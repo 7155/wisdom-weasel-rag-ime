@@ -8,9 +8,8 @@
  * raw records before anything renders:
  *
  * 1. Room partner Sessions (`roomParticipant`) never appear as rows. They fold
- *    into their Room's row as side-by-side partner names; when the Room record
- *    itself is missing from the directory, one synthesized Room row carries
- *    the shared goal text and the partner labels.
+ *    into their existing Room's row; a missing Room never becomes a synthetic
+ *    clickable object.
  * 2. Records that repeat the same goal copy (same kind + title + project)
  *    collapse into the newest record; older runs stay reachable as `repeats`.
  * 3. Rows land in three recency buckets — 今天 / 本周 / 更早 — each with a
@@ -20,8 +19,7 @@
  * Pure data → data. The owning component decides fetch, expansion and clicks.
  */
 
-import { ROOM_PLANET_NAMES, roomPlanetName } from '@/features/rooms/room-copy';
-
+import { roomPlanetName } from '@/features/rooms/room-participant-identity';
 export type WayfinderWorkKind = 'session' | 'room';
 export type WayfinderWorkActivity = 'running' | 'attention' | 'idle';
 
@@ -31,6 +29,7 @@ export type WayfinderWorkSessionSource = {
   status: string;
   updatedAtMs: number;
   workspaceRoots?: string[];
+  lastMessagePreview?: string;
   roomParticipant?: { roomId?: string } | null;
 };
 
@@ -40,6 +39,13 @@ export type WayfinderWorkRoomSource = {
   status?: string;
   updatedAtMs: number;
   workspaceRoots?: string[];
+  workItems?: Array<{
+    state: 'queued' | 'active' | 'review' | 'blocked' | 'done' | 'failed' | 'cancelled';
+    objective?: string;
+    resultSummary?: string;
+    blocker?: { reason?: string };
+    updatedAtMs: number;
+  }>;
   participants?: Array<{ displayName?: string; ordinal?: number; status?: string }>;
 };
 
@@ -51,13 +57,18 @@ export type WayfinderWorkRepeat = {
 
 export type WayfinderWorkItem = {
   key: string;
+  projectKey: string;
+  /** Real workspace roots projected from the directory; never a Finder/Git mirror. */
+  workspaceRoots: string[];
   kind: WayfinderWorkKind;
   id: string;
   title: string;
   project: string;
   updatedAtMs: number;
   activity: WayfinderWorkActivity;
-  /** Room partner names in ordinal order — rendered side by side, never as rows. */
+  statusLabel: string;
+  detail: string;
+  /** Room planet names in ordinal order — rendered side by side, never as rows. */
   agents: string[];
   /** Older records with the same goal copy, newest first. */
   repeats: WayfinderWorkRepeat[];
@@ -73,8 +84,21 @@ export type WayfinderWorkBucket = {
   previewCount: number;
 };
 
+export type WayfinderWorkProject = {
+  id: string;
+  label: string;
+  workspaceRoots: string[];
+  items: WayfinderWorkItem[];
+  buckets: WayfinderWorkBucket[];
+  sessionCount: number;
+  roomCount: number;
+  runningCount: number;
+  attentionCount: number;
+};
+
 export type WayfinderWorkView = {
   buckets: WayfinderWorkBucket[];
+  projects: WayfinderWorkProject[];
   /** Rows after folding — what the desktop can actually show. */
   rowCount: number;
   /** Raw records absorbed by folding (partner clones + repeated goal copy). */
@@ -93,8 +117,6 @@ const BUCKET_PREVIEW: Record<WayfinderWorkBucketId, number> = {
   earlier: 0,
 };
 
-const PARTNER_SUFFIX = /\s*[·•・\-–—]\s*(Agent\s*\d+|伙伴\s*\d+|Earth|Mars|Venus|Jupiter|Saturn|Mercury|Neptune|Uranus|Planet\s*\d+)\s*$/i;
-
 export function projectWayfinderWork({
   nowMs,
   query = '',
@@ -108,20 +130,17 @@ export function projectWayfinderWork({
 }): WayfinderWorkView {
   const liveRooms = rooms.filter((room) => room.status !== 'archived');
   const liveSessions = sessions.filter((session) => session.status !== 'archived');
-  const roomIds = new Set(liveRooms.map((room) => room.id));
-
   const partnerSessions = liveSessions.filter((session) => session.roomParticipant?.roomId);
   const plainSessions = liveSessions.filter((session) => !session.roomParticipant?.roomId);
 
-  const orphanPartnerRows = orphanPartnerRooms(partnerSessions, roomIds);
   const roomRows = liveRooms.map(roomRow);
   const sessionRows = plainSessions.map(sessionRow);
 
   let foldedCount = partnerSessions.length;
   const deduped = new Map<string, WayfinderWorkItem>();
-  for (const row of [...sessionRows, ...roomRows, ...orphanPartnerRows]
+  for (const row of [...sessionRows, ...roomRows]
     .sort((left, right) => right.updatedAtMs - left.updatedAtMs)) {
-    const foldKey = `${row.kind}\u0001${normalizedTitle(row.title)}\u0001${row.project}`;
+    const foldKey = `${row.kind}\u0001${normalizedTitle(row.title)}\u0001${row.projectKey}`;
     const leader = deduped.get(foldKey);
     if (!leader) {
       deduped.set(foldKey, row);
@@ -147,99 +166,137 @@ export function projectWayfinderWork({
     }))
     .filter((bucket) => bucket.items.length > 0);
 
-  return { buckets, rowCount: matched.length, foldedCount };
+  const projects = [...new Set(matched.map((item) => item.projectKey))]
+    .map((id) => {
+      const items = matched.filter((item) => item.projectKey === id);
+      const workspaceRoots = [...new Set(items.flatMap((item) => item.workspaceRoots))].sort();
+      return {
+        id,
+        label: items[0]?.project || '未绑定项目',
+        workspaceRoots,
+        items,
+        buckets: bucketizeWayfinderWork(items, nowMs),
+        sessionCount: items.filter((item) => item.kind === 'session').length,
+        roomCount: items.filter((item) => item.kind === 'room').length,
+        runningCount: items.filter((item) => item.activity === 'running').length,
+        attentionCount: items.filter((item) => item.activity === 'attention').length,
+      };
+    })
+    .sort((left, right) => (right.items[0]?.updatedAtMs ?? 0) - (left.items[0]?.updatedAtMs ?? 0));
+
+  return { buckets, projects, rowCount: matched.length, foldedCount };
 }
 
 function sessionRow(session: WayfinderWorkSessionSource): WayfinderWorkItem {
+  const roots = normalizedWorkspaceRoots(session.workspaceRoots);
   return {
     key: `session:${session.id}`,
+    projectKey: projectKey(session.workspaceRoots),
+    workspaceRoots: roots,
     kind: 'session',
     id: session.id,
     title: session.title || '未命名工作',
     project: projectLeaf(session.workspaceRoots),
     updatedAtMs: session.updatedAtMs,
     activity: session.status === 'busy' ? 'running' : session.status === 'faulted' ? 'attention' : 'idle',
+    statusLabel: session.status === 'busy' ? '进行中' : session.status === 'faulted' ? '需要处理' : '就绪',
+    detail: session.status === 'busy'
+      ? publicPreview(session.lastMessagePreview, '当前公开内容') || '当前进度不可用'
+      : session.status === 'faulted'
+        ? publicPreview(session.lastMessagePreview, '最近公开内容') || '故障原因不可用'
+        : publicPreview(session.lastMessagePreview, '最近公开内容') || '暂无公开进度',
     agents: [],
     repeats: [],
   };
 }
 
 function roomRow(room: WayfinderWorkRoomSource): WayfinderWorkItem {
+  const roots = normalizedWorkspaceRoots(room.workspaceRoots);
+  const attention = room.workItems?.some((item) => item.state === 'blocked' || item.state === 'failed') ?? false;
   return {
     key: `room:${room.id}`,
+    projectKey: projectKey(room.workspaceRoots),
+    workspaceRoots: roots,
     kind: 'room',
     id: room.id,
     title: room.title || '未命名工作',
     project: projectLeaf(room.workspaceRoots),
     updatedAtMs: room.updatedAtMs,
-    activity: room.status === 'active' ? 'running' : 'idle',
+    activity: attention ? 'attention' : room.status === 'active' ? 'running' : 'idle',
+    statusLabel: attention ? '需要处理' : room.status === 'active' ? '进行中' : room.status || '状态不可用',
+    detail: roomWorkDetail(room.workItems),
     agents: (room.participants ?? [])
       .filter((participant) => participant.status !== 'removed')
       .sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0))
-      .map((participant) => roomPlanetName(participant.ordinal ?? 0))
-      .filter(Boolean),
+      .map((participant) => roomPlanetName(participant.ordinal)),
     repeats: [],
   };
 }
 
-/** Partner Sessions whose Room record is absent still fold into one Room row. */
-function orphanPartnerRooms(
-  partnerSessions: readonly WayfinderWorkSessionSource[],
-  knownRoomIds: ReadonlySet<string>,
-): WayfinderWorkItem[] {
-  const byRoom = new Map<string, WayfinderWorkSessionSource[]>();
-  for (const session of partnerSessions) {
-    const roomId = session.roomParticipant?.roomId ?? '';
-    if (!roomId || knownRoomIds.has(roomId)) continue;
-    byRoom.set(roomId, [...(byRoom.get(roomId) ?? []), session]);
-  }
-  return [...byRoom.entries()].map(([roomId, members]) => {
-    const newest = members.reduce((left, right) => (right.updatedAtMs > left.updatedAtMs ? right : left));
-    const agents = members
-      .map((member, index) => roomPlanetName(legacyPartnerOrdinal(member.title) ?? index))
-      .sort((left, right) => roomPlanetOrdinal(left) - roomPlanetOrdinal(right));
-    return {
-      key: `room:${roomId}`,
-      kind: 'room' as const,
-      id: roomId,
-      title: newest.title.replace(PARTNER_SUFFIX, '').trim() || newest.title,
-      project: projectLeaf(newest.workspaceRoots),
-      updatedAtMs: newest.updatedAtMs,
-      activity: members.some((member) => member.status === 'busy')
-        ? 'running' as const
-        : members.some((member) => member.status === 'faulted') ? 'attention' as const : 'idle' as const,
-      agents,
-      repeats: [],
-    };
-  });
-}
-
-function legacyPartnerOrdinal(title: string): number | undefined {
-  const identity = title.match(PARTNER_SUFFIX)?.[1]?.trim();
-  if (!identity) return undefined;
-  const known = ROOM_PLANET_NAMES.findIndex((name) => name.toLowerCase() === identity.toLowerCase());
-  if (known >= 0) return known;
-  const matched = identity.match(/\d+/u)?.[0];
-  if (!matched) return undefined;
-  const ordinal = Number(matched) - 1;
-  return Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : undefined;
-}
-
-function roomPlanetOrdinal(name: string): number {
-  const known = ROOM_PLANET_NAMES.indexOf(name as typeof ROOM_PLANET_NAMES[number]);
-  if (known >= 0) return known;
-  const fallback = Number(name.match(/\d+/u)?.[0]);
-  return Number.isInteger(fallback) ? fallback - 1 : Number.MAX_SAFE_INTEGER;
-}
-
+/* Partner Sessions without a Room row remain folded out; a synthetic Room
+   cannot satisfy the canonical-object click contract. */
 function normalizedTitle(title: string): string {
   return title.replace(/\s+/g, ' ').replace(/[…]+$/, '').trim().toLocaleLowerCase();
 }
 
 function projectLeaf(roots: readonly string[] | undefined): string {
-  const first = roots?.[0]?.trim() ?? '';
+  const first = normalizedWorkspaceRoots(roots)[0] ?? '';
   if (!first) return '';
   return first.split('/').filter(Boolean).at(-1) ?? '';
+}
+
+function projectKey(roots: readonly string[] | undefined): string {
+  const normalized = normalizedWorkspaceRoots(roots);
+  return normalized.length ? normalized.join('\u001f') : '__unbound__';
+}
+
+function normalizedWorkspaceRoots(roots: readonly string[] | undefined): string[] {
+  return [...new Set((roots ?? []).map((root) => root.trim()).filter(Boolean))].sort();
+}
+
+/**
+ * Rebuild the recency buckets after the desktop moves a dialogue file.  The
+ * source project buckets cannot be reused in that case: their item lists are
+ * keyed to the old workspace project, so a moved file would be counted in the
+ * destination project but disappear from its opened folder.  Keeping this
+ * projection helper here gives both the initial and reassigned views the same
+ * bucket semantics.
+ */
+export function bucketizeWayfinderWork(items: readonly WayfinderWorkItem[], nowMs: number): WayfinderWorkBucket[] {
+  return (['today', 'week', 'earlier'] as const)
+    .map((id) => ({ id, label: BUCKET_LABELS[id], items: items.filter((item) => bucketFor(item.updatedAtMs, nowMs) === id), previewCount: BUCKET_PREVIEW[id] }))
+    .filter((bucket) => bucket.items.length > 0);
+}
+
+function publicPreview(value: unknown, label: string): string {
+  if (typeof value !== 'string') return '';
+  const normalized = value.replace(/\s+/gu, ' ').trim();
+  if (!normalized) return '';
+  const bounded = normalized.length <= 96 ? normalized : `${normalized.slice(0, 95).trimEnd()}…`;
+  return `${label}：${bounded}`;
+}
+
+function roomWorkDetail(workItems: WayfinderWorkRoomSource['workItems']): string {
+  if (!workItems) return '任务进度不可用';
+  const focus = [...workItems].sort((left, right) => workPriority(left.state) - workPriority(right.state) || right.updatedAtMs - left.updatedAtMs)[0];
+  if (!focus) return '尚无任务';
+  const text = focus.state === 'blocked'
+    ? focus.blocker?.reason?.trim()
+    : focus.state === 'active' || focus.state === 'review' || focus.state === 'queued'
+      ? focus.objective?.trim()
+      : focus.resultSummary?.trim();
+  const bounded = text ? (text.length <= 96 ? text : `${text.slice(0, 95).trimEnd()}…`) : '';
+  if (focus.state === 'blocked') return bounded ? `阻塞：${bounded}` : '阻塞原因不可用';
+  if (focus.state === 'active') return bounded ? `当前任务：${bounded}` : '当前进度不可用';
+  if (focus.state === 'review') return bounded ? `待复核：${bounded}` : '复核内容不可用';
+  if (focus.state === 'queued') return bounded ? `待开始：${bounded}` : '待开始任务内容不可用';
+  if (focus.state === 'failed') return bounded ? `失败结果：${bounded}` : '失败原因不可用';
+  if (focus.state === 'done') return bounded ? `最近结果：${bounded}` : '结果摘要不可用';
+  return bounded ? `已取消：${bounded}` : '已取消任务内容不可用';
+}
+
+function workPriority(state: NonNullable<WayfinderWorkRoomSource['workItems']>[number]['state']): number {
+  return { blocked: 0, active: 1, review: 2, queued: 3, failed: 4, done: 5, cancelled: 6 }[state];
 }
 
 function bucketFor(updatedAtMs: number, nowMs: number): WayfinderWorkBucketId {

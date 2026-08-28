@@ -4,6 +4,7 @@ import {
   ExternalLink,
   Focus,
   GitBranch,
+  ListChecks,
   LoaderCircle,
   MessageCircle,
   Orbit,
@@ -50,10 +51,16 @@ import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-st
 import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { PawRoomConversation, roomProcessWindowRequest } from './PawRoomConversation';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
+import { PawRoomRoundSheet } from './PawRoomRoundSheet';
+import type { RoomRoundTaskRow } from './room-round-task-sheet';
 /* 星空按钮按下之前，星空代码不进入 Room 默认对话的 bundle 路径。 */
 import { LazyPawRoomStarfield } from './PawStarfieldLazy';
 import { buildRoomFocusProjection, roomFocusHasCoordinator, roomFocusOriginLabel, type RoomFocusProjection } from './room-focus-projection';
-import { roomPlanetWindowRequest } from './room-satellite-auto-open';
+import {
+  roomCollaborationSatelliteRequests,
+  roomPlanetWindowRequest,
+  roomProjectionRuntimeActiveParticipantIds,
+} from './room-satellite-auto-open';
 /* Shared conversation modules (tool result panels, diff reader) style the
  * Room's tool receipts too; the Room window must not depend on a Session
  * window having loaded them first. */
@@ -97,8 +104,6 @@ export function followRoomTimelineIfReaderAtEnd(
   );
   if (!readerIsAtEnd()) return false;
   scheduleFrame(() => {
-    // The receipt and this layout frame are separated by user-observable time.
-    // Recheck so a wheel/touch gesture in that gap keeps ownership of the view.
     if (!readerIsAtEnd()) return;
     timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
   });
@@ -131,12 +136,13 @@ export function PawRoomWorkspace({
   const optimisticSteerRef = useRef<OptimisticSteerReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(initialError ?? '');
-  /* Match an ordinary Session on entry: the public conversation owns the
-   * stage. Collaboration tools and partner windows are explicit disclosure,
-   * never a wall of windows opened on the reader's behalf. */
   const [panel, setPanel] = useState<RoomToolPanel | 'none'>('none');
-  const [view, setView] = useState<'conversation' | 'starfield'>('conversation');
+  const [view, setView] = useState<'rounds' | 'conversation' | 'starfield'>('rounds');
+  const [selectedParticipantId, setSelectedParticipantId] = useState('');
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
+  const [collaborationOpenFailures, setCollaborationOpenFailures] = useState<Set<string>>(() => new Set());
+  const [resumeErrorByRow, setResumeErrorByRow] = useState<Record<string, string>>({});
+  const [resumingWorkItemId, setResumingWorkItemId] = useState('');
   const [recoveryState, setRecoveryState] = useState<'recovering' | 'failed' | 'synced'>('recovering');
   const runtimeToolWindow = useMemo(() => createRuntimeToolWindowProjector(), [recordId]);
 
@@ -146,8 +152,10 @@ export function PawRoomWorkspace({
   }, [initialDraft, initialError]);
 
   useEffect(() => {
-    setView('conversation');
+    setView('rounds');
     setPanel('none');
+    setSelectedParticipantId('');
+    setCollaborationOpenFailures(new Set());
   }, [recordId]);
 
   const clearOptimisticSteer = useCallback((clientActionId: string) => {
@@ -182,6 +190,30 @@ export function PawRoomWorkspace({
   const pendingQuestion = projection?.pendingUserQuestion;
   const pendingGroupedInput = latestPendingGroupedRoomInput(projection);
   const activeTurn = projection ? selectActivePublicRoomTurn(projection) : undefined;
+  const runtimeActiveParticipantIds = useMemo(
+    () => roomProjectionRuntimeActiveParticipantIds(projection),
+    [projection],
+  );
+  const runtimeActiveParticipantSignature = useMemo(
+    () => [...runtimeActiveParticipantIds].sort().join('\u0000'),
+    [runtimeActiveParticipantIds],
+  );
+  const collaborationParticipantSignature = useMemo(() => record?.participants
+    .map((participant) => [
+      participant.id,
+      participant.status,
+      participant.sessionId,
+      participant.ordinal,
+      participant.collaborationRole ?? '',
+    ].join(':'))
+    .sort()
+    .join('\u0000') ?? '', [record?.participants]);
+  const collaborationParticipantRequests = useMemo(
+    () => record ? roomCollaborationSatelliteRequests(record, runtimeActiveParticipantIds) : [],
+    [collaborationParticipantSignature, record, runtimeActiveParticipantIds, runtimeActiveParticipantSignature],
+  );
+  const collaborationParticipantIds = useRef(new Map<string, Set<string>>());
+  const collaborationSyncKeyRef = useRef('');
   const activeWork = record?.workItems?.find((item) => ['queued', 'active', 'review', 'blocked'].includes(item.state));
   const taskBusyState = record?.roomKind === 'roleplay'
     ? undefined
@@ -254,10 +286,10 @@ export function PawRoomWorkspace({
     const addressed = answersQuestion
       ? []
       : roomMentionedParticipants(
-        record.participants.filter((item) => item.status === 'active'),
-        message,
-        participantAliases,
-      );
+          record.participants.filter((item) => item.status === 'active'),
+          message,
+          participantAliases,
+        );
     if (steering && addressed.length > 1) {
       if (!options.preserveDraft) setDraft(rawValue);
       setError('当前回合只能点名一位伙伴，请只保留一个 @伙伴。');
@@ -422,22 +454,77 @@ export function PawRoomWorkspace({
   const activeTopic = record?.topics?.find((topic) => topic.id === record.activeTopicId)
     ?? record?.topics?.find((topic) => topic.status === 'active');
   const activeRootId = activeTurn?.rootId ?? activeTurn?.id ?? '';
+  /* The Room moderator is the backend's Root actor. Require that canonical
+   * participant to be active before exposing a recovery command; never fall
+   * back to the first participant or a lane that merely happens to be visible. */
+  const activeRootActorId = activeTurn && record?.moderatorParticipantId
+    && record.participants.some((participant) => (
+      participant.id === record.moderatorParticipantId && participant.status === 'active'
+    ))
+    ? record.moderatorParticipantId
+    : '';
   const abortingActiveTurn = Boolean(activeRootId && abortingTurnIds.has(activeRootId));
   /* planet 窗口统一铭牌：从任何入口打开同一伙伴都走 roomPlanetWindowRequest。 */
   const openParticipant = useCallback((participant: RoomSummary['participants'][number], background = false) => desktop?.openWindow(
     roomPlanetWindowRequest(participant, recordId, background),
   ), [desktop, recordId]);
-  const openParticipantById = useCallback((participantId: string) => {
+  const openParticipantById = useCallback((participantId: string, background = false) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!participant) return;
-    setPanel('none');
-    openParticipant(participant);
+    openParticipant(participant, background);
   }, [openParticipant, record?.participants]);
+  const selectAndOpenParticipant = useCallback((participantId: string, background = false) => {
+    setSelectedParticipantId(participantId);
+    openParticipantById(participantId, background);
+  }, [openParticipantById]);
   const openProcessActivity = useCallback((activity: RoomActivityProjection) => {
     const request = roomProcessWindowRequest(activity, recordId);
     if (request) desktop?.openWindow({ ...request, background: false });
   }, [desktop, recordId]);
-  /* PF-CM-013：协作态势可以弹出成一扇卫星窗，主 Room 留给公开对话。 */
+  const resumeBlockedWorkItem = useCallback(async (row: RoomRoundTaskRow): Promise<void> => {
+    if (!record || !row.blockedWorkItemId) return;
+    if (!activeRootActorId) {
+      setResumeErrorByRow((current) => ({ ...current, [row.key]: '当前没有可用的 active Root，无法恢复。' }));
+      return;
+    }
+    const workItemId = row.blockedWorkItemId;
+    setResumingWorkItemId(workItemId);
+    setResumeErrorByRow((current) => {
+      if (!(row.key in current)) return current;
+      const next = { ...current };
+      delete next[row.key];
+      return next;
+    });
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.workItem.resume',
+        params: { roomId: record.id, workItemId },
+        body: {
+          actorParticipantId: activeRootActorId,
+          clientActionId: `paw-room-work-resume-${crypto.randomUUID()}`,
+          phase: 'recovery',
+          timeoutSeconds: 300,
+        },
+      });
+      const workItem = asWorkItem(asRecord(response).workItem);
+      if (!workItem) throw new Error('恢复回执缺少 WorkItem。');
+      /* The response is an authoritative dispatch receipt. Reflect only its
+       * WorkItem; the subsequent live snapshot supplies any later settlement. */
+      onRoomUpdated({
+        ...record,
+        workItems: [...(record.workItems ?? []).filter((item) => item.id !== workItem.id), workItem],
+      });
+      retrySnapshot();
+    } catch (reason) {
+      setResumeErrorByRow((current) => ({
+        ...current,
+        [row.key]: publicErrorText(reason, '恢复没有完成，请重试。'),
+      }));
+    } finally {
+      setResumingWorkItemId('');
+    }
+  }, [activeRootActorId, onRoomUpdated, record, retrySnapshot, transport]);
+  /* PF-CM-013：协作态势可以弹出成一扇独立观察窗，主 Room 留给公开对话。 */
   const openFocusSatellite = useCallback(() => {
     if (!record) return;
     desktop?.openWindow({
@@ -451,6 +538,87 @@ export function PawRoomWorkspace({
       },
     });
   }, [desktop, record, recordId]);
+  const enterCollaborationMode = useCallback(() => {
+    setView('rounds');
+    setPanel('focus');
+    if (!desktop || !record) return;
+    /* Collaboration focus is an explicit Room view choice. Opening a
+       participant Session is still an ordinary desktop action and must not
+       enter this mode as a side effect. */
+    desktop.setCollaborationFocusGroup?.(`room:${record.id}`);
+    setCollaborationOpenFailures(new Set());
+  }, [desktop, record]);
+  const retryCollaborationSatellite = useCallback((participantId: string) => {
+    const participant = record?.participants.find((candidate) => candidate.id === participantId);
+    if (!desktop || !participant) return;
+    try {
+      desktop.openWindow(roomPlanetWindowRequest(participant, recordId, true));
+      setCollaborationOpenFailures((current) => {
+        if (!current.has(participantId)) return current;
+        const next = new Set(current);
+        next.delete(participantId);
+        return next;
+      });
+    } catch {
+      setCollaborationOpenFailures((current) => current.has(participantId)
+        ? current
+        : new Set(current).add(participantId));
+    }
+  }, [desktop, record?.participants, recordId]);
+  /* Keep the collaboration perimeter in lockstep with the Room roster. The
+   * effect runs only after the explicit focus choice, so ordinary Room work
+   * never opens a window for every participant. Existing window ids are stable
+   * (`agent:<participantId>`), which lets a removed member disappear without
+   * inventing a second desktop store or changing Session semantics. */
+  useEffect(() => {
+    if (panel !== 'focus' || !desktop || !record) {
+      if (panel !== 'focus') collaborationSyncKeyRef.current = '';
+      return;
+    }
+    /* Room snapshots are intentionally frequent. Reconcile the desktop only
+       when the roster meaning changes; otherwise every progress event would
+       reopen/focus all planet windows and make the canvas feel random. */
+    const syncKey = `${record.id}:${collaborationParticipantSignature}:${runtimeActiveParticipantSignature}`;
+    if (syncKey === collaborationSyncKeyRef.current) return;
+    collaborationSyncKeyRef.current = syncKey;
+    const desired = new Set(collaborationParticipantRequests.map((request) => request.target.id));
+    const previous = collaborationParticipantIds.current.get(record.id) ?? new Set<string>();
+    for (const participantId of previous) {
+      if (!desired.has(participantId)) desktop.closeWindow?.(`agent:${participantId}`);
+    }
+    const failures = new Set<string>();
+    for (const request of collaborationParticipantRequests) {
+      try {
+        desktop.openWindow(request);
+      } catch {
+        failures.add(request.target.id);
+      }
+    }
+    collaborationParticipantIds.current.set(record.id, desired);
+    setCollaborationOpenFailures(failures);
+  }, [
+    collaborationParticipantRequests,
+    collaborationParticipantSignature,
+    desktop,
+    panel,
+    record,
+    runtimeActiveParticipantSignature,
+  ]);
+  useEffect(() => {
+    setCollaborationOpenFailures((current) => {
+      if (!current.size) return current;
+      const next = new Set([...current].filter((participantId) => record?.participants.some((participant) => (
+        participant.id === participantId && participant.status === 'active'
+      ))));
+      return next.size === current.size ? current : next;
+    });
+  }, [record?.participants]);
+  useEffect(() => {
+    if (!selectedParticipantId) return;
+    if (!record?.participants.some((participant) => (
+      participant.id === selectedParticipantId && participant.status === 'active'
+    ))) setSelectedParticipantId('');
+  }, [record?.participants, selectedParticipantId]);
   useEffect(() => {
     if (!desktop || !record) return;
     desktop.bindRoomMain?.({ kind: 'room', id: record.id, title: record.title, subtitle: record.description });
@@ -469,9 +637,10 @@ export function PawRoomWorkspace({
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
-      <button aria-pressed={panel === 'none' && view === 'conversation'} onClick={() => { setView('conversation'); setPanel('none'); }} type="button"><MessageCircle size={14} /><span>公开对话</span></button>
-      <button aria-pressed={panel !== 'none'} onClick={() => { setView('conversation'); setPanel((current) => current === 'none' ? 'focus' : current); }} type="button"><Focus size={14} /><span>协作态势</span></button>
-      <button aria-pressed={view === 'starfield'} onClick={() => { setView('starfield'); setPanel('none'); }} type="button"><Orbit size={14} /><span>星空</span></button>
+      <button aria-pressed={panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); setPanel('none'); setSelectedParticipantId(''); }} type="button"><ListChecks size={14} /><span>任务表</span></button>
+      <button aria-pressed={panel !== 'none'} data-room-view="collaboration" onClick={enterCollaborationMode} type="button"><Focus size={14} /><span>协同模式</span></button>
+      <button aria-pressed={panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); setPanel('none'); setSelectedParticipantId(''); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
+      <button aria-pressed={view === 'starfield'} data-room-view="starfield" onClick={() => { setView('starfield'); setPanel('none'); setSelectedParticipantId(''); }} type="button"><Orbit size={14} /><span>星空</span></button>
     </nav>
     <div className="paw-room-workspace__runtime"><span><i />{abortingActiveTurn ? '正在停止' : sending && activeTurn ? '正在干预' : activeTurn ? '协作中' : recoveryState === 'synced' ? '已同步' : '连接中'}</span>{activeTurn ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
   </div>;
@@ -506,6 +675,22 @@ export function PawRoomWorkspace({
               onExit={() => setView('conversation')}
               onOpenParticipant={openParticipantById}
             />
+          ) : view === 'rounds' ? (
+            <div className="paw-room-timeline" ref={timelineRef}>
+              {projection && record ? (
+                <PawRoomRoundSheet
+                  onOpenParticipant={selectAndOpenParticipant}
+                  onResumeBlocked={resumeBlockedWorkItem}
+                  projection={projection}
+                  resumeErrorByRow={resumeErrorByRow}
+                  resumingWorkItemId={resumingWorkItemId}
+                  room={record}
+                  selectedParticipantId={selectedParticipantId}
+                />
+              ) : (
+                <div className="paw-room-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复 Room 协作现场</div>
+              )}
+            </div>
           ) : <div className="paw-room-timeline" ref={timelineRef}>
               {projection && record ? <PawRoomConversation
                 empty={loading
@@ -539,6 +724,20 @@ export function PawRoomWorkspace({
           </div>}
 
           <div className="paw-room-workspace__composer">
+              {collaborationOpenFailures.size ? <div className="paw-room-workspace__satellite-error" role="alert">
+                <CircleAlert size={14} />
+                <div>
+                  <span>{collaborationOpenFailures.size} 颗运行中行星未能打开</span>
+                  <div aria-label="未打开的行星">
+                    {[...collaborationOpenFailures].map((participantId) => <button
+                      aria-label={`重试打开 ${participantAliases[participantId] ?? participantId}`}
+                      key={participantId}
+                      onClick={() => retryCollaborationSatellite(participantId)}
+                      type="button"
+                    >{participantAliases[participantId] ?? participantId} · 重试</button>)}
+                  </div>
+                </div>
+              </div> : null}
               {error ? <div className="paw-room-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button></div> : null}
               {pendingGroupedInput ? <GenericUserInputCard activity={pendingGroupedInput} sessionId={pendingGroupedInput.sourceSessionId} onError={setError} /> : (
                 <>
@@ -566,7 +765,7 @@ export function PawRoomWorkspace({
           </div>
         </main>
         {panel !== 'none' && record ? <PawRoomToolWorkspace
-          onClose={() => setPanel('none')}
+          onClose={() => { setPanel('none'); setSelectedParticipantId(''); }}
           onError={setError}
           onOpenParticipant={openParticipantById}
           onPanelChange={setPanel}
@@ -577,6 +776,8 @@ export function PawRoomWorkspace({
           personas={personas}
           focusProjection={focusProjection}
           room={record}
+          onSelectParticipant={setSelectedParticipantId}
+          selectedParticipantId={selectedParticipantId}
         /> : null}
       </div>
     </section>
@@ -588,6 +789,7 @@ function PawRoomToolWorkspace({
   onClose,
   onError,
   onOpenParticipant,
+  onSelectParticipant,
   onPanelChange,
   onPopout,
   onRefresh,
@@ -596,10 +798,12 @@ function PawRoomToolWorkspace({
   personas,
   focusProjection,
   room,
+  selectedParticipantId,
 }: {
   onClose: () => void;
   onError: (message: string) => void;
-  onOpenParticipant: (participantId: string) => void;
+  onOpenParticipant: (participantId: string, background?: boolean) => void;
+  onSelectParticipant: (participantId: string) => void;
   onPanelChange: (panel: RoomToolPanel) => void;
   onPopout?: () => void;
   onRefresh: () => Promise<void>;
@@ -608,6 +812,7 @@ function PawRoomToolWorkspace({
   personas: AgentPersonaV1[];
   focusProjection?: RoomFocusProjection;
   room: RoomSummary;
+  selectedParticipantId: string;
 }) {
   const tabId = useId();
   /* 空间指向：协作态势键在标题栏尾端，面板也必须从尾端展开。data-side 把这个
@@ -616,7 +821,7 @@ function PawRoomToolWorkspace({
     <header className="paw-room-tools__header">
       <span><Focus aria-hidden="true" size={15} /><strong>协作态势</strong></span>
       <div className="paw-room-tools__actions">
-        {onPopout ? <button aria-label="在卫星窗中打开协作态势" onClick={onPopout} type="button"><ExternalLink aria-hidden="true" size={14} /></button> : null}
+        {onPopout ? <button aria-label="在协作窗口中打开协作态势" onClick={onPopout} type="button"><ExternalLink aria-hidden="true" size={14} /></button> : null}
         <button aria-label="关闭协作态势" onClick={onClose} type="button"><X aria-hidden="true" size={15} /></button>
       </div>
     </header>
@@ -636,7 +841,13 @@ function PawRoomToolWorkspace({
       })}
     </nav>
     <div aria-labelledby={`${tabId}-${panel}`} className="paw-room-tools__content" id={`${tabId}-panel`} role="tabpanel">
-      {panel === 'focus' && focusProjection ? <PawRoomFocusOverview focus={focusProjection} hideMission onOpenParticipant={onOpenParticipant} /> : null}
+      {panel === 'focus' && focusProjection ? <PawRoomFocusOverview
+        focus={focusProjection}
+        hideMission
+        onOpenParticipant={onOpenParticipant}
+        onSelectParticipant={onSelectParticipant}
+        selectedParticipantId={selectedParticipantId}
+      /> : null}
       {panel === 'governance' ? <PawRoomGovernance personas={personas} room={room} onError={onError} onRefresh={onRefresh} onRoomUpdated={onRoomUpdated} /> : null}
     </div>
   </aside>;

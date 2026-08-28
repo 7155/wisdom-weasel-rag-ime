@@ -15,6 +15,7 @@ export type RouteId =
   | 'governance'
   | 'history'
   | 'observability'
+  | 'trace-agent'
   | 'context-debug'
   | 'diagnostics'
   | 'configuration';
@@ -51,6 +52,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'approvals', path: '/approvals', label: '审批中心', shortLabel: '审批', group: 'operations' },
   { id: 'context-debug', path: '/context-debug', label: '上下文检查', shortLabel: '上下文', group: 'operations' },
   { id: 'observability', path: '/observability', label: '运行记录', shortLabel: '运行', group: 'operations' },
+  { id: 'trace-agent', path: '/trace-agent', label: 'Trace Agent', shortLabel: 'Trace', group: 'operations' },
   { id: 'diagnostics', path: '/diagnostics', label: '问题排查', shortLabel: '排查', group: 'operations' },
   { id: 'configuration', path: '/configuration', label: '设置', shortLabel: '设置', group: 'operations' },
 ] as const;

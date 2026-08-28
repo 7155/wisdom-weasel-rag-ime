@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { agentEventFixture } from '@/test/fixtures/events';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { useAgentLiveStore } from '../state/live-store';
@@ -377,6 +378,69 @@ describe('Agent chat rendering', () => {
     expect(entries[1]).toHaveTextContent('运行状态正常');
     expect(entries[2]).toHaveTextContent('读取完成，当前运行正常。');
     expect(entries[0]).not.toHaveTextContent('读取完成');
+  });
+
+  it('keeps an in-flight Steer message at its exact place in the turn timeline', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'busy',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'tool_finished', {
+        toolCallId: 'call-before-steer',
+        toolName: 'overview',
+        result: { details: { ok: true, result: { summary: '插话前的工具结果' } } },
+      }),
+    ]);
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'client-steer-order',
+      text: 'ZDO',
+      nowMs: 25,
+      turnId,
+      delivery: 'steer',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      {
+        ...agentEventFixture(2, 'tool_finished', {
+          toolCallId: 'call-after-steer',
+          toolName: 'overview',
+          result: { details: { ok: true, result: { summary: '插话后的工具结果' } } },
+        }),
+        createdAtMs: 30,
+      },
+      agentEventFixture(3, 'message_completed', {
+        message: assistantMessage(sessionId, turnId, '最终回复', 40),
+      }),
+      agentEventFixture(4, 'turn_completed', { status: 'completed' }),
+    ]);
+
+    render(
+      <AgentTurn
+        presentation="fx"
+        sessionId={sessionId}
+        turnId={turnId}
+        onApprovalDecision={() => {}}
+      />,
+    );
+
+    const collapsedSteer = document.querySelector<HTMLElement>('[data-timeline-kind="user-message"]');
+    expect(collapsedSteer).toHaveTextContent('ZDO');
+    expect(collapsedSteer?.closest('[inert]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /展开 .* 个步骤/ }));
+
+    const entries = [...document.querySelectorAll<HTMLElement>('[data-timeline-kind]')];
+    expect(entries.map((entry) => entry.dataset.timelineKind)).toEqual([
+      'activity',
+      'user-message',
+      'activity',
+      'message',
+    ]);
+    expect(entries[1]).toHaveTextContent('ZDO');
   });
 
   it('collapses settled FX work to the explicit final response and restores every layer on demand', () => {
@@ -810,6 +874,29 @@ describe('Agent chat rendering', () => {
     expect(container.querySelectorAll('.agent-code-block')).toHaveLength(3);
   });
 
+  it('opens workspace file references from prose while keeping hashes, commands, and code spans plain', async () => {
+    const user = userEvent.setup();
+    const openRoute = vi.fn();
+    render(
+      <PawOsDesktopProvider openRoute={openRoute} openWindow={() => undefined}>
+        <MarkdownBody
+          sessionId="session-files"
+          text={'已读取 acceptance.md 和 src/features/rooms/RoomTurn.tsx。\n\n不要把 `ordinary-code.md` 当作文件入口；另有 [room-runtime-handoff.md](room-runtime-handoff.md)。\n\n命令：\ngit diff -- src/ignored.ts'}
+        />
+      </PawOsDesktopProvider>,
+    );
+
+    const acceptance = screen.getByRole('link', { name: '打开文件 acceptance.md' });
+    const source = screen.getByRole('link', { name: '打开文件 RoomTurn.tsx' });
+    expect(acceptance).toHaveAttribute('title', 'acceptance.md');
+    expect(source).toHaveAttribute('title', 'src/features/rooms/RoomTurn.tsx');
+    expect(screen.getByText('ordinary-code.md').tagName).toBe('CODE');
+    expect(screen.getByRole('link', { name: '打开文件 room-runtime-handoff.md' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '打开文件 ignored.ts' })).not.toBeInTheDocument();
+    await user.click(acceptance);
+    expect(openRoute).toHaveBeenCalledWith('/files?session=session-files&path=acceptance.md');
+  });
+
   it('renders inline unified diffs and lets the user switch to a split view', () => {
     const diff = [
       'diff --git a/src/runtime.ts b/src/runtime.ts',
@@ -1063,8 +1150,7 @@ describe('Agent chat rendering', () => {
     expect(reasoning).toHaveTextContent('工作要点 9');
   });
 
-  it('merges repeated file receipts by logical file while preserving distinct versions', async () => {
-    const user = userEvent.setup();
+  it('flattens repeated file receipts to one latest block per logical file', () => {
     const blocks: UiAgentBlock[] = [
       fileBlock('tui-v1', 'tui.py', 'media_tui_version_0001', '1'.repeat(64)),
       fileBlock('tui-diff-v1', 'tui.py.diff', 'media_tui_diff_000001', '2'.repeat(64)),
@@ -1080,13 +1166,12 @@ describe('Agent chat rendering', () => {
     );
 
     const collection = screen.getByRole('region', { name: '结果文件' });
-    expect(collection).toHaveTextContent('2 个文件');
-    expect(collection).toHaveTextContent('已合并 1 条重复结果');
-    expect(container.querySelectorAll('.agent-file-collection__file')).toHaveLength(2);
-    for (const summary of container.querySelectorAll('.agent-file-collection__file > summary')) await user.click(summary);
-    expect(container.querySelectorAll('.agent-file-collection__version')).toHaveLength(6);
-    expect(container.querySelectorAll('.agent-file-collection__file > summary')[0]).toHaveTextContent('tui.py');
-    expect(container.querySelectorAll('.agent-file-collection__file > summary')[1]).toHaveTextContent('test_tui.py');
+    expect(collection).toBeInTheDocument();
+    expect(container.querySelectorAll('.agent-file-collection__file')).toHaveLength(0);
+    expect(container.querySelectorAll('.agent-file-collection__version')).toHaveLength(0);
+    expect(container.querySelectorAll('.agent-file-block-shell')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'tui.py.diff 的预览回执不可用' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'test_tui.py.diff 的预览回执不可用' })).toBeDisabled();
   });
 
   it('keeps a structured Tool disclosure anchored and focused when opened', () => {

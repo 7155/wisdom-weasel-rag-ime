@@ -194,7 +194,7 @@ class ControlApiFacadeTests(unittest.TestCase):
 
     def test_upstream_exception_is_sanitized(self) -> None:
         def execute(_request):
-            raise RuntimeError("private database path /Users/undo/private.sqlite")
+            raise RuntimeError("private database path /Users/example/private.sqlite")
 
         facade = ControlApiFacade(executor=execute)
         response = facade.handle(

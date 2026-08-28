@@ -27,10 +27,12 @@ class _EvidenceStore:
 class AgentMemoryEvidenceServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = _EvidenceStore()
+        self.memory_enabled = True
         self.service = AgentMemoryEvidenceService(
             sessions=_Sessions(),
             memory_evidence=self.store,
             message_text=lambda message: str(message.get("text") or ""),
+            memory_enabled_provider=lambda: self.memory_enabled,
         )
 
     def test_user_memory_workflow_instruction_is_not_recorded(self) -> None:
@@ -86,6 +88,31 @@ class AgentMemoryEvidenceServiceTests(unittest.TestCase):
 
         self.assertTrue(result["stored"])
         self.assertEqual(self.store.calls[0][0], "user")
+
+    def test_master_switch_skips_new_evidence_without_erasing_existing_rows(self) -> None:
+        existing = ("user", {"text": "已有长期偏好"})
+        self.store.calls.append(existing)
+        self.memory_enabled = False
+
+        disabled = self.service.record_user(
+            session_id="session:1",
+            pi_entry_id="entry:disabled",
+            turn_id="turn:disabled",
+            text="关闭后不应进入记忆证据",
+        )
+
+        self.assertEqual(disabled["status"], "skipped_memory_disabled")
+        self.assertEqual(self.store.calls, [existing])
+
+        self.memory_enabled = True
+        restored = self.service.record_user(
+            session_id="session:1",
+            pi_entry_id="entry:restored",
+            turn_id="turn:restored",
+            text="重新开启后恢复记录",
+        )
+        self.assertTrue(restored["stored"])
+        self.assertEqual(len(self.store.calls), 2)
 
 
 if __name__ == "__main__":

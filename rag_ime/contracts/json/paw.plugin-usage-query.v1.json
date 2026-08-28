@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paw.plugin-usage-query.v1",
+  "$defs": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "occurredAtMs", "sessionId", "packageId", "packageVersion", "resourceKind", "resourceId", "activity"],
+      "properties": {
+        "schemaVersion": {"const": "paw.plugin-usage.v1"},
+        "eventId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "occurredAtMs": {"type": "integer", "minimum": 0},
+        "sessionId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "packageId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "packageVersion": {"type": "string", "minLength": 1, "maxLength": 80},
+        "resourceKind": {"enum": ["extension", "tool", "command", "skill", "prompt", "theme"]},
+        "resourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "activity": {"enum": ["loaded", "invoked", "finished"]},
+        "invocationId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
+        "durationMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "events", "aggregates"],
+  "properties": {
+    "schemaVersion": {"const": "paw.plugin-usage-query.v1"},
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/event"}
+    },
+    "aggregates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "packageId", "packageVersion", "resourceKind", "resourceId",
+          "loadedCount", "invocationCount", "terminalCount",
+          "succeededCount", "failedCount", "cancelledCount",
+          "averageDurationMs", "lastLoadedAtMs", "lastInvokedAtMs"
+        ],
+        "properties": {
+          "packageId": {"type": "string", "minLength": 1, "maxLength": 200},
+          "packageVersion": {"type": "string", "minLength": 1, "maxLength": 80},
+          "resourceKind": {"enum": ["extension", "tool", "command", "skill", "prompt", "theme"]},
+          "resourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+          "loadedCount": {"type": "integer", "minimum": 0},
+          "invocationCount": {"type": "integer", "minimum": 0},
+          "terminalCount": {"type": "integer", "minimum": 0},
+          "succeededCount": {"type": "integer", "minimum": 0},
+          "failedCount": {"type": "integer", "minimum": 0},
+          "cancelledCount": {"type": "integer", "minimum": 0},
+          "averageDurationMs": {"type": ["integer", "null"], "minimum": 0},
+          "lastLoadedAtMs": {"type": ["integer", "null"], "minimum": 0},
+          "lastInvokedAtMs": {"type": ["integer", "null"], "minimum": 0}
+        }
+      }
+    }
+  }
+}

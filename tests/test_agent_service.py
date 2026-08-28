@@ -1511,6 +1511,17 @@ class AgentServiceTests(unittest.TestCase):
             first["memoryBootstrap"]["dedupeKey"],
         )
         self.assertEqual(second["contextItemsDelivered"], 1)
+        first_trace = self.service.context_trace(
+            session_id,
+            str(first["contextTraceId"]),
+        )
+        first_memory_node = next(
+            node for node in first_trace["nodes"] if node["stage"] == "memory_recall"
+        )
+        self.assertEqual(
+            first_memory_node["metadata"].get("memoryAtomIds"),
+            "atom:MEMORY_A_ONLY",
+        )
         self.assertNotIn(
             "refreshedForCurrentTurn",
             first["memoryBootstrap"],
@@ -2368,7 +2379,10 @@ class AgentServiceTests(unittest.TestCase):
                 "expectedRevision": initial["revision"],
                 "changes": {
                     "sessionDefaults.roleId": "companion-firstlight-v1",
-                    "sessionDefaults.modelProfile": "deepseek/deepseek-chat",
+                    "modelRouting.primary": {
+                        "modelProfile": "deepseek/deepseek-chat",
+                        "thinkingLevel": "off",
+                    },
                 },
                 "updatedBy": "mac-control",
             }
@@ -2489,7 +2503,7 @@ class AgentServiceTests(unittest.TestCase):
 
             self.assertEqual(runtime["runtimeKind"], "gateway_http")
             self.assertEqual(runtime["driverId"], "test-gateway")
-            self.assertEqual(session["modelProfile"], "gateway/default")
+            self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
             self.assertEqual(factory.created_for, ["interactive"])
         finally:
             service.close()
@@ -2530,7 +2544,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "companion-firstlight-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "pi/default")
+        self.assertEqual(created["modelProfile"], "openai-codex/gpt-5.6-luna")
         self.assertEqual(created["roleBookRevisionId"], "")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
@@ -2701,7 +2715,7 @@ class AgentServiceTests(unittest.TestCase):
         )["session"]
         self.assertEqual(session["roleId"], created_role["roleId"])
         self.assertEqual(session["roleVersion"], "1")
-        self.assertEqual(session["modelProfile"], "pi/default")
+        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
         self.assertEqual(session["toolProfileVersion"], "control-center-v1")
 
         room = self.service.create_room(
@@ -4131,6 +4145,10 @@ class AgentServiceTests(unittest.TestCase):
         with patch.object(service.runtime, "available_models", return_value=available_models):
             catalog = service.role_model_catalog()
         self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
+        self.assertEqual(
+            catalog["selected"],
+            {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+        )
         with patch.object(service.runtime, "available_models", return_value=available_models):
             updated = service.update_role_runtime_defaults(
                 {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "openai-codex",
@@ -4146,8 +4164,8 @@ class AgentServiceTests(unittest.TestCase):
             session = service.create_session(
                 {"title": "角色不决定模型", "roleId": "companion-present-v1", "roleVersion": "1"}
             )["session"]
-        self.assertEqual(session["modelProfile"], "deepseek/deepseek-v4-flash")
-        self.assertEqual(session["thinkingLevel"], "")
+        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(session["thinkingLevel"], "max")
         set_thinking.assert_not_called()
 
         explicit = service.create_session(

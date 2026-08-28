@@ -19,7 +19,10 @@ from .memory_maintenance_settings import (
     DEFAULT_MAINTENANCE_MODEL,
     DEFAULT_MAINTENANCE_THINKING_LEVEL,
 )
-from .deepseek_memory_organizer import ManagedPiMemoryOrganizer
+from .deepseek_memory_organizer import (
+    ActivitySemanticVerificationError,
+    ManagedPiMemoryOrganizer,
+)
 from .memory_model_executor import (
     MemoryModelUnavailable,
     build_managed_pi_memory_model_executor,
@@ -303,6 +306,7 @@ class PersonalContextMaintenanceRunner:
             "remainingDayCount": 0,
             "failedDate": "",
             "error": "",
+            "warningCount": 0,
             "activityTimelines": [],
         }
         if (
@@ -328,6 +332,12 @@ class PersonalContextMaintenanceRunner:
         )
         timeline_failed_count = sum(
             1 for item in timeline_results if not bool(item.get("ok"))
+        )
+        timeline_warning_count = sum(
+            1
+            for item in timeline_results
+            if isinstance(item.get("semanticOrganization"), Mapping)
+            and str(item["semanticOrganization"].get("status") or "") == "warning"
         )
         return {
             "schemaVersion": PERSONAL_CONTEXT_MAINTENANCE_RUN_SCHEMA_VERSION,
@@ -366,6 +376,7 @@ class PersonalContextMaintenanceRunner:
                     if str(item.get("status") or "") == "no_events"
                 ),
                 "failedCount": timeline_failed_count,
+                "warningCount": timeline_warning_count,
             },
             "activityTimelines": timeline_results,
             "activityTimelineCatchUp": timeline_catch_up,
@@ -473,6 +484,8 @@ class PersonalContextMaintenanceRunner:
                     "activityCount": int(timeline.get("segmentCount") or 0),
                     "semanticStatus": str(semantic.get("status") or ""),
                     "receipt": dict(semantic.get("receipt") or {}),
+                    "reviewRequired": semantic.get("reviewRequired") is True,
+                    "verification": dict(semantic.get("verification") or {}),
                     "error": str(result.get("error") or semantic.get("error") or ""),
                 }
             )
@@ -509,6 +522,11 @@ class PersonalContextMaintenanceRunner:
             "remainingDayCount": max(0, len(pending_dates) - completed),
             "failedDate": str((failed or {}).get("date") or ""),
             "error": str((failed or {}).get("error") or ""),
+            "warningCount": sum(
+                1
+                for item in results
+                if str(item.get("semanticStatus") or "") == "warning"
+            ),
             "activityTimelines": results,
         }
 
@@ -584,6 +602,7 @@ class PersonalContextMaintenanceRunner:
         timeline = result.get("timeline")
         organization: dict[str, object] = {}
         organization_error = ""
+        organization_warning: dict[str, object] = {}
         needs_organization = bool(
             self.config.auto_publish_timelines
             and isinstance(timeline, Mapping)
@@ -636,6 +655,31 @@ class PersonalContextMaintenanceRunner:
                         if callable(finish_model_run):
                             finish_model_run()
                         model_run_started = False
+                except ActivitySemanticVerificationError as exc:
+                    if model_run_started:
+                        finish_model_run = getattr(organizer, "finish_run", None)
+                        try:
+                            if callable(finish_model_run):
+                                finish_model_run()
+                        except Exception as finish_exc:
+                            organization_error = _public_error(finish_exc)
+                            fail_model_run = getattr(organizer, "fail_run", None)
+                            if callable(fail_model_run):
+                                try:
+                                    fail_model_run(finish_exc)
+                                except Exception:
+                                    pass
+                        else:
+                            model_run_started = False
+                    if not organization_error:
+                        organization_warning = {
+                            "status": "warning",
+                            "error": _public_error(exc),
+                            "reviewRequired": True,
+                            "verification": dict(exc.verification),
+                            "receipt": dict(exc.receipt),
+                        }
+                    organization = {}
                 except Exception as exc:
                     if model_run_started:
                         fail_model_run = getattr(organizer, "fail_run", None)
@@ -656,6 +700,14 @@ class PersonalContextMaintenanceRunner:
                     "status": "failed",
                     "error": organization_error,
                 },
+            }
+        if organization_warning:
+            return {
+                **result,
+                "ok": True,
+                "timeline": timeline,
+                "autoPublished": False,
+                "semanticOrganization": organization_warning,
             }
         if (
             self.config.auto_publish_timelines

@@ -65,6 +65,12 @@ import {
   type ApprovalDecisionView,
 } from '@/contracts/approval-decision';
 import { writeClipboardText } from '@/platform/clipboard';
+import {
+  evidenceEchoRoute,
+  openEvidenceEchoEntity,
+  type EvidenceEchoEntity,
+} from '@/features/evidence-echo/evidence-echo';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { DiffPreview } from '../file-preview/DiffPreview';
 import { SafeFieldList } from './BlockRenderer';
 import {
@@ -117,12 +123,14 @@ function useActivityDisclosure(
 export function ActivitySummary({
   activities,
   inline = false,
+  sessionId = '',
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
 }: {
   activities: AgentActivityProjection[];
   inline?: boolean;
+  sessionId?: string;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
@@ -291,6 +299,7 @@ export function ActivitySummary({
                 <ActivityRow
                   key={activity.id}
                   activity={activity}
+                  sessionId={sessionId}
                   initiallyOpen={false}
                   onApprovalDecision={onApprovalDecision}
                   onOpenApproval={(selected) => {
@@ -332,6 +341,7 @@ export function ActivitySummary({
               <ActivityRow
                 key={activity.id}
                 activity={activity}
+                sessionId={sessionId}
                 onApprovalDecision={onApprovalDecision}
                 onOpenApproval={(selected) => {
                   setDetailsOpen(false);
@@ -364,6 +374,7 @@ export function ActivitySummary({
             <ActivityRow
               key={activity.id}
               activity={activity}
+              sessionId={sessionId}
               onApprovalDecision={onApprovalDecision}
               onOpenApproval={onOpenApproval}
               onRequestPermission={onRequestPermission}
@@ -377,6 +388,7 @@ export function ActivitySummary({
 
 const ActivityRow = memo(function ActivityRow({
   activity,
+  sessionId = '',
   initiallyOpen = false,
   hideSummary = false,
   onApprovalDecision,
@@ -384,6 +396,7 @@ const ActivityRow = memo(function ActivityRow({
   onRequestPermission,
 }: {
   activity: AgentActivityProjection;
+  sessionId?: string;
   initiallyOpen?: boolean;
   hideSummary?: boolean;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
@@ -469,7 +482,7 @@ const ActivityRow = memo(function ActivityRow({
           {routePlan ? <RouteDecisionPlan view={routePlan} /> : null}
           <ToolProgressTimeline activity={activity} entries={progressHistory} />
           {toolView?.request.length ? <PublicToolRequest view={toolView} /> : null}
-          {toolView ? <PublicToolResult activityId={activity.id} view={toolView} /> : null}
+          {toolView ? <PublicToolResult activityId={activity.id} sessionId={sessionId} view={toolView} /> : null}
           {toolView && toolView.fields.every((field) => field.id === 'status') && !toolView.request.length && !toolView.output && !toolView.preview && !toolView.resultItems.length && !toolView.change && !toolView.error ? (
             <p className="agent-tool-unavailable">这条历史回执未包含可公开的调用参数或返回内容。</p>
           ) : null}
@@ -794,7 +807,7 @@ function publicProgressSummary(summary: string, activity: AgentActivityProjectio
   return summary;
 }
 
-function PublicToolResult({ activityId, view }: { activityId: string; view: PublicToolResultView }) {
+function PublicToolResult({ activityId, sessionId, view }: { activityId: string; sessionId?: string; view: PublicToolResultView }) {
   let primary: ReactNode = null;
   let outputRendered = false;
   if (view.resultKind === 'semantic' && view.preview) {
@@ -803,12 +816,12 @@ function PublicToolResult({ activityId, view }: { activityId: string; view: Publ
     primary = <PublicTerminalResult view={view} />;
     outputRendered = true;
   } else if (view.resultKind === 'code' && view.output) {
-    primary = <PublicCodeResult view={view} />;
+    primary = <PublicCodeResult sessionId={sessionId} view={view} />;
     outputRendered = true;
   } else if (view.resultKind === 'matches' && view.resultItems.length) {
-    primary = <PublicResultList view={view} label="搜索匹配结果" icon={<Search size={14} />} />;
+    primary = <PublicResultList sessionId={sessionId} view={view} label="搜索匹配结果" icon={<Search size={14} />} />;
   } else if (view.resultKind === 'files' && view.resultItems.length) {
-    primary = <PublicResultList view={view} label="项目文件结果" icon={<Database size={14} />} />;
+    primary = <PublicResultList sessionId={sessionId} view={view} label="项目文件结果" icon={<Database size={14} />} />;
   } else if (view.resultKind === 'browser' && view.resultItems.length) {
     primary = <PublicResultList view={view} label="浏览器结果" icon={<ExternalLink size={14} />} />;
   } else if (view.resultKind === 'change' && (view.target || view.change)) {
@@ -816,7 +829,7 @@ function PublicToolResult({ activityId, view }: { activityId: string; view: Publ
   } else if (view.resultKind === 'structured' && view.resultItems.length) {
     primary = (
       <>
-        <PublicResultList view={view} label={view.resultItemsLabel ?? '结果明细'} icon={<GitBranch size={14} />} />
+        <PublicResultList sessionId={sessionId} view={view} label={view.resultItemsLabel ?? '结果明细'} icon={<GitBranch size={14} />} />
         {view.output ? <PublicToolOutput view={view} /> : null}
       </>
     );
@@ -870,10 +883,11 @@ function PublicTerminalResult({ view }: { view: PublicToolResultView }) {
   );
 }
 
-function PublicCodeResult({ view }: { view: PublicToolResultView }) {
+function PublicCodeResult({ sessionId = '', view }: { sessionId?: string; view: PublicToolResultView }) {
   const file = view.target || '文件内容';
   const code = view.output?.text ?? '';
   const { copy, state } = useCopyableText(code);
+  const target = workspaceFileEntity(sessionId, view.targetPath, file);
   return (
     <section
       aria-label={`文件内容：${file}`}
@@ -881,7 +895,10 @@ function PublicCodeResult({ view }: { view: PublicToolResultView }) {
       data-result-kind="code"
     >
       <header>
-        <strong><BookOpenText size={14} />{file}</strong>
+        <strong>
+          <BookOpenText size={14} />
+          {target ? <WorkspaceFileLink target={target}>{file}</WorkspaceFileLink> : file}
+        </strong>
         <span>
           <small>{view.language ?? 'text'}</small>
           <Button
@@ -903,10 +920,12 @@ function PublicCodeResult({ view }: { view: PublicToolResultView }) {
 }
 
 function PublicResultList({
+  sessionId = '',
   view,
   label,
   icon,
 }: {
+  sessionId?: string;
   view: PublicToolResultView;
   label: string;
   icon: ReactNode;
@@ -945,7 +964,12 @@ function PublicResultList({
       <ol>
         {view.resultItems.map((item) => (
           <li key={item.id}>
-            <strong>{item.label}</strong>
+            <strong>
+              {(() => {
+                const target = workspaceFileEntity(sessionId, item.path, item.label);
+                return target ? <WorkspaceFileLink target={target}>{item.label}</WorkspaceFileLink> : item.label;
+              })()}
+            </strong>
             {item.text ? <span>{view.resultKind === 'matches' ? ':' : null}{item.text}</span> : null}
           </li>
         ))}
@@ -953,6 +977,45 @@ function PublicResultList({
       {view.output?.truncated ? <small>{view.rawResult ? '列表摘要已截断；可展开下方“完整返回”查看原始回执。' : '完整结果仍由本机工具回执保留。'}</small> : null}
       {state === 'failed' ? <small role="alert">无法复制结果，请手动选择内容。</small> : null}
     </section>
+  );
+}
+
+function workspaceFileEntity(
+  sessionId: string,
+  path: string | undefined,
+  label: string,
+): EvidenceEchoEntity | undefined {
+  if (!sessionId || !path) return undefined;
+  return {
+    appId: 'files',
+    entityId: path,
+    label,
+    sessionId,
+  };
+}
+
+function WorkspaceFileLink({
+  target,
+  children,
+}: {
+  target: EvidenceEchoEntity;
+  children: ReactNode;
+}) {
+  const desktop = usePawOsDesktop();
+  return (
+    <a
+      aria-label={`打开文件 ${target.label}`}
+      className="agent-tool-file-link"
+      href={evidenceEchoRoute(target)}
+      onClick={(event) => {
+        event.preventDefault();
+        openEvidenceEchoEntity(desktop, target);
+      }}
+      title={target.entityId}
+    >
+      {children}
+      <FileText aria-hidden="true" size={12} />
+    </a>
   );
 }
 
@@ -1585,11 +1648,13 @@ function finiteCount(value: unknown): number {
  *  只投影真实 reducer 活动，不合并、不重排、不发明状态。 */
 export function FxActivityStack({
   activities,
+  sessionId = '',
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
 }: {
   activities: AgentActivityProjection[];
+  sessionId?: string;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
@@ -1600,6 +1665,7 @@ export function FxActivityStack({
       {activities.map((activity, index) => (
         <FxActivityDisclosure
           activity={activity}
+          sessionId={sessionId}
           key={activity.id}
           onApprovalDecision={onApprovalDecision}
           onOpenApproval={onOpenApproval}
@@ -1614,6 +1680,7 @@ export function FxActivityStack({
 
 function FxActivityDisclosure({
   activity,
+  sessionId = '',
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
@@ -1621,6 +1688,7 @@ function FxActivityDisclosure({
   setSize,
 }: {
   activity: AgentActivityProjection;
+  sessionId?: string;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
@@ -1720,6 +1788,7 @@ function FxActivityDisclosure({
       ><div className="fx-inner">
         <ActivityRow
           activity={activity}
+          sessionId={sessionId}
           hideSummary
           initiallyOpen
           onApprovalDecision={onApprovalDecision}

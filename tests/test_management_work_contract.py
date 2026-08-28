@@ -1006,8 +1006,8 @@ class ConfigurationSettingsWorkContractTests(unittest.TestCase):
         self.assertEqual(
             reopened["agent"]["defaults"],
             {
-                "modelReference": "inherit",
-                "thinkingLevel": "high",
+                "modelReference": "openai-codex/gpt-5.6-luna",
+                "thinkingLevel": "max",
                 "executionMode": "workspace_managed",
             },
         )

@@ -31,6 +31,10 @@ class _SurfaceProviderConfig:
     model: str = "stateless-completion"
 
 
+class SurfaceCompletionCancelled(RuntimeError):
+    """The foreground completion lost the cancellation terminal fence."""
+
+
 class PiSurfaceCompletionProvider:
     """Active-RAG provider backed by Pi's stateless one-shot completion API."""
 
@@ -169,13 +173,23 @@ class AgentSurfaceRuntime:
         agent: object,
         *,
         settings_provider: Callable[[], Mapping[str, object]],
+        observation_callback: Callable[[Mapping[str, object]], None] | None = None,
+        clock: Callable[[], float] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         self.agent = agent
         self._settings_provider = settings_provider
+        self._observation_callback = observation_callback
+        # Wall-clock values are display timestamps only.  Measured duration is
+        # taken from a monotonic source so an NTP/user clock rollback cannot
+        # make a valid completion appear to have a negative interval.
+        self._clock = clock or time.time
+        self._monotonic_clock = monotonic_clock or time.monotonic
         self._lock = threading.RLock()
         self._session_locks: dict[str, threading.Lock] = {}
         self._active_requests: dict[str, str] = {}
         self._active_completions: set[str] = set()
+        self._active_generation_records: dict[str, dict[str, object]] = {}
 
     def complete(
         self,
@@ -199,10 +213,46 @@ class AgentSurfaceRuntime:
             payload,
             current_request=current_request,
         )
+        request_metadata = _input_generation_request_metadata(
+            payload,
+            current_request=current_request,
+            provider=provider,
+            model_id=model_id,
+            thinking_level=thinking_level,
+            timeout_seconds=timeout_seconds,
+        )
+        trace_id = _input_generation_trace_id(request_id)
+        public_request_id = _safe_request_identity(request_id)
+        started_at_ms = self._clock_ms()
+        started_monotonic = self._monotonic()
+        generation_state: dict[str, object]
         with self._lock:
             if request_id in self._active_completions:
                 raise RuntimeError("surface completion request is already active")
             self._active_completions.add(request_id)
+            generation_state = {
+                "traceId": trace_id,
+                "requestId": public_request_id,
+                "request": request_metadata,
+                "generation": {
+                    "effectiveProvider": _safe_generation_identity(provider),
+                    "effectiveModel": _safe_generation_identity(model_id),
+                    "effectiveThinkingLevel": thinking_level,
+                },
+                "startedAtMs": started_at_ms,
+                "startedMonotonic": started_monotonic,
+                "terminalEmitted": False,
+                "terminalStatus": "",
+            }
+            self._active_generation_records[request_id] = generation_state
+        self._emit_input_generation_record(
+            self._input_generation_record(
+                generation_state,
+                phase="started",
+                status="running",
+                timestamp_ms=started_at_ms,
+            )
+        )
         try:
             result = self.agent.runtime.complete_once(
                 request_id=request_id,
@@ -213,25 +263,75 @@ class AgentSurfaceRuntime:
                 on_text_delta=on_text_delta,
                 timeout_seconds=timeout_seconds,
             )
+            text = str(result.get("text") or "").strip()
+            if not text:
+                raise RuntimeError("Pi stateless completion returned no text")
+            completed_at_ms = self._clock_ms()
+            state = self._claim_generation_terminal(
+                request_id,
+                status="completed",
+                timestamp_ms=completed_at_ms,
+                monotonic_now=self._monotonic(),
+            )
+            if state is None:
+                if self._generation_terminal_status(request_id) == "cancelled":
+                    raise SurfaceCompletionCancelled("surface completion was cancelled")
+                raise RuntimeError("surface completion terminal outcome was already claimed")
+            self._emit_input_generation_record(
+                self._input_generation_record(
+                    state,
+                    phase="completed",
+                    status="completed",
+                    timestamp_ms=completed_at_ms,
+                    generation={
+                        **dict(state["generation"]),
+                        **_input_generation_success(result),
+                    },
+                )
+            )
+            return {
+                "schemaVersion": "rag-ime.agent-surface-completion.v1",
+                "ok": True,
+                "text": text,
+                "model": f"{provider}/{model_id}",
+                "thinkingLevel": thinking_level,
+                "elapsedMs": max(0, int(result.get("elapsedMs") or 0)),
+                "firstTokenMs": max(0, int(result.get("firstTokenMs") or 0)),
+                "usage": dict(result.get("usage") or {}) if isinstance(result.get("usage"), Mapping) else {},
+                "surfaceSession": False,
+                "statelessCompletion": True,
+                "semanticContextUsed": semantic_context_used,
+            }
+        except BaseException as exc:
+            if isinstance(exc, SurfaceCompletionCancelled):
+                raise
+            failed_at_ms = self._clock_ms()
+            state = self._claim_generation_terminal(
+                request_id,
+                status="failed",
+                timestamp_ms=failed_at_ms,
+                monotonic_now=self._monotonic(),
+            )
+            if state is not None:
+                self._emit_input_generation_record(
+                    self._input_generation_record(
+                        state,
+                        phase="failed",
+                        status="failed",
+                        timestamp_ms=failed_at_ms,
+                        generation={
+                            **dict(state["generation"]),
+                            **_input_generation_failure(exc),
+                        },
+                    )
+                )
+            elif self._generation_terminal_status(request_id) == "cancelled":
+                raise SurfaceCompletionCancelled("surface completion was cancelled") from exc
+            raise
         finally:
             with self._lock:
                 self._active_completions.discard(request_id)
-        text = str(result.get("text") or "").strip()
-        if not text:
-            raise RuntimeError("Pi stateless completion returned no text")
-        return {
-            "schemaVersion": "rag-ime.agent-surface-completion.v1",
-            "ok": True,
-            "text": text,
-            "model": f"{provider}/{model_id}",
-            "thinkingLevel": thinking_level,
-            "elapsedMs": max(0, int(result.get("elapsedMs") or 0)),
-            "firstTokenMs": max(0, int(result.get("firstTokenMs") or 0)),
-            "usage": dict(result.get("usage") or {}) if isinstance(result.get("usage"), Mapping) else {},
-            "surfaceSession": False,
-            "statelessCompletion": True,
-            "semanticContextUsed": semantic_context_used,
-        }
+                self._active_generation_records.pop(request_id, None)
 
     def refine_voice(self, payload: Mapping[str, object]) -> dict[str, object]:
         if str(payload.get("privacyDisposition") or "") != "allowed":
@@ -317,23 +417,136 @@ class AgentSurfaceRuntime:
 
     def cancel(self, payload: Mapping[str, object]) -> dict[str, object]:
         request_id = _bounded_text(payload.get("requestId"), maximum=200)
+        cancel_state: dict[str, object] | None = None
         with self._lock:
             active_completion = request_id in self._active_completions
             session_id = self._active_requests.get(request_id, "")
-        if active_completion:
-            cancelled = bool(self.agent.runtime.cancel_completion(request_id))
-        elif session_id:
-            abort_service = getattr(self.agent, "abort", None)
-            if callable(abort_service):
-                abort_service(session_id)
-            else:
-                self.agent.runtime.abort(session_id)
-            cancelled = True
+            cancelled = False
+            if active_completion:
+                # Keep the runtime cancellation acknowledgement and the local
+                # terminal claim in one lock interval.  A completion that has
+                # returned but has not yet published its result therefore
+                # cannot overtake a successful cancellation.
+                has_generation_record = request_id in self._active_generation_records
+                runtime_cancelled = bool(self.agent.runtime.cancel_completion(request_id))
+                if runtime_cancelled:
+                    if has_generation_record:
+                        cancel_state = self._claim_generation_terminal(
+                            request_id,
+                            status="cancelled",
+                            timestamp_ms=self._clock_ms(),
+                            monotonic_now=self._monotonic(),
+                        )
+                        cancelled = cancel_state is not None
+                    else:
+                        # Preserve the legacy no-observation cancellation path
+                        # used by callers that only register an active request.
+                        cancelled = True
+            elif session_id:
+                abort_service = getattr(self.agent, "abort", None)
+                if callable(abort_service):
+                    abort_service(session_id)
+                else:
+                    self.agent.runtime.abort(session_id)
+                cancelled = True
+        if cancel_state is not None:
+            self._emit_input_generation_record(
+                self._input_generation_record(
+                    cancel_state,
+                    phase="cancelled",
+                    status="cancelled",
+                    timestamp_ms=int(cancel_state["terminalTimestampMs"]),
+                    generation={
+                        **dict(cancel_state["generation"]),
+                        "ok": False,
+                        "cancelled": True,
+                    },
+                )
+            )
         return {
             "schemaVersion": "rag-ime.agent-surface-cancel.v1",
             "ok": True,
             "cancelled": cancelled,
         }
+
+    def _clock_ms(self) -> int:
+        return max(0, int(float(self._clock()) * 1000))
+
+    def _monotonic(self) -> float:
+        return float(self._monotonic_clock())
+
+    def _generation_terminal_status(self, request_id: str) -> str:
+        with self._lock:
+            state = self._active_generation_records.get(request_id)
+            return str(state.get("terminalStatus") or "") if state is not None else ""
+
+    def _claim_generation_terminal(
+        self,
+        request_id: str,
+        *,
+        status: str,
+        timestamp_ms: int,
+        monotonic_now: float,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            state = self._active_generation_records.get(request_id)
+            if state is None or state.get("terminalStatus"):
+                return None
+            state["terminalEmitted"] = True
+            state["terminalStatus"] = status
+            state["terminalTimestampMs"] = max(0, int(timestamp_ms))
+            started_monotonic = float(state.get("startedMonotonic") or monotonic_now)
+            state["terminalDurationMs"] = max(
+                0,
+                int(round(max(0.0, monotonic_now - started_monotonic) * 1000)),
+            )
+            return dict(state)
+
+    def _input_generation_record(
+        self,
+        state: Mapping[str, object],
+        *,
+        phase: str,
+        status: str,
+        timestamp_ms: int,
+        generation: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        started_at_ms = max(0, int(state.get("startedAtMs") or timestamp_ms))
+        record: dict[str, object] = {
+            "schemaVersion": "rag-ime.input-generation-observation.v1",
+            "sourceKind": "input_generation",
+            "traceId": str(state["traceId"]),
+            "requestId": str(state["requestId"]),
+            "phase": phase,
+            "status": status,
+            "timestampMs": max(0, int(timestamp_ms)),
+            "startedAtMs": started_at_ms,
+            "request": dict(state["request"]),
+            "generation": dict(generation or state["generation"]),
+            "privacy": {"rawTextIncluded": False},
+        }
+        if status in {"completed", "failed", "cancelled"}:
+            # Keep wall-clock values for display, but clamp the interval end to
+            # its start when the wall clock moved backwards.  The duration was
+            # measured by ``_claim_generation_terminal`` from monotonic time.
+            record["endedAtMs"] = max(started_at_ms, max(0, int(timestamp_ms)))
+            duration_ms = state.get("terminalDurationMs")
+            if isinstance(duration_ms, (int, float)) and not isinstance(duration_ms, bool):
+                record["durationMs"] = max(0, int(duration_ms))
+            else:
+                record["durationMs"] = max(0, int(record["endedAtMs"]) - started_at_ms)
+        return record
+
+    def _emit_input_generation_record(self, record: Mapping[str, object]) -> None:
+        callback = self._observation_callback
+        if not callable(callback):
+            return
+        try:
+            callback(dict(record))
+        except Exception:
+            # Tracing is deliberately a side-channel.  A broken journal must
+            # never alter text generation or cancellation behavior.
+            return
 
     def _surface_config(self) -> tuple[str, str, str]:
         settings = self._settings_provider()
@@ -642,3 +855,217 @@ def _assistant_message_text(message: Mapping[str, object]) -> str:
 
 def _bounded_text(value: object, *, maximum: int) -> str:
     return compact_whitespace(str(value or ""))[:maximum]
+
+
+_INPUT_GENERATION_REASON_TOKENS = frozenset(
+    {
+        "ax_timeout",
+        "budget_exceeded",
+        "not_captured",
+        "provider_unavailable",
+        "redacted",
+        "unsupported",
+    }
+)
+_INPUT_GENERATION_USAGE_KEYS = frozenset(
+    {
+        "inputTokens",
+        "outputTokens",
+        "totalTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+    }
+)
+
+
+def _input_generation_trace_id(request_id: str) -> str:
+    digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:24]
+    return f"trace:input-generation:{digest}"
+
+
+def _safe_request_identity(value: str) -> str:
+    """Project opaque request IDs; never publish URLs, paths, or free text."""
+
+    # ``AgentSurfaceRuntime`` accepts up to 200 characters for the private
+    # runtime request id.  Do not truncate at the public 160-character Trace
+    # bound: two attempts that differ only in their tail must not share the
+    # same public request/span identity.
+    text = _bounded_text(value, maximum=200)
+    if len(text) <= 160 and text and text[0].isalnum() and all(
+        char.isalnum() or char in "._:-" for char in text
+    ):
+        return text
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _input_generation_request_metadata(
+    payload: Mapping[str, object],
+    *,
+    current_request: str,
+    provider: str,
+    model_id: str,
+    thinking_level: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    context_packet = payload.get("contextPacket")
+    packet = dict(context_packet) if isinstance(context_packet, Mapping) else {}
+    current_input = packet.get("currentInput")
+    current_input = dict(current_input) if isinstance(current_input, Mapping) else {}
+    policy = current_input.get("recentInputPolicy")
+    policy = dict(policy) if isinstance(policy, Mapping) else {}
+    if not policy and isinstance(packet.get("recentInputPolicy"), Mapping):
+        policy = dict(packet["recentInputPolicy"])
+    recent_items = current_input.get("recentCompleteInputs")
+    if not isinstance(recent_items, list):
+        recent_items = packet.get("recentCompleteInputs")
+    recent_items = recent_items if isinstance(recent_items, list) else []
+    timeline = packet.get("activityTimeline")
+    timeline = dict(timeline) if isinstance(timeline, Mapping) else {}
+    window_context = packet.get("windowContext")
+    window_context = dict(window_context) if isinstance(window_context, Mapping) else {}
+    context_budget = packet.get("contextBudget")
+    context_budget = dict(context_budget) if isinstance(context_budget, Mapping) else {}
+
+    recent_actual_count = _metric_int(
+        timeline,
+        "recentInputCount",
+        "timelineRecentInputRecordCount",
+    )
+    if recent_actual_count is None:
+        recent_actual_count = len(recent_items)
+    recent_actual_chars = _metric_int(
+        timeline,
+        "recentInputChars",
+        "timelineRecentInputChars",
+    )
+    if recent_actual_chars is None:
+        recent_actual_chars = sum(
+            len(str(item.get("textPreview") or item.get("text") or ""))
+            for item in recent_items
+            if isinstance(item, Mapping)
+        )
+    context_metrics: dict[str, object] = {
+        "recentInputActualCount": max(0, recent_actual_count),
+        "recentInputActualChars": max(0, recent_actual_chars),
+    }
+    _copy_metric(context_metrics, "recentInputRequestedCount", policy, "requestedCount")
+    _copy_metric(context_metrics, "recentInputEffectiveCount", policy, "effectiveCount")
+    _copy_bool(context_metrics, "recentInputTruncated", policy, "truncated")
+    _copy_metric(context_metrics, "axNodeCount", window_context, "nodeCount")
+    ax_chars = _metric_int(window_context, "characterCount", "charCount", "textChars")
+    if ax_chars is not None:
+        context_metrics["axCharacterCount"] = ax_chars
+    _copy_bool(context_metrics, "axTruncated", window_context, "truncated")
+    _copy_reason(context_metrics, "axUnavailableReason", window_context)
+    _copy_metric(context_metrics, "contextRequestedTokens", context_budget, "requestedTokens")
+    _copy_metric(context_metrics, "contextEffectiveTokens", context_budget, "effectiveTokens")
+    _copy_bool(context_metrics, "contextTruncated", context_budget, "truncated")
+    _copy_reason(context_metrics, "contextUnavailableReason", context_budget)
+    return {
+        "frontAppBundleId": _safe_front_app_identity(payload.get("frontAppBundleId")),
+        "requestedProvider": _safe_generation_identity(provider),
+        "requestedModel": _safe_generation_identity(model_id),
+        "requestedThinkingLevel": thinking_level,
+        "inputFingerprint": "sha256:" + hashlib.sha256(
+            current_request.encode("utf-8")
+        ).hexdigest(),
+        "currentRequestChars": len(current_request),
+        "currentContextChars": len(str(payload.get("currentContext") or "")),
+        "selectedChars": len(str(payload.get("selectedText") or "")),
+        "latencyBudgetMs": max(0, int(timeout_seconds * 1000)),
+        "contextMetrics": context_metrics,
+    }
+
+
+def _input_generation_success(result: Mapping[str, object]) -> dict[str, object]:
+    usage = result.get("usage") if isinstance(result.get("usage"), Mapping) else {}
+    generation: dict[str, object] = {
+        "ok": True,
+    }
+    for output_key in ("elapsedMs", "firstTokenMs"):
+        value = _non_negative_int(result.get(output_key))
+        if value is not None:
+            generation[output_key] = value
+    for key in _INPUT_GENERATION_USAGE_KEYS:
+        value = _non_negative_int(usage.get(key))
+        if value is not None:
+            generation[key] = value
+    return generation
+
+
+def _input_generation_failure(error: BaseException) -> dict[str, object]:
+    return {
+        "ok": False,
+        "errorType": type(error).__name__[:80],
+        "failureReason": "runtime_error",
+    }
+
+
+def _safe_front_app_identity(value: object) -> str:
+    text = _bounded_text(value, maximum=300)
+    if not text or not text[0].isalnum() or any(
+        not (char.isalnum() or char in ".-_:") for char in text
+    ):
+        return ""
+    return text
+
+
+def _safe_generation_identity(value: object) -> str:
+    """Keep provider/model labels useful while excluding path-like values."""
+
+    text = _bounded_text(value, maximum=160)
+    if text and text[0].isalnum() and all(
+        char.isalnum() or char in "._:-" for char in text
+    ):
+        return text
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _non_negative_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value < 0:
+        return None
+    return int(value)
+
+
+def _metric_int(mapping: Mapping[str, object], *keys: str) -> int | None:
+    for key in keys:
+        value = _non_negative_int(mapping.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _copy_metric(
+    target: dict[str, object],
+    output_key: str,
+    source: Mapping[str, object],
+    source_key: str,
+) -> None:
+    value = _metric_int(source, source_key)
+    if value is not None:
+        target[output_key] = value
+
+
+def _copy_bool(
+    target: dict[str, object],
+    output_key: str,
+    source: Mapping[str, object],
+    source_key: str,
+) -> None:
+    value = source.get(source_key)
+    if isinstance(value, bool):
+        target[output_key] = value
+
+
+def _copy_reason(
+    target: dict[str, object],
+    output_key: str,
+    source: Mapping[str, object],
+) -> None:
+    value = source.get("unavailableReason")
+    if isinstance(value, str) and value in _INPUT_GENERATION_REASON_TOKENS:
+        target[output_key] = value

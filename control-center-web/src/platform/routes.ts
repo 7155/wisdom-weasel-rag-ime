@@ -51,6 +51,14 @@ export const CONTROL_ROUTES = {
     body: ['rollbackId'],
     requiredBody: ['rollbackId'],
   },
+  // This bounded frame feed is intentionally local-only: debug configuration
+  // may expose owner-local text in the response, while the input page projects
+  // only identity and lane metadata.
+  'input.prediction.liveTrace': {
+    method: 'GET',
+    path: '/api/prediction/live-trace',
+    query: ['limit', 'sessionId'],
+  },
   'observability.snapshot': {
     method: 'GET',
     path: '/api/observability/snapshot',
@@ -60,10 +68,92 @@ export const CONTROL_ROUTES = {
       'sessionId',
       'roomId',
       'traceId',
+      'runId',
       'category',
       'status',
     ],
     responseContract: 'observation-snapshot.v1',
+  },
+  'observability.trace.get': {
+    method: 'GET',
+    path: '/api/observability/traces/:traceId',
+    params: { traceId: null },
+    query: ['limit', 'beforeSequence'],
+    responseContract: 'observability-trace-get.v1',
+  },
+  'observability.evals.list': {
+    method: 'GET',
+    path: '/api/observability/evals',
+    query: ['traceId', 'limit'],
+    requiredQuery: ['traceId'],
+    responseContract: 'observability-eval-list.v1',
+  },
+  'observability.evalSuites.list': {
+    method: 'GET',
+    path: '/api/observability/eval-suites',
+    query: ['limit'],
+    responseContract: 'eval-suite-list.v1',
+  },
+  'observability.sandboxRuns.list': {
+    method: 'GET',
+    path: '/api/observability/sandbox-runs',
+    query: ['limit'],
+    responseContract: 'observability-sandbox-run-list.v1',
+  },
+  'observability.sandboxRun.get': {
+    method: 'GET',
+    path: '/api/observability/sandbox-runs/:sandboxRunId',
+    params: { sandboxRunId: null },
+    responseContract: 'sandbox-run.v1',
+  },
+  'observability.evals.evidence.run': {
+    method: 'POST',
+    path: '/api/observability/evals/evidence-ground-truth',
+    body: [
+      'schemaVersion',
+      'traceId',
+      'requiredEvidenceIds',
+      'datasetId',
+      'labelRevision',
+      'truthKind',
+    ],
+    requiredBody: [
+      'schemaVersion',
+      'traceId',
+      'requiredEvidenceIds',
+      'datasetId',
+      'labelRevision',
+      'truthKind',
+    ],
+    responseContract: 'eval-run.v1',
+  },
+  'observability.evalSchedules.list': {
+    method: 'GET',
+    path: '/api/observability/eval-schedules',
+    query: ['limit'],
+    responseContract: 'eval-schedule-list.v1',
+  },
+  'observability.evalSchedules.create': {
+    method: 'POST',
+    path: '/api/observability/eval-schedules',
+    body: [
+      'scheduleId',
+      'suiteId',
+      'suiteRevision',
+      'recurrenceKind',
+      'recurrenceInterval',
+      'maxRuns',
+      'nextDueAtMs',
+    ],
+    requiredBody: ['suiteId', 'suiteRevision', 'recurrenceKind', 'nextDueAtMs'],
+    responseContract: 'eval-schedule-create.v1',
+  },
+  'observability.evalSchedule.runs': {
+    method: 'GET',
+    path: '/api/observability/eval-schedules/:scheduleId/runs',
+    params: { scheduleId: null },
+    query: ['limit'],
+    responseContract: 'eval-schedule-run-list.v1',
   },
   'observability.events': {
     method: 'GET',
@@ -73,6 +163,7 @@ export const CONTROL_ROUTES = {
       'sessionId',
       'roomId',
       'traceId',
+      'runId',
       'category',
       'status',
     ],
@@ -127,7 +218,13 @@ export const CONTROL_ROUTES = {
   'agent.sessions.list': {
     method: 'GET',
     path: '/api/agent/sessions',
-    query: ['includeArchived', 'includeInternal', 'limit'],
+    query: [
+      'includeArchived',
+      'includeInternal',
+      'limit',
+      'beforeUpdatedAtMs',
+      'beforeId',
+    ],
   },
   'agent.sessions.create': {
     method: 'POST',
@@ -399,7 +496,7 @@ export const CONTROL_ROUTES = {
   'agent.rooms.list': {
     method: 'GET',
     path: '/api/agent/rooms',
-    query: ['includeArchived', 'limit'],
+    query: ['includeArchived', 'limit', 'beforeUpdatedAtMs', 'beforeId'],
   },
   'agent.rooms.create': {
     method: 'POST',
@@ -625,6 +722,13 @@ export const CONTROL_ROUTES = {
     body: ['actorParticipantId', 'targetParticipantId', 'reason'],
     requiredBody: ['actorParticipantId', 'targetParticipantId'],
   },
+  'agent.room.workItem.resume': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/work-items/:workItemId/resume',
+    params: { roomId: null, workItemId: null },
+    body: ['actorParticipantId', 'clientActionId', 'phase', 'timeoutSeconds'],
+    requiredBody: ['actorParticipantId'],
+  },
   'agent.roles.list': { method: 'GET', path: '/api/agent/roles' },
   'agent.roles.create': {
     method: 'POST',
@@ -691,6 +795,11 @@ export const CONTROL_ROUTES = {
   },
   'agent.tools.list': { method: 'GET', path: '/api/agent/tools', query: ['sessionId'] },
   'agent.extensions.list': { method: 'GET', path: '/api/agent/extensions' },
+  'agent.extensions.usage': {
+    method: 'GET',
+    path: '/api/agent/extensions/usage',
+    query: ['packageId', 'resourceKind', 'sessionId', 'sinceMs', 'limit'],
+  },
   'agent.extensions.catalog': { method: 'GET', path: '/api/agent/extensions/catalog' },
   'agent.extensions.create': {
     method: 'POST',
@@ -1441,7 +1550,7 @@ export function resolveControlPath(
   let resolved = route.path;
   for (const key of requiredKeys) {
     const value = params[key];
-    if (!isSafeRouteParameter(value)) {
+    if (!isSafeRouteParameter(value, key)) {
       throw new ControlRoutePolicyError(pathId, `invalid ${key} path parameter`);
     }
     const allowedValues = policy[key];
@@ -1517,6 +1626,8 @@ export class ControlRoutePolicyError extends Error {
   }
 }
 
-function isSafeRouteParameter(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
+function isSafeRouteParameter(value: unknown, key: string): value is string {
+  const maximumTailLength = key === 'traceId' ? 159 : 127;
+  return typeof value === 'string'
+    && new RegExp(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,${maximumTailLength}}$`, 'u').test(value);
 }

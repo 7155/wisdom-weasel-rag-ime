@@ -462,6 +462,7 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / .85), 0 18px 44px -26px rgb(23 32 52 / .3);
 }
 .paw-desktop-root .paw-wayfinder-work__head strong { color: #273142; }
+.paw-desktop-root .paw-wayfinder-work__head small { color: #727c8c; }
 .paw-desktop-root .paw-wayfinder-work__count,
 .paw-desktop-root .paw-wayfinder-work__bucket-label,
 .paw-desktop-root .paw-wayfinder-work__bucket-toggle { color: var(--paw-desktop-muted); }
@@ -490,8 +491,27 @@
 .paw-desktop-root .paw-wayfinder-work__search input { color: var(--paw-ink); outline: none; }
 .paw-desktop-root .paw-wayfinder-work__search input::placeholder { color: #8a93a2; }
 .paw-desktop-root .paw-wayfinder-work__list { scrollbar-color: rgb(23 26 33 / .24) transparent; }
-.paw-desktop-root .paw-wayfinder-work__row { transition: background-color 120ms ease; }
-.paw-desktop-root .paw-wayfinder-work__row:hover { background: rgb(255 255 255 / .9); }
+.paw-desktop-root .paw-wayfinder-work__project > summary {
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__project[open] > summary {
+  background: rgb(255 255 255 / .5);
+}
+.paw-desktop-root .paw-wayfinder-work__row {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .8);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__row:hover {
+  border-color: rgb(47 107 255 / .3);
+  background: #fff;
+  box-shadow: inset 0 1px 0 #fff, 0 8px 18px -14px rgb(23 32 52 / .5);
+  transform: translateY(-1px);
+}
+.paw-desktop-root .paw-wayfinder-work__row:focus-visible {
+  border-color: rgb(47 107 255 / .62);
+  outline: 0;
+  box-shadow: 0 0 0 2px rgb(47 107 255 / .16);
+}
 .paw-desktop-root .paw-wayfinder-work__row strong { color: var(--paw-ink); }
 .paw-desktop-root .paw-wayfinder-work__row small { color: var(--paw-desktop-muted); }
 .paw-desktop-root .paw-wayfinder-work__dot { background: rgb(23 26 33 / .3); }
@@ -928,4 +948,323 @@
   .paw-desktop-root .paw-wayfinder-work,
   .paw-desktop-root .paw-window-shell .paw-window { border: 1px solid CanvasText; }
   .paw-desktop-root .paw-app-icon { forced-color-adjust: auto; }
+}
+
+/* Wayfinder desktop icons ---------------------------------------------------
+ * The work projection is furniture on the wallpaper, not a blue dashboard
+ * card. Stone is the quiet ground for controls; moss, clay and ochre carry
+ * state so a folder can be scanned without relying on cobalt. */
+.paw-desktop-root .paw-wayfinder-work {
+  --wayfinder-stone: #f1ede4;
+  --wayfinder-stone-deep: #e4ddd0;
+  --wayfinder-ink: #2e332f;
+  --wayfinder-muted: #697069;
+  --wayfinder-moss: #3f7658;
+  --wayfinder-clay: #b45d4b;
+  --wayfinder-ochre: #a67d3d;
+  color: var(--wayfinder-ink);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.paw-desktop-root .paw-wayfinder-work__head strong { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__head small,
+.paw-desktop-root .paw-wayfinder-work__count { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__search {
+  border-color: rgb(47 48 43 / .18);
+  background: rgb(247 244 237 / .72);
+  color: var(--wayfinder-muted);
+}
+.paw-desktop-root .paw-wayfinder-work__search:focus-within {
+  border-color: color-mix(in srgb, var(--wayfinder-moss) 66%, white);
+  background: var(--wayfinder-stone);
+  box-shadow: 0 0 0 2px rgb(63 118 88 / .16);
+}
+.paw-desktop-root .paw-wayfinder-work__search input { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__search input::placeholder { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__archive-dropzone {
+  color: var(--wayfinder-muted);
+  background: rgb(241 237 228 / .72);
+  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__archive-dropzone:hover,
+.paw-desktop-root .paw-wayfinder-work__archive-dropzone[aria-expanded='true'] {
+  color: var(--wayfinder-ink);
+  background: var(--wayfinder-stone);
+  box-shadow: inset 0 -2px 0 var(--wayfinder-ochre);
+}
+.paw-desktop-root .paw-wayfinder-work__project > summary {
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__project > summary:hover,
+.paw-desktop-root .paw-wayfinder-work__project > summary:focus-visible {
+  background: rgb(241 237 228 / .56);
+  outline: 0;
+}
+.paw-desktop-root .paw-wayfinder-work__project > summary:focus-visible {
+  box-shadow: 0 0 0 2px rgb(63 118 88 / .22);
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art { color: var(--wayfinder-moss); }
+.paw-desktop-root .paw-wayfinder-work__folder-art::before { background: rgb(63 118 88 / .16); }
+.paw-desktop-root .paw-wayfinder-work__folder-art > svg { fill: rgb(63 118 88 / .19); }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] { color: var(--wayfinder-clay); }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention]::before { background: rgb(180 93 75 / .14); }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] > svg { fill: rgb(180 93 75 / .17); }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-running] > i { background: var(--wayfinder-moss); box-shadow: 0 0 0 3px rgb(63 118 88 / .14); }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] > i { background: var(--wayfinder-clay); box-shadow: 0 0 0 3px rgb(180 93 75 / .13); }
+.paw-desktop-root .paw-wayfinder-work__project-copy strong { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__project-copy small,
+.paw-desktop-root .paw-wayfinder-work__bucket-label,
+.paw-desktop-root .paw-wayfinder-work__bucket-toggle { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__project-content {
+  border-color: rgb(47 48 43 / .16);
+  background: rgb(247 244 237 / .96);
+  box-shadow: 0 16px 30px -22px rgb(47 48 43 / .65);
+}
+.paw-desktop-root .paw-wayfinder-work__bucket-toggle:hover {
+  color: var(--wayfinder-ink);
+  background: rgb(63 118 88 / .09);
+}
+.paw-desktop-root .paw-wayfinder-work__row {
+  color: var(--wayfinder-ink);
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+.paw-desktop-root .paw-wayfinder-work__row:hover,
+.paw-desktop-root .paw-wayfinder-work__row:focus-visible {
+  background: rgb(228 221 208 / .64);
+  outline: 0;
+}
+.paw-desktop-root .paw-wayfinder-work__row:focus-visible { box-shadow: 0 0 0 2px rgb(63 118 88 / .22); }
+.paw-desktop-root .paw-wayfinder-work__row strong { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__row small { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__file-icon {
+  color: var(--wayfinder-moss);
+  background: rgb(63 118 88 / .13);
+}
+.paw-desktop-root .paw-wayfinder-work__file-icon[data-kind='room'] {
+  color: var(--wayfinder-ochre);
+  background: rgb(166 125 61 / .14);
+}
+.paw-desktop-root .paw-wayfinder-work__row[data-activity='running'] .paw-wayfinder-work__dot { background: var(--wayfinder-moss); box-shadow: 0 0 0 3px rgb(63 118 88 / .14); }
+.paw-desktop-root .paw-wayfinder-work__row[data-activity='attention'] .paw-wayfinder-work__dot { background: var(--wayfinder-clay); box-shadow: 0 0 0 3px rgb(180 93 75 / .13); }
+.paw-desktop-root .paw-wayfinder-work__repeats-toggle {
+  border-color: rgb(47 48 43 / .18);
+  color: var(--wayfinder-muted);
+  background: rgb(247 244 237 / .9);
+}
+.paw-desktop-root .paw-wayfinder-work__repeats-toggle:hover,
+.paw-desktop-root .paw-wayfinder-work__repeats-toggle[aria-expanded='true'] {
+  border-color: rgb(166 125 61 / .55);
+  color: var(--wayfinder-ochre);
+  background: var(--wayfinder-stone);
+}
+.paw-desktop-root .paw-wayfinder-work__repeat:hover { color: var(--wayfinder-ink); background: rgb(228 221 208 / .58); }
+.paw-desktop-root .paw-wayfinder-work__more { color: var(--wayfinder-moss); }
+.paw-desktop-root .paw-wayfinder-work__more:hover { background: rgb(63 118 88 / .09); }
+.paw-desktop-root .paw-wayfinder-work__drop-hint {
+  color: var(--wayfinder-ink);
+  background: var(--wayfinder-stone);
+  box-shadow: 0 8px 18px -13px rgb(47 48 43 / .7);
+}
+.paw-desktop-root .paw-wayfinder-work__archive-tray {
+  border: 1px solid rgb(47 48 43 / .14);
+  background: rgb(247 244 237 / .94);
+  box-shadow: 0 12px 24px -20px rgb(47 48 43 / .65);
+}
+.paw-desktop-root .paw-wayfinder-work__archive-tray > header { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__archive-item { color: var(--wayfinder-muted); transition: background-color 150ms ease; }
+.paw-desktop-root .paw-wayfinder-work__archive-item:hover,
+.paw-desktop-root .paw-wayfinder-work__archive-item:focus-visible { color: var(--wayfinder-ink); background: rgb(228 221 208 / .64); outline: 0; }
+.paw-desktop-root .paw-wayfinder-work__archive-icon { color: var(--wayfinder-ochre); background: rgb(166 125 61 / .14); }
+.paw-desktop-root .paw-wayfinder-work__archive-item small { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__state { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__state button:hover { color: var(--wayfinder-moss); border-color: rgb(63 118 88 / .5); background: var(--wayfinder-stone); }
+
+/* App shortcuts occupy the same desktop plane as project folders. Keep their
+   identity colours in the glyph, while the hit surface follows the neutral
+   Stone/Moss desktop language and labels remain readable across two lines. */
+.paw-desktop-root .paw-desktop-shortcuts button {
+  color: var(--wayfinder-ink, #2e332f);
+  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+.paw-desktop-root .paw-desktop-shortcuts button:hover,
+.paw-desktop-root .paw-desktop-shortcuts button[aria-selected='true'],
+.paw-desktop-root .paw-desktop-shortcuts button:focus-visible {
+  color: var(--wayfinder-ink, #2e332f);
+  background: rgb(241 237 228 / .82);
+  box-shadow: 0 0 0 2px rgb(63 118 88 / .2);
+  outline: 0;
+}
+.paw-desktop-root .paw-desktop-shortcuts button strong {
+  max-width: 92px;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  -webkit-line-clamp: 2;
+}
+.paw-desktop-root .paw-desktop-shortcuts button[data-open] > i { background: #3f7658; }
+
+/* The folder is an outline identity, not a coloured tile. Status remains a
+   small dot and the little Agent/Room mark carries the semantic distinction;
+   this keeps the desktop readable when many projects are visible. */
+.paw-desktop-root .paw-wayfinder-work__folder-art::before {
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art > svg { fill: none; }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention]::before { background: transparent; }
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] > svg { fill: none; }
+.paw-desktop-root .paw-wayfinder-work__folder-art > i {
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  border-width: 1px;
+  box-shadow: none;
+}
+.paw-desktop-root .paw-wayfinder-work__folder-mark {
+  position: absolute;
+  z-index: 3;
+  top: -1px;
+  right: -3px;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--wayfinder-moss);
+  background: var(--wayfinder-stone);
+}
+.paw-desktop-root .paw-wayfinder-work__folder-mark svg { stroke-width: 2.2; }
+.paw-desktop-root .paw-wayfinder-work__project-content {
+  border-color: rgb(47 48 43 / .2);
+  background: rgb(250 248 243 / .98);
+  box-shadow: 0 22px 52px -26px rgb(47 48 43 / .72), 0 0 0 1px rgb(255 255 255 / .7) inset;
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-head {
+  border-bottom: 1px solid rgb(47 48 43 / .14);
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-head > div > span { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__project-content-head strong { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__project-content-head small { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__project-content-head > button:hover,
+.paw-desktop-root .paw-wayfinder-work__project-content-head > button:focus-visible {
+  color: var(--wayfinder-ink);
+  background: rgb(63 118 88 / .09);
+  outline: 0;
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll { scrollbar-color: rgb(47 48 43 / .3) transparent; }
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row:hover,
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row:focus-visible {
+  background: rgb(228 221 208 / .52);
+  box-shadow: none;
+  outline: 0;
+  transform: none;
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row strong { color: var(--wayfinder-ink); }
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row small { color: var(--wayfinder-muted); }
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__file-icon {
+  width: 32px;
+  height: 36px;
+  border: 1px solid rgb(63 118 88 / .2);
+  border-radius: 8px;
+  background: transparent;
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__file-icon[data-kind='room'] {
+  border-color: rgb(166 125 61 / .25);
+  background: transparent;
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__kind {
+  color: var(--wayfinder-moss);
+  background: rgb(63 118 88 / .09);
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__kind[data-kind='room'] {
+  color: var(--wayfinder-ochre);
+  background: rgb(166 125 61 / .1);
+}
+
+/* Desktop project identities are soft folder objects, not black outlined
+   tiles. Keep the semantic mark tucked into the folder body and let one small
+   status dot carry activity; the toolbar arrows/sliders belong to the window,
+   not to every icon. */
+.paw-desktop-root .paw-wayfinder-work__folder-art {
+  width: 52px;
+  height: 44px;
+  color: var(--wayfinder-moss);
+  filter: drop-shadow(0 4px 7px rgb(47 48 43 / .16));
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art::before {
+  inset: 7px 2px 1px;
+  border: 1px solid rgb(63 118 88 / .34);
+  border-radius: 9px 9px 8px 8px;
+  background: linear-gradient(155deg, rgb(255 255 255 / .86), rgb(211 230 219 / .94));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .9), 0 4px 8px -7px rgb(47 48 43 / .8);
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art > svg {
+  width: 36px;
+  height: 36px;
+  stroke: var(--wayfinder-moss);
+  stroke-width: 1.7;
+  fill: none;
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] {
+  color: var(--wayfinder-clay);
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention]::before {
+  border-color: rgb(180 93 75 / .34);
+  background: linear-gradient(155deg, rgb(255 255 255 / .88), rgb(239 222 214 / .94));
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] > svg { stroke: var(--wayfinder-clay); }
+.paw-desktop-root .paw-wayfinder-work__folder-mark {
+  top: 16px;
+  right: 9px;
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 3px;
+  color: currentColor;
+  background: transparent;
+  opacity: .72;
+}
+.paw-desktop-root .paw-wayfinder-work__folder-mark svg { width: 11px; height: 11px; stroke-width: 2; }
+.paw-desktop-root .paw-wayfinder-work__folder-art > i {
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgb(250 248 243 / .94);
+  box-shadow: none;
+}
+.paw-desktop-root .paw-wayfinder-work__project > summary > svg { display: none; }
+.paw-desktop-root .paw-wayfinder-work__project-copy {
+  gap: 2px;
+}
+.paw-desktop-root .paw-wayfinder-work__project-copy strong {
+  /* The icon cell is 96px wide and the next cell starts 112px away. Keep the
+     name inside its own cell, but let the complete project identity wrap to
+     as many lines as it needs instead of inheriting the global two-line
+     ellipsis used by compact conversation rows. */
+  display: block;
+  width: 96px;
+  max-width: 96px;
+  min-height: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+}
+.paw-desktop-root .paw-wayfinder-work__project-copy small {
+  max-width: 92px;
+  min-height: 14px;
+  color: var(--wayfinder-muted);
+  font-size: 12px;
+  line-height: 1.2;
 }

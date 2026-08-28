@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { createElement } from 'react';
-import { createRoomProjection } from '@/contracts/room-reducer';
-import { createPawDesktopStore, type PawWindowNode } from '../runtime/desktop-store';
+import { createRoomProjection, type RoomActivityProjection } from '@/contracts/room-reducer';
+import {
+  createPawDesktopStore,
+  PAW_WINDOW_MIN_HEIGHT,
+  PAW_WINDOW_MIN_WIDTH,
+  type PawWindowNode,
+} from '../runtime/desktop-store';
 import {
   isCollaborationSatellite,
   layoutCollaborationFocus,
@@ -29,7 +34,7 @@ describe('PAWOS collaboration focus', () => {
       title: '子 Agent A',
     });
 
-    expect(isCollaborationSatellite(participant)).toBe(true);
+    expect(isCollaborationSatellite(participant)).toBe(false);
     expect(isCollaborationSatellite(subagent)).toBe(true);
     expect(isCollaborationSatellite({ ...participant, minimized: true })).toBe(false);
     expect(isCollaborationSatellite(windowNode('room-main', {
@@ -49,7 +54,7 @@ describe('PAWOS collaboration focus', () => {
       target: { kind: 'participant', id: 'participant-a', roomId: 'room-a', title: '伙伴 A' },
     });
 
-    expect(store.getState().collaborationFocusGroup).toBe('room:room-a');
+    expect(store.getState().collaborationFocusGroup).toBeNull();
     expect(store.getState().windows[mainId]!.bounds).toEqual(ordinaryBounds);
 
     store.getState().setCollaborationFocusGroup(null);
@@ -58,6 +63,9 @@ describe('PAWOS collaboration focus', () => {
     expect(store.getState().windows['agent:participant-a']).toBeDefined();
 
     store.getState().focusWindow('agent:participant-a');
+    expect(store.getState().collaborationFocusGroup).toBeNull();
+
+    store.getState().setCollaborationFocusGroup('room:room-a');
     expect(store.getState().collaborationFocusGroup).toBe('room:room-a');
   });
 
@@ -124,61 +132,29 @@ describe('PAWOS collaboration focus', () => {
   });
 
   it.each([
-    { width: 800, height: 620 },
-    { width: 560, height: 720 },
-  ])('keeps the focus projection inside a $width px viewport without overlap', (viewport) => {
+    { width: 1280, height: 720, planetCount: 2 },
+    { width: 1440, height: 900, planetCount: 8 },
+  ])('keeps the reduced Room central and places $planetCount complete participant Sessions around it at $width×$height', ({ width, height, planetCount }) => {
     const nodes = [
       windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      windowNode('participant-a', { kind: 'participant', id: 'participant-a', roomId: 'room-a', title: '伙伴 A' }),
-      windowNode('participant-b', { kind: 'participant', id: 'participant-b', roomId: 'room-a', title: '伙伴 B' }),
-      windowNode('participant-c', { kind: 'participant', id: 'participant-c', roomId: 'room-a', title: '伙伴 C' }),
-    ];
-    const frames = layoutCollaborationFocus(nodes, viewport);
-    for (const frame of frames.values()) {
-      expect(frame.x).toBeGreaterThanOrEqual(0);
-      expect(frame.y).toBeGreaterThanOrEqual(0);
-      expect(frame.x + frame.width).toBeLessThanOrEqual(viewport.width);
-      expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height);
-    }
-    const regions = [...frames.values()];
-    for (let index = 0; index < regions.length; index += 1) {
-      for (let otherIndex = index + 1; otherIndex < regions.length; otherIndex += 1) {
-        expect(overlaps(regions[index]!, regions[otherIndex]!)).toBe(false);
-      }
-    }
-  });
-
-  it.each([
-    { satelliteCount: 0, width: 1280, height: 720 },
-    { satelliteCount: 1, width: 1280, height: 720 },
-    { satelliteCount: 5, width: 1280, height: 720 },
-    { satelliteCount: 7, width: 1280, height: 720 },
-    { satelliteCount: 0, width: 560, height: 720 },
-    { satelliteCount: 1, width: 560, height: 720 },
-    { satelliteCount: 5, width: 560, height: 720 },
-    { satelliteCount: 7, width: 560, height: 720 },
-  ])('reserves the Room Focus mode bar and intentionally places $satelliteCount satellites at $width px', ({ satelliteCount, width, height }) => {
-    const nodes = [
-      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: satelliteCount }, (_, index) => windowNode(`participant-${index}`, {
+      ...Array.from({ length: planetCount }, (_, index) => windowNode(`participant-${index}`, {
         kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
       })),
     ];
-    const ledgerHeight = width < 720 ? 0 : 48;
-    const frames = layoutCollaborationFocus(nodes, { width, height }, { modeBarHeight: 46, ledgerHeight });
+    const frames = layoutCollaborationFocus(nodes, { width, height }, { modeBarHeight: 46, ledgerHeight: 198 });
+    const main = frames.get('main')!;
 
     expect(frames.size).toBe(nodes.length);
-    const satelliteFrames = [...frames.entries()]
-      .filter(([id]) => id !== 'main')
-      .map(([, frame]) => frame);
-    const horizontalRail = satelliteFrames.length >= 5
-      && new Set(satelliteFrames.map((frame) => frame.y)).size === 1
-      && Math.max(...satelliteFrames.map((frame) => frame.x + frame.width)) > width;
-    for (const [id, frame] of frames) {
-      expect(frame.y).toBeGreaterThanOrEqual(46);
+    expect(main.width).toBeLessThan(width * .8);
+    expect(main.height).toBeGreaterThanOrEqual(PAW_WINDOW_MIN_HEIGHT);
+    expect(Math.max(...[...frames.values()].map((frame) => frame.y + frame.height))).toBe(height - 10);
+    expect(Math.min(...[...frames.values()].map((frame) => frame.width))).toBeGreaterThanOrEqual(PAW_WINDOW_MIN_WIDTH);
+    expect(Math.min(...[...frames.values()].map((frame) => frame.height))).toBeGreaterThanOrEqual(PAW_WINDOW_MIN_HEIGHT);
+    for (const frame of frames.values()) {
       expect(frame.x).toBeGreaterThanOrEqual(0);
-      if (!horizontalRail || id === 'main') expect(frame.x + frame.width).toBeLessThanOrEqual(width);
-      expect(frame.y + frame.height).toBeLessThanOrEqual(height - (satelliteCount ? ledgerHeight : 0));
+      expect(frame.y).toBeGreaterThanOrEqual(46);
+      expect(frame.x + frame.width).toBeLessThanOrEqual(width);
+      expect(frame.y + frame.height).toBeLessThanOrEqual(height);
     }
     const regions = [...frames.values()];
     for (let index = 0; index < regions.length; index += 1) {
@@ -186,53 +162,68 @@ describe('PAWOS collaboration focus', () => {
         expect(overlaps(regions[index]!, regions[otherIndex]!)).toBe(false);
       }
     }
-    if (satelliteCount && width >= 720) expect(frames.get('main')!.width).toBeGreaterThan(frames.get('participant-0')!.width);
-    if (satelliteCount === 5 && width < 720) {
-      expect(frames.get('main')!.height).toBeGreaterThanOrEqual(320);
-      expect(Math.min(...[...frames.entries()].filter(([id]) => id !== 'main').map(([, frame]) => frame.height))).toBeGreaterThanOrEqual(96);
-    }
   });
 
-  it.each([5, 7])('keeps all $satelliteCount satellites readable in one horizontal rail at 560×720', (satelliteCount) => {
+  it('lets wide focus canvases grow the perimeter slots instead of leaving thumbnail-sized planets', () => {
+    const width = 1920;
+    const height = 1080;
     const nodes = [
       windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: satelliteCount }, (_, index) => windowNode(`participant-${index}`, {
+      ...Array.from({ length: 4 }, (_, index) => windowNode(`participant-${index}`, {
         kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
       })),
     ];
-    const frames = layoutCollaborationFocus(nodes, { width: 560, height: 720 }, { modeBarHeight: 46, ledgerHeight: 0 });
+    const frames = layoutCollaborationFocus(nodes, { width, height }, { modeBarHeight: 46 });
     const main = frames.get('main')!;
-    const satellites = nodes.slice(1).map((node) => frames.get(node.id)!);
+    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
 
-    expect(frames.size).toBe(satelliteCount + 1);
-    expect(main.width).toBeGreaterThanOrEqual(320);
-    expect(main.height).toBeGreaterThanOrEqual(320);
-    expect(new Set(satellites.map((frame) => frame.y)).size).toBe(1);
-    expect(Math.min(...satellites.map((frame) => frame.width))).toBeGreaterThanOrEqual(260);
-    expect(Math.min(...satellites.map((frame) => frame.height))).toBeGreaterThanOrEqual(220);
-    expect(Math.max(...satellites.map((frame) => frame.x + frame.width))).toBeGreaterThan(560);
-    for (let index = 1; index < satellites.length; index += 1) {
-      expect(satellites[index]!.x).toBeGreaterThanOrEqual(satellites[index - 1]!.x + satellites[index - 1]!.width);
+    expect(Math.min(...planets.map((frame) => frame.width))).toBeGreaterThan(300);
+    expect(Math.min(...planets.map((frame) => frame.height))).toBeGreaterThan(400);
+    expect(main.x).toBeGreaterThan(300);
+    expect(main.x + main.width).toBeLessThan(width - 300);
+    expect(Math.max(...[...frames.values()].map((frame) => frame.y + frame.height))).toBe(height - 10);
+    for (let index = 0; index < planets.length; index += 1) {
+      for (let otherIndex = index + 1; otherIndex < planets.length; otherIndex += 1) {
+        expect(overlaps(planets[index]!, planets[otherIndex]!)).toBe(false);
+      }
     }
-    for (const satellite of satellites) expect(overlaps(main, satellite)).toBe(false);
   });
 
-  it.each([5, 8])('keeps all $satelliteCount satellites above the window height floor in one rail at 800×720', (satelliteCount) => {
+  it('uses an ordered horizontal rail when a narrow Room cannot surround its planets', () => {
     const nodes = [
       windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
-      ...Array.from({ length: satelliteCount }, (_, index) => windowNode(`participant-${index}`, {
+      ...Array.from({ length: 8 }, (_, index) => windowNode(`participant-${index}`, {
         kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
       })),
     ];
-    const frames = layoutCollaborationFocus(nodes, { width: 800, height: 720 }, { modeBarHeight: 46, ledgerHeight: 0 });
+    const frames = layoutCollaborationFocus(nodes, { width: 390, height: 720 }, { modeBarHeight: 46 });
     const main = frames.get('main')!;
-    const satellites = nodes.slice(1).map((node) => frames.get(node.id)!);
+    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
 
-    expect(main.height).toBeGreaterThanOrEqual(320);
-    expect(new Set(satellites.map((frame) => frame.y)).size).toBe(1);
-    expect(Math.min(...satellites.map((frame) => frame.height))).toBeGreaterThanOrEqual(210);
-    expect(Math.max(...satellites.map((frame) => frame.x + frame.width))).toBeGreaterThan(800);
-    for (const satellite of satellites) expect(overlaps(main, satellite)).toBe(false);
+    expect(main.x).toBe(10);
+    expect(main.width).toBe(370);
+    expect(planets.every((frame) => frame.y === planets[0]!.y)).toBe(true);
+    expect(planets.every((frame, index) => index === 0 || frame.x > planets[index - 1]!.x)).toBe(true);
+    expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(390);
+  });
+
+  it('keeps the Room reduced and centered when collaboration has no running participant Sessions', () => {
+    const width = 1400;
+    const height = 900;
+    const frames = layoutCollaborationFocus([
+      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+    ], { width, height }, { modeBarHeight: 46 });
+    const main = frames.get('main')!;
+
+    expect(frames.size).toBe(1);
+    expect(main.width).toBeLessThan(width * .8);
+    expect(main.height).toBeLessThan(height - 46 - 20);
+    expect(main.x).toBeGreaterThan(10);
+    expect(main.x + main.width).toBeLessThan(width - 10);
+    expect(main.y).toBeGreaterThan(46);
+    expect(main.y + main.height).toBeLessThan(height - 10);
+    expect(main.x + main.width / 2).toBeCloseTo(width / 2, 1);
+    expect(main.y + main.height / 2).toBeCloseTo((46 + height) / 2, 1);
   });
 
   it('does not leak unowned documents or results into the current Room', () => {
@@ -242,6 +233,21 @@ describe('PAWOS collaboration focus', () => {
     expect(windowBelongsToFocus(windowNode('result', {
       kind: 'result', id: 'result-a', title: '无归属结果', resultKind: 'artifact',
     }), 'room:room-a')).toBe(false);
+  });
+
+  it('keeps Runtime projections, Room panels and Session subagents out of the Room planet layout', () => {
+    const targets = [
+      { kind: 'room', id: 'room-a', title: '态势', panel: 'focus' as const },
+      { kind: 'process-terminal', id: 'run-a', title: 'pnpm test', roomId: 'room-a', sessionId: 'session-a', toolCallId: 'call-a', command: 'pnpm test' },
+      { kind: 'browser-target', id: 'browser-a', title: 'Browser', roomId: 'room-a', sessionId: 'session-a', toolCallId: 'call-a', targetId: 'target-a', url: 'http://localhost' },
+      { kind: 'subagent', id: 'subagent-a', title: '子 Agent', sessionId: 'session-a' },
+    ] as const;
+    for (const [index, target] of targets.entries()) {
+      const node = windowNode(`auxiliary-${index}`, target);
+      expect(windowBelongsToFocus(node, 'room:room-a')).toBe(false);
+      if (target.kind === 'subagent') expect(isCollaborationSatellite(node)).toBe(true);
+      else expect(isCollaborationSatellite(node)).toBe(false);
+    }
   });
 
   it('projects a real ContextRef receipt from the Room main window to its participant satellite', () => {
@@ -284,12 +290,54 @@ describe('PAWOS collaboration focus', () => {
     expect(arrival.targetWindowIds).toEqual(new Set(['participant']));
   });
 
+  it('reuses the WorkItem producer review mapping for cross-window packets', () => {
+    const work = {
+      id: 'work-child',
+      parentWorkId: 'work-root',
+      createdByParticipantId: 'participant-a',
+      accountableParticipantId: 'participant-a',
+      currentOwnerParticipantId: 'participant-a',
+      artifactRefs: ['artifact:child'],
+      evidenceRefs: ['trace:child'],
+    };
+    const projection = createRoomProjection('room-a');
+    projection.activityOrder.push('work-submitted', 'work-completed');
+    projection.activitiesById['work-submitted'] = activity({
+      id: 'work-submitted',
+      kind: 'participant_activity',
+      participantId: 'participant-b',
+      payload: { activityKind: 'work', phase: 'submitted', workItemId: 'work-child', work },
+    });
+    projection.activitiesById['work-completed'] = activity({
+      id: 'work-completed',
+      kind: 'participant_activity',
+      participantId: 'participant-b',
+      payload: { activityKind: 'work', phase: 'completed', workItemId: 'work-child', work },
+    });
+    const windows = {
+      main: windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+      owner: windowNode('owner', { kind: 'participant', id: 'participant-a', roomId: 'room-a', title: '伙伴 A' }),
+      reviewer: windowNode('reviewer', { kind: 'participant', id: 'participant-b', roomId: 'room-a', title: '伙伴 B' }),
+    };
+
+    expect(roomWindowFlowGroups(windows, { 'room-a': projection })[0]?.packets).toEqual([
+      expect.objectContaining({
+        id: 'activity:work-submitted', kind: 'review', sourceId: 'participant-b', targetIds: ['participant-a'],
+        status: 'waiting', workItemId: 'work-child', refs: ['artifact:child', 'trace:child'],
+      }),
+      expect.objectContaining({
+        id: 'activity:work-completed', kind: 'review', sourceId: 'participant-b', targetIds: ['participant-a'],
+        status: 'completed', workItemId: 'work-child', refs: ['artifact:child', 'trace:child'],
+      }),
+    ]);
+  });
+
   it.each([
     {
       id: 'intercom-a',
       participantId: null,
       payload: { sourceEventType: 'intercom', targetParticipantId: 'participant-a' },
-      expectedKind: 'request',
+      expectedKind: 'intercom',
       expectedSource: 'root',
       expectedTarget: 'participant-a',
     },
@@ -525,6 +573,17 @@ describe('PAWOS collaboration focus', () => {
     expect(summary).toHaveAttribute('aria-expanded', 'false');
     expect(reveal).toHaveAttribute('inert');
   });
+
+  it('uses a collapsed flow ledger as an overlay instead of reserving an empty bottom band', () => {
+    const frames = layoutCollaborationFocus([
+      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+      windowNode('participant-a', {
+        kind: 'participant', id: 'participant-a', roomId: 'room-a', title: 'Earth',
+      }),
+    ], { width: 1280, height: 720 }, { modeBarHeight: 46, ledgerHeight: 0 });
+
+    expect(Math.max(...[...frames.values()].map((frame) => frame.y + frame.height))).toBe(710);
+  });
 });
 
 function windowNode(
@@ -538,6 +597,26 @@ function windowNode(
     target,
     bounds: { x: id === 'main' ? 100 : 800, y: 80, width: 360, height: 280 },
     minimized: false,
+  };
+}
+
+function activity({ id, kind, payload, participantId = 'participant-a' }: {
+  id: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  participantId?: string | null;
+}): RoomActivityProjection {
+  return {
+    id,
+    turnId: 'turn-a',
+    participantId,
+    sourceSessionId: participantId ? `session-${participantId}` : '',
+    kind,
+    status: 'completed',
+    summary: id,
+    payload,
+    createdAtMs: 10,
+    updatedAtMs: 10,
   };
 }
 

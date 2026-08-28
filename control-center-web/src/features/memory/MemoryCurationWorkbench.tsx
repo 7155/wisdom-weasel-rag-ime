@@ -90,7 +90,8 @@ export function MemoryCurationWorkbench({
   const jobPayload = asRecord(queries.job.data);
   const jobState = stringValue(jobPayload.state, queries.jobState);
   const jobActive = jobState === 'queued' || jobState === 'running' || queries.trigger.isPending;
-  const jobFailed = jobState === 'failed' || Boolean(queries.trigger.error ?? queries.job.error);
+  const jobExpired = jobState === 'expired';
+  const jobFailed = jobState === 'failed' || jobExpired || Boolean(queries.trigger.error ?? queries.job.error);
   const totalSourceCount = Math.max(governedPending, numberValue(ownerScope.totalSourceCount));
   const organizedSourceCount = Math.max(0, totalSourceCount - governedPending);
   const progressPercent = totalSourceCount
@@ -174,8 +175,10 @@ export function MemoryCurationWorkbench({
               </div>
 
               {startError || jobFailed ? (
-                <InlineNotice title="本轮没有完成" tone="danger">
-                  {startError || publicErrorText(queries.trigger.error ?? queries.job.error ?? jobPayload.error, '整理任务没有完成；进度已经保留，可以重试。')}
+                <InlineNotice title={jobExpired ? '整理任务已过期' : '本轮没有完成'} tone={jobExpired ? 'warning' : 'danger'}>
+                  {startError || (jobExpired
+                    ? 'Gateway 重启后旧的整理任务已过期，无法恢复；请重新整理。'
+                    : publicErrorText(queries.trigger.error ?? queries.job.error ?? jobPayload.error, '整理任务没有完成；进度已经保留，可以重试。'))}
                 </InlineNotice>
               ) : jobState === 'completed' ? (
                 <InlineNotice title="本轮处理完成" tone="success">状态正在刷新；如果产生了草案，请在下方逐项审核。</InlineNotice>

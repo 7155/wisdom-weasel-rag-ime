@@ -8,12 +8,10 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { previewRoomSnapshot } from '@/app/preview-room-data';
 import { TooltipProvider } from '@/components/primitives';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
-import { MockControlTransport } from '@/test/mock-transport';
-import type { ControlRequest, ControlTransport } from '@/platform/transport';
+import type { ControlRequest } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
-import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
-import { followRoomTimelineIfReaderAtEnd, PawRoomWorkspace } from './PawRoomWorkspace';
+import { PawRoomWorkspace } from './PawRoomWorkspace';
 
 /* Lazy-bundle proof: this flag flips only when the PawStarfield module is
  * actually evaluated. Rendering the Room conversation must never flip it;
@@ -24,160 +22,51 @@ vi.mock('./PawStarfield', async (importOriginal) => {
   return await importOriginal();
 });
 
-const transcriptScrollTo = vi.fn();
-Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
-  configurable: true,
-  value: transcriptScrollTo,
-});
-
-afterEach(() => {
-  cleanup();
-  transcriptScrollTo.mockReset();
-});
+afterEach(cleanup);
 
 describe('PAWOS Room collaboration tools', () => {
-  it('does not let a late send receipt steal the Room timeline from a reader', () => {
-    const timeline = document.createElement('div');
-    const scrollTo = vi.fn();
-    const scheduled: FrameRequestCallback[] = [];
-    Object.defineProperties(timeline, {
-      clientHeight: { configurable: true, value: 400 },
-      scrollHeight: { configurable: true, value: 1_200 },
-      scrollTo: { configurable: true, value: scrollTo },
-    });
+  it('hydrates a satellite mention into the one shared Room composer', async () => {
+    renderRoom(900, vi.fn(), undefined, undefined, '@Mars ');
 
-    timeline.scrollTop = 240;
-    expect(followRoomTimelineIfReaderAtEnd(timeline, (callback) => {
-      scheduled.push(callback);
-      return scheduled.length;
-    })).toBe(false);
-    expect(scheduled).toHaveLength(0);
-
-    timeline.scrollTop = 800;
-    expect(followRoomTimelineIfReaderAtEnd(timeline, (callback) => {
-      scheduled.push(callback);
-      return scheduled.length;
-    })).toBe(true);
-    timeline.scrollTop = 300;
-    scheduled[0]?.(0);
-    expect(scrollTo).not.toHaveBeenCalled();
-
-    timeline.scrollTop = 800;
-    followRoomTimelineIfReaderAtEnd(timeline, (callback) => {
-      scheduled.push(callback);
-      return scheduled.length;
-    });
-    scheduled[1]?.(0);
-    expect(scrollTo).toHaveBeenCalledOnce();
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: 'smooth' });
+    expect(await screen.findByRole('textbox', { name: '协作消息' })).toHaveValue('@Mars ');
   });
 
-  it('steers an explicitly mentioned participant and keeps an ack-only receipt until the Room event arrives', async () => {
-    const user = userEvent.setup();
-    const snapshot = activeRoomSnapshot('room-steer-target');
-    const room = snapshot.room as unknown as RoomSummary;
-    const transport = new MockControlTransport({ routes: {
-      'agent.room.snapshot': snapshot,
-      'agent.room.participant.steer': { ok: true },
-    } });
-    renderRoom(901, vi.fn(), room, [], transport);
-
-    const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    await user.type(composer, '@Mars 请优先核对依赖边界');
-    await waitFor(() => expect(screen.getByRole('button', { name: '立即干预当前回合' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
-
-    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.room.participant.steer')).toBe(true));
-    const request = transport.requests.find(({ request }) => request.pathId === 'agent.room.participant.steer')?.request;
-    expect(request?.body).toMatchObject({
-      participantId: 'participant-firstlight',
-      message: '@Mars 请优先核对依赖边界',
-    });
-    expect(screen.getByRole('status', { name: '等待 Room 回执' })).toHaveTextContent('尚未送达伙伴 · Mars');
-    expect(screen.getByText('@Mars 请优先核对依赖边界')).toBeInTheDocument();
-
-    const clientActionId = String((request?.body as Record<string, unknown>).clientActionId);
-    transport.emit('agent.room.events', {
-      ...snapshot.events.at(-1),
-      eventId: 'room-steer-target:4',
-      sequence: 4,
-      eventType: 'user_message',
-      participantId: 'participant-firstlight',
-      sourceSessionId: 'session-room-firstlight',
-      payload: {
-        text: '@Mars 请优先核对依赖边界',
-        delivery: 'steer',
-        rootId: 'room-steer-target:turn-1',
-        clientActionId,
-      },
-      resumeToken: 'room-steer-target:4',
-    });
-
-    await waitFor(() => expect(screen.queryByRole('status', { name: '等待 Room 回执' })).not.toBeInTheDocument());
-    expect(within(screen.getByRole('log', { name: 'Room 公开对话时间线' })).getByText('@Mars 请优先核对依赖边界')).toBeInTheDocument();
-
-    await user.type(composer, '请继续同步');
-    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
-    await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.participant.steer')).toHaveLength(2));
-    const defaultRequest = transport.requests.filter(({ request }) => request.pathId === 'agent.room.participant.steer').at(-1)?.request;
-    expect(defaultRequest?.body).toMatchObject({ participantId: 'participant-present', message: '请继续同步' });
-  });
-
-  it('rejects multiple active-turn mentions instead of silently choosing one participant', async () => {
-    const user = userEvent.setup();
-    const snapshot = activeRoomSnapshot('room-steer-ambiguous');
-    const room = snapshot.room as unknown as RoomSummary;
-    const transport = new MockControlTransport({ routes: {
-      'agent.room.snapshot': snapshot,
-      'agent.room.participant.steer': { ok: true },
-    } });
-    renderRoom(902, vi.fn(), room, [], transport);
-
-    const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    await user.type(composer, '@Earth @Mars 请先对齐边界');
-    await waitFor(() => expect(screen.getByRole('button', { name: '立即干预当前回合' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('当前回合只能点名一位伙伴');
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.room.participant.steer')).toBe(false);
-    expect(composer).toHaveValue('@Earth @Mars 请先对齐边界');
-  });
-
-  it('opens as the same conversation-first workspace as Session and discloses collaboration on demand', async () => {
+  it('uses one round sheet by default and enters collaboration mode only on explicit request', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
-    const { container, room } = renderRoom(900, openWindow);
+    const setCollaborationFocusGroup = vi.fn();
+    const { container, room } = renderRoom(900, openWindow, undefined, undefined, undefined, undefined, setCollaborationFocusGroup);
     await screen.findByRole('textbox', { name: '协作消息' });
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
-    expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(3);
-    expect(within(primaryNavigation).getByRole('button', { name: '公开对话' })).toHaveAttribute('aria-pressed', 'true');
-    expect(within(primaryNavigation).getByRole('button', { name: '协作态势' })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(4);
+    expect(within(primaryNavigation).getByRole('button', { name: '任务表' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(primaryNavigation).getByRole('button', { name: '协同模式' })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(primaryNavigation).getByRole('button', { name: '公开记录' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '星空' })).toHaveAttribute('aria-pressed', 'false');
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
-    expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'rounds');
+
+    const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
+    expect(within(rounds).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。')).toBeInTheDocument();
+    expect(within(rounds).getAllByRole('row')).toHaveLength(4);
+    expect(screen.queryByRole('log', { name: 'Room 公开对话' })).not.toBeInTheDocument();
     expect(openWindow).not.toHaveBeenCalled();
 
-    const timeline = screen.getByRole('log', { name: 'Room 公开对话时间线' });
-    const userMessage = within(timeline).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。').closest('article');
-    expect(userMessage).not.toBeNull();
-    expect(within(userMessage!).queryByText('你')).not.toBeInTheDocument();
-    const earthMessage = within(timeline).getByText('我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。').closest('article');
-    expect(within(earthMessage!).getByText('Earth')).toBeInTheDocument();
-    expect(container.querySelector('.room-turn, .room-agent-lane')).toBeNull();
-
-    await user.click(within(primaryNavigation).getByRole('button', { name: '协作态势' }));
+    await user.click(within(primaryNavigation).getByRole('button', { name: '协同模式' }));
+    expect(setCollaborationFocusGroup).toHaveBeenCalledWith(`room:${room.id}`);
 
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     expect(within(tools).getAllByRole('tab')).toHaveLength(2);
     expect(within(tools).getByRole('tab', { name: '态势' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
-    const mesh = within(tools).getByRole('group', { name: '协作网状图' });
-    expect(mesh).toHaveTextContent('实现 Room 依赖数据投影');
-    expect(mesh.querySelector(':scope > svg, .paw-room-focus-overview__mesh-edge-label')).toBeNull();
-    expect(within(mesh).getByRole('list', { name: '协作关系' })).toBeInTheDocument();
-    /* PF-CM-013/PF-CM-020：态势弹出是真实可达的卫星入口，指向 focus 面板。 */
-    await user.click(within(tools).getByRole('button', { name: '在卫星窗中打开协作态势' }));
+    expect(within(tools).getByRole('group', { name: '协作网状图' })).toHaveTextContent('实现 Room 依赖数据投影');
+    /* 已完成的预览回合没有 Runtime-active participant，协同模式不能
+       因为仍在名册中的成员而偷偷打开行星窗口。 */
+    expect(openWindow).not.toHaveBeenCalled();
+
+    /* PF-CM-013/PF-CM-020：态势弹出是真实可达的协作窗口入口，指向 focus 面板。 */
+    await user.click(within(tools).getByRole('button', { name: '在协作窗口中打开协作态势' }));
     expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
       appId: 'agent',
       target: expect.objectContaining({ kind: 'room', id: room.id, panel: 'focus' }),
@@ -189,11 +78,150 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'rounds');
 
     /* Default conversation path pays nothing for the sky: no region, no
      * canvas, and the starfield module itself was never evaluated. */
     expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(starfieldChunk.evaluated).toBe(false);
+  });
+
+  it('opens only Runtime-active Room planets when collaboration mode is requested', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn();
+    /* A distinct Room id keeps this running snapshot independent from the
+       terminal preview Room already replayed by the preceding test. */
+    const completed = previewRoomSnapshot('room-running-collaboration');
+    /* Stop before either dispatched Partner reaches a terminal event. The
+       Room roster also contains a third reviewer, but only the two
+       participants present in the live Runtime projection are opened. */
+    const events = completed.events.slice(0, 6);
+    const running = {
+      ...completed,
+      room: {
+        ...completed.room,
+        lastEventSequence: events.length,
+      },
+      events,
+      lastSequence: events.length,
+      resumeToken: `room-running-collaboration:${events.length}`,
+    };
+    renderRoom(
+      900,
+      openWindow,
+      running.room as unknown as RoomSummary,
+      running,
+    );
+    await screen.findByRole('textbox', { name: '协作消息' });
+    expect(openWindow).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(2));
+    expect(openWindow.mock.calls.map(([request]) => request)).toEqual([
+      expect.objectContaining({
+        background: true,
+        target: expect.objectContaining({ id: 'participant-present', title: 'Earth' }),
+      }),
+      expect.objectContaining({
+        background: true,
+        target: expect.objectContaining({ id: 'participant-firstlight', title: 'Mars' }),
+      }),
+    ]);
+    expect(openWindow.mock.calls.some(([request]) => (
+      request.target.id === 'participant-future'
+    ))).toBe(false);
+  });
+
+  it('resumes a blocked WorkItem through the active Root and keeps failure retryable', async () => {
+    const user = userEvent.setup();
+    const completed = previewRoomSnapshot('room-blocked-resume');
+    const events = completed.events.slice(0, 6);
+    const blocked = {
+      ...(completed.room as unknown as RoomSummary).workItems?.[0],
+      id: 'room-work:blocked',
+      rootTurnId: 'room-blocked-resume:turn-1',
+      state: 'blocked',
+      blocker: { reason: 'Runtime 暂时不可用', nextStep: '恢复后重新分派' },
+    };
+    const runningRoom = {
+      ...completed.room,
+      lastEventSequence: events.length,
+      workItems: [blocked],
+    };
+    const running = {
+      ...completed,
+      room: runningRoom,
+      events,
+      lastSequence: events.length,
+      resumeToken: `room-blocked-resume:${events.length}`,
+    };
+    const { transport } = renderRoom(
+      900,
+      vi.fn(),
+      runningRoom as unknown as RoomSummary,
+      running as unknown as ReturnType<typeof previewRoomSnapshot>,
+      undefined,
+      { ...blocked, state: 'active' },
+    );
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    const resume = screen.getByRole('button', { name: '恢复 Earth 并重新分派' });
+    await user.click(resume);
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'agent.room.workItem.resume'
+      && request.params?.roomId === 'room-blocked-resume'
+      && request.params?.workItemId === 'room-work:blocked'
+      && (request.body as { actorParticipantId?: string }).actorParticipantId === 'participant-present'
+    ))).toBe(true));
+    expect(screen.queryByText('恢复失败')).not.toBeInTheDocument();
+  });
+
+  it('keeps opening later planets when one satellite fails and retries that planet in place', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('window unavailable'); })
+      .mockImplementation(() => undefined);
+    const completed = previewRoomSnapshot('room-collaboration-retry');
+    const events = completed.events.slice(0, 6);
+    const running = {
+      ...completed,
+      room: { ...completed.room, lastEventSequence: events.length },
+      events,
+      lastSequence: events.length,
+      resumeToken: `room-collaboration-retry:${events.length}`,
+    };
+    renderRoom(
+      900,
+      openWindow,
+      running.room as unknown as RoomSummary,
+      running,
+    );
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(2));
+    expect(openWindow.mock.calls[0]?.[0]).toMatchObject({
+      background: true,
+      target: { id: 'participant-present', title: 'Earth' },
+    });
+    expect(openWindow.mock.calls[1]?.[0]).toMatchObject({
+      background: true,
+      target: { id: 'participant-firstlight', title: 'Mars' },
+    });
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('1 颗运行中行星未能打开');
+    expect(within(alert).getByRole('button', { name: '重试打开 Earth' })).toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: '重试打开 Earth' }));
+
+    expect(openWindow).toHaveBeenCalledTimes(3);
+    expect(openWindow.mock.calls[2]?.[0]).toMatchObject({
+      background: true,
+      target: { id: 'participant-present', title: 'Earth' },
+    });
+    expect(screen.queryByText('1 颗运行中行星未能打开')).not.toBeInTheDocument();
   });
 
   it('turns the whole Room into one clickable solar system in 星空 mode', async () => {
@@ -244,28 +272,47 @@ describe('PAWOS Room collaboration tools', () => {
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'conversation');
   });
 
-  it('fronts a partner satellite only when the user explicitly clicks that planet', async () => {
+  it('links a selected task-table planet and its graph node while keeping collaboration open', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
-    await user.click(screen.getByRole('button', { name: '协作态势' }));
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    const marsRow = document.querySelector<HTMLElement>('[data-planet-row$=":participant-firstlight"]')!;
+    await user.click(marsRow.querySelector('td:nth-child(2)')!);
+
+    expect(marsRow).toHaveAttribute('aria-selected', 'true');
+    expect(within(tools).getByRole('button', { name: /^Mars，/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('complementary', { name: 'Room 协作态势' })).toBeInTheDocument();
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
+      background: false,
+      target: expect.objectContaining({ kind: 'participant', id: 'participant-firstlight', title: 'Mars' }),
+    }));
+
     const mesh = within(tools).getByRole('group', { name: '协作网状图' });
-    await user.click(within(mesh).getByRole('button', { name: /^Mars，/ }));
-    await user.click(within(tools).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
+    await user.click(within(mesh).getByRole('button', { name: /^Earth，/ }));
+    const earthRow = document.querySelector<HTMLElement>('[data-planet-row$=":participant-present"]')!;
+    expect(earthRow).toHaveAttribute('aria-selected', 'true');
+    expect(within(mesh).getByRole('button', { name: /^Earth，/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
+      background: false,
+      target: expect.objectContaining({ kind: 'participant', id: 'participant-present', title: 'Earth' }),
+    }));
 
     expect(screen.queryByRole('button', { name: /铺开 .* 位/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
-    expect(openWindow).toHaveBeenCalledTimes(1);
-    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
+    expect(screen.getByRole('complementary', { name: 'Room 协作态势' })).toBeInTheDocument();
+    /* 自动展开只允许 background 调用；前台调用只来自用户选择的行星。 */
+    const foregroundCalls = openWindow.mock.calls.filter(([request]) => request.background === false);
+    expect(foregroundCalls).toHaveLength(2);
+    expect(foregroundCalls[1]?.[0]).toMatchObject({
       target: expect.objectContaining({
-        id: 'participant-firstlight',
-        title: 'Mars',
-        subtitle: '调研与证据',
+        id: 'participant-present',
+        title: 'Earth',
+        subtitle: expect.not.stringContaining('Agent 2'),
       }),
-    }));
+    });
   });
   it('opens the tools panel on the same edge as the control that opens it', async () => {
     /* 按钮在右、面板在左 was the complaint: the 协作态势 control portals into
@@ -280,7 +327,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(chromeSlot.querySelector('.paw-room-window-chrome')).not.toBeNull();
     expect(container.querySelector('.paw-window-leading-slot .paw-room-window-chrome')).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: '协作态势' }));
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     expect(tools).toHaveAttribute('data-side', 'trailing');
     const body = container.querySelector('.paw-room-workspace__body')!;
@@ -322,7 +369,7 @@ describe('PAWOS Room collaboration tools', () => {
     const { container, transport } = renderRoom(900);
     await screen.findByRole('textbox', { name: '协作消息' });
 
-    await user.click(screen.getByRole('button', { name: '协作态势' }));
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     await user.click(within(tools).getByRole('tab', { name: '治理' }));
     const governance = container.querySelector('.paw-room-governance') as HTMLElement;
@@ -351,60 +398,41 @@ describe('PAWOS Room collaboration tools', () => {
       && (request.body as { collaborationRole?: string }).collaborationRole === 'reviewer'
     ))).toBe(true));
   });
-
-  it.each([1, 7])('keeps the invite entry enabled with %i active participants', async (participantCount) => {
-    const user = userEvent.setup();
-    const room = roomWithParticipantCount(participantCount);
-    const { container } = renderRoom(900, vi.fn(), room, [persona('candidate')]);
-    await screen.findByRole('textbox', { name: '协作消息' });
-
-    await user.click(screen.getByRole('button', { name: '协作态势' }));
-    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    await user.click(within(tools).getByRole('tab', { name: '治理' }));
-    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
-
-    expect(within(governance).getByText(`${participantCount}/8`)).toBeInTheDocument();
-    expect(within(governance).getByRole('combobox', { name: '邀请伙伴' })).toBeEnabled();
-  });
-
-  it('keeps the invite entry visible but disables it at the eight-participant backend limit', async () => {
-    const user = userEvent.setup();
-    const room = roomWithParticipantCount(8);
-    const { container } = renderRoom(900, vi.fn(), room, [persona('candidate')]);
-    await screen.findByRole('textbox', { name: '协作消息' });
-
-    await user.click(screen.getByRole('button', { name: '协作态势' }));
-    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    await user.click(within(tools).getByRole('tab', { name: '治理' }));
-    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
-
-    expect(within(governance).getByText('8/8')).toBeInTheDocument();
-    expect(within(governance).getByRole('combobox', { name: '邀请伙伴' })).toBeDisabled();
-    expect(within(governance).getByRole('combobox', { name: '邀请伙伴' })).toHaveTextContent('已达 8 人上限');
-  });
 });
 
 function renderRoom(
   width: number,
   openWindow = vi.fn(),
   record?: RoomSummary,
-  personas: AgentPersonaV1[] = [],
-  transport: ControlTransport = createPreviewTransport(),
+  snapshotOverride?: ReturnType<typeof previewRoomSnapshot>,
+  initialDraft?: string,
+  resumeResponse?: Record<string, unknown>,
+  setCollaborationFocusGroup = vi.fn(),
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
+  const transport = createPreviewTransport();
   const requests: { request: ControlRequest }[] = [];
   const send = transport.request.bind(transport);
-  transport.request = (request: ControlRequest) => {
+  transport.request = async <Response = unknown>(request: ControlRequest): Promise<Response> => {
     requests.push({ request });
-    return send(request);
+    if (snapshotOverride && request.pathId === 'agent.room.snapshot') {
+      return snapshotOverride as Response;
+    }
+    if (snapshotOverride && request.pathId === 'agent.room.get') {
+      return { ok: true, room: snapshotOverride.room } as Response;
+    }
+    if (resumeResponse && request.pathId === 'agent.room.workItem.resume') {
+      return { ok: true, workItem: resumeResponse } as Response;
+    }
+    return send<Response>(request);
   };
   return {
     transport: { requests },
     ...render(
       <QueryClientProvider client={queryClient}>
         <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={openWindow}>
+          <PawOsDesktopProvider openWindow={openWindow} setCollaborationFocusGroup={setCollaborationFocusGroup}>
             <TooltipProvider>
               <PawWindowFrame
                 active
@@ -421,7 +449,8 @@ function renderRoom(
                 zIndex={10}
               >
                 <PawRoomWorkspace
-                  personas={personas}
+                  initialDraft={initialDraft}
+                  personas={[]}
                   record={room}
                   recordId={room.id}
                   onRoomUpdated={vi.fn()}
@@ -433,58 +462,5 @@ function renderRoom(
       </QueryClientProvider>,
     ),
     room,
-  };
-}
-
-function activeRoomSnapshot(roomId: string) {
-  const snapshot = previewRoomSnapshot(roomId);
-  const events = snapshot.events.slice(0, 3);
-  return {
-    ...snapshot,
-    room: {
-      ...snapshot.room,
-      lastEventSequence: events.length,
-    },
-    events,
-    firstSequence: 1,
-    lastSequence: events.length,
-    resumeToken: `${roomId}:${events.length}`,
-  };
-}
-
-function roomWithParticipantCount(count: number): RoomSummary {
-  const base = previewRoomSnapshot('room-capacity').room as unknown as RoomSummary;
-  const seed = base.participants[0]!;
-  return {
-    ...base,
-    moderatorParticipantId: 'participant-0',
-    participants: Array.from({ length: count }, (_, ordinal) => ({
-      ...seed,
-      id: `participant-${ordinal}`,
-      sessionId: `session-${ordinal}`,
-      roleId: `role-${ordinal}`,
-      displayName: `Agent ${ordinal + 1}`,
-      ordinal,
-    })),
-  };
-}
-
-function persona(roleId: string): AgentPersonaV1 {
-  return {
-    schemaVersion: 'rag-ime.agent-persona.v1',
-    roleId,
-    version: '1',
-    displayName: '候选伙伴',
-    tagline: '候选',
-    summary: '可邀请的候选伙伴',
-    traits: ['协作'],
-    visualProfile: { avatarAssetId: 'candidate', symbolName: 'person', accentToken: 'blue' },
-    defaults: { modelPolicy: 'default', memoryPolicy: 'default', toolProfileVersion: '1' },
-    runtimeCharacteristics: {
-      intelligence: 'balanced', speed: 'balanced', context: 'balanced',
-      suitableTasks: ['协作'], unsuitableTasks: ['无'], isDefault: false,
-    },
-    safetyPolicyVersion: 'agent-core-v2',
-    selectableModes: ['assistant'],
   };
 }

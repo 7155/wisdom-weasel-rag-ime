@@ -75,7 +75,7 @@ describe('PAWOS compositor window frame', () => {
       id: 'intercom-a',
       kind: 'participant_activity',
       payload: { activityKind: 'intercom', targetParticipantId: 'participant-a' },
-      expectedKind: 'request',
+      expectedKind: 'intercom',
       targetIds: ['participant-a'],
     },
     {
@@ -116,12 +116,12 @@ describe('PAWOS compositor window frame', () => {
     expect(groups[0]?.packets.map((packet) => packet.id)).toEqual(['activity:dispatch-a']);
   });
 
-  it('keeps narrow Room rail satellites draggable and resizable without duplicating host window chrome', async () => {
+  it('keeps the Room reduced and participant Sessions draggable with complete window chrome', async () => {
     const originalWidth = window.innerWidth;
     const originalHeight = window.innerHeight;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 560 });
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
-    const windows = narrowRoomWindows();
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    const windows = narrowRoomWindows(2);
     window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
       windows,
       stack: Object.keys(windows),
@@ -138,13 +138,13 @@ describe('PAWOS compositor window frame', () => {
         </ControlTransportProvider>,
       );
 
-      await screen.findByRole('region', { name: 'Sol 行星窗口，横向滚动查看全部 5 个窗口' });
+      expect(screen.queryByRole('region', { name: /横向滚动查看/ })).not.toBeInTheDocument();
       const shell = await screen.findByLabelText('伙伴 1窗口');
       expect(shell).not.toHaveAttribute('data-focus-locked');
-      expect(shell).toHaveAttribute('data-frame-mode', 'focus-card');
-      /* One chrome language: a focus-card satellite carries the same
+      expect(shell).toHaveAttribute('data-frame-mode', 'window');
+      /* A planet carries the complete Session in the same normal window
          traffic-light cluster, in the same slot and the same order, as the
-         Room window it orbits — never a lone top-right X. Inside the focus
+         Room window it collaborates with — never a lone top-right X. Inside the focus
          layout both drop maximize together, because the layout owns
          geometry, so the two clusters stay verb-for-verb identical. */
       const roomShell = await screen.findByLabelText('Room A窗口');
@@ -162,6 +162,9 @@ describe('PAWOS compositor window frame', () => {
       expect(roomShell.querySelector('.paw-traffic-lights')!.firstElementChild)
         .toHaveAttribute('data-action', 'close');
       expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(8);
+      expect(Number.parseFloat(shell.style.width)).toBeGreaterThanOrEqual(280);
+      expect(Number.parseFloat(shell.style.height)).toBeGreaterThanOrEqual(210);
+      expect(Number.parseFloat(roomShell.style.width)).toBeLessThan(1440 * .8);
 
       const initialTransform = shell.style.transform;
       const initialY = transformCoordinate(initialTransform, 'y');
@@ -178,18 +181,8 @@ describe('PAWOS compositor window frame', () => {
       fireEvent.pointerUp(window, { clientX: 520, clientY: 500, pointerId: 42 });
       await waitFor(() => expect(Number.parseFloat(shell.style.width)).toBe(initialWidth + 20));
 
-      const lastShell = await screen.findByLabelText('伙伴 5窗口');
-      const lastInitialX = transformCoordinate(lastShell.style.transform, 'x');
-      expect(lastInitialX).toBeGreaterThan(window.innerWidth);
-      const lastTitlebar = lastShell.querySelector('.paw-window-titlebar')!;
-      fireEvent.pointerDown(lastTitlebar, { button: 0, clientX: 220, clientY: 500, pointerId: 43 });
-      fireEvent.pointerMove(window, { clientX: 228, clientY: 500, pointerId: 43 });
-      fireEvent.pointerUp(window, { clientX: 228, clientY: 500, pointerId: 43 });
-      await waitFor(() => expect(transformCoordinate(lastShell.style.transform, 'x')).toBe(lastInitialX + 8));
-
       fireEvent.click(within(shell).getByRole('button', { name: '关闭窗口' }));
       await waitFor(() => expect(screen.queryByLabelText('伙伴 1窗口')).not.toBeInTheDocument());
-      await waitFor(() => expect(screen.queryByRole('region', { name: 'Sol 行星窗口，横向滚动查看全部 5 个窗口' })).not.toBeInTheDocument());
       expect(screen.getByLabelText('伙伴 2窗口')).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
@@ -197,7 +190,7 @@ describe('PAWOS compositor window frame', () => {
     }
   });
 
-  it('does not let the activation pointer overwrite a satellite focus frame with stale desktop bounds', async () => {
+  it('keeps ordinary participant activation out of collaboration focus', async () => {
     const originalWidth = window.innerWidth;
     const originalHeight = window.innerHeight;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
@@ -228,10 +221,8 @@ describe('PAWOS compositor window frame', () => {
       fireEvent.pointerDown(titlebar, { button: 0, clientX: 160, clientY: 80, pointerId: 44 });
       fireEvent.pointerUp(window, { clientX: 160, clientY: 80, pointerId: 44 });
 
-      await waitFor(() => expect(shell).toHaveAttribute('data-focus-layout', 'true'));
-      await waitFor(() => expect(shell.style.transform)
-        .toBe(shell.style.getPropertyValue('--paw-focus-frame-transform')));
-      expect(transformCoordinate(shell.style.transform, 'y')).toBeGreaterThanOrEqual(56);
+      await waitFor(() => expect(shell).not.toHaveAttribute('data-focus-layout'));
+      expect(shell.style.transform).toBe('translate3d(20px, 26px, 0)');
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });
@@ -253,11 +244,11 @@ describe('PAWOS compositor window frame', () => {
     expect(within(rail).getAllByRole('button')).toHaveLength(7);
   });
 
-  it('moves eight Room satellites into the accessible rail at an 800px desktop width', async () => {
+  it('keeps eight participant Sessions in the Room perimeter without a satellite rail', async () => {
     const originalWidth = window.innerWidth;
     const originalHeight = window.innerHeight;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
     const windows = narrowRoomWindows(8);
     window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
       windows,
@@ -275,11 +266,35 @@ describe('PAWOS compositor window frame', () => {
         </ControlTransportProvider>,
       );
 
-      const rail = await screen.findByRole('region', { name: 'Sol 行星窗口，横向滚动查看全部 8 个窗口' });
-      expect(rail).toHaveAttribute('data-satellite-count', '8');
-      const satelliteShells = Array.from({ length: 8 }, (_, index) => screen.getByLabelText(`伙伴 ${index + 1}窗口`));
-      expect(Math.min(...satelliteShells.map((shell) => Number.parseFloat(shell.style.height)))).toBeGreaterThanOrEqual(210);
-      expect(transformCoordinate(satelliteShells.at(-1)!.style.transform, 'x')).toBeGreaterThan(window.innerWidth);
+      expect(screen.queryByRole('region', { name: /横向滚动查看/ })).not.toBeInTheDocument();
+      const planetShells = Array.from({ length: 8 }, (_, index) => screen.getByLabelText(`伙伴 ${index + 1}窗口`));
+      expect(Math.min(...planetShells.map((shell) => Number.parseFloat(shell.style.width)))).toBeGreaterThanOrEqual(280);
+      expect(Math.min(...planetShells.map((shell) => Number.parseFloat(shell.style.height)))).toBeGreaterThanOrEqual(210);
+      for (const shell of planetShells) {
+        expect(shell).toHaveAttribute('data-frame-mode', 'window');
+        const x = transformCoordinate(shell.style.transform, 'x');
+        const y = transformCoordinate(shell.style.transform, 'y');
+        expect(x + Number.parseFloat(shell.style.width)).toBeLessThanOrEqual(window.innerWidth);
+        expect(y + Number.parseFloat(shell.style.height)).toBeLessThanOrEqual(window.innerHeight - 34);
+      }
+      const rectangles = planetShells.map((shell) => ({
+        x: transformCoordinate(shell.style.transform, 'x'),
+        y: transformCoordinate(shell.style.transform, 'y'),
+        width: Number.parseFloat(shell.style.width),
+        height: Number.parseFloat(shell.style.height),
+      }));
+      for (let first = 0; first < rectangles.length; first += 1) {
+        for (let second = first + 1; second < rectangles.length; second += 1) {
+          const a = rectangles[first]!;
+          const b = rectangles[second]!;
+          expect(
+            a.x + a.width <= b.x
+              || b.x + b.width <= a.x
+              || a.y + a.height <= b.y
+              || b.y + b.height <= a.y,
+          ).toBe(true);
+        }
+      }
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });

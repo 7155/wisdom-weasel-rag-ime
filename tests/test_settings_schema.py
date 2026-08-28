@@ -80,8 +80,8 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
         self.assertTrue(defaults["agent"]["pi"]["systemProxy"])
         self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "companion-future-v1")
-        self.assertEqual(defaults["agent"]["defaults"]["modelReference"], "inherit")
-        self.assertEqual(defaults["agent"]["defaults"]["thinkingLevel"], "high")
+        self.assertEqual(defaults["agent"]["defaults"]["modelReference"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(defaults["agent"]["defaults"]["thinkingLevel"], "max")
         self.assertEqual(defaults["agent"]["defaults"]["executionMode"], "per_action")
         self.assertTrue(defaults["lexiconOrganization"]["enabled"])
         self.assertEqual(defaults["lexiconOrganization"]["runsPerDay"], 2)
@@ -276,6 +276,14 @@ class SettingsSchemaTests(unittest.TestCase):
             self.assertEqual(
                 default_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["roleId"],
                 "companion-future-v1",
+            )
+            self.assertEqual(
+                default_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["modelProfile"],
+                "openai-codex/gpt-5.6-luna",
+            )
+            self.assertEqual(
+                default_service.configuration()["configuration"]["configuration"]["modelRouting"]["primary"],
+                {"modelProfile": "openai-codex/gpt-5.6-luna", "thinkingLevel": "max"},
             )
             self.assertEqual(
                 legacy_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["roleId"],

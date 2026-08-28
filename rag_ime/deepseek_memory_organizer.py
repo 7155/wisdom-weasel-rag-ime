@@ -64,6 +64,21 @@ class DeepSeekMemoryOrganizerError(RuntimeError):
     pass
 
 
+class ActivitySemanticVerificationError(DeepSeekMemoryOrganizerError):
+    """The Activity draft is usable, but independent semantic review failed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        verification: Mapping[str, object],
+        receipt: Mapping[str, object],
+    ) -> None:
+        super().__init__(message)
+        self.verification = dict(verification)
+        self.receipt = dict(receipt)
+
+
 class DeepSeekMemoryOrganizer:
     def __init__(
         self,
@@ -1052,38 +1067,41 @@ class ManagedPiMemoryOrganizer(DeepSeekMemoryOrganizer):
                 verdict_payload,
                 packet=packet,
             )
+        receipt = {
+            "organizerPromptVersion": ACTIVITY_ORGANIZATION_PROMPT_VERSION,
+            "verifierPromptVersion": ACTIVITY_ORGANIZATION_VERIFIER_PROMPT_VERSION,
+            "contractRepairPromptVersion": (
+                ACTIVITY_ORGANIZATION_CONTRACT_REPAIR_PROMPT_VERSION
+                if contract_repaired
+                else ""
+            ),
+            "semanticRepairPromptVersion": (
+                ACTIVITY_ORGANIZATION_REPAIR_PROMPT_VERSION
+                if semantically_repaired
+                else ""
+            ),
+            "membershipSha256": packet.membership_sha256,
+            "organizerOutputSha256": _mapping_sha256(
+                result.contract_payload()
+            ),
+            "verifierOutputSha256": _mapping_sha256(verdict_payload),
+            "verdict": verdict.verdict,
+            "scores": dict(verdict.scores),
+            "contractRepaired": contract_repaired,
+            "semanticRepaired": semantically_repaired,
+            "organizerRequest": _managed_response_receipt(candidate_response),
+            "verifierRequest": _managed_response_receipt(verdict_response),
+        }
         if verdict.verdict != "pass":
-            raise DeepSeekMemoryOrganizerError(
-                "Activity organization did not pass independent semantic verification"
+            raise ActivitySemanticVerificationError(
+                "Activity organization did not pass independent semantic verification",
+                verification=verdict.payload(),
+                receipt=receipt,
             )
 
         return {
             "organization": result.contract_payload(),
-            "receipt": {
-                "organizerPromptVersion": ACTIVITY_ORGANIZATION_PROMPT_VERSION,
-                "verifierPromptVersion": ACTIVITY_ORGANIZATION_VERIFIER_PROMPT_VERSION,
-                "contractRepairPromptVersion": (
-                    ACTIVITY_ORGANIZATION_CONTRACT_REPAIR_PROMPT_VERSION
-                    if contract_repaired
-                    else ""
-                ),
-                "semanticRepairPromptVersion": (
-                    ACTIVITY_ORGANIZATION_REPAIR_PROMPT_VERSION
-                    if semantically_repaired
-                    else ""
-                ),
-                "membershipSha256": packet.membership_sha256,
-                "organizerOutputSha256": _mapping_sha256(
-                    result.contract_payload()
-                ),
-                "verifierOutputSha256": _mapping_sha256(verdict_payload),
-                "verdict": verdict.verdict,
-                "scores": dict(verdict.scores),
-                "contractRepaired": contract_repaired,
-                "semanticRepaired": semantically_repaired,
-                "organizerRequest": _managed_response_receipt(candidate_response),
-                "verifierRequest": _managed_response_receipt(verdict_response),
-            },
+            "receipt": receipt,
         }
 
     def begin_run(

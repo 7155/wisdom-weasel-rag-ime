@@ -597,6 +597,30 @@ class GovernedMemoryModelExecutor:
                 (run_id, phase, input_sha256),
             ).fetchone()
             if row is not None:
+                if isolated and str(row["state"]) == "resumable":
+                    replacement = self._create_internal_session(
+                        title=(
+                            "Memory curation recovery · "
+                            f"{_short_run_label(run_id)} · {phase[:32]}"
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE memory_curation_model_requests
+                        SET session_id = ?, state = 'prepared', turn_id = '',
+                            last_error = '', updated_at_ms = ?
+                        WHERE request_id = ? AND state = 'resumable'
+                        """,
+                        (
+                            str(replacement["id"]),
+                            _now_ms(),
+                            str(row["request_id"]),
+                        ),
+                    )
+                    row = conn.execute(
+                        "SELECT * FROM memory_curation_model_requests WHERE request_id = ?",
+                        (str(row["request_id"]),),
+                    ).fetchone()
                 return row
         request_session_id = self._active_session_id
         if isolated:

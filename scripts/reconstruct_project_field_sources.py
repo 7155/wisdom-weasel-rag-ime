@@ -60,7 +60,7 @@ class SessionRecord:
         if workspace_root and workspace_root.lower() in material:
             score += 8
             hits.insert(0, "canonical-workspace")
-        elif "/volumes/undo 4t/git/learna" in self.cwd.lower():
+        elif self.cwd.lower().rstrip("/").endswith("/git/learna"):
             score += 1
         return score, list(dict.fromkeys(hits))
 

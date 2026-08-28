@@ -44,8 +44,10 @@ from .pi_runtime_public import (
     pi_message_id,
     pi_message_completes_public_turn,
     pi_message_is_public,
+    provider_request_receipt,
     provider_retry_status,
     public_code_tool_activity,
+    public_knowledge_tool_activity,
     public_file_name,
     public_fork_candidate_text,
     public_pi_model,
@@ -1071,6 +1073,7 @@ class PiRuntimeManager:
         # Pi emits one assistant message before every tool call. The product UI
         # presents those messages as one Agent turn, not as a stack of avatars.
         self._stream_pi_message_id = ""
+        self._provider_request_ids: set[str] = set()
         self._tool_blocks = AgentToolBlockBuffer()
 
     @property
@@ -1297,6 +1300,7 @@ class PiRuntimeManager:
             self._active_turn_id = turn_id
             self._active_client_message_id = str(client_message_id).strip()
             self._stream_pi_message_id = ""
+            self._provider_request_ids.clear()
             self._tool_blocks.clear()
             self._provider_retry_attempt = 0
             self._provider_retry_max_attempts = 0
@@ -1944,6 +1948,7 @@ class PiRuntimeManager:
             self._active_turn_id = ""
             self._active_client_message_id = ""
             self._stream_pi_message_id = ""
+            self._provider_request_ids.clear()
             self._tool_blocks.clear()
             self._active_session_id = ""
             self._status = "stopped" if self.config.enabled else "disabled"
@@ -1957,6 +1962,38 @@ class PiRuntimeManager:
             client.stop()
         if session_id:
             self.sessions.set_status(session_id, "idle")
+
+    def _publish_provider_request(
+        self,
+        session_id: str,
+        turn_id: str,
+        raw_message: Mapping[str, object],
+        *,
+        status: str,
+    ) -> None:
+        completed_at_ms = int(time.time() * 1000)
+        payload = provider_request_receipt(
+            raw_message,
+            turn_id=turn_id,
+            provider=self.config.provider,
+            model=self.config.model,
+            status=status,
+            completed_at_ms=completed_at_ms,
+        )
+        request_id = str(payload.get("requestId") or "")
+        with self._lock:
+            if not request_id or request_id in self._provider_request_ids:
+                return
+            self._provider_request_ids.add(request_id)
+        self.events.publish(
+            session_id,
+            "provider_request_failed"
+            if str(payload.get("status") or "") == "failed"
+            else "provider_request_completed",
+            payload,
+            turn_id=turn_id,
+            created_at_ms=completed_at_ms,
+        )
 
     def _handle_pi_event(self, client: PiRpcClient, session_id: str, raw: dict[str, object]) -> None:
         with self._lock:
@@ -2058,9 +2095,22 @@ class PiRuntimeManager:
             return
         if event_type == "message_end":
             raw_message = as_mapping(raw.get("message"))
+            role = str(raw_message.get("role") or "assistant").lower()
+            if role == "assistant":
+                self._publish_provider_request(
+                    session_id,
+                    turn_id,
+                    raw_message,
+                    status=(
+                        "failed"
+                        if str(raw_message.get("stopReason") or "").lower()
+                        == "error"
+                        or bool(raw_message.get("errorMessage"))
+                        else "completed"
+                    ),
+                )
             if not pi_message_completes_public_turn(raw_message):
                 return
-            role = str(raw_message.get("role") or "assistant").lower()
             trusted_blocks = raw.get("agentBlocks")
             if role == "assistant":
                 trusted_blocks = self._tool_blocks.blocks_for_message(
@@ -2120,6 +2170,10 @@ class PiRuntimeManager:
                 "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
+            # Hosts may provide a measured end-to-end tool duration. Preserve
+            # it for ObservationHub/Trace; absent measurements stay absent.
+            if raw.get("durationMs") is not None:
+                payload["durationMs"] = as_integer(raw.get("durationMs"))
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             raw_result = raw.get(result_key)
             result_is_error = runtime_tool_result_is_error(
@@ -2132,6 +2186,13 @@ class PiRuntimeManager:
                 tool_name,
                 raw_args,
                 raw_result,
+            )
+            public_result.update(
+                public_knowledge_tool_activity(
+                    tool_name,
+                    raw_args,
+                    raw_result,
+                )
             )
             if (
                 result_is_error
@@ -2303,6 +2364,21 @@ class PiRuntimeManager:
                 ):
                     return
                 if provider_error:
+                    last_assistant = next(
+                        (
+                            as_mapping(item)
+                            for item in reversed(messages)
+                            if str(as_mapping(item).get("role") or "").lower()
+                            == "assistant"
+                        ),
+                        {},
+                    )
+                    self._publish_provider_request(
+                        session_id,
+                        turn_id,
+                        last_assistant,
+                        status="failed",
+                    )
                     failure_context: dict[str, object] = {}
                     if (
                         self._provider_retry_max_attempts > 0

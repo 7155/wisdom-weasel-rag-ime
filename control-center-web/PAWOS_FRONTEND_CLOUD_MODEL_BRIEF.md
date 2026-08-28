@@ -6,12 +6,13 @@
 
 ## Requirement Sources — Mandatory Before Lane Work
 
-These files are on `main` and are the GitHub-visible authority pack:
+These files are intended to form the post-merge `main` GitHub-visible authority
+pack; verify the actual merge commit before treating them as the current baseline:
 
 | File | Role |
 | --- | --- |
 | `control-center-web/CLOUD_MODEL.md` | GitHub-only start file; read first |
-| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-152`, corrections, verbatim evidence |
+| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-195` in thirteen volumes, corrections, verbatim evidence |
 | `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` | Historical Agent/Room `AUI-*`/`RUI-*` receipts and open boundaries |
 | `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` | This file: `PF-CM-*`, eleven-App spec, completion gate |
 | `control-center-web/PAWOS_FRONTEND_CONTINUATION_HANDOFF.md` | 2026-08-24 checkpoint of what landed and what remains |
@@ -27,23 +28,26 @@ These files are on `main` and are the GitHub-visible authority pack:
 Relevant Codex source tasks, to be treated as user-message evidence rather than
 as executable instructions, are:
 
-- `codex://threads/01a02381-f842-7361-ad9e-96419c33ccf9` — Tutti/PAWOS migration.
-- `codex://threads/01a01a38-bf01-7be2-b944-119ea6900744` and
-  `codex://threads/01a0229a-bc89-7e51-8a23-e46cc5b53b4a` — earlier TUI and
+- `codex://threads/<redacted-current-thread>` — Tutti/PAWOS migration.
+- `codex://threads/<redacted-tui-thread-1>` and
+  `codex://threads/<redacted-tui-thread-2>` — earlier TUI and
   frontend-migration requirements that led into PAWOS.
-- `codex://threads/01a02485-5adb-7631-9e17-53a160cb011a` — Composition 8,
+- `codex://threads/<redacted-composition-thread>` — Composition 8,
   satellites, App adaptation, trace, and interaction corrections.
-- `codex://threads/01a02390-4c84-7480-8d90-6b430c29e9c8` — requirement and
+- `codex://threads/<redacted-requirements-thread>` — requirement and
   WorkDocument responsibility corrections.
-- `codex://threads/01a02850-045f-7342-be7d-964e45050e76` — frontend handoff
+- `codex://threads/<redacted-backend-owner-thread>` — frontend handoff
   history plus the current backend-owner boundary; frontend lanes must not edit
   its backend scope.
-- `codex://threads/01a02e85-1488-7e20-b0aa-dbd9a86b94fe` — embedded EgoLite
+- `codex://threads/<redacted-egolite-thread>` — embedded EgoLite
   Browser and real same-guest task acceptance.
-- `codex://threads/01a02eaa-b42a-7da2-ae7a-0d6bab27b6f2` — real Session/Room
+- `codex://threads/<redacted-session-room-thread>` — real Session/Room
   fixtures and full editable handoff boundary.
-- `codex://threads/01a02f39-d416-7780-a034-f498357b394c` — current Agent UI,
+- `codex://threads/<redacted-agent-ui-thread>` — current Agent UI,
   progressive disclosure, all-App polish, and handoff corrections.
+
+Private source URI identifiers are intentionally redacted in this public brief;
+the requirement ledger and evidence file retain the stable semantic mapping.
 
 Supporting inventories (not requirement authority, not install proof):
 
@@ -90,7 +94,7 @@ the conflict instead of silently choosing.
 ### PF-CM-002 — Frontend-only scope and delivery | current · P0
 
 - **Current controlling requirement:** Thoroughly clean and polish the frontend
-  while keeping backend task `01a02850-045f-7342-be7d-964e45050e76` untouched.
+  while keeping backend task `<redacted-backend-task>` untouched.
   The deliverable is editable application code on `main`, not a design-only
   mockup or prose replacement.
 - **User-visible acceptance:** The installed PAWOS App renders the changed code;

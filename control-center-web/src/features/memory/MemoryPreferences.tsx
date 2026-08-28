@@ -25,6 +25,7 @@ type RecallDetail = 'compact' | 'balanced' | 'detailed';
 type TimelineMaxItems = '1' | '2' | '3' | '4';
 
 type MemoryPreferenceDraft = {
+  memoryEnabled: boolean;
   stablePreference: StablePreferenceLevel;
   temporaryDetails: TemporaryDetailLevel;
   includeAgentDialogue: boolean;
@@ -34,7 +35,7 @@ type MemoryPreferenceDraft = {
 };
 
 type MemoryRecallRuntimeContract = {
-  enabled: boolean | null;
+  memoryEnabled: boolean | null;
   agentDecides: boolean | null;
   maxPerCompactionCycle: number | null;
 };
@@ -128,6 +129,14 @@ export function MemoryPreferences() {
             <p>{recallPolicyDescription(recallContract)}</p>
           </div>
           <small>{recallBudgetDescription(recallContract)}</small>
+        </div>
+        <div className="memory-preferences__master">
+          <Switch
+            checked={current.memoryEnabled}
+            description="总开关：关闭后不记录、不整理，也不会把记忆召回到 Agent 上下文；不会删除已经保存的记忆。"
+            label="启用记忆增强"
+            onCheckedChange={(checked) => updateDraft({ memoryEnabled: checked })}
+          />
         </div>
         <div className="memory-preferences__grid">
           <Field description="用户习惯、长期选择和反复确认的偏好会按这个强度保留。" htmlFor="memory-stable-preference" label="稳定偏好">
@@ -268,6 +277,7 @@ function memoryPreferenceDraft(value: unknown): MemoryPreferenceDraft {
   const recallDetail = stringValue(recall.detailLevel, 'compact');
   const timelineMaxItems = Math.min(4, Math.max(1, Math.round(numberValue(recall.timelineMaxItems, 2))));
   return {
+    memoryEnabled: booleanValue(memory.enabled, true),
     stablePreference: stableDays >= 730 ? 'priority' : stableDays <= 180 ? 'weaken' : 'normal',
     temporaryDetails: temporaryDays <= 1 ? 'avoid' : temporaryDays <= 7 ? 'weaken' : 'normal',
     includeAgentDialogue: booleanValue(automatic.includeAgentDialogue, true),
@@ -279,6 +289,7 @@ function memoryPreferenceDraft(value: unknown): MemoryPreferenceDraft {
 
 function memoryPreferenceChanges(persisted: MemoryPreferenceDraft, draft: MemoryPreferenceDraft): Record<string, boolean | number | string> {
   const changes: Record<string, boolean | number | string> = {};
+  if (draft.memoryEnabled !== persisted.memoryEnabled) changes['memory.enabled'] = draft.memoryEnabled;
   if (draft.stablePreference !== persisted.stablePreference) {
     changes['memory.timeDecay.stablePreferenceHalfLifeDays'] = ({ weaken: 180, normal: 365, priority: 730 } as const)[draft.stablePreference];
   }
@@ -295,10 +306,11 @@ function memoryPreferenceChanges(persisted: MemoryPreferenceDraft, draft: Memory
 }
 
 function memoryRecallRuntimeContract(value: unknown): MemoryRecallRuntimeContract {
-  const recall = asRecord(asRecord(asRecord(value).settings).memory).recall;
+  const memory = asRecord(asRecord(asRecord(value).settings).memory);
+  const recall = memory.recall;
   const contract = asRecord(recall);
   return {
-    enabled: typeof contract.enabled === 'boolean' ? contract.enabled : null,
+    memoryEnabled: typeof memory.enabled === 'boolean' ? memory.enabled : null,
     agentDecides: typeof contract.agentDecides === 'boolean' ? contract.agentDecides : null,
     maxPerCompactionCycle: Number.isInteger(contract.maxPerCompactionCycle) && Number(contract.maxPerCompactionCycle) > 0
       ? Number(contract.maxPerCompactionCycle)
@@ -307,13 +319,13 @@ function memoryRecallRuntimeContract(value: unknown): MemoryRecallRuntimeContrac
 }
 
 function recallPolicyDescription(contract: MemoryRecallRuntimeContract): string {
-  if (contract.enabled === null || contract.agentDecides === null) {
-    return '总开关与 Agent 按需判断由 Runtime 管理；当前版本尚未返回可配置合同。';
+  if (contract.memoryEnabled === null) {
+    return '记忆总开关由 Runtime 管理；当前版本尚未返回 settings.memory.enabled。';
   }
-  if (!contract.enabled) return '默认关闭；开启前不会把个人记忆加入回答上下文。';
-  return contract.agentDecides
+  if (!contract.memoryEnabled) return '已关闭；不会把个人记忆加入回答上下文，也不会新增记忆记录。';
+  return contract.agentDecides === true
     ? '已开启，由 Agent 根据当前任务判断是否调用。'
-    : '已开启，按 Runtime 当前策略执行召回。';
+    : '已开启，Agent 会根据当前任务按需召回。';
 }
 
 function recallBudgetDescription(contract: MemoryRecallRuntimeContract): string {

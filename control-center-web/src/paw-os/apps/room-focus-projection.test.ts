@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createRoomProjection, type RoomProjectionState } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { buildRoomFocusProjection } from './room-focus-projection';
+import { buildRoomFocusMesh } from './room-focus-mesh';
 
 function participant(id: string, ordinal: number, displayName = `Agent ${ordinal + 1}`) {
   return {
@@ -158,7 +159,7 @@ describe('buildRoomFocusProjection', () => {
     ]);
   });
 
-  it('projects the chronological flow ledger from public messages, transfers and WorkItem revisions', () => {
+  it('projects the chronological flow ledger from public messages and transfers without inventing WorkItem traffic', () => {
     const withWork = room([work({
       id: 'work-root',
       objective: '并行实现 Room 任务图',
@@ -189,15 +190,135 @@ describe('buildRoomFocusProjection', () => {
     expect(focus.flow.map((packet) => [packet.id, packet.kind, packet.sourceParticipantId, packet.targetParticipantIds])).toEqual([
       ['message:message-user', 'request', 'root', ['p-earth']],
       ['activity:approval-a', 'approval', 'p-mars', ['root']],
-      ['work:work-root:1', 'document', 'p-earth', ['p-earth']],
     ]);
-    expect(focus.flow.at(-1)?.refs).toEqual(['docs/plan.md']);
+    expect(focus.flow.some((packet) => packet.id.startsWith('work:'))).toBe(false);
+    expect(focus.flow.at(-1)?.refs).toEqual([]);
+  });
+
+  it('projects only explicitly addressed review requests and conclusions with evidence refs', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['review-request', 'review-conclusion', 'unaddressed-review'];
+    projection.activitiesById = {
+      'review-request': {
+        id: 'review-request', sequence: 5, turnId: 'turn-root', participantId: 'p-earth', sourceSessionId: 'session-earth',
+        kind: 'participant_activity', status: 'waiting', summary: '等待 Venus 复核',
+        payload: {
+          sourceEventType: 'user_input_required', requestKind: 'plan_review', requestId: 'review:request:1',
+          sourceParticipantId: 'p-earth', targetParticipantId: 'p-venus', workItemId: 'work-review',
+          evidenceRefs: ['trace:request-evidence'],
+        },
+        createdAtMs: 20, updatedAtMs: 20,
+      },
+      'review-conclusion': {
+        id: 'review-conclusion', sequence: 6, turnId: 'turn-root', participantId: 'p-venus', sourceSessionId: 'session-venus',
+        kind: 'participant_activity', status: 'completed', summary: '复核通过',
+        payload: {
+          sourceEventType: 'review_concluded', requestId: 'review:request:1',
+          sourceParticipantId: 'p-venus', targetParticipantId: 'p-earth', workItemId: 'work-review',
+          evidenceRefs: ['trace:conclusion-evidence'], reviewState: 'accepted',
+        },
+        createdAtMs: 21, updatedAtMs: 21,
+      },
+      'unaddressed-review': {
+        id: 'unaddressed-review', sequence: 7, turnId: 'turn-root', participantId: 'p-earth', sourceSessionId: 'session-earth',
+        kind: 'participant_activity', status: 'waiting', summary: '等待复核',
+        payload: { requestKind: 'plan_review', requestId: 'review:unaddressed' },
+        createdAtMs: 22, updatedAtMs: 22,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+    expect(focus.flow.filter((packet) => packet.kind === 'review')).toEqual([
+      expect.objectContaining({
+        id: 'activity:review-request', sourceParticipantId: 'p-earth', targetParticipantIds: ['p-venus'],
+        status: 'waiting', refs: ['trace:request-evidence'], workItemId: 'work-review',
+      }),
+      expect.objectContaining({
+        id: 'activity:review-conclusion', sourceParticipantId: 'p-venus', targetParticipantIds: ['p-earth'],
+        status: 'completed', refs: ['trace:conclusion-evidence'], workItemId: 'work-review',
+      }),
+    ]);
+    expect(focus.flow).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'activity:unaddressed-review' }),
+    ]));
+  });
+
+  it('projects the real WorkItem producer phases with actor/owner provenance and nested refs', () => {
+    const producerWork = {
+      id: 'work-child',
+      parentWorkId: 'work-root',
+      createdByParticipantId: 'p-earth',
+      accountableParticipantId: 'p-venus',
+      currentOwnerParticipantId: 'p-mars',
+      artifactRefs: ['artifact:room-ui'],
+      evidenceRefs: ['trace:room-ui'],
+    };
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['work-submitted', 'work-completed', 'work-returned'];
+    projection.activitiesById = {
+      'work-submitted': {
+        id: 'work-submitted', sequence: 10, turnId: 'turn-root', participantId: 'p-mars', sourceSessionId: 'session-mars',
+        kind: 'participant_activity', status: 'completed', summary: 'producer submitted',
+        payload: { activityKind: 'work', phase: 'submitted', workItemId: 'work-child', work: producerWork },
+        createdAtMs: 10, updatedAtMs: 10,
+      },
+      'work-completed': {
+        id: 'work-completed', sequence: 11, turnId: 'turn-root', participantId: 'p-venus', sourceSessionId: 'session-venus',
+        kind: 'participant_activity', status: 'completed', summary: 'producer completed',
+        payload: { activityKind: 'work', phase: 'completed', workItemId: 'work-child', work: producerWork },
+        createdAtMs: 11, updatedAtMs: 11,
+      },
+      'work-returned': {
+        id: 'work-returned', sequence: 12, turnId: 'turn-root', participantId: 'p-venus', sourceSessionId: 'session-venus',
+        kind: 'participant_activity', status: 'completed', summary: 'producer returned',
+        payload: { activityKind: 'work', phase: 'returned', workItemId: 'work-child', work: producerWork },
+        createdAtMs: 12, updatedAtMs: 12,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+
+    expect(focus.flow.filter((packet) => packet.kind === 'review')).toEqual([
+      expect.objectContaining({
+        id: 'activity:work-submitted', sourceParticipantId: 'p-mars', targetParticipantIds: ['p-earth'],
+        status: 'waiting', workItemId: 'work-child', refs: ['artifact:room-ui', 'trace:room-ui'],
+      }),
+      expect.objectContaining({
+        id: 'activity:work-completed', sourceParticipantId: 'p-venus', targetParticipantIds: ['p-mars'],
+        status: 'completed', workItemId: 'work-child', refs: ['artifact:room-ui', 'trace:room-ui'],
+      }),
+      expect.objectContaining({
+        id: 'activity:work-returned', sourceParticipantId: 'p-venus', targetParticipantIds: ['p-mars'],
+        status: 'waiting', workItemId: 'work-child', refs: ['artifact:room-ui', 'trace:room-ui'],
+      }),
+    ]);
+
+    const mesh = buildRoomFocusMesh(focus);
+    expect(mesh.edges).toEqual([
+      expect.objectContaining({
+        kind: 'review', sourceId: 'partner:p-venus', targetId: 'partner:p-mars', state: 'completed',
+        provenance: expect.objectContaining({
+          eventIds: ['activity:work-completed'], workItemIds: ['work-child'],
+          refs: ['artifact:room-ui', 'trace:room-ui'],
+        }),
+      }),
+    ]);
+    expect(mesh.nonDagRelations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'review', sourceId: 'partner:p-mars', targetId: 'partner:p-earth', state: 'waiting',
+        provenance: expect.objectContaining({ eventIds: ['activity:work-submitted'] }),
+      }),
+      expect.objectContaining({
+        kind: 'review', sourceId: 'partner:p-venus', targetId: 'partner:p-mars', state: 'waiting',
+        provenance: expect.objectContaining({ eventIds: ['activity:work-returned'] }),
+      }),
+    ]));
   });
 
   it.each([
     { label: 'dispatch（activity.kind）', kind: 'dispatch', payload: { targetParticipantId: 'p-earth' }, expectedKind: 'dispatch', project: true },
     { label: 'route_decision（activity.kind）', kind: 'route_decision', payload: { targetParticipantId: 'p-earth' }, expectedKind: 'dispatch', project: true },
-    { label: 'intercom（payload.activityKind）', kind: 'participant_activity', payload: { activityKind: 'intercom', targetParticipantId: 'p-earth' }, expectedKind: 'request', project: true },
+    { label: 'intercom（payload.activityKind）', kind: 'participant_activity', payload: { activityKind: 'intercom', targetParticipantId: 'p-earth' }, expectedKind: 'intercom', project: true },
     { label: 'ContextRef 移交', kind: 'participant_activity', payload: { contextRefs: ['context://room-sol/brief'], targetParticipantId: 'p-earth' }, expectedKind: 'context', project: true },
     { label: '未知 activity 不投影', kind: 'participant_activity', payload: { sourceEventType: 'not_a_flow_event', targetParticipantId: 'p-earth' }, expectedKind: 'dispatch', project: false },
     { label: '无目标 dispatch 不投影', kind: 'dispatch', payload: {}, participantId: null, expectedKind: 'dispatch', project: false },
@@ -222,7 +343,159 @@ describe('buildRoomFocusProjection', () => {
     }
   });
 
-  it('makes a real offer visible as a directed handoff and preserves blocker recovery copy', () => {
+  it.each([
+    {
+      label: 'current_progress',
+      kind: 'participant_activity',
+      participantId: 'p-earth',
+      payload: {
+        sourceEventType: 'current_progress',
+        targetParticipantId: 'p-mars',
+        contextRefs: ['doc:progress-notice'],
+      },
+    },
+    {
+      label: 'tool activity',
+      kind: 'tool',
+      participantId: 'p-earth',
+      payload: {
+        targetParticipantId: 'p-mars',
+        toolName: 'read_file',
+      },
+    },
+    {
+      label: 'source-less handoff',
+      kind: 'participant_activity',
+      participantId: '',
+      payload: {
+        sourceEventType: 'handoff',
+        targetParticipantId: 'p-mars',
+      },
+    },
+  ] as const)('does not turn a $label target into a handoff', ({ kind, participantId, payload }) => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['activity-1'];
+    projection.activitiesById = {
+      'activity-1': {
+        id: 'activity-1', turnId: 'turn-root', participantId, sourceSessionId: 'session-earth',
+        kind, status: 'completed', summary: '普通运行记录', payload,
+        createdAtMs: 200, updatedAtMs: 200,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+
+    expect(focus.handoffs).toEqual([]);
+  });
+
+  it.each(['handoff', 'reassigned', 'transfer', 'offer'] as const)(
+    'projects an explicit %s event as a handoff',
+    (sourceEventType) => {
+      const projection = createRoomProjection('room-sol');
+      projection.activityOrder = ['activity-1'];
+      projection.activitiesById = {
+        'activity-1': {
+          id: 'activity-1', turnId: 'turn-root', participantId: 'p-earth', sourceSessionId: 'session-earth',
+          kind: 'participant_activity', status: 'completed', summary: `${sourceEventType} Room 工作`,
+          payload: { sourceEventType, sourceParticipantId: 'p-earth', targetParticipantId: 'p-mars', task: '恢复验收' },
+          createdAtMs: 200, updatedAtMs: 200,
+        },
+      };
+
+      const focus = buildRoomFocusProjection(room(), projection);
+
+      expect(focus.handoffs).toContainEqual(expect.objectContaining({
+        id: 'activity:activity-1',
+        sourceParticipantId: 'p-earth',
+        targetParticipantId: 'p-mars',
+        task: '恢复验收',
+        state: 'completed',
+      }));
+      expect(focus.flow).toEqual([]);
+    },
+  );
+
+  it('projects the real work reassignment activity from its nested WorkItem target', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['activity-1'];
+    projection.activitiesById = {
+      'activity-1': {
+        id: 'activity-1', turnId: 'turn-root', participantId: 'p-earth', sourceSessionId: 'session-earth',
+        kind: 'participant_activity', status: 'completed', summary: '已重新分配工作',
+        payload: {
+          activityKind: 'work',
+          phase: 'reassigned',
+          work: {
+            currentOwnerParticipantId: 'p-mars',
+            offeredToParticipantId: '',
+            objective: '恢复 Room 验收',
+          },
+        },
+        createdAtMs: 200, updatedAtMs: 200,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+
+    expect(focus.handoffs).toContainEqual(expect.objectContaining({
+      id: 'activity:activity-1',
+      sourceParticipantId: 'p-earth',
+      targetParticipantId: 'p-mars',
+      task: '恢复 Room 验收',
+    }));
+  });
+
+  it('uses the parsed dispatch plan target when selectedParticipantIds is the only target signal', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['dispatch-selected'];
+    projection.activitiesById = {
+      'dispatch-selected': {
+        id: 'dispatch-selected', turnId: 'turn-root', participantId: 'p-earth', sourceSessionId: 'session-earth',
+        kind: 'route_decision', status: 'completed', summary: '已选择并行伙伴',
+        payload: {
+          sourceEventType: 'route_decision',
+          dispatchId: 'dispatch-selected',
+          selectedParticipantIds: ['p-mars'],
+          targetDisplayName: 'Agent 2',
+          reason: 'parallel',
+        },
+        createdAtMs: 200, updatedAtMs: 200,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+    const packet = focus.flow.find((candidate) => candidate.id === 'activity:dispatch-selected');
+
+    expect(packet).toEqual(expect.objectContaining({
+      kind: 'dispatch',
+      targetParticipantIds: ['p-mars'],
+      dispatchPlan: expect.objectContaining({ targetParticipantId: 'p-mars' }),
+    }));
+  });
+
+  it('keeps an unknown dispatch target neutral instead of exposing its Runtime display name', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.activityOrder = ['dispatch-unknown-target'];
+    projection.activitiesById = {
+      'dispatch-unknown-target': {
+        id: 'dispatch-unknown-target', turnId: 'turn-root', participantId: 'p-earth', sourceSessionId: 'session-earth',
+        kind: 'route_decision', status: 'completed', summary: '已确定本轮分工',
+        payload: {
+          sourceEventType: 'route_decision', dispatchId: 'dispatch-unknown-target',
+          targetParticipantId: 'p-unknown', targetDisplayName: '不应出现的目标人名', reason: 'parallel',
+        },
+        createdAtMs: 200, updatedAtMs: 200,
+      },
+    };
+
+    const packet = buildRoomFocusProjection(room(), projection).flow
+      .find((candidate) => candidate.id === 'activity:dispatch-unknown-target');
+
+    expect(packet?.summary).toContain('协作行星');
+    expect(packet?.summary).not.toContain('不应出现的目标人名');
+  });
+
+  it('keeps a structural WorkItem offer in task detail without fabricating a handoff', () => {
     const blocked = work({
       id: 'work-blocked',
       objective: '恢复前端验收',
@@ -241,11 +514,94 @@ describe('buildRoomFocusProjection', () => {
       reason: '等待真实 Browser 权限',
       nextStep: '恢复连接后重跑前台验收',
     });
-    expect(focus.handoffs).toContainEqual(expect.objectContaining({
-      sourceParticipantId: 'p-earth',
-      targetParticipantId: 'p-mars',
-      workItemId: 'work-blocked',
-      state: 'offered',
-    }));
+    expect(focus.handoffs).toEqual([]);
+    expect(focus.flow).toEqual([]);
+  });
+
+  it('projects current Room focus from the latest public root without leaking historical failures', () => {
+    const historical = work({
+      id: 'work-historical',
+      objective: '上一轮失败任务',
+      rootTurnId: 'turn-old',
+      currentOwnerParticipantId: 'p-earth',
+      accountableParticipantId: 'p-earth',
+      state: 'blocked',
+      resultSummary: '上一轮旧结果',
+      evidenceRefs: ['evidence:old'],
+      blocker: { reason: '上一轮阻塞' },
+      updatedAtMs: 20,
+    });
+    const current = work({
+      id: 'work-current',
+      objective: '本轮继续修复 Room',
+      rootTurnId: 'turn-current',
+      currentOwnerParticipantId: 'p-mars',
+      accountableParticipantId: 'p-mars',
+      state: 'active',
+      evidenceRefs: ['evidence:current'],
+      updatedAtMs: 40,
+    });
+    const projection = createRoomProjection('room-sol');
+    projection.turnOrder = ['turn-old', 'turn-current'];
+    projection.turnsById = {
+      'turn-old': {
+        id: 'turn-old', rootId: 'turn-old', status: 'failed',
+        messageIds: ['message-old'], activityIds: ['activity-old'], participantIds: ['p-earth'],
+        failedParticipantIds: ['p-earth'], createdAtMs: 10, updatedAtMs: 20,
+      },
+      'turn-current': {
+        id: 'turn-current', rootId: 'turn-current', status: 'running',
+        messageIds: ['message-current'], activityIds: ['activity-current'], participantIds: ['p-mars'],
+        createdAtMs: 30, updatedAtMs: 40,
+      },
+    };
+    projection.messageOrder = ['message-old', 'message-current'];
+    projection.messagesById = {
+      'message-old': {
+        id: 'message-old', roomId: 'room-sol', turnId: 'turn-old', participantId: 'p-earth',
+        sourceSessionId: 'session-p-earth', role: 'assistant', status: 'completed',
+        postKind: 'result', text: '上一轮旧回执', createdAtMs: 20,
+      },
+      'message-current': {
+        id: 'message-current', roomId: 'room-sol', turnId: 'turn-current', participantId: 'p-mars',
+        sourceSessionId: 'session-p-mars', role: 'assistant', status: 'streaming',
+        postKind: 'progress', text: '本轮正在继续', createdAtMs: 40,
+      },
+    };
+    projection.activityOrder = ['activity-old', 'activity-current'];
+    projection.activitiesById = {
+      'activity-old': {
+        id: 'activity-old', turnId: 'turn-old', participantId: 'p-earth', sourceSessionId: 'session-p-earth',
+        kind: 'participant_activity', status: 'failed', summary: '上一轮失败进展',
+        payload: { sourceEventType: 'handoff', sourceParticipantId: 'p-earth', targetParticipantId: 'p-mars' },
+        createdAtMs: 19, updatedAtMs: 20,
+      },
+      'activity-current': {
+        id: 'activity-current', turnId: 'turn-current', participantId: 'p-mars', sourceSessionId: 'session-p-mars',
+        kind: 'participant_activity', status: 'running', summary: '本轮正在修复',
+        payload: { sourceEventType: 'current_progress' }, createdAtMs: 39, updatedAtMs: 40,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room([historical, current]), projection);
+
+    expect(focus.goal).toMatchObject({ rootId: 'turn-current', state: 'running' });
+    expect(focus.goal.rootResult).toBeUndefined();
+    expect(focus.workItems.map((item) => item.id)).toEqual(['work-current']);
+    expect(focus.rootEvidence).toEqual([{ ref: 'evidence:current', kind: 'evidence' }]);
+    expect(focus.counts).toEqual({ active: 1, review: 0, blocked: 0, completed: 0 });
+    expect(focus.partners.find((partner) => partner.participantId === 'p-earth')).toMatchObject({
+      state: 'idle',
+      currentAction: '等待新的工作项',
+    });
+    expect(focus.partners.find((partner) => partner.participantId === 'p-mars')).toMatchObject({
+      state: 'running',
+      currentAction: '本轮正在修复',
+      latestReceipt: '本轮正在继续',
+    });
+    expect(focus.handoffs).toEqual([]);
+    expect(focus.flow.map((packet) => packet.id)).toEqual([
+      'message:message-current',
+    ]);
   });
 });

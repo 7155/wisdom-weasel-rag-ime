@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.eval-suite-list.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "items"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.eval-suite-list.v1"},
+    "ok": {"const": true},
+    "items": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/suite"}
+    }
+  },
+  "$defs": {
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["suiteId", "suiteRevision", "displayName", "fixtureCount", "capabilities"],
+      "properties": {
+        "suiteId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "suiteRevision": {"type": "string", "minLength": 1, "maxLength": 120},
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 240},
+        "fixtureCount": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "capabilities": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        }
+      }
+    }
+  }
+}

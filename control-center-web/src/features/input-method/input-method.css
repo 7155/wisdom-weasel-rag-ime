@@ -32,6 +32,91 @@ main[data-route-id='input'] .input-mode-console {
   gap: var(--space-3);
 }
 
+/* Trace is a small discovery surface, not a second transcript. Keep identity
+ * and lane facts scannable while leaving raw input and diagnostic prose out. */
+main[data-route-id='input'] .input-trace-discovery {
+  display: grid;
+  gap: var(--space-2);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--input-os-panel-radius);
+  background: var(--color-surface);
+}
+
+main[data-route-id='input'] .input-trace-discovery__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+main[data-route-id='input'] .input-trace-discovery__head > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+main[data-route-id='input'] .input-trace-discovery__head span,
+main[data-route-id='input'] .input-trace-discovery__lane small,
+main[data-route-id='input'] .input-trace-discovery > small {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+main[data-route-id='input'] .input-trace-discovery__head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-trace-discovery__head a {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+main[data-route-id='input'] .input-trace-discovery__lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+main[data-route-id='input'] .input-trace-discovery__lane {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 1px solid var(--color-border-subtle, var(--color-border));
+  border-radius: 8px;
+}
+
+main[data-route-id='input'] .input-trace-discovery__lane > span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='input'] .input-trace-discovery__lane small {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  main[data-route-id='input'] .input-trace-discovery__head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  main[data-route-id='input'] .input-trace-discovery__lanes {
+    grid-template-columns: 1fr;
+  }
+}
+
 main[data-route-id='input'] .input-mode-deck {
   display: grid;
   min-width: 0;

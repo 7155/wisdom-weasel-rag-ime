@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.eval-schedule-error.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "errorCode", "error"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.eval-schedule-error.v1"},
+    "ok": {"const": false},
+    "errorCode": {"enum": ["invalid_request", "schedule_not_found", "schedule_unavailable"]},
+    "error": {"type": "string", "minLength": 1}
+  }
+}

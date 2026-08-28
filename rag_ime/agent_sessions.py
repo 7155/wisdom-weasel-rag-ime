@@ -7,7 +7,7 @@ import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, cast
 from urllib.parse import quote
 
 from .agent_approval_model import pending_model_arbitration
@@ -270,7 +270,35 @@ class AgentSessionStore:
         include_archived: bool = False,
         include_internal: bool = False,
         limit: int = 100,
+        before_updated_at_ms: int | None = None,
+        before_id: str | None = None,
     ) -> list[dict[str, object]]:
+        page = self.list_page(
+            include_archived=include_archived,
+            include_internal=include_internal,
+            limit=limit,
+            before_updated_at_ms=before_updated_at_ms,
+            before_id=before_id,
+        )
+        return cast(list[dict[str, object]], page["items"])
+
+    def list_page(
+        self,
+        *,
+        include_archived: bool = False,
+        include_internal: bool = False,
+        limit: int = 100,
+        before_updated_at_ms: int | None = None,
+        before_id: str | None = None,
+    ) -> dict[str, object]:
+        """Return a stable page of Sessions ordered by recency.
+
+        ``before_updated_at_ms`` and ``before_id`` form one keyset cursor.
+        The id tie-breaker is required because multiple Sessions can be
+        touched during the same millisecond. ``list`` remains the legacy
+        array-shaped API for internal callers; this page-shaped method is the
+        listing seam used by the HTTP application service.
+        """
         bounded_limit = max(1, min(int(limit), 500))
         clauses = [] if include_archived else ["s.status <> 'archived'"]
         if not include_internal:
@@ -280,13 +308,52 @@ class AgentSessionStore:
                     "s.id NOT IN (SELECT child_session_id FROM agent_subagent_runs)",
                 ]
             )
+        normalized_before_id = str(before_id or "").strip()
+        if before_updated_at_ms is not None and normalized_before_id:
+            clauses.append(
+                "(s.updated_at_ms < ? OR "
+                "(s.updated_at_ms = ? AND s.id < ?))"
+            )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query_params: list[object] = []
+        if before_updated_at_ms is not None and normalized_before_id:
+            query_params.extend(
+                [before_updated_at_ms, before_updated_at_ms, normalized_before_id]
+            )
+        query_params.append(bounded_limit + 1)
         with self._connect() as conn:
             rows = conn.execute(
-                f"{_SESSION_SELECT} {where} ORDER BY s.updated_at_ms DESC LIMIT ?",  # noqa: S608
-                (bounded_limit,),
+                f"{_SESSION_SELECT} {where} "
+                "ORDER BY s.updated_at_ms DESC, s.id DESC LIMIT ?",  # noqa: S608
+                query_params,
             ).fetchall()
-        return [_session_payload(row, _joined_runtime_binding(row)) for row in rows]
+        has_more = len(rows) > bounded_limit
+        page_rows = rows[:bounded_limit]
+        items = [
+            _session_payload(row, _joined_runtime_binding(row))
+            for row in page_rows
+        ]
+        next_updated_at_ms = (
+            int(page_rows[-1]["updated_at_ms"])
+            if has_more and page_rows
+            else None
+        )
+        next_id = str(page_rows[-1]["id"]) if has_more and page_rows else None
+        next_cursor = (
+            {
+                "beforeUpdatedAtMs": next_updated_at_ms,
+                "beforeId": next_id,
+            }
+            if has_more
+            else None
+        )
+        return {
+            "items": items,
+            "hasMore": has_more,
+            "nextBeforeUpdatedAtMs": next_updated_at_ms,
+            "nextBeforeId": next_id,
+            "nextCursor": next_cursor,
+        }
 
     def search_history(
         self,

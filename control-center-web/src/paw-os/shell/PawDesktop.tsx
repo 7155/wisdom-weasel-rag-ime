@@ -1,5 +1,5 @@
 import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
 import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
@@ -9,7 +9,7 @@ import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
 import { PawFieldLede } from './PawFieldLede';
-import { PawWayfinderWork } from './PawWayfinderWork';
+import { clampWayfinderIconPosition, PawWayfinderWork, WAYFINDER_DRAG_MIME } from './PawWayfinderWork';
 import { PawWindowLayer } from './PawWindowLayer';
 import { pawBrowserHost } from '../apps/paw-browser-host';
 
@@ -463,6 +463,8 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
 }) {
   const desktopApps: PawAppId[] = ['project-workbench', 'agent', 'files', 'browser', 'terminal'];
   const shortcutsRef = useRef<HTMLDivElement>(null);
+  const api = usePawDesktopApi();
+  const wayfinder = usePawDesktopStore((state) => state.wayfinder);
   const running = usePawRunningApps();
   // Roving arrows walk the shortcut list like a real desktop: focus moves
   // between identities without tabbing out of the Wayfinder, and Enter on the
@@ -483,8 +485,30 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
       : Math.min(Math.max(current + (forward ? 1 : -1), 0), buttons.length - 1);
     buttons[next]?.focus();
   };
+  const startAppDrag = useCallback((event: DragEvent<HTMLElement>, appId: PawAppId) => {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(WAYFINDER_DRAG_MIME, `app:${appId}`);
+    event.dataTransfer.setData('text/plain', `app:${appId}`);
+  }, []);
+  const dropOnDesktop = useCallback((event: DragEvent<HTMLElement>) => {
+    const iconId = event.dataTransfer.getData(WAYFINDER_DRAG_MIME) || event.dataTransfer.getData('text/plain');
+    if (!iconId.startsWith('app:') && !iconId.startsWith('project:') && !iconId.startsWith('session:') && !iconId.startsWith('room:')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = clampWayfinderIconPosition({
+      x: event.clientX - rect.left - 48,
+      y: event.clientY - rect.top - 46,
+    }, event.currentTarget);
+    api.getState().setWayfinderIconPosition(iconId, position);
+    if (iconId.startsWith('session:') || iconId.startsWith('room:')) {
+      api.getState().setWayfinderProjectAssignment(iconId, null);
+      api.getState().setWayfinderArchived(iconId, false);
+    }
+  }, [api]);
   return (
-    <section className="paw-wayfinder" aria-label="项目场">
+    <section className="paw-wayfinder" aria-label="项目场" onDragOver={(event) => { if ([...event.dataTransfer.types].includes(WAYFINDER_DRAG_MIME)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; } }} onDrop={dropOnDesktop}>
       <div aria-hidden="true" className="paw-field-media">
         <PawCompositionField effects />
       </div>
@@ -496,43 +520,52 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
           so the type belongs to the picture instead of sitting on a card. */}
       <div className="paw-field-stage">
         <PawFieldLede onOpen={onOpen} />
-        {/* The identity rail is the lede's index: same column, same ground.
-            Each tile keeps the selection/open contracts (click selects,
-            double-click or Enter opens) and mirrors the Dock's
-            open/minimized running language so live work is visible from the
-            desktop. */}
-        <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
-          {desktopApps.map((id) => {
-            const open = running.open.has(id);
-            const minimizedOnly = open && !running.visible.has(id);
-            return (
-              <button
-                aria-selected={selectedApps.has(id) || undefined}
-                data-app={id}
-                data-desktop-app={id}
-                data-minimized={minimizedOnly || undefined}
-                data-open={open || undefined}
-                key={id}
-                onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
-                onDoubleClick={() => onOpen(id)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') onOpen(id);
-                }}
-                title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : undefined}
-                type="button"
-              >
-                <span><PawAppIcon appId={id} size={28} /></span>
-                <strong>{pawApp(id).shortLabel}</strong>
-                <i aria-hidden="true" />
-              </button>
-            );
-          })}
-        </div>
+      </div>
+      {/* App shortcuts share the Wayfinder's desktop coordinate plane. They
+          are still App launchers, but their icon positions now live beside
+          project/session icon positions in the same PAWOS snapshot. */}
+      <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
+        {desktopApps.map((id, index) => {
+          const open = running.open.has(id);
+          const minimizedOnly = open && !running.visible.has(id);
+          const position = wayfinder.iconPositions[`app:${id}`] ?? defaultAppIconPosition(index);
+          return (
+            <button
+              aria-selected={selectedApps.has(id) || undefined}
+              data-app={id}
+              data-desktop-app={id}
+              data-minimized={minimizedOnly || undefined}
+              data-open={open || undefined}
+              draggable
+              key={id}
+              onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
+              onDoubleClick={() => onOpen(id)}
+              onDragStart={(event) => startAppDrag(event, id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') onOpen(id);
+              }}
+              style={{ '--wayfinder-x': `${position.x}px`, '--wayfinder-y': `${position.y}px` } as CSSProperties}
+              title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : pawApp(id).shortLabel}
+              type="button"
+            >
+              <span><PawAppIcon appId={id} size={28} /></span>
+              <strong>{pawApp(id).shortLabel}</strong>
+              <i aria-hidden="true" />
+            </button>
+          );
+        })}
       </div>
       <PawWayfinderWork />
     </section>
   );
 });
+
+function defaultAppIconPosition(index: number): { x: number; y: number } {
+  return {
+    x: 30 + (index % 5) * 104,
+    y: 28 + Math.floor(index / 5) * 104,
+  };
+}
 
 /* One projection answers "which Apps are running, which are hidden" for both
  * the Wayfinder list and the Dock. The sorted string signature keeps the

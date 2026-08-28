@@ -57,7 +57,7 @@ def default_agent_configuration(
     idle_timeout_seconds: int = 900,
     role_id: str = "companion-future-v1",
     role_version: str = "1",
-    model_profile: str = "openai-codex/gpt-5.6-sol",
+    model_profile: str = "openai-codex/gpt-5.6-luna",
     tool_profile_version: str = "control-center-v1",
     resume_last_session: bool = True,
     coordinator_enabled: bool = False,
@@ -796,8 +796,8 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
 def _default_model_routing() -> dict[str, dict[str, str]]:
     return {
         "primary": {
-            "modelProfile": "inherit",
-            "thinkingLevel": "inherit",
+            "modelProfile": "openai-codex/gpt-5.6-luna",
+            "thinkingLevel": "max",
         },
         "toolAgent": {
             "modelProfile": "openai-codex/gpt-5.6-luna",

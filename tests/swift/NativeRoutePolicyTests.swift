@@ -234,15 +234,16 @@ struct NativeRoutePolicyTests {
         let observationSnapshot = try policy.resolveRequest(
             pathId: "observability.snapshot",
             parameters: [:],
-            query: ["sessionId": "session-a", "limit": "100"],
+            query: ["sessionId": "session-a", "runId": "subagent-run:test", "limit": "100"],
             body: nil
         )
         expect(observationSnapshot.request.url?.path == "/api/observability/snapshot", "observation snapshot route")
+        expect(observationSnapshot.request.url?.query?.contains("runId=subagent-run:test") == true, "observation run filter")
 
         let observationEvents = try policy.resolveSubscription(
             pathId: "observability.events",
             parameters: [:],
-            query: ["sessionId": "session-a"],
+            query: ["sessionId": "session-a", "runId": "subagent-run:test"],
             lastEventId: "observation:41"
         )
         expect(observationEvents.request.url?.path == "/api/observability/events", "observation event route")

@@ -265,7 +265,7 @@ describe('Project Field prototype', () => {
     expect(within(workspace).getByRole('button', { name: '返回项目场' })).toBeInTheDocument();
     expect(within(workspace).queryByRole('button', { name: '查看 Room 历史' })).not.toBeInTheDocument();
     expect(within(workspace).queryByRole('button', { name: '更多 Room 操作' })).not.toBeInTheDocument();
-    expect(workspace).not.toHaveTextContent('/Users/undo');
+    expect(workspace).not.toHaveTextContent('/Users/example');
     expect(within(workspace).queryByTitle(/agent-session:|git:/)).not.toBeInTheDocument();
     await waitFor(() => expect(workspace).toHaveFocus());
 

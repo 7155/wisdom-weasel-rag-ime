@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "rag-ime.vertical-agent-manifest.v1",
+  "appId": "sgg",
+  "suiteRevision": "fixture-v2",
+  "displayName": "SGG 示例垂直 Agent",
+  "capabilities": ["trace.emit", "eval.ground_truth", "rag.retrieval", "memory.recall", "sandbox.self_test"],
+  "fixtures": [
+    {
+      "fixtureId": "sales-ledger-answer",
+      "inputLabel": "销售额问答（公开 fixture）",
+      "truth": {"requiredEvidenceIds": ["knowledge:sales-ledger", "memory:fixture:sgg:pricing-policy"]},
+      "ragEvidence": {
+        "evidenceId": "knowledge:sales-ledger",
+        "sourceKind": "knowledge",
+        "sourceLane": "sandbox_knowledge",
+        "sourceRef": "K-08fe67dcbc"
+      }
+    }
+  ],
+  "selfTest": {
+    "fixturePath": "sgg/sales-ledger.md",
+    "documentId": "sales-ledger",
+    "baseAlias": "public",
+    "baseName": "SGG public sales ledger",
+    "query": "sales ledger",
+    "memory": {
+      "memoryId": "memory:fixture:sgg:pricing-policy",
+      "sourceRef": "fixture://memory/sgg/pricing-policy",
+      "summaryFingerprint": "sha256:fixture-sgg-pricing-policy"
+    }
+  },
+  "traceRequirements": {
+    "requiredSpanNames": ["agent.input", "rag.retrieve", "memory.recall", "agent.answer"]
+  },
+  "ragChecks": {
+    "required": true,
+    "requiredSpanNames": ["rag.retrieve"],
+    "requiredEvidenceSourceKinds": ["knowledge"],
+    "requiredEvidenceStages": ["retrieval_output"]
+  },
+  "memoryChecks": {
+    "required": true,
+    "requiredSpanNames": ["memory.recall"],
+    "requiredEvidenceSourceKinds": ["memory"],
+    "requiredEvidenceStages": ["memory_recall"]
+  },
+  "sandbox": {
+    "workspaceRoot": "examples/vertical_agents/runs/sgg",
+    "mutationMode": "staged",
+    "network": "blocked",
+    "productionWriteBlocked": true
+  }
+}

@@ -103,6 +103,9 @@ export function useSafeTextRelease(
       const ceiling = ceilingRef.current;
       const current = visibleEndRef.current;
       const backlog = ceiling - current;
+      // Compare timestamps from the same rAF clock. Hosts can expose a
+      // different time origin through performance.now().
+      if (lastAdvanceAt === undefined) lastAdvanceAt = now;
       if (backlog <= 0) {
         lastAdvanceAt = now;
         return;

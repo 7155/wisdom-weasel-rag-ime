@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import sqlite3
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -108,14 +109,36 @@ from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .agent_wake_application import AgentWakeApplicationService
 from .contracts.json_schema import validate_contract
 from .embeddings import EmbeddingProvider
+from .eval_run_store import EvalRunStore
+from .eval_schedule_store import (
+    EvalScheduleExecutionError,
+    EvalScheduleRunner,
+    EvalScheduleStore,
+)
+from .evidence_eval import evaluate_evidence_ground_truth
 from .observability import ObservationHub
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory
 from .personal_context import (
     AgentMemoryEvidenceStore,
     PersonalContextConsolidator,
 )
+from .memory_maintenance_settings import memory_enabled_from_settings
 from .session_memory_recall import SessionMemoryRecallBuilder
 from .text_utils import compact_whitespace
+from .trace_adapters import envelope_from_observations
+from .trace_runtime import (
+    TraceContractError,
+    TraceEnvelope,
+    validate_sandbox_run,
+    validate_trace_envelope,
+)
+from .trace_store import TraceStore
+from .sandbox_run_store import SandboxRunStore
+from .vertical_agent_suite import (
+    BuiltinVerticalSuiteError,
+    run_builtin_vertical_agent_eval,
+)
+from .vertical_agent_harness import list_builtin_eval_suites
 
 ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 ROOM_CONTEXT_HISTORY_CHAR_BUDGET = 3_600
@@ -125,6 +148,7 @@ ROOM_MESSAGE_CHAR_LIMIT = 8_000
 # by one final settle decision that must stop the cancel scope.
 GOAL_SETTLE_ATTEMPT_LIMIT = 5
 GOAL_CONTINUATION_LIMIT = 4
+_SCHEDULE_RUN_TRACE_ID_LIMIT = 64
 
 
 class AgentService:
@@ -143,6 +167,11 @@ class AgentService:
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
         background_job_execution_owner: bool = True,
+        eval_schedule_executor: (
+            Callable[[Mapping[str, object]], Mapping[str, object]] | None
+        ) = None,
+        trace_store: TraceStore | None = None,
+        sandbox_run_store: SandboxRunStore | None = None,
         collaboration_profile_signers: Mapping[str, bytes] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
@@ -157,6 +186,13 @@ class AgentService:
         if not self.tool_gateway_url:
             raise ValueError("tool gateway URL must not be empty")
         self._tool_manifest_provider: ToolManifestProvider | None = None
+        self._external_trace_resolvers: list[
+            Callable[[str], TraceEnvelope | None]
+        ] = []
+        # Eval schedules use the existing Gateway wake poller.  The executor
+        # is intentionally injected: creating a schedule never grants access
+        # to Provider, Memory, or Knowledge state by itself.
+        self._eval_schedule_executor = eval_schedule_executor
         configured = replace(
             runtime_config or PiRuntimeConfig.from_environment(),
             tool_gateway_token=self.tool_token,
@@ -186,7 +222,6 @@ class AgentService:
             or default_agent_configuration(
                 enabled=configured.enabled,
                 idle_timeout_seconds=configured.idle_timeout_seconds,
-                model_profile=self.runtime_factory.default_model_profile,
             )
         )
         self.configuration_store = AgentConfigurationStore(db_path)
@@ -236,13 +271,28 @@ class AgentService:
         self.room_partner_dispatches.initialize()
         self.governance_projection = GovernanceProjectionStore(db_path)
         self.governance_projection.initialize()
-        self.knowledge_promotion = KnowledgePromotionStore(db_path)
+        self.knowledge_promotion = KnowledgePromotionStore(
+            db_path,
+            observation_callback=(
+                lambda record: self.observations.enqueue_knowledge_retrieval_record(record)
+            ),
+        )
         self.knowledge_promotion.initialize()
         self._collaboration_profile_signers = {
             str(signer_id): bytes(key)
             for signer_id, key in (collaboration_profile_signers or {}).items()
         }
         self.observations = ObservationHub(db_path)
+        self.trace_store = trace_store or TraceStore(db_path)
+        initialize_trace_store = getattr(self.trace_store, "initialize", None)
+        if callable(initialize_trace_store):
+            initialize_trace_store()
+        self.eval_runs = EvalRunStore(db_path)
+        self.eval_runs.initialize()
+        self.sandbox_runs = sandbox_run_store or SandboxRunStore(db_path)
+        self.sandbox_runs.initialize()
+        if self._eval_schedule_executor is None:
+            self._eval_schedule_executor = self._run_builtin_eval_schedule
         self.room_events = AgentRoomEventHub(self.rooms)
         self._remove_observation_room_observer = self.room_events.add_observer(
             self.observations.enqueue_room_event
@@ -289,6 +339,9 @@ class AgentService:
             personas=self.personas,
             runtime_provider=lambda: self.runtime,
             runtime_factory=self.runtime_factory,
+            default_model_profile_provider=lambda: str(
+                self.configuration_store.snapshot()["configuration"]["sessionDefaults"]["modelProfile"]
+            ),
         )
         initial_configuration = self.configuration_store.snapshot()
         if (
@@ -366,6 +419,8 @@ class AgentService:
                 context_runtime=self.context_runtime,
                 task_context=self.task_context,
                 runtime_provider=lambda: self.runtime,
+                observation_callback=self.observations.enqueue_memory_recall_record,
+                memory_enabled_provider=self.memory_enabled,
             )
         )
         self.memory_evidence_application = (
@@ -373,6 +428,7 @@ class AgentService:
                 sessions=self.sessions,
                 memory_evidence=self.memory_evidence,
                 message_text=_agent_message_text,
+                memory_enabled_provider=self.memory_enabled,
             )
         )
         self.prompt_delivery_application = (
@@ -386,6 +442,7 @@ class AgentService:
                 room_public_recovery_context=(
                     self._room_public_recovery_context_for_session
                 ),
+                memory_enabled_provider=self.memory_enabled,
             )
         )
         self.prompt_application = AgentPromptApplicationService(
@@ -502,6 +559,15 @@ class AgentService:
         self._approval_executor: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._memory_maintenance_probe: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._process_id_provider = process_id_provider
+        self.eval_schedules = EvalScheduleStore(db_path)
+        self.eval_schedules.initialize()
+        self.eval_schedule_runner = EvalScheduleRunner(
+            store=self.eval_schedules,
+            execute=self._execute_eval_schedule,
+            eval_run_exists=self._eval_run_exists,
+            eval_run_loader=self.eval_runs.get,
+            max_parallel=1,
+        )
         self.wake_schedules = AgentWakeScheduleStore(db_path)
         self.wake_schedules.initialize()
         self.wake_application = AgentWakeApplicationService(
@@ -527,6 +593,7 @@ class AgentService:
             enabled=wake_scheduler_enabled,
             poll_seconds=wake_scheduler_poll_seconds,
             max_parallel=2,
+            on_tick=self._run_eval_schedules_once,
         )
         self.wake_application.bind_scheduler(self.wake_scheduler)
         self._remove_wake_observer = self.events.add_observer(
@@ -590,6 +657,8 @@ class AgentService:
                 session_id,
                 payload,
             ),
+            add_room_participant=self.add_room_participant,
+            remove_room_participant=self.remove_room_participant,
             recover_faulted_session=self._recover_faulted_room_session,
         )
         self.room_work_application = RoomWorkApplicationService(self)
@@ -629,6 +698,14 @@ class AgentService:
                 self.delete_session(session_id)
             ),
             runtime_status=lambda: self.runtime_status(),
+            release_room_work=lambda room_id, participant_id, replacement_id, reason: (
+                self.room_work.release_for_participant(
+                    room_id,
+                    participant_id,
+                    replacement_participant_id=replacement_id,
+                    reason=reason,
+                )
+            ),
             # Read-only busy checks under the shared lock; mutation stays
             # inside the registry.
             turn_lock=self.room_turns.lock,
@@ -650,10 +727,77 @@ class AgentService:
     ) -> None:
         self._memory_maintenance_probe = probe
 
+    def bind_eval_schedule_executor(
+        self,
+        executor: Callable[[Mapping[str, object]], Mapping[str, object]],
+    ) -> None:
+        """Bind the Runtime-owned evaluator used by the existing wake loop.
+
+        The callback must persist its immutable EvalRun through ``eval_runs``
+        and return only ``{"evalRunId": ...}`` (additional values are not
+        persisted by the schedule ledger).  It must not use this seam to write
+        production Memory/Knowledge or invoke a Provider implicitly.
+        """
+
+        if not callable(executor):
+            raise TypeError("eval schedule executor must be callable")
+        self._eval_schedule_executor = executor
+        self.wake_scheduler.wake()
+
+    def _execute_eval_schedule(
+        self,
+        claim: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        executor = self._eval_schedule_executor
+        if executor is None:
+            raise EvalScheduleExecutionError("executor_unavailable")
+        result = executor(claim)
+        if not isinstance(result, Mapping):
+            raise EvalScheduleExecutionError("executor_invalid_result")
+        return result
+
+    def _run_builtin_eval_schedule(
+        self,
+        claim: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        """Run one checked-in fixture suite in a managed temporary workspace."""
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="paw-vertical-eval-") as workspace:
+                return run_builtin_vertical_agent_eval(
+                    claim.get("suiteId"),
+                    claim.get("suiteRevision"),
+                    workspace,
+                    eval_store=self.eval_runs,
+                    trace_store=getattr(self, "trace_store", None),
+                    schedule_run_id=claim.get("runId"),
+                    schedule_due_at_ms=claim.get("dueAtMs"),
+                )
+        except BuiltinVerticalSuiteError as exc:
+            raise EvalScheduleExecutionError(exc.code) from exc
+
+    def _eval_run_exists(self, eval_run_id: str) -> bool:
+        return self.eval_runs.get(eval_run_id) is not None
+
+    def _run_eval_schedules_once(self, now_ms: int | None = None) -> int:
+        """Advance due Eval schedules from the existing wake scheduler tick."""
+
+        if self._eval_schedule_executor is None:
+            return 0
+        return self.eval_schedule_runner.run_due_once(now_ms=now_ms)
+
     def bind_tool_manifest_provider(self, provider: ToolManifestProvider) -> None:
         """Bind the backend-owned tool catalog without exposing gateway credentials."""
 
         self._tool_manifest_provider = provider
+
+    def bind_external_trace_resolver(
+        self,
+        resolver: Callable[[str], TraceEnvelope | None],
+    ) -> None:
+        """Bind an authority-preserving adapter for traces outside the journal."""
+
+        self._external_trace_resolvers.append(resolver)
 
     def list_context_items(
         self,
@@ -1013,6 +1157,11 @@ class AgentService:
             if value
         )
         return {"sessionContext": session_context} if session_context else {}
+
+    def memory_enabled(self) -> bool:
+        """Resolve the live memory master switch for the next Runtime call."""
+
+        return memory_enabled_from_settings(self.db_path)
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()
@@ -1957,6 +2106,59 @@ class AgentService:
             work_item_id,
             payload,
         )
+
+    def resume_room_work_item(
+        self,
+        room_id: str,
+        work_item_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        actor_participant_id = str(payload.get("actorParticipantId") or "").strip()
+        if not actor_participant_id:
+            raise ValueError("actorParticipantId must not be empty")
+        client_action_id = _optional_client_message_id(payload.get("clientActionId"))
+        if not client_action_id:
+            client_action_id = f"room-work-resume:{uuid.uuid4()}"
+        phase = str(payload.get("phase") or "recovery").strip()
+        if not phase or len(phase) > 120:
+            raise ValueError("phase must contain between 1 and 120 characters")
+        timeout_seconds = int(payload.get("timeoutSeconds") or 300)
+        if not 5 <= timeout_seconds <= 300:
+            raise ValueError("timeoutSeconds must be between 5 and 300")
+        response = self.room_partner_application.resume_work_item_for_control(
+            room_id,
+            work_item_id,
+            actor_participant_id,
+            phase=phase,
+            timeout_seconds=timeout_seconds,
+            tool_call_id=client_action_id,
+        )
+        if not isinstance(response.get("workItem"), Mapping) or not str(
+            response.get("childDispatchId") or ""
+        ).strip():
+            raise RuntimeError("Room WorkItem resume did not return a verifiable dispatch receipt")
+        response = {
+            "schemaVersion": "rag-ime.agent-room-work-item-resume.v1",
+            "ok": True,
+            "operation": "resume",
+            "roomId": room_id,
+            "workItem": response.get("workItem"),
+            "rootId": response.get("rootId"),
+            "dispatchReceipt": {
+                "childDispatchId": response.get("childDispatchId", ""),
+                "participantId": response.get("participantId", ""),
+                "status": response.get("status", "failed"),
+                "workItemId": work_item_id,
+                "accepted": True,
+            },
+            "contractStatus": response.get("contractStatus", "pending"),
+        }
+        response["controlReceipt"] = {
+            "state": "accepted",
+            "scope": "room_work_resume",
+            "clientActionId": client_action_id,
+        }
+        return response
 
     def room_topics(
         self,
@@ -3329,6 +3531,380 @@ class AgentService:
     ) -> dict[str, object]:
         return self.observations.snapshot(payload)
 
+    def list_eval_suites(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return the validated, privacy-safe registry projection for Eval UI."""
+
+        values = dict(payload or {})
+        limit_value = values.get("limit")
+        if limit_value in (None, ""):
+            limit = 100
+        else:
+            if isinstance(limit_value, bool):
+                raise ValueError("eval suite list limit must be an integer")
+            try:
+                limit = int(limit_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("eval suite list limit must be an integer") from exc
+        if not 1 <= limit <= 100:
+            raise ValueError("eval suite list limit must be between 1 and 100")
+        result = {
+            "schemaVersion": "rag-ime.eval-suite-list.v1",
+            "ok": True,
+            "items": list_builtin_eval_suites()[:limit],
+        }
+        validate_contract(result, "eval-suite-list.v1.json")
+        return result
+
+    def list_eval_schedules(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return bounded local EvalSchedule projections for a caller.
+
+        The schedule store owns lease and settlement state.  This facade only
+        returns its public projection, so a Control API caller can inspect
+        schedule identity and run state without receiving a lease token.
+        """
+
+        values = dict(payload or {})
+        limit = values.get("limit")
+        if limit in (None, ""):
+            limit = 100
+        result = {
+            "schemaVersion": "rag-ime.eval-schedule-list.v1",
+            "ok": True,
+            "items": self.eval_schedules.list(limit=limit),
+        }
+        validate_contract(result, "eval-schedule-list.v1.json")
+        return result
+
+    def create_eval_schedule(
+        self,
+        payload: Mapping[str, object],
+        *,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Create one local EvalSchedule without starting a scheduler daemon."""
+
+        schedule = self.eval_schedules.create(payload, now_ms=now_ms)
+        result = {
+            "schemaVersion": "rag-ime.eval-schedule-create.v1",
+            "ok": True,
+            "schedule": schedule,
+        }
+        validate_contract(result, "eval-schedule-create.v1.json")
+        scheduler = getattr(self, "wake_scheduler", None)
+        if scheduler is not None:
+            # ``wake`` only nudges the already-owned wake loop.  It does not
+            # create or start a second thread for Eval schedules.
+            scheduler.wake()
+        return result
+
+    def eval_schedule_runs(
+        self,
+        schedule_id: str,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return one schedule and a bounded newest-first run projection."""
+
+        values = dict(payload or {})
+        limit = values.get("limit")
+        if limit in (None, ""):
+            limit = 100
+        schedule = self.eval_schedules.get(schedule_id)
+        runs = self.eval_schedules.runs(schedule_id, limit=limit)
+        eval_store = getattr(self, "eval_runs", None)
+        eval_get = getattr(eval_store, "get", None)
+        projected_runs: list[dict[str, object]] = []
+        for run in runs:
+            projected = dict(run)
+            trace_ids: list[str] = []
+            trace_ids_truncated = False
+            eval_run_id = str(run.get("evalRunId") or "")
+            if eval_run_id and callable(eval_get):
+                eval_run = eval_get(eval_run_id)
+                if eval_run is not None:
+                    if not isinstance(eval_run, Mapping):
+                        raise TraceContractError("persisted EvalRun projection is invalid")
+                    raw_trace_ids = eval_run.get("traceIds")
+                    if (
+                        not isinstance(raw_trace_ids, Sequence)
+                        or isinstance(raw_trace_ids, (str, bytes, bytearray))
+                    ):
+                        raise TraceContractError("persisted EvalRun traceIds are invalid")
+                    trace_ids_truncated = len(raw_trace_ids) > _SCHEDULE_RUN_TRACE_ID_LIMIT
+                    trace_ids = [
+                        str(trace_id)
+                        for trace_id in raw_trace_ids[:_SCHEDULE_RUN_TRACE_ID_LIMIT]
+                    ]
+            projected["traceIds"] = trace_ids
+            projected["traceIdsTruncated"] = trace_ids_truncated
+            projected_runs.append(projected)
+        result = {
+            "schemaVersion": "rag-ime.eval-schedule-run-list.v1",
+            "ok": True,
+            "schedule": schedule,
+            "items": projected_runs,
+        }
+        validate_contract(result, "eval-schedule-run-list.v1.json")
+        return result
+
+    def observation_trace(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Project one bounded observation trace without creating persistence."""
+
+        values = dict(payload or {})
+        trace_id = _observation_trace_id(values)
+
+        external_envelope = self._resolve_external_trace(trace_id)
+        if external_envelope is not None:
+            trace = external_envelope.to_dict()
+            if trace.get("traceId") != trace_id:
+                raise TraceContractError("external trace envelope id does not match requested trace")
+            result = {
+                "schemaVersion": "rag-ime.observability-trace-get.v1",
+                "traceId": trace_id,
+                "trace": trace,
+                "truncated": False,
+                "projectionSource": "source_adapter",
+                "observationWindow": {
+                    "firstSequence": 0,
+                    "lastSequence": 0,
+                    "resumeToken": f"source:{trace_id}",
+                    "nextBeforeSequence": None,
+                },
+            }
+            validate_contract(result, "observability-trace-get.v1.json")
+            return result
+
+        # A durable canonical trace outranks the observation journal, which
+        # is only a bounded discovery/progress projection.  ``getattr`` keeps
+        # lightweight AgentService.__new__ test doubles compatible with the
+        # pre-TraceStore facade.
+        durable_store = getattr(self, "trace_store", None)
+        durable_get = getattr(durable_store, "get", None)
+        if callable(durable_get):
+            durable_trace = durable_get(trace_id)
+            if durable_trace is not None:
+                if not isinstance(durable_trace, Mapping):
+                    raise TraceContractError("durable TraceStore returned an invalid envelope")
+                trace = dict(durable_trace)
+                validate_trace_envelope(trace)
+                if trace.get("traceId") != trace_id:
+                    raise TraceContractError(
+                        "durable trace envelope id does not match requested trace"
+                    )
+                result = {
+                    "schemaVersion": "rag-ime.observability-trace-get.v1",
+                    "traceId": trace_id,
+                    "trace": trace,
+                    "truncated": False,
+                    "projectionSource": "trace_store",
+                    "observationWindow": {
+                        "firstSequence": 0,
+                        "lastSequence": 0,
+                        "resumeToken": f"trace-store:{trace_id}",
+                        "nextBeforeSequence": None,
+                    },
+                }
+                validate_contract(result, "observability-trace-get.v1.json")
+                return result
+
+        snapshot_payload = {"traceId": trace_id}
+        for key in ("limit", "beforeSequence"):
+            if values.get(key) not in (None, ""):
+                snapshot_payload[key] = values[key]
+        snapshot = self.observations.snapshot(snapshot_payload)
+        raw_items = snapshot.get("items")
+        if (
+            not isinstance(raw_items, Sequence)
+            or isinstance(raw_items, (str, bytes, bytearray))
+            or not raw_items
+        ):
+            raise KeyError(trace_id)
+        truncated_value = snapshot.get("truncated")
+        if not isinstance(truncated_value, bool):
+            raise TraceContractError("observation snapshot has invalid truncated flag")
+
+        try:
+            envelope = envelope_from_observations(raw_items)  # type: ignore[arg-type]
+            trace = envelope.to_dict()
+            if trace.get("traceId") != trace_id:
+                raise TraceContractError("trace envelope id does not match requested trace")
+            if truncated_value:
+                trace["status"] = "building"
+                validate_trace_envelope(trace)
+            sequences = [
+                int(item["sequence"])
+                for item in raw_items
+                if isinstance(item, Mapping)
+                and isinstance(item.get("sequence"), (int, float))
+            ]
+            result = {
+                "schemaVersion": "rag-ime.observability-trace-get.v1",
+                "traceId": trace_id,
+                "trace": trace,
+                "truncated": truncated_value,
+                "projectionSource": "observation_journal",
+                "observationWindow": {
+                    "firstSequence": min(sequences),
+                    "lastSequence": max(sequences),
+                    "resumeToken": f"observation:{max(sequences)}",
+                    "nextBeforeSequence": (
+                        min(sequences)
+                        if truncated_value and sequences
+                        else None
+                    ),
+                },
+            }
+            validate_contract(result, "observability-trace-get.v1.json")
+            return result
+        except TraceContractError:
+            raise
+        except Exception as exc:
+            raise TraceContractError(str(exc)) from exc
+
+    def _resolve_external_trace(self, trace_id: str) -> TraceEnvelope | None:
+        for resolver in tuple(getattr(self, "_external_trace_resolvers", ())):
+            envelope = resolver(trace_id)
+            if envelope is not None:
+                return envelope
+        return None
+
+    def observation_evals(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return privacy-safe EvalRun summaries for one authoritative Trace."""
+
+        values = dict(payload or {})
+        trace_id = _observation_trace_id(values)
+        limit = _integer(values.get("limit"), default=100, minimum=1, maximum=500)
+        runs, total = self.eval_runs.recent_for_trace(trace_id, limit=limit)
+        items: list[dict[str, object]] = []
+        for run in runs:
+            truth = run.get("truth")
+            evaluator = run.get("evaluator")
+            metrics = run.get("metrics")
+            suite_binding = run.get("suiteBinding")
+            if not isinstance(truth, Mapping) or not isinstance(evaluator, Mapping):
+                raise TraceContractError("persisted EvalRun projection is invalid")
+            if not isinstance(metrics, Mapping):
+                raise TraceContractError("persisted EvalRun metrics are invalid")
+            item: dict[str, object] = {
+                "evalRunId": str(run["evalRunId"]),
+                "mode": str(run["mode"]),
+                "metricAuthority": str(run["metricAuthority"]),
+                "truthStatus": str(truth.get("status") or "none"),
+                "datasetId": str(truth.get("datasetId") or ""),
+                "labelRevision": str(truth.get("labelRevision") or ""),
+                "evaluatorDisplayName": str(evaluator.get("displayName") or ""),
+                "metrics": {
+                    str(key): float(value)
+                    for key, value in metrics.items()
+                },
+                "status": str(run["status"]),
+                "createdAtMs": int(run["createdAtMs"]),
+                "updatedAtMs": int(run["updatedAtMs"]),
+            }
+            if isinstance(suite_binding, Mapping):
+                item["suiteBinding"] = {
+                    "suiteId": str(suite_binding["suiteId"]),
+                    "suiteRevision": str(suite_binding["suiteRevision"]),
+                }
+            items.append(item)
+        result = {
+            "schemaVersion": "rag-ime.observability-eval-list.v1",
+            "traceId": trace_id,
+            "total": total,
+            "truncated": total > len(items),
+            "items": items,
+        }
+        validate_contract(result, "observability-eval-list.v1.json")
+        return result
+
+    def observability_sandbox_runs(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return the Host-owned SandboxRun ledger as a bounded read projection."""
+
+        values = dict(payload or {})
+        limit = _integer(values.get("limit"), default=20, minimum=1, maximum=500)
+        store = getattr(self, "sandbox_runs", None)
+        if store is None:
+            raise TraceContractError("SandboxRun store is unavailable")
+        runs = store.list(limit=limit)
+        total = store.count()
+        result = {
+            "schemaVersion": "rag-ime.observability-sandbox-run-list.v1",
+            "ok": True,
+            "items": runs,
+            "total": total,
+        }
+        validate_contract(result, "observability-sandbox-run-list.v1.json")
+        return result
+
+    def observability_sandbox_run(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return one immutable SandboxRun payload without granting mutation."""
+
+        values = dict(payload or {})
+        sandbox_run_id = values.get("sandboxRunId")
+        if not isinstance(sandbox_run_id, str) or not sandbox_run_id.strip():
+            raise ValueError("invalid_sandbox_run_id")
+        store = getattr(self, "sandbox_runs", None)
+        if store is None:
+            raise TraceContractError("SandboxRun store is unavailable")
+        run = store.get(sandbox_run_id)
+        if run is None:
+            raise KeyError(sandbox_run_id)
+        if not isinstance(run, Mapping):
+            raise TraceContractError("SandboxRun store returned an invalid payload")
+        result = dict(run)
+        validate_sandbox_run(result)
+        validate_contract(result, "sandbox-run.v1.json")
+        return result
+
+    def evaluate_observation_evidence(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Run one deterministic evidence-set Eval against a completed Trace."""
+
+        values = dict(payload)
+        validate_contract(
+            values,
+            "observability-evidence-eval-request.v1.json",
+        )
+        trace_id = _observation_trace_id(values)
+        detail = self.observation_trace({"traceId": trace_id, "limit": 500})
+        if detail.get("truncated") is True:
+            raise TraceContractError(
+                "evidence evaluation requires a complete observation window"
+            )
+        trace = detail.get("trace")
+        if not isinstance(trace, Mapping):
+            raise TraceContractError("observation Trace projection is invalid")
+        required_ids = values.get("requiredEvidenceIds")
+        if not isinstance(required_ids, Sequence) or isinstance(required_ids, (str, bytes)):
+            raise TraceContractError("requiredEvidenceIds must be a sequence")
+        return evaluate_evidence_ground_truth(
+            (trace,),
+            {trace_id: [str(value) for value in required_ids]},
+            dataset_id=str(values["datasetId"]),
+            label_revision=str(values["labelRevision"]),
+            truth_kind=str(values["truthKind"]),
+            store=self.eval_runs,
+        )
+
     def subscribe_observations(
         self,
         *,
@@ -3828,11 +4404,13 @@ class AgentService:
         *,
         phase: str,
         actor: Mapping[str, object],
+        document_sync: Mapping[str, object] | None = None,
     ) -> None:
         return self.room_work_application._publish_room_work_activity(
             work,
             phase=phase,
             actor=actor,
+            document_sync=document_sync,
         )
 
 
@@ -3929,11 +4507,6 @@ def agent_service_from_settings(
     runtime_config = pi_runtime_config_from_settings(settings)
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
     pi = agent.get("pi") if isinstance(agent.get("pi"), Mapping) else {}
-    default_model_profile = (
-        f"{runtime_config.provider}/{runtime_config.model}"
-        if runtime_config.provider and runtime_config.model
-        else "pi/default"
-    )
     return AgentService(
         db_path=db_path,
         runtime_config=runtime_config,
@@ -3946,7 +4519,6 @@ def agent_service_from_settings(
             idle_timeout_seconds=runtime_config.idle_timeout_seconds,
             role_id=str(pi.get("defaultRoleId") or "companion-future-v1"),
             role_version="1",
-            model_profile=default_model_profile,
             tool_profile_version=str(pi.get("toolProfile") or "control-center-v1"),
             resume_last_session=_bool(pi.get("resumeLastSession")),
             coordinator_enabled=_bool(pi.get("coordinatorEnabled")),
@@ -4123,6 +4695,16 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
+
+
+def _observation_trace_id(payload: Mapping[str, object]) -> str:
+    try:
+        trace_id = _required_text(payload, "traceId")
+    except ValueError as exc:
+        raise ValueError("invalid_trace_id") from exc
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", trace_id) is None:
+        raise ValueError("invalid_trace_id")
+    return trace_id
 
 
 def _media_owner_input(

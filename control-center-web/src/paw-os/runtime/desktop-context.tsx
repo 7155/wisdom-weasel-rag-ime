@@ -27,6 +27,7 @@ export function PawDesktopProvider({ children, initialAppId, initialRoute }: { c
         windows: state.windows,
         stack: state.stack,
         activeWindowId: state.activeWindowId,
+        wayfinder: state.wayfinder,
       };
       window.localStorage.setItem(pawDesktopSnapshotKey, JSON.stringify(snapshot));
     };

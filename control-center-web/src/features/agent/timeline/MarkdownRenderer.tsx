@@ -1,7 +1,13 @@
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, FileText } from 'lucide-react';
 import { memo, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {
+  evidenceEchoRoute,
+  openEvidenceEchoEntity,
+  type EvidenceEchoEntity,
+} from '@/features/evidence-echo/evidence-echo';
+import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
 import {
@@ -18,11 +24,13 @@ import {
 
 export function TextBlockRenderer({
   block,
+  sessionId,
   streamingTail,
 }: AgentBlockRenderProps) {
   return (
     <MarkdownBody
       documentKey={block.id}
+      sessionId={sessionId}
       streamingTail={streamingTail}
       text={text(block.data.text ?? block.data.markdown)}
     />
@@ -31,10 +39,12 @@ export function TextBlockRenderer({
 
 export function MarkdownBody({
   documentKey = '',
+  sessionId = '',
   streamingTail = false,
   text: source,
 }: {
   documentKey?: string;
+  sessionId?: string;
   streamingTail?: boolean;
   text: string;
 }) {
@@ -52,7 +62,7 @@ export function MarkdownBody({
   if (!progressiveMode) {
     return (
       <div className="agent-markdown">
-        <StableMarkdownFragment source={source} />
+        <StableMarkdownFragment sessionId={sessionId} source={source} />
       </div>
     );
   }
@@ -68,17 +78,18 @@ export function MarkdownBody({
       className="agent-markdown"
       documentKey={documentKey}
       isStreaming={streamingTail}
-      renderChunk={renderProgressiveChunk}
+      renderChunk={(context) => renderProgressiveChunk(context, sessionId)}
       text={source}
     />
   );
 }
 
-function renderProgressiveChunk(context: ProgressiveChunkRenderContext) {
+function renderProgressiveChunk(context: ProgressiveChunkRenderContext, sessionId: string) {
   if (!context.active || context.settled) {
     return (
       <StableMarkdownFragment
         deferRichHtml={!context.settled}
+        sessionId={sessionId}
         source={context.text}
       />
     );
@@ -99,7 +110,7 @@ function renderProgressiveChunk(context: ProgressiveChunkRenderContext) {
           />
         </>
       ) : (
-        <MarkdownFragment source={context.text} streamingTail />
+        <MarkdownFragment sessionId={sessionId} source={context.text} streamingTail />
       )}
     </div>
   );
@@ -131,29 +142,60 @@ function StreamingFenceIsland({
 
 const StableMarkdownFragment = memo(function StableMarkdownFragment({
   deferRichHtml = false,
+  sessionId = '',
   source,
 }: {
   deferRichHtml?: boolean;
+  sessionId?: string;
   source: string;
 }) {
-  return <MarkdownFragment deferRichHtml={deferRichHtml} source={source} />;
+  return <MarkdownFragment deferRichHtml={deferRichHtml} sessionId={sessionId} source={source} />;
 });
 
 function MarkdownFragment({
   deferRichHtml = false,
+  sessionId = '',
   source,
   streamingTail = false,
 }: {
   deferRichHtml?: boolean;
+  sessionId?: string;
   source: string;
   streamingTail?: boolean;
 }) {
+  const desktop = usePawOsDesktop();
   return (
     <ReactMarkdown
       skipHtml
-      remarkPlugins={streamingTail ? [remarkGfm, remarkLiteralHtml, remarkStreamingTail] : [remarkGfm, remarkLiteralHtml]}
+      remarkPlugins={streamingTail
+        ? [remarkGfm, remarkWorkspaceFileReferences, remarkLiteralHtml, remarkStreamingTail]
+        : [remarkGfm, remarkWorkspaceFileReferences, remarkLiteralHtml]}
       components={{
         a: ({ href, children }) => {
+          const filePath = workspaceFileReference(href);
+          if (filePath) {
+            const target: EvidenceEchoEntity = {
+              appId: 'files',
+              entityId: filePath,
+              label: fileName(filePath),
+              ...(sessionId ? { sessionId } : {}),
+            };
+            return (
+              <a
+                aria-label={`打开文件 ${target.label}`}
+                className="agent-markdown__file-link"
+                href={evidenceEchoRoute(target)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openEvidenceEchoEntity(desktop, target);
+                }}
+                title={filePath}
+              >
+                {children}
+                <FileText aria-hidden="true" size={12} />
+              </a>
+            );
+          }
           const safe = safeLink(href);
           return safe ? (
             <a
@@ -243,9 +285,73 @@ function MarkdownFragment({
 type MarkdownAstNode = {
   type?: string;
   value?: string;
+  url?: string;
   children?: MarkdownAstNode[];
   data?: { hProperties?: Record<string, unknown> };
 };
+
+const WORKSPACE_FILE_REFERENCE = /(?<![\w./:-])(?:\/(?:[\w@+.-]+\/)*|(?:\.\.?\/)?(?:[\w@+.-]+\/)+)?[\w@+.-]+\.(?:md|mdx|markdown|txt|json|jsonl|yaml|yml|toml|ts|tsx|js|jsx|css|scss|html|htm|py|swift|sql|sh|zsh|go|rs|java|rb|c|cpp|h|vue|svelte|xml|csv|tsv|diff|patch)(?![\w.-])/giu;
+
+/** Turn only prose file references into Markdown links. Inline and fenced code
+ * are separate AST nodes and therefore stay literal; command-looking lines
+ * are also left alone so a shell path argument is not presented as a file. */
+function remarkWorkspaceFileReferences() {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (node.type === 'link' || node.type === 'linkReference') return;
+      if (!node.children?.length) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type !== 'text' || !child.value || commandLikeText(child.value)) {
+          visit(child);
+          return [child];
+        }
+        return splitWorkspaceFileReferences(child.value);
+      });
+    };
+    visit(tree);
+  };
+}
+
+function splitWorkspaceFileReferences(value: string): MarkdownAstNode[] {
+  const parts: MarkdownAstNode[] = [];
+  let cursor = 0;
+  for (const match of value.matchAll(WORKSPACE_FILE_REFERENCE)) {
+    const candidate = match[0];
+    if (!workspaceFileReference(candidate)) continue;
+    const start = match.index ?? 0;
+    if (start > cursor) parts.push({ type: 'text', value: value.slice(cursor, start) });
+    parts.push({
+      type: 'link',
+      url: candidate,
+      children: [{ type: 'text', value: candidate }],
+    });
+    cursor = start + candidate.length;
+  }
+  if (!parts.length) return [{ type: 'text', value }];
+  if (cursor < value.length) parts.push({ type: 'text', value: value.slice(cursor) });
+  return parts;
+}
+
+function commandLikeText(value: string): boolean {
+  const commands = '(?:npm|pnpm|yarn|bun|git|python3?|node|npx|bash|sh|zsh|pytest|vitest|vite|cargo|make|curl|docker|swift|xcodebuild)';
+  return value.split(/\r?\n/u).some((line) => new RegExp(
+    `^(?:[$>#]\\s*)?(?:(?:命令|运行|执行)[:：]?\\s*)?${commands}\\b`,
+    'iu',
+  ).test(line.trim()));
+}
+
+function workspaceFileReference(value: string | undefined): string | undefined {
+  if (!value || value.includes('\\') || value.includes('://') || value.startsWith('#')) return undefined;
+  const normalized = value.trim().replace(/^\.\//u, '');
+  if (!normalized || normalized === '.' || normalized === '..' || !/\.[a-z0-9]{1,12}$/iu.test(normalized)) return undefined;
+  if (!WORKSPACE_FILE_REFERENCE.test(normalized) && !/^\/[\w@+./-]+\.[a-z0-9]{1,12}$/iu.test(normalized)) return undefined;
+  WORKSPACE_FILE_REFERENCE.lastIndex = 0;
+  return value.trim();
+}
+
+function fileName(path: string): string {
+  return path.split('/').filter(Boolean).at(-1) || path;
+}
 
 /**
  * Raw HTML in assistant prose is turned into literal text.

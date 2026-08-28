@@ -18,10 +18,12 @@ class AgentRoleApplicationService:
         personas: AgentPersonaStore,
         runtime_provider: Callable[[], Any],
         runtime_factory: Any,
+        default_model_profile_provider: Callable[[], str],
     ) -> None:
         self.personas = personas
         self._runtime_provider = runtime_provider
         self.runtime_factory = runtime_factory
+        self._default_model_profile_provider = default_model_profile_provider
 
     @property
     def runtime(self) -> Any:
@@ -123,7 +125,7 @@ class AgentRoleApplicationService:
             )
         ]
         default_profile = str(
-            self.runtime_factory.default_model_profile or "pi/default"
+            self._default_model_profile_provider() or "pi/default"
         )
         default_provider, _, default_model = default_profile.partition(
             "/"

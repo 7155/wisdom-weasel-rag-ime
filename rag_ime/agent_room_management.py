@@ -35,6 +35,10 @@ class RoomManagementService:
             [],
             Mapping[str, object],
         ],
+        release_room_work: Callable[
+            [str, str, str, str],
+            list[dict[str, object]],
+        ] | None = None,
         turn_lock: RLock,
         pending_turns: Mapping[str, str],
         user_priority_sessions: set[str],
@@ -46,6 +50,7 @@ class RoomManagementService:
             events=events,
             create_session=create_session,
             runtime_status=runtime_status,
+            release_room_work=release_room_work,
             turn_lock=turn_lock,
             pending_turns=pending_turns,
             user_priority_sessions=(

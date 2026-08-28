@@ -1044,7 +1044,7 @@ PathIds：`agent.sessions.list`, `agent.session.workspace.list/read`
 
 - defer/reject Session list、workspace list 或 read 分别验证对应 loading/error/retry。
 - `truncated:true` 表示有界预览前缀，不是读取失败。
-- 不展示 `/Users/...`、home、未授权 root 或任意机器文件。
+- 不展示本机绝对路径、home、未授权 root 或任意机器文件。
 
 Source refs：`features/files/PawOsFilesApp.tsx`; `features/files/paw-os-files-app.test.tsx`; `platform/routes.ts`。
 

@@ -989,6 +989,119 @@ class AgentRoomWorkStore:
             )
         return work_item_payload(row)
 
+    def release_for_participant(
+        self,
+        room_id: str,
+        participant_id: str,
+        *,
+        replacement_participant_id: str,
+        reason: str = "",
+        updated_at_ms: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Release open work before a Room participant leaves.
+
+        The Room keeps the original creator and event history, while the
+        active facilitator becomes the temporary owner of released work.  A
+        blocked state makes the need for a new assignment visible and lets
+        the normal retry/reassign lifecycle continue after the participant
+        row is soft-removed.
+        """
+
+        normalized_room_id = _required_text(room_id, "room_id", maximum=320)
+        released_id = _required_text(participant_id, "participant_id", maximum=320)
+        replacement_id = _required_text(
+            replacement_participant_id,
+            "replacement_participant_id",
+            maximum=320,
+        )
+        if released_id == replacement_id:
+            raise ValueError("replacement participant must differ from the removed participant")
+        timestamp = _timestamp(updated_at_ms)
+        release_reason = _bounded(reason, 500) or "participant removed; Room work needs reassignment"
+        with self._connect(immediate=True) as conn:
+            replacement = conn.execute(
+                """
+                SELECT id, participant_status FROM agent_room_participants
+                WHERE room_id = ? AND id = ?
+                """,
+                (normalized_room_id, replacement_id),
+            ).fetchone()
+            if replacement is None or str(replacement["participant_status"]) != "active":
+                raise ValueError("replacement participant must be active in this Room")
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_room_work_items
+                WHERE room_id = ? AND state IN ('queued', 'active', 'review', 'blocked')
+                  AND (
+                    accountable_participant_id = ?
+                    OR current_owner_participant_id = ?
+                    OR offered_to_participant_id = ?
+                  )
+                ORDER BY created_at_ms ASC, id ASC
+                """,
+                (
+                    normalized_room_id,
+                    released_id,
+                    released_id,
+                    released_id,
+                ),
+            ).fetchall()
+            released: list[dict[str, object]] = []
+            for current in rows:
+                previous_owner_id = str(current["current_owner_participant_id"])
+                previous_accountable_id = str(current["accountable_participant_id"])
+                previous_offered_id = str(current["offered_to_participant_id"] or "")
+                blocker = dict(json.loads(str(current["blocker_json"] or "{}")))
+                blocker.update(
+                    {
+                        "reason": release_reason,
+                        "nextStep": "Facilitator must assign this WorkItem to an active Room participant",
+                        "releasedFromParticipantId": released_id,
+                        "needsReassignment": True,
+                    }
+                )
+                conn.execute(
+                    """
+                    UPDATE agent_room_work_items
+                    SET state = 'blocked',
+                        accountable_participant_id = ?,
+                        current_owner_participant_id = ?,
+                        offered_to_participant_id = NULL,
+                        assignment_key = ?,
+                        accepted_turn_id = '',
+                        blocker_json = ?,
+                        updated_at_ms = ?,
+                        completed_at_ms = NULL
+                    WHERE id = ?
+                    """,
+                    (
+                        replacement_id,
+                        replacement_id,
+                        f"{normalized_room_id}:{current['id']}:assignment:{uuid.uuid4()}",
+                        json.dumps(blocker, ensure_ascii=False, separators=(",", ":")),
+                        timestamp,
+                        str(current["id"]),
+                    ),
+                )
+                updated = self._row(conn, str(current["id"]))
+                self._append_event(
+                    conn,
+                    updated,
+                    event_type="reassigned",
+                    actor_participant_id=replacement_id,
+                    created_at_ms=timestamp,
+                    payload={
+                        "reason": release_reason,
+                        "releasedFromParticipantId": released_id,
+                        "previousOwnerParticipantId": previous_owner_id,
+                        "previousAccountableParticipantId": previous_accountable_id,
+                        "previousOfferedToParticipantId": previous_offered_id,
+                        "needsReassignment": True,
+                    },
+                )
+                released.append(work_item_payload(updated))
+        return released
+
     def retry(
         self,
         work_id: str,

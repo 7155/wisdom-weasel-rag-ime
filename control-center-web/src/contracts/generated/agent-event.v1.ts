@@ -35,6 +35,8 @@ export interface AgentEventV1 {
     | 'memory_maintenance_updated'
     | 'user_input_required'
     | 'message_completed'
+    | 'provider_request_completed'
+    | 'provider_request_failed'
     | 'compaction_started'
     | 'compaction_completed'
     | 'turn_completed'

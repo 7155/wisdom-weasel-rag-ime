@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "paw.real-frontend-source-map",
-  "updatedAt": "2026-08-28",
+  "updatedAt": "2026-08-29",
   "entrypoint": "control-center-web/CLOUD_MODEL.md",
   "humanGuide": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md",
   "proofBoundary": "This map proves current source selection and checked build wiring only. It does not prove installation, a running process, foreground interaction, visual acceptance, or completion of a feature.",
@@ -192,7 +192,7 @@
         "Agent home",
         "Session conversation and trace",
         "Room conversation and collaboration mode",
-        "participant, subagent, work-document, project, task, package, result, and process satellites"
+        "participant planet windows, subagent satellites, and work-document, project, task, package, result, and process windows"
       ]
     },
     {
@@ -376,6 +376,7 @@
       "showcaseRoutes": [
         "/observability",
         "/context-debug",
+        "/trace-agent",
         "/diagnostics"
       ],
       "selectionChain": [
@@ -390,6 +391,7 @@
           "file": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
           "contains": [
             "if (appId === 'system-monitor')",
+            "if (pageId === 'trace-agent') return <TraceAgentFeature />",
             "return <ObservabilityFeature />"
           ]
         }
@@ -398,17 +400,20 @@
         "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
         "control-center-web/src/features/observability/index.tsx",
         "control-center-web/src/features/context-debug/index.tsx",
+        "control-center-web/src/features/trace-agent/index.tsx",
         "control-center-web/src/features/diagnostics/index.tsx"
       ],
       "styleOwners": [
         "control-center-web/src/features/observability/observability.css",
         "control-center-web/src/features/context-debug/context-debug.css",
+        "control-center-web/src/features/trace-agent/trace-agent.css",
         "control-center-web/src/features/diagnostics/diagnostics.css",
         "control-center-web/src/paw-os/styles/paw-os-sys-apps-migrated-v1.css"
       ],
       "featureSurfaces": [
         "activity and Trace/Eval projection",
         "context inspection",
+        "Trace Agent diagnosis with original conversation and action timeline",
         "diagnostics"
       ]
     },
@@ -572,7 +577,7 @@
       "featureSurfaces": [
         "embedded xterm terminal sessions",
         "incremental output, input, resize, close, and recovery",
-        "process-terminal satellite for Agent background work"
+        "process-terminal run window for Agent background work"
       ]
     }
   ],

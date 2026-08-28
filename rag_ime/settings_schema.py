@@ -142,8 +142,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     },
     "agent": {
         "defaults": {
-            "modelReference": "inherit",
-            "thinkingLevel": "high",
+            "modelReference": "openai-codex/gpt-5.6-luna",
+            "thinkingLevel": "max",
             "executionMode": "per_action",
         },
         "pi": {
@@ -530,13 +530,13 @@ SETTINGS_SCHEMA: dict[str, object] = {
                     "key": "agent.defaults.modelReference",
                     "type": "pi-model-or-inherit",
                     "label": "新建 Session 模型",
-                    "default": "inherit",
+                    "default": "openai-codex/gpt-5.6-luna",
                 },
                 {
                     "key": "agent.defaults.thinkingLevel",
                     "type": "pi-thinking",
                     "label": "新建 Session 推理强度",
-                    "default": "high",
+                    "default": "max",
                     "modelKey": "agent.defaults.modelReference",
                     "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
                 },

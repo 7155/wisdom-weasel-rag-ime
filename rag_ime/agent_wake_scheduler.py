@@ -5,11 +5,11 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -768,7 +768,12 @@ class AgentWakeScheduleStore:
 
 
 class AgentWakeScheduler:
-    """Bounded Gateway-owned dispatcher for durable Agent wake schedules."""
+    """Bounded Gateway-owned dispatcher for durable schedules.
+
+    ``on_tick`` runs from this scheduler's existing poll loop.  It is a small
+    maintenance seam for other Runtime-owned ledgers (such as Eval) and does
+    not create another daemon or poller.
+    """
 
     def __init__(
         self,
@@ -778,9 +783,11 @@ class AgentWakeScheduler:
         enabled: bool = True,
         poll_seconds: float = 1.0,
         max_parallel: int = 2,
+        on_tick: Callable[[int | None], object] | None = None,
     ) -> None:
         self.store = store
         self.dispatch = dispatch
+        self.on_tick = on_tick
         self.enabled = bool(enabled)
         self.poll_seconds = max(0.1, float(poll_seconds))
         self.max_parallel = max(1, min(int(max_parallel), 4))
@@ -793,6 +800,8 @@ class AgentWakeScheduler:
             max_workers=self.max_parallel,
             thread_name_prefix="agent-wake",
         )
+        self._maintenance_lock = Lock()
+        self._maintenance_future: Future[object] | None = None
         self._thread: Thread | None = None
         if self.enabled:
             self._thread = Thread(target=self._run, name="agent-wake-scheduler", daemon=True)
@@ -834,9 +843,22 @@ class AgentWakeScheduler:
             limit=self.max_parallel,
             max_active=self.max_parallel,
         )
+        self._submit_maintenance(now_ms)
         for claim in claims:
             self._executor.submit(self._dispatch_safely, claim)
         return len(claims)
+
+    def _submit_maintenance(self, now_ms: int | None) -> None:
+        callback = self.on_tick
+        if callback is None:
+            return
+        with self._maintenance_lock:
+            if (
+                self._maintenance_future is not None
+                and not self._maintenance_future.done()
+            ):
+                return
+            self._maintenance_future = self._executor.submit(callback, now_ms)
 
     def close(self) -> None:
         self._stop.set()

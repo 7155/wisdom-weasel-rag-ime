@@ -47,6 +47,35 @@ describe('roomTranscript', () => {
     expect(tool?.kind === 'tool' && tool.input).toContain('PawWindowLayer.tsx');
   });
 
+  it('keeps a dispatch planet-only when Runtime persona names have no public alias', () => {
+    const projection = roomProjection();
+    projection.activityOrder = ['dispatch-persona-name'];
+    projection.activitiesById = {
+      'dispatch-persona-name': {
+        id: 'dispatch-persona-name', turnId: 'root-a', participantId: 'participant-a', sourceSessionId: 'session-a',
+        kind: 'route_decision', status: 'completed', summary: '已确定本轮分工',
+        payload: {
+          sourceEventType: 'route_decision', dispatchId: 'dispatch-persona-name',
+          targetParticipantId: 'participant-target', targetDisplayName: '不应出现的目标人名',
+          candidates: [{ participantId: 'participant-candidate', displayName: '不应出现的候选人名', score: 0.8, signals: [] }],
+        },
+        sequence: 2, createdAtMs: 110, updatedAtMs: 110,
+      },
+    };
+
+    const transcript = roomTranscript(projection, {
+      ...options,
+      actorName: (participantId) => participantId === 'participant-a' ? 'Mars' : participantId ? '' : 'Sol',
+    });
+    const dispatch = transcript.messages
+      .flatMap((message) => message.role === 'assistant' ? message.blocks : [])
+      .find((block) => block.id === 'dispatch:dispatch-persona-name');
+
+    expect(JSON.stringify(dispatch)).not.toContain('不应出现的目标人名');
+    expect(JSON.stringify(dispatch)).not.toContain('不应出现的候选人名');
+    expect(dispatch?.kind === 'tool' && dispatch.name).toContain('协作行星');
+  });
+
   it('keeps a pending approval on the card and links it back to its activity', () => {
     const projection = roomProjection();
 

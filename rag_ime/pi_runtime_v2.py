@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import re
+import sqlite3
 import subprocess
 import threading
 import time
@@ -15,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .agent_events import AgentEventHub
+from .agent_plugin_usage import AgentPluginUsageStore
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_failure import classify_runtime_failure
 from .agent_tool_block_bridge import AgentToolBlockBuffer
@@ -40,8 +42,10 @@ from .pi_runtime_public import (
     pi_message_completes_public_turn,
     pi_message_continues_public_turn,
     pi_message_is_public,
+    provider_request_receipt,
     provider_retry_status,
     public_code_tool_activity,
+    public_knowledge_tool_activity,
     public_fork_candidate_text,
     public_pi_model,
     public_reasoning_summaries,
@@ -73,6 +77,26 @@ __all__ = ["PiRuntimeHostManager"]
 _PROTOCOL_VERSION = "2"
 _MODEL_CATALOG_CACHE_SECONDS = 1_800.0
 _PROMPT_TIMEOUT_SECONDS = 60.0 * 60.0
+
+
+def _record_plugin_usage_notice(
+    store: AgentPluginUsageStore,
+    *,
+    event: object,
+    session_id: object,
+    payload: Mapping[str, object],
+) -> bool:
+    if event != "runtime.notice" or payload.get("schemaVersion") != "paw.plugin-usage.v1":
+        return False
+    if not session_id or payload.get("sessionId") != session_id:
+        return True
+    try:
+        store.record(payload)
+    except (ValueError, sqlite3.Error):
+        # Usage telemetry is fail-closed for privacy and fail-open for the
+        # Agent loop: invalid/unknown fields are not retained.
+        pass
+    return True
 
 
 def _failed_settlement_receipt(
@@ -479,6 +503,7 @@ class _HostedSessionState:
     # is advanced by each assistant message_start and inherited by the Tool
     # events produced from that assistant message.
     source_loop_id: str = ""
+    provider_request_ids: set[str] = field(default_factory=set)
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
@@ -513,6 +538,8 @@ class PiRuntimeHostManager:
         self.config = config
         self.sessions = sessions
         self.events = events
+        self.plugin_usage = AgentPluginUsageStore(self.sessions.db_path)
+        self.plugin_usage.initialize()
         self._media_resolver = media_resolver
         self._session_context_provider = session_context_provider
         self._tool_manifest_provider = tool_manifest_provider
@@ -1291,6 +1318,7 @@ class PiRuntimeHostManager:
                 state.prompt_dispatch_signal.set()
                 cancelled_before_dispatch = True
             state.stream_pi_message_id = ""
+            state.provider_request_ids.clear()
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
@@ -1572,7 +1600,14 @@ class PiRuntimeHostManager:
         try:
             snapshot = self._inspection_snapshot(session_id)
         except AgentRuntimeError:
-            return {"messages": [], "telemetry": None, "messageQueue": None}
+            # A transient Host failure is not evidence that the Session has no
+            # history. The append-only Pi transcript remains readable even when
+            # Provider context inspection is unavailable; use it as the
+            # recovery source instead of publishing a successful empty
+            # snapshot that would make the API and UI erase the conversation.
+            snapshot = self._durable_history_snapshot(session_id)
+            if snapshot is None:
+                raise
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
         raw_entries = snapshot.get("entries") if isinstance(snapshot.get("entries"), list) else []
         durable_messages, durable_entries = _pi_durable_branch_messages(
@@ -1590,7 +1625,17 @@ class PiRuntimeHostManager:
             projection_messages,
             session_id=session_id,
             raw_entries=projection_entries,
+            # This is the durable transcript projection, not the bounded live
+            # replay tail. Keep every historical thinking/Tool row visible;
+            # each individual result is still passed through the existing
+            # redaction and local inspector bounds. The UI may virtualize or
+            # paginate this canonical list, but a refresh must not silently
+            # erase older activity identities.
+            maximum_tools=None,
+            maximum_public_chars=None,
         )
+        entry_timestamps = _pi_history_entry_timestamps(projection_entries)
+        entry_ordinals = _pi_history_entry_ordinals(projection_entries)
         result: list[dict[str, object]] = []
         current_turn_id = ""
         last_assistant_fingerprint: tuple[str, str] | None = None
@@ -1602,6 +1647,20 @@ class PiRuntimeHostManager:
         for raw in projection_messages:
             if not isinstance(raw, Mapping) or not pi_message_is_public(raw):
                 continue
+            # Pi's message timestamp is Provider/request time and can move
+            # backwards when a user/Steer entry is appended after a replayed
+            # response. The JSONL entry timestamp is the authoritative append
+            # order used by the restored timeline.
+            timestamp_queue = entry_timestamps.get(
+                _pi_history_message_fingerprint(raw)
+            )
+            ordinal_queue = entry_ordinals.get(
+                _pi_history_message_fingerprint(raw)
+            )
+            timeline_raw = dict(raw)
+            if timestamp_queue:
+                timeline_raw["timestamp"] = timestamp_queue.popleft()
+            timeline_sequence = ordinal_queue.popleft() if ordinal_queue else None
             role = str(raw.get("role") or "assistant").lower()
             message_id = pi_message_id(raw, "history")
             if (
@@ -1611,13 +1670,19 @@ class PiRuntimeHostManager:
                 current_turn_id = f"history:{message_id}"
                 last_assistant_fingerprint = None
             payload = pi_message_payload(
-                raw,
+                timeline_raw,
                 session_id=session_id,
                 turn_id=current_turn_id,
                 media_resolver=self._media_resolver,
                 message_id=message_id,
             ).to_payload()
             if role == "assistant":
+                if timeline_sequence is not None:
+                    # One durable assistant entry can contain public reasoning,
+                    # Tool calls/results and the final text.  Fractional event
+                    # receipts occupy .1-.8; the final body is the last item in
+                    # that append entry, immediately before the next JSONL row.
+                    payload["timelineSequence"] = float(timeline_sequence) + 0.9
                 projection_fingerprint = _assistant_projection_fingerprint(
                     payload
                 )
@@ -1651,6 +1716,8 @@ class PiRuntimeHostManager:
                 emitted_assistant_counts[projection_fingerprint] = (
                     emitted_count + 1
                 )
+            elif timeline_sequence is not None:
+                payload["timelineSequence"] = timeline_sequence
             result.append(
                 payload
             )
@@ -2576,6 +2643,7 @@ class PiRuntimeHostManager:
                     state.turn_id = ""
                     state.client_message_id = ""
                     state.stream_pi_message_id = ""
+                    state.provider_request_ids.clear()
                     state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
@@ -3015,6 +3083,39 @@ class PiRuntimeHostManager:
             raise PiRuntimeError("Pi Runtime Host is not running")
         return client
 
+    def _publish_provider_request(
+        self,
+        session_id: str,
+        turn_id: str,
+        raw_message: Mapping[str, object],
+        *,
+        status: str,
+    ) -> None:
+        completed_at_ms = int(time.time() * 1000)
+        payload = provider_request_receipt(
+            raw_message,
+            turn_id=turn_id,
+            provider=self.config.provider,
+            model=self.config.model,
+            status=status,
+            completed_at_ms=completed_at_ms,
+        )
+        request_id = str(payload.get("requestId") or "")
+        with self._lock:
+            state = self._states.setdefault(session_id, _HostedSessionState())
+            if not request_id or request_id in state.provider_request_ids:
+                return
+            state.provider_request_ids.add(request_id)
+        self.events.publish(
+            session_id,
+            "provider_request_failed"
+            if str(payload.get("status") or "") == "failed"
+            else "provider_request_completed",
+            payload,
+            turn_id=turn_id,
+            created_at_ms=completed_at_ms,
+        )
+
     def _handle_host_event(self, envelope: dict[str, object]) -> None:
         if envelope.get("protocolVersion") != _PROTOCOL_VERSION or envelope.get("event") not in {
             "agent.event",
@@ -3022,6 +3123,13 @@ class PiRuntimeHostManager:
         }:
             return
         raw = dict(as_mapping(envelope.get("payload")))
+        if _record_plugin_usage_notice(
+            self.plugin_usage,
+            event=envelope.get("event"),
+            session_id=envelope.get("sessionId"),
+            payload=raw,
+        ):
+            return
         if envelope.get("event") == "runtime.notice" and str(raw.get("type") or "") == "completion_text_delta":
             request_id = str(raw.get("requestId") or "")
             delta = str(raw.get("delta") or "")
@@ -3130,6 +3238,19 @@ class PiRuntimeHostManager:
         if event_type == "message_end":
             raw_message = as_mapping(raw.get("message"))
             role = str(raw_message.get("role") or "assistant").lower()
+            if role == "assistant":
+                self._publish_provider_request(
+                    session_id,
+                    turn_id,
+                    raw_message,
+                    status=(
+                        "failed"
+                        if str(raw_message.get("stopReason") or "").lower()
+                        == "error"
+                        or bool(raw_message.get("errorMessage"))
+                        else "completed"
+                    ),
+                )
             if role == "user" or not pi_message_is_public(raw_message):
                 return
             trusted_blocks = raw.get("agentBlocks")
@@ -3301,6 +3422,11 @@ class PiRuntimeHostManager:
                     else {}
                 ),
             }
+            # Preserve a Host-measured end-to-end duration when available;
+            # Observation/Trace must continue to represent missing timing as
+            # unavailable rather than deriving it from unrelated timestamps.
+            if raw.get("durationMs") is not None:
+                payload["durationMs"] = as_integer(raw.get("durationMs"))
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             raw_result = raw.get(result_key)
             result_is_error = runtime_tool_result_is_error(
@@ -3313,6 +3439,13 @@ class PiRuntimeHostManager:
                 tool_name,
                 raw_args,
                 raw_result,
+            )
+            public_result.update(
+                public_knowledge_tool_activity(
+                    tool_name,
+                    raw_args,
+                    raw_result,
+                )
             )
             if (
                 result_is_error
@@ -3409,6 +3542,22 @@ class PiRuntimeHostManager:
                     session_id,
                     turn_id,
                     delay_seconds=1.0,
+                )
+            if raw.get("willRetry") is not True and assistant_error:
+                last_assistant = next(
+                    (
+                        as_mapping(item)
+                        for item in reversed(messages)
+                        if str(as_mapping(item).get("role") or "").lower()
+                        == "assistant"
+                    ),
+                    {},
+                )
+                self._publish_provider_request(
+                    session_id,
+                    turn_id,
+                    last_assistant,
+                    status="failed",
                 )
             # agent_end is not terminal: retries, follow-ups, and extension work can continue.
             return
@@ -3507,6 +3656,7 @@ class PiRuntimeHostManager:
                     state.client_message_id = ""
                     state.stream_pi_message_id = ""
                     state.source_loop_id = ""
+                    state.provider_request_ids.clear()
                     state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
@@ -3833,6 +3983,7 @@ class PiRuntimeHostManager:
             state.client_message_id = ""
             state.stream_pi_message_id = ""
             state.source_loop_id = ""
+            state.provider_request_ids.clear()
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
@@ -3940,6 +4091,7 @@ class PiRuntimeHostManager:
             state.turn_id = ""
             state.client_message_id = ""
             state.stream_pi_message_id = ""
+            state.provider_request_ids.clear()
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
@@ -4070,6 +4222,7 @@ class PiRuntimeHostManager:
                 state.turn_id = ""
                 state.client_message_id = ""
                 state.stream_pi_message_id = ""
+                state.provider_request_ids.clear()
                 state.tool_blocks.clear()
                 state.last_agent_messages = []
                 state.final_error = ""
@@ -4259,8 +4412,8 @@ def _pi_tool_history_events(
     *,
     session_id: str,
     raw_entries: list[object] | None = None,
-    maximum_tools: int = 256,
-    maximum_public_chars: int = 48_000,
+    maximum_tools: int | None = 256,
+    maximum_public_chars: int | None = 48_000,
 ) -> list[dict[str, object]]:
     """Rebuild the public tool timeline from Pi's durable transcript.
 
@@ -4271,11 +4424,13 @@ def _pi_tool_history_events(
     local-only transient Debug endpoint.
     """
 
-    events: list[tuple[str, str, str, int, dict[str, object]]] = []
+    events: list[tuple[str, str, str, int, dict[str, object], float | None]] = []
     entry_timestamps = _pi_history_entry_timestamps(raw_entries or [])
+    entry_ordinals = _pi_history_entry_ordinals(raw_entries or [])
     current_turn_id = ""
     activity_order: list[str] = []
     tool_names: dict[str, str] = {}
+    tool_arguments: dict[str, Mapping[str, object]] = {}
     for raw_value in raw_messages:
         if not isinstance(raw_value, Mapping):
             continue
@@ -4289,10 +4444,21 @@ def _pi_tool_history_events(
         turn_id = current_turn_id or f"history:{message_id}"
         fingerprint = _pi_history_message_fingerprint(raw)
         durable_timestamps = entry_timestamps.get(fingerprint)
+        durable_ordinals = entry_ordinals.get(fingerprint)
         created_at_ms = (
             durable_timestamps.popleft()
             if durable_timestamps
             else as_integer(raw.get("timestamp"))
+        )
+        source_ordinal = (
+            durable_ordinals.popleft()
+            if durable_ordinals
+            else None
+        )
+        source_sequence = (
+            float(source_ordinal)
+            if source_ordinal is not None
+            else None
         )
         if role == "assistant":
             summaries = public_reasoning_summaries(raw)
@@ -4312,6 +4478,7 @@ def _pi_tool_history_events(
                             "source": "provider_reasoning_summary",
                             "state": "completed",
                         },
+                        source_sequence + 0.1 if source_sequence is not None else None,
                     )
                 )
                 activity_order.append(reasoning_id)
@@ -4332,6 +4499,9 @@ def _pi_tool_history_events(
                     "isError": False,
                 }
                 public_result = public_code_tool_activity(tool_name, raw_args)
+                public_result.update(
+                    public_knowledge_tool_activity(tool_name, raw_args)
+                )
                 if public_result:
                     payload["publicResult"] = public_result
                 events.append(
@@ -4341,11 +4511,13 @@ def _pi_tool_history_events(
                         turn_id,
                         created_at_ms + item_index,
                         payload,
+                        source_sequence + 0.2 + (item_index / 1_000) if source_sequence is not None else None,
                     )
                 )
                 if tool_call_id not in tool_names:
                     activity_order.append(tool_call_id)
                 tool_names[tool_call_id] = tool_name
+                tool_arguments[tool_call_id] = raw_args
             continue
         if role not in {"toolresult", "tool_result"}:
             continue
@@ -4356,11 +4528,13 @@ def _pi_tool_history_events(
         if tool_call_id not in tool_names:
             activity_order.append(tool_call_id)
         tool_names[tool_call_id] = tool_name
+        raw_result = _pi_tool_result(raw)
+        raw_args = tool_arguments.get(tool_call_id, {})
         payload = {
             "toolCallId": tool_call_id,
             "toolName": tool_name,
             "args": {},
-            "result": _pi_tool_result(raw),
+            "result": raw_result,
             "isError": runtime_tool_result_is_error(
                 tool_name,
                 raw,
@@ -4369,17 +4543,45 @@ def _pi_tool_history_events(
                 ),
             ),
         }
-        events.append((tool_call_id, "tool_finished", turn_id, created_at_ms, payload))
+        public_result = public_code_tool_activity(
+            tool_name,
+            raw_args,
+            raw_result,
+        )
+        public_result.update(
+            public_knowledge_tool_activity(
+                tool_name,
+                raw_args,
+                raw_result,
+            )
+        )
+        if public_result:
+            payload["publicResult"] = public_result
+        events.append(
+            (
+                tool_call_id,
+                "tool_finished",
+                turn_id,
+                created_at_ms,
+                payload,
+                source_sequence + 0.8 if source_sequence is not None else None,
+            )
+        )
 
     events_by_activity: dict[
         str,
-        list[tuple[str, str, str, int, dict[str, object]]],
+        list[tuple[str, str, str, int, dict[str, object], float | None]],
     ] = {}
     for event in events:
         events_by_activity.setdefault(event[0], []).append(event)
     allowed_order: list[str] = []
     used_chars = 0
-    for activity_id in reversed(activity_order[-max(1, maximum_tools) :]):
+    candidate_order = (
+        activity_order
+        if maximum_tools is None
+        else activity_order[-max(1, maximum_tools) :]
+    )
+    for activity_id in reversed(candidate_order):
         activity_events = events_by_activity.get(activity_id, [])
         activity_chars = sum(
             len(
@@ -4394,12 +4596,16 @@ def _pi_tool_history_events(
                 )
             )
             + 320
-            for _identity, event_type, turn_id, _created_at_ms, payload
+            for _identity, event_type, turn_id, _created_at_ms, payload, _timeline_sequence
             in activity_events
         )
-        if allowed_order and used_chars + activity_chars > max(
-            4_000,
-            int(maximum_public_chars),
+        if (
+            maximum_public_chars is not None
+            and allowed_order
+            and used_chars + activity_chars > max(
+                4_000,
+                int(maximum_public_chars),
+            )
         ):
             break
         allowed_order.append(activity_id)
@@ -4407,13 +4613,12 @@ def _pi_tool_history_events(
     allowed_ids = set(allowed_order)
     selected = [event for event in events if event[0] in allowed_ids]
     result: list[dict[str, object]] = []
-    for sequence, (tool_call_id, event_type, turn_id, created_at_ms, payload) in enumerate(selected, start=1):
+    for sequence, (tool_call_id, event_type, turn_id, created_at_ms, payload, timeline_sequence) in enumerate(selected, start=1):
         event_id = (
             f"{session_id}:history-tool:"
             f"{uuid.uuid5(uuid.NAMESPACE_URL, f'{session_id}:{tool_call_id}:{event_type}').hex[:20]}"
         )
-        result.append(
-            AgentEventEnvelope(
+        event = AgentEventEnvelope(
                 event_id=event_id,
                 session_id=session_id,
                 turn_id=turn_id,
@@ -4423,7 +4628,9 @@ def _pi_tool_history_events(
                 payload=payload,
                 resume_token=event_id,
             ).to_payload()
-        )
+        if timeline_sequence is not None:
+            event["timelineSequence"] = timeline_sequence
+        result.append(event)
     return result
 
 
@@ -4441,12 +4648,38 @@ def _pi_history_entry_timestamps(raw_entries: list[object]) -> dict[str, deque[i
         if str(entry.get("type") or "") != "message":
             continue
         message = as_mapping(entry.get("message"))
+        # `_pi_durable_branch_messages` gives id-less transcript messages the
+        # enclosing entry id before projection. Normalize the same way here so
+        # the append timestamp still matches the projected message.
+        if not str(message.get("id") or "") and str(entry.get("id") or ""):
+            message = {**message, "id": str(entry["id"])}
         fingerprint = _pi_history_message_fingerprint(message)
         created_at_ms = _pi_history_entry_timestamp_ms(entry.get("timestamp"))
         if not fingerprint or created_at_ms <= 0:
             continue
         timestamps.setdefault(fingerprint, deque()).append(created_at_ms)
     return timestamps
+
+
+def _pi_history_entry_ordinals(raw_entries: list[object]) -> dict[str, deque[int]]:
+    """Map durable messages to their append order in the selected branch."""
+
+    ordinals: dict[str, deque[int]] = {}
+    ordinal = 0
+    for entry_value in raw_entries:
+        entry = as_mapping(entry_value)
+        if str(entry.get("type") or "") != "message":
+            continue
+        ordinal += 1
+        message = as_mapping(entry.get("message"))
+        # Keep this identity normalization aligned with
+        # `_pi_durable_branch_messages` and `_pi_history_entry_timestamps`.
+        if not str(message.get("id") or "") and str(entry.get("id") or ""):
+            message = {**message, "id": str(entry["id"])}
+        fingerprint = _pi_history_message_fingerprint(message)
+        if fingerprint:
+            ordinals.setdefault(fingerprint, deque()).append(ordinal)
+    return ordinals
 
 
 def _durable_public_assistant_counts(
@@ -4548,11 +4781,12 @@ def _pi_tool_arguments(item: Mapping[str, object]) -> dict[str, object]:
 
 
 def _pi_tool_result(raw: Mapping[str, object]) -> dict[str, object]:
+    result: dict[str, object] = {}
     for key in ("details", "result"):
         value = raw.get(key)
         if isinstance(value, Mapping):
-            return dict(inspectable_tool_result(value))
+            result.update(inspectable_tool_result(value))
     content = raw.get("content")
     if content is not None:
-        return {"content": inspectable_tool_result(content)}
-    return {}
+        result["content"] = inspectable_tool_result(content)
+    return result

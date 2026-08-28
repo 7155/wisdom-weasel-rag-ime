@@ -48,8 +48,8 @@ describe('Minecraft Harness frontend fixture', () => {
       readFileSync(resolve(root, 'room/history.jsonl'), 'utf8'),
       readFileSync(resolve(root, 'sessions/coordinator.snapshot.json'), 'utf8'),
     ].join('\n');
-    expect(fixtureText).not.toContain('/Users/undo/');
-    expect(fixtureText).not.toContain('/Volumes/undo 4t/');
+    expect(fixtureText).not.toContain('/Users/example/');
+    expect(fixtureText).not.toContain('/Volumes/example/');
     expect(fixtureText).toContain('room:00000000-0000-4000-8000-000000000001');
   });
 });

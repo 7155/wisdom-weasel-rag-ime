@@ -145,8 +145,8 @@ describe('roomToolEvidence', () => {
       result: {
         operation: 'list',
         partners: [
-          { participantId: 'p2', displayName: 'Agent 1', collaborationRole: 'reviewer' },
-          { participantId: 'p3', displayName: 'Agent 2', collaborationRole: 'specialist' },
+          { participantId: 'p2', displayName: 'Alice', ordinal: 1, collaborationRole: 'reviewer' },
+          { participantId: 'p3', displayName: 'Bob', ordinal: 2, collaborationRole: 'specialist' },
         ],
       },
     });
@@ -155,7 +155,9 @@ describe('roomToolEvidence', () => {
     expect(evidence?.headline).toBe('行星协调 · 查看伙伴名册');
     expect(evidence?.facts.find((fact) => fact.label === '操作')?.value).toBe('查看伙伴名册');
     expect(evidence?.facts.find((fact) => fact.label === '伙伴')?.value)
-      .toBe('Agent 1 · reviewer；Agent 2 · specialist');
+      .toBe('Mars · reviewer；Venus · specialist');
+    expect(evidence?.facts.find((fact) => fact.label === '伙伴')?.value)
+      .not.toMatch(/Alice|Bob/);
   });
 
   it('labels delegate_batch and keeps primitive arguments compact', () => {

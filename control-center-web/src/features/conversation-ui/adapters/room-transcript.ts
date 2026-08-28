@@ -284,14 +284,16 @@ function activityBlock(
   if (plan) {
     /* A route decision reads as the real dispatch — which planet pulled which,
      * and for what — never a dead「分派」label. */
-    const sourceName = options.actorName(roomDispatchSourceParticipantId(plan, dispatchPlans) || null);
-    const targetName = options.actorName(plan.targetParticipantId) || plan.targetDisplayName || '伙伴';
+    const sourceName = roomPublicPlanetName(
+      options.actorName(roomDispatchSourceParticipantId(plan, dispatchPlans) || null),
+    );
+    const targetName = roomPublicPlanetName(options.actorName(plan.targetParticipantId));
     const objective = plan.workItemId ? options.workItemObjective?.(plan.workItemId) ?? '' : '';
     const routingDetail = [
       objective ? `任务：${objective}` : '',
       plan.routingPolicyLabel,
       ...plan.candidates.map((candidate) => (
-        `${options.actorName(candidate.participantId) || candidate.displayName} · ${candidate.score.toFixed(1)}${candidate.selected ? ' · 已选择' : ''}${candidate.signals.length ? ` · ${candidate.signals.join('、')}` : ''}`
+        `${roomPublicPlanetName(options.actorName(candidate.participantId))} · ${candidate.score.toFixed(1)}${candidate.selected ? ' · 已选择' : ''}${candidate.signals.length ? ` · ${candidate.signals.join('、')}` : ''}`
       )),
       plan.dispatchId ? `分派 ${plan.dispatchId}` : '',
       plan.workItemId ? `任务 ${plan.workItemId}` : '',
@@ -390,7 +392,9 @@ function roomWorkActivityReceipt(
       ? `r${currentRevision}`
       : '';
   const ownerParticipantId = text(payload.ownerParticipantId);
-  const owner = ownerParticipantId ? options.actorName(ownerParticipantId) || ownerParticipantId : '';
+  const owner = ownerParticipantId
+    ? roomPublicPlanetName(options.actorName(ownerParticipantId))
+    : '';
   return {
     summary: [title, revision, owner ? `负责人 ${owner}` : ''].filter(Boolean).join(' · '),
     detail: [
@@ -403,6 +407,14 @@ function roomWorkActivityReceipt(
 
 function positiveInteger(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+/** Public Room dispatch copy is planet-only. Runtime display names are kept in
+ * the parsed plan for internal correlation, but they must never become a
+ * reader-facing fallback when a participant alias is unavailable. */
+function roomPublicPlanetName(value: string | undefined): string {
+  const name = value?.trim();
+  return name || '协作行星';
 }
 
 function toolStatus(status: RoomActivityProjection['status']): ToolStatus {

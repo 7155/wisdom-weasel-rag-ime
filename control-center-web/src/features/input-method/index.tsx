@@ -36,6 +36,8 @@ import {
   modelConfigValue,
   numericDraftValue,
   presetInputModes,
+  predictionLiveTraceSummaries,
+  type PredictionTraceFrameSummary,
   profileLabel,
   publicInputText,
   readinessLabel,
@@ -241,6 +243,7 @@ export function InputMethodFeature() {
     queries.settings,
     queries.schema,
     queries.capabilities,
+    queries.predictionLiveTrace,
   ].some((query) => query.isFetching);
 
   const refresh = () => {
@@ -718,6 +721,14 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
+        description="仅显示最近少量输入请求的运行摘要；原文、候选与诊断原因不会在这里展开。"
+        title="输入 Trace"
+        trailing={<StatusBadge label={queries.predictionLiveTrace.isFetching ? '正在读取' : '本机摘要'} tone="neutral" />}
+      >
+        <InputTraceDiscoverability query={queries.predictionLiveTrace} />
+      </ManagementSection>
+
+      <ManagementSection
         description="候选数量、触发时机与本机联想参数，只保存本次改动。"
         title="输入体验设置"
         trailing={(
@@ -981,6 +992,73 @@ export function InputLexiconFeature() {
         )}
       </ManagementSection>
     </ManagementPage>
+  );
+}
+
+function InputTraceDiscoverability({
+  query,
+}: {
+  query: ReturnType<typeof useInputMethodQueries>['predictionLiveTrace'];
+}) {
+  if (query.isPending) {
+    return <InlineNotice title="正在读取输入 Trace" tone="info">正在等待本机最近请求的摘要。</InlineNotice>;
+  }
+  if (query.error) {
+    return (
+      <div className="input-inline-action">
+        <InlineNotice title="输入 Trace 暂不可用" tone="warning">
+          {publicErrorText(query.error, '本机摘要暂时不可用；不会影响正常输入。')}
+        </InlineNotice>
+        <Button onClick={() => void query.refetch()} size="small">重试 Trace</Button>
+      </div>
+    );
+  }
+  const summaries = predictionLiveTraceSummaries(query.data);
+  const latest = summaries.length ? summaries[summaries.length - 1] : null;
+  if (!latest) {
+    return <InlineNotice title="尚未有可定位的输入请求" tone="info">输入发生后，这里会显示最近请求的安全摘要。</InlineNotice>;
+  }
+  return (
+    <div aria-label="输入 Trace 最近请求" className="input-trace-discovery">
+      <div className="input-trace-discovery__head">
+        <div>
+          <strong>最近请求</strong>
+          <span>会话 {latest.sessionId} · 请求 #{latest.requestSeq}</span>
+        </div>
+        <a href={`#/observability?traceId=${encodeURIComponent(latest.traceId)}`}>查看标准 Trace</a>
+      </div>
+      <div className="input-trace-discovery__lanes">
+        <InputTraceLane label="知识召回" lane={latest.ragLane} />
+        <InputTraceLane label="本机联想" lane={latest.modelLane} />
+      </div>
+      {summaries.length > 1 ? <small>已保留最近 {summaries.length} 条可定位请求</small> : null}
+    </div>
+  );
+}
+
+function InputTraceLane({
+  label,
+  lane,
+}: {
+  label: string;
+  lane: PredictionTraceFrameSummary['ragLane'];
+}) {
+  const status = ({
+    completed: '已完成',
+    timed_out: '超时',
+    dropped: '已丢弃',
+    waiting: '等待中',
+    skipped: '已跳过',
+    not_reported: '未报告',
+  } as const)[lane.status];
+  const count = lane.count === null ? '数量未知' : `${lane.count} 条`;
+  const elapsed = lane.elapsedMs === null ? '耗时未知' : `${lane.elapsedMs} ms`;
+  return (
+    <div className="input-trace-discovery__lane">
+      <span>{label}</span>
+      <StatusBadge label={status} tone={lane.status === 'completed' ? 'success' : lane.status === 'not_reported' ? 'neutral' : 'warning'} />
+      <small>{count} · {elapsed}</small>
+    </div>
   );
 }
 

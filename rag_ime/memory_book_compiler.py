@@ -630,6 +630,7 @@ def memory_book_plan_from_compile_output(
     project: str,
     provider: str,
     model: str,
+    run_id: str = "",
     source_bundle: dict[str, object] | None = None,
     owner_kind: str = "user",
     owner_id: str = "default",
@@ -1130,7 +1131,7 @@ def memory_book_plan_from_compile_output(
     isolated_proposed_tags = sorted(name for name in proposed_tag_names if name and name not in connected_tag_names)
     if len(proposed_tag_names) > 1 and isolated_proposed_tags:
         warnings.append(f"isolated_semantic_tags_in_draft:{len(isolated_proposed_tags)}")
-    run_id = f"memory_book_{now_ms()}"
+    run_id = compact_whitespace(str(run_id or "")) or f"memory_book_{now_ms()}"
     if (
         compact_whitespace(run_kind) in {"", "legacy"}
         and source_bundle

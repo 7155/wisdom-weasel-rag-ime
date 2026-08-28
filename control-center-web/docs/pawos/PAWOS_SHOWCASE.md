@@ -21,7 +21,7 @@ Source ref: `TaskBrief.user_message.current`
 
 ## Current execution record
 
-- Goal: `01a03ea7-1007-7e30-837a-b8c88875a374`
+- Goal: `<redacted-showcase-goal>`
 - Workspace: isolated Goal worktree; unrelated dirty worktrees remain untouched.
 - Environment: the lockfile-defined frontend dependencies were installed in
   this worktree. Existing Node, pnpm, Playwright, ffmpeg, cwebp, and macOS

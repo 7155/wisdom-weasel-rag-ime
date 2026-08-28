@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -60,8 +61,10 @@ __all__ = [
     "pi_message_continues_public_turn",
     "pi_message_is_public",
     "pi_message_payload",
+    "provider_request_receipt",
     "provider_retry_status",
     "public_code_tool_activity",
+    "public_knowledge_tool_activity",
     "public_reasoning_summaries",
     "public_file_name",
     "public_fork_candidate_text",
@@ -476,6 +479,69 @@ def pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
     return f"pi:message:{role}:{digest}"
 
 
+def provider_request_receipt(
+    raw: Mapping[str, object],
+    *,
+    turn_id: str,
+    provider: str = "",
+    model: str = "",
+    status: str = "completed",
+    completed_at_ms: int | None = None,
+) -> dict[str, object]:
+    """Return a bounded, content-free receipt for one Provider request.
+
+    Pi emits an assistant message for every request, including assistant
+    messages whose only purpose is to invoke a Tool.  The existing Pi message
+    identity is carried as a bounded request identity; no prompt, completion,
+    or new identity derivation crosses the boundary.  Usage and
+    timing are copied only when Pi actually reported them; prompt, completion,
+    and error text never enter this projection.
+    """
+
+    normalized_status = str(status or "completed").strip().lower()
+    if normalized_status not in {"completed", "failed"}:
+        normalized_status = "completed"
+    message_id = re.sub(
+        r"[^A-Za-z0-9_.:-]",
+        "_",
+        pi_message_id(raw, turn_id),
+    )[:160]
+    if not message_id:
+        message_id = "response"
+    safe_turn_id = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(turn_id))[:160]
+    if not safe_turn_id:
+        safe_turn_id = "turn"
+    receipt: dict[str, object] = {
+        "requestId": f"{safe_turn_id}:provider:{message_id}",
+        "status": normalized_status,
+    }
+    provider_value = str(raw.get("provider") or provider or "").strip()
+    model_value = str(
+        raw.get("responseModel") or raw.get("model") or model or ""
+    ).strip()
+    if provider_value:
+        receipt["provider"] = provider_value[:80]
+    if model_value:
+        receipt["model"] = model_value[:160]
+    started_at_ms = as_integer(raw.get("timestamp"))
+    if started_at_ms:
+        receipt["startedAtMs"] = started_at_ms
+        # Pi's timestamp is the request start.  Only expose a measured
+        # duration when it is an epoch-millisecond timestamp; tiny fixture
+        # timestamps and malformed values are not latency evidence.
+        if (
+            completed_at_ms is not None
+            and started_at_ms >= 1_000_000_000_000
+            and completed_at_ms >= started_at_ms
+        ):
+            receipt["durationMs"] = max(0, int(completed_at_ms - started_at_ms))
+    usage = public_usage(raw)
+    if public_usage_evidence(raw)["usageReported"]:
+        receipt["usage"] = usage
+        receipt.update(public_usage_evidence(raw))
+    return receipt
+
+
 def pi_message_is_public(raw: Mapping[str, object]) -> bool:
     """Keep Pi's loop protocol out while retaining user-visible assistant text.
 
@@ -876,6 +942,117 @@ def public_code_tool_activity(
         result["automatic"] = True
 
     return result
+
+
+_PUBLIC_KNOWLEDGE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+_PUBLIC_KNOWLEDGE_MODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}\Z")
+
+
+def _public_knowledge_id(value: object) -> str:
+    candidate = str(value or "").strip()
+    return candidate if _PUBLIC_KNOWLEDGE_ID_RE.fullmatch(candidate) else ""
+
+
+def _public_knowledge_mode(value: object) -> str:
+    candidate = str(value or "").strip().lower()
+    return candidate if _PUBLIC_KNOWLEDGE_MODE_RE.fullmatch(candidate) else ""
+
+
+def public_knowledge_tool_activity(
+    tool_name: str,
+    args: Mapping[str, object],
+    raw_result: object = None,
+) -> dict[str, object]:
+    """Project one Knowledge search into privacy-safe retrieval metadata.
+
+    Search queries, document names, citations, content and local paths are
+    intentionally absent.  The projection keeps only opaque Knowledge ids,
+    measured result counts, retrieval mode and evidence receipts needed by
+    Trace/Eval.  It is shared by both Pi runtime protocols so a vertical Agent
+    produces the same trace regardless of the host transport in use.
+    """
+
+    if str(tool_name or "").strip().lower() != "knowledge":
+        return {}
+    operation = str(args.get("operation") or args.get("op") or "").strip().lower()
+    if operation != "search":
+        return {}
+
+    result = as_mapping(raw_result)
+    retrieval = as_mapping(result.get("retrieval"))
+    kb_id = _public_knowledge_id(args.get("kbId") or args.get("baseId"))
+    mode = _public_knowledge_mode(
+        retrieval.get("effectiveMode")
+        or retrieval.get("mode")
+        or args.get("searchMode")
+        or args.get("mode")
+    )
+    raw_items = result.get("items") or result.get("hits")
+    items = (
+        list(raw_items[:32])
+        if isinstance(raw_items, list)
+        else list(raw_items[:32])
+        if isinstance(raw_items, tuple)
+        else []
+    )
+    evidence: list[dict[str, object]] = []
+    for rank, raw_item in enumerate(items, start=1):
+        item = as_mapping(raw_item)
+        item_kb_id = _public_knowledge_id(
+            item.get("kbId") or item.get("baseId") or kb_id
+        )
+        chunk_id = _public_knowledge_id(item.get("chunkId"))
+        if not item_kb_id or not chunk_id:
+            continue
+        source_ref = f"knowledge://{item_kb_id}/{chunk_id}"
+        readable_evidence_id = f"knowledge:{item_kb_id}:{chunk_id}"
+        evidence_id = (
+            readable_evidence_id
+            if len(readable_evidence_id) <= 160
+            else f"knowledge:sha256:{hashlib.sha256(source_ref.encode('utf-8')).hexdigest()}"
+        )
+        scores: dict[str, float] = {}
+        raw_score = item.get("score")
+        if (
+            isinstance(raw_score, (int, float))
+            and not isinstance(raw_score, bool)
+            and math.isfinite(float(raw_score))
+        ):
+            scores["score"] = round(float(raw_score), 6)
+        evidence.append(
+            {
+                "evidenceId": evidence_id,
+                "sourceKind": "knowledge",
+                "sourceRef": source_ref,
+                "sourceLane": mode,
+                "disposition": "included",
+                "scores": scores,
+                "rankBefore": None,
+                "rankAfter": rank,
+                "omissionReason": "",
+            }
+        )
+
+    raw_total = result.get("total")
+    evidence_count = (
+        int(raw_total)
+        if isinstance(raw_total, int)
+        and not isinstance(raw_total, bool)
+        and 0 <= raw_total <= 1_000_000
+        else len(items)
+    )
+    projection: dict[str, object] = {
+        "activityKind": "knowledge_retrieval",
+        "operation": "search",
+        "evidenceStage": "retrieval_output",
+        "evidenceCount": evidence_count,
+        "traceEvidence": evidence,
+    }
+    if kb_id:
+        projection["kbId"] = kb_id
+    if mode:
+        projection["retrievalMode"] = mode
+    return projection
 
 
 def _public_mutation_line_counts(

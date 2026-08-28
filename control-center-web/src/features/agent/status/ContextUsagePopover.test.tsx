@@ -84,6 +84,8 @@ describe('ContextUsagePopover', () => {
 
   it('sizes the portalled panel from Radix collision space and compacts its trigger in narrow composer containers', () => {
     expect(contextUsageCss).toContain('--radix-popover-content-available-width');
+    expect(contextUsageCss).toMatch(/\.agent-context-usage__popover\s*\{[^}]*max-height:\s*min\(560px/s);
+    expect(contextUsageCss).toMatch(/\.agent-context-usage__popover\s*\{[^}]*overflow-y:\s*auto/s);
     expect(contextUsageCss).toMatch(/@container paw-composer-toolbar \(max-width: 360px\)/);
     expect(contextUsageCss).toMatch(/\.agent-context-usage__label\s*\{[^}]*clip-path:\s*inset\(50%\)/s);
   });

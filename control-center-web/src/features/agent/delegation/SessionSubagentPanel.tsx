@@ -223,12 +223,13 @@ function SubagentGraphNodes({
     const state = subagentPresentationState(run);
     const parent = run.parentRunId ? runs.find((item) => item.id === run.parentRunId) : undefined;
     const owner = parent ? subagentTemplateLabel(parent.templateId) : 'Root';
+    const failureReason = (run.state === 'failed' || run.state === 'timed_out') ? run.error.trim() : '';
     return (
       <li key={run.id} data-depth={level} data-state={state}>
         <span className="session-subagent-tree__edge" aria-hidden="true" />
         <button
           aria-current={selectedRunId === run.id ? 'true' : undefined}
-          aria-label={`${subagentTemplateLabel(run.templateId)} · ${run.task || '未公开任务说明'} · ${subagentStateLabel(run)}`}
+          aria-label={`${subagentTemplateLabel(run.templateId)} · ${run.task || '未公开任务说明'} · ${subagentStateLabel(run)}${failureReason ? ` · ${failureReason}` : ''}`}
           className="session-subagent-node"
           data-selected={selectedRunId === run.id || undefined}
           onClick={() => onSelect(run.id)}
@@ -242,6 +243,9 @@ function SubagentGraphNodes({
             <span className="session-subagent-node__task">{run.task || '未公开任务说明'}</span>
             <i>{subagentStateLabel(run)}</i>
             {node.children.length ? <b>{node.children.length}</b> : null}
+            {(run.state === 'failed' || run.state === 'timed_out') && run.error.trim() ? (
+              <small className="session-subagent-node__error" title={run.error}>{run.error}</small>
+            ) : null}
         </button>
         {node.children.length ? <ol aria-label={`${run.task} 的 Pattern 子调用`}>
           <SubagentGraphNodes

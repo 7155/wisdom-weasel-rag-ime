@@ -71,6 +71,13 @@ import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1
 import type { DailyActivityTimelineV1 } from './generated/daily-activity-timeline.v1';
 import type { DailyConversationDigestV1 } from './generated/daily-conversation-digest.v1';
 import type { DeliveryGateObservationV1 } from './generated/delivery-gate-observation.v1';
+import type { EvalRunV1 } from './generated/eval-run.v1';
+import type { EvalScheduleCreateV1 } from './generated/eval-schedule-create.v1';
+import type { EvalScheduleErrorV1 } from './generated/eval-schedule-error.v1';
+import type { EvalScheduleListV1 } from './generated/eval-schedule-list.v1';
+import type { EvalScheduleRunListV1 } from './generated/eval-schedule-run-list.v1';
+import type { EvalScheduleV1 } from './generated/eval-schedule.v1';
+import type { EvalSuiteListV1 } from './generated/eval-suite-list.v1';
 import type { ForegroundCommitV1 } from './generated/foreground-commit.v1';
 import type { ForegroundContextV2 } from './generated/foreground-context.v2';
 import type { FrontendCapabilitiesV1 } from './generated/frontend-capabilities.v1';
@@ -102,9 +109,16 @@ import type { MemoryGovernancePreviewV1 } from './generated/memory-governance-pr
 import type { MemoryGraphV1 } from './generated/memory-graph.v1';
 import type { MemoryReadErrorV1 } from './generated/memory-read-error.v1';
 import type { MemoryReferenceV1 } from './generated/memory-reference.v1';
+import type { ObservabilityEvalListV1 } from './generated/observability-eval-list.v1';
+import type { ObservabilityEvidenceEvalRequestV1 } from './generated/observability-evidence-eval-request.v1';
+import type { ObservabilitySandboxRunListV1 } from './generated/observability-sandbox-run-list.v1';
+import type { ObservabilityTraceErrorV1 } from './generated/observability-trace-error.v1';
+import type { ObservabilityTraceGetV1 } from './generated/observability-trace-get.v1';
 import type { ObservationEventV1 } from './generated/observation-event.v1';
 import type { ObservationSnapshotV1 } from './generated/observation-snapshot.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
+import type { PawPluginUsageQueryV1 } from './generated/paw.plugin-usage-query.v1';
+import type { PawPluginUsageV1 } from './generated/paw.plugin-usage.v1';
 import type { PiRuntimeManifestV1 } from './generated/pi-runtime-manifest.v1';
 import type { PromptCompileReceiptV1 } from './generated/prompt-compile-receipt.v1';
 import type { PromptPlanV1 } from './generated/prompt-plan.v1';
@@ -130,10 +144,13 @@ import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
 import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
 import type { RoomTaskV3 } from './generated/room-task.v3';
 import type { RunnerVerificationReceiptV2 } from './generated/runner-verification-receipt.v2';
+import type { SandboxRunV1 } from './generated/sandbox-run.v1';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
+import type { TraceEnvelopeV1 } from './generated/trace-envelope.v1';
 import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
+import type { VerticalAgentSelfTestSuiteV1 } from './generated/vertical-agent-self-test-suite.v1';
 import type { WorkDocumentCommandV1 } from './generated/work-document-command.v1';
 import type { WorkDocumentContextV1 } from './generated/work-document-context.v1';
 import type { WorkDocumentDetailV1 } from './generated/work-document-detail.v1';
@@ -210,6 +227,13 @@ export type {
   DailyActivityTimelineV1,
   DailyConversationDigestV1,
   DeliveryGateObservationV1,
+  EvalRunV1,
+  EvalScheduleCreateV1,
+  EvalScheduleErrorV1,
+  EvalScheduleListV1,
+  EvalScheduleRunListV1,
+  EvalScheduleV1,
+  EvalSuiteListV1,
   ForegroundCommitV1,
   ForegroundContextV2,
   FrontendCapabilitiesV1,
@@ -241,9 +265,16 @@ export type {
   MemoryGraphV1,
   MemoryReadErrorV1,
   MemoryReferenceV1,
+  ObservabilityEvalListV1,
+  ObservabilityEvidenceEvalRequestV1,
+  ObservabilitySandboxRunListV1,
+  ObservabilityTraceErrorV1,
+  ObservabilityTraceGetV1,
   ObservationEventV1,
   ObservationSnapshotV1,
   OverlayConfigV1,
+  PawPluginUsageQueryV1,
+  PawPluginUsageV1,
   PiRuntimeManifestV1,
   PromptCompileReceiptV1,
   PromptPlanV1,
@@ -269,10 +300,13 @@ export type {
   RoomShadowObservationV1,
   RoomTaskV3,
   RunnerVerificationReceiptV2,
+  SandboxRunV1,
   SessionMemoryRecallV1,
   SessionRecallEffectReceiptV1,
+  TraceEnvelopeV1,
   TypedVerificationReceiptV1,
   UserMemoryDraftV1,
+  VerticalAgentSelfTestSuiteV1,
   WorkDocumentCommandV1,
   WorkDocumentContextV1,
   WorkDocumentDetailV1,
@@ -350,6 +384,13 @@ export interface ContractTypeMap {
   'daily-activity-timeline.v1': DailyActivityTimelineV1;
   'daily-conversation-digest.v1': DailyConversationDigestV1;
   'delivery-gate-observation.v1': DeliveryGateObservationV1;
+  'eval-run.v1': EvalRunV1;
+  'eval-schedule-create.v1': EvalScheduleCreateV1;
+  'eval-schedule-error.v1': EvalScheduleErrorV1;
+  'eval-schedule-list.v1': EvalScheduleListV1;
+  'eval-schedule-run-list.v1': EvalScheduleRunListV1;
+  'eval-schedule.v1': EvalScheduleV1;
+  'eval-suite-list.v1': EvalSuiteListV1;
   'foreground-commit.v1': ForegroundCommitV1;
   'foreground-context.v2': ForegroundContextV2;
   'frontend-capabilities.v1': FrontendCapabilitiesV1;
@@ -381,9 +422,16 @@ export interface ContractTypeMap {
   'memory-graph.v1': MemoryGraphV1;
   'memory-read-error.v1': MemoryReadErrorV1;
   'memory-reference.v1': MemoryReferenceV1;
+  'observability-eval-list.v1': ObservabilityEvalListV1;
+  'observability-evidence-eval-request.v1': ObservabilityEvidenceEvalRequestV1;
+  'observability-sandbox-run-list.v1': ObservabilitySandboxRunListV1;
+  'observability-trace-error.v1': ObservabilityTraceErrorV1;
+  'observability-trace-get.v1': ObservabilityTraceGetV1;
   'observation-event.v1': ObservationEventV1;
   'observation-snapshot.v1': ObservationSnapshotV1;
   'overlay-config.v1': OverlayConfigV1;
+  'paw.plugin-usage-query.v1': PawPluginUsageQueryV1;
+  'paw.plugin-usage.v1': PawPluginUsageV1;
   'pi-runtime-manifest.v1': PiRuntimeManifestV1;
   'prompt-compile-receipt.v1': PromptCompileReceiptV1;
   'prompt-plan.v1': PromptPlanV1;
@@ -409,10 +457,13 @@ export interface ContractTypeMap {
   'room-shadow-observation.v1': RoomShadowObservationV1;
   'room-task.v3': RoomTaskV3;
   'runner-verification-receipt.v2': RunnerVerificationReceiptV2;
+  'sandbox-run.v1': SandboxRunV1;
   'session-memory-recall.v1': SessionMemoryRecallV1;
   'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;
+  'trace-envelope.v1': TraceEnvelopeV1;
   'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
+  'vertical-agent-self-test-suite.v1': VerticalAgentSelfTestSuiteV1;
   'work-document-command.v1': WorkDocumentCommandV1;
   'work-document-context.v1': WorkDocumentContextV1;
   'work-document-detail.v1': WorkDocumentDetailV1;

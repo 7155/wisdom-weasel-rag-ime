@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.rag_benchmark_sandbox import (
     RUN_MARKER_NAME,
@@ -168,6 +170,81 @@ class RagBenchmarkSandboxTests(unittest.TestCase):
         self.assertTrue(cleaned["deleted"])
         self.assertFalse((self.root / f"run-{run_id}").exists())
         self.assertEqual("must survive sandbox cleanup\n", self.outside.read_text(encoding="utf-8"))
+
+    def test_search_projection_preserves_score_tristate_and_rejects_invalid_measurements(self) -> None:
+        run_id = self.sandbox.create_run("session-score")["runId"]
+        self.sandbox.create_base("session-score", run_id, alias="kb", name="Score fixture")
+        self.sandbox.import_documents(
+            "session-score",
+            run_id,
+            base_alias="kb",
+            documents=[{"externalId": "doc-1", "name": "doc.md", "text": "score fixture"}],
+        )
+        marker = json.loads((self.root / f"run-{run_id}" / RUN_MARKER_NAME).read_text(encoding="utf-8"))
+        document_id = marker["documents"]["doc-1"]["documentId"]
+        service = self.sandbox._services[run_id]
+        raw_hit = {
+            "documentId": document_id,
+            "chunkId": "chunk-1",
+            "documentName": "doc.md",
+            "ordinal": 0,
+            "content": "score fixture",
+        }
+        with patch.object(
+            service,
+            "search",
+            side_effect=[
+                {"hits": [raw_hit]},
+                {"hits": [{**raw_hit, "score": 0}]},
+                {"hits": [{**raw_hit, "score": -2.5}]},
+            ],
+        ):
+            missing = self.sandbox.search("session-score", run_id, base_alias="kb", query="score", mode="lexical")
+            zero = self.sandbox.search("session-score", run_id, base_alias="kb", query="score", mode="lexical")
+            negative = self.sandbox.search("session-score", run_id, base_alias="kb", query="score", mode="lexical")
+
+        self.assertNotIn("score", missing["hits"][0])
+        self.assertEqual(0.0, zero["hits"][0]["score"])
+        self.assertEqual(-2.5, negative["hits"][0]["score"])
+
+        for invalid in (True, "0.5", math.nan, math.inf, -math.inf):
+            with self.subTest(invalid=invalid):
+                with patch.object(service, "search", return_value={"hits": [{**raw_hit, "score": invalid}]}):
+                    with self.assertRaisesRegex(RagBenchmarkSandboxError, "invalid score"):
+                        self.sandbox.search(
+                            "session-score",
+                            run_id,
+                            base_alias="kb",
+                            query="score",
+                            mode="lexical",
+                        )
+
+    def test_lexical_and_hashing_dense_search_return_real_hits_and_finite_scores(self) -> None:
+        run_id = self.sandbox.create_run("session-modes")["runId"]
+        self.sandbox.create_base("session-modes", run_id, alias="kb", name="Modes fixture")
+        self.sandbox.import_documents(
+            "session-modes",
+            run_id,
+            base_alias="kb",
+            documents=[
+                {"externalId": "doc-1", "name": "doc.md", "text": "alpha beta retrieval"},
+                {"externalId": "doc-2", "name": "other.md", "text": "unrelated text"},
+            ],
+        )
+        for mode in ("lexical", "dense"):
+            with self.subTest(mode=mode):
+                result = self.sandbox.search(
+                    "session-modes",
+                    run_id,
+                    base_alias="kb",
+                    query="alpha beta",
+                    top_k=1,
+                    mode=mode,
+                )
+                self.assertEqual(1, result["total"])
+                self.assertEqual("doc-1", result["hits"][0]["externalDocumentId"])
+                self.assertIsInstance(result["hits"][0]["score"], (int, float))
+                self.assertTrue(math.isfinite(result["hits"][0]["score"]))
 
     def test_owner_binding_and_marker_integrity_fail_closed(self) -> None:
         run = self.sandbox.create_run("session-owner")

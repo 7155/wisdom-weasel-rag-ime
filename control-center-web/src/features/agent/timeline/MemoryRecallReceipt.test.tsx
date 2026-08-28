@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -48,11 +48,30 @@ describe('MemoryRecallReceipt', () => {
     expect(memoryRecallReceiptFromTrace(memoryTrace({ disposition: 'omitted' }))).toBeUndefined();
     expect(memoryRecallReceiptFromTrace(memoryTrace({ hitCount: undefined }))).toBeUndefined();
   });
+
+  it('keeps a recalled Knowledge document as a clickable source', async () => {
+    const receipt = memoryRecallReceiptFromTrace(memoryTrace({ knowledgeDocumentId: 'doc-1' }));
+    expect(receipt?.entities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ appId: 'knowledge', entityId: 'doc-1' }),
+    ]));
+
+    const openRoute = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(
+      <PawOsDesktopProvider openRoute={openRoute} openWindow={() => {}}>
+        <MemoryRecallReceipt receipt={receipt!} />
+      </PawOsDesktopProvider>,
+    );
+    await user.click(within(container).getByText('记忆召回 · 3 条 · 18 ms'));
+    await user.click(within(container).getByRole('button', { name: '在知识库中打开 doc-1' }));
+    expect(openRoute).toHaveBeenCalledWith('/knowledge?document=doc-1&tab=viewer');
+  });
 });
 
 function memoryTrace(options: {
   disposition?: 'included' | 'omitted';
   hitCount?: number;
+  knowledgeDocumentId?: string;
 } = {}): AgentContextTraceV1 {
   const disposition = options.disposition ?? 'included';
   const hitCount = Object.hasOwn(options, 'hitCount') ? options.hitCount : 3;
@@ -82,6 +101,7 @@ function memoryTrace(options: {
         memoryAtomIds: 'atom-1',
         memoryBookIds: 'book-2',
         sourceTitles: '偏好：回答保持简洁,PAW 项目约定',
+        ...(options.knowledgeDocumentId ? { knowledgeDocumentIds: options.knowledgeDocumentId } : {}),
       },
       createdAtMs: 1_010,
     }],

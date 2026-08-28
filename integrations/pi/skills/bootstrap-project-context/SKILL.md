@@ -40,7 +40,12 @@ context; it is not a second task database, transcript, or Runtime projection.
 5. Record durable accepted requirements in the project's existing canonical
    requirements document. If none exists, name `docs/agent/requirements.md` as
    the default and create it only when there is an actual requirement to
-   preserve. Do not create empty ceremony during bootstrap.
+   preserve. Do not create empty ceremony during bootstrap. When the existing
+   ledger is split, keep the well-known path as its canonical index, link every
+   volume and exact stable-ID range, and preserve the repository's current
+   `previous / index / next` plus end-of-file **Continue reading / editing**
+   navigation. Load or update only the relevant volume, but follow its explicit
+   continuation link when the requested requirement crosses that boundary.
 6. Keep active task documents anywhere below the project's existing `docs/`
    convention and register them to the real `session_goal` or `room_work_item`
    through the write's `workDocument` field, or `work_documents` when that Tool

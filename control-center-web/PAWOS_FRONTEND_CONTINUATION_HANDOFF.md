@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-24  
 **Audience:** next GitHub-only cloud model on `main`  
-**Status:** partial — checkpoint pushed so work is not trapped in a dirty tree  
+**Status:** partial — historical checkpoint; current merge/push state must be read from Git
 **This file is progress context, not proof of install, foreground acceptance, or all-App completion.**
 
 ## Objective the user owns
@@ -25,6 +25,10 @@ Thoroughly reconstruct PAWOS frontend from the user's design, not a colour pass.
 
 ## Git snapshot (verify at takeover)
 
+The following is a dated 2026-08-24 checkpoint, not a current branch or
+post-merge receipt. Verify branch, commit, merge, installation, and foreground
+state from current Git/Runtime evidence before treating it as a baseline.
+
 ```text
 branch: main
 remote: git@github.com:7155/personal-agent-workbench.git  (account 7155)
@@ -38,12 +42,12 @@ This checkpoint commit sits on top of two local backend WIP commits that were re
 
 Do not revert those unless the backend owner says so. Do not commit `integrations/ego-browser/` (vendor tree / `node_modules`).
 
-## Requirement authority (all on GitHub `main`)
+## Requirement authority (intended post-merge GitHub `main`)
 
 Root `/docs/` is gitignored. A cloud model must read the tracked copies:
 
 1. `control-center-web/docs/README.md` — index
-2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` — complete `UR-001`–`UR-152`
+2. `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` — complete `UR-001`–`UR-195` in thirteen volumes
 3. `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` — `PF-CM-001`–`023` and App specs
 4. this file — latest checkpoint
 5. `control-center-web/docs/pawos/PAWOS_FRONTEND_HANDOFF.md` — earlier receipts

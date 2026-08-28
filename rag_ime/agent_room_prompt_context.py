@@ -193,12 +193,14 @@ def room_participant_prompt(
                 room_document_lines.append(
                     f"- [你负责] WorkItem {work_id} 尚未登记活动文档；"
                     f"先用 work_documents list 查 authorityKey={authority_key}；"
-                    "这是当前 WorkItem 的第一步：在 Room 工作区 docs/ 下创建 Markdown，"
-                    f"workspace_write.workDocument 必须原样使用 {authority_binding}。"
+                    "如需留痕，最多尝试一次在 Room 工作区 docs/ 下创建 Markdown，"
+                    f"workspace_write.workDocument 原样使用 {authority_binding}。"
                     "成功回执会给出 workDocumentRegistration.document.path；"
                     "后续 read/write 立即改用该规范路径，不再沿用首次请求路径；"
                     "后续 bound write 使用当前文档索引给出的 authorityRevision，"
-                    "不要沿用更早记住的旧值。"
+                    "不要沿用更早记住的旧值。绑定、哈希或登记失败只记录一次"
+                    "documentSync pending/failed、Trace 和公开残余提醒，继续真实工作，"
+                    "不要仅因文档失败 retry/return。"
                 )
             continue
         owner_id = (
@@ -222,8 +224,9 @@ def room_participant_prompt(
         )
         if work_id in related_ids:
             room_document_lines.append(
-                "  交付规则：先在该文档写目标、范围与计划；工作中持续更新；"
-                "结束前再写结果、证据、改动文件、验证和剩余风险，并重新绑定登记。"
+                "  交付规则：该文档是辅助证据；有可用绑定时再写目标、范围、计划、结果、"
+                "证据、改动文件、验证和剩余风险。同步失败只留 documentSync/Trace，"
+                "不为文档重复绑定或返工。"
             )
     opening_sections = [
         "<room-context>",
@@ -271,9 +274,11 @@ def room_participant_prompt(
                         "Session 的整段对话。"
                     ),
                     (
-                        "提交门槛：负责文档必须已登记且至少形成一次后续内容修订"
-                        "（documentRevision >= 2）；满足它只允许把 WorkItem 提交到 review，"
-                        "不会自动验收。Facilitator 仍须依据证据分别判断运行可操作性和需求满足度。"
+                        "文档同步说明：WorkDocument 是辅助证据，提交门槛只要求真实结果和可核对"
+                        "证据，不依赖 documentRevision。绑定、哈希或登记失败只公开一次"
+                        "documentSync pending/failed、Trace 和残余项，不阻断满足功能证据的 WorkItem，"
+                        "也不要因此 retry/return；只有交付本身就是文档时才影响 requirementVerdict。"
+                        "Facilitator 仍须依据 operability/requirement evidence 分别判断验收。"
                     ),
                 ]
             )
@@ -289,11 +294,16 @@ def room_participant_prompt(
                         "当请求包含多个可独立验收步骤、需要不同专长，或并行处理能明显推进时，"
                         "先用 skill_load 加载 facilitate-room，再按该 Skill 判断是否调用 "
                         "room_partner list/delegate/delegate_batch；同一阶段多条独立轨道"
-                        "必须用一次 delegate_batch 才能称为并行，不要为了凑伙伴数量机械委派。",
-                        "拆分完成并注册 Root WorkDocument 后，在委派或修改产品前先用一次 "
-                        "room_partner post(kind=progress) 向用户公开文档路径、目标、工作轨道和验收条件。"
+                        "必须用一次 delegate_batch 才能称为并行，不要为了凑伙伴数量机械委派。"
+                        "如果当前任务需要改变 Room 规模，使用 typed room_partner "
+                        "op=add_participant（roleId）或 op=remove_participant（participantId）；"
+                        "新增成员会进入同一 Room 并拥有独立 Session，Room 最多 8 个 active participant；"
+                        "移除成员会保留其历史，并把未完成 WorkItem 标为待重新分配。",
+                        "拆分完成后，若 Root WorkDocument 已成功注册，在委派或修改产品前用一次 "
+                        "room_partner post(kind=progress) 向用户公开文档路径、目标、工作轨道和验收条件；"
+                        "若绑定失败，只公开一次 documentSync pending/failed、Trace 和残余提醒，继续执行。"
                         "这是可见计划回执，不新增审批门；没有会改变结果的用户选择时，公开后自动继续。"
-                        "计划发生实质变化时先更新绑定文档，再公开新的文档回执。",
+                        "计划发生实质变化时，有可用绑定再更新文档，再公开新的文档回执。",
                         "Room 内所有 participant 都是平等 peer。需要澄清、同步或求助时，"
                         "直接使用 room_partner peer_list/peer_send/peer_ask/peer_reply 与目标伙伴通信；"
                         "消息由 source Session 直接投递到 target Session。Facilitator 只负责最终 Root 汇合，"
@@ -305,6 +315,8 @@ def room_participant_prompt(
                         "交付到达后先 collect 当前 WorkItem、WorkDocument 与证据，再显式 accept 或 return。"
                         "分别判断运行可操作性和需求满足度；两轴均通过才用 expectedRevision、verdicts、"
                         "evidenceRefs 与非空 reason accept，否则用相同审查字段 return 并写明 reason。Partner 完成和"
+                        "documentSync pending/failed 只是公开残余提醒，不阻断满足功能证据的 WorkItem；"
+                        "只有交付本身就是文档时才影响 requirementVerdict。"
                         "文档修订都不能代替验收。审查报告 unverified、changes_required、failed 或未解决 "
                         "HIGH/MEDIUM 时必须 return，不得写成 passed/satisfied；Runtime 会机械拒绝"
                         "在 Partner 提交的 failed/unverified/not_satisfied 之上 accept。"
@@ -342,12 +354,13 @@ def room_participant_prompt(
                         "Room 协作规则：所有 participant 都是平等 peer。需要另一位伙伴的信息或回应时，"
                         "直接使用 room_partner peer_list/peer_send/peer_ask/peer_reply；不要等待 Facilitator 中转，"
                         "也不要把自己当成上级。Facilitator 只负责最终 Root 汇合。",
-                        "只有所有验收条件满足且负责的 WorkDocument 已完成收尾同步后，才调用一次 "
+                        "完成真实工作并收集可核对证据后，WorkDocument 绑定最多尝试一次；若失败，"
+                        "只记录一次 documentSync pending/failed、Trace 和公开残余提醒，然后仍调用一次 "
                         "room_partner post(kind=work_result)；该结构化交付只会把 WorkItem 提交到 review"
                         "并通过持久 wake 通知 Facilitator，不会自动验收。work_result 必须携带如实的 "
                         "proposedOperabilityVerdict 与 proposedRequirementVerdict：未验证写 unverified，"
                         "失败写 failed/not_satisfied，Facilitator 无法把它们改写成通过。"
-                        "不要把进度或尚未满足的条件伪装成 work_result。"
+                        "不要把进度或尚未满足的条件伪装成 work_result；不要仅因文档同步失败 retry/return。"
                         "网页验收只用 product browser（PAW Browser）；禁止 desktop_semantic "
                         "去操作独立 Chrome/Edge。bound write 使用当前文档索引上的 live "
                         "authorityRevision，不要沿用更早记住的旧值。",

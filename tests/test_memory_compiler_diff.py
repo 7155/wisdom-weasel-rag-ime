@@ -113,7 +113,7 @@ class MemoryCompilerDiffTests(unittest.TestCase):
                 event_id=None,
                 created_at_ms=1_900_000_000_100,
                 source="manual",
-                committed_text="token sk-abcdef1234567890 路径 /Users/undo/private/note.txt",
+                committed_text="token sk-abcdef1234567890 路径 /Users/example/private/note.txt",
                 privacy_disposition="allowed",
                 recent_context="联系我: test@example.com",
                 project="wisdom-weasel-rag-ime",
@@ -134,7 +134,7 @@ class MemoryCompilerDiffTests(unittest.TestCase):
         serialized = json.dumps(bundle, ensure_ascii=False)
 
         self.assertNotIn("sk-abcdef1234567890", serialized)
-        self.assertNotIn("/Users/undo/private/note.txt", serialized)
+        self.assertNotIn("/Users/example/private/note.txt", serialized)
         self.assertNotIn("test@example.com", serialized)
         self.assertIn("[REDACTED_SECRET]", serialized)
         self.assertIn("[REDACTED_PATH]", serialized)

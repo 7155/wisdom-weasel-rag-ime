@@ -75,6 +75,7 @@ import {
   type ModelRouteId,
 } from '@/features/roles/role-model';
 import { ObservabilityFeature } from '@/features/observability';
+import { TraceAgentFeature } from '@/features/trace-agent';
 import { VoiceFeature } from '@/features/voice';
 import type { PawAppId } from '../runtime/app-registry';
 import { pawApp } from '../runtime/app-registry';
@@ -113,6 +114,7 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
   'system-monitor': [
     { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时', purpose: 'Runtime 正在发生的事件与调用' },
     { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查', purpose: '逐轮查看模型实际收到的上下文' },
+    { id: 'trace-agent', label: 'Trace Agent', icon: Search, route: '/trace-agent', group: '排查', purpose: '选择一段对话，让 Agent 解释失败、浪费与改进方向' },
     { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查', purpose: '各组件自报的状态与可执行的检查' },
   ],
   'system-settings': [
@@ -266,6 +268,7 @@ function PawSystemSurface({ appId, pageId }: { appId: PawSystemAppId; pageId: st
   }
   if (appId === 'system-monitor') {
     if (pageId === 'context') return <ContextDebugFeature />;
+    if (pageId === 'trace-agent') return <TraceAgentFeature />;
     if (pageId === 'diagnostics') return <DiagnosticsFeature />;
     return <ObservabilityFeature />;
   }

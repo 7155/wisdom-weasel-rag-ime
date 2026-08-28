@@ -685,7 +685,7 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
   return (
     <Disclosure className="agent-status-tool" data-state={activity.status} contentClassName="agent-status-tool__details" summary={<>
         <span className="agent-status-tool__icon">{stateIcon}</span>
-        <span><strong>{knowledge ? '知识库' : view.toolLabel}</strong><small>{view.summary}</small></span>
+        <span><strong>{knowledge ? '知识库' : view.toolLabel}</strong><small title={view.error || view.summary}>{view.error || view.summary}</small></span>
         <i>{view.sources.length ? `来源 ${view.sources.length} · ` : ''}{activityStatusLabel(activity.status)}</i>
         <ChevronRight size={14} />
       </>}>
@@ -694,6 +694,7 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
         {view.operation ? <p><span>操作</span><code>{view.operation}</code></p> : null}
         <p><span>参数</span><strong>{argumentFieldCount} 个字段</strong></p>
         {visibleFields.map((field) => <p key={field.id}><span>{field.label}</span><strong>{field.value}</strong></p>)}
+        {view.error ? <p className="agent-status-tool__error" role="alert"><TriangleAlert size={13} /><span>{view.error}</span></p> : null}
         {visibleFields.length < view.fields.length ? <Button className="agent-status-tool__load-more" onClick={() => setVisibleFieldCount((count) => Math.min(view.fields.length, count + 5))} size="small" variant="quiet">显示更多字段（{visibleFields.length}/{view.fields.length}）</Button> : null}
         {view.sources.length ? (
           <section className="agent-status-tool__sources">
@@ -839,6 +840,9 @@ function SubagentRow({
         <small className="agent-status-subagent__verification" data-contract-invalid>
           {INVALID_SUBAGENT_CONTRACT_NOTICE}
         </small>
+      ) : null}
+      {(run.state === 'failed' || run.state === 'timed_out') && run.error.trim() ? (
+        <small className="agent-status-subagent__error" role="alert">{run.error}</small>
       ) : null}
       <SubagentConsoleDialog run={run} sessionId={sessionId} triggerLabel={active ? '查看进度' : '查看结果'} />
     </div>

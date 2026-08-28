@@ -18,7 +18,7 @@ from .owner_memory_curation import (
 
 
 _DEFAULT_GATEWAY_URL = "http://127.0.0.1:8768"
-_TERMINAL_JOB_STATES = frozenset({"completed", "failed"})
+_TERMINAL_JOB_STATES = frozenset({"completed", "failed", "expired"})
 
 
 class GatewayMemoryMaintenanceJobs:
@@ -75,7 +75,14 @@ class GatewayMemoryMaintenanceJobs:
         with self._lock:
             job = self._jobs.get(normalized)
             if job is None:
-                raise ValueError(f"memory maintenance job not found: {normalized}")
+                # Jobs deliberately live in the Gateway process because the
+                # durable maintenance truth is recorded by the SQLite owner.
+                # A refresh after a Gateway restart therefore cannot recover
+                # the old worker, and must not look like an active/failed run
+                # with invented progress. Return a terminal, retryable
+                # projection so HTTP clients can stop polling and start a new
+                # run explicitly.
+                return self._expired_payload(normalized)
             return self._payload(job, reused=False)
 
     def activity_timeline_status(self, *, project: str = "") -> dict[str, object]:
@@ -235,6 +242,12 @@ class GatewayMemoryMaintenanceJobs:
                 "remainingDayCount",
                 "failedDate",
                 "error",
+                "status",
+                "autoPublished",
+                "semanticOrganization",
+                "activityTimelineSummary",
+                "warningCount",
+                "activityTimelines",
             )
             if key in timeline_result
         }
@@ -309,6 +322,32 @@ class GatewayMemoryMaintenanceJobs:
             "createdAtMs": int(job.get("createdAtMs") or 0),
             "updatedAtMs": int(job.get("updatedAtMs") or 0),
             "completedAtMs": int(job.get("completedAtMs") or 0),
+        }
+
+    @staticmethod
+    def _expired_payload(job_id: str) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
+            "ok": False,
+            "jobId": job_id,
+            "state": "expired",
+            "reused": False,
+            "result": {},
+            "progress": {},
+            "errorCode": "memory_maintenance_job_expired",
+            "error": (
+                "Gateway restarted before this process-local Memory maintenance "
+                "job could be read; the old job cannot be recovered."
+            ),
+            "recovery": {
+                "recoverable": False,
+                "retryable": True,
+                "action": "trigger_new_job",
+                "reason": "process_local_job_registry_lost",
+            },
+            "createdAtMs": 0,
+            "updatedAtMs": 0,
+            "completedAtMs": 0,
         }
 
 
@@ -391,7 +430,7 @@ def run_gateway_memory_maintenance(
             raise TimeoutError(
                 f"Gateway Memory maintenance job timed out: {job_id}"
             )
-        sleep(min(interval, remaining))
+        time.sleep(min(interval, remaining))
         current = _request_json(
             opener,
             Request(

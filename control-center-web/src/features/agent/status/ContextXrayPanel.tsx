@@ -38,6 +38,8 @@ type ContextLayerId =
   | 'goal'
   | 'lifecycle-hook'
   | 'session-memory'
+  | 'memory-recall'
+  | 'knowledge-rag'
   | 'timeline'
   | 'skills'
   | 'tools'
@@ -64,12 +66,25 @@ export interface ContextXrayLayer {
   content: string | null;
 }
 
+export interface ContextXrayCache {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  prefixBytes: number | null;
+  duplicateBytes: number | null;
+  capability: 'reported' | 'unsupported' | 'unknown';
+}
+
 export interface ContextXraySnapshot {
   available: boolean;
+  /** The Runtime's captured current-turn input, when supplied. */
+  prompt?: string | null;
   layers: ContextXrayLayer[];
   contextTokens: number | null;
   contextWindow: number | null;
   cacheHitPercent: number | null;
+  cache?: ContextXrayCache;
   compaction: {
     count: number | null;
     status: string;
@@ -98,6 +113,8 @@ const layerIcons: Record<ContextLayerId, LucideIcon> = {
   goal: Flag,
   'lifecycle-hook': Sparkles,
   'session-memory': Brain,
+  'memory-recall': Brain,
+  'knowledge-rag': Database,
   timeline: Clock3,
   skills: Sparkles,
   tools: Wrench,
@@ -113,6 +130,12 @@ const roleBookPattern = /<agent-profile\b[^>]*>([\s\S]*?)<\/agent-profile>/giu;
 const workflowStatePattern = /<workflow-state\b[^>]*>([\s\S]*?)<\/workflow-state>/giu;
 const managedContextPattern = /<rag-ime-context\b[^>]*>([\s\S]*?)<\/rag-ime-context>/giu;
 const sessionMemoryPattern = typedContextPattern('session_memory');
+const memoryRecallPattern = typedContextPattern('memory_recall');
+const knowledgeRecallPatterns = [
+  typedContextPattern('knowledge_recall'),
+  typedContextPattern('knowledge'),
+  typedContextPattern('rag'),
+];
 const goalPattern = typedContextPattern('goal');
 const lifecycleHookPattern = typedContextPattern('lifecycle_hook');
 const timelineSectionPattern = /(?:^|\n)###\s+近期时间线\s*\n([\s\S]*?)(?=\n###\s+|\s*$)/giu;
@@ -327,10 +350,32 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
   const sources = contextLayerSources(context.systemPrompt, context.systemPromptOptions, context.activeTools, context.toolSchemas, latestCall);
   const telemetry = response.telemetry;
   const telemetryContext = record(telemetry.context);
+  const latestUsage = record(telemetry.latestUsage);
+  const latestCacheEvidence = context.cacheEvidence.at(-1);
+  const cacheUnsupported = latestCacheEvidence?.capability === 'unsupported';
+  const cache = {
+    inputTokens: cacheUnsupported
+      ? null
+      : finiteNumber(latestCacheEvidence?.inputTokens) ?? finiteNumber(latestUsage.input),
+    outputTokens: cacheUnsupported
+      ? null
+      : finiteNumber(latestCacheEvidence?.outputTokens) ?? finiteNumber(latestUsage.output),
+    cacheReadTokens: cacheUnsupported
+      ? null
+      : finiteNumber(latestCacheEvidence?.cacheReadTokens) ?? finiteNumber(latestUsage.cacheRead),
+    cacheWriteTokens: cacheUnsupported
+      ? null
+      : finiteNumber(latestCacheEvidence?.cacheWriteTokens) ?? finiteNumber(latestUsage.cacheWrite),
+    prefixBytes: cacheUnsupported ? null : finiteNumber(latestCacheEvidence?.prefixBytes),
+    duplicateBytes: cacheUnsupported ? null : finiteNumber(latestCacheEvidence?.duplicateBytes),
+    capability: latestCacheEvidence?.capability
+      ?? (Object.values(latestUsage).some((value) => finiteNumber(value) !== null) ? 'reported' : 'unknown'),
+  } as ContextXraySnapshot['cache'];
   const compaction = record(telemetry.latestCompaction);
 
   return {
     available: true,
+    prompt: context.prompt || null,
     layers: sources.map((source) => {
       if (!source.knowable) {
         return {
@@ -380,6 +425,7 @@ export function buildContextXraySnapshot(response: DebugContextResponse): Contex
     contextTokens: finiteNumber(telemetryContext.tokens),
     contextWindow: finiteNumber(telemetryContext.contextWindow),
     cacheHitPercent: finiteNumber(telemetry.latestCacheHitPercent),
+    cache,
     compaction: {
       count: finiteNumber(telemetry.compactionCount),
       status: text(compaction.status),
@@ -408,6 +454,10 @@ function contextLayerSources(
   const timelines = captures(sessionContent, timelineSectionPattern);
   const timelineContent = timelines.join('\n');
   const sessionWithoutTimeline = sessionContent.replace(timelineSectionPattern, '\n').trim();
+  const memoryRecallContent = captures(systemPrompt, memoryRecallPattern).join('\n');
+  const knowledgeRecallContent = knowledgeRecallPatterns
+    .flatMap((pattern) => captures(systemPrompt, pattern))
+    .join('\n');
   const systemWithoutManagedLayers = systemPrompt
     .replace(roleBookPattern, '\n')
     .replace(workflowStatePattern, '\n')
@@ -510,6 +560,22 @@ function contextLayerSources(
       sessionWithoutTimeline,
       Boolean(systemPrompt),
       contentIdentifiers(sessionWithoutTimeline),
+    ),
+    layer(
+      'memory-recall',
+      'Memory / 记忆召回',
+      'type="memory_recall"',
+      memoryRecallContent,
+      Boolean(systemPrompt),
+      contentIdentifiers(memoryRecallContent),
+    ),
+    layer(
+      'knowledge-rag',
+      'Knowledge / RAG',
+      'type="knowledge_recall" / type="rag"',
+      knowledgeRecallContent,
+      Boolean(systemPrompt),
+      contentIdentifiers(knowledgeRecallContent),
     ),
     layer('timeline', 'Timeline', 'Session Memory · 近期时间线', timelineContent, Boolean(systemPrompt)),
     layer('skills', 'Skills', 'systemPromptOptions.skills', skillsContent, Boolean(Object.keys(options).length), skillIdentifiers),
@@ -747,6 +813,7 @@ function emptySnapshot(): ContextXraySnapshot {
   });
   return {
     available: false,
+    prompt: null,
     layers: [
       unavailable('system', 'System', '最终 systemPrompt'),
       unavailable('project-context', '项目规则', 'systemPromptOptions.contextFiles'),
@@ -755,6 +822,8 @@ function emptySnapshot(): ContextXraySnapshot {
       unavailable('goal', 'Goal', 'type="goal"'),
       unavailable('lifecycle-hook', 'Lifecycle Hook', 'type="lifecycle_hook"'),
       unavailable('session-memory', 'Session Memory', 'type="session_memory"'),
+      unavailable('memory-recall', 'Memory / 记忆召回', 'type="memory_recall"'),
+      unavailable('knowledge-rag', 'Knowledge / RAG', 'type="knowledge_recall" / type="rag"'),
       unavailable('timeline', 'Timeline', 'Session Memory · 近期时间线'),
       unavailable('skills', 'Skills', 'systemPromptOptions.skills'),
       unavailable('tools', 'Tools', 'activeTools + toolSchemas'),
@@ -768,6 +837,15 @@ function emptySnapshot(): ContextXraySnapshot {
     contextTokens: null,
     contextWindow: null,
     cacheHitPercent: null,
+    cache: {
+      inputTokens: null,
+      outputTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
+      prefixBytes: null,
+      duplicateBytes: null,
+      capability: 'unknown',
+    },
     compaction: {
       count: null,
       status: '',

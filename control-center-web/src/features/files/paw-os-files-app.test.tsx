@@ -213,6 +213,44 @@ describe('PawOsFilesApp', () => {
     ))).toBe(true));
   });
 
+  it('opens a root-relative file path from a Session evidence link', async () => {
+    const relativePath = 'docs/room-runtime-handoff.md';
+    const absolutePath = `/workspace/paw/${relativePath}`;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': (request: ControlRequest) => {
+          const path = String(request.query?.path ?? '');
+          if (path === '/workspace/paw/docs') {
+            return { ok: true, path, items: [{ path: absolutePath, name: 'room-runtime-handoff.md', kind: 'file', byteSize: 32 }] };
+          }
+          return { ok: true, path, items: [{ path: '/workspace/paw/docs', name: 'docs', kind: 'directory' }] };
+        },
+        'agent.session.workspace.read': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          content: '# Room handoff',
+          byteSize: 14,
+          truncated: false,
+        }),
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp initialRoute={`/files?session=session-work&path=${encodeURIComponent(relativePath)}`} />);
+
+    expect(await screen.findByRole('heading', { name: 'room-runtime-handoff.md', level: 2 })).toBeInTheDocument();
+    expect(await screen.findByText('Room handoff')).toBeInTheDocument();
+    expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.session.workspace.read'
+      && call.request.params?.sessionId === 'session-work'
+      && call.request.query?.path === absolutePath
+    ))).toBe(true);
+  });
+
   it('projects its live Session selector and refresh action into window chrome', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({

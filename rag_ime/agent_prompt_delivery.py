@@ -15,6 +15,7 @@ from .pi_runtime_values import (
     PiRuntimeError,
     PiRuntimeTurnConflict,
 )
+from .memory_maintenance_settings import memory_enabled_from_settings
 from .text_utils import compact_whitespace
 
 
@@ -40,6 +41,7 @@ class AgentPromptDeliveryService:
             list[Mapping[str, object]],
         ],
         room_public_recovery_context: Callable[[str], str],
+        memory_enabled_provider: Callable[[], bool] | None = None,
     ) -> None:
         self.sessions = sessions
         self.context_runtime = context_runtime
@@ -47,6 +49,10 @@ class AgentPromptDeliveryService:
         self.runtime_tool_manifest = runtime_tool_manifest
         self.room_public_recovery_context = (
             room_public_recovery_context
+        )
+        sessions_db_path = getattr(sessions, "db_path", "")
+        self._memory_enabled_provider = memory_enabled_provider or (
+            lambda: memory_enabled_from_settings(sessions_db_path)
         )
 
     @property
@@ -253,10 +259,40 @@ class AgentPromptDeliveryService:
                 "prompt": "",
                 "charCount": 0,
             }
-        return self.context_runtime.materialize_for_delivery(
+        materialized = self.context_runtime.materialize_for_delivery(
             session_id,
             delivery_id=delivery_id,
         )
+        if self._memory_enabled():
+            return materialized
+        # Do not inject a previously materialized memory pack after the
+        # master switch is turned off.  The durable context rows are retained
+        # (and can be reused when re-enabled); only this turn's projection is
+        # filtered out.
+        items = [
+            item
+            for item in materialized.get("items") or []
+            if isinstance(item, Mapping)
+            and item.get("sourceKind") != "memory_bootstrap"
+        ]
+        item_ids = [
+            str(item.get("itemId") or "")
+            for item in items
+            if str(item.get("itemId") or "")
+        ]
+        prompt = render_context_items(items)
+        return {
+            "itemIds": item_ids,
+            "items": items,
+            "prompt": prompt,
+            "charCount": len(prompt),
+        }
+
+    def _memory_enabled(self) -> bool:
+        try:
+            return bool(self._memory_enabled_provider())
+        except Exception:
+            return False
 
     def _trace_memory(
         self,
@@ -268,6 +304,51 @@ class AgentPromptDeliveryService:
         char_count: int,
     ) -> str:
         timeline_intent = _timeline_intent(memory_items)
+        trace_metadata: dict[str, object] = {
+            "itemCount": len(memory_items),
+            "priority": "developer",
+            "lifecycle": "session",
+            "timelineRequested": (
+                timeline_intent.get("requested") is True
+            ),
+            "timelineReason": str(
+                timeline_intent.get("reason") or "none"
+            ),
+            "timelineMatched": "、".join(
+                compact_whitespace(str(value))
+                for value in timeline_intent.get("matched")
+                or []
+                if compact_whitespace(str(value))
+            ),
+            "timelineRange": str(
+                timeline_intent.get("range") or ""
+            ),
+        }
+        # Keep the source identifiers that were actually selected by the
+        # recall projection.  The context trace is the existing public
+        # evidence path used by the UI's Memory/Knowledge deep links; without
+        # these IDs a real recall row can only show a dead summary.
+        reference_keys = {
+            "memory_book": "memoryBookIds",
+            "memory_atom": "memoryAtomIds",
+            "memory_timeline": "memoryTimelineIds",
+        }
+        for source_type, metadata_key in reference_keys.items():
+            source_ids: list[str] = []
+            for context_item in memory_items:
+                payload = context_item.get("payload")
+                recalled = payload.get("items") if isinstance(payload, Mapping) else []
+                if not isinstance(recalled, (list, tuple)):
+                    continue
+                source_ids.extend(
+                    compact_whitespace(str(item.get("sourceId") or ""))
+                    for item in recalled
+                    if isinstance(item, Mapping)
+                    and compact_whitespace(str(item.get("sourceType") or "")).casefold() == source_type
+                )
+            source_ids = list(dict.fromkeys(value for value in source_ids if value))[:24]
+            if source_ids:
+                trace_metadata[metadata_key] = ",".join(source_ids)
         return self.context_runtime.add_trace_node(
             trace_id,
             stage="memory_recall",
@@ -293,26 +374,7 @@ class AgentPromptDeliveryService:
                 if memory_items
                 else "memory pack unavailable or active turn delivery"
             ),
-            metadata={
-                "itemCount": len(memory_items),
-                "priority": "developer",
-                "lifecycle": "session",
-                "timelineRequested": (
-                    timeline_intent.get("requested") is True
-                ),
-                "timelineReason": str(
-                    timeline_intent.get("reason") or "none"
-                ),
-                "timelineMatched": "、".join(
-                    compact_whitespace(str(value))
-                    for value in timeline_intent.get("matched")
-                    or []
-                    if compact_whitespace(str(value))
-                ),
-                "timelineRange": str(
-                    timeline_intent.get("range") or ""
-                ),
-            },
+            metadata=trace_metadata,
         )
 
     def _trace_inbox(

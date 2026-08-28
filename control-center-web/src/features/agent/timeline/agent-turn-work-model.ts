@@ -60,14 +60,24 @@ export function buildAgentTurnWorkModel(
   const visibleResultIds = new Set<string>();
   if (finalMessageId) visibleResultIds.add(finalMessageId);
   for (const entry of entries) {
-    if (entry.kind === 'message' && hasResponseTailResult(entry.message)) {
+    if (
+      entry.kind === 'message'
+      && entry.message.role === 'assistant'
+      && hasResponseTailResult(entry.message)
+    ) {
       visibleResultIds.add(entry.message.id);
     }
   }
 
   const items = entries.map((entry): AgentTurnWorkItem => ({
     entry,
-    role: entry.kind === 'message' && visibleResultIds.has(entry.message.id) ? 'result' : 'work',
+    // A Steer/follow-up is an authored transcript event, not hidden Agent
+    // work. Keep it visible at its exact chronological position even when the
+    // surrounding settled Tool/reasoning rows are collapsed.
+    role: entry.kind === 'message'
+      && (entry.message.role === 'user' || visibleResultIds.has(entry.message.id))
+      ? 'result'
+      : 'work',
   }));
   const hiddenEntries = items.filter((item) => item.role === 'work');
   const hiddenActivities = hiddenEntries.flatMap((item) => (
@@ -92,7 +102,11 @@ export function buildAgentTurnWorkModel(
 function finalNarrativeMessageId(entries: AgentTurnSequenceEntry[]): string {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
-    if (entry?.kind === 'message' && hasNarrativeText(entry.message)) return entry.message.id;
+    if (
+      entry?.kind === 'message'
+      && entry.message.role === 'assistant'
+      && hasNarrativeText(entry.message)
+    ) return entry.message.id;
   }
   return '';
 }

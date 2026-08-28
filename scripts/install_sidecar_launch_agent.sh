@@ -21,6 +21,8 @@ PI_NATIVE_SESSION_SOURCE="$PI_INTEGRATION_SOURCE_DIR/pi-native-session.ts"
 PI_EXTENSION_TARGET="$PI_INTEGRATION_DIR/rag-ime-control.ts"
 PI_SKILLS_SOURCE_DIR="$PI_INTEGRATION_SOURCE_DIR/skills"
 PI_INIT_PROMPT_SOURCE="$PI_INTEGRATION_SOURCE_DIR/prompts/init.md"
+VERTICAL_AGENT_SOURCE_DIR="$ROOT/examples/vertical_agents"
+VERTICAL_AGENT_INSTALL_DIR="$APP_CODE_DIR/examples/vertical_agents"
 MANAGED_PI_SKILLS_DIR="$APP_SUPPORT_DIR/Agent/config/skills"
 MANAGED_PI_PROMPTS_DIR="$APP_SUPPORT_DIR/Agent/config/prompts"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
@@ -282,6 +284,14 @@ if [[ -n "$(find "$PI_INTEGRATION_SOURCE_DIR" -type l -print -quit)" ]]; then
   echo "controlled Pi integration source must not contain symlinks: $PI_INTEGRATION_SOURCE_DIR" >&2
   exit 1
 fi
+if [[ ! -d "$VERTICAL_AGENT_SOURCE_DIR" || -L "$VERTICAL_AGENT_SOURCE_DIR" ]]; then
+  echo "vertical Agent fixture source not found or is a symlink: $VERTICAL_AGENT_SOURCE_DIR" >&2
+  exit 1
+fi
+if [[ -n "$(find "$VERTICAL_AGENT_SOURCE_DIR" -type l -print -quit)" ]]; then
+  echo "vertical Agent fixture source must not contain symlinks: $VERTICAL_AGENT_SOURCE_DIR" >&2
+  exit 1
+fi
 
 SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 
@@ -289,6 +299,9 @@ mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
 rm -f "$INSTALL_MARKER"
 rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
+rm -rf "$VERTICAL_AGENT_INSTALL_DIR"
+mkdir -p "$(dirname "$VERTICAL_AGENT_INSTALL_DIR")"
+cp -R "$VERTICAL_AGENT_SOURCE_DIR" "$VERTICAL_AGENT_INSTALL_DIR"
 cp "$ROOT/scripts/sidecar_launch.py" "$LAUNCH_WRAPPER"
 cp "$ROOT/scripts/portable_restore_supervisor.py" "$RESTORE_SUPERVISOR"
 chmod 700 "$RESTORE_SUPERVISOR"

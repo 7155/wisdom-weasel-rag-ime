@@ -1358,7 +1358,17 @@ class FailingActiveRagProvider:
 
     def stream_candidates(self, request):
         self.calls.append(request)
-        raise DeepSeekCompletionError("active_rag_no_insertable_content:governor_rejected_content")
+        # The service deliberately trusts the producer's structured
+        # terminal/transport pair, not the legacy compact exception message.
+        # Keep this fixture a governed empty-result recovery rather than an
+        # unclassified provider failure.
+        raise DeepSeekCompletionError(
+            "active_rag_no_insertable_content:governor_rejected_content",
+            diagnostics={
+                "terminalReason": "governor_rejected_content",
+                "transportReason": "empty_remote_content",
+            },
+        )
         yield
 
 

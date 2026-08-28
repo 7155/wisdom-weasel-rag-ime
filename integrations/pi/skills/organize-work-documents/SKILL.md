@@ -93,6 +93,32 @@ owner and timestamp | document revision/hash receipt
 - Condensation may shorten closed history only after the result, evidence,
   residual risk, source refs, and revision receipt remain recoverable.
 
+## Large Ledgers May Be Split
+
+Split an oversized requirement ledger when one file has become harder to find,
+read, or edit than a small document set. Splitting is a navigation change, not
+permission to summarize, renumber, drop quotations, or weaken source coverage.
+
+- Keep one canonical index at the original well-known path. It names every
+  ledger file, its exact stable-ID range or product domain, and the separate
+  evidence, status, contract, and handoff files that belong to the set.
+- Give every split file a clear `previous / index / next` navigation block near
+  the top and a **Continue reading / editing** block at the end. The final block
+  names the exact next file; the last file points to the status or evidence file
+  instead of ending silently.
+- Prefer stable-ID ranges when requirements are already numbered and later
+  corrections rely on sequence. Prefer product-domain volumes only when every
+  requirement has one unambiguous home and cross-domain indexes remain complete.
+- Preserve stable requirement IDs and existing source refs. Keep completion
+  state in the canonical status ledger rather than copying drifting state into
+  every volume.
+- Update backlinks and discovery documents so an Agent entering through the
+  index, any volume, status ledger, evidence file, or handoff can discover the
+  complete document set without scanning the repository.
+- After splitting, verify both directions: the union of volumes contains every
+  requirement exactly once, and every indexed file exists. Report any gap or
+  duplicate instead of treating the split as complete.
+
 ## Workflow
 
 1. Start from document-update receipts, final results, accepted decisions, and directly referenced documents. Do not reconstruct work from entire transcripts unless the user explicitly asks to recover original requirements from a named task or conversation; in that case, extract only user messages, preserve exact wording and source identity, and record the retrieval boundary.

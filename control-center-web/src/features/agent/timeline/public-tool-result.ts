@@ -29,6 +29,8 @@ export interface PublicToolResultView {
   summary: string;
   resultKind: PublicToolResultKind;
   target?: string;
+  /** A non-redacted workspace-relative target that can safely be opened in Files. */
+  targetPath?: string;
   change?: {
     additions: number;
     deletions: number;
@@ -76,6 +78,8 @@ export interface PublicToolResultItem {
   label: string;
   text: string;
   kind?: string;
+  /** A non-redacted workspace-relative path, when the receipt carries one. */
+  path?: string;
 }
 
 export interface PublicToolSemanticPreview {
@@ -430,6 +434,7 @@ export function publicToolResultView(activity: PublicToolActivityProjection): Pu
     summary: subagentResult?.summary || summary || collaboration?.summary || codeResult.summary || `${toolLabel} ${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : activity.status === 'aborted' ? '已停止' : '已完成'}`,
     resultKind,
     ...(codeResult.file ? { target: codeResult.file } : {}),
+    ...(codeResult.filePath ? { targetPath: codeResult.filePath } : {}),
     ...(codeResult.additions !== undefined || codeResult.deletions !== undefined ? {
       change: {
         additions: codeResult.additions ?? 0,
@@ -1033,7 +1038,14 @@ function publicToolResultItems(
   const projected = entries.slice(0, 40).flatMap((value, index) => {
     if (typeof value === 'string') {
       const visible = publicStructuredText(value);
-      return visible ? [{ id: `file:${index}:${visible}`, label: visible, text: '', kind: '' }] : [];
+      const path = publicRelativeWorkspacePath(value);
+      return visible ? [{
+        id: `file:${index}:${visible}`,
+        label: visible,
+        text: '',
+        kind: '',
+        ...(path ? { path } : {}),
+      }] : [];
     }
     const item = record(value);
     const label = publicDisplayText(
@@ -1041,18 +1053,31 @@ function publicToolResultItems(
       '',
     );
     if (!label) return [];
+    const rawPath = firstText(
+      [item],
+      ['relativePath', 'path', 'filePath', 'fileName', 'name', 'label'],
+    );
+    const path = publicRelativeWorkspacePath(rawPath);
     const itemKind = publicDisplayText(item.kind ?? item.type, '');
     return [{
       id: `file:${index}:${label}`,
       label,
       text: itemKind ? publicFileKindLabel(itemKind) : '',
       kind: itemKind,
+      ...(path ? { path } : {}),
     }];
   });
   if (projected.length > 0) return projected;
   return output.split('\n').slice(0, 40).flatMap((line, index) => {
     const visible = publicStructuredText(line);
-    return visible ? [{ id: `file-output:${index}:${visible}`, label: visible, text: '', kind: '' }] : [];
+    const path = publicRelativeWorkspacePath(line);
+    return visible ? [{
+      id: `file-output:${index}:${visible}`,
+      label: visible,
+      text: '',
+      kind: '',
+      ...(path ? { path } : {}),
+    }] : [];
   });
 }
 
@@ -1345,6 +1370,7 @@ function roleBookToolPreview(
 interface PublicCodeToolResult {
   summary: string;
   file: string;
+  filePath?: string;
   request: PublicToolRequestField[];
   output?: {
     text: string;
@@ -1384,6 +1410,7 @@ function publicCodeToolResult(
   ];
   const rawPath = firstText(requestLayers, ['relativePath', 'fileName', 'file_path', 'path']);
   const file = codeTools.has(toolId) ? publicWorkspacePath(rawPath) : '';
+  const filePath = codeTools.has(toolId) ? publicRelativeWorkspacePath(rawPath) : '';
   const request: PublicToolRequestField[] = [];
   const addRequest = (id: string, label: string, value: string, code = false) => {
     if (!value || request.some((field) => field.id === id)) return;
@@ -1442,6 +1469,7 @@ function publicCodeToolResult(
       : output;
     return {
       file,
+      ...(filePath ? { filePath } : {}),
       request,
       ...(contentOutput ? { output: contentOutput, outputLabel: '写入内容' } : {}),
       ...(lines !== undefined ? { lines } : {}),
@@ -1471,6 +1499,7 @@ function publicCodeToolResult(
       : output;
     return {
       file,
+      ...(filePath ? { filePath } : {}),
       request,
       ...(diffOutput ? { output: diffOutput, outputLabel: '变更差异' } : {}),
       summary: file ? `${file}${changeLabel}` : '文件已更新',
@@ -1483,6 +1512,7 @@ function publicCodeToolResult(
     const lines = totalLines ?? publicLineCount(publicToolContentText(carrier));
     return {
       file,
+      ...(filePath ? { filePath } : {}),
       request,
       ...(output ? { output } : {}),
       ...(lines !== undefined ? { lines } : {}),
@@ -1493,6 +1523,7 @@ function publicCodeToolResult(
     const needle = pattern || query;
     return {
       file,
+      ...(filePath ? { filePath } : {}),
       request,
       ...(output ? { output } : {}),
       summary: needle
@@ -1504,6 +1535,7 @@ function publicCodeToolResult(
     const needle = pattern || query;
     return {
       file,
+      ...(filePath ? { filePath } : {}),
       request,
       ...(output ? { output } : {}),
       summary: toolId === 'ls' || toolId === 'workspace_list'
@@ -1517,6 +1549,7 @@ function publicCodeToolResult(
     const firstLine = command.split('\n', 1)[0]?.slice(0, 140) ?? '';
     return {
       file,
+      ...(filePath ? { filePath } : {}),
       request,
       ...(output ? { output } : {}),
       summary: firstLine ? `运行 ${firstLine}` : '运行项目命令',
@@ -1604,6 +1637,26 @@ function publicWorkspacePath(value: string): string {
       : parts.join('/');
   if (!candidate || candidate.length > 240 || /[\u0000-\u001f]/u.test(candidate)) return '';
   return candidate;
+}
+
+/**
+ * A Files deep link needs the actual workspace-relative path. Absolute paths,
+ * server-redacted paths, and traversal candidates intentionally remain display
+ * only: their basename is useful in a receipt but is not a trustworthy target.
+ */
+function publicRelativeWorkspacePath(value: string): string {
+  const normalized = value.replace(/\\/gu, '/').replace(/\/{2,}/gu, '/').trim();
+  if (
+    !normalized
+    || normalized.startsWith('/')
+    || normalized.startsWith('~/')
+    || normalized.startsWith('…/')
+    || /^[a-z]:\//iu.test(normalized)
+    || normalized.includes('[REDACTED_PATH]')
+  ) return '';
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.some((part) => part === '.' || part === '..')) return '';
+  return publicWorkspacePath(normalized);
 }
 
 function publicLineCount(value: string): number | undefined {

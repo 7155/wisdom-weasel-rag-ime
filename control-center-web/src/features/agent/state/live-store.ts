@@ -81,7 +81,33 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
   hydrateSnapshot(sessionId, snapshot) {
     const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
     if (snapshot.lastSequence < current.lastSequence) return;
-    const projection = applyAgentSnapshot(current, normalizeLegacyHistoryTurns(snapshot));
+    // A snapshot with no messages can only be a transient/partial projection
+    // failure for a Session that already has durable history. Rebuild the
+    // cursor and terminal/status metadata against the last confirmed
+    // messages, then retain prior activity rows that this empty response
+    // cannot disprove.
+    // This keeps an idle terminal snapshot able to clear a stale spinner
+    // without allowing a successful-looking empty response to erase text.
+    const preserveHistory = (
+      current.messageOrder.length > 0
+      && snapshot.messages.length === 0
+    );
+    const hydratedSnapshot = preserveHistory
+      ? {
+          ...snapshot,
+          messages: current.messageOrder
+            .map((messageId) => current.messagesById[messageId])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message)),
+        }
+      : snapshot;
+    let projection = applyAgentSnapshot(current, normalizeLegacyHistoryTurns(hydratedSnapshot));
+    if (preserveHistory) {
+      projection = preserveConfirmedActivities(
+        current,
+        projection,
+        ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status ?? ''),
+      );
+    }
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));
@@ -213,6 +239,42 @@ function normalizeLegacyHistoryTurns(snapshot: AgentSnapshot): AgentSnapshot {
     return { ...rawMessage, turnId: currentTurnId };
   });
   return changed ? { ...snapshot, messages } : snapshot;
+}
+
+function preserveConfirmedActivities(
+  current: AgentProjectionState,
+  projection: AgentProjectionState,
+  settleActive: boolean,
+): AgentProjectionState {
+  const next = {
+    ...projection,
+    turnsById: { ...projection.turnsById },
+    turnOrder: [...projection.turnOrder],
+    activitiesById: { ...projection.activitiesById },
+    activityOrder: [...projection.activityOrder],
+  };
+  for (const activityId of current.activityOrder) {
+    const activity = current.activitiesById[activityId];
+    if (!activity || next.activitiesById[activityId]) continue;
+    next.activitiesById[activityId] = settleActive && ['running', 'waiting'].includes(activity.status)
+      ? { ...activity, status: 'completed' }
+      : activity;
+    next.activityOrder.push(activityId);
+    let turn = next.turnsById[activity.turnId];
+    if (!turn) {
+      const previousTurn = current.turnsById[activity.turnId];
+      if (!previousTurn) continue;
+      turn = {
+        ...previousTurn,
+        messageIds: previousTurn.messageIds.filter((messageId) => Boolean(next.messagesById[messageId])),
+        activityIds: [],
+      };
+      next.turnsById[activity.turnId] = turn;
+      next.turnOrder.push(activity.turnId);
+    }
+    if (!turn.activityIds.includes(activityId)) turn.activityIds.push(activityId);
+  }
+  return next;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

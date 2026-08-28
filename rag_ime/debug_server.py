@@ -43,6 +43,7 @@ from .agent_routes import (
     agent_artifact_route,
     agent_context_item_route,
     agent_context_trace_route,
+    observability_trace_route,
     agent_media_route,
     agent_room_route,
     agent_room_work_route,
@@ -50,6 +51,8 @@ from .agent_routes import (
     agent_work_document_route,
     agent_subagent_route,
     agent_wake_schedule_route,
+    observability_eval_schedule_route,
+    observability_sandbox_run_route,
 )
 from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tools import ControlToolGateway
@@ -62,6 +65,9 @@ from .demo_seed import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
 from .contracts.json_schema import validate_contract
+from .trace_adapters import envelope_from_browser_trace, envelope_from_prediction_frame
+from .trace_runtime import TraceContractError, TraceEnvelope
+from .vertical_sandbox_connector import VerticalSandboxConnectorService
 from .control_api import (
     AgentKernelControlFacade,
     ControlAccessContext,
@@ -485,6 +491,7 @@ class DebugImeService:
         self.agent_surface = AgentSurfaceRuntime(
             self.agent,
             settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True),
+            observation_callback=self.agent.observations.enqueue_input_generation_record,
         )
         if config.server_name == "agent gateway":
             self.active_rag.completion_provider = PiSurfaceCompletionProvider(
@@ -572,7 +579,22 @@ class DebugImeService:
         )
         self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)
         self.agent_lifecycle_hooks.initialize()
-        self.browser_control = BrowserControlService(config.db_path)
+        self.vertical_sandbox_connector = VerticalSandboxConnectorService(
+            eval_store=self.agent.eval_runs,
+            trace_store=self.agent.trace_store,
+            sandbox_store=self.agent.sandbox_runs,
+            workspace_harness=self.agent.background_jobs.workspace_harness,
+            repository_root=(
+                Path(os.environ["RAG_IME_ROOT"]).expanduser()
+                if os.environ.get("RAG_IME_ROOT")
+                else Path(__file__).resolve().parents[1]
+            ),
+        )
+        self.browser_control = BrowserControlService(
+            config.db_path,
+            trace_observer=self.agent.observations.enqueue_browser_record,
+        )
+        self.agent.bind_external_trace_resolver(self._resolve_external_common_trace)
         self.system_terminal = SystemTerminalService(
             default_cwd=(
                 os.environ.get("RAG_IME_DEFAULT_WORKSPACE")
@@ -599,6 +621,7 @@ class DebugImeService:
             browser_control=self.browser_control,
             artifact_projector=AgentToolArtifactProjector(self.agent.media),
             work_documents=self.agent.work_documents,
+            sandbox_connector=self.vertical_sandbox_connector,
             workflow_publisher=lambda session_id, reason: self.agent.publish_workflow_state(
                 session_id,
                 reason=reason,
@@ -5385,6 +5408,51 @@ class DebugImeService:
             "dropStats": _prediction_drop_stats(frames),
         }
 
+    def _resolve_external_common_trace(self, trace_id: str) -> TraceEnvelope | None:
+        """Resolve source-owned traces without copying their persistence."""
+
+        browser_prefix = "trace:browser:command:"
+        if trace_id.startswith(browser_prefix):
+            command_id = trace_id.removeprefix(browser_prefix)
+            try:
+                return envelope_from_browser_trace(self.browser_control.trace(command_id))
+            except (BrowserControlError, KeyError, TraceContractError):
+                return None
+
+        prediction_prefix = "trace:prediction:"
+        if not trace_id.startswith(prediction_prefix):
+            return None
+        identity = trace_id.removeprefix(prediction_prefix)
+        if ":request-" not in identity:
+            return None
+        session_id, request_text = identity.rsplit(":request-", 1)
+        if not session_id or not request_text.isdigit():
+            return None
+        request_seq = int(request_text)
+        with self._rime_cache_lock:
+            frame = next(
+                (
+                    item
+                    for item in reversed(self._prediction_live_trace)
+                    if _string(item.get("sessionId")) == session_id
+                    and _bounded_int(
+                        item.get("requestSeq"),
+                        default=0,
+                        minimum=0,
+                        maximum=2**63 - 1,
+                    )
+                    == request_seq
+                ),
+                None,
+            )
+        if frame is None:
+            return None
+        try:
+            envelope = envelope_from_prediction_frame(frame)
+        except TraceContractError:
+            return None
+        return envelope if envelope.trace_id == trace_id else None
+
     def prediction_drop_stats(self, payload: dict[str, Any]) -> dict[str, object]:
         limit = _bounded_int(payload.get("limit"), default=500, minimum=1, maximum=1000)
         with self._rime_cache_lock:
@@ -6684,7 +6752,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
                 filters={
                     key: _query_first(query, key)
-                    for key in ("sessionId", "roomId", "traceId", "category", "status")
+                    for key in ("sessionId", "roomId", "traceId", "runId", "category", "status")
                     if _query_first(query, key)
                 },
             )
@@ -6743,6 +6811,191 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         query = parse_qs(parsed.query or "")
+        sandbox_run_id, sandbox_run_action = observability_sandbox_run_route(parsed.path)
+        if sandbox_run_action == "list":
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.observability_sandbox_runs({
+                        "limit": _query_first(query, "limit"),
+                    }),
+                )
+            except (TypeError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.observability-sandbox-run-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_sandbox_run_id",
+                        "error": "Invalid SandboxRun list request",
+                    },
+                )
+            except Exception:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "schemaVersion": "rag-ime.observability-sandbox-run-error.v1",
+                        "ok": False,
+                        "errorCode": "sandbox_run_unavailable",
+                        "error": "SandboxRun ledger is unavailable",
+                    },
+                )
+            return
+        if sandbox_run_action == "get":
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.observability_sandbox_run({
+                        "sandboxRunId": sandbox_run_id,
+                    }),
+                )
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schemaVersion": "rag-ime.observability-sandbox-run-error.v1",
+                        "ok": False,
+                        "errorCode": "sandbox_run_not_found",
+                        "error": "SandboxRun not found",
+                        "sandboxRunId": sandbox_run_id,
+                    },
+                )
+            except ValueError:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.observability-sandbox-run-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_sandbox_run_id",
+                        "error": "Invalid SandboxRun ID",
+                        "sandboxRunId": sandbox_run_id,
+                    },
+                )
+            except TraceContractError:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "schemaVersion": "rag-ime.observability-sandbox-run-error.v1",
+                        "ok": False,
+                        "errorCode": "sandbox_run_invalid",
+                        "error": "SandboxRun is invalid",
+                        "sandboxRunId": sandbox_run_id,
+                    },
+                )
+            except Exception:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "schemaVersion": "rag-ime.observability-sandbox-run-error.v1",
+                        "ok": False,
+                        "errorCode": "sandbox_run_unavailable",
+                        "error": "SandboxRun ledger is unavailable",
+                        "sandboxRunId": sandbox_run_id,
+                    },
+                )
+            return
+        if parsed.path in (
+            "/api/observability/eval-suites",
+            "/control/v1/observability/eval-suites",
+        ):
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.list_eval_suites({
+                        "limit": _query_first(query, "limit"),
+                    }),
+                )
+            except (TypeError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "ok": False,
+                        "errorCode": "invalid_request",
+                        "error": "Invalid Eval suite catalog request",
+                    },
+                )
+            except Exception:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "ok": False,
+                        "errorCode": "suite_catalog_unavailable",
+                        "error": "Eval suite catalog is unavailable",
+                    },
+                )
+            return
+        if parsed.path == "/api/observability/eval-schedules":
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.list_eval_schedules({
+                        "limit": _query_first(query, "limit"),
+                    }),
+                )
+            except (TypeError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_request",
+                        "error": "Invalid Eval schedule request",
+                    },
+                )
+            except Exception:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                        "ok": False,
+                        "errorCode": "schedule_unavailable",
+                        "error": "Eval schedule is unavailable",
+                    },
+                )
+            return
+        eval_schedule_id, eval_schedule_action = observability_eval_schedule_route(
+            parsed.path
+        )
+        if eval_schedule_id and eval_schedule_action == "runs":
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.eval_schedule_runs(
+                        eval_schedule_id,
+                        {"limit": _query_first(query, "limit")},
+                    ),
+                )
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                        "ok": False,
+                        "errorCode": "schedule_not_found",
+                        "error": "Eval schedule not found",
+                    },
+                )
+            except (TypeError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_request",
+                        "error": "Invalid Eval schedule request",
+                    },
+                )
+            except Exception:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                        "ok": False,
+                        "errorCode": "schedule_unavailable",
+                        "error": "Eval schedule is unavailable",
+                    },
+                )
+            return
         if work_document_id and work_document_action == "detail":
             try:
                 response = self.service.agent.work_documents.detail(work_document_id)
@@ -6818,6 +7071,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                                 "sessionId",
                                 "roomId",
                                 "traceId",
+                                "runId",
                                 "category",
                                 "status",
                             )
@@ -6829,6 +7083,84 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.BAD_REQUEST,
                     {"ok": False, "error": str(exc)},
+                )
+            return
+        if parsed.path in (
+            "/api/observability/evals",
+            "/control/v1/observability/evals",
+        ):
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.observation_evals({
+                        "traceId": _query_first(query, "traceId"),
+                        "limit": _query_first(query, "limit"),
+                    }),
+                )
+            except (TraceContractError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "Invalid Eval request"},
+                )
+            return
+        trace_id = observability_trace_route(parsed.path)
+        if trace_id is not None:
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.observation_trace(
+                        {
+                            "traceId": trace_id,
+                            "limit": _query_first(query, "limit"),
+                            "beforeSequence": _query_first(query, "beforeSequence"),
+                        }
+                    ),
+                )
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schemaVersion": "rag-ime.observability-trace-error.v1",
+                        "ok": False,
+                        "errorCode": "trace_not_found",
+                        "error": "Trace not found",
+                        "traceId": trace_id,
+                    },
+                )
+            except TraceContractError:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {
+                        "schemaVersion": "rag-ime.observability-trace-error.v1",
+                        "ok": False,
+                        "errorCode": "trace_invalid",
+                        "error": "Trace is invalid",
+                        "traceId": trace_id,
+                    },
+                )
+            except ValueError as exc:
+                code = (
+                    "invalid_trace_id"
+                    if str(exc) == "invalid_trace_id"
+                    else "trace_invalid"
+                )
+                self._write_json(
+                    (
+                        HTTPStatus.BAD_REQUEST
+                        if code == "invalid_trace_id"
+                        else HTTPStatus.INTERNAL_SERVER_ERROR
+                    ),
+                    {
+                        "schemaVersion": "rag-ime.observability-trace-error.v1",
+                        "ok": False,
+                        "errorCode": code,
+                        "error": (
+                            "Invalid Trace ID"
+                            if code == "invalid_trace_id"
+                            else "Trace is invalid"
+                        ),
+                        "traceId": trace_id,
+                    },
                 )
             return
         knowledge_parts = _knowledge_route_parts(parsed.path)
@@ -6926,6 +7258,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "includeArchived": _query_first(query, "includeArchived"),
                         "includeInternal": _query_first(query, "includeInternal"),
                         "limit": _query_first(query, "limit"),
+                        "beforeUpdatedAtMs": _query_first(query, "beforeUpdatedAtMs"),
+                        "beforeId": _query_first(query, "beforeId"),
                     }
                 ),
             )
@@ -7111,6 +7445,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {
                         "includeArchived": _query_first(query, "includeArchived"),
                         "limit": _query_first(query, "limit"),
+                        "beforeUpdatedAtMs": _query_first(query, "beforeUpdatedAtMs"),
+                        "beforeId": _query_first(query, "beforeId"),
                     }
                 ),
             )
@@ -7878,6 +8214,50 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
+            if path == "/api/observability/eval-schedules":
+                try:
+                    self._write_json(
+                        HTTPStatus.CREATED,
+                        self.service.agent.create_eval_schedule(payload),
+                    )
+                except (TypeError, ValueError):
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                            "ok": False,
+                            "errorCode": "invalid_request",
+                            "error": "Invalid Eval schedule request",
+                        },
+                    )
+                except Exception:
+                    self._write_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {
+                            "schemaVersion": "rag-ime.eval-schedule-error.v1",
+                            "ok": False,
+                            "errorCode": "schedule_unavailable",
+                            "error": "Eval schedule is unavailable",
+                        },
+                    )
+                return
+            if path == "/api/observability/evals/evidence-ground-truth":
+                try:
+                    self._write_json(
+                        HTTPStatus.OK,
+                        self.service.agent.evaluate_observation_evidence(payload),
+                    )
+                except KeyError:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"ok": False, "error": "Trace not found"},
+                    )
+                except (TraceContractError, ValueError):
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"ok": False, "error": "Invalid Eval request"},
+                    )
+                return
             # Migrated families are served from the route table. This sits
             # after the security gate and payload read so those semantics are
             # identical to the chain it replaces.

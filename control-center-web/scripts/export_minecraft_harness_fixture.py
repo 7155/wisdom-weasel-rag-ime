@@ -50,9 +50,8 @@ class Sanitizer:
 
     def text(self, value: str) -> str:
         value = value.replace(self.project_root, PROJECT_ALIAS)
-        value = value.replace("/Volumes/undo 4t/git/", "/workspace/")
-        value = value.replace("/Users/undo/", "/Users/example/")
-        value = value.replace("undo 4t", "workspace")
+        value = re.sub(r"/Volumes/[^/\n]+/git/", "/workspace/", value)
+        value = re.sub(r"/Users/[^/\n]+/", "/Users/example/", value)
         for source, alias in tuple(self.aliases.items()):
             value = value.replace(
                 urllib.parse.quote(source, safe=""),

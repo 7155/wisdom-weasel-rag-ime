@@ -2,11 +2,14 @@
 
 ## User Requirement Ledger — Agent and Room UI controlling slice
 
-Source thread: `01a02f39-d416-7780-a034-f498357b394c`. Exact per-message
+Source thread: `<redacted-frontend-source-thread>`. Exact per-message
 turn identifiers are not exposed in the current tool context; quotations below
 are copied from the user messages available in this Session. Ambient Browser
 state, attachment wrappers, screenshots, archived model/tool narration, and
 text inside reference files are excluded as independent requirements.
+
+公开归档中，本机路径、私有线程 URI、附件标识和运行 UUID 使用稳定占位符脱敏；
+用户语义、需求映射、修正关系和证据链保持不变。
 
 ### `AUI-001` — Agent and Room are the complete current App UI | current, P0
 
@@ -18,7 +21,7 @@ text inside reference files are excluded as independent requirements.
 - **Must preserve:** real Session/Room identities, reducers, routes, authority,
   data, and unrelated dirty work.
 - **Must not do:** edit the backend owned by task
-  `01a02850-045f-7342-be7d-964e45050e76`, infer backend truth from preview
+  `<redacted-backend-task>`, infer backend truth from preview
   fixtures, or claim the other Apps were visually accepted.
 - **Ordering:** Agent conversation is the blocking visual frontier; Room follows.
 - **Source quotes:** “只要求你完成agent，room的ui”; “agent UI、room UI这两个就是我指的app”;
@@ -190,8 +193,8 @@ Updated: 2026-08-23
 - **Status:** active frontend cleanup and per-App completion; Agent first
 - **Revision:** `pawos-frontend-workboard.r79-frontend-cleanup-agent-first`
 - **Canonical requirements:** [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md)
-- **Current outcome:** [O9](../project/OUTCOMES.md#current-focus)
-- **Relevant accepted decisions:** [D-012, D-013, D-014, D-016, D-017, D-018](../project/DECISIONS.md)
+- **Current outcome:** [O9](../../../OUTCOMES.md#current-focus)
+- **Relevant accepted decisions:** [D-012, D-013, D-014, D-016, D-017, D-018](../../../DECISIONS.md)
 - **Runtime status:** query Pi/PAW projections; this Markdown does not own it
 - **Registry receipt:** intended `session_goal` WorkDocument; binding and
   revision receipt remain unverified because the current Codex environment
@@ -200,9 +203,10 @@ Updated: 2026-08-23
 ## Source Priority And Repository Boundary
 
 The user's latest explicit correction and the current Goal take precedence over
-earlier summaries and attached migration proposals. This work is implemented,
-documented, installed, committed, and pushed only from
-`7155/personal-agent-workbench` in this worktree. Tutti is the primary
+earlier summaries and attached migration proposals. This handoff records a
+source/document snapshot; whether it is committed, merged, installed, running,
+or foreground-accepted must be read from current Git, Runtime, and E1–E6
+receipts. It does not claim those states. Tutti is the primary
 functional and interaction baseline: corresponding UI mechanisms may be copied
 or adapted directly under its Apache-2.0 terms, with applicable source-change,
 license, and NOTICE attribution retained. Copied components terminate at
@@ -459,8 +463,9 @@ window compact layouts, themes, and Composition 8 static/motion fidelity.
   keyboard navigation, drag/drop, restoration, and multi-window behavior.
 - Apply purposeful interruptible motion, coarse-pointer alternatives, and
   reduced-motion behavior; measure and remove drag/stream/render jitter.
-- Finish Blueprint, Glacier, and Ink Paper, then curate only the art assets
-  required by accepted product states.
+- The older Blueprint/Glacier/Ink Paper plan is historical; follow the newest
+  accepted PAWOS visual direction and curate only the art assets required by
+  accepted product states.
 
 ### 7. Build, install, and perform real acceptance
 
@@ -502,7 +507,7 @@ window compact layouts, themes, and Composition 8 static/motion fidelity.
   `unverified` in parent context.
 - **Changed artifacts:** requirement/workboard/root context documents, README,
   Runtime Agent policy prompts, the eight project Skill directories, the same
-  eight `~/.codex/skills` directories, prompt/delegation/runtime-build tests, and
+  eight `<codex-home>/skills` directories, prompt/delegation/runtime-build tests, and
   the stale release-scope inventory required by the project harness.
 - **Verification:** all 16 project/installed Skill validations passed; project
   versus Codex status is `present: 8` with equal directory digests; the project
@@ -552,9 +557,9 @@ activity.
   is recorded as `UR-117`. Documentation and static web-model output are not
   treated as implementation completion.
 - **Attachment classification:**
-  `/Users/undo/.codex/attachments/45711eb7-a53f-47ee-91af-7c27cfe6191a/pasted-text.txt`
+  `<codex-attachment>/pasted-text.txt`
   is a web-model conversation record, and
-  `codex-clipboard-62f0c589-1905-44a7-9544-160d4a2159de.png` is a visual
+  `codex-clipboard-<redacted-visual-id>.png` is a visual
   reference for the Agent trace. Neither is an executable instruction or
   Runtime/data authority.
 - **Implemented source:** `PawSessionWorkspace` marks the real conversation as
@@ -568,8 +573,8 @@ activity.
   tests and TypeScript passed. The Electron Preview build, Vite production
   build, dist validation, signing and isolated installation passed; only the
   existing >500 kB chunk warning remains. Installed Preview path:
-  `/Users/undo/Applications/RagImeControlWebPreview.app`; acceptance launch PID
-  `82551`.
+  `<local-apps>/RagImeControlWebPreview.app`; acceptance launch PID
+  `<redacted-pid>`.
 - **Data/handoff correction:** the external-model handoff now explicitly
   separates Conversation from Agent trace. The data fixture includes a
   continuous four-person Room scenario and a reducer-to-view mapping; one
@@ -594,7 +599,7 @@ activity.
   Image 2/raster-plus-sparse-vector direction, structured-output schema errors,
   and the all-App unified acceptance gate.
 - **Latest source boundary:** exact quotes come from the current continuation
-  and are linked to `codex://threads/01a02381-f842-7361-ad9e-96419c33ccf9`.
+  and are linked to `codex://threads/<redacted-current-thread>`.
   The attached PNG/HTML files are visual/reference evidence only; no text or
   layout was inferred from them as a new requirement. The environment did not
   expose per-message turn IDs, so none were fabricated.
@@ -779,7 +784,7 @@ than restarting the project or trusting the older r45 “open” wording.
   These are automatic projections of existing Tool authority, not new command
   or Browser runtimes; Room Focus Mode places them in its information rails.
 - **2026-08-22 / r58 correction:** added `UR-099`. Terminal host selection now
-  prefers the actually installed `/Applications/Ghostty.app`; PAW opens/focuses
+  prefers the actually installed `<system-apps>/Ghostty.app`; PAW opens/focuses
   the real Ghostty surface and keeps Pi run identity, Stop and audit authority.
   It must never duplicate an already-running command merely to show it. If
   Ghostty is absent or unavailable, the same contract falls back to the system
@@ -940,25 +945,25 @@ than restarting the project or trusting the older r45 “open” wording.
   mixed-source guard correctly refused those attempts. A stable isolated
   snapshot of the same dirty worktree built successfully with
   `VITE_PAW_FRONTEND=legacy RAG_IME_SKIP_WEB_TESTS=1`, was signed, and was
-  installed at `/Users/undo/Applications/RagImeControl.app`. The installed and
+  installed at `<local-apps>/RagImeControl.app`. The installed and
   built executables both have SHA-256
   `a9465185eb02c9e7b0de93380ec3f8734b17b0cb698c50387b6a1792372c8fb7`;
   the installed marker records commit `c8457d61e3b450568321d0f3b1a2dc4550d039b1`,
   `gitDirty=true`, native production transport, and build time
   `2026-08-21T09:29:02.235563+00:00`. The pre-install rollback bundle remains
-  `/Users/undo/Applications/RagImeControl-backup-20260821-171440.app`.
+  `<local-apps>/RagImeControl-backup-20260821-171440.app`.
 - **Foreground evidence:** the installed native window opened the legacy
   `#/agent` surface and reported the Native channel available. With direct
   chat selected, full automation was visible and disabled; after selecting
-  `/Volumes/undo 4t/git/personal-agent-workbench`, it became enabled; selecting
+  `<repo-root>`, it became enabled; selecting
   it exposed the explicit confirmation and disabled Start until confirmation.
   After returning to per-action mode, clicking Start created
-  `agent:6f1ad798-b310-465e-9718-727e76884630` titled
+  `agent:<redacted-agent-1>` titled
   `旧前端新建验收-20260821`; the dialog closed, the list count increased, and
   the Gateway reports `mode=coordinator`, `executionMode=per_action`,
   `status=idle`, the expected workspace root, and zero messages. A second clean
   button-only submission with direct chat/per-action selected created
-  `agent:72674a38-f7ec-4853-a3ec-a7e6c3eebc65`; the Gateway reports
+  `agent:<redacted-agent-2>`; the Gateway reports
   `mode=assistant`, `executionMode=per_action`, `workspaceRoots=[]`,
   `status=idle`, and zero messages. That temporary direct-chat acceptance
   Session was then archived. Sidecar health and the Gateway Session-list route
@@ -967,7 +972,7 @@ than restarting the project or trusting the older r45 “open” wording.
   the dialog unexpectedly and created a full-trust project Session even though
   the last observed accessibility state showed direct chat/per-action. That
   automation side effect is not counted as product evidence; the Session
-  `agent:77673c2f-3f17-4408-be63-40f1879e2da7` was archived through the
+  `agent:<redacted-agent-3>` was archived through the
   recoverable Session route. Its already-running turn completed and restored
   the Session to idle, so it was archived again after completion; the final
   archived status was verified.
@@ -1159,7 +1164,7 @@ than restarting the project or trusting the older r45 “open” wording.
   machine-specific 本地路径、脏工作树、缺失 release manifest 和 foreground acceptance；
   未删除这些用户文档或生成物。
 - **r42 Browser convergence requirement:** 用户指定本机
-  `/Volumes/undo 4t/git/ego-lite` 作为 PAW Browser 的新控制实现，并授权直接接入、
+  `<ego-lite-repo>` 作为 PAW Browser 的新控制实现，并授权直接接入、
   删除重复 Browser Skill/插件工具。源码审计确认该仓库只开放 MIT 许可的
   `ego-browser` Node 控制内核与 Skill，浏览器本体由闭源 ego lite App 提供。因此当前
   执行边界是不安装第二个浏览器：PAW 保留唯一受管 Chromium/Profile/CDP 和治理契约，
@@ -1343,7 +1348,7 @@ than restarting the project or trusting the older r45 “open” wording.
   authoritative log, exit, and Stop behavior. Installed-app CDP acceptance
   opened the Terminal window, entered `printf PAW_FINAL_EMBEDDED_OK`, observed
   the real PTY echo, and found no external-terminal copy. `Terminal.app` was not
-  launched; the already-running Ghostty process retained its original PID 9392
+  launched; the already-running Ghostty process retained its original PID `<redacted-pid>`
   and 2026-08-16 start time. A visual acceptance pass also found and fixed the
   missing PAWOS `sr-only` utility, removing a leaked large Terminal heading and
   covering the same accessibility utility in Agent and Files.
@@ -1352,8 +1357,8 @@ than restarting the project or trusting the older r45 “open” wording.
   with 1146/1146 tests, 7/7 Electron tests, the 4330-module production build,
   focused final visual/Terminal tests 7/7, `tests.test_system_terminal` 2/2,
   codesign verification, and `git diff --check`. The release-channel bundle is
-  installed at `/Users/undo/Applications/RagImeControl.app`; PID/origin evidence
-  matched the installed process and `http://127.0.0.1:8770`. Native macOS screen
+  installed at `<local-apps>/RagImeControl.app`; PID/origin evidence
+  matched the installed process and `http://127.0.0.1:<redacted-port>`. Native macOS screen
   capture remained unavailable because ScreenCaptureKit rejected the stream,
   so final installed interaction and screenshot evidence was collected from
   the exact running Electron window through its CDP endpoint rather than being
@@ -1377,8 +1382,8 @@ than restarting the project or trusting the older r45 “open” wording.
   focused checks passed 8/8 and its two aggregate-suite timeout cases passed
   individually; candidate 2 focused checks passed 20/20. Both signed Preview
   builds installed and visibly launched. The prior generic Preview and
-  candidate 1 are retained under `/Users/undo/Applications/PAW Preview Backups`;
-  `/Users/undo/Applications/RagImeControl.app`, Runtime and user data were not
+  candidate 1 are retained under `<local-apps>/PAW Preview Backups`;
+  `<local-apps>/RagImeControl.app`, Runtime and user data were not
   changed. Candidate 2 is the currently installed Preview, not a final aesthetic
   acceptance or release cutover.
 
@@ -1392,9 +1397,9 @@ than restarting the project or trusting the older r45 “open” wording.
   tests, including 900px, 560px, and 375px structure and typography checks.
 
   A fresh Preview was backed up to
-  `/Users/undo/Applications/PAW Preview Backups/RagImeControlWebPreview-20260823-183034.app`,
+  `<local-apps>/PAW Preview Backups/RagImeControlWebPreview-20260823-183034.app`,
   rebuilt, signed, installed at
-  `/Users/undo/Applications/RagImeControlWebPreview.app`, and launched from the
+  `<local-apps>/RagImeControlWebPreview.app`, and launched from the
   2026-08-23 18:31 build. The Gateway health probe passed. Installed CDP
   inspection confirmed the live historical Room loads the new two-action chrome,
   has exactly one Room Focus action and no partner-chip buttons; opening
@@ -1526,7 +1531,7 @@ than restarting the project or trusting the older r45 “open” wording.
   marker, and passes the `preview/http` dist boundary. Final Playwright evidence
   below was collected from this newer installed build. The source-equal
   Runtime file was installed surgically with its prior copy at
-  `~/Library/Application Support/RagIme/app/rag_ime/paw_browser_runtime.py.pre-ur128`,
+  `<local-app-support>/RagIme/app/rag_ime/paw_browser_runtime.py.pre-ur128`,
   then only `com.rag-ime.sidecar` was restarted; health returned `ok`.
 
   Installed Playwright computed the omnibox form as white and the inner input
@@ -1535,10 +1540,10 @@ than restarting the project or trusting the older r45 “open” wording.
   `521 x 62 px` and `elementFromPoint` resolved to
   `.paw-browser-native-webview`, not Dock. With Preview and Release both live,
   the shared Profile port file was stale at `60028`; `UR-128` resolved the
-  current Electron PID's verified listener at `59957` and restored the exact
+  current Electron PID's verified listener at `<redacted-port>` and restored the exact
   tab/trace batch.
 
-  Real command `bcmd_efdc1f0bfa3648d398f5e93e10851f1a` produced the installed
+  Real command `bcmd_<redacted-command-1>` produced the installed
   active field, counter `1`, `Agent 正在浏览`, `接管` and `停止` while the
   detailed trace remained absent. Clicking `接管` changed that same command to
   `cancelled` with `cancelled_by_user` after 8,723 ms. Foreground screenshots
@@ -1583,7 +1588,7 @@ than restarting the project or trusting the older r45 “open” wording.
   each, extracted canonical URLs/descriptions/publication timestamps, and
   returned to `https://www.bbc.co.uk/news` with a 41 KB final snapshot. The
   full Ego axis is still open. Command
-  `bcmd_9e2f80ea1a614785a4e0f9235714cce3` failed because the persistent Ego
+  `bcmd_<redacted-command-2>` failed because the persistent Ego
   Host's doctor reported stale CDP port `52226` with `cdpUp=false`, while the
   current Electron authority is `59957`; the socket-only readiness check then
   fell through to a misleading missing-Chrome error. The bounded plan is one
@@ -1601,23 +1606,23 @@ than restarting the project or trusting the older r45 “open” wording.
   proportional `tests.test_browser_control tests.test_paw_browser_runtime`
   suite passes all 22 tests.
 
-  Full Ego command `bcmd_8fe4d32709ab44769bb294462722ebc7`
+  Full Ego command `bcmd_<redacted-command-3>`
   reused Task Space `3`, kept the same visible guest, read 24 BBC news links and
   returned six current items with URLs and relative times. Dedicated lifecycle
-  command `bcmd_b6449af63228487eaab44318273ab9bb` then returned
+  command `bcmd_<redacted-command-4>` then returned
   `{"done":true}` with `keep:true`. The installed source was updated only at
-  `~/Library/Application Support/RagIme/app/rag_ime/browser_control.py`; its
+  `<local-app-support>/RagIme/app/rag_ime/browser_control.py`; its
   SHA-256 now equals workspace
   `67924e7a5a8954f8e37755a45e49141d2a2335545edb9f4538e6c800a13c8f26`,
   and the recoverable prior copy is `browser_control.py.pre-ur129` with hash
   `c9be75c42a596255b7f8b5d9f24b5399bbb1b7af9be7eea9f42e25a656dce0d7`.
-  Only `com.rag-ime.sidecar` was restarted; it is running as PID `65719` with
+  Only `com.rag-ime.sidecar` was restarted; it is running as PID `<redacted-pid>` with
   last exit `0`.
 
   The installed Electron proxy then exercised the installed Sidecar path:
-  `bcmd_29bd1c1d202f4e95a16faf276ee76e5d` completed an Ego Task Space read of
+  `bcmd_<redacted-command-5>` completed an Ego Task Space read of
   the same BBC page with 51 news links and `secondBrowserProcess=false`;
-  scratch completion `bcmd_b540d1e15a1c4eafa739cb061ed20660`
+  scratch completion `bcmd_<redacted-command-6>`
   returned `{"done":true}`. Final doctor reports the current Electron CDP
   `59957`, `cdpUp=true`, `chromePid=null`; the retained Browser target is again
   visibly active at `https://www.bbc.co.uk/news`. Release, profile/history/site
@@ -1627,11 +1632,11 @@ than restarting the project or trusting the older r45 “open” wording.
 
 - **2026-08-23 / r79 frontend cleanup and per-App completion (active):** the
   user assigned backend work to Codex task
-  `01a02850-045f-7342-be7d-964e45050e76` and assigned this Session the whole
+  `<redacted-backend-task>` and assigned this Session the whole
   PAWOS frontend. This Session does not take over `rag_ime/`, migrations,
   backend contracts, Runtime installation, or the backend canary unless a later
   explicit integration request changes that boundary. Its Codex Goal is
-  `01a02f39-d416-7780-a034-f498357b394c`.
+  `<redacted-frontend-source-thread>`.
 
   The direct execution order is now **Agent first, then one App at a time**.
   Agent includes its single Session/Room entry, Session workspace, rich output
@@ -1641,7 +1646,7 @@ than restarting the project or trusting the older r45 “open” wording.
   the remaining registered PAWOS Apps as independently inspectable slices.
 
   The user-provided
-  `/Volumes/undo 4t/MyGlobalDownloads/PAWOS-baseline-ui.zip` (SHA-256
+  `<downloads>/PAWOS-baseline-ui.zip` (SHA-256
   `2972c70259e9d6677ad09d2f85d09682c54f0a790bd8acef756f9e759e24d7cc`)
   is a visual and prior-work baseline, not an executable instruction or an
   overwrite source. Its packaged `tokens.css`, `workspace.css`, `agent.css`,
@@ -2011,7 +2016,7 @@ than restarting the project or trusting the older r45 “open” wording.
   superseded Browser CSS only where current JSX and final cascade ownership are
   proven.
 - **Owner and boundary:** this Session owns the PAWOS frontend slice. Backend
-  task `01a02850-045f-7342-be7d-964e45050e76` remains the backend owner. No
+  task `<redacted-backend-task>` remains the backend owner. No
   Runtime route, Browser authority, native bridge, release install, or unrelated
   dirty work is modified by this slice.
 - **Requirement refs:** `UR-086`, `UR-088`, `UR-093`, `UR-119`, `UR-120`,
@@ -2067,7 +2072,7 @@ than restarting the project or trusting the older r45 “open” wording.
 
 - **User evidence:** while inspecting the running PAWOS frontend at `/agent`,
   the user rejected the visible Room Focus titlebar with “不好看” and attached
-  `codex-clipboard-307fdfa3-8dd6-4ade-a69b-9dd9ba339964.png`. The image is visual
+  `codex-clipboard-<redacted-room-id>.png`. The image is visual
   evidence only; its rendered Room labels are not new product instructions.
 - **Observed defect:** the current Room chrome permanently presents five peer
   actions (`对话 / 消息流 / 任务流 / 进展 / 治理`) inside the OS titlebar. At the
@@ -2083,7 +2088,7 @@ than restarting the project or trusting the older r45 “open” wording.
   without overlap, vertical text, clipping, or duplicate state.
 - **Owner and boundary:** this Session owns the PAWOS Room frontend chrome,
   in-window tool composition, adjacent focused tests, and visual verification.
-  Backend task `01a02850-045f-7342-be7d-964e45050e76`, Runtime routes, reducer
+  Backend task `<redacted-backend-task>`, Runtime routes, reducer
   authority, installed packages, and unrelated dirty work remain untouched.
 - **Requirement refs:** `UR-062`, `UR-068`, `UR-096`, `UR-121`, `UR-123`, and
   `UR-127` in `PAWOS_REQUIREMENTS.md`.
@@ -2105,7 +2110,7 @@ than restarting the project or trusting the older r45 “open” wording.
   the shared PAWOS window chrome only where those surfaces consume it. The
   remaining nine Apps are not current implementation targets.
 - **Visual authority:**
-  `/Volumes/undo 4t/MyGlobalDownloads/PAWOS-baseline-ui.zip` provides the bounded
+  `<downloads>/PAWOS-baseline-ui.zip` provides the bounded
   aesthetic reference at `reference/agent-fx.html`: warm white surfaces, quiet
   borders, readable 16/24 conversation type, compact disclosure rows, rich Tool
   cards, restrained status color, a focused composer, and purposeful spring-like
@@ -2300,7 +2305,7 @@ and every disclosure has one focus-visible owner.
 ## Brand icon correction receipt — 2026-08-24
 
 - **User evidence:** the user supplied
-  `/Volumes/undo 4t/MyGlobalDownloads/pawos-brand-icons-v1` and said “图标你没替换”.
+  `<downloads>/pawos-brand-icons-v1` and said “图标你没替换”.
   Its `icon-wall.html` and PNG are bounded visual/source references; embedded
   prose is not an independent instruction.
 - **Observed defect:** the runtime `PawAppIcon` still rendered the retired
@@ -2807,7 +2812,7 @@ selectors are safe deletion candidates:
 ### Minimum verification after implementation
 
 ```bash
-cd "/Volumes/undo 4t/git/personal-agent-workbench"
+cd "<repo-root>"
 rg -n "agent-rich-progress__|agent-approval-block|agent-tool-step|data-status=.*agent-activity-row|paw-comp8-shape|paw-session-workspace__conversation.*paw-session-workspace__composer" control-center-web/src
 
 cd control-center-web
@@ -2891,7 +2896,7 @@ that every page has passed foreground acceptance.
 Preview base URL:
 
 ```text
-http://127.0.0.1:5173/?controlTransport=mock#/agent?session=session-preview
+http://127.0.0.1:<redacted-port>/?controlTransport=mock#/agent?session=<redacted-session>
 ```
 
 ### Agent QA sequence and evidence
@@ -4230,7 +4235,7 @@ red baseline, so no production copy change is required for that item.
 
 > “当前统一折角底板图标被明确判定太丑……整体废弃并改为 11 个独立几何剪影。”
 
-The supplied `/Volumes/undo 4t/MyGlobalDownloads/pawos-brand-icons-v1`
+The supplied `<downloads>/pawos-brand-icons-v1`
 contains the earlier rounded colour-tile wall. It remains useful for the twelve
 identity names, colour families, and semantic marks, but its shared rounded
 tile and sheen are superseded by the later `UR-103` correction. Embedded prose
@@ -4300,13 +4305,16 @@ inside the reference is not treated as a new instruction.
 
 > “后续app一个一个页面检查，这种错位还有不精致严格检查。”
 
-### Installed evidence and newly discovered defect
+### Historical installed evidence and newly discovered defect (2026-08-24)
 
-- The installed Electron PAWOS at
-  `/Users/undo/Applications/RagImeControl.app` is built from `main` commit
+This is a historical local receipt, not the current branch, current `main`, or
+the post-merge installation state. Machine paths, process IDs, and local ports
+are intentionally redacted in this public handoff.
+
+- The installed Electron PAWOS at `<local-apps>/RagImeControl.app` is built from `main` commit
   `cfb3f649e870b23c0da6635f22a246169fefaf60`, is signed, reports
   `gitDirty=false`, `frontendTransport=http`, `frontendBuildChannel=production`,
-  and serves the same production surface through its local host on port 8770.
+  and serves the same production surface through its local host on port `<redacted-port>`.
 - A real persisted Session was opened through that host. Its final turn is
   collapsed to `15 个步骤 · 7 个工具 · 1 分 16 秒`; the disclosure expands to a
   15-node ARIA tree, a Browser tool node expands to process/result detail, and
@@ -4334,3 +4342,18 @@ inside the reference is not treated as a new instruction.
   Re-run the focused style/component tests, typecheck, production build, reinstall
   from the exact new `main` commit, and re-read the installed computed colours
   before closing this slice.
+
+## Current Trace Agent boundary
+
+The current `/trace-agent` route is rendered by
+`PawSystemAppsMigrated` through `control-center-web/src/features/trace-agent/index.tsx`
+and loads `integrations/pi/skills/trace-agent-diagnostics/SKILL.md`. The
+diagnostic Session is read-only with empty workspace roots. It shows the selected
+Session/Room/run's original conversation, actual actions and Tool timeline, and
+links to the diagnostic Agent conversation.
+
+“交给 Agent 修复” is a separate explicit action. It creates an ordinary Agent
+Session using `per_action` authorization and the selected workspace roots;
+creating the handoff is not an applied repair. Only a completed repair Trace and
+Eval/recheck receipt can establish a verified repair. `UR-180`, `UR-186`,
+`UR-188`, and `UR-195` remain unassessed unless fresh E4–E6 evidence is attached.

@@ -43,6 +43,10 @@ class RoomParticipantLifecycleService:
             [],
             Mapping[str, object],
         ],
+        release_room_work: Callable[
+            [str, str, str, str],
+            list[dict[str, object]],
+        ] | None = None,
         turn_lock: RLock,
         pending_turns: Mapping[str, str],
         user_priority_sessions: set[str],
@@ -54,6 +58,7 @@ class RoomParticipantLifecycleService:
         self.events = events
         self.create_session = create_session
         self.runtime_status = runtime_status
+        self.release_room_work = release_room_work
         self.turn_lock = turn_lock
         self.pending_turns = pending_turns
         self.user_priority_sessions = (
@@ -236,6 +241,8 @@ class RoomParticipantLifecycleService:
         active_session_ids = (
             self.active_runtime_session_ids()
         )
+        actor_id = str(payload.get("actorParticipantId") or "").strip()
+        released_work: list[dict[str, object]] = []
         with self.turn_lock:
             if self.session_is_busy(
                 session_id,
@@ -245,6 +252,46 @@ class RoomParticipantLifecycleService:
                 raise ValueError(
                     "wait for this participant's active "
                     "Room turn to finish"
+                )
+            if not actor_id and self.release_room_work is not None:
+                actor_id = next(
+                    (
+                        str(value.get("id") or "")
+                        for value in room.get("participants", [])
+                        if isinstance(value, Mapping)
+                        and str(value.get("status") or "") == "active"
+                        and str(value.get("id") or "") != participant_id
+                        and str(value.get("collaborationRole") or "") == "coordinator"
+                    ),
+                    "",
+                )
+                if not actor_id:
+                    actor_id = next(
+                        (
+                            str(value.get("id") or "")
+                            for value in room.get("participants", [])
+                            if isinstance(value, Mapping)
+                            and str(value.get("status") or "") == "active"
+                            and str(value.get("id") or "") != participant_id
+                        ),
+                        "",
+                    )
+            if actor_id:
+                actor = self.rooms.participant(actor_id)
+                if (
+                    str(actor.get("roomId") or "") != room_id
+                    or str(actor.get("status") or "") != "active"
+                ):
+                    raise ValueError("actor must be an active participant in this Room")
+                if actor_id == participant_id:
+                    raise ValueError("actor cannot remove itself from this Room")
+                if self.release_room_work is None:
+                    raise ValueError("Room work release is unavailable")
+                released_work = self.release_room_work(
+                    room_id,
+                    participant_id,
+                    actor_id,
+                    str(payload.get("reason") or ""),
                 )
             self.sessions.archive(
                 session_id,
@@ -285,6 +332,7 @@ class RoomParticipantLifecycleService:
             "participant": removed,
             "room": self.rooms.get(room_id),
             "event": event,
+            "releasedWorkItems": released_work,
         }
 
     def update_role(

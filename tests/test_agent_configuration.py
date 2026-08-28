@@ -35,7 +35,7 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(configuration["sessionDefaults"]["roleId"], "companion-future-v1")
         self.assertEqual(
             configuration["sessionDefaults"]["modelProfile"],
-            "openai-codex/gpt-5.6-sol",
+            "openai-codex/gpt-5.6-luna",
         )
         self.assertEqual(
             default_agent_configuration(role_id="vcp-v1")["sessionDefaults"]["roleId"],
@@ -45,8 +45,8 @@ class AgentConfigurationTests(unittest.TestCase):
             configuration["modelRouting"],
             {
                 "primary": {
-                    "modelProfile": "inherit",
-                    "thinkingLevel": "inherit",
+                    "modelProfile": "openai-codex/gpt-5.6-luna",
+                    "thinkingLevel": "max",
                 },
                 "toolAgent": {
                     "modelProfile": "openai-codex/gpt-5.6-luna",

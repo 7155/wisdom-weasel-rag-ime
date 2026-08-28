@@ -65,6 +65,7 @@ describe('PluginsFeature', () => {
   });
 
   it('shows the routed proposal workbench without the legacy App Center shell', async () => {
+    const user = userEvent.setup();
     renderPlugins({
       'agent.extensions.proposals': {
         ok: true,
@@ -72,7 +73,18 @@ describe('PluginsFeature', () => {
           proposalId: 'proposal-disable',
           previewToken: 'preview-disable',
           payloadSha256: 'b'.repeat(64),
-          summary: { action: 'disable', pluginId: 'session-review', displayName: 'Session Review', version: '1.1.0', permissions: ['session.read'] },
+          summary: {
+            action: 'disable',
+            pluginId: 'session-review',
+            displayName: 'Session Review',
+            version: '1.1.0',
+            permissions: ['session.read'],
+            recommendationReason: '现有复盘能力与请求完全匹配',
+            dependencies: ['@paw/pi-session-workflow'],
+            risks: ['停用后仅影响新对话'],
+            capabilityOverlap: ['与内置只读检查部分重叠'],
+            verificationPlan: ['新建对话并检查 Skill 目录'],
+          },
         }],
       },
     }, '/plugins?view=proposals', true);
@@ -80,6 +92,13 @@ describe('PluginsFeature', () => {
     expect(await screen.findByRole('heading', { name: /的建议/ })).toBeInTheDocument();
     const proposal = await screen.findByRole('button', { name: /对话复盘/ });
     expect(proposal).toHaveTextContent('停用插件 · v1.1.0 · 1 项权限');
+    await user.click(proposal);
+    const approval = screen.getByRole('region', { name: '待确认的插件更改' });
+    expect(approval).toHaveTextContent('现有复盘能力与请求完全匹配');
+    expect(approval).toHaveTextContent('@paw/pi-session-workflow');
+    expect(approval).toHaveTextContent('停用后仅影响新对话');
+    expect(approval).toHaveTextContent('与内置只读检查部分重叠');
+    expect(approval).toHaveTextContent('新建对话并检查 Skill 目录');
     expect(screen.queryByText('能力概览')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Pi Package 来源')).not.toBeInTheDocument();
     expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
@@ -131,6 +150,56 @@ describe('PluginsFeature', () => {
     expect(screen.queryByRole('button', { name: '管理扩展与自动整理' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看安装内容' })).not.toBeInTheDocument();
     expect(screen.queryByText('Session Review')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes enabled, loaded and invoked Package status with privacy-safe usage statistics', async () => {
+    renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        items: [{
+          id: 'pi-lens',
+          displayName: 'Pi Lens',
+          version: '4.1.2',
+          enabled: true,
+          installed: true,
+          rollbackAvailable: true,
+          previousVersion: '4.1.1',
+          permissions: ['workspace.read'],
+          resources: { extensions: ['lens_diagnostics'], skills: ['skills/pi-lens/SKILL.md'] },
+          source: { kind: 'npm', requested: 'npm:pi-lens@4.1.2' },
+          usage: {
+            loadedSessionCount: 3,
+            lastLoadedAtMs: 1_787_784_720_000,
+            invocationCount: 18,
+            succeededCount: 17,
+            failedCount: 1,
+            cancelledCount: 0,
+            averageDurationMs: 240,
+            lastInvocation: {
+              resourceKind: 'tool',
+              resourceName: 'lens_diagnostics',
+              sessionId: 'session-private-id',
+              startedAtMs: 1_787_790_720_000,
+              completedAtMs: 1_787_790_720_240,
+              durationMs: 240,
+              status: 'succeeded',
+            },
+          },
+        }],
+      },
+    }, '/plugins', true);
+
+    const packageCard = await screen.findByRole('article', { name: 'Pi Lens Package' });
+    expect(packageCard).toHaveTextContent('已启用');
+    expect(packageCard).toHaveTextContent('已加载 · 3 个对话');
+    expect(packageCard).toHaveTextContent('已调用 · lens_diagnostics');
+    expect(packageCard).toHaveTextContent('18 次调用');
+    expect(packageCard).toHaveTextContent('成功 17 · 失败 1 · 取消 0');
+    expect(packageCard).toHaveTextContent('平均 240 ms');
+    expect(packageCard).toHaveTextContent('最近调用成功 · 240 ms');
+    expect(packageCard).not.toHaveTextContent('session-private-id');
   });
 
   it('offers a guarded update on an installed Package when the catalog reports a newer version', async () => {

@@ -4,16 +4,20 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
+import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { MockControlTransport } from '@/test/mock-transport';
 import type { ControlRequest } from '@/platform/transport';
 import { PawOsAppSurfaceProvider, PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import { PawAgentApp } from './PawAgentApp';
 
 vi.mock('./PawSessionWorkspace', () => ({
   PawSessionWorkspace: () => <div>Session 工作区</div>,
 }));
 vi.mock('./PawRoomWorkspace', () => ({
-  PawRoomWorkspace: ({ recordId }: { recordId: string }) => <div>Room 工作区 · {recordId}</div>,
+  PawRoomWorkspace: ({ initialDraft, recordId }: { initialDraft?: string; recordId: string }) => (
+    <div>Room 工作区 · {recordId}<output data-testid="room-initial-draft">{initialDraft}</output></div>
+  ),
 }));
 vi.mock('@/features/roles', () => ({ RolesFeature: () => <div>角色工作区</div> }));
 
@@ -31,11 +35,89 @@ describe('PAWOS Agent App', () => {
     expect(within(rail).getByText('工作记录')).toBeInTheDocument();
     expect(within(rail).getByRole('button', { name: /^发布检查/ })).toBeInTheDocument();
     expect(within(rail).getByRole('button', { name: /迁移作战室/ })).toBeInTheDocument();
+    expect(within(rail).getByText('paw')).toBeInTheDocument();
     expect(within(rail).getByText('Session')).toBeInTheDocument();
     expect(within(rail).getByText('Room')).toBeInTheDocument();
     expect(rail.querySelector('[data-paw-app-icon]')).not.toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Session' })).toBeChecked();
     expect(screen.getByRole('radio', { name: 'Room' })).not.toBeChecked();
+  });
+
+  it('keeps unbound conversations in an explicit folder instead of guessing from titles', async () => {
+    renderAgent(createTransport({
+      sessions: [{
+        id: 'session-unbound',
+        title: '迁移作战室',
+        mode: 'coordinator',
+        status: 'idle',
+        updatedAtMs: 4,
+        workspaceRoots: [],
+        messageCount: 1,
+        lastMessagePreview: '',
+      }],
+    }));
+
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    expect(await within(rail).findByText('未绑定项目')).toBeInTheDocument();
+    expect(within(rail).getAllByRole('button', { name: /^迁移作战室/ })).toHaveLength(2);
+    expect(within(rail).getByText('paw')).toBeInTheDocument();
+  });
+
+  it('opens a directly targeted Room planet as a full Session without listing it as an ordinary conversation file', async () => {
+    renderAgent(createTransport({
+      sessions: [{
+        id: 'session-earth',
+        title: 'Room 内部会话',
+        mode: 'coordinator',
+        status: 'busy',
+        updatedAtMs: 4,
+        workspaceRoots: ['/work/paw'],
+        messageCount: 4,
+        lastMessagePreview: '正在汇总',
+        roomParticipant: true,
+      }],
+    }), {
+      target: { kind: 'session', id: 'session-earth', title: 'Earth' },
+    });
+
+    expect(await screen.findByText('Session 工作区')).toBeInTheDocument();
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    await waitFor(() => expect(within(rail).queryByText('Room 内部会话')).not.toBeInTheDocument());
+  });
+
+  it('projects truthful bounded status into virtual conversation files and lets project folders fold in place', async () => {
+    const now = Date.now();
+    const user = userEvent.setup();
+    renderAgent(createTransport({
+      rooms: [roomFixture({
+        updatedAtMs: now,
+        workItems: [
+          workItemFixture({ id: 'done', state: 'done', resultSummary: '旧结果已生成', updatedAtMs: now }),
+          workItemFixture({ id: 'blocked', state: 'blocked', blocker: { reason: '等待沙盒授权' }, updatedAtMs: now - 10 }),
+        ],
+      })],
+      sessions: [
+        {
+          id: 'session-busy', title: 'Trace 地基', mode: 'coordinator', status: 'busy', updatedAtMs: now,
+          workspaceRoots: ['/work/paw'], messageCount: 3, lastMessagePreview: '正在建立\nTrace 关联',
+        },
+        {
+          id: 'session-faulted', title: 'RAG 检查', mode: 'coordinator', status: 'faulted', updatedAtMs: now - 1,
+          workspaceRoots: ['/work/paw'], messageCount: 2, lastMessagePreview: '',
+        },
+      ],
+    }));
+
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    expect(await within(rail).findByText('当前公开内容：正在建立 Trace 关联')).toBeInTheDocument();
+    expect(within(rail).getByText('故障原因不可用')).toBeInTheDocument();
+    expect(within(rail).getByText('阻塞：等待沙盒授权')).toBeInTheDocument();
+    expect(within(rail).queryByText('最近结果：旧结果已生成')).not.toBeInTheDocument();
+
+    await user.click(within(rail).getByText('paw'));
+    await waitFor(() => expect(within(rail).queryByText('Trace 地基')).not.toBeInTheDocument());
+    await user.click(within(rail).getByText('paw'));
+    expect(await within(rail).findByText('Trace 地基')).toBeInTheDocument();
   });
 
   it('exposes the rail relationship and returns focus when Escape closes it', async () => {
@@ -262,6 +344,13 @@ describe('PAWOS Agent App', () => {
     expect(await screen.findByRole('textbox', { name: '描述你想完成的工作' })).toHaveValue('再检查安装状态');
   });
 
+  it('keeps a Room deep-link draft so a satellite can return input to the shared composer', async () => {
+    renderAgent(createTransport(), { initialRoute: '/agent?room=room-old&draft=%40Mars%20' });
+
+    expect(await screen.findByText('Room 工作区 · room-old')).toBeInTheDocument();
+    expect(screen.getByTestId('room-initial-draft').textContent).toBe('@Mars ');
+  });
+
   it('accepts the sessionId compatibility deep link without returning to new work', async () => {
     renderAgent(createTransport(), { initialRoute: '/agent?sessionId=session-old' });
 
@@ -293,7 +382,7 @@ describe('PAWOS Agent App', () => {
     expect(screen.queryByRole('button', { name: /^发布检查/ })).not.toBeInTheDocument();
   });
 
-  it('states the consequence of Session next to the composer and previews Room partners on switch', async () => {
+  it('states the consequence of Session and previews Room partners as planets without persona names', async () => {
     const user = userEvent.setup();
     renderAgent();
 
@@ -311,6 +400,8 @@ describe('PAWOS Agent App', () => {
     expect(roomBrief.getByText('协调')).toBeInTheDocument();
     expect(roomBrief.getByText('Mars')).toBeInTheDocument();
     expect(roomBrief.getByText('审阅')).toBeInTheDocument();
+    expect(roomBrief.queryByText('构建者')).not.toBeInTheDocument();
+    expect(roomBrief.queryByText('审阅者')).not.toBeInTheDocument();
   });
 
   it('blocks a Room start with the truthful reason when fewer than two partners exist', async () => {
@@ -439,6 +530,7 @@ type MockSessionSummary = {
   workspaceRoots: string[];
   messageCount: number;
   lastMessagePreview: string;
+  roomParticipant?: boolean;
 };
 
 function agentTree(transport = createTransport(), props: { initialRoute?: string } = {}) {
@@ -454,7 +546,7 @@ function agentTree(transport = createTransport(), props: { initialRoute?: string
   );
 }
 
-function renderAgent(transport = createTransport(), props: { initialRoute?: string } = {}) {
+function renderAgent(transport = createTransport(), props: { initialRoute?: string; target?: PawOsWindowTarget } = {}) {
   return render(agentTree(transport, props));
 }
 
@@ -466,13 +558,14 @@ function createTransport(options: {
   roomMessageHandler?: () => Promise<unknown>;
   staleCatalogAfterCreate?: boolean;
   preferencesHandler?: () => unknown | Promise<unknown>;
+  rooms?: RoomSummary[];
   sessions?: MockSessionSummary[];
 } = {}) {
   let sessions: MockSessionSummary[] = options.sessions ?? [{
     id: 'session-old', title: '发布检查', mode: 'coordinator', status: 'idle', updatedAtMs: 2,
     workspaceRoots: ['/work/paw'], messageCount: 3, lastMessagePreview: '检查构建结果',
   }];
-  let rooms = [{
+  let rooms: RoomSummary[] = options.rooms ?? [{
     id: 'room-old', title: '迁移作战室', status: 'active', roomKind: 'collaboration',
     routingPolicy: 'parallel', moderatorParticipantId: 'p1', updatedAtMs: 3,
     workspaceRoots: ['/work/paw'], participants: [
@@ -527,6 +620,30 @@ function createTransport(options: {
       'agent.room.message': options.roomMessageHandler ?? { ok: true },
     },
   });
+}
+
+function roomFixture(overrides: Partial<RoomSummary> = {}): RoomSummary {
+  return {
+    id: 'room-old', title: '迁移作战室', status: 'active', roomKind: 'collaboration',
+    routingPolicy: 'parallel', moderatorParticipantId: 'p1', updatedAtMs: 3,
+    workspaceRoots: ['/work/paw'], participants: [
+      { id: 'p1', sessionId: 's1', roleId: 'builder', roleVersion: '1', displayName: '构建者', status: 'active', ordinal: 0 },
+      { id: 'p2', sessionId: 's2', roleId: 'reviewer', roleVersion: '1', displayName: '审阅者', status: 'active', ordinal: 1 },
+    ],
+    ...overrides,
+  };
+}
+
+function workItemFixture(overrides: Partial<RoomWorkItem> = {}): RoomWorkItem {
+  return {
+    id: 'work-1', roomId: 'room-old', topicId: 'topic-1', rootTurnId: 'turn-1', rootWorkId: 'work-1',
+    parentWorkId: '', objective: '完成任务', expectedOutput: '结果', acceptanceCriteria: [],
+    accountableParticipantId: 'p1', currentOwnerParticipantId: 'p1', offeredToParticipantId: '',
+    createdByParticipantId: 'p1', clientMessageId: 'message-1', state: 'active', depth: 0, revision: 1,
+    resultSummary: '', artifactRefs: [], evidenceRefs: [], blocker: {}, acceptedTurnId: 'turn-1',
+    createdAtMs: 1, updatedAtMs: 1, completedAtMs: null,
+    ...overrides,
+  };
 }
 
 function modelCatalog() {

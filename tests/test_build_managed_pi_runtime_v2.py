@@ -359,6 +359,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "project-maintainer",
                 "systematic-debugging",
                 "test-driven-implementation",
+                "trace-agent-diagnostics",
             }),
         )
         for name in skill_names:

@@ -32,7 +32,7 @@ import {
   text,
 } from './renderer-values';
 
-export function CardBlockRenderer({ block }: AgentBlockRenderProps) {
+export function CardBlockRenderer({ block, sessionId }: AgentBlockRenderProps) {
   const data = block.data;
   const title = text(data.title) || '信息卡片';
   const tone = ['info', 'success', 'warning', 'danger'].includes(text(data.tone))
@@ -45,7 +45,7 @@ export function CardBlockRenderer({ block }: AgentBlockRenderProps) {
         <span className="agent-insert-icon">{statusIcon(tone)}</span>
         <strong>{title}</strong>
       </header>
-      {text(data.bodyMarkdown) ? <MarkdownBody text={text(data.bodyMarkdown)} /> : null}
+      {text(data.bodyMarkdown) ? <MarkdownBody sessionId={sessionId} text={text(data.bodyMarkdown)} /> : null}
       {fields.length ? (
         <dl>
           {fields.map((field, index) => (

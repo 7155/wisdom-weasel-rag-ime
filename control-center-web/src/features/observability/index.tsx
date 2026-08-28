@@ -6,24 +6,34 @@ import {
   ChevronDown,
   CircleDotDashed,
   Database,
+  FileCheck2,
   FilterX,
   GitBranch,
   KeyRound,
+  Link2,
   LockKeyhole,
   MessagesSquare,
   Network,
+  Package,
   Radio,
   RefreshCw,
   Search,
+  ShieldCheck,
   TimerReset,
   TriangleAlert,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Disclosure, EmptyState, IconButton } from '@/components/primitives';
 import type { ObservationEventV1 } from '@/contracts/generated/observation-event.v1';
+import type { EvalRunV1 } from '@/contracts/generated/eval-run.v1';
+import type { EvalScheduleListV1 } from '@/contracts/generated/eval-schedule-list.v1';
+import type { ObservabilityEvidenceEvalRequestV1 } from '@/contracts/generated/observability-evidence-eval-request.v1';
+import type { ObservabilityEvalListV1 } from '@/contracts/generated/observability-eval-list.v1';
+import type { ObservabilityTraceGetV1 } from '@/contracts/generated/observability-trace-get.v1';
+import type { SandboxRunV1 } from '@/contracts/generated/sandbox-run.v1';
 import { DebugContextInspector } from '@/features/agent/status/DebugContextInspector';
 import {
   InlineNotice,
@@ -34,7 +44,15 @@ import {
   numberValue,
 } from '@/features/overview/management-ui';
 import {
+  useCreateEvalSchedule,
+  useEvalScheduleRuns,
+  useEvalSchedules,
+  useEvalSuites,
   useObservationFeed,
+  useObservationEvals,
+  useObservationEvidenceEval,
+  useObservationTrace,
+  useSandboxRuns,
   type ObservationConnectionState,
   type ObservationFilters,
 } from './api';
@@ -63,37 +81,50 @@ export function ObservabilityFeature() {
     ...(searchParams.get('sessionId') ? { sessionId: searchParams.get('sessionId') ?? '' } : {}),
     ...(searchParams.get('roomId') ? { roomId: searchParams.get('roomId') ?? '' } : {}),
     ...(searchParams.get('traceId') ? { traceId: searchParams.get('traceId') ?? '' } : {}),
+    ...(searchParams.get('runId') ? { runId: searchParams.get('runId') ?? '' } : {}),
     ...(category === 'all' ? {} : { category }),
   }), [category, searchParams]);
   const feed = useObservationFeed(filters);
+  const scopedItems = useMemo(
+    () => feed.items.filter((item) => !filters.runId || item.runId === filters.runId),
+    [feed.items, filters.runId],
+  );
   const visibleItems = useMemo(
-    () => feed.items.filter((item) => observationMatches(item, needle)),
-    [feed.items, needle],
+    () => scopedItems.filter((item) => observationMatches(item, needle)),
+    [needle, scopedItems],
   );
   const [selectedTraceId, setSelectedTraceId] = useState('');
   const [selectedEventId, setSelectedEventId] = useState('');
   const selectedTrace = useMemo(
-    () => visibleItems
+    () => scopedItems
       .filter((item) => item.traceId === selectedTraceId)
       .sort((left, right) => left.sequence - right.sequence),
-    [selectedTraceId, visibleItems],
+    [scopedItems, selectedTraceId],
   );
-  const selectedEvent = visibleItems.find((item) => item.eventId === selectedEventId)
+  const selectedEvent = scopedItems.find((item) => item.eventId === selectedEventId)
     ?? selectedTrace.at(-1);
+  const traceDetail = useObservationTrace(selectedTraceId);
+  const scopedTraceId = filters.traceId ?? '';
 
   useEffect(() => {
-    if (!visibleItems.length) {
-      setSelectedTraceId('');
+    if (!scopedItems.length) {
+      setSelectedTraceId(scopedTraceId);
       setSelectedEventId('');
       return;
     }
-    if (!visibleItems.some((item) => item.traceId === selectedTraceId)) {
-      setSelectedTraceId(visibleItems[0].traceId);
+    if (!visibleItems.length) return;
+    if (scopedTraceId && selectedTraceId !== scopedTraceId) {
+      setSelectedTraceId(scopedTraceId);
+      setSelectedEventId(scopedItems.find((item) => item.traceId === scopedTraceId)?.eventId ?? '');
+      return;
     }
-    if (!visibleItems.some((item) => item.eventId === selectedEventId)) {
-      setSelectedEventId(visibleItems[0].eventId);
+    if (!scopedItems.some((item) => item.traceId === selectedTraceId)) {
+      setSelectedTraceId(scopedItems[0].traceId);
     }
-  }, [selectedEventId, selectedTraceId, visibleItems]);
+    if (!scopedItems.some((item) => item.eventId === selectedEventId)) {
+      setSelectedEventId(scopedItems[0].eventId);
+    }
+  }, [scopedItems, scopedTraceId, selectedEventId, selectedTraceId, visibleItems]);
 
   const runningCount = visibleItems.filter((item) =>
     ['queued', 'running', 'waiting'].includes(item.status),
@@ -106,7 +137,7 @@ export function ObservabilityFeature() {
       .map((item) => item.durationMs)
       .filter((value): value is number => typeof value === 'number' && value > 0),
   );
-  const scoped = Boolean(filters.sessionId || filters.roomId || filters.traceId);
+  const scoped = Boolean(filters.sessionId || filters.roomId || filters.traceId || filters.runId);
   const snapshotTotal = Math.max(feed.items.length, feed.snapshot?.counts.total ?? 0);
   const snapshotTruncated = Boolean(feed.snapshot?.truncated || snapshotTotal > feed.items.length);
   const snapshotGeneratedAtMs = feed.snapshot?.generatedAtMs ?? 0;
@@ -126,7 +157,7 @@ export function ObservabilityFeature() {
 
   function clearScope(): void {
     const params = new URLSearchParams(searchParams);
-    for (const key of ['sessionId', 'roomId', 'traceId']) params.delete(key);
+    for (const key of ['sessionId', 'roomId', 'traceId', 'runId']) params.delete(key);
     setSearchParams(params, { replace: true });
   }
 
@@ -271,33 +302,58 @@ export function ObservabilityFeature() {
               title="这次是怎样完成的"
               trailing={selectedTrace.length ? (
                 <StatusBadge label={`${selectedTrace.length} 步`} tone="neutral" />
+              ) : selectedTraceId ? (
+                <StatusBadge
+                  label={traceProjectionLabel(
+                    traceDetail.data?.trace.traceId === selectedTraceId
+                      ? traceDetail.data.projectionSource
+                      : undefined,
+                  )}
+                  tone="neutral"
+                />
               ) : undefined}
             >
-              {selectedTrace.length ? (
+              {selectedTraceId ? (
                 <>
                   <header className="observation-trace-heading">
-                    <span><GitBranch size={15} />一次完整流程</span>
-                    <small>{traceScope(selectedTrace)}</small>
+                    <span><GitBranch size={15} />同一次流程</span>
+                    <small>{selectedTrace.length ? traceScope(selectedTrace) : selectedTraceId}</small>
                   </header>
-                  <ol className="observation-trace">
-                    {selectedTrace.map((item, index) => (
-                      <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} data-status={item.status} key={`${item.eventId}:trace`}>
-                        <article className="observation-trace__card">
-                          <button className="observation-trace__summary" onClick={() => setSelectedEventId(item.eventId)} type="button">
-                            <span className="observation-trace__index">{index + 1}</span>
-                            <span>
-                              <strong>{publicObservationSummary(item)}</strong>
-                              <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
-                            </span>
-                            <time dateTime={new Date(item.createdAtMs).toISOString()}>
-                              {formatTime(item.createdAtMs)}
-                            </time>
-                          </button>
-                          <ObservationFacts item={item} />
-                        </article>
-                      </li>
-                    ))}
-                  </ol>
+                  {selectedTrace.length ? (
+                    <ol className="observation-trace">
+                      {selectedTrace.map((item, index) => (
+                        <li data-active={item.eventId === selectedEvent?.eventId} data-category={item.category} data-status={item.status} key={`${item.eventId}:trace`}>
+                          <article className="observation-trace__card">
+                            <button className="observation-trace__summary" onClick={() => setSelectedEventId(item.eventId)} type="button">
+                              <span className="observation-trace__index">{index + 1}</span>
+                              <span>
+                                <strong>{publicObservationSummary(item)}</strong>
+                                <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
+                              </span>
+                              <time dateTime={new Date(item.createdAtMs).toISOString()}>
+                                {formatTime(item.createdAtMs)}
+                              </time>
+                            </button>
+                            <ObservationFacts item={item} />
+                          </article>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : traceDetail.data?.trace.traceId === selectedTraceId ? (
+                    <CanonicalTraceOriginNotice source={traceDetail.data.projectionSource} />
+                  ) : null}
+                  {traceDetail.error ? (
+                    <InlineNotice title="这次流程的标准 Trace 暂时不可用" tone="warning">
+                      事件时间线仍然保留；标准 spans 和检索证据稍后可以重新读取。
+                    </InlineNotice>
+                  ) : null}
+                  {traceDetail.isPending ? (
+                    <div className="observation-canonical-loading" role="status">
+                      正在读取这次流程的标准 Trace…
+                    </div>
+                  ) : traceDetail.data?.trace.traceId === selectedTraceId ? (
+                    <CanonicalTraceDetails detail={traceDetail.data} key={selectedTraceId} />
+                  ) : null}
                   {selectedEvent?.sessionId ? (
                     <div className="observation-debug-actions">
                       <a href={`#/context-debug?sessionId=${encodeURIComponent(selectedEvent.sessionId)}${selectedEvent.turnId ? `&turnId=${encodeURIComponent(selectedEvent.turnId)}` : ''}`}>
@@ -324,6 +380,8 @@ export function ObservabilityFeature() {
             </ManagementSection>
           </div>
 
+          <EvalSchedulesPanel />
+
           <footer className="observation-privacy">
             <LockKeyhole aria-hidden="true" size={14} />
             <p>运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，可以在上下文检查中查看指定目录保存的脱敏记录；未开启时只查看当前运行中的内容。</p>
@@ -332,6 +390,301 @@ export function ObservabilityFeature() {
       </QueryState>
     </ManagementPage>
   );
+}
+
+function EvalSchedulesPanel() {
+  const schedules = useEvalSchedules();
+  const suites = useEvalSuites();
+  const createSchedule = useCreateEvalSchedule();
+  const [selectedScheduleId, setSelectedScheduleId] = useState('');
+  const [suiteId, setSuiteId] = useState('');
+  const [recurrenceKind, setRecurrenceKind] = useState<'daily' | 'weekly'>('daily');
+  const [recurrenceInterval, setRecurrenceInterval] = useState(1);
+  const [maxRuns, setMaxRuns] = useState(30);
+  const [nextDueAt, setNextDueAt] = useState(() => localDateTimeValue(Date.now() + 60 * 60 * 1_000));
+  const [createdScheduleId, setCreatedScheduleId] = useState('');
+  const runs = useEvalScheduleRuns(selectedScheduleId);
+  const nextDueAtMs = new Date(nextDueAt).getTime();
+  const selectedSuite = suites.data?.items.find((item) => item.suiteId === suiteId);
+  const canCreate = Boolean(selectedSuite)
+    && Number.isInteger(recurrenceInterval)
+    && recurrenceInterval >= 1
+    && recurrenceInterval <= 30
+    && Number.isInteger(maxRuns)
+    && maxRuns >= 1
+    && maxRuns <= 100
+    && Number.isFinite(nextDueAtMs)
+    && nextDueAtMs >= Date.now()
+    && !suites.isFetching
+    && !createSchedule.isPending;
+
+  useEffect(() => {
+    const items = suites.data?.items ?? [];
+    if (items.some((item) => item.suiteId === suiteId)) return;
+    setSuiteId(items[0]?.suiteId ?? '');
+  }, [suiteId, suites.data?.items]);
+
+  useEffect(() => {
+    const items = schedules.data?.items ?? [];
+    if (items.some((item) => item.id === selectedScheduleId)) return;
+    setSelectedScheduleId(createdScheduleId || items.at(-1)?.id || '');
+  }, [createdScheduleId, schedules.data?.items, selectedScheduleId]);
+
+  async function submitSchedule(): Promise<void> {
+    try {
+      const result = await createSchedule.mutateAsync({
+        suiteId: selectedSuite?.suiteId ?? '',
+        suiteRevision: selectedSuite?.suiteRevision ?? '',
+        recurrenceKind,
+        recurrenceInterval,
+        maxRuns,
+        nextDueAtMs,
+      });
+      setCreatedScheduleId(result.schedule.id);
+      setSelectedScheduleId(result.schedule.id);
+    } catch {
+      // The current schedule list remains usable; the inline receipt owns retry copy.
+    }
+  }
+
+  const selectedSchedule = schedules.data?.items.find((item) => item.id === selectedScheduleId)
+    ?? (createSchedule.data?.schedule.id === selectedScheduleId ? createSchedule.data.schedule : undefined);
+
+  return (
+    <section aria-label="周期 Eval" className="observation-schedules">
+      <SandboxRunsPanel />
+      <header className="observation-schedules__heading">
+        <span><TimerReset aria-hidden="true" size={15} /><strong>周期 Eval</strong></span>
+        <small>本机计划 · 固定 suite revision · {schedules.data?.items.length ?? 0} 项</small>
+      </header>
+      <p className="observation-schedules__hint">
+        周期计划只调度已注册的确定性 Eval suite；每次执行仍生成独立 EvalRun，不会自动改写 Memory、Knowledge 或索引。
+      </p>
+      {schedules.error ? (
+        <InlineNotice title="周期 Eval 暂时不可用" tone="warning">
+          Trace 与已有 Eval 仍可查看；当前只保留本机计划的重试入口。
+        </InlineNotice>
+      ) : null}
+      {suites.error ? (
+        <InlineNotice title="Eval suite 目录暂不可用" tone="warning">
+          已有周期计划仍可查看；目录恢复前不会显示或伪造新建选项。
+        </InlineNotice>
+      ) : null}
+      <div className="observation-schedules__workspace">
+        <div>
+          {schedules.isPending ? <div className="observation-eval__loading" role="status">正在读取周期 Eval…</div> : null}
+          {!schedules.isPending && !schedules.error && !(schedules.data?.items.length) ? (
+            <p className="observation-eval__empty">还没有周期 Eval 计划。</p>
+          ) : null}
+          {schedules.data?.items.length ? (
+            <ul aria-label="周期 Eval 计划" className="observation-schedules__list">
+              {schedules.data.items.map((schedule) => (
+                <li key={schedule.id}>
+                  <button
+                    aria-current={schedule.id === selectedScheduleId ? 'true' : undefined}
+                    aria-label={`${schedule.suiteId} ${schedule.suiteRevision}，${evalScheduleStatusLabel(schedule.status)}`}
+                    data-active={schedule.id === selectedScheduleId || undefined}
+                    onClick={() => setSelectedScheduleId(schedule.id)}
+                    type="button"
+                  >
+                    <span><strong>{schedule.suiteId}</strong><small>{schedule.suiteRevision}</small></span>
+                    <span>{recurrenceLabel(schedule)}<small>{schedule.runCount} / {schedule.maxRuns} 次</small></span>
+                    <StatusBadge label={evalScheduleStatusLabel(schedule.status)} tone={evalScheduleStatusTone(schedule.status)} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+        <div className="observation-schedules__runs">
+          {selectedSchedule ? (
+            <>
+              <header>
+                <span><strong>{selectedSchedule.suiteId}</strong><small>{selectedSchedule.id}</small></span>
+                <span>下次 {formatDateTime(selectedSchedule.nextDueAtMs)}</span>
+              </header>
+              {runs.error ? <InlineNotice title="执行记录暂时不可用" tone="warning">计划本身仍然保留。</InlineNotice> : null}
+              {runs.isPending ? <div className="observation-eval__loading" role="status">正在读取执行记录…</div> : null}
+              {!runs.isPending && !runs.error && !runs.data?.items.length ? (
+                <p className="observation-eval__empty">还没有执行回执。</p>
+              ) : null}
+              {runs.data?.items.length ? (
+                <ol aria-label="周期 Eval 执行记录">
+                  {runs.data.items.map((run) => (
+                    <li data-state={run.state} key={run.id}>
+                      <span><strong>第 {run.attempt} 次</strong><small>{formatDateTime(run.dueAtMs)}</small></span>
+                      <span>
+                        {evalScheduleRunStateLabel(run.state)}
+                        <small>{run.evalRunId || run.errorCode || '等待回执'}</small>
+                        {run.traceIds.length ? (
+                          <span aria-label="关联 Trace">
+                            {run.traceIds.map((traceId) => (
+                              <a
+                                href={`#/observability?traceId=${encodeURIComponent(traceId)}`}
+                                key={traceId}
+                              >
+                                {traceId}
+                              </a>
+                            ))}
+                            {run.traceIdsTruncated ? <small>Trace 已截断</small> : null}
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+            </>
+          ) : <p className="observation-eval__empty">选择一项计划后查看每次执行回执。</p>}
+        </div>
+      </div>
+      <Disclosure
+        className="observation-schedules__create"
+        summary={<><ShieldCheck aria-hidden="true" size={14} />新建周期 Eval</>}
+      >
+        <div className="observation-schedules__form">
+          <label><span>Eval suite</span>
+            <select
+              aria-label="Eval suite"
+              disabled={suites.isPending || suites.isFetching || Boolean(suites.error) || !suites.data?.items.length}
+              onChange={(event) => setSuiteId(event.target.value)}
+              value={suiteId}
+            >
+              {!suites.data?.items.length ? <option value="">暂无已注册 suite</option> : null}
+              {suites.data?.items.map((suite) => (
+                <option key={suite.suiteId} value={suite.suiteId}>{suite.displayName} · {suite.suiteId}</option>
+              ))}
+            </select>
+          </label>
+          <div aria-label="Eval suite revision" className="observation-schedules__suite-revision">
+            <span>固定版本</span>
+            <strong>{selectedSuite?.suiteRevision ?? (suites.isPending ? '读取中…' : '不可用')}</strong>
+            {selectedSuite ? <small>{selectedSuite.fixtureCount} 个 fixture · {selectedSuite.capabilities.join(' · ')}</small> : null}
+          </div>
+          <label><span>周期</span><select aria-label="Eval 周期" onChange={(event) => setRecurrenceKind(event.target.value as 'daily' | 'weekly')} value={recurrenceKind}><option value="daily">每天</option><option value="weekly">每周</option></select></label>
+          <label><span>间隔</span><input aria-label="Eval 周期间隔" max={30} min={1} onChange={(event) => setRecurrenceInterval(Number(event.target.value))} type="number" value={recurrenceInterval} /></label>
+          <label><span>最多执行</span><input aria-label="Eval 最大执行次数" max={100} min={1} onChange={(event) => setMaxRuns(Number(event.target.value))} type="number" value={maxRuns} /></label>
+          <label><span>首次执行</span><input aria-label="Eval 首次执行时间" onChange={(event) => setNextDueAt(event.target.value)} type="datetime-local" value={nextDueAt} /></label>
+          <div className="observation-schedules__create-action">
+            <span>创建后由现有 Runtime wake loop 领取，不另起守护进程。</span>
+            <Button disabled={!canCreate || Boolean(suites.error)} loading={createSchedule.isPending} onClick={() => void submitSchedule()} size="small">创建计划</Button>
+          </div>
+          {createSchedule.error ? <InlineNotice title="周期 Eval 未创建" tone="danger">请检查 suite、版本和首次执行时间后重试。</InlineNotice> : null}
+          {createdScheduleId ? <div className="observation-eval__receipt" role="status"><strong>周期 Eval 已创建</strong><span>{createdScheduleId}</span></div> : null}
+        </div>
+      </Disclosure>
+    </section>
+  );
+}
+
+function SandboxRunsPanel() {
+  const sandboxRuns = useSandboxRuns();
+  const items = sandboxRuns.data?.items ?? [];
+
+  return (
+    <section aria-label="垂直 Agent SandboxRun 链路" className="observation-sandbox-runs">
+      <header className="observation-sandbox-runs__heading">
+        <span><ShieldCheck aria-hidden="true" size={15} /><strong>垂直 Agent · SandboxRun → Trace → EvalRun</strong></span>
+        <small>{sandboxRuns.data?.total ?? 0} 次 SandboxRun</small>
+      </header>
+      {sandboxRuns.error ? (
+        <InlineNotice title="SandboxRun 暂时不可用" tone="warning">
+          Trace 与 Eval 仍可查看；请刷新重试。
+        </InlineNotice>
+      ) : null}
+      {sandboxRuns.isPending ? <div className="observation-sandbox-runs__loading" role="status">正在读取 SandboxRun…</div> : null}
+      {!sandboxRuns.isPending && !sandboxRuns.error && !items.length ? (
+        <EmptyState
+          description="先在 App Center 启用 Vertical Agent Sandbox，再从新 Session 运行 SGG。"
+          headingLevel={3}
+          icon={ShieldCheck}
+          title="还没有 SandboxRun"
+        />
+      ) : null}
+      {items.length ? (
+        <ol aria-label="SandboxRun 到 Trace 与 EvalRun" className="observation-sandbox-runs__list">
+          {items.map((item) => <SandboxRunRow item={item} key={item.sandboxRunId} />)}
+        </ol>
+      ) : null}
+    </section>
+  );
+}
+
+function SandboxRunRow({ item }: { item: SandboxRunV1 }) {
+  return (
+    <li className="observation-sandbox-runs__row" data-status={item.status}>
+      <div className="observation-sandbox-runs__identity">
+        <strong>{item.appId}</strong>
+        <StatusBadge label={sandboxRunStatusLabel(item.status)} tone={sandboxRunStatusTone(item.status)} />
+      </div>
+      <div aria-label={`SandboxRun ${item.sandboxRunId} 的 Trace 与 EvalRun`} className="observation-sandbox-runs__chain">
+        <span className="observation-sandbox-runs__node"><small>SandboxRun</small><code>{item.sandboxRunId}</code></span>
+        <span aria-hidden="true" className="observation-sandbox-runs__arrow">→</span>
+        <span className="observation-sandbox-runs__node"><small>Trace</small>
+          {item.traceIds.length ? item.traceIds.map((traceId) => (
+            <a href={`#/observability?traceId=${encodeURIComponent(traceId)}`} key={traceId}>{traceId}</a>
+          )) : <code>未产出</code>}
+        </span>
+        <span aria-hidden="true" className="observation-sandbox-runs__arrow">→</span>
+        <span className="observation-sandbox-runs__node"><small>EvalRun</small>
+          {item.evalRunIds.length ? item.evalRunIds.map((evalRunId) => (
+            <code key={evalRunId}>{evalRunId}</code>
+          )) : <code>未产出</code>}
+        </span>
+      </div>
+      <div className="observation-sandbox-runs__policy" aria-label="SandboxRun 策略">
+        <span><code>network</code> {item.policy.network}</span>
+        <span><code>mutation</code> {item.policy.mutationMode}</span>
+        <span><code>productionWriteBlocked</code> {String(item.policy.productionWriteBlocked)}</span>
+      </div>
+    </li>
+  );
+}
+
+function recurrenceLabel(schedule: EvalScheduleListV1['items'][number]): string {
+  const unit = schedule.recurrenceKind === 'daily' ? '天' : '周';
+  return `每 ${schedule.recurrenceInterval} ${unit}`;
+}
+
+function evalScheduleStatusLabel(status: EvalScheduleListV1['items'][number]['status']): string {
+  return ({ scheduled: '已计划', running: '执行中', completed: '已完成', failed: '失败' })[status];
+}
+
+function evalScheduleStatusTone(status: EvalScheduleListV1['items'][number]['status']): 'success' | 'danger' | 'info' | 'neutral' {
+  if (status === 'completed') return 'success';
+  if (status === 'failed') return 'danger';
+  if (status === 'running') return 'info';
+  return 'neutral';
+}
+
+function evalScheduleRunStateLabel(state: 'claimed' | 'succeeded' | 'failed'): string {
+  return ({ claimed: '执行中', succeeded: '成功', failed: '失败' })[state];
+}
+
+function sandboxRunStatusLabel(status: SandboxRunV1['status']): string {
+  return ({
+    queued: '排队', running: '运行中', completed: '已完成', failed: '失败', cancelled: '已取消',
+  })[status];
+}
+
+function sandboxRunStatusTone(status: SandboxRunV1['status']): 'success' | 'danger' | 'info' | 'neutral' {
+  if (status === 'completed') return 'success';
+  if (status === 'failed') return 'danger';
+  if (status === 'running') return 'info';
+  return 'neutral';
+}
+
+function localDateTimeValue(timestamp: number): string {
+  const date = new Date(timestamp);
+  const offsetMs = date.getTimezoneOffset() * 60 * 1_000;
+  return new Date(timestamp - offsetMs).toISOString().slice(0, 16);
+}
+
+function formatDateTime(timestamp: number): string {
+  if (!timestamp) return '未安排';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(timestamp));
 }
 
 function ObservationRow({
@@ -395,6 +748,481 @@ function ObservationFacts({ item }: { item: ObservationEventV1 }) {
       ) : null}
     </div>
   );
+}
+
+function CanonicalTraceDetails({ detail }: { detail: ObservabilityTraceGetV1 }) {
+  const trace = detail.trace;
+  return (
+    <section aria-label="标准 Trace 记录" className="observation-canonical">
+      <header className="observation-canonical__heading">
+        <span><GitBranch aria-hidden="true" size={14} />标准 Trace</span>
+        <small>{trace.status} · {trace.traceId}</small>
+      </header>
+      {detail.truncated ? (
+        <InlineNotice title="局部窗口，状态已降级" tone="warning">
+          当前只展示观察窗口中的 spans 和证据，不能据此断言完整流程已经结束。
+        </InlineNotice>
+      ) : null}
+      <TraceRelations trace={trace} />
+      <Disclosure
+        className="observation-canonical__disclosure"
+        summary={<><GitBranch aria-hidden="true" size={14} />Canonical spans · {trace.spans.length}</>}
+      >
+        <ol aria-label="Canonical spans" className="observation-canonical__list">
+          {trace.spans.map((span, index) => (
+            <li data-recorded={span.recorded} data-status={span.status} key={span.spanId}>
+              <span className="observation-canonical__index">{index + 1}</span>
+              <span className="observation-canonical__copy">
+                <strong>{span.name}</strong>
+                <small>{span.spanId}</small>
+                {span.parentSpanId ? <small>父阶段 · {span.parentSpanId}</small> : null}
+                {!span.recorded ? (
+                  <small>未记录：{span.unavailableReason || '原因未提供'}</small>
+                ) : null}
+                <TraceSpanFacts attributes={span.attributes} metrics={span.metrics} />
+              </span>
+              <StatusBadge label={statusLabel(span.status)} tone={statusTone(span.status)} />
+              <span className="observation-canonical__duration">{spanDurationLabel(span)}</span>
+            </li>
+          ))}
+        </ol>
+      </Disclosure>
+      <Disclosure
+        className="observation-canonical__disclosure"
+        summary={<><Database aria-hidden="true" size={14} />证据 · {trace.evidence.length}</>}
+      >
+        <ul aria-label="Trace 证据" className="observation-canonical__evidence">
+          {trace.evidence.map((evidence, index) => (
+            <li key={`${evidence.evidenceId}:${evidence.evidenceStage}:${index}`}>
+              <div className="observation-canonical__evidence-head">
+                <strong>{evidence.evidenceId}</strong>
+                <StatusBadge label={evidence.disposition} tone={evidence.disposition === 'included' ? 'success' : 'neutral'} />
+              </div>
+              <div className="observation-canonical__evidence-meta">
+                <span>{evidence.sourceKind} · {evidence.sourceLane || '未标注 lane'}</span>
+                <span>阶段 {evidence.evidenceStage}</span>
+                <span>排名 {rankChangeLabel(evidence)}</span>
+                <span>分数 {scoreLabel(evidence.scores)}</span>
+              </div>
+              <small>{evidence.sourceRef}</small>
+              {evidence.omissionReason ? <small>省略原因：{evidence.omissionReason}</small> : null}
+            </li>
+          ))}
+        </ul>
+      </Disclosure>
+      <Disclosure
+        className="observation-canonical__disclosure"
+        summary={<><Package aria-hidden="true" size={14} />产物 · {trace.artifacts.length}</>}
+      >
+        <ul aria-label="Trace 产物" className="observation-canonical__artifacts">
+          {trace.artifacts.map((artifact, index) => (
+            <li key={`${artifact.artifactId}:${index}`}>
+              <strong>{artifact.artifactId}</strong>
+              <span>{artifact.kind} · {artifact.mediaType}</span>
+              <small>{formatBytes(artifact.byteSize)} · {artifact.recordCount} 条记录</small>
+            </li>
+          ))}
+        </ul>
+      </Disclosure>
+      <TraceEvalPanel detail={detail} />
+    </section>
+  );
+}
+
+function CanonicalTraceOriginNotice({
+  source,
+}: {
+  source: ObservabilityTraceGetV1['projectionSource'];
+}) {
+  if (source === 'trace_store') {
+    return (
+      <InlineNotice title="这是本机持久化的标准 Trace" tone="info">
+        公共事件日志里没有复制这份记录；下方读取的是由原执行边界写入、本机不可变保存的脱敏终态 Trace。
+      </InlineNotice>
+    );
+  }
+  if (source === 'source_adapter') {
+    return (
+      <InlineNotice title="这是来源系统直接提供的 Trace" tone="info">
+        公共事件日志里没有复制这份记录；下方直接读取输入或 Browser 等原始权威的脱敏投影。
+      </InlineNotice>
+    );
+  }
+  return null;
+}
+
+function TraceSpanFacts({
+  attributes,
+  metrics,
+}: {
+  attributes: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+}) {
+  const facts = [
+    ...Object.entries(attributes).map(([key, value]) => ({ key, value, group: '属性' })),
+    ...Object.entries(metrics).map(([key, value]) => ({ key, value, group: '指标' })),
+  ];
+  if (!facts.length) return null;
+  return (
+    <dl className="observation-canonical__span-facts">
+      {facts.map((fact) => (
+        <div key={`${fact.group}:${fact.key}`}>
+          <dt>{fact.key}</dt>
+          <dd>{traceFactValue(fact.value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function traceFactValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return JSON.stringify(value) ?? '未记录';
+  return String(value);
+}
+
+function traceProjectionLabel(
+  source: ObservabilityTraceGetV1['projectionSource'] | undefined,
+): string {
+  if (source === 'trace_store') return '已保存 Trace';
+  if (source === 'source_adapter') return '来源 Trace';
+  if (source === 'observation_journal') return '事件 Trace';
+  return '标准 Trace';
+}
+
+function TraceRelations({ trace }: { trace: ObservabilityTraceGetV1['trace'] }) {
+  const bindings = Object.entries(trace.binding).filter((entry): entry is [string, string] => (
+    typeof entry[1] === 'string' && Boolean(entry[1])
+  ));
+  const links = [
+    ...(trace.parentTraceId ? [{ traceId: trace.parentTraceId, relation: 'parent' as const }] : []),
+    ...(trace.links ?? []),
+  ];
+  if (!bindings.length && !links.length) return null;
+  const sessionId = trace.binding.sessionId;
+  const turnId = trace.binding.turnId;
+  return (
+    <section aria-label="Trace 关联" className="observation-canonical__relations">
+      <header><span><Link2 aria-hidden="true" size={14} />对象与 Trace 关联</span></header>
+      {bindings.length ? (
+        <dl aria-label="Trace 对象绑定">
+          {bindings.map(([key, value]) => (
+            <div key={key}><dt>{traceBindingLabel(key)}</dt><dd><code>{value}</code></dd></div>
+          ))}
+        </dl>
+      ) : null}
+      {links.length ? (
+        <ul aria-label="关联 Trace">
+          {links.map((link, index) => (
+            <li key={`${link.relation}:${link.traceId}:${index}`}>
+              <span>{traceRelationLabel(link.relation)}</span>
+              <a href={`#/observability?traceId=${encodeURIComponent(link.traceId)}`}>{link.traceId}</a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {sessionId ? (
+        <nav aria-label="Trace 返回入口">
+          <a href={`#/agent?session=${encodeURIComponent(sessionId)}`}>返回原 Session</a>
+          {turnId ? <a href={`#/context-debug?sessionId=${encodeURIComponent(sessionId)}&turnId=${encodeURIComponent(turnId)}`}>检查原 Turn 上下文</a> : null}
+        </nav>
+      ) : null}
+    </section>
+  );
+}
+
+function traceBindingLabel(key: string): string {
+  return ({
+    sessionId: 'Session', turnId: 'Turn', roomId: 'Room', runId: 'Run',
+    sourceLoopId: 'Source loop', workItemId: 'WorkItem', caseId: 'Case',
+  } as Record<string, string>)[key] ?? key;
+}
+
+function traceRelationLabel(relation: 'parent' | 'retry' | 'related'): string {
+  return ({ parent: '父 Trace', retry: '重试自', related: '关联' })[relation];
+}
+
+function TraceEvalPanel({ detail }: { detail: ObservabilityTraceGetV1 }) {
+  const trace = detail.trace;
+  const evals = useObservationEvals(trace.traceId);
+  const evidenceEval = useObservationEvidenceEval();
+  const activeTraceId = useRef(trace.traceId);
+  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<Set<string>>(() => new Set());
+  const [additionalEvidenceIds, setAdditionalEvidenceIds] = useState('');
+  const [datasetId, setDatasetId] = useState(() => `manual:${trace.traceId}`);
+  const [labelRevision, setLabelRevision] = useState('manual:1');
+  const [lastRun, setLastRun] = useState<EvalRunV1 | null>(null);
+  const [submissionTraceId, setSubmissionTraceId] = useState('');
+  activeTraceId.current = trace.traceId;
+  const evidence = uniqueTraceEvidence(trace.evidence);
+  const canRun = trace.status === 'completed'
+    && !detail.truncated
+    && Boolean(datasetId.trim())
+    && Boolean(labelRevision.trim())
+    && !evidenceEval.isPending;
+
+  useEffect(() => {
+    evidenceEval.reset();
+    setSelectedEvidenceIds(new Set());
+    setAdditionalEvidenceIds('');
+    setDatasetId(`manual:${trace.traceId}`);
+    setLabelRevision('manual:1');
+    setLastRun(null);
+    setSubmissionTraceId('');
+  }, [trace.traceId]);
+
+  async function submitHumanEvidence(): Promise<void> {
+    const submittedTraceId = trace.traceId;
+    setSubmissionTraceId(submittedTraceId);
+    const body: ObservabilityEvidenceEvalRequestV1 = {
+      schemaVersion: 'rag-ime.observability-evidence-eval-request.v1',
+      traceId: submittedTraceId,
+      requiredEvidenceIds: [
+        ...new Set([
+          ...selectedEvidenceIds,
+          ...parseAdditionalEvidenceIds(additionalEvidenceIds),
+        ]),
+      ],
+      datasetId: datasetId.trim(),
+      labelRevision: labelRevision.trim(),
+      truthKind: 'human',
+    };
+    try {
+      const result = await evidenceEval.mutateAsync(body);
+      if (activeTraceId.current !== submittedTraceId) return;
+      setLastRun(result);
+      if (activeTraceId.current === submittedTraceId) await evals.refetch();
+    } catch {
+      // Keep the current trace and Eval list visible when the run fails.
+    }
+  }
+
+  function toggleEvidence(evidenceId: string): void {
+    setSelectedEvidenceIds((current) => {
+      const next = new Set(current);
+      if (next.has(evidenceId)) next.delete(evidenceId);
+      else next.add(evidenceId);
+      return next;
+    });
+  }
+
+  return (
+    <section aria-label="Trace Eval" className="observation-eval">
+      <header className="observation-eval__heading">
+        <span><ShieldCheck aria-hidden="true" size={14} />Trace Eval</span>
+        <small>只显示已真实记录的评估结果</small>
+      </header>
+      {evals.error ? (
+        <InlineNotice title="Eval 记录暂时不可用" tone="warning">
+          当前 Trace 仍然保留；稍后可以重新读取 Eval。
+        </InlineNotice>
+      ) : null}
+      {evals.isPending ? <div className="observation-eval__loading" role="status">正在读取 Eval 记录…</div> : null}
+      {evals.data?.truncated ? (
+        <InlineNotice title={`当前显示最近 ${evals.data.items.length} / 共 ${evals.data.total} 条 Eval`} tone="warning">
+          Eval 列表已截断；这里不把当前窗口当作完整评估历史。
+        </InlineNotice>
+      ) : null}
+      {!evals.isPending && !evals.error ? <EvalSummaryList items={evals.data?.items ?? []} /> : null}
+      <Disclosure
+        className="observation-eval__disclosure"
+        summary={<><FileCheck2 aria-hidden="true" size={14} />人工 evidence-set 标注</>}
+      >
+        <div className="observation-eval__form">
+          <p className="observation-eval__hint">
+            勾选正确结果本应依赖的证据。跨检索阶段重复出现的 evidenceId 已合并；默认不会自动勾选。
+          </p>
+          <div className="observation-eval__fields">
+            <label>
+              <span>datasetId</span>
+              <input
+                aria-label="datasetId"
+                onChange={(event) => setDatasetId(event.target.value)}
+                value={datasetId}
+              />
+            </label>
+            <label>
+              <span>labelRevision</span>
+              <input
+                aria-label="labelRevision"
+                onChange={(event) => setLabelRevision(event.target.value)}
+                value={labelRevision}
+              />
+            </label>
+          </div>
+          <fieldset className="observation-eval__evidence">
+            <legend>Required evidence · {selectedEvidenceIds.size} 已选</legend>
+            {evidence.length ? evidence.map((item) => (
+              <label className="observation-eval__evidence-row" key={item.evidenceId}>
+                <input
+                  checked={selectedEvidenceIds.has(item.evidenceId)}
+                  onChange={() => toggleEvidence(item.evidenceId)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>{item.evidenceId}</strong>
+                  <small>{item.sourceRef} · {item.stages.join(' / ')}</small>
+                </span>
+              </label>
+            )) : <p className="observation-eval__empty">这次 Trace 没有可标注的 evidenceId。</p>}
+          </fieldset>
+          <label className="observation-eval__missing-evidence">
+            <span>Trace 未产出、但正确结果仍应包含的 evidenceId</span>
+            <textarea
+              aria-label="额外 required evidenceId"
+              onChange={(event) => setAdditionalEvidenceIds(event.target.value)}
+              placeholder="每行一个 evidenceId；用于记录漏检并计算 false negative"
+              rows={3}
+              value={additionalEvidenceIds}
+            />
+          </label>
+          {detail.truncated || trace.status !== 'completed' ? (
+            <InlineNotice title="当前 Trace 不能运行人工 Eval" tone="warning">
+              {detail.truncated ? 'Trace 仍是截断窗口，需等完整 Trace 后再标注。' : 'Trace 尚未完成，完成后才能运行。'}
+            </InlineNotice>
+          ) : null}
+          <div className="observation-eval__actions">
+            <span>提交 authority：<strong>human</strong></span>
+            <Button
+              disabled={!canRun}
+              leadingIcon={<ShieldCheck size={15} />}
+              loading={evidenceEval.isPending}
+              onClick={() => void submitHumanEvidence()}
+              size="small"
+            >
+              运行人工 Eval
+            </Button>
+          </div>
+          {evidenceEval.error && submissionTraceId === trace.traceId ? (
+            <InlineNotice title="人工 Eval 未完成" tone="danger">
+              当前 Trace 和 Eval 记录保持不变，请检查输入后重试。
+            </InlineNotice>
+          ) : null}
+          {lastRun?.traceIds.includes(trace.traceId) ? <EvalRunReceipt run={lastRun} /> : null}
+        </div>
+      </Disclosure>
+    </section>
+  );
+}
+
+function EvalSummaryList({ items }: { items: ObservabilityEvalListV1['items'] }) {
+  if (!items.length) {
+    return <p className="observation-eval__empty">这次 Trace 还没有 Eval 记录。</p>;
+  }
+  return (
+    <ul aria-label="Trace Eval 记录" className="observation-eval__list">
+      {items.map((item) => (
+        <li key={item.evalRunId}>
+          <div className="observation-eval__run-head">
+            <strong>{evalModeLabel(item.mode)}</strong>
+            <StatusBadge label={evalStatusLabel(item.status)} tone={evalStatusTone(item.status)} />
+          </div>
+          <div className="observation-eval__run-meta">
+            {item.suiteBinding ? <span>Suite：{item.suiteBinding.suiteId} · {item.suiteBinding.suiteRevision}</span> : null}
+            <span>指标 authority：{metricAuthorityLabel(item.metricAuthority)}</span>
+            <span>真值：{truthStatusLabel(item.truthStatus)}</span>
+            <span>评估者：{item.evaluatorDisplayName}</span>
+            <span>{item.datasetId} · {item.labelRevision}</span>
+          </div>
+          {Object.keys(item.metrics).length ? (
+            <dl className="observation-eval__metrics">
+              {Object.entries(item.metrics).map(([key, value]) => (
+                <div key={key}><dt>{key}</dt><dd>{formatScore(value)}</dd></div>
+              ))}
+            </dl>
+          ) : <small className="observation-eval__no-metrics">暂无指标</small>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function EvalRunReceipt({ run }: { run: EvalRunV1 }) {
+  return (
+    <div className="observation-eval__receipt" role="status">
+      <strong>人工 Eval 已提交</strong>
+      <span>{run.evalRunId} · {evalStatusLabel(run.status)}</span>
+      <small>真值 authority：{metricAuthorityLabel(run.metricAuthority)} · truthKind：{run.truth.status}</small>
+    </div>
+  );
+}
+
+type UniqueTraceEvidence = TraceEvidence & { stages: string[] };
+
+function uniqueTraceEvidence(items: TraceEvidence[]): UniqueTraceEvidence[] {
+  const byId = new Map<string, UniqueTraceEvidence>();
+  for (const item of items) {
+    const existing = byId.get(item.evidenceId);
+    if (existing) {
+      if (!existing.stages.includes(item.evidenceStage)) existing.stages.push(item.evidenceStage);
+      continue;
+    }
+    byId.set(item.evidenceId, { ...item, stages: [item.evidenceStage] });
+  }
+  return [...byId.values()];
+}
+
+function parseAdditionalEvidenceIds(value: string): string[] {
+  return [...new Set(
+    value
+      .split(/[\n,]/u)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )];
+}
+
+function evalModeLabel(mode: ObservabilityEvalListV1['items'][number]['mode']): string {
+  return mode === 'ground_truth' ? 'Ground truth · 人工/冻结真值' : 'AI Judge · 模型估计';
+}
+
+function metricAuthorityLabel(authority: ObservabilityEvalListV1['items'][number]['metricAuthority']): string {
+  return authority === 'ground_truth' ? 'ground_truth 真值' : 'ai_judge_estimate AI 估计';
+}
+
+function truthStatusLabel(status: ObservabilityEvalListV1['items'][number]['truthStatus']): string {
+  return ({ none: '未绑定', human: '人工', frozen: '冻结' })[status];
+}
+
+function evalStatusLabel(status: ObservabilityEvalListV1['items'][number]['status']): string {
+  return ({ queued: '排队', running: '运行中', completed: '已完成', failed: '失败' })[status];
+}
+
+function evalStatusTone(status: ObservabilityEvalListV1['items'][number]['status']): 'success' | 'danger' | 'info' | 'neutral' {
+  if (status === 'completed') return 'success';
+  if (status === 'failed') return 'danger';
+  if (status === 'running') return 'info';
+  return 'neutral';
+}
+
+type CanonicalTrace = ObservabilityTraceGetV1['trace'];
+type TraceSpan = CanonicalTrace['spans'][number];
+type TraceEvidence = CanonicalTrace['evidence'][number];
+
+function spanDurationLabel(span: TraceSpan): string {
+  if (span.durationMs !== null) return formatDuration(span.durationMs);
+  return span.recorded ? '未提供' : '未记录';
+}
+
+function rankChangeLabel(evidence: TraceEvidence): string {
+  return `${evidence.rankBefore ?? '—'} → ${evidence.rankAfter ?? '—'}`;
+}
+
+function scoreLabel(scores: TraceEvidence['scores']): string {
+  const entries = Object.entries(scores);
+  return entries.length
+    ? entries.map(([key, value]) => `${key} ${formatScore(value)}`).join(' · ')
+    : '未记录';
+}
+
+function formatScore(value: number): string {
+  if (!Number.isFinite(value)) return '未记录';
+  return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatBytes(value: number): string {
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KB`;
+  return `${(value / 1_048_576).toFixed(1)} MB`;
 }
 
 function ObservationFactList({ facts, nested = false }: { facts: [string, string][]; nested?: boolean }) {
@@ -510,6 +1338,7 @@ function scopeLabel(filters: ObservationFilters): string {
   if (filters.sessionId) return '只看这段对话';
   if (filters.roomId) return '只看这个协作空间';
   if (filters.traceId) return '只看这次流程';
+  if (filters.runId) return `只看子 Agent 运行 · ${filters.runId}`;
   return '限定范围';
 }
 

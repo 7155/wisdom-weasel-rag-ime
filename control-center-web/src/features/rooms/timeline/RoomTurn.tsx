@@ -37,6 +37,7 @@ import {
   type RoomTurnProjection,
 } from '@/contracts/room-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import { roomParticipantPlanetName } from '../room-participant-identity';
 import { publicAgentErrorText } from '@/features/agent/public-error';
 import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
 import {
@@ -60,7 +61,6 @@ import {
 import { useRoomUpdateClock } from '../runtime/use-room-update-clock';
 import type { PendingRoomQuestion } from '../room-question';
 import { RoomQuestionDialog } from '../RoomQuestionDialog';
-import { roomPlanetName } from '../room-copy';
 import { roomProjection, useRoomLiveStore } from '../state/live-store';
 import {
   roomPublicActivityText,
@@ -82,10 +82,8 @@ interface TimelineRoom {
 
 function timelineParticipantName(
   participant: TimelineParticipant,
-  participants: readonly TimelineParticipant[],
 ): string {
-  const position = participants.findIndex((item) => item.id === participant.id);
-  return roomPlanetName(participant.ordinal ?? Math.max(0, position));
+  return roomParticipantPlanetName(participant);
 }
 
 interface RoomTurnProps {
@@ -372,7 +370,7 @@ export function RoomTurn({
   ));
   const projection = providedProjection ?? roomProjection(roomId);
   const participantNames = Object.fromEntries((room?.participants ?? []).map((participant) => (
-    [participant.id, timelineParticipantName(participant, room?.participants ?? [])]
+    [participant.id, timelineParticipantName(participant)]
   )));
   const laneDisclosureScope = `${projection.roomId}\u001f${turnId}`;
   const [laneDisclosure, setLaneDisclosure] = useState<{
@@ -581,9 +579,6 @@ export function RoomTurn({
       }
       const { includeDetails, lane } = entry;
       const participant = room?.participants.find((item) => item.id === lane.participantId);
-      const participantPlanetName = participant
-        ? timelineParticipantName(participant, room?.participants ?? [])
-        : undefined;
       const messages = lane.messageIds
         .map((id) => projection.messagesById[id])
         .filter((message): message is RoomMessageProjection => Boolean(message));
@@ -670,7 +665,7 @@ export function RoomTurn({
                     : 'waiting';
       const laneWork = roomLaneWorkSummary(
         lane.activities,
-        participantPlanetName,
+        participant ? roomParticipantPlanetName(participant) : undefined,
         laneState,
         participantNames,
       );
@@ -719,7 +714,7 @@ export function RoomTurn({
             : <span className="room-agent-lane__route"><Route size={15} /></span>}
           <span className="room-agent-lane__work">
             <span className="room-agent-lane__identity">
-              <strong>{participantPlanetName ?? '正在选择伙伴'}</strong>
+              <strong>{participant ? roomParticipantPlanetName(participant) : '正在选择伙伴'}</strong>
               <small>{statusLabel}</small>
             </span>
             <strong className="room-agent-lane__task">{laneHeadline}</strong>
@@ -748,8 +743,7 @@ export function RoomTurn({
           activities={lane.activities}
           active={laneStillActive && !laneAction}
           motionActive={laneMotionActive}
-          participantName={participantPlanetName}
-          participantNames={participantNames}
+          participantName={participant ? roomParticipantPlanetName(participant) : undefined}
           attention={laneState === 'failed'}
           onApprovalDecision={onApprovalDecision}
         /> : null}
@@ -777,7 +771,7 @@ export function RoomTurn({
           {laneMotionActive ? <LoaderCircle size={14} /> : <Clock3 size={14} />}
           <span>{laneMotionActive
             ? participant
-              ? `${participantPlanetName} 已接手，正在准备`
+              ? `${roomParticipantPlanetName(participant)} 已接手，正在准备`
               : '消息已经送达，正在请合适的伙伴回应'
             : laneFreshness.detail}
           </span>
@@ -846,7 +840,7 @@ function RoomUserPost({
         blocks={visibleBlocks}
         sessionId={message.message?.sessionId || message.sourceSessionId || `room:${roomId}`}
       />
-    ) : <MarkdownBody text={message.text} />}
+    ) : <MarkdownBody sessionId={message.message?.sessionId ?? message.sourceSessionId} text={message.text} />}
     {message.status === 'queued' ? <small>正在发送</small> : null}
   </div>;
 }
@@ -1300,7 +1294,7 @@ function RoomLanePost({
   const content = message.question
     ? <div className="room-question-post">
         {message.text.trim() && message.text.trim() !== message.question.prompt.trim()
-          ? <MarkdownBody text={message.text} />
+          ? <MarkdownBody sessionId={message.message?.sessionId ?? message.sourceSessionId} text={message.text} />
           : null}
         <RoomQuestionDialog
           active={questionIsAuthoritative}
@@ -1313,7 +1307,7 @@ function RoomLanePost({
     : visibleBlocks.length
       ? <AgentBlocks blocks={visibleBlocks} sessionId={message.message?.sessionId ?? message.sourceSessionId} />
       : message.text
-        ? <MarkdownBody text={message.text} />
+        ? <MarkdownBody sessionId={message.message?.sessionId ?? message.sourceSessionId} text={message.text} />
         : null;
   return <div
     className="room-agent-lane__post"
@@ -1382,11 +1376,9 @@ function RoomPostLifecycle({
   }, [activeWait]);
   if (!['handoff', 'wait', 'blocked'].includes(message.postKind ?? '')) return null;
   const targetNames = (message.mentionedParticipantIds ?? [])
-    .map((participantId) => (
-      participants.find((participant) => participant.id === participantId)
-    ))
-    .filter((value): value is TimelineParticipant => Boolean(value))
-    .map((participant) => timelineParticipantName(participant, participants));
+    .map((participantId) => participants.find((participant) => participant.id === participantId))
+    .map(roomParticipantPlanetName)
+    .filter((value): value is string => Boolean(value));
   const target = targetNames.join('、');
   const title = message.postKind === 'handoff'
     ? target
@@ -2265,9 +2257,9 @@ function describeRoomActivity(
     };
   }
   if (activity.kind === 'route_decision') {
-    const targetParticipantId = textValue(payload.targetParticipantId);
-    const target = participantNames[targetParticipantId]
-      || (targetParticipantId ? '另一位行星伙伴' : participantName);
+    // Route receipts may retain a historical persona display name. The public
+    // Room timeline always uses the lane's stable planet identity instead.
+    const target = participantName;
     // Older Room events used explicit_invite for Tool-delegated children.
     // Prefer the authoritative child marker so retained timelines also render
     // the real owner of the dispatch after this projection fix ships.

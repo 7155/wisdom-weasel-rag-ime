@@ -13,7 +13,7 @@ describe('roomPublicToolResultView', () => {
         { id: 'status', label: '状态', value: '已完成' },
         { id: 'receiptId', label: '回执', value: 'receipt-room-82' },
         { id: 'contentHash', label: '哈希', value: `sha256:${'a'.repeat(64)}` },
-        { id: 'file', label: '文件', value: '/Volumes/undo 4t/team/control-center-web/src/Report.tsx' },
+        { id: 'file', label: '文件', value: '/Volumes/example/team/control-center-web/src/Report.tsx' },
       ],
       request: [
         { id: 'path', label: '目标', value: '/Users/alice/project/src/Report.tsx', code: true },
@@ -22,7 +22,7 @@ describe('roomPublicToolResultView', () => {
       ],
       output: {
         text: [
-          '已更新 /Volumes/undo 4t/team/control-center-web/src/Report.tsx',
+          '已更新 /Volumes/example/team/control-center-web/src/Report.tsx',
           'dispatchId: dispatch-room-report-7',
           '任务 dispatch-room-report-7 已完成',
         ].join('\n'),
@@ -40,7 +40,7 @@ describe('roomPublicToolResultView', () => {
     ]);
     expect(view.output?.text).toBe('已更新 …/Report.tsx\n任务协作记录已完成');
     expect(JSON.stringify(view)).not.toContain('receipt-room-82');
-    expect(JSON.stringify(view)).not.toContain('/Volumes/undo 4t');
+    expect(JSON.stringify(view)).not.toContain('/Volumes/example');
     expect(JSON.stringify(view)).not.toContain('/Users/alice');
   });
 

@@ -13,6 +13,7 @@ import {
   inputModeChanges,
   modeFactChips,
   modeSettingLabel,
+  predictionLiveTraceSummaries,
   presetInputModes,
   recallLaneFacts,
   secondsLabel,
@@ -95,6 +96,44 @@ const review = {
 afterEach(cleanup);
 
 describe('InputMethodFeature', () => {
+  it('shows only safe input trace facts and links the latest stable request', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true },
+        'overview.get': { ok: true, profile: '调试模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.prediction.liveTrace': {
+          schemaVersion: 'rag-ime.prediction-live-trace.v1',
+          ok: true,
+          rawTextVisible: true,
+          frames: [
+            {
+              sessionId: 'input-session',
+              requestSeq: 7,
+              recordedAtMs: 123,
+              input: { text: '绝不显示' },
+              traceEvents: [{ reason: '绝不显示' }],
+              ragLane: { called: true, predictionCount: 2, elapsedMs: 12 },
+              modelLane: { called: true, suggestionCount: 1, elapsedMs: 28 },
+            },
+          ],
+        },
+        'input.lexicon.review': emptyReview,
+      },
+    }));
+
+    expect(await screen.findByText('最近请求')).toBeInTheDocument();
+    expect(screen.getByText('会话 input-session · 请求 #7')).toBeInTheDocument();
+    expect(screen.getByText('查看标准 Trace')).toHaveAttribute(
+      'href',
+      '#/observability?traceId=trace%3Aprediction%3Ainput-session%3Arequest-7',
+    );
+    expect(screen.getByText('知识召回')).toBeInTheDocument();
+    expect(screen.getByText('2 条 · 12 ms')).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('绝不显示');
+  });
+
   it('updates the read-only current mode when the live overview arrives asynchronously', async () => {
     let resolveOverview!: (value: unknown) => void;
     const overview = new Promise<unknown>((resolve) => { resolveOverview = resolve; });
@@ -1792,6 +1831,31 @@ describe('modeFactChips', () => {
 });
 
 describe('generation stage presentation', () => {
+  it('drops frames without adapter-compatible identity and never projects private fields', () => {
+    expect(predictionLiveTraceSummaries({
+      frames: [
+        { sessionId: '', requestSeq: 2, recordedAtMs: 1 },
+        { sessionId: 's', requestSeq: 0, recordedAtMs: 1 },
+        {
+          sessionId: 's',
+          requestSeq: 2,
+          recordedAtMs: 3,
+          input: { text: 'private' },
+          preedit: { text: 'private' },
+          modelLane: { called: true, suggestionCount: 0, elapsedMs: 0 },
+        },
+      ],
+    })).toEqual([{
+      sessionId: 's',
+      requestSeq: 2,
+      recordedAtMs: 3,
+      traceId: 'trace:prediction:s:request-2',
+      ragLane: { status: 'not_reported', count: null, elapsedMs: null },
+      modelLane: { status: 'completed', count: 0, elapsedMs: 0 },
+    }]);
+    expect(JSON.stringify(predictionLiveTraceSummaries({ frames: [] }))).not.toContain('private');
+  });
+
   it('derives the suggestion panel schematic only from real settings', () => {
     // 没有配置时不假装知道数量或采纳方式；开关默认沿用产品默认（开启）。
     expect(suggestionPanel({})).toEqual({ enabled: true, candidateCount: 0, expanded: false, hints: [] });

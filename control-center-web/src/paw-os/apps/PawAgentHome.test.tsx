@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -7,7 +7,7 @@ import { TooltipProvider } from '@/components/primitives';
 import type { SessionSummary } from '@/features/agent/types';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { PiModelOption } from '@/features/agent/model-catalog-options';
-import type { ControlRequest } from '@/platform/transport';
+import type { AgentImagePasteOptions, ControlRequest, PickedFile } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { MockControlTransport } from '@/test/mock-transport';
 import agentNextCss from '../styles/paw-os-agent-next.css?raw';
@@ -86,6 +86,46 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(thinkingTrigger).toHaveFocus();
   });
 
+  it('keeps a pasted image visible, removable, and sends its managed receipt with a new Session', async () => {
+    const user = userEvent.setup();
+    const file = new File(['preview'], 'screen.png', { type: 'image/png' });
+    const { transport } = renderHome({
+      imagePaste: (input) => [{
+        id: 'media-screen',
+        name: 'screen.png',
+        mimeType: 'image/png',
+        byteSize: file.size,
+        sha256: 'sha-screen',
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      }],
+    });
+    const composer = screen.getByRole('textbox', { name: '描述你想完成的工作' });
+
+    fireEvent.paste(composer, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    });
+    expect(screen.getByRole('list', { name: '待发送附件' })).toHaveTextContent('screen.png');
+    await user.click(screen.getByRole('button', { name: '移除 screen.png' }));
+    expect(screen.queryByRole('list', { name: '待发送附件' })).not.toBeInTheDocument();
+
+    fireEvent.paste(composer, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    });
+    await user.type(composer, '请检查这张截图');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    await waitFor(() => expect(transport.imagePasteCalls).toHaveLength(1));
+    expect(transport.imagePasteCalls[0]).toMatchObject({
+      sessionId: 'session-created',
+      maxFiles: 1,
+      files: [file],
+    });
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.prompt')).toBe(true));
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.model.select')).toBe(false);
+    const prompt = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
+    expect(prompt?.body).toMatchObject({ message: '请检查这张截图', attachments: ['media-screen'] });
+  });
+
   it('recomputes the visible Room team from a task suggestion and sends the adjusted participants', async () => {
     const user = userEvent.setup();
     const { transport } = renderHome({
@@ -134,10 +174,12 @@ function renderHome({
   modelReference = 'inherit',
   models = [],
   personas = [],
+  imagePaste,
 }: {
   modelReference?: string;
   models?: PiModelOption[];
   personas?: AgentPersonaV1[];
+  imagePaste?: (input: AgentImagePasteOptions) => PickedFile[];
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const transport = new MockControlTransport({
@@ -156,7 +198,19 @@ function renderHome({
         },
       }),
       'agent.room.message': { ok: true },
+      'agent.sessions.create': {
+        ok: true,
+        session: {
+          id: 'session-created',
+          title: '新工作',
+          mode: 'assistant',
+          status: 'running',
+          workspaceRoots: [],
+        },
+      },
+      'agent.session.prompt': { ok: true },
     },
+    ...(imagePaste ? { imagePaste } : {}),
   });
   const rendered = render(
     <QueryClientProvider client={client}>

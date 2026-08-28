@@ -1,16 +1,22 @@
-# Cloud model start here
+# Cloud Model 起点（本地归档合并后的只读入口）
 
 You only have this GitHub repository. That is enough. Do **not** clone, fetch,
 or request Tutti, CodingTo, local Downloads HTML, or ignored `/docs/` paths.
 
-**Status of the product work:** partial reconstruction on `main`. Continue it.
-Do not restart from a blank UI. Do not treat this file as install/foreground proof.
+**交接状态：** 本地 Session 会在整理相关文件、跑新鲜检查、创建提交并把最终
+结果合并到 `main` 后，把这一版作为外部前端模型的只读起点。此文件本身不是
+安装、Runtime 或前台验收收据；外部模型必须以实际合并提交、检查输出和状态账本
+为准。不要因为旧 handoff、截图、diff 或本文件中的摘要把未验证范围当成完成。
+在合并收据出现前，`main` 基线仍是待确认的本地交付边界。
+
+合并收据至少要记录最终提交、`main` 合并结果、实际检查输出和仍未验证的 E1–E6
+边界。没有对应 Git/Runtime/安装/前台收据的状态，继续标为 pending 或 unverified。
 
 ## Read in this order (all in-repo)
 
 1. This file.
-2. [docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md) — current product entry, 11-App dispatch, leaf render owners, native build-selected surfaces, and explicit exclusions. Its [JSON manifest](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json) is machine-checked; use it before any filename or web search.
-3. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete, append-only user ledger. Do not trust a hard-coded terminal `UR-*` count in an older handoff; read the current file, and let the newest explicit user correction win.
+2. [docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md) — current product-entry, 11-App dispatch, leaf render owners, native build-selected surfaces, and explicit exclusions. Its [JSON manifest](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json) is machine-checked by the tracked `scripts/check_pawos_frontend_source_map.py`; use the manifest before any filename or web search.
+3. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete, append-only user ledger (`UR-001`–`UR-195` in thirteen volumes). Do not trust a hard-coded terminal `UR-*` count in an older handoff; read the current file, and let the newest explicit user correction win.
 4. [PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — `PF-CM-*`, eleven-App design, completion gate, receipt template. Reconcile it with the newer requirement ledger rather than treating its snapshot counts as current.
 5. [PAWOS_FRONTEND_CONTINUATION_HANDOFF.md](PAWOS_FRONTEND_CONTINUATION_HANDOFF.md) — what already landed on `main` and what is unfinished.
 6. [docs/references/pawos-conversation-baseline.html](docs/references/pawos-conversation-baseline.html) — Agent conversation craft baseline. Reference only; do not replace the App with this static page.
@@ -21,14 +27,22 @@ Before naming any file as the frontend for a feature, return its exact
 `selectionChain`, `renderOwners`, and proof level from the source map. A file
 that merely looks relevant is not an owner.
 
+## 外部模型接手边界
+
+接手顺序是：先确认本地最终提交已经合并到 `main`，再从本文件进入需求总索引、
+分卷、逐字证据、实施状态和 handoff。先按 `UR-192`–`UR-195` 检查插件市场、
+整理归档和交接入口，再对照其余最近需求做前端复核与优化。外部模型不得回到
+旧版前端或 ignored 的本机 `/docs/` 猜测当前状态，也不得把源代码/测试/构建
+证明升级成安装、Runtime 或前台证明。
+
 Repo-root `PROJECT.md`, `OUTCOMES.md`, `CONTEXT.md`, `DECISIONS.md`, `ARCHITECTURE.md` are already on GitHub. Load them only when the change crosses product vision or owners.
 
 ## Do not use
 
 - Tutti, CodingTo, or any other local frontend repo. They are **not** in this repository and must not be downloaded.
-- `file:///Volumes/.../pawos-conversation-baseline.html` — the tracked copy is `docs/references/pawos-conversation-baseline.html`.
+- Any machine-local `file://` copy of `pawos-conversation-baseline.html` — the tracked copy is `docs/references/pawos-conversation-baseline.html`.
 - Repo-root `/docs/` — gitignored; not on GitHub.
-- `integrations/ego-browser/` if present untracked — do not commit it.
+- `integrations/ego-browser/` and Browser-owned surfaces — they are outside this handoff; do not edit them unless the user explicitly opens that scope.
 - `rag_ime/`, migrations, Pi Runtime, backend contracts — another owner.
 
 Historical user quotes that mention Tutti remain in the ledger as **intent** (mature disclosure, density, motion). For this GitHub-only Session, implement that intent from the brief's interaction contracts plus the in-repo baseline HTML.
@@ -45,7 +59,7 @@ vertical slice is clear.
 Suggested order (parallel only with hard file ownership):
 
 1. Finish / deepen **Agent App** (conversation, composer, trace, rich results) and
-   **Room satellites** (compact projection, cross-window flow, focus). Keep the
+   **Room planet windows** (compact projection, cross-window flow, focus). Keep the
    code-surface colour pair and its regression test.
 2. **OS shell** — windows, Dock, Wayfinder, chrome uniqueness, drag/resize,
    motion/flicker, one visual language. Redesign freely when the current shell
@@ -58,7 +72,8 @@ Suggested order (parallel only with hard file ownership):
    `control-center-web/`. Do not claim install/foreground completion unless the
    user asks to install.
 
-Work on `main`. Path-qualified frontend commits. Preserve unrelated dirty work.
+After the local merge receipt is confirmed, work on that `main` baseline. Use
+path-qualified frontend commits and preserve unrelated dirty work.
 Ignore CI billing failures when merging unless the user asks otherwise.
 
 ## Reusable conversation disclosure (Agent lane → Room lane)

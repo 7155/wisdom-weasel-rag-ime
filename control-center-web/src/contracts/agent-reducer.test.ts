@@ -261,6 +261,30 @@ describe('AgentEventReducer', () => {
     });
   });
 
+  it('keeps durable transcript order when snapshot clocks drift', () => {
+    const state = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        { ...serverMessage('history-user', 'user', 'turn-1', '先问'), timelineSequence: 1 },
+        { ...serverMessage('history-answer', 'assistant', 'turn-1', '后答'), timelineSequence: 4 },
+      ],
+      liveEvents: [{
+        ...agentEvent(7, 'tool_finished', {
+          toolCallId: 'tool-durable',
+          toolName: 'workspace_read',
+          result: { details: { summary: '读取完成' } },
+        }),
+        timelineSequence: 3.8,
+      }],
+      lastSequence: 20,
+      resumeToken: 'session-1:20',
+      status: 'idle',
+    });
+
+    expect(state.messagesById['history-user']?.timelineSequence).toBe(1);
+    expect(state.activitiesById['tool-durable']?.timelineSequence).toBe(3.8);
+    expect(state.messagesById['history-answer']?.timelineSequence).toBe(4);
+  });
+
   it('stops projection on a sequence gap until a snapshot is applied', () => {
     const first = reduceAgentEvent(
       createAgentProjection('session-1'),

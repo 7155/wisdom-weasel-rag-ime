@@ -134,12 +134,14 @@ class AgentBlockStoreTest(unittest.TestCase):
             },
             *live["blocks"],
         ]
-        live["createdAtMs"] = 105
+        # Event-envelope and Pi transcript clocks can arrive in the opposite
+        # order. Projection identity, not timestamp direction, owns the alias.
+        live["createdAtMs"] = 95
         self.store.persist_message(
             live,
             root_id="root:1",
             generation=2,
-            created_at_ms=105,
+            created_at_ms=95,
         )
         durable = {
             **live,

@@ -10,6 +10,74 @@ export type StatusTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 export type DraftValue = string | number | boolean;
 export type InputMode = '安全模式' | '标准模式' | '记忆增强' | '调试模式';
 
+export type PredictionTraceLaneSummary = {
+  status: 'completed' | 'timed_out' | 'dropped' | 'waiting' | 'skipped' | 'not_reported';
+  count: number | null;
+  elapsedMs: number | null;
+};
+
+export type PredictionTraceFrameSummary = {
+  sessionId: string;
+  requestSeq: number;
+  recordedAtMs: number;
+  traceId: string;
+  ragLane: PredictionTraceLaneSummary;
+  modelLane: PredictionTraceLaneSummary;
+};
+
+/**
+ * Project the bounded local debug feed into the handful of facts the input
+ * page can safely disclose.  The source response is deliberately not returned
+ * (or rendered): it may contain owner-local text when debug visibility is on.
+ * The trace id mirrors envelope_from_prediction_frame's stable identity rule.
+ */
+export function predictionLiveTraceSummaries(value: unknown): readonly PredictionTraceFrameSummary[] {
+  const payload = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const frames = Array.isArray(payload.frames) ? payload.frames : [];
+  return frames
+    .map((frame): PredictionTraceFrameSummary | null => {
+      if (!frame || typeof frame !== 'object') return null;
+      const item = frame as Record<string, unknown>;
+      const sessionId = typeof item.sessionId === 'string' ? item.sessionId.trim() : '';
+      const requestSeq = item.requestSeq;
+      const recordedAtMs = item.recordedAtMs;
+      if (!sessionId || !Number.isSafeInteger(requestSeq) || (requestSeq as number) < 1) return null;
+      if (!Number.isSafeInteger(recordedAtMs) || (recordedAtMs as number) < 0) return null;
+      return {
+        sessionId,
+        requestSeq: requestSeq as number,
+        recordedAtMs: recordedAtMs as number,
+        traceId: `trace:prediction:${sessionId}:request-${requestSeq}`,
+        ragLane: predictionLiveTraceLane(item.ragLane),
+        modelLane: predictionLiveTraceLane(item.modelLane),
+      };
+    })
+    .filter((frame): frame is PredictionTraceFrameSummary => frame !== null);
+}
+
+function predictionLiveTraceLane(value: unknown): PredictionTraceLaneSummary {
+  const lane = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const countValue = lane.predictionCount ?? lane.suggestionCount;
+  const count = typeof countValue === 'number' && Number.isSafeInteger(countValue) && countValue >= 0
+    ? countValue
+    : null;
+  const elapsedMs = typeof lane.elapsedMs === 'number' && Number.isFinite(lane.elapsedMs) && lane.elapsedMs >= 0
+    ? lane.elapsedMs
+    : null;
+  const status = lane.timedOut === true
+    ? 'timed_out'
+    : lane.staleDropped === true
+      ? 'dropped'
+      : lane.waitingForLatest === true
+        ? 'waiting'
+        : lane.called === true
+          ? 'completed'
+          : Object.hasOwn(lane, 'skippedReason')
+            ? 'skipped'
+            : 'not_reported';
+  return { status, count, elapsedMs };
+}
+
 export const presetInputModes: readonly InputMode[] = ['安全模式', '标准模式', '记忆增强', '调试模式'];
 
 /* 每种使用方式只等于它真实写入的键值。卡片事实、差异列表和保存请求都

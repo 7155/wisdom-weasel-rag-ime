@@ -202,6 +202,7 @@ class OwnerMemoryCurator:
         include_agent_dialogue: bool = True,
         embedding_provider: EmbeddingProvider | None = None,
         personal_window_ms: int = MAX_PERSONAL_V2_WINDOW_MS,
+        observations: object | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.organizer = organizer
@@ -217,6 +218,10 @@ class OwnerMemoryCurator:
             60_000,
             min(24 * 60 * 60 * 1_000, int(personal_window_ms)),
         )
+        # Optional to keep the curator usable in isolated/library tests.  The
+        # Gateway supplies ObservationHub so a real maintenance run can keep
+        # one durable run id across started, review, apply, and failure phases.
+        self.observations = observations
         self.curation_protocol_version = compact_whitespace(
             str(getattr(organizer, "curation_protocol_version", ""))
         )
@@ -355,8 +360,9 @@ class OwnerMemoryCurator:
                 "reason": claim["reason"],
             }
 
-        run_id = _owner_run_id(owner[0], owner[1], current_ms)
+        run_id = str(claim.get("runId") or _owner_run_id(owner[0], owner[1], current_ms))
         model_run_started = False
+        attempt_id = run_id
         personal_evidence_applied = False
         stored_plan = False
         try:
@@ -379,6 +385,13 @@ class OwnerMemoryCurator:
                 if isinstance(item, dict)
             ]
             if not inputs:
+                self._emit_memory_event(
+                    phase="draft_finished",
+                    status="completed",
+                    summary="所有者记忆维护未发现待处理来源",
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                )
                 self._finish_scope(
                     owner_kind=owner[0],
                     owner_id=owner[1],
@@ -660,7 +673,7 @@ class OwnerMemoryCurator:
                 )
                 begin_model_run = getattr(self.organizer, "begin_run", None)
                 if callable(begin_model_run):
-                    begin_model_run(
+                    begin_result = begin_model_run(
                         model_run_id,
                         frozen_input_sha256=hashlib.sha256(
                             json.dumps(
@@ -671,7 +684,19 @@ class OwnerMemoryCurator:
                             ).encode("utf-8")
                         ).hexdigest(),
                     )
+                    attempt_id = (
+                        str(begin_result.get("runId") or run_id)
+                        if isinstance(begin_result, Mapping)
+                        else run_id
+                    )
                     model_run_started = True
+                self._emit_memory_event(
+                    phase="started",
+                    status="completed",
+                    summary="所有者记忆维护已开始",
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                )
                 compile_output = self.organizer.curate_owner_memory(
                     bundle=model_bundle,
                     project=self.project,
@@ -887,6 +912,13 @@ class OwnerMemoryCurator:
                     run_status = "idle"
                     stored_run_id = run_id
             else:
+                self._emit_memory_event(
+                    phase="started",
+                    status="completed",
+                    summary="所有者记忆维护已开始",
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                )
                 with self._connect() as conn:
                     _store_empty_owner_run(
                         conn,
@@ -918,6 +950,29 @@ class OwnerMemoryCurator:
                 next_due_at_ms=current_ms + self.daily_interval_ms,
                 current_ms=current_ms,
             )
+            self._emit_memory_event(
+                phase=(
+                    "applied"
+                    if run_status == "applied"
+                    else "draft_ready"
+                    if run_status == "waiting_review"
+                    else "draft_finished"
+                ),
+                status=(
+                    "completed"
+                    if run_status in {"applied", "idle", "empty"}
+                    else "waiting"
+                ),
+                summary=(
+                    "所有者记忆维护已应用"
+                    if run_status == "applied"
+                    else "所有者记忆草案已生成，等待审阅"
+                    if run_status == "waiting_review"
+                    else "所有者记忆维护已完成"
+                ),
+                run_id=stored_run_id,
+                attempt_id=attempt_id,
+            )
             return {
                 "ok": True,
                 "ownerKind": owner[0],
@@ -943,6 +998,14 @@ class OwnerMemoryCurator:
                 "diffCount": len(plan.get("diffs") or []) if plan is not None else 0,
             }
         except Exception as exc:
+            self._emit_memory_event(
+                phase="failed",
+                status="failed",
+                summary="所有者记忆维护失败",
+                run_id=run_id,
+                attempt_id=attempt_id,
+                metrics={"errorType": exc.__class__.__name__},
+            )
             if model_run_started:
                 fail_model_run = getattr(self.organizer, "fail_run", None)
                 if callable(fail_model_run):
@@ -956,6 +1019,7 @@ class OwnerMemoryCurator:
             self._fail_scope(
                 owner_kind=owner[0],
                 owner_id=owner[1],
+                run_id=run_id,
                 error=exc,
                 current_ms=current_ms,
             )
@@ -977,8 +1041,30 @@ class OwnerMemoryCurator:
                 "ownerKind": owner[0],
                 "ownerId": owner[1],
                 "skipped": False,
+                "runId": run_id,
                 "error": _public_error(exc),
             }
+
+    def _emit_memory_event(
+        self,
+        *,
+        phase: str,
+        status: str,
+        summary: str,
+        run_id: str,
+        attempt_id: str = "",
+        metrics: Mapping[str, object] | None = None,
+    ) -> None:
+        emitter = getattr(self.observations, "emit_memory_event", None)
+        if callable(emitter):
+            emitter(
+                phase=phase,
+                status=status,
+                summary=summary,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                metrics=metrics,
+            )
 
     def _apply_model_decisions(
         self,
@@ -1333,7 +1419,14 @@ class OwnerMemoryCurator:
                 (owner_kind, owner_id, self.project, current_ms),
             )
             conn.commit()
-        return {"claimed": True, "reason": "manual" if manual else "due"}
+        resume_run_id = ""
+        if row is not None and str(row["status"] or "") == "backoff":
+            resume_run_id = str(row["last_run_id"] or "")
+        return {
+            "claimed": True,
+            "reason": "manual" if manual else "due",
+            "runId": resume_run_id,
+        }
 
     def _finish_scope(
         self,
@@ -1394,6 +1487,7 @@ class OwnerMemoryCurator:
         *,
         owner_kind: str,
         owner_id: str,
+        run_id: str,
         error: BaseException,
         current_ms: int,
     ) -> None:
@@ -1414,10 +1508,11 @@ class OwnerMemoryCurator:
             conn.execute(
                 """
                 INSERT INTO memory_curation_cursors(
-                    owner_kind, owner_id, project, lane, next_due_at_ms,
+                    owner_kind, owner_id, project, lane, last_run_id, next_due_at_ms,
                     status, consecutive_failures, last_error, updated_at_ms
-                ) VALUES (?, ?, ?, 'daily', ?, 'backoff', ?, ?, ?)
+                ) VALUES (?, ?, ?, 'daily', ?, ?, 'backoff', ?, ?, ?)
                 ON CONFLICT(owner_kind, owner_id, project, lane) DO UPDATE SET
+                    last_run_id = excluded.last_run_id,
                     next_due_at_ms = excluded.next_due_at_ms,
                     status = 'backoff',
                     consecutive_failures = excluded.consecutive_failures,
@@ -1428,6 +1523,7 @@ class OwnerMemoryCurator:
                     owner_kind,
                     owner_id,
                     self.project,
+                    run_id,
                     current_ms + backoff_ms,
                     failures,
                     _public_error(error),

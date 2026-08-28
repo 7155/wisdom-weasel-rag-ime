@@ -74,6 +74,26 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertEqual(settings.recall_detail_level, "balanced")
         self.assertFalse(settings.timeline_recall_enabled)
 
+    def test_memory_master_disables_maintenance_lanes_without_deleting_memory(self) -> None:
+        self.store.update_settings({"memory.enabled": False})
+
+        disabled = MemoryMaintenanceSettings.load(self.db_path)
+
+        self.assertFalse(disabled.memory_enabled)
+        self.assertFalse(disabled.automatic_organization_enabled)
+        self.assertFalse(disabled.dreaming_enabled)
+        self.assertFalse(disabled.as_dict()["enabled"])
+        self.assertFalse(disabled.as_dict()["automaticOrganization"]["enabled"])
+        self.assertFalse(disabled.as_dict()["dreaming"]["enabled"])
+
+        # Re-enabling restores the independent lane defaults; no memory data
+        # table is touched by resolving the switch.
+        self.store.update_settings({"memory.enabled": True})
+        enabled = MemoryMaintenanceSettings.load(self.db_path)
+        self.assertTrue(enabled.memory_enabled)
+        self.assertTrue(enabled.automatic_organization_enabled)
+        self.assertTrue(enabled.dreaming_enabled)
+
     def test_preverified_snapshot_reads_settings_without_replaying_migrations(self) -> None:
         self.store.update_settings(
             {"memory.recall.detailLevel": "balanced"}

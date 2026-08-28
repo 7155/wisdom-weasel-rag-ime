@@ -221,10 +221,22 @@ describe('PawRoomConversation', () => {
 
     const { container } = renderRoom({ participantId: 'participant-a', projection, room });
 
-    expect(screen.getByRole('region', { name: '伙伴公开对话' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '行星公开对话' })).toBeInTheDocument();
     expect(container.querySelector('[data-tool-block="tool:tool-a"]')).not.toBeNull();
     expect(container.querySelector('[data-tool-block="tool:tool-b"]')).toBeNull();
     expect(container.querySelector('.ccui-conversation-surface')).toHaveAttribute('data-density', 'compact');
+  });
+
+  it('keeps a planet observation surface read-only while retaining its public timeline', () => {
+    const { projection, room } = roomConversation();
+
+    renderRoom({ participantId: 'participant-a', projection, readOnly: true, room });
+
+    const surface = screen.getByRole('region', { name: '行星公开对话' });
+    expect(surface).toHaveTextContent('已接入生产 reducer。');
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '批准并继续' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '拒绝' })).not.toBeInTheDocument();
   });
 });
 

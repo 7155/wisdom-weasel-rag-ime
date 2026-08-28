@@ -272,7 +272,7 @@ describe('PawContextTrace', () => {
     await user.click(modelCall!.querySelector('summary')!);
     expect(within(modelCall!).getByText('参数已记录')).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent('rm -rf /private/secret');
-    expect(document.body).not.toHaveTextContent('/Users/undo/private.key');
+    expect(document.body).not.toHaveTextContent('/Users/example/private.key');
     expect(document.body).not.toHaveTextContent('token=super-secret');
   });
 
@@ -711,7 +711,7 @@ function debugContextResponse() {
         endSequence: 2,
         args: {
           command: 'rm -rf /private/secret',
-          path: '/Users/undo/private.key',
+          path: '/Users/example/private.key',
           query: 'token=super-secret',
           payload: { authorization: 'Bearer hidden' },
         },

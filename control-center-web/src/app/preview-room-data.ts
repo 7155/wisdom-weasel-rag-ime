@@ -91,8 +91,9 @@ export function previewRoomSnapshot(roomId: string) {
     }),
     event(3, 'route_decision', 'participant-firstlight', {
       rootId, dispatchId: 'dispatch-firstlight',
+      sourceParticipantId: 'participant-present',
       targetParticipantId: 'participant-firstlight', targetDisplayName: 'Mars',
-      reason: '负责依赖数据', summary: 'Mars 已接手依赖数据',
+      reason: 'Earth 将依赖数据投影交给 Mars', summary: 'Earth 已将依赖数据投影分派给 Mars',
     }),
     event(4, 'participant_activity', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',

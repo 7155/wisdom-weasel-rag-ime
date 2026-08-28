@@ -960,6 +960,33 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("随 Session 固定版本注入系统提示词", role_book["does"])
         self.assertIn("待审草案", role_book["output"])
 
+    def test_memory_master_switch_removes_runtime_operations_and_blocks_stale_calls(self) -> None:
+        enabled = False
+        self.gateway._memory_enabled_provider = lambda: enabled
+
+        self.assertNotIn(
+            "memory",
+            {item["name"] for item in self.gateway.runtime_manifests(self.session)},
+        )
+        public_memory = next(
+            item
+            for item in self.gateway.manifests(session_id=str(self.session["id"]))["items"]
+            if item["id"] == "memory"
+        )
+        self.assertFalse(public_memory["enabled"])
+        self.assertEqual(public_memory["effectiveOperations"], [])
+        with self.assertRaisesRegex(ValueError, "memory tool is disabled"):
+            self.gateway.execute(self._call("recent", query="关闭时不可召回"))
+        self.assertEqual(self.management.memory_requests, [])
+
+        enabled = True
+        self.assertIn(
+            "memory",
+            {item["name"] for item in self.gateway.runtime_manifests(self.session)},
+        )
+        restored = self.gateway.execute(self._call("recent", limit=1))["result"]
+        self.assertEqual(restored["count"], 1)
+
     def test_overview_tool_describes_the_agent_product_before_input_sources(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
         overview = next(item for item in manifests if item["name"] == "overview")
@@ -1249,7 +1276,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "agent-tool-result.v1.json",
             )
 
-    def test_room_facilitator_delegation_requires_active_root_work_document(self) -> None:
+    def test_room_facilitator_delegation_requires_active_goal_not_root_document(self) -> None:
         workspace = Path(self.tmp.name) / "room-root-document-gate"
         workspace.mkdir()
         facilitator = self.store.create(
@@ -1266,8 +1293,8 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "confirmed": True,
                 "expectedRevision": 0,
                 "objective": "Build the Room result",
-                "successCriteria": "Root document is bound before delegation",
-                "evidenceExpectations": ["workDocumentRegistration"],
+                "successCriteria": "Real delegated result is reviewed",
+                "evidenceExpectations": ["real result evidence"],
             },
             actor="agent-runtime",
             updated_at_ms=4,
@@ -1310,24 +1337,12 @@ class ControlToolGatewayTests(unittest.TestCase):
             "sessionId": session_id,
         }
 
-        with self.assertRaisesRegex(
-            ValueError,
-            "Act Gate blocked workspace mutation.*active Root WorkDocument",
-        ):
-            gateway.execute(request)
-        self.assertEqual(calls, [])
-
-        documents.append(
-            {
-                "authorityKey": f"session_goal:{goal['goalId']}",
-                "state": "active",
-            }
-        )
         self.assertEqual(
             gateway.execute(request)["result"]["operation"],
             "delegate",
         )
         self.assertEqual(len(calls), 1)
+        self.assertEqual(documents, [])
 
     def test_room_partner_catalog_describes_dynamic_fanout_up_to_capacity(self) -> None:
         room_partner = next(
@@ -1437,6 +1452,8 @@ class ControlToolGatewayTests(unittest.TestCase):
             read_only_room_partner["parameters"]["properties"]["op"]["enum"],
             [
                 "list",
+                "add_participant",
+                "remove_participant",
                 "delegate",
                 "delegate_batch",
                 "retry",
@@ -1867,6 +1884,99 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.gateway.execute(self._tool_call("overview", "status"))
         with self.assertRaisesRegex(ValueError, "tool profile"):
             self.gateway.execute(self._call("catalog"))
+
+    def test_subagent_readonly_profile_allows_the_host_sandbox_connector(self) -> None:
+        class _SandboxConnector:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+            def execute(self, session_id, operation, args):
+                self.calls.append((str(session_id), str(operation), dict(args)))
+                return {"summary": "sandbox status"}
+
+        connector = _SandboxConnector()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            knowledge_client=self.knowledge,
+            sandbox_connector=connector,
+        )
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="assistant",
+            tool_profile_version="subagent-readonly-v1",
+            allowed_tools=None,
+        )
+
+        result = gateway.execute(
+            self._tool_call("sandbox", "status")
+        )["result"]
+
+        self.assertEqual(result, {"summary": "sandbox status"})
+        self.assertEqual(
+            connector.calls,
+            [(str(self.session["id"]), "status", {"op": "status", "_sessionId": str(self.session["id"])})],
+        )
+
+    def test_installed_sandbox_package_discloses_the_host_connector_to_pi(self) -> None:
+        class _SandboxConnector:
+            def execute(self, session_id, operation, args):
+                return {"summary": "sandbox status"}
+
+        class _Extensions:
+            def __init__(self, *, enabled: bool) -> None:
+                self.enabled = enabled
+
+            def catalog(self):
+                return {
+                    "ok": True,
+                    "items": [
+                        {
+                            "id": "vertical-agent-sandbox",
+                            "installed": True,
+                            "enabled": self.enabled,
+                        }
+                    ],
+                }
+
+        enabled_gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            extensions=_Extensions(enabled=True),
+            sandbox_connector=_SandboxConnector(),
+        )
+        disabled_gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            extensions=_Extensions(enabled=False),
+            sandbox_connector=_SandboxConnector(),
+        )
+
+        enabled = {
+            item["name"]: item
+            for item in enabled_gateway.runtime_manifests(self.session)
+        }
+        disabled = {
+            item["name"]: item
+            for item in disabled_gateway.runtime_manifests(self.session)
+        }
+
+        self.assertIn("sandbox", enabled)
+        self.assertNotIn("modelVisible", enabled["sandbox"])
+        self.assertEqual(
+            set(enabled["sandbox"]["parameters"]["properties"]["op"]["enum"]),
+            {"status", "run"},
+        )
+        self.assertNotIn("sandbox", disabled)
 
     def test_read_only_subagent_assistant_receives_only_explicit_workspace_tools(self) -> None:
         workspace = Path(self.tmp.name) / "delegated-workspace"
@@ -3754,7 +3864,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "active",
         )
 
-    def test_workspace_write_rolls_back_when_work_document_registration_fails(self) -> None:
+    def test_workspace_write_keeps_real_write_when_work_document_registration_fails(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-work-document-rollback"
         workspace.mkdir()
         coordinator = self.store.create(
@@ -3806,10 +3916,77 @@ class ControlToolGatewayTests(unittest.TestCase):
             payload_sha256=approval["payloadSha256"],
         )
 
-        with self.assertRaisesRegex(RuntimeError, "authority advanced"):
-            gateway.apply_approval(decided)
+        receipt = gateway.apply_approval(decided)
 
-        self.assertFalse(target.exists())
+        self.assertTrue(target.exists())
+        self.assertEqual(receipt["documentSync"]["state"], "failed")
+        self.assertEqual(receipt["documentSync"]["attemptCount"], 1)
+        self.assertFalse(receipt["documentSync"]["retryable"])
+        self.assertIn("authority advanced", receipt["documentSync"]["reason"])
+        self.assertTrue(str(receipt["documentSync"]["traceId"]).startswith("trace:work-document-sync:"))
+
+    def test_workspace_write_records_archived_document_failure_without_raising(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-work-document-archived"
+        workspace.mkdir()
+        coordinator = self.store.create(
+            title="archived document coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=9,
+        )
+        session_id = str(coordinator["id"])
+
+        class _ArchivedWorkDocuments:
+            def preflight_register(self, _payload):
+                raise RuntimeError(
+                    "WorkDocumentError: archived document must be reopened through its authority"
+                )
+
+            def register(self, _payload):
+                raise AssertionError("preflight failure must be the only document attempt")
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            work_documents=_ArchivedWorkDocuments(),
+        )
+        target = workspace / "docs" / "worker.md"
+        prepared = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_write",
+                    "apply",
+                    path=str(target),
+                    resourceRevision="missing",
+                    content="# Worker opening\n",
+                    workDocument={
+                        "authorityKind": "room_work_item",
+                        "authorityId": "room-work:archived",
+                        "authorityRevision": 2,
+                    },
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+
+        receipt = gateway.apply_approval(decided)
+
+        self.assertTrue(target.exists())
+        self.assertEqual(receipt["documentSync"]["state"], "failed")
+        self.assertEqual(receipt["documentSync"]["attemptCount"], 1)
+        self.assertIn(
+            "archived document must be reopened through its authority",
+            receipt["documentSync"]["reason"],
+        )
 
     def test_workspace_write_rejects_non_active_work_document_receipt(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-work-document-rejected"
@@ -3864,10 +4041,12 @@ class ControlToolGatewayTests(unittest.TestCase):
             payload_sha256=approval["payloadSha256"],
         )
 
-        with self.assertRaisesRegex(ValueError, "did not become active"):
-            gateway.apply_approval(decided)
+        receipt = gateway.apply_approval(decided)
 
-        self.assertFalse(target.exists())
+        self.assertTrue(target.exists())
+        self.assertEqual(receipt["documentSync"]["state"], "failed")
+        self.assertEqual(receipt["documentSync"]["receiptStatus"], "failed")
+        self.assertEqual(receipt["documentSync"]["documentState"], "error")
 
     def test_workspace_harness_failure_keeps_native_approval_out_of_execution(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-failing"

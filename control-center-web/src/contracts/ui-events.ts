@@ -93,6 +93,8 @@ export interface UiAgentEvent {
   streamKind: 'agent';
   eventType: KnownAgentEventType | 'unknown';
   rawEventType?: string;
+  /** Durable transcript order when the event was rebuilt from Pi JSONL. */
+  timelineSequence?: number;
 }
 
 export interface UiRoomEvent {
@@ -174,6 +176,8 @@ export interface UiAgentMessage {
   attachments: string[];
   citations: string[];
   createdAtMs: number;
+  /** Durable transcript order when the message was rebuilt from Pi JSONL. */
+  timelineSequence?: number;
   completedAtMs?: number | null;
   clientMessageId?: string;
   retryOfClientMessageId?: string;
@@ -202,6 +206,7 @@ const agentBlockTypeSet = new Set<string>(knownAgentBlockTypes);
 export function normalizeAgentEvent(value: Record<string, unknown>): UiAgentEvent {
   const rawEventType = String(value.eventType ?? '');
   const known = agentEventTypeSet.has(rawEventType);
+  const timelineSequence = value.timelineSequence;
   return {
     schemaVersion: value.schemaVersion as AgentEventV1['schemaVersion'],
     eventId: String(value.eventId),
@@ -214,6 +219,9 @@ export function normalizeAgentEvent(value: Record<string, unknown>): UiAgentEven
     streamKind: 'agent',
     eventType: known ? (rawEventType as KnownAgentEventType) : 'unknown',
     ...(known ? {} : { rawEventType }),
+    ...(typeof timelineSequence === 'number' && Number.isFinite(timelineSequence)
+      ? { timelineSequence }
+      : {}),
   };
 }
 
@@ -261,6 +269,7 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
       && source.retryOfClientMessageId.length > 0
       ? source.retryOfClientMessageId
       : undefined;
+  const timelineSequence = value.timelineSequence;
   const usage = source.usage
     ? {
         input: source.usage.input,
@@ -281,6 +290,9 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
     attachments: [...source.attachments],
     citations: [...source.citations],
     createdAtMs: source.createdAtMs,
+    ...(typeof timelineSequence === 'number' && Number.isFinite(timelineSequence)
+      ? { timelineSequence }
+      : {}),
     ...(source.completedAtMs === undefined ? {} : { completedAtMs: source.completedAtMs }),
     ...(clientMessageId ? { clientMessageId } : {}),
     ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),

@@ -332,6 +332,15 @@ def _runtime_message_alias(
     fingerprint = _message_projection_fingerprint(envelope)
     if not fingerprint:
         return ""
+    # Rich live-event envelopes use the turn-owned assistant identity while Pi
+    # history assigns a separate durable message id. Ordinary persisted message
+    # ids can legitimately repeat the same text in a later turn and must never
+    # be collapsed merely because their projection matches.
+    if (
+        str(envelope.get("role") or "") != "assistant"
+        or not str(envelope.get("id") or "").endswith(":assistant")
+    ):
+        return ""
     envelope_time = max(0, int(envelope.get("createdAtMs") or 0))
     candidates = [
         message_id
@@ -339,12 +348,10 @@ def _runtime_message_alias(
         if message_id not in persisted_message_ids
         and message_id not in claimed_alias_ids
         and envelope_time > 0
-        and 0
-        < max(
+        and max(
             0,
             int(runtime_by_id[message_id].get("createdAtMs") or 0),
-        )
-        <= envelope_time
+        ) > 0
         and _message_projection_fingerprint(runtime_by_id[message_id])
         == fingerprint
     ]

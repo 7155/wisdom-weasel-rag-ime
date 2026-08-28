@@ -175,6 +175,41 @@ class AgentRuntimeDriver(Protocol):
         response: Mapping[str, object],
     ) -> dict[str, object]: ...
 
+    def plugin_list(self) -> list[dict[str, object]]: ...
+
+    def plugin_create_package(self, payload: Mapping[str, object]) -> dict[str, object]: ...
+
+    def plugin_validate(self, source_path: str) -> dict[str, object]: ...
+
+    def plugin_prepare_package(self, source: str) -> dict[str, object]: ...
+
+    def plugin_install(self, payload: Mapping[str, object]) -> dict[str, object]: ...
+
+    def plugin_enable(
+        self,
+        plugin_id: str,
+        *,
+        enabled: bool,
+        expected_active_digest: str,
+        expected_enabled: bool,
+    ) -> dict[str, object]: ...
+
+    def plugin_rollback(
+        self,
+        plugin_id: str,
+        *,
+        expected_active_digest: str,
+        target_digest: str,
+    ) -> dict[str, object]: ...
+
+    def plugin_uninstall(
+        self,
+        plugin_id: str,
+        *,
+        expected_active_digest: str,
+        expected_enabled: bool,
+    ) -> dict[str, object]: ...
+
     def stop(self) -> None: ...
 
 

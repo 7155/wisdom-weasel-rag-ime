@@ -34,7 +34,7 @@ import {
   Plus,
   Users,
 } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ClipboardEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   useAgentPreferencesRead,
@@ -50,11 +50,20 @@ import {
   WorkspaceMark,
 } from '@/features/agent/marks/ConversationMarks';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import type { SessionSummary } from '@/features/agent/types';
+import { ComposerAttachmentPreview, type ComposerShellAttachment } from '@/features/composer/ComposerShell';
+import {
+  MAX_COMPOSER_ATTACHMENT_BYTES,
+  MAX_COMPOSER_ATTACHMENTS,
+  normalizeComposerAttachmentMimeType,
+} from '@/contracts/attachment-policy';
 import type { RoomSummary } from '@/features/rooms/room-types';
-import { roomPlanetName } from '@/features/rooms/room-copy';
+import { roomPlanetName } from '@/features/rooms/room-participant-identity';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { clipboardFilesFromEvent } from '@/features/agent/composer/AgentComposer';
+import type { PickedFile } from '@/platform/transport';
 import { pawBrowserHost } from './paw-browser-host';
 import { PawAppIcon } from '../shell/PawAppIcon';
 
@@ -65,6 +74,11 @@ type Selection =
   | { kind: 'room'; id: string; draft?: string; error?: string };
 
 type OptionsPanel = 'project' | 'model' | 'thinking' | 'permission' | null;
+
+type HomePendingAttachment = {
+  id: string;
+  file: File;
+};
 
 const PERMISSION_PRESETS: ReadonlyArray<{
   executionMode: AgentExecutionMode;
@@ -127,6 +141,8 @@ export function PawAgentHome({
   const [optionsPanel, setOptionsPanel] = useState<OptionsPanel>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [pendingAttachments, setPendingAttachments] = useState<HomePendingAttachment[]>([]);
+  const [pendingClipboardPaste, setPendingClipboardPaste] = useState(false);
   const composerRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
@@ -218,8 +234,76 @@ export function PawAgentHome({
     }
   }
 
+  function addPastedFiles(files: File[]): void {
+    if (!transport.pasteImages) {
+      setError('当前运行环境不能导入剪贴板文件。');
+      return;
+    }
+    const remaining = MAX_COMPOSER_ATTACHMENTS - pendingAttachments.length;
+    if (files.length > remaining) {
+      setError(`当前输入还可以粘贴 ${remaining} 个附件。`);
+      return;
+    }
+    const oversized = files.find((file) => file.size <= 0 || file.size > MAX_COMPOSER_ATTACHMENT_BYTES);
+    if (oversized) {
+      setError(`${oversized.name || '附件'} 必须小于 20 MiB 且不能为空。`);
+      return;
+    }
+    setPendingClipboardPaste(false);
+    setPendingAttachments((current) => [
+      ...current,
+      ...files.map((file) => ({ id: clientId('home-attachment'), file })),
+    ]);
+    setError('');
+  }
+
+  function pasteIntoHome(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    const { files, hasFileItem } = clipboardFilesFromEvent(event);
+    if (!files.length && !hasFileItem) {
+      const pastedText = event.clipboardData.getData?.('text/plain') ?? '';
+      if (pastedText || !transport.pasteImages) return;
+      event.preventDefault();
+      setPendingClipboardPaste(true);
+      setError('');
+      return;
+    }
+    event.preventDefault();
+    if (files.length) {
+      addPastedFiles(files);
+      return;
+    }
+    if (!transport.pasteImages) {
+      setError('当前运行环境不能导入剪贴板文件。');
+      return;
+    }
+    // WebKit can expose the image item but not its bytes. The native transport
+    // will inspect its trusted pasteboard after a Session/Room owner exists.
+    setPendingClipboardPaste(true);
+    setError('');
+  }
+
+  async function importPendingAttachments(
+    owner: { sessionId: string } | { roomId: string },
+  ): Promise<PickedFile[]> {
+    const files = pendingAttachments.map((item) => item.file);
+    if (!files.length && !pendingClipboardPaste) return [];
+    if (!transport.pasteImages) throw new Error('当前运行环境不能导入剪贴板文件。');
+    const imported = await transport.pasteImages({
+      ...owner,
+      ...(files.length ? { files } : {}),
+      maxFiles: files.length || 1,
+    });
+    if (!imported.length) throw new Error('剪贴板里没有可导入的文件。');
+    return imported;
+  }
+
+  function clearPendingAttachments(): void {
+    setPendingAttachments([]);
+    setPendingClipboardPaste(false);
+  }
+
   async function startWork(): Promise<void> {
-    const message = prompt.trim();
+    const message = prompt.trim() || (pendingAttachments.length || pendingClipboardPaste ? '请查看附件。' : '');
     if (!message || submitting) return;
     if (executionMode === 'full_trust' && !workspaceRoot) {
       setError('全自动需要先选择工作目录。');
@@ -251,18 +335,23 @@ export function PawAgentHome({
         if (!sessionId) throw new Error('服务端没有返回可验证的 Session。');
         const clientMessageId = clientId('session');
         const createdSession = createdSessionSummary(rawSession, message, workspaceRoot, executionMode);
+        const importedAttachments = await importPendingAttachments({ sessionId });
+        const attachmentIds = importedAttachments.map((attachment) => attachment.id);
+        clearPendingAttachments();
         // Tutti 入场顺序：先让 Session 与首条用户消息可见，配置与回执后台补齐。
         useAgentLiveStore.getState().appendOptimistic(sessionId, {
           clientMessageId,
           text: message,
-          attachments: [],
+          attachments: attachmentIds,
           nowMs: Date.now(),
         });
         onCreated({ kind: 'session', id: sessionId }, createdSession);
         void (async () => {
           try {
             const configuration = [] as Promise<unknown>[];
-            if (selectedModel) {
+            const explicitModelSelection = preferenceEditedRef.current.modelReference
+              || Boolean(preferences.modelReference && preferences.modelReference !== 'inherit');
+            if (selectedModel && explicitModelSelection) {
               configuration.push(transport.request({
                 pathId: 'agent.session.model.select',
                 params: { sessionId },
@@ -280,7 +369,7 @@ export function PawAgentHome({
             await transport.request({
               pathId: 'agent.session.prompt',
               params: { sessionId },
-              body: { message, attachments: [], clientMessageId },
+              body: { message, attachments: attachmentIds, clientMessageId },
             });
             useAgentLiveStore.getState().acknowledgeOptimistic(sessionId, clientMessageId, Date.now());
           } catch (requestError) {
@@ -316,17 +405,20 @@ export function PawAgentHome({
         if (!roomId) throw new Error('服务端没有返回可验证的 Room。');
         const clientMessageId = clientId('room');
         const createdRoom = createdRoomSummary(rawRoom, message, workspaceRoot, selectedPersonas);
+        const importedAttachments = await importPendingAttachments({ roomId });
+        const attachmentIds = importedAttachments.map((attachment) => attachment.id);
+        clearPendingAttachments();
         useRoomLiveStore.getState().appendOptimistic(roomId, {
           clientMessageId,
           text: message,
-          attachments: [],
+          attachments: roomAttachmentReceipts(importedAttachments, roomId),
           nowMs: Date.now(),
         });
         onCreated({ kind: 'room', id: roomId }, undefined, createdRoom);
         void transport.request<Record<string, unknown>>({
           pathId: 'agent.room.message',
           params: { roomId },
-          body: { message, clientMessageId, attachmentIds: [] },
+          body: { message, clientMessageId, attachmentIds },
         }).then((messageResponse) => {
           useRoomLiveStore.getState().acceptMessage(roomId, messageResponse);
         }).catch((requestError) => {
@@ -361,10 +453,47 @@ export function PawAgentHome({
           <h1 className="an-home-title">交给 Agent <em>一件事</em>。</h1>
 
           <div className="an-composer" ref={composerRef}>
+            {pendingAttachments.length || pendingClipboardPaste ? (
+              <div aria-label="待发送附件" className="agent-composer__attachments" role="list">
+                {pendingAttachments.map(({ id, file }) => {
+                  const attachment: ComposerShellAttachment = {
+                    id,
+                    name: file.name || 'clipboard-file',
+                    mimeType: normalizeComposerAttachmentMimeType(file.type),
+                    byteSize: file.size,
+                    previewFile: file,
+                  };
+                  return (
+                    <span
+                      className="agent-composer__attachment-chip"
+                      data-attachment-kind={attachment.mimeType.startsWith('image/') ? 'image' : 'file'}
+                      key={id}
+                      role="listitem"
+                    >
+                      <ComposerAttachmentPreview attachment={attachment} />
+                      <b title={attachment.name}>{attachment.name}</b>
+                      <button
+                        aria-label={`移除 ${attachment.name}`}
+                        onClick={() => setPendingAttachments((current) => current.filter((item) => item.id !== id))}
+                        type="button"
+                      >×</button>
+                    </span>
+                  );
+                })}
+                {pendingClipboardPaste ? (
+                  <span className="agent-composer__attachment-chip" data-attachment-kind="image" role="listitem">
+                    <ComposerAttachmentPreview attachment={{ id: 'pending-clipboard-image', name: '剪贴板图片', mimeType: 'image/png' }} />
+                    <b>剪贴板图片</b>
+                    <button aria-label="移除 剪贴板图片" onClick={() => setPendingClipboardPaste(false)} type="button">×</button>
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             <textarea
               aria-describedby={modeBriefId}
               aria-label="描述你想完成的工作"
               onChange={(event) => setPrompt(event.target.value)}
+              onPaste={pasteIntoHome}
               ref={promptRef}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -571,7 +700,7 @@ export function PawAgentHome({
               <button
                 aria-label={submitting ? '正在创建' : `开始 ${mode === 'session' ? 'Session' : 'Room'}`}
                 className="an-send"
-                disabled={!prompt.trim() || submitting || (mode === 'room' && !roomReady)}
+                disabled={(!prompt.trim() && !pendingAttachments.length && !pendingClipboardPaste) || submitting || (mode === 'room' && !roomReady)}
                 onClick={() => void startWork()}
                 type="button"
               >
@@ -746,10 +875,22 @@ function createdRoomSummary(
     updatedAtMs: typeof raw.updatedAtMs === 'number' ? raw.updatedAtMs : Date.now(),
     participants: Array.isArray(raw.participants)
       ? raw.participants
-      : selectedPersonas.map((persona) => ({ id: persona.roleId, displayName: persona.displayName })),
+      : selectedPersonas.map((persona, ordinal) => ({ id: persona.roleId, ordinal })),
     workspaceRoots: Array.isArray(raw.workspaceRoots) ? (raw.workspaceRoots as string[]) : workspaceRoot ? [workspaceRoot] : [],
   } as RoomSummary;
 }
+
+function roomAttachmentReceipts(files: readonly PickedFile[], roomId: string): RoomAttachmentReceipt[] {
+  return files.map((file) => ({
+    mediaId: file.id,
+    roomId,
+    fileName: file.name || '附件',
+    mimeType: file.mimeType,
+    byteSize: file.byteSize,
+    sha256: file.sha256 ?? '',
+  }));
+}
+
 function projectName(roots: readonly string[] | undefined): string {
   const first = roots?.[0] ?? '';
   if (!first) return '未绑定项目';

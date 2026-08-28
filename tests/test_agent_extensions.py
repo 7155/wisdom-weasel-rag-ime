@@ -603,6 +603,46 @@ class AgentExtensionServiceTests(unittest.TestCase):
                 }
             )
 
+    def test_vertical_agent_sandbox_is_an_actionable_bundled_plugin(self) -> None:
+        catalog = self.service.catalog()
+        item = next(
+            value for value in catalog["items"]
+            if value["id"] == "vertical-agent-sandbox"
+        )
+
+        self.assertEqual(item["latestVersion"], "0.1.1")
+        self.assertEqual(
+            [value["version"] for value in item["versions"]],
+            ["0.1.1", "0.1.0"],
+        )
+        self.assertEqual(item["permissions"], ["sandbox.run"])
+        self.assertTrue(item["actionable"])
+        validation = self.service.validate(
+            {"catalogId": "vertical-agent-sandbox", "catalogVersion": "0.1.1"}
+        )
+        self.assertEqual(validation["extension"]["id"], "vertical-agent-sandbox")
+        self.assertEqual(validation["catalog"]["catalogVersion"], "0.1.1")
+
+    def test_vertical_agent_sandbox_host_connector_fix_is_a_real_update(self) -> None:
+        self.runtime.installed = [
+            {
+                "id": "vertical-agent-sandbox",
+                "name": "Vertical Agent Sandbox",
+                "version": "0.1.0",
+                "enabled": True,
+                "installedVersions": [{"version": "0.1.0", "digest": "old"}],
+            }
+        ]
+
+        item = next(
+            value
+            for value in self.service.catalog()["items"]
+            if value["id"] == "vertical-agent-sandbox"
+        )
+
+        self.assertTrue(item["updateAvailable"])
+        self.assertEqual(item["installState"], "update_available")
+
     def test_review_only_catalog_item_cannot_be_validated_for_install(self) -> None:
         with self.assertRaisesRegex(ValueError, "review only"):
             self.service.validate({"catalogId": "community-catalog-preview"})

@@ -16,6 +16,7 @@ from rag_ime.activity_timeline_curation import (
     ACTIVITY_ORGANIZATION_OUTPUT_VERSION,
 )
 from rag_ime.agent_role_book import AgentRoleBookStore
+from rag_ime.deepseek_memory_organizer import ActivitySemanticVerificationError
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
 from rag_ime.personal_context import (
@@ -479,6 +480,63 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
         ).latest("2026-08-12")
         self.assertEqual(latest["status"], "draft")
 
+    def test_activity_semantic_verification_failure_is_a_review_warning(self) -> None:
+        timestamp = int(
+            datetime(
+                2026,
+                8,
+                12,
+                11,
+                30,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            ).timestamp()
+            * 1_000
+        )
+        LocalSqliteCoreClient(self.db_path).record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=timestamp,
+                source="voice_final",
+                committed_text="需要保留这份待检查的活动草稿",
+                privacy_disposition="allowed",
+                app="RagImeControl",
+                project="project-a",
+            )
+        )
+        organizer = _MaintenanceActivityOrganizer(semantic_fail=True)
+        result = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=PersonalContextMaintenanceConfig(
+                project="project-a",
+                consolidate_roles=False,
+                build_timelines=True,
+                auto_publish_timelines=True,
+            ),
+            activity_organizer=organizer,
+        ).build_activity_timeline("2026-08-12", now_ms=timestamp + 60_000)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "draft")
+        self.assertFalse(result["autoPublished"])
+        semantic = result["semanticOrganization"]
+        self.assertEqual(semantic["status"], "warning")
+        self.assertTrue(semantic["reviewRequired"])
+        self.assertEqual(
+            semantic["error"],
+            "Activity organization did not pass independent semantic verification",
+        )
+        self.assertEqual(semantic["verification"]["verdict"], "reject")
+        self.assertEqual(
+            semantic["receipt"]["verifierRequest"]["traceId"],
+            "trace:activity-repair-verifier",
+        )
+        self.assertEqual(organizer.lifecycle, ["begin", "organize", "finish"])
+        latest = DailyActivityTimelineStore(
+            self.db_path,
+            project="project-a",
+        ).latest("2026-08-12")
+        self.assertEqual(latest["status"], "draft")
+
     def test_activity_catch_up_serially_organizes_every_pending_day(self) -> None:
         for day, hour in ((10, 9), (11, 14)):
             timestamp = int(
@@ -784,8 +842,9 @@ class _MaintenanceRoleBookOrganizer:
 class _MaintenanceActivityOrganizer:
     provider_name = "fake-maintenance-activity-organizer"
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, semantic_fail: bool = False) -> None:
         self.fail = fail
+        self.semantic_fail = semantic_fail
         self.lifecycle: list[str] = []
 
     def begin_run(self, run_id: str, *, frozen_input_sha256: str = "") -> dict[str, object]:
@@ -797,6 +856,20 @@ class _MaintenanceActivityOrganizer:
         self.lifecycle.append("organize")
         if self.fail:
             raise RuntimeError("synthetic Activity verifier failure")
+        if self.semantic_fail:
+            raise ActivitySemanticVerificationError(
+                "Activity organization did not pass independent semantic verification",
+                verification={
+                    "schemaVersion": "rag-ime.activity-organization-verdict.v1",
+                    "verdict": "reject",
+                    "scores": {},
+                    "issues": [],
+                    "strengths": [],
+                },
+                receipt={
+                    "verifierRequest": {"traceId": "trace:activity-repair-verifier"},
+                },
+            )
         refs = list(getattr(packet, "event_refs"))
         return {
             "organization": {

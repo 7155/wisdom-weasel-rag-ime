@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 import uuid
 import re
@@ -49,6 +50,32 @@ ACTIVE_RAG_CHAIN_TRACE_TEXT_LIMIT = 24_000
 ACTIVE_RAG_PROGRESS_MAX_ITEMS = 3
 ACTIVE_RAG_PROGRESS_PREVIEW_CHARS = 96
 SENSITIVE_FIELD_BLOCK_REASON = "sensitive_field_blocked"
+
+# DeepSeekCompletionError exposes producer diagnostics as structured
+# ``terminalReason``/``transportReason`` fields.  Only the combinations below
+# mean that the provider completed normally but produced no insertable result;
+# an absent or unfamiliar code must remain a real Trace failure.
+_ACTIVE_RAG_GOVERNED_TERMINAL_REASONS = frozenset(
+    {"governor_rejected_content", "empty_remote_content"}
+)
+_ACTIVE_RAG_GOVERNED_TRANSPORT_REASONS = frozenset(
+    {
+        "empty_remote_content",
+        "stream_completed",
+        "finish_stop",
+        "finish_length",
+        "finish_tool_calls",
+        "finish_function_call",
+        "finish_content_filter",
+        "continuation_empty_remote_content",
+        "continuation_stream_completed",
+        "continuation_finish_stop",
+        "continuation_finish_length",
+        "continuation_finish_tool_calls",
+        "continuation_finish_function_call",
+        "continuation_finish_content_filter",
+    }
+)
 
 _TRACE_SECRET_FIELD_TOKENS = (
     "authorization",
@@ -167,6 +194,86 @@ class ActiveRagSession:
     trace_partial_chars: int = 0
     created_at_ms: int = field(default_factory=now_ms)
     updated_at_ms: int = field(default_factory=now_ms)
+    # Lifecycle timing is kept separately from the user-facing session
+    # elapsed counter.  The latter starts at request capture and therefore
+    # cannot identify when retrieval or generation actually began.  Internal
+    # monotonic anchors are stripped before this map crosses the observation
+    # boundary; only explicit wall ordering points and monotonic-derived
+    # durations are published.
+    stage_timings: dict[str, dict[str, object]] = field(default_factory=dict)
+    # UI status is separate from execution/trace outcome. A visible timeout
+    # can expose a retry row while the provider is still open.
+    trace_outcome: str = "building"
+    visible_timeout: bool = False
+
+
+def _initialize_active_rag_context_timing(session: ActiveRagSession) -> None:
+    """Record the context capture point without inventing its duration."""
+
+    session.stage_timings["context"] = {
+        "startedAtMs": max(0, int(session.created_at_ms)),
+    }
+
+
+def _begin_active_rag_stage(session: ActiveRagSession, stage: str) -> None:
+    """Start one producer-owned stage with a wall ordering point and monotonic anchor."""
+
+    if stage not in {"retrieval", "generation"}:
+        return
+    existing = session.stage_timings.get(stage)
+    if isinstance(existing, dict) and "startedAtMs" in existing:
+        return
+    session.stage_timings[stage] = {
+        "startedAtMs": max(0, int(now_ms())),
+        "_startedMonotonic": time.perf_counter(),
+    }
+
+
+def _finish_active_rag_stage(session: ActiveRagSession, stage: str) -> None:
+    """Finish a stage using monotonic elapsed time, never session elapsed time.
+
+    Common Trace requires an integer wall-clock start/end pair whose difference
+    equals ``durationMs``.  The start is the producer's wall ordering point;
+    the endpoint is projected from that point using the monotonic measurement.
+    This keeps duration immune to wall-clock adjustments while retaining a
+    stable display ordering coordinate.
+    """
+
+    timing = session.stage_timings.get(stage)
+    if not isinstance(timing, dict) or "startedAtMs" not in timing:
+        return
+    if "durationMs" in timing:
+        return
+    started_monotonic = timing.get("_startedMonotonic")
+    if isinstance(started_monotonic, bool) or not isinstance(started_monotonic, (int, float)):
+        return
+    elapsed_ms = max(0.0, (time.perf_counter() - float(started_monotonic)) * 1000.0)
+    duration_ms = max(0, int(round(elapsed_ms)))
+    started_at_ms = max(0, int(timing["startedAtMs"]))
+    timing.update(
+        {
+            "endedAtMs": started_at_ms + duration_ms,
+            "durationMs": duration_ms,
+        }
+    )
+
+
+def _finish_active_rag_open_stages(session: ActiveRagSession) -> None:
+    for stage in ("retrieval", "generation"):
+        _finish_active_rag_stage(session, stage)
+
+
+def _active_rag_worker_pending(session: ActiveRagSession) -> bool:
+    """Whether the worker still owns an unfinished request.
+
+    ``visible_timeout`` is a UI fallback only. The provider worker remains
+    active and must be allowed to close its generation stage (or report a
+    truthful failure) after the retry row has been shown.
+    """
+
+    return session.status == "pending" or (
+        session.visible_timeout and session.trace_outcome == "building"
+    )
 
 
 class ActiveRagService:
@@ -223,6 +330,7 @@ class ActiveRagService:
             request=request,
             diagnostics=_initial_session_diagnostics(request, completion_provider=self.completion_provider),
         )
+        _initialize_active_rag_context_timing(session)
         _append_trace_event(session, "active_rag_context_captured", requestCapture=session.diagnostics["requestCapture"])
         with self._lock:
             if self._closed:
@@ -343,7 +451,7 @@ class ActiveRagService:
                 return {"schemaVersion": ACTIVE_RAG_SERVICE_SCHEMA_VERSION, "sessionId": session_id, "status": "missing"}
             if session.status == "pending" and _should_force_visible_fallback(session):
                 self._force_visible_fallback_locked(session, reason="visible_timeout")
-                self._persist_session_trace_locked(session, phase=session.status)
+                self._persist_session_trace_locked(session, phase="visible_timeout")
             return _session_payload(session)
 
     def diagnostics(self, session_id: str) -> dict[str, object]:
@@ -423,8 +531,10 @@ class ActiveRagService:
     def cancel(self, session_id: str) -> dict[str, object]:
         with self._lock:
             session = self._sessions.get(session_id)
-            if session is not None and session.status == "pending":
+            if session is not None and _active_rag_worker_pending(session):
+                _finish_active_rag_open_stages(session)
                 session.status = "cancelled"
+                session.trace_outcome = "cancelled"
                 session.updated_at_ms = now_ms()
                 self._record_cancel_feedback(session=session)
                 self._persist_session_trace_locked(session, phase="cancelled")
@@ -551,7 +661,32 @@ class ActiveRagService:
         if session is None:
             return
         try:
-            evidence = self._retrieve_local_evidence(session.request, diagnostics=session.diagnostics)
+            with self._lock:
+                current = self._sessions.get(session_id)
+                if current is None or not _active_rag_worker_pending(current):
+                    return
+                _begin_active_rag_stage(current, "retrieval")
+            try:
+                evidence = self._retrieve_local_evidence(session.request, diagnostics=session.diagnostics)
+            except Exception as exc:
+                # The normal retriever records an internal failure itself, but
+                # adapters/tests may fail at this boundary before that helper
+                # can write diagnostics.  Preserve the stage attribution so a
+                # failed retrieval cannot be projected as a completed or
+                # fabricated generation span.
+                with self._lock:
+                    current = self._sessions.get(session_id)
+                    if current is not None:
+                        current.diagnostics["retrieval"] = {
+                            **dict(current.diagnostics.get("retrieval") or {}),
+                            "error": f"{type(exc).__name__}: {_safe_failure_reason(exc)}",
+                        }
+                raise
+            finally:
+                with self._lock:
+                    current = self._sessions.get(session_id)
+                    if current is not None:
+                        _finish_active_rag_stage(current, "retrieval")
             _append_trace_event(
                 session,
                 "active_rag_retrieval_completed",
@@ -559,7 +694,7 @@ class ActiveRagService:
             )
             with self._lock:
                 current = self._sessions.get(session_id)
-                if current is None or current.status != "pending":
+                if current is None or not _active_rag_worker_pending(current):
                     return
                 current.evidence = evidence
                 current.updated_at_ms = now_ms()
@@ -573,19 +708,30 @@ class ActiveRagService:
                 evidence=evidence,
                 remote_model_ready=remote_model_enabled,
             )
-            if remote_model_enabled:
-                candidates = self._deepseek_candidates(
-                    session.request,
-                    evidence=evidence,
-                    diagnostics=session.diagnostics,
-                    trace_events=session.trace_events,
-                    stream_sink=lambda text: self._publish_deepseek_partial(session_id, text),
-                )
-            else:
-                candidates = self._local_candidates(session.request, evidence=evidence)
             with self._lock:
                 current = self._sessions.get(session_id)
-                if current is None or current.status != "pending":
+                if current is None or not _active_rag_worker_pending(current):
+                    return
+                _begin_active_rag_stage(current, "generation")
+            try:
+                if remote_model_enabled:
+                    candidates = self._deepseek_candidates(
+                        session.request,
+                        evidence=evidence,
+                        diagnostics=session.diagnostics,
+                        trace_events=session.trace_events,
+                        stream_sink=lambda text: self._publish_deepseek_partial(session_id, text),
+                    )
+                else:
+                    candidates = self._local_candidates(session.request, evidence=evidence)
+            finally:
+                with self._lock:
+                    current = self._sessions.get(session_id)
+                    if current is not None:
+                        _finish_active_rag_stage(current, "generation")
+            with self._lock:
+                current = self._sessions.get(session_id)
+                if current is None or not _active_rag_worker_pending(current):
                     return
                 current.evidence = evidence
                 if candidates:
@@ -613,19 +759,27 @@ class ActiveRagService:
                 )
                 if current.status == "ready":
                     self._record_shown_feedback(session=current, candidates=current.candidates)
+                if current.trace_outcome == "building":
+                    current.trace_outcome = "completed"
                 current.updated_at_ms = now_ms()
                 self._persist_session_trace_locked(current, phase=current.status)
         except Exception as exc:
             with self._lock:
                 current = self._sessions.get(session_id)
-                if current is not None and current.status == "pending":
+                if current is not None and _active_rag_worker_pending(current):
                     current.diagnostics["failure"] = {
                         "stage": "active_rag_session",
                         "errorType": type(exc).__name__,
                         "reason": _safe_failure_reason(exc),
                     }
+                    provider_failure = not _no_suitable_generation_error(
+                        exc,
+                        diagnostics=current.diagnostics,
+                    )
+                    if provider_failure:
+                        current.trace_outcome = "failed"
                     if not self._recover_streamed_partial_locked(current, reason=type(exc).__name__):
-                        if _no_suitable_generation_error(exc, diagnostics=current.diagnostics):
+                        if not provider_failure:
                             self._mark_no_suitable_suggestion_locked(
                                 current,
                                 reason=_no_suitable_generation_reason(exc),
@@ -635,7 +789,10 @@ class ActiveRagService:
                             if current.status == "error":
                                 current.error = _safe_failure_reason(exc)
                     current.updated_at_ms = now_ms()
-                    self._persist_session_trace_locked(current, phase=current.status)
+                    self._persist_session_trace_locked(
+                        current,
+                        phase="failed" if current.trace_outcome == "failed" else current.status,
+                    )
 
     def _retrieve_local_evidence(
         self,
@@ -1121,6 +1278,8 @@ class ActiveRagService:
         return local_candidates
 
     def _force_visible_fallback_locked(self, session: ActiveRagSession, *, reason: str) -> None:
+        if reason == "visible_timeout":
+            session.visible_timeout = True
         if self._recover_streamed_partial_locked(session, reason=reason):
             return
         evidence = session.evidence or _evidence_from_pack(session.request.evidence_pack)
@@ -1308,7 +1467,7 @@ class ActiveRagService:
 
     def _drop_stale_sessions_locked(self, request: ActiveRagStartRequest) -> None:
         for session in self._sessions.values():
-            if session.status != "pending":
+            if not _active_rag_worker_pending(session):
                 continue
             if session.request.project != request.project or session.request.app != request.app:
                 continue
@@ -1316,7 +1475,9 @@ class ActiveRagService:
                 int(session.request.frontend_revision) < int(request.frontend_revision)
                 or int(session.request.selection_epoch) < int(request.selection_epoch)
             ):
+                _finish_active_rag_open_stages(session)
                 session.status = "stale_dropped"
+                session.trace_outcome = "cancelled"
                 session.updated_at_ms = now_ms()
                 self._persist_session_trace_locked(session, phase="stale_dropped")
 
@@ -1587,25 +1748,41 @@ def _evidence_pack_item_echoes_request(item: dict[str, object], request_text: st
 
 
 def _retryable_empty_generation_error(exc: DeepSeekCompletionError) -> bool:
-    reason = compact_whitespace(str(exc)).lower()
-    return reason.startswith("active_rag_no_insertable_content:")
+    return bool(_structured_governed_generation_reason(exc))
+
+
+def _structured_governed_generation_reason(error: BaseException) -> str:
+    """Return a governed no-suggestion code only from producer diagnostics."""
+
+    if not isinstance(error, DeepSeekCompletionError):
+        return ""
+    details = getattr(error, "diagnostics", None)
+    if not isinstance(details, dict):
+        return ""
+    terminal = details.get("terminalReason")
+    transport = details.get("transportReason")
+    if not isinstance(terminal, str) or not isinstance(transport, str):
+        return ""
+    if (
+        terminal in _ACTIVE_RAG_GOVERNED_TERMINAL_REASONS
+        and transport in _ACTIVE_RAG_GOVERNED_TRANSPORT_REASONS
+    ):
+        return terminal
+    return ""
 
 
 def _no_suitable_generation_reason(error: BaseException) -> str:
-    details = dict(getattr(error, "diagnostics", {}) or {})
-    terminal = compact_whitespace(str(details.get("terminalReason") or "")).lower()
-    if terminal:
-        return terminal
-    message = compact_whitespace(str(error)).lower()
-    prefix = "active_rag_no_insertable_content:"
-    return message[len(prefix) :] if message.startswith(prefix) else message
+    return _structured_governed_generation_reason(error) or "no_suitable_suggestion"
 
 
 def _no_suitable_generation_error(error: BaseException, *, diagnostics: dict[str, object]) -> bool:
     """Keep provider failures observable without turning them into a dead UI."""
 
     _ = diagnostics
-    return isinstance(error, DeepSeekCompletionError)
+    # A provider can use the same compact public message for a governed empty
+    # result and a transport/stream failure.  Only the structured producer
+    # codes above can make the former a completed no-suggestion Trace.
+    return bool(_structured_governed_generation_reason(error))
 
 
 def _timeline_evidence_from_core(core: LocalSqliteCoreClient, request: ActiveRagStartRequest) -> tuple[ActiveRagEvidence, ...]:
@@ -2323,6 +2500,10 @@ def _active_rag_chain_trace_record(
         "phase": compact_whitespace(phase),
         "sessionId": session.session_id,
         "status": session.status,
+        "traceStatus": _active_rag_trace_status(session, phase),
+        "terminalStage": _active_rag_terminal_stage(session, phase),
+        "stageStatus": _active_rag_stage_statuses(session, phase),
+        "stageTiming": _active_rag_observation_stage_timing(session),
         "error": session.error,
         "elapsedMs": max(0, now_ms() - int(session.created_at_ms)),
         "privacy": {
@@ -2380,13 +2561,34 @@ def _active_rag_observation_record(
 ) -> dict[str, object]:
     request = session.request
     timestamp_ms = now_ms()
+    retrieval: dict[str, object] = {"evidenceCount": len(session.evidence)}
+    if phase == "retrieval_complete":
+        retrieval.update(
+            {
+                "evidenceStage": "retrieval_output",
+                "traceEvidence": [
+                    _active_rag_observation_evidence(item, rank_after=index)
+                    for index, item in enumerate(session.evidence, start=1)
+                ],
+            }
+        )
+    stage_timing = _active_rag_observation_stage_timing(session)
+    trace_status = _active_rag_trace_status(session, phase)
     return {
         "schemaVersion": "rag-ime.active-rag-observation.v1",
         "timestampMs": timestamp_ms,
         "phase": compact_whitespace(phase),
         "sessionId": session.session_id,
-        "status": session.status,
+        # ``status`` is the common Trace status. ``uiStatus`` keeps the
+        # foreground fallback observable without letting it settle an open
+        # provider stage as completed.
+        "status": trace_status,
+        "uiStatus": session.status,
+        "traceStatus": trace_status,
+        "terminalStage": _active_rag_terminal_stage(session, phase),
+        "stageStatus": _active_rag_stage_statuses(session, phase),
         "elapsedMs": max(0, timestamp_ms - int(session.created_at_ms)),
+        "stageTiming": stage_timing,
         "privacy": {"rawTextIncluded": False},
         "request": {
             "frontAppBundleId": request.front_app_bundle_id,
@@ -2397,9 +2599,176 @@ def _active_rag_observation_record(
             "currentContext": {"chars": len(request.context)},
             "providedEvidenceCount": len(request.evidence_pack),
         },
-        "retrieval": {"evidenceCount": len(session.evidence)},
+        "retrieval": retrieval,
         "generation": {"candidateCount": len(session.candidates)},
     }
+
+
+def _active_rag_observation_stage_timing(
+    session: ActiveRagSession,
+) -> dict[str, dict[str, int]]:
+    """Project only explicit, bounded lifecycle timing into the observer record."""
+
+    projected: dict[str, dict[str, int]] = {}
+    for stage in ("context", "retrieval", "generation"):
+        timing = session.stage_timings.get(stage)
+        if not isinstance(timing, dict):
+            continue
+        started = timing.get("startedAtMs")
+        if isinstance(started, bool) or not isinstance(started, int) or started < 0:
+            continue
+        item: dict[str, int] = {"startedAtMs": started}
+        ended = timing.get("endedAtMs")
+        duration = timing.get("durationMs")
+        if (
+            isinstance(ended, int)
+            and not isinstance(ended, bool)
+            and ended >= started
+            and isinstance(duration, int)
+            and not isinstance(duration, bool)
+            and duration >= 0
+            and ended - started == duration
+        ):
+            item.update({"endedAtMs": ended, "durationMs": duration})
+        projected[stage] = item
+    return projected
+
+
+def _active_rag_retrieval_failed(session: ActiveRagSession) -> bool:
+    retrieval = session.diagnostics.get("retrieval")
+    return isinstance(retrieval, dict) and bool(
+        compact_whitespace(str(retrieval.get("error") or ""))
+    )
+
+
+def _active_rag_stage_started(session: ActiveRagSession, stage: str) -> bool:
+    return isinstance(session.stage_timings.get(stage), dict) and "startedAtMs" in session.stage_timings[stage]
+
+
+def _active_rag_stage_finished(session: ActiveRagSession, stage: str) -> bool:
+    timing = session.stage_timings.get(stage)
+    return isinstance(timing, dict) and "durationMs" in timing and "endedAtMs" in timing
+
+
+def _active_rag_terminal_stage(session: ActiveRagSession, phase: str) -> str:
+    """Return the producer-owned stage represented by this transition."""
+
+    if phase == "started":
+        return "context"
+    if phase == "retrieval_complete":
+        return "retrieval"
+    if _active_rag_stage_started(session, "generation"):
+        return "generation"
+    if _active_rag_stage_started(session, "retrieval"):
+        return "retrieval"
+    return "context"
+
+
+def _active_rag_stage_statuses(
+    session: ActiveRagSession,
+    phase: str,
+) -> dict[str, str]:
+    """Expose only bounded stage outcomes, never provider/private reasons."""
+
+    result: dict[str, str] = {}
+    if _active_rag_stage_started(session, "context"):
+        result["context"] = "completed"
+    if _active_rag_stage_started(session, "retrieval"):
+        if phase in {"cancelled", "stale_dropped"} and not _active_rag_stage_started(session, "generation"):
+            result["retrieval"] = "cancelled"
+        elif _active_rag_retrieval_failed(session):
+            result["retrieval"] = "failed"
+        elif _active_rag_stage_finished(session, "retrieval"):
+            result["retrieval"] = "completed"
+        else:
+            result["retrieval"] = "running"
+    if _active_rag_stage_started(session, "generation"):
+        if phase in {"cancelled", "stale_dropped"}:
+            result["generation"] = "cancelled"
+        elif session.trace_outcome == "failed":
+            result["generation"] = "failed"
+        elif _active_rag_stage_finished(session, "generation"):
+            result["generation"] = "completed"
+        else:
+            result["generation"] = "running"
+    terminal_stage = _active_rag_terminal_stage(session, phase)
+    if phase in {"cancelled", "stale_dropped"}:
+        # Context-only cancellation needs a terminal span so the envelope is
+        # cancelled rather than looking like a completed capture.
+        if terminal_stage == "context":
+            result = {"context": "cancelled"}
+        elif terminal_stage == "retrieval":
+            result.pop("generation", None)
+            result["retrieval"] = "cancelled"
+    return result
+
+
+def _active_rag_trace_status(session: ActiveRagSession, phase: str) -> str:
+    if session.trace_outcome == "failed" or _active_rag_retrieval_failed(session):
+        return "failed"
+    if session.trace_outcome == "cancelled" or phase in {"cancelled", "stale_dropped"}:
+        return "cancelled"
+    if any(
+        _active_rag_stage_started(session, stage)
+        and not _active_rag_stage_finished(session, stage)
+        for stage in ("retrieval", "generation")
+    ):
+        return "running"
+    return "completed" if session.status == "ready" else "running"
+
+
+def _active_rag_observation_evidence(
+    evidence: ActiveRagEvidence,
+    *,
+    rank_after: int,
+) -> dict[str, object]:
+    """Return only bounded, non-content metadata for a retrieval receipt."""
+
+    metadata = evidence.metadata if isinstance(evidence.metadata, dict) else {}
+    rank_before = _positive_exact_rank(metadata.get("rankBefore", metadata.get("rank")))
+
+    source_ref = next(
+        (
+            compact_whitespace(str(value))[:160]
+            for values in (
+                evidence.memory_ids,
+                evidence.atom_ids,
+                evidence.book_ids,
+                evidence.evidence_event_ids,
+            )
+            for value in values
+            if compact_whitespace(str(value))
+        ),
+        compact_whitespace(evidence.evidence_id)[:160],
+    )
+    return {
+        "evidenceId": compact_whitespace(evidence.evidence_id)[:160] or f"active-rag:{rank_after}",
+        "sourceKind": compact_whitespace(evidence.source_type)[:80] or "unknown",
+        "sourceRef": source_ref,
+        "sourceLane": compact_whitespace(evidence.source_lane)[:80] or "unknown",
+        "disposition": "included",
+        "scores": {
+            key: round(max(-1_000_000.0, min(1_000_000.0, float(value))), 6)
+            for key, value in (("score", evidence.score), ("confidence", evidence.confidence))
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+        },
+        "rankBefore": rank_before,
+        "rankAfter": max(1, int(rank_after)),
+        "omissionReason": "",
+    }
+
+
+def _positive_exact_rank(value: object) -> int | None:
+    """Keep only measured, positive integer ranks; never truncate a float."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 1 or not number.is_integer():
+        return None
+    return int(number)
 
 
 def _trace_text_snapshot(text: str, *, include_text: bool) -> dict[str, object]:

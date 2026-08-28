@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 760
+      "pathCount": 771
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 388
+      "pathCount": 389
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -43,24 +43,24 @@
     },
     "installation_reliability": {
       "description": "Clean installation compatibility for full Xcode paths and immutable installed database history.",
-      "pathCount": 10
+      "pathCount": 12
     }
   },
   "summary": {
-    "pathCount": 1203,
+    "pathCount": 1217,
     "dispositionCounts": {
-      "keep_release": 1181,
+      "keep_release": 1195,
       "delete_old_implementation": 22
     },
     "groupCounts": {
       "project_harness": 14,
-      "control_center_release_ui": 760,
-      "session_room_skill_flow": 388,
+      "control_center_release_ui": 771,
+      "session_room_skill_flow": 389,
       "desktop_semantic_accessibility": 12,
       "memory_curation": 14,
       "room_kernel_cleanup": 2,
       "release_scope": 3,
-      "installation_reliability": 10
+      "installation_reliability": 12
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -92,7 +92,7 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1203/1203 base-to-HEAD paths classified; 1181 retained and 22 old implementations deleted",
+    "releaseScopeCoverage": "1217/1217 base-to-HEAD paths classified; 1195 retained and 22 old implementations deleted",
     "repositoryPublicAudit": "Current 2026-08-27 repository-only audit is blocked by tracked handoff artifacts, machine-specific paths, the dirty worktree, pending foreground acceptance, declared blocked product status, and a missing release manifest. This file is a path-classification inventory, not a current public-release readiness receipt.",
     "localInstall": "Installation acceptance is external runtime evidence; source fixes cover installed migration checksum compatibility plus spaceful-Xcode Squirrel preinstall and SDK header resolution",
     "foregroundAcceptance": "not claimed by this source scope"
@@ -8518,6 +8518,104 @@
       "disposition": "keep_release",
       "group": "project_harness",
       "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "assets/showcase/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/pawos-agent-trace.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/pawos-room-focus-satellite.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/pawos-room-starfield.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/showcase-manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_SHOWCASE.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "control-center-web/e2e/pawos-showcase.capture.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "control-center-web/playwright.showcase.config.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryRelationCanvas.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its regression coverage."
+    },
+    {
+      "path": "scripts/build_control_center.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep Control Center build and release-footprint verification aligned with the current product generation."
+    },
+    {
+      "path": "scripts/capture_pawos_showcase.sh",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "scripts/check_control_center_footprint.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep Control Center build and release-footprint verification aligned with the current product generation."
+    },
+    {
+      "path": "scripts/write_pawos_showcase_manifest.mjs",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "tests/fixtures/native_control_bridge_contract.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room, observability, and native route contracts synchronized across product boundaries."
     }
   ]
 }

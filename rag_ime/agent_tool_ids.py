@@ -20,6 +20,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "todo",
     "agent_goal",
     "plugins",
+    "sandbox",
     "work_documents",
     "desktop_semantic",
 )

@@ -17,7 +17,17 @@ const canonicalPathIds = [
   'input.lexicon.review',
   'input.lexicon.apply',
   'input.lexicon.rollback',
+  'input.prediction.liveTrace',
   'observability.snapshot',
+  'observability.trace.get',
+  'observability.evals.list',
+  'observability.evalSuites.list',
+  'observability.sandboxRuns.list',
+  'observability.sandboxRun.get',
+  'observability.evals.evidence.run',
+  'observability.evalSchedules.list',
+  'observability.evalSchedules.create',
+  'observability.evalSchedule.runs',
   'observability.events',
   'agent.runtime.get',
   'agent.runtime.ensure',
@@ -99,6 +109,7 @@ const canonicalPathIds = [
   'agent.room.workItem.create',
   'agent.room.workItem.get',
   'agent.room.workItem.reassign',
+  'agent.room.workItem.resume',
   'agent.roles.list',
   'agent.roles.create',
   'agent.roles.update',
@@ -113,6 +124,7 @@ const canonicalPathIds = [
   'agent.personalContext.observability',
   'agent.tools.list',
   'agent.extensions.list',
+  'agent.extensions.usage',
   'agent.extensions.catalog',
   'agent.extensions.create',
   'agent.extensions.proposals',
@@ -268,6 +280,71 @@ describe('control route policy', () => {
         body: { previewToken: 'preview-token', confirmText: 'replace', refreshToken: 'secret' },
       } as never),
     ).toThrow(/body field/);
+  });
+
+  it('resolves an encoded traceId through the local trace detail route', () => {
+    expect(CONTROL_ROUTES['observability.trace.get']).toMatchObject({
+      method: 'GET',
+      path: '/api/observability/traces/:traceId',
+      params: { traceId: null },
+      query: ['limit', 'beforeSequence'],
+      responseContract: 'observability-trace-get.v1',
+    });
+    expect(resolveControlPath('observability.trace.get', {
+      traceId: 'trace:active-rag:alpha',
+    })).toBe('/api/observability/traces/trace%3Aactive-rag%3Aalpha');
+    expect(() => resolveControlPath('observability.trace.get', {
+      traceId: 'trace/escape',
+    })).toThrow(/invalid traceId/);
+    const maximumTraceId = `t${'a'.repeat(159)}`;
+    expect(resolveControlPath('observability.trace.get', { traceId: maximumTraceId }))
+      .toBe(`/api/observability/traces/${maximumTraceId}`);
+    expect(() => resolveControlPath('observability.trace.get', {
+      traceId: `${maximumTraceId}a`,
+    })).toThrow(/invalid traceId/);
+  });
+
+  it('keeps Eval reads trace-scoped and manual ground-truth runs versioned', () => {
+    expect(CONTROL_ROUTES['observability.evals.list']).toMatchObject({
+      method: 'GET',
+      path: '/api/observability/evals',
+      query: ['traceId', 'limit'],
+      requiredQuery: ['traceId'],
+      responseContract: 'observability-eval-list.v1',
+    });
+    expect(() => assertControlRequest({
+      pathId: 'observability.evals.list',
+      query: { traceId: 'trace:active-rag:alpha' },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'observability.evals.evidence.run',
+      body: {
+        schemaVersion: 'rag-ime.observability-evidence-eval-request.v1',
+        traceId: 'trace:active-rag:alpha',
+        requiredEvidenceIds: ['knowledge:answer'],
+        datasetId: 'manual:alpha',
+        labelRevision: 'review:1',
+        truthKind: 'human',
+      },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'observability.evals.evidence.run',
+      body: {
+        traceId: 'trace:active-rag:alpha',
+        requiredEvidenceIds: [],
+        datasetId: 'manual:alpha',
+        labelRevision: 'review:1',
+        truthKind: 'human',
+      },
+    } as never)).toThrow(/required body field/);
+  });
+
+  it('exposes prediction trace only as a bounded local input feed', () => {
+    expect(CONTROL_ROUTES['input.prediction.liveTrace']).toEqual({
+      method: 'GET',
+      path: '/api/prediction/live-trace',
+      query: ['limit', 'sessionId'],
+    });
   });
 
   it('allows the bounded recent view without changing full Session snapshot callers', () => {

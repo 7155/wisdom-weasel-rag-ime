@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_events import AgentEventHub
+from rag_ime.agent_runtime_driver import AgentRuntimeError
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 from rag_ime.pi_runtime_public import (
@@ -1529,6 +1530,316 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertEqual(context_calls, [])
         self.assertFalse((self.root / "agent" / "host-requests.jsonl").exists())
+
+    def test_host_snapshot_failure_recovers_from_durable_history_instead_of_empty_success(self) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "host-snapshot-failure.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-host-snapshot-failure"},
+            {
+                "type": "message",
+                "id": "failure-user",
+                "parentId": "",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "历史仍然存在"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "failure-assistant",
+                "parentId": "failure-user",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Host 暂时不可用，但历史不能消失"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-host-snapshot-failure",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="failure-assistant",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        with patch.object(
+            self.runtime,
+            "_inspection_snapshot",
+            side_effect=AgentRuntimeError("Host snapshot unavailable"),
+        ):
+            snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [
+                block["data"]["text"]
+                for message in snapshot["messages"]
+                for block in message["blocks"]
+                if block["type"] == "text"
+            ],
+            ["历史仍然存在", "Host 暂时不可用，但历史不能消失"],
+        )
+
+    def test_durable_snapshot_uses_transcript_append_time_for_timeline_order(self) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "timeline-order.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-timeline-order"},
+            {
+                "type": "message",
+                "id": "timeline-user-1",
+                "parentId": "",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "timestamp": 900,
+                    "content": [{"type": "text", "text": "第一条"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "timeline-user-2",
+                "parentId": "timeline-user-1",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "user",
+                    "timestamp": 100,
+                    "content": [{"type": "text", "text": "第二条"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-timeline-order",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="timeline-user-2",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [message["createdAtMs"] for message in snapshot["messages"]],
+            [100, 200],
+        )
+
+    def test_durable_reasoning_precedes_final_inside_one_append_entry(self) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "reasoning-before-final.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-reasoning-order"},
+            {
+                "type": "message",
+                "id": "reasoning-user",
+                "parentId": "pi-reasoning-order",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "timestamp": 100,
+                    "content": [{"type": "text", "text": "hi"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "reasoning-assistant",
+                "parentId": "reasoning-user",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "api": "openai-codex-responses",
+                    "timestamp": 200,
+                    "content": [
+                        {"type": "thinking", "thinking": "Drafting greeting"},
+                        {"type": "text", "text": "Hi!"},
+                    ],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-reasoning-order",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="reasoning-assistant",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        snapshot = self.runtime.session_snapshot(session_id)
+        final_message = next(
+            message for message in snapshot["messages"]
+            if message["role"] == "assistant"
+        )
+        reasoning = next(
+            event for event in snapshot["toolHistoryEvents"]
+            if event["eventType"] == "reasoning_summary"
+        )
+
+        self.assertEqual(final_message["timelineSequence"], 2.9)
+        self.assertEqual(reasoning["timelineSequence"], 2.1)
+        self.assertLess(
+            reasoning["timelineSequence"],
+            final_message["timelineSequence"],
+        )
+
+    def test_durable_snapshot_keeps_more_than_256_tool_activities_after_refresh(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "long-tool-history.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-long-tool-history"},
+            {
+                "type": "message",
+                "id": "long-tool-user",
+                "parentId": "pi-long-tool-history",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "timestamp": 100,
+                    "content": [{"type": "text", "text": "保留完整工具时间线"}],
+                },
+            },
+        ]
+        parent_id = "long-tool-user"
+        for index in range(300):
+            tool_call_id = f"long-tool-{index + 1}"
+            assistant_id = f"long-assistant-{index + 1}"
+            result_id = f"long-result-{index + 1}"
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": assistant_id,
+                    "parentId": parent_id,
+                    "timestamp": 1_000 + index * 2,
+                    "message": {
+                        "role": "assistant",
+                        "timestamp": 200 + index * 2,
+                        "content": [{
+                            "type": "toolCall",
+                            "id": tool_call_id,
+                            "name": "workspace_read",
+                            "arguments": {"path": f"docs/item-{index + 1}.md"},
+                        }],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": result_id,
+                    "parentId": assistant_id,
+                    "timestamp": 1_001 + index * 2,
+                    "message": {
+                        "role": "toolResult",
+                        "timestamp": 201 + index * 2,
+                        "toolCallId": tool_call_id,
+                        "toolName": "workspace_read",
+                        "isError": False,
+                        "details": {"summary": f"read item {index + 1}"},
+                    },
+                },
+            ])
+            parent_id = result_id
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-long-tool-history",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor=parent_id,
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=601,
+        )
+
+        snapshot = self.runtime.session_snapshot(session_id)
+        tool_events = [
+            event
+            for event in snapshot["toolHistoryEvents"]
+            if event["eventType"] in {"tool_started", "tool_finished"}
+        ]
+
+        self.assertEqual(len(tool_events), 600)
+        self.assertEqual(tool_events[0]["payload"]["toolCallId"], "long-tool-1")
+        self.assertEqual(tool_events[-1]["payload"]["toolCallId"], "long-tool-300")
+
+    def test_transcript_tool_failure_keeps_pi_error_content_in_public_receipt(self) -> None:
+        raw_messages = [
+            {
+                "id": "user-validation",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "修改文件"}],
+            },
+            {
+                "id": "assistant-validation",
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{
+                    "type": "toolCall",
+                    "id": "tool-validation",
+                    "name": "write",
+                    "arguments": {"path": "file.txt"},
+                }],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 102,
+                "toolCallId": "tool-validation",
+                "toolName": "write",
+                "isError": True,
+                "details": {},
+                "content": [{
+                    "type": "text",
+                    "text": "Validation failed: resourceRevision: must have required properties resourceRevision",
+                }],
+            },
+        ]
+
+        events = _pi_tool_history_events(
+            raw_messages,
+            session_id="session-validation",
+        )
+        finished = next(
+            event for event in events if event["eventType"] == "tool_finished"
+        )
+
+        self.assertTrue(finished["payload"]["isError"])
+        self.assertIn(
+            "resourceRevision",
+            json.dumps(finished["payload"]["result"], ensure_ascii=False),
+        )
 
     def test_resident_history_and_command_reads_skip_context_reassembly(self) -> None:
         session_id = str(self.first["id"])

@@ -194,6 +194,25 @@ describe('buildContextXraySnapshot', () => {
     expect(snapshot.layers.find((layer) => layer.id === 'history')?.state).toBe('absent');
   });
 
+  it('keeps Memory and Knowledge/RAG managed blocks as separate real layers', () => {
+    const response = debugResponse();
+    const context = response.context as Record<string, unknown>;
+    context.systemPrompt = `${String(context.systemPrompt)}\n<rag-ime-context type="memory_recall">MEMORY_RECALL_TEXT</rag-ime-context>\n<rag-ime-context type="knowledge_recall">KNOWLEDGE_RECALL_TEXT</rag-ime-context>`;
+
+    const snapshot = buildContextXraySnapshot(normalizeDebugContextResponse(response));
+
+    expect(snapshot.layers.find((layer) => layer.id === 'memory-recall')).toMatchObject({
+      state: 'present',
+      content: 'MEMORY_RECALL_TEXT',
+    });
+    expect(snapshot.layers.find((layer) => layer.id === 'knowledge-rag')).toMatchObject({
+      state: 'present',
+      content: 'KNOWLEDGE_RECALL_TEXT',
+    });
+    expect(snapshot.layers.find((layer) => layer.id === 'system')?.content).not.toContain('MEMORY_RECALL_TEXT');
+    expect(snapshot.layers.find((layer) => layer.id === 'system')?.content).not.toContain('KNOWLEDGE_RECALL_TEXT');
+  });
+
   it('uses Pi final provider-neutral context when the bounded RPC projection omits wire payloads', () => {
     const response = debugResponse();
     const context = response.context as Record<string, unknown>;

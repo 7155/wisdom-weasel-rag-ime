@@ -351,6 +351,60 @@ describe('MemoryFeature relations', () => {
     expect(await screen.findByText('本轮处理完成')).toBeInTheDocument();
   });
 
+  it('surfaces an expired curation job as retryable after a Gateway restart', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'agent.memoryMaintenance.run': (request: ControlRequest) => request.query?.jobId
+          ? {
+            ok: false,
+            jobId: 'memory-maintenance:after-gateway-restart',
+            state: 'expired',
+            errorCode: 'memory_maintenance_job_expired',
+            error: 'Gateway restarted before this process-local Memory maintenance job could be read; the old job cannot be recovered.',
+            recovery: {
+              recoverable: false,
+              retryable: true,
+              action: 'trigger_new_job',
+              reason: 'process_local_job_registry_lost',
+            },
+          }
+          : {
+            ok: true,
+            policy: 'auto_governed',
+            runs: [],
+            ownerCuration: {
+              pendingSourceCount: 4,
+              needsReviewSourceCount: 0,
+              backlog: {
+                pendingSourceCount: 4,
+                pendingDayCount: 1,
+                coveredThroughDate: '2026-08-09',
+                targetDate: localCalendarDate(),
+                caughtUpThroughToday: false,
+                days: [{ date: localCalendarDate(), pendingSourceCount: 4, applications: [] }],
+                applications: [],
+              },
+              scopes: [{ status: 'idle', totalSourceCount: 4 }],
+            },
+            modelCuration: { stateCounts: {} },
+            bookProjection: { inSync: true },
+            projection: { freshness: { fresh: true } },
+          },
+        'agent.memoryMaintenance.trigger': { ok: true, jobId: 'memory-maintenance:after-gateway-restart', state: 'queued' },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '让Agent整理' }));
+    await user.click(await screen.findByRole('button', { name: '开始整理' }));
+    expect(await screen.findByText('整理任务已过期')).toBeInTheDocument();
+    expect(screen.getByText('Gateway 重启后旧的整理任务已过期，无法恢复；请重新整理。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '开始整理' })).not.toBeDisabled();
+  });
+
   it('opens a backlog day in the matching activity timeline', async () => {
     const user = userEvent.setup();
     const targetDate = '2026-08-10';
@@ -1754,6 +1808,7 @@ describe('MemoryFeature preferences', () => {
           ok: true,
           settings: {
             memory: {
+              enabled: false,
               timeDecay: { temporaryHalfLifeDays: 14, stablePreferenceHalfLifeDays: 365 },
               recall: { detailLevel: 'balanced' },
               automaticOrganization: { includeAgentDialogue: true },
@@ -1766,6 +1821,7 @@ describe('MemoryFeature preferences', () => {
     renderMemory(transport, '/memory?view=preferences', true);
 
     expect(await screen.findByRole('heading', { name: '记忆偏好' })).toBeInTheDocument();
+    expect(await screen.findByRole('switch', { name: '启用记忆增强' })).not.toBeChecked();
     expect(screen.queryByRole('tablist', { name: '记忆视图' })).not.toBeInTheDocument();
     expect(screen.getByRole('main')).toHaveAttribute('data-paw-os-app', 'memory');
     expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
@@ -1773,6 +1829,7 @@ describe('MemoryFeature preferences', () => {
 
   it('saves second-brain preferences through the governed settings authority and reloads them', async () => {
     const user = userEvent.setup();
+    let memoryEnabled = true;
     let stablePreferenceHalfLifeDays = 365;
     let includeAgentDialogue = true;
     let timelineEnabled = true;
@@ -1795,6 +1852,7 @@ describe('MemoryFeature preferences', () => {
             ok: true,
             settings: {
               memory: {
+                enabled: memoryEnabled,
                 timeDecay: { temporaryHalfLifeDays: 14, stablePreferenceHalfLifeDays },
                 automaticOrganization: { includeAgentDialogue },
                 recall: { detailLevel: 'compact', timelineEnabled, timelineMaxItems },
@@ -1806,6 +1864,7 @@ describe('MemoryFeature preferences', () => {
         'configuration.settings.preview': (request: ControlRequest) => {
           expect(request.body).toEqual({
             changes: {
+              'memory.enabled': false,
               'memory.automaticOrganization.includeAgentDialogue': false,
               'memory.recall.timelineEnabled': false,
               'memory.recall.timelineMaxItems': 4,
@@ -1829,6 +1888,7 @@ describe('MemoryFeature preferences', () => {
           const body = request.body as Record<string, unknown>;
           expect(body).toMatchObject({
             changes: {
+              'memory.enabled': false,
               'memory.automaticOrganization.includeAgentDialogue': false,
               'memory.recall.timelineEnabled': false,
               'memory.recall.timelineMaxItems': 4,
@@ -1840,6 +1900,7 @@ describe('MemoryFeature preferences', () => {
             confirmText: 'apply',
           });
           stablePreferenceHalfLifeDays = 730;
+          memoryEnabled = false;
           includeAgentDialogue = false;
           timelineEnabled = false;
           timelineMaxItems = 4;
@@ -1860,6 +1921,7 @@ describe('MemoryFeature preferences', () => {
 
     expect(await screen.findByRole('heading', { name: '记忆偏好' })).toBeInTheDocument();
     expect(await screen.findByRole('combobox', { name: '稳定偏好' })).toHaveTextContent('正常记住');
+    await user.click(await screen.findByRole('switch', { name: '启用记忆增强' }));
     await user.click(screen.getByRole('combobox', { name: '稳定偏好' }));
     await user.click(await screen.findByRole('option', { name: '优先记住' }));
     await user.click(screen.getByRole('switch', { name: '让 Agent 对话摘要参与整理' }));
@@ -1871,6 +1933,7 @@ describe('MemoryFeature preferences', () => {
     expect(await screen.findByText('记忆偏好已保存')).toBeInTheDocument();
     expect(settingsReads).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('combobox', { name: '稳定偏好' })).toHaveTextContent('优先记住');
+    expect(screen.getByRole('switch', { name: '启用记忆增强' })).not.toBeChecked();
     expect(screen.getByRole('switch', { name: '让 Agent 对话摘要参与整理' })).not.toBeChecked();
     expect(screen.getByRole('switch', { name: '按需召回时间线' })).not.toBeChecked();
     expect(screen.getByRole('combobox', { name: '时间线召回上限' })).toHaveTextContent('4 条');

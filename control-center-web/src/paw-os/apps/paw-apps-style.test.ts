@@ -14,6 +14,7 @@ import pluginsCss from '../../features/plugins/plugins.css?raw';
 import satelliteCss from '../../features/paw-os/paw-os-satellite.css?raw';
 import terminalCss from '../../features/terminal/paw-os-terminal-app.css?raw';
 import appCss from './paw-apps.css?raw';
+import roundSheetCss from './paw-room-round-sheet.css?raw';
 import pawOsAppSource from '../PawOsApp.tsx?raw';
 import primitiveCss from '../../components/primitives/primitives.css?raw';
 import workspaceCss from '../../design/workspace.css?raw';
@@ -167,8 +168,8 @@ describe('PAWOS semantic type roles', () => {
     expect(agentMigratedCss.slice(codeSurfaceRule)).toMatch(/\.agent-tool-raw-result__body > pre,[\s\S]*?\.agent-tool-raw-result__virtual-scroll pre,[\s\S]*?\.agent-tool-code-result > pre,[\s\S]*?\.agent-tool-terminal-result > pre[\s\S]*?background:\s*var\(--color-code-bg\);[\s\S]*?color:\s*var\(--color-code-text\);/s);
   });
 
-  it('keeps ordinary App windows above the desktop Dock', () => {
-    expect(pawOsCss).toMatch(/\.paw-dock\s*\{[^}]*z-index:\s*8;/s);
+  it('keeps the resident Dock above App windows', () => {
+    expect(pawOsCss).toMatch(/\.paw-dock\s*\{[^}]*z-index:\s*90;/s);
     expect(shellMigratedCss).not.toMatch(/\.paw-dock\s*\{[^}]*z-index/s);
   });
 
@@ -707,6 +708,20 @@ describe('PAWOS semantic type roles', () => {
     expect(appCss).toMatch(/\.paw-room-governance \.ui-select__trigger, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
   });
 
+  it('keeps the Room task-sheet readable, scrollable, and collaboration reachable in narrow windows', () => {
+    expect(roundSheetCss).not.toMatch(/font(?:-size)?:[^;]*(?:10|10\.5|11|11\.5)px/);
+    expect(roundSheetCss).toMatch(/\.paw-room-rounds\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s);
+    expect(roundSheetCss).toMatch(/\.paw-room-round\s*\{[^}]*height:\s*max-content;[^}]*overflow:\s*hidden;/s);
+    expect(roundSheetCss).toMatch(/\.paw-room-round__table-scroll\s*\{[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*clip;/s);
+    expect(roundSheetCss).toMatch(/\.paw-room-round table\s*\{[^}]*min-width:\s*720px;/s);
+    expect(appCss).toMatch(/\.paw-room-workspace\[data-window-chrome='portal'\]\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/s);
+    expect(appCss).toMatch(/\.paw-room-workspace\[data-window-chrome='fallback'\]\s*\{[^}]*grid-template-rows:\s*44px auto minmax\(0, 1fr\);/s);
+    expect(roomMigratedCss).toMatch(/\.paw-room-workspace--migrated-v1\[data-window-chrome='portal'\]\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/s);
+    expect(appCss).not.toMatch(/\.paw-room-workspace__header nav button:nth-child\(2\)\s*\{[^}]*display:\s*none;/s);
+    expect(appCss).toContain("[data-room-view='conversation']");
+    expect(appCss).toContain("[data-room-view='starfield']");
+  });
+
   it('keeps Room panel and participant satellites at the 12px metadata floor', () => {
     const roomSatelliteCss = satelliteCss.slice(
       satelliteCss.indexOf('.paw-os-satellite--room-panel'),
@@ -807,7 +822,7 @@ describe('PAWOS semantic type roles', () => {
     const narrowShellCss = pawOsCss.slice(narrowStart, narrowEnd);
 
     expect(narrowShellCss).toContain('.paw-window-shell:not([data-overview]):not([data-focus-layout])');
-    expect(narrowShellCss).toContain('.paw-window-shell:not([data-focus-layout]) .paw-window-resize');
+    expect(narrowShellCss).toContain(".paw-window-shell:not([data-focus-layout]):not([data-placement='maximized']) .paw-window-resize");
     expect(narrowShellCss).not.toMatch(/(?:^|\n)\s*\.paw-window-resize\s*\{/);
   });
 

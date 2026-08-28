@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RoomActivityProjection } from '@/contracts/room-reducer';
-import { roomActivityFlowKind, roomFlowRefs } from './room-flow-projection';
+import { roomActivityFlowKind, roomFlowRefs, roomWorkReviewFlow } from './room-flow-projection';
 
 function activity(overrides: Partial<RoomActivityProjection> & { payload?: Record<string, unknown> }): RoomActivityProjection {
   return {
@@ -36,10 +36,10 @@ describe('roomActivityFlowKind', () => {
     }))).toBe('dispatch');
   });
 
-  it('classifies intercom traffic as request paths', () => {
+  it('classifies intercom traffic as a distinct request path, not a mention', () => {
     expect(roomActivityFlowKind(activity({
       payload: { sourceEventType: 'intercom', targetParticipantId: 'partner-b' },
-    }))).toBe('request');
+    }))).toBe('intercom');
   });
 
   it('treats refs as a context handoff only when explicitly addressed to a target', () => {
@@ -76,5 +76,101 @@ describe('roomFlowRefs', () => {
     expect(refs.slice(0, 3)).toEqual(['doc:a', 'doc:b', 'artifact:c']);
     expect(refs).toHaveLength(10);
     expect(new Set(refs).size).toBe(refs.length);
+  });
+
+  it('retains explicit artifact and evidence refs nested in a producer WorkItem', () => {
+    expect(roomFlowRefs({
+      work: {
+        artifactRefs: ['artifact:nested', 'artifact:duplicate'],
+        evidenceRefs: ['artifact:duplicate', 'trace:nested'],
+      },
+      artifactRefs: ['artifact:top-level'],
+    })).toEqual([
+      'artifact:top-level',
+      'artifact:nested',
+      'artifact:duplicate',
+      'trace:nested',
+    ]);
+  });
+});
+
+describe('roomWorkReviewFlow', () => {
+  it('maps a submitted child WorkItem from the event actor to its creator', () => {
+    const result = roomWorkReviewFlow(activity({
+      participantId: 'reviewer',
+      payload: {
+        activityKind: 'work',
+        phase: 'submitted',
+        workItemId: 'work-child',
+        sourceParticipantId: 'prose-must-not-win',
+        work: {
+          id: 'work-child',
+          parentWorkId: 'work-root',
+          createdByParticipantId: 'owner',
+          accountableParticipantId: 'root-accountable',
+          currentOwnerParticipantId: 'reviewer',
+          artifactRefs: ['artifact:child'],
+          evidenceRefs: ['trace:child'],
+        },
+      },
+    }));
+
+    expect(result).toEqual({
+      phase: 'submitted',
+      sourceParticipantId: 'reviewer',
+      targetParticipantId: 'owner',
+      status: 'waiting',
+      workItemId: 'work-child',
+      refs: ['artifact:child', 'trace:child'],
+    });
+    expect(roomActivityFlowKind(activity({
+      participantId: 'reviewer',
+      payload: {
+        activityKind: 'work', phase: 'submitted', workItemId: 'work-child',
+        work: { id: 'work-child', parentWorkId: 'work-root', createdByParticipantId: 'owner' },
+      },
+    }))).toBe('review');
+  });
+
+  it.each([
+    { phase: 'completed', status: 'completed' },
+    { phase: 'returned', status: 'waiting' },
+  ] as const)('maps a $phase conclusion to the current owner', ({ phase, status }) => {
+    expect(roomWorkReviewFlow(activity({
+      participantId: 'reviewer',
+      status: 'completed',
+      payload: {
+        activityKind: 'work', phase, workItemId: 'work-root',
+        work: {
+          id: 'work-root',
+          currentOwnerParticipantId: 'implementer',
+          artifactRefs: ['artifact:result'],
+          evidenceRefs: ['trace:result'],
+        },
+      },
+    }))).toMatchObject({
+      phase,
+      sourceParticipantId: 'reviewer',
+      targetParticipantId: 'implementer',
+      status,
+      refs: ['artifact:result', 'trace:result'],
+    });
+  });
+
+  it('rejects an ambiguous or prose-only work review shape', () => {
+    expect(roomWorkReviewFlow(activity({
+      participantId: 'reviewer',
+      payload: {
+        activityKind: 'work', phase: 'completed', workItemId: 'top-id',
+        summary: 'reviewed owner',
+        work: { id: 'different-id', currentOwnerParticipantId: 'owner' },
+      },
+    }))).toBeUndefined();
+    expect(roomWorkReviewFlow(activity({
+      participantId: 'reviewer',
+      payload: {
+        summary: '等待某人复核', requestKind: 'review_request',
+      },
+    }))).toBeUndefined();
   });
 });

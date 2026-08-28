@@ -1140,7 +1140,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
                 evidence_pack=(
                     {
                         "rawText": "不要出现这个原文 sk-abcdef1234567890",
-                        "evidencePreview": "/Users/undo/private/file.txt user@example.com",
+                        "evidencePreview": "/Users/example/private/file.txt user@example.com",
                         "surfaceHints": ["真实候选"],
                     },
                 ),
@@ -1150,7 +1150,7 @@ class DeepSeekCompletionTests(unittest.TestCase):
 
         self.assertNotIn("sk-1234567890abcdef", prompt_blob)
         self.assertNotIn("sk-abcdef1234567890", prompt_blob)
-        self.assertNotIn("/Users/undo/private/file.txt", prompt_blob)
+        self.assertNotIn("/Users/example/private/file.txt", prompt_blob)
         self.assertNotIn("user@example.com", prompt_blob)
         self.assertNotIn("不要出现这个原文", prompt_blob)
         self.assertIn("[REDACTED_SECRET]", prompt_blob)

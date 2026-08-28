@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.observability-trace-error.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "errorCode", "error", "traceId"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.observability-trace-error.v1"},
+    "ok": {"const": false},
+    "errorCode": {"enum": ["trace_not_found", "invalid_trace_id", "trace_invalid"]},
+    "error": {"type": "string", "minLength": 1},
+    "traceId": {"type": "string"}
+  }
+}

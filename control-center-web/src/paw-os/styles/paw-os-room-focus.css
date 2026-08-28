@@ -164,37 +164,199 @@
 .paw-desktop-root .paw-room-focus-overview__inspector > header strong { font-size: 12px; font-weight: 650; }
 .paw-desktop-root .paw-room-focus-overview__section > header small { color: #9197a1; font-size: 12px; font-variant-numeric: tabular-nums; }
 
-/* Partner-only collaboration graph. Partners occupy a stable two-column
- * ledger and real relations get their own rows. Labels and paths never float
- * above the same pixels, so the narrow Room tool rail remains readable. */
+/* Partner-only collaboration graph. Two stable columns keep all eight named
+ * planets and their responsibility copy aligned without introducing Sol or
+ * WorkItem pseudo-participants. */
 .paw-desktop-root .paw-room-focus-overview__mesh-canvas {
+  position: relative;
   width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.paw-desktop-root .paw-room-focus-overview__mesh-canvas > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.paw-desktop-root .paw-room-focus-overview__mesh-edge { color: #9aa1ac; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-selected='true'] { color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-selected='true'] > path { stroke-width: 2.4px; opacity: 1; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge > path { fill: none; stroke: currentColor; stroke-width: 1.4px; opacity: .72; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='responsibility'] > path { stroke-width: 1.7px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='dependency'] > path { stroke-dasharray: 5 3; stroke-width: 1.2px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='review'] > path { stroke-dasharray: 1.5 3.5; stroke-linecap: round; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='handoff'] > path { stroke-dasharray: 7 4; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='mention'] > path { stroke-dasharray: 2 3; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='request'] > path { stroke-dasharray: 1 4; stroke-width: 1.6px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='dispatch'] > path { stroke-width: 2px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='receipt'] > path { stroke-width: 1.8px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='result'] > path { stroke-width: 1.8px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='question'] > path { stroke-dasharray: 2 3; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='answer'] > path { stroke-width: 1.7px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge-label {
+  position: absolute;
+  z-index: 2;
+  padding: 1px 5px;
+  border: 1px solid rgb(42 45 52 / .1);
+  border-radius: 999px;
+  color: #68717d;
+  background: rgb(255 255 255 / .94);
+  box-shadow: 0 1px 4px rgb(42 45 52 / .06);
+  font-size: 12px;
+  font-weight: 650;
+  font-family: inherit;
+  line-height: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transform: translate(-50%, -50%);
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-edge-label:hover,
+.paw-desktop-root .paw-room-focus-overview__mesh-edge-label[aria-current='true'] {
+  border-color: rgb(39 131 222 / .32);
+  color: #206fae;
+  background: rgb(239 247 255 / .98);
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-edge-label:focus-visible {
+  z-index: 3;
+  outline: 2px solid var(--focus-blue);
+  outline-offset: 2px;
+}
+
+.paw-desktop-root .paw-room-focus-overview__mesh-detail {
+  position: relative;
+  z-index: 4;
   display: grid;
+  gap: 7px;
+  margin: 8px 8px 6px;
+  padding: 9px 10px;
+  border: 1px solid rgb(39 131 222 / .16);
+  border-radius: 9px;
+  background: rgb(255 255 255 / .96);
+  box-shadow: 0 5px 15px rgb(42 45 52 / .06);
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-detail > header {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-detail > header > span { display: inline-flex; align-items: center; gap: 5px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail > header > small { color: #737a86; font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-route { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: #363c46; font-size: 13px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail > dl { display: grid; gap: 3px 8px; margin: 0; font-size: 12px; line-height: 16px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail > dl > div { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail dt { color: #8b929d; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail dd { min-width: 0; display: flex; flex-wrap: wrap; gap: 3px 7px; margin: 0; color: #4c545f; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail code { color: #59616e; font: 12px/16px var(--font-mono); }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempts { min-width: 0; display: grid; gap: 4px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempts-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; color: #59616e; font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempts-heading span { color: #8b929d; font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-list { display: grid; max-height: min(220px, 30vh); gap: 4px; margin: 0; padding: 0 3px 0 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-list > li { min-width: 0; padding: 5px 6px; border: 1px solid rgb(42 45 52 / .08); border-radius: 7px; background: rgb(250 250 250 / .72); }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-meta { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 7px; color: #59616e; font-size: 12px; line-height: 15px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-meta strong { min-width: 0; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-meta span { flex-shrink: 0; color: #8b929d; font-variant-numeric: tabular-nums; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-list > li > p { margin: 2px 0 0; color: #59616e; font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-provenance { display: flex; flex-wrap: wrap; gap: 2px 6px; margin-top: 3px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-attempt-provenance code { color: #737a86; font-size: 12px; line-height: 15px; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-actions button { min-height: 28px; padding: 0 8px; border: 1px solid rgb(39 131 222 / .16); border-radius: 7px; color: #206fae; background: rgb(39 131 222 / .055); font-size: 12px; cursor: pointer; }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-actions button:hover { background: rgb(39 131 222 / .1); }
+.paw-desktop-root .paw-room-focus-overview__mesh-detail-actions button:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 2px; }
+
+/* Failed, pending and cycle-conflict attempts remain inspectable without
+ * becoming success-DAG geometry. Keep the disclosure bounded so a noisy Room
+ * cannot push the task sheet and inspector out of the narrow panel. */
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure {
+  margin: 0 8px 8px;
+  border: 1px solid rgb(198 71 71 / .16);
+  border-radius: 8px;
+  background: rgb(255 250 249 / .82);
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure > summary {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 6px 10px 10px;
+  padding: 6px 9px;
+  color: #78514d;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  list-style: none;
 }
-
-.paw-desktop-root .paw-room-focus-overview__mesh-nodes {
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure > summary::-webkit-details-marker { display: none; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure > summary::after { content: '›'; color: #a26a63; font-size: 17px; line-height: 12px; transform: rotate(90deg); }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure[data-expanded='true'] > summary::after { transform: rotate(-90deg); }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure > summary:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: -2px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px 12px;
+  max-height: 240px;
+  gap: 5px;
+  margin: 0;
+  padding: 0 6px 7px 27px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-list > li {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid rgb(42 45 52 / .08);
+  border-radius: 7px;
+  background: rgb(255 255 255 / .86);
+}
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-route { min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 6px; color: #4d5560; font-size: 12px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-route strong { font-weight: 650; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-route > span:last-child { color: #737a86; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-reason { margin: 3px 0 0; color: #9a4f47; font-size: 12px; line-height: 15px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-summary { margin: 2px 0 0; color: #59616e; font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-provenance { display: flex; flex-wrap: wrap; gap: 3px 6px; margin-top: 4px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-disclosure-provenance code { color: #737a86; font: 12px/15px var(--font-mono); overflow-wrap: anywhere; }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-nodes > [role='listitem'] { min-width: 0; }
+/* Edge state colors follow the same palette as every state dot. Handoff
+ * lifecycle states map onto the same hues (dispatched/offered read as live). */
+.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='running'], [data-state='dispatched'], [data-state='offered'], [data-state='sent']) { color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='review'], [data-state='waiting']) { color: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='blocked'], [data-state='failed']) { color: var(--focus-red); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge:is([data-state='delivered'], [data-state='received'], [data-state='replied'], [data-state='accepted']) { color: #64748b; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-state='cancelled'] { color: #94a3b8; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-state='confirmed'] { color: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-state='completed'] { color: var(--focus-green); }
+/* Type colours are applied after lifecycle colours so established relations
+ * still communicate whether they are an @, request, dispatch, handoff,
+ * receipt, result or review at a glance. */
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='mention'] { color: #8b5cf6; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='request'] { color: #0f766e; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='dispatch'] { color: var(--focus-blue); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='handoff'] { color: #c2410c; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='receipt'] { color: #0891b2; }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='result'] { color: var(--focus-green); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-kind='review'] { color: var(--focus-amber); }
+.paw-desktop-root .paw-room-focus-overview__mesh-edge[data-selected='true'] { color: var(--focus-blue); }
 
 .paw-desktop-root .paw-room-focus-overview__mesh-node {
-  width: 100%;
-  min-width: 0;
+  position: absolute;
+  z-index: 1;
+  /* Two columns keep responsibilities legible in the 320px collaboration
+     panel while remaining collision-free in the pop-out surface. */
+  width: min(156px, 42%);
+  max-width: 156px;
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
-  padding: 7px 4px;
+  justify-items: center;
+  gap: 3px;
+  padding: 3px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 9px;
   color: inherit;
   background: transparent;
-  text-align: left;
+  text-align: center;
+  transform: translate(-50%, -50%);
   cursor: pointer;
   transition: background-color 120ms ease;
 }
@@ -202,10 +364,10 @@
 .paw-desktop-root button.paw-room-focus-overview__mesh-node[aria-pressed='true'] { background: rgb(39 131 222 / .085); box-shadow: inset 0 0 0 1px rgb(39 131 222 / .18); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 1px; }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span { width: 100%; min-width: 0; display: grid; gap: 1px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span { width: 100%; min-width: 0; display: grid; gap: 0; padding: 2px 4px 3px; border-radius: 6px; background: rgb(250 250 250 / .9); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node > span > strong { overflow: hidden; font-size: 12px; font-weight: 640; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span > small { display: none; }
-.paw-desktop-root .paw-room-focus-overview__mesh-node > span > em { overflow: hidden; color: #727a86; font-size: 12px; font-style: normal; font-weight: 500; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span > small { overflow: hidden; color: #858c97; font-size: 12px; line-height: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.paw-desktop-root .paw-room-focus-overview__mesh-node > span > em { display: -webkit-box; overflow: hidden; color: #59616e; font-size: 12px; font-style: normal; font-weight: 570; line-height: 16px; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
 /* Planet marks keep their identity colors; the state ring is live state. */
 .paw-desktop-root .paw-room-focus-overview__mesh-node > i { width: 10px; height: 10px; border-radius: 50%; background: #9198a3; box-shadow: 0 0 0 2.5px rgb(145 152 163 / .16); }
@@ -220,35 +382,6 @@
 .paw-desktop-root .paw-room-focus-overview__mesh-node[data-state='completed'] > i { box-shadow: 0 0 0 2.5px rgb(36 138 77 / .26); }
 .paw-desktop-root .paw-room-focus-overview__mesh-node--partner[data-state='disconnected'] { opacity: .55; }
 
-.paw-desktop-root .paw-room-focus-overview__mesh-relations {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 5px 0 0;
-  border-top: 1px solid rgb(42 45 52 / .07);
-  list-style: none;
-}
-.paw-desktop-root .paw-room-focus-overview__mesh-relations > li {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 7px;
-  min-height: 27px;
-  color: #59616e;
-  font-size: 12px;
-}
-.paw-desktop-root .paw-room-focus-overview__mesh-relations i { width: 8px; height: 1px; background: #9aa1ac; }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations li:is([data-state='running'], [data-state='dispatched'], [data-state='offered']) i { background: var(--focus-blue); }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations li:is([data-state='review'], [data-state='waiting']) i { background: var(--focus-amber); }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations li:is([data-state='blocked'], [data-state='failed']) i { background: var(--focus-red); }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations li[data-state='completed'] i { background: var(--focus-green); }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations span { min-width: 0; display: flex; align-items: center; gap: 5px; }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations strong { overflow: hidden; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations svg { flex: 0 0 auto; color: #a0a6af; }
-.paw-desktop-root .paw-room-focus-overview__mesh-relations small { color: #858c97; white-space: nowrap; }
-.paw-desktop-root .paw-room-focus-overview__mesh-empty { margin: 0; padding-top: 7px; border-top: 1px solid rgb(42 45 52 / .07); color: #858c97; font-size: 12px; line-height: 17px; }
-
 .paw-desktop-root .paw-room-focus-overview__mesh-legend {
   display: flex;
   flex-wrap: wrap;
@@ -262,6 +395,13 @@
 }
 .paw-desktop-root .paw-room-focus-overview__mesh-legend > li { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .paw-desktop-root .paw-room-focus-overview__mesh-legend i { width: 16px; border-top: 2px solid #9aa1ac; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='mention'] i { border-top-color: #8b5cf6; border-top-style: dashed; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='request'] i { border-top-color: #0f766e; border-top-style: dotted; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='dispatch'] i { border-top-color: var(--focus-blue); border-top-width: 3px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='handoff'] i { border-top-color: #c2410c; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='receipt'] i { border-top-color: #0891b2; border-top-width: 3px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='result'] i { border-top-color: var(--focus-green); border-top-width: 3px; }
+.paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='review'] i { border-top-color: var(--focus-amber); }
 .paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='dependency'] i,
 .paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='handoff'] i { border-top-style: dashed; }
 .paw-desktop-root .paw-room-focus-overview__mesh-legend [data-kind='review'] i { border-top-style: dotted; }

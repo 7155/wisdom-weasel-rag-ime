@@ -903,6 +903,120 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertNotIn("不可重放的旧消息", rendered)
         self.assertLessEqual(len(rendered), 24_000)
 
+    def test_facilitator_can_resize_active_room_and_release_removed_work(self) -> None:
+        roles = [
+            self.service.personas.create(
+                {
+                    "displayName": f"测试角色 {index}",
+                    "tagline": "协作测试",
+                    "summary": "用于 Room 动态成员测试",
+                    "traits": ["执行"],
+                    "timelineModel": "terra",
+                    "selectableModes": ["coordinator"],
+                    "suitableTasks": ["Room 协作"],
+                    "unsuitableTasks": ["无"],
+                }
+            )
+            for index in range(7)
+        ]
+        room = self.service.create_room(
+            {
+                "title": "动态行星 Room",
+                "routingPolicy": "natural",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        facilitator = room["participants"][0]
+        self.service._begin_room_turn(
+            str(facilitator["sessionId"]),
+            "room-turn:resize",
+            str(room["activeTopicId"]),
+            dispatch_id="room-dispatch:resize",
+        )
+
+        added = []
+        for index, role in enumerate(roles[:6]):
+            result = self.service.execute_room_partner_tool(
+                str(facilitator["sessionId"]),
+                {
+                    "op": "add_participant",
+                    "roleId": role.role_id,
+                    "roleVersion": role.version,
+                },
+                tool_call_id=f"tool:resize:add:{index}",
+            )
+            added.append(result["participant"])
+
+        self.assertEqual(
+            len([value for value in result["room"]["participants"] if value["status"] == "active"]),
+            8,
+        )
+        self.assertEqual(len({value["sessionId"] for value in added}), 6)
+        listed = self.service.execute_room_partner_tool(
+            str(facilitator["sessionId"]),
+            {"op": "list"},
+            tool_call_id="tool:resize:list",
+        )
+        self.assertEqual(len(listed["partners"]), 7)
+        self.assertTrue(
+            {value["participantId"] for value in listed["partners"]}
+            >= {value["id"] for value in added}
+        )
+
+        with self.assertRaisesRegex(ValueError, "at most eight"):
+            self.service.execute_room_partner_tool(
+                str(facilitator["sessionId"]),
+                {
+                    "op": "add_participant",
+                    "roleId": roles[6].role_id,
+                    "roleVersion": roles[6].version,
+                },
+                tool_call_id="tool:resize:add:overflow",
+            )
+
+        removed_target = added[0]
+        work = self.service.create_room_work_item(
+            str(room["id"]),
+            {
+                "objective": "交回被移除成员的任务",
+                "expectedOutput": "待重新分配的工作卡片",
+                "acceptanceCriteria": ["保留原始证据"],
+                "currentOwnerParticipantId": removed_target["id"],
+                "accountableParticipantId": removed_target["id"],
+                "createdByParticipantId": removed_target["id"],
+                "clientMessageId": "resize-release-work",
+            },
+        )["workItem"]
+        removed = self.service.execute_room_partner_tool(
+            str(facilitator["sessionId"]),
+            {
+                "op": "remove_participant",
+                "participantId": removed_target["id"],
+                "reason": "Room 规模调整",
+            },
+            tool_call_id="tool:resize:remove",
+        )
+        self.assertEqual(removed["participant"]["status"], "removed")
+        self.assertEqual(
+            len([value for value in removed["room"]["participants"] if value["status"] == "active"]),
+            7,
+        )
+        self.assertEqual(removed["releasedWorkItems"][0]["id"], work["id"])
+        self.assertEqual(removed["releasedWorkItems"][0]["state"], "blocked")
+        self.assertTrue(removed["releasedWorkItems"][0]["blocker"]["needsReassignment"])
+        self.assertEqual(
+            self.service.sessions.get(str(removed_target["sessionId"]))["status"],
+            "archived",
+        )
+        self.assertEqual(
+            [event["eventType"] for event in self.service.room_work.list_events(str(work["id"]))],
+            ["assigned", "reassigned"],
+        )
+
     def test_existing_member_room_context_is_bounded_by_count_and_characters(self) -> None:
         room = self.service.create_room(
             {

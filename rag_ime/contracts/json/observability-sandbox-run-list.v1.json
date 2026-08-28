@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.observability-sandbox-run-list.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "items", "total"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.observability-sandbox-run-list.v1"},
+    "ok": {"const": true},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/sandboxRun"}
+    },
+    "total": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "sandboxRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "sandboxRunId", "appId", "status", "policy",
+        "traceIds", "evalRunIds", "createdAtMs", "updatedAtMs"
+      ],
+      "properties": {
+        "schemaVersion": {"const": "rag-ime.sandbox-run.v1"},
+        "sandboxRunId": {"type": "string", "minLength": 1},
+        "appId": {"type": "string", "minLength": 1},
+        "status": {"enum": ["queued", "running", "completed", "failed", "cancelled"]},
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspaceBindingId", "workspaceFingerprint", "mutationMode",
+            "network", "productionWriteBlocked"
+          ],
+          "properties": {
+            "workspaceBindingId": {"type": "string", "minLength": 1},
+            "workspaceFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+            "mutationMode": {"enum": ["read_only", "staged"]},
+            "network": {"enum": ["blocked", "allowlisted"]},
+            "productionWriteBlocked": {"const": true}
+          }
+        },
+        "traceIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "evalRunIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

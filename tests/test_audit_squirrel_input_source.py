@@ -275,7 +275,7 @@ def _write_fake_lsregister(tmp_path: Path) -> Path:
                 "#!/usr/bin/env bash",
                 "cat <<'EOF'",
                 "---------------------------------------------------------------------------------",
-                "path: /Users/undo/Library/Input Methods/Squirrel.app (0x1)",
+                "path: /Users/example/Library/Input Methods/Squirrel.app (0x1)",
                 'identifier: "im.rime.inputmethod.Squirrel"',
                 'name: "Squirrel"',
                 "---------------------------------------------------------------------------------",

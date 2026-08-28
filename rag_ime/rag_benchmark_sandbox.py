@@ -622,25 +622,26 @@ class RagBenchmarkSandbox:
                     )
                 citation_ref = _citation_ref(external_document_id)
                 citation = hit.get("citation") if isinstance(hit.get("citation"), Mapping) else {}
-                hits.append(
-                    {
+                projected_hit = {
+                    "externalDocumentId": external_document_id,
+                    "citationRef": citation_ref,
+                    "chunkId": str(hit.get("chunkId") or ""),
+                    "documentName": str(hit.get("documentName") or ""),
+                    "ordinal": int(hit.get("ordinal") or 0),
+                    "content": str(hit.get("content") or ""),
+                    "citation": {
                         "externalDocumentId": external_document_id,
                         "citationRef": citation_ref,
-                        "chunkId": str(hit.get("chunkId") or ""),
-                        "documentName": str(hit.get("documentName") or ""),
-                        "ordinal": int(hit.get("ordinal") or 0),
-                        "content": str(hit.get("content") or ""),
-                        "score": float(hit.get("score") or 0.0),
-                        "citation": {
-                            "externalDocumentId": external_document_id,
-                            "citationRef": citation_ref,
-                            "documentName": str(citation.get("documentName") or ""),
-                            "page": citation.get("page"),
-                            "heading": citation.get("heading"),
-                            "chunkId": str(citation.get("chunkId") or ""),
-                        },
-                    }
-                )
+                        "documentName": str(citation.get("documentName") or ""),
+                        "page": citation.get("page"),
+                        "heading": citation.get("heading"),
+                        "chunkId": str(citation.get("chunkId") or ""),
+                    },
+                }
+                score = _optional_search_score(hit)
+                if score is not None:
+                    projected_hit["score"] = score
+                hits.append(projected_hit)
             rerank_receipt: dict[str, Any] = {
                 "enabled": False,
                 "independentStage": True,
@@ -1741,6 +1742,23 @@ def _finite_number(value: object, field: str, *, minimum: float, maximum: float)
             code="invalid_argument",
         )
     return normalized
+
+
+def _optional_search_score(hit: Mapping[str, object]) -> float | None:
+    """Project a measured score without turning an omitted value into zero."""
+
+    if "score" not in hit or hit.get("score") is None:
+        return None
+    value = hit.get("score")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RagBenchmarkSandboxError("search returned invalid score", code="integrity_error")
+    try:
+        score = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise RagBenchmarkSandboxError("search returned invalid score", code="integrity_error") from exc
+    if not math.isfinite(score):
+        raise RagBenchmarkSandboxError("search returned invalid score", code="integrity_error")
+    return score
 
 
 def _budget_error(message: str) -> RagBenchmarkSandboxError:

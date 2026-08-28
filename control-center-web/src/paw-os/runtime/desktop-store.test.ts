@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createPawDesktopStore } from './desktop-store';
+import { createPawDesktopStore, pawFocusWindowLayerSize, pawWindowLayerSize } from './desktop-store';
 
 describe('PAWOS desktop store', () => {
   it('keeps one primary window per App and restores it without creating a second process', () => {
@@ -65,7 +65,52 @@ describe('PAWOS desktop store', () => {
     expect(store.getState().windows.agent).toBe(before);
   });
 
-  it('keeps the Room main window focused while opening participant satellites in one group', () => {
+  it('lets ordinary windows use the full menu-below plane because the Dock is an overlay', () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    try {
+      expect(pawWindowLayerSize()).toEqual({ width: 1440, height: 866 });
+      expect(pawFocusWindowLayerSize()).toEqual({ width: 1440, height: 866 });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });
+    }
+  });
+
+  it('maximizes every App to the full menu-below plane and restores its prior frame', () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    try {
+      const store = createPawDesktopStore();
+      const windowId = store.getState().openApp('files');
+      const before = store.getState().windows[windowId]!.bounds;
+
+      store.getState().toggleMaximize(windowId);
+
+      expect(store.getState().windows[windowId]).toMatchObject({
+        placement: 'maximized',
+        restoreBounds: before,
+        bounds: { x: 0, y: 0, width: 1440, height: 866 },
+      });
+
+      store.getState().toggleMaximize(windowId);
+
+      expect(store.getState().windows[windowId]).toMatchObject({
+        bounds: before,
+        placement: undefined,
+        restoreBounds: undefined,
+      });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });
+    }
+  });
+
+  it('keeps the Room main window focused while opening participant Sessions without entering collaboration mode', () => {
     const store = createPawDesktopStore();
     const room = { kind: 'room', id: 'room-7', title: '迁移协作' } as const;
     const mainId = store.getState().openApp('agent', { entityId: room.id, target: room, title: room.title });
@@ -85,6 +130,10 @@ describe('PAWOS desktop store', () => {
     expect(state.windows[firstId]?.bounds.width).toBeGreaterThan(0);
     expect(state.windows[secondId]?.bounds.width).toBeGreaterThan(0);
     expect(state.stack.at(-1)).toBe(mainId);
+    expect(state.collaborationFocusGroup).toBeNull();
+
+    store.getState().setCollaborationFocusGroup(`room:${room.id}`);
+    expect(store.getState().collaborationFocusGroup).toBe(`room:${room.id}`);
   });
 
   it('gives all eight supported Room participants distinct non-overlapping satellite frames', () => {
@@ -159,7 +208,7 @@ describe('PAWOS desktop store', () => {
     expect(store.getState().windows[satelliteId]).toBe(before);
   });
 
-  it('keeps Room satellites attached to the matching Room main when other Agent windows are open', () => {
+  it('keeps Room participant Sessions attached to the matching Room main when other Agent windows are open', () => {
     const store = createPawDesktopStore();
     const sessionId = store.getState().openApp('agent', { entityId: 'session-1', target: { kind: 'session', id: 'session-1', title: '普通 Session' } });
     const room = { kind: 'room', id: 'room-9', title: '并行协作' } as const;
@@ -177,9 +226,24 @@ describe('PAWOS desktop store', () => {
     expect(roomWindow?.bounds.width).toBeGreaterThan(0);
     expect(roomWindow?.bounds).toEqual(roomBoundsBeforeSatellite);
     expect(roomWindow?.target).toEqual(room);
-    expect(state.collaborationFocusGroup).toBe('room:room-9');
+    expect(state.collaborationFocusGroup).toBeNull();
     expect(state.windows[sessionId]?.target?.kind).toBe('session');
     expect(state.windows[participantId]?.target?.kind).toBe('participant');
+  });
+
+  it('keeps ordinary subagent open and focus actions out of collaboration mode', () => {
+    const store = createPawDesktopStore();
+    const returnId = store.getState().openApp('project-workbench');
+    const subagentId = store.getState().openApp('agent', {
+      entityId: 'subagent-ordinary',
+      target: { kind: 'subagent', id: 'subagent-ordinary', sessionId: 'session-ordinary', title: '子 Agent' },
+    });
+
+    expect(store.getState().collaborationFocusGroup).toBeNull();
+    store.getState().focusWindow(returnId);
+    store.getState().focusWindow(subagentId);
+    expect(store.getState().activeWindowId).toBe(subagentId);
+    expect(store.getState().collaborationFocusGroup).toBeNull();
   });
 
   it('binds the matching Room main even when another Agent window is focused', () => {

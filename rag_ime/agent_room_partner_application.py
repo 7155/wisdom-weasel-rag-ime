@@ -103,6 +103,14 @@ class RoomPartnerApplicationService:
             [str, Mapping[str, object]], Mapping[str, object]
         ]
         | None = None,
+        add_room_participant: Callable[
+            [str, Mapping[str, object]], Mapping[str, object]
+        ]
+        | None = None,
+        remove_room_participant: Callable[
+            [str, Mapping[str, object]], Mapping[str, object]
+        ]
+        | None = None,
         recover_faulted_session: Callable[[str], None] | None = None,
     ) -> None:
         self.rooms = rooms
@@ -129,6 +137,8 @@ class RoomPartnerApplicationService:
         self.command_failure_evidence = command_failure_evidence
         self.accept_room_work = accept_room_work
         self.return_room_work = return_room_work
+        self.add_room_participant = add_room_participant
+        self.remove_room_participant = remove_room_participant
         self.recover_faulted_session = recover_faulted_session
 
     def execute(
@@ -143,6 +153,10 @@ class RoomPartnerApplicationService:
         operation = str(args.get("op") or "list").strip()
         if operation == "list":
             return self._list(source)
+        if operation == "add_participant":
+            return self._add_participant(source, args)
+        if operation == "remove_participant":
+            return self._remove_participant(source, args)
         if operation == "delegate":
             return self._delegate(
                 source,
@@ -188,8 +202,72 @@ class RoomPartnerApplicationService:
         raise ValueError(
             "room_partner op must be list, delegate, delegate_batch, retry, post, "
             "collect, wait, accept, return, peer_list, peer_send, peer_ask, "
-            "or peer_reply"
+            "peer_reply, add_participant, or remove_participant"
         )
+
+    def _require_facilitator_root(
+        self,
+        source: Mapping[str, object],
+    ) -> tuple[str, str]:
+        if str(source.get("collaborationRole") or "") != "coordinator":
+            raise ValueError(
+                "only the Room Facilitator can change Room participants"
+            )
+        return self._active_root(source)
+
+    def _add_participant(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        root_id, dispatch_id = self._require_facilitator_root(source)
+        if self.add_room_participant is None:
+            raise ValueError("Room participant add is unavailable")
+        payload: dict[str, object] = {
+            "roleId": _required_text(args, "roleId", maximum=320),
+            "collaborationRole": _text(args.get("collaborationRole"), maximum=40)
+            or "implementer",
+        }
+        role_version = _text(args.get("roleVersion"), maximum=40)
+        if role_version:
+            payload["roleVersion"] = role_version
+        result = self.add_room_participant(str(source["roomId"]), payload)
+        return {
+            **dict(result),
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "add_participant",
+            "roomId": str(source["roomId"]),
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+        }
+
+    def _remove_participant(
+        self,
+        source: Mapping[str, object],
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        root_id, dispatch_id = self._require_facilitator_root(source)
+        if self.remove_room_participant is None:
+            raise ValueError("Room participant removal is unavailable")
+        participant_id = _required_text(args, "participantId", maximum=320)
+        if participant_id == str(source.get("id") or ""):
+            raise ValueError("the Room Facilitator cannot remove itself")
+        result = self.remove_room_participant(
+            str(source["roomId"]),
+            {
+                "participantId": participant_id,
+                "actorParticipantId": str(source["id"]),
+                "reason": _text(args.get("reason"), maximum=500),
+            },
+        )
+        return {
+            **dict(result),
+            "schemaVersion": "rag-ime.room-partner-result.v1",
+            "operation": "remove_participant",
+            "roomId": str(source["roomId"]),
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+        }
 
     def _collect(
         self,
@@ -503,7 +581,7 @@ class RoomPartnerApplicationService:
         elif str(record.get("status") or "") == "blocked":
             instruction = (
                 f"Room Partner {record['targetParticipantId']} 的 WorkItem "
-                f"{record['workItemId']} 因 WorkDocument 或证据不足而 blocked。"
+                f"{record['workItemId']} 因证据或其他可修复前置条件不足而 blocked。"
                 f"先用 room_partner collect 查看 {child_dispatch_id}；补齐可修复前提后，"
                 "选择空闲伙伴并对同一 WorkItem 调用 retry，携带最新 expectedRevision "
                 "与具体 reason。不可修复时发布诚实的未解决终态。"
@@ -2516,35 +2594,44 @@ class RoomPartnerApplicationService:
         state = str(current.get("state") or "")
         if phase == "completed":
             document: Mapping[str, object] | None = None
+            document_sync: dict[str, object] | None = None
             if self.work_document_for_authority is not None:
-                document = self.work_document_for_authority(
-                    "room_work_item",
-                    str(current["id"]),
-                )
-                document_revision = int(
-                    (document or {}).get("documentRevision") or 0
-                )
-                if document is None or document_revision < 2:
-                    if state == "active":
-                        current = self.room_work.block(
-                            str(target["sessionId"]),
-                            {
-                                "workId": current["id"],
-                                "reason": (
-                                    "伙伴回合已结束，但负责的 WorkDocument 尚未完成开工与交付同步。"
-                                ),
-                                "nextStep": (
-                                    "先登记 room_work_item 活动文档，写入目标/范围；完成后再次更新结果、"
-                                    "证据、改动文件、验证与剩余风险，使 documentRevision 至少为 2。"
-                                ),
-                            },
+                try:
+                    document = self.work_document_for_authority(
+                        "room_work_item",
+                        str(current["id"]),
+                    )
+                except Exception as document_error:
+                    document_sync = _document_sync_receipt(
+                        work_item=current,
+                        child_dispatch_id=child_dispatch_id,
+                        state="failed",
+                        reason=_public_error(document_error),
+                    )
+                else:
+                    document_revision = _document_revision(document)
+                    if document is None:
+                        document_sync = _document_sync_receipt(
+                            work_item=current,
+                            child_dispatch_id=child_dispatch_id,
+                            state="pending",
+                            reason="尚未找到可用的 active WorkDocument",
                         )
-                        self._publish_work_activity(
-                            current,
-                            phase="blocked",
-                            actor=target,
+                    elif document_revision < 2:
+                        document_sync = _document_sync_receipt(
+                            work_item=current,
+                            child_dispatch_id=child_dispatch_id,
+                            state="pending",
+                            reason="WorkDocument 尚未完成交付内容修订",
+                            document=document,
                         )
-                    return current
+                    else:
+                        document_sync = _document_sync_receipt(
+                            work_item=current,
+                            child_dispatch_id=child_dispatch_id,
+                            state="applied",
+                            document=document,
+                        )
             if state in {"active", "blocked"}:
                 evidence_refs = [child_dispatch_id]
                 if document is not None:
@@ -2552,6 +2639,13 @@ class RoomPartnerApplicationService:
                         "workdoc:"
                         f"{document.get('documentId')}@"
                         f"{document.get('documentRevision')}"
+                    )
+                if document_sync is not None and document_sync["state"] != "applied":
+                    evidence_refs.extend(
+                        [
+                            str(document_sync["traceId"]),
+                            f"document-sync:{document_sync['state']}:{current['id']}",
+                        ]
                     )
                 summary = (
                     result[:4_000]
@@ -2574,6 +2668,7 @@ class RoomPartnerApplicationService:
                     current,
                     phase="submitted",
                     actor=target,
+                    document_sync=document_sync,
                 )
             return current
         if state in {"active", "blocked"}:
@@ -2636,10 +2731,20 @@ class RoomPartnerApplicationService:
         *,
         phase: str,
         actor: Mapping[str, object],
+        document_sync: Mapping[str, object] | None = None,
     ) -> None:
         if self.publish_room_work_activity is None or not work:
             return
-        self.publish_room_work_activity(work, phase=phase, actor=actor)
+        self.publish_room_work_activity(
+            work,
+            phase=phase,
+            actor=actor,
+            **(
+                {"document_sync": dict(document_sync)}
+                if document_sync is not None
+                else {}
+            ),
+        )
 
     def _existing_child_dispatch(
         self,
@@ -2946,6 +3051,50 @@ def _expected_revision(value: object) -> int:
 
 def _public_error(error: BaseException) -> str:
     return " ".join(str(error).split())[:240] or error.__class__.__name__
+
+
+def _document_revision(document: Mapping[str, object] | None) -> int:
+    if not isinstance(document, Mapping):
+        return 0
+    try:
+        return max(0, int(document.get("documentRevision") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _document_sync_receipt(
+    *,
+    work_item: Mapping[str, object],
+    child_dispatch_id: str,
+    state: str,
+    reason: str = "",
+    document: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    normalized_state = state if state in {"applied", "pending", "failed"} else "failed"
+    work_id = _text(work_item.get("id"), maximum=240)
+    trace_id = f"trace:room-document-sync:{_text(child_dispatch_id, maximum=200)}"
+    receipt: dict[str, object] = {
+        "state": normalized_state,
+        "attemptCount": 1,
+        "retryable": False,
+        "authorityKind": "room_work_item",
+        "authorityId": work_id,
+        "traceId": trace_id,
+        "publicNotice": (
+            "WorkDocument 同步已记录一次；不阻断真实工作结果，也不要仅因文档同步失败自动 retry/return。"
+            if normalized_state != "applied"
+            else "WorkDocument 已同步。"
+        ),
+    }
+    if isinstance(document, Mapping):
+        document_id = _text(document.get("documentId"), maximum=240)
+        if document_id:
+            receipt["documentId"] = document_id
+        receipt["documentRevision"] = _document_revision(document)
+    normalized_reason = " ".join(str(reason).split())[:240] if reason else ""
+    if normalized_reason:
+        receipt["reason"] = normalized_reason
+    return receipt
 
 
 def _recoverable_runtime_host_failure(error: str) -> bool:

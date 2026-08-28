@@ -512,11 +512,13 @@ class ControlRoutePolicyTests(unittest.TestCase):
             "/control/v1/observability/snapshot",
         )
         self.assertTrue(observation_snapshot["remoteSafe"])
+        self.assertIn("runId", observation_snapshot["query"])
 
         observation_events = entries[ControlPathId.OBSERVABILITY_EVENTS.value]
         self.assertTrue(observation_events["subscription"])
         self.assertIn("lastEventId", observation_events["query"])
         self.assertIn("sessionId", observation_events["query"])
+        self.assertIn("runId", observation_events["query"])
 
         templates = entries[ControlPathId.AGENT_SUBAGENTS_TEMPLATES.value]
         self.assertEqual(
@@ -1196,7 +1198,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
                     {"roleId": "companion-present-v1", "roleVersion": "1"},
                     {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
-                "workspaceRoots": ["/Users/undo/project"],
+                "workspaceRoots": ["/Users/example/project"],
             },
         )
         self.policy.authorize(room_request, ControlAccessContext.native())
@@ -1206,7 +1208,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
         workspace_request = ControlRequest(
             request_id="request-1",
             path_id=ControlPathId.AGENT_SESSIONS_CREATE.value,
-            body={"title": "remote", "workspaceRoots": ["/Users/undo"]},
+            body={"title": "remote", "workspaceRoots": ["/Users/example"]},
         )
         with self.assertRaises(ControlApiError):
             self.policy.authorize(workspace_request, context)
@@ -1239,6 +1241,33 @@ class ControlRoutePolicyTests(unittest.TestCase):
 
         with self.assertRaises(ControlApiError):
             self.policy.authorize(request, context)
+
+    def test_remote_session_and_room_lists_accept_stable_history_cursors(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_READ.value},
+        )
+
+        for path_id in (
+            ControlPathId.AGENT_SESSIONS_LIST.value,
+            ControlPathId.AGENT_ROOMS_LIST.value,
+        ):
+            request = ControlRequest(
+                request_id=f"request-{path_id}",
+                path_id=path_id,
+                query={
+                    "includeArchived": True,
+                    "limit": 100,
+                    "beforeUpdatedAtMs": 1_725_000_000_000,
+                    "beforeId": "history:cursor",
+                },
+            )
+
+            route = self.policy.authorize(request, context)
+
+            remote_query = route.remote_query if route.remote_query is not None else route.query
+            self.assertIn("beforeUpdatedAtMs", remote_query)
+            self.assertIn("beforeId", remote_query)
 
     def test_remote_configuration_update_cannot_spoof_audit_identity(self) -> None:
         context = ControlAccessContext.remote(

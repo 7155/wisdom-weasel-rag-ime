@@ -30,6 +30,7 @@ class RoomWorkHost(Protocol):
         *,
         phase: str,
         actor: Mapping[str, object],
+        document_sync: Mapping[str, object] | None = None,
     ) -> None: ...
 
     @staticmethod
@@ -508,6 +509,7 @@ class RoomWorkApplicationService:
         *,
         phase: str,
         actor: Mapping[str, object],
+        document_sync: Mapping[str, object] | None = None,
     ) -> None:
         self.host.room_events.publish(
             room_id=str(work.get("roomId") or ""),
@@ -524,6 +526,11 @@ class RoomWorkApplicationService:
                     else {}
                 ),
                 "work": dict(work),
+                **(
+                    {"documentSync": dict(document_sync)}
+                    if document_sync is not None
+                    else {}
+                ),
             },
             turn_id=str(work.get("rootTurnId") or work.get("id") or ""),
             participant_id=str(actor.get("id") or ""),

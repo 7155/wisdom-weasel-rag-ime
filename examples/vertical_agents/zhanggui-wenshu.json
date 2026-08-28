@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "rag-ime.vertical-agent-manifest.v1",
+  "appId": "zhanggui-wenshu",
+  "suiteRevision": "fixture-v2",
+  "displayName": "掌柜问数",
+  "capabilities": ["trace.emit", "eval.ground_truth", "rag.retrieval", "memory.recall", "sandbox.self_test"],
+  "fixtures": [
+    {
+      "fixtureId": "order-summary-answer",
+      "inputLabel": "订单汇总问答（公开 fixture）",
+      "truth": {"requiredEvidenceIds": ["knowledge:orders-ledger", "memory:fixture:zhanggui-wenshu:reporting-policy"]},
+      "ragEvidence": {
+        "evidenceId": "knowledge:orders-ledger",
+        "sourceKind": "knowledge",
+        "sourceLane": "sandbox_knowledge",
+        "sourceRef": "K-0ff2373dd2"
+      }
+    }
+  ],
+  "selfTest": {
+    "fixturePath": "zhanggui-wenshu/orders-ledger.md",
+    "documentId": "orders-ledger",
+    "baseAlias": "public",
+    "baseName": "掌柜问数 public orders ledger",
+    "query": "orders ledger",
+    "memory": {
+      "memoryId": "memory:fixture:zhanggui-wenshu:reporting-policy",
+      "sourceRef": "fixture://memory/zhanggui-wenshu/reporting-policy",
+      "summaryFingerprint": "sha256:fixture-zhanggui-reporting-policy"
+    }
+  },
+  "traceRequirements": {
+    "requiredSpanNames": ["agent.input", "rag.retrieve", "memory.recall", "agent.answer"]
+  },
+  "ragChecks": {
+    "required": true,
+    "requiredSpanNames": ["rag.retrieve"],
+    "requiredEvidenceSourceKinds": ["knowledge"],
+    "requiredEvidenceStages": ["retrieval_output"]
+  },
+  "memoryChecks": {
+    "required": true,
+    "requiredSpanNames": ["memory.recall"],
+    "requiredEvidenceSourceKinds": ["memory"],
+    "requiredEvidenceStages": ["memory_recall"]
+  },
+  "sandbox": {
+    "workspaceRoot": "examples/vertical_agents/runs/zhanggui-wenshu",
+    "mutationMode": "staged",
+    "network": "blocked",
+    "productionWriteBlocked": true
+  }
+}

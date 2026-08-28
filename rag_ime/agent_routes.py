@@ -110,6 +110,42 @@ def agent_context_trace_route(path: str) -> tuple[str, str]:
     return "", ""
 
 
+def observability_trace_route(path: str) -> str | None:
+    """Return the once-decoded trace id for the public observation route."""
+
+    for prefix in (
+        "/api/observability/traces/",
+        "/control/v1/observability/traces/",
+    ):
+        if not path.startswith(prefix):
+            continue
+        remainder = path[len(prefix) :].strip("/")
+        if not remainder:
+            return ""
+        return unquote(remainder).strip()
+    return None
+
+
+def observability_sandbox_run_route(path: str) -> tuple[str, str]:
+    """Return ``(sandboxRunId, action)`` for the SandboxRun read routes."""
+
+    for prefix in (
+        "/api/observability/sandbox-runs/",
+        "/control/v1/observability/sandbox-runs/",
+    ):
+        collection = prefix.rstrip("/")
+        if path.rstrip("/") == collection:
+            return "", "list"
+        if not path.startswith(prefix):
+            continue
+        remainder = path[len(prefix) :].strip("/")
+        if not remainder or "/" in remainder:
+            return "", ""
+        sandbox_run_id = unquote(remainder).strip()
+        return (sandbox_run_id, "get") if sandbox_run_id else ("", "")
+    return "", ""
+
+
 def agent_approval_route(path: str) -> tuple[str, str]:
     prefix = "/api/agent/approvals/"
     if not path.startswith(prefix):
@@ -230,12 +266,12 @@ def agent_room_work_route(path: str) -> tuple[str, str, str]:
     if (
         len(parts) == 4
         and parts[1] == "work-items"
-        and parts[3] == "reassign"
+        and parts[3] in {"reassign", "resume"}
     ):
         room_id = unquote(parts[0]).strip()
         work_item_id = unquote(parts[2]).strip()
         return (
-            (room_id, work_item_id, "reassign")
+            (room_id, work_item_id, parts[3])
             if room_id and work_item_id
             else ("", "", "")
         )
@@ -274,3 +310,19 @@ def agent_wake_schedule_route(path: str) -> tuple[str, str]:
     if not schedule_id or action not in {"", "runs", "action"}:
         return "", ""
     return schedule_id, action
+
+
+def observability_eval_schedule_route(path: str) -> tuple[str, str]:
+    """Parse the local EvalSchedule run path without accepting gateway aliases."""
+
+    prefix = "/api/observability/eval-schedules/"
+    if not path.startswith(prefix):
+        return "", ""
+    remainder = path[len(prefix) :].strip("/")
+    if not remainder:
+        return "", ""
+    parts = remainder.split("/")
+    if len(parts) != 2 or parts[1] != "runs":
+        return "", ""
+    schedule_id = unquote(parts[0]).strip()
+    return (schedule_id, "runs") if schedule_id else ("", "")

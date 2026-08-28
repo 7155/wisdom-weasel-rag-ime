@@ -2,8 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { ActivitySummary, FxActivityStack, PublicActivityFeed, ReasoningActivitySummary, resetActivityDisclosureOverrides } from './ActivitySummary';
-import { inspectableRawResultText } from './public-tool-result';
+import { inspectableRawResultText, publicToolResultView } from './public-tool-result';
 
 afterEach(() => {
   cleanup();
@@ -427,6 +428,23 @@ describe('Agent tool activity details', () => {
     expect(group).toHaveAttribute('open');
   });
 
+  it('shows a Pi validation message when the Tool receipt has content but empty details', () => {
+    const view = publicToolResultView(toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-validation-content',
+      toolName: 'write',
+      isError: true,
+      result: {
+        content: [{
+          type: 'text',
+          text: 'Validation failed: resourceRevision: must have required properties resourceRevision',
+        }],
+      },
+    }));
+
+    expect(view.error).toContain('resourceRevision');
+    expect(view.error).not.toContain('没有可公开展示的错误明细');
+  });
+
   it('renders an Act Gate refusal as an expected no-op rather than a Tool failure', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-goal-paused',
@@ -664,6 +682,33 @@ describe('Agent tool activity details', () => {
     const result = within(row).getByRole('region', { name: '文件内容：src/example.ts' });
     expect(result).toHaveAttribute('data-result-kind', 'code');
     expect(within(result).getByLabelText('src/example.ts 代码内容')).toHaveTextContent('export const ready');
+  });
+
+  it('links a workspace file result to the Files app for the current Session', () => {
+    const openRoute = vi.fn();
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-read-file-link',
+      toolName: 'workspace_read',
+      publicResult: {
+        path: 'src/example.ts',
+        outputPreview: 'export const ready: boolean = true;',
+      },
+    });
+    expect(publicToolResultView(activity)).toMatchObject({ targetPath: 'src/example.ts' });
+
+    const { container } = render(
+      <PawOsDesktopProvider openRoute={openRoute} openWindow={() => undefined}>
+        <ActivitySummary activities={[activity]} inline sessionId="session-files" />
+      </PawOsDesktopProvider>,
+    );
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    const link = within(row).getByRole('link', { name: '打开文件 src/example.ts' });
+    expect(link).toHaveAttribute('href', '/files?session=session-files&path=src%2Fexample.ts');
+    fireEvent.click(link);
+    expect(openRoute).toHaveBeenCalledWith('/files?session=session-files&path=src%2Fexample.ts');
   });
 
   it('renders search output as individually readable matches', () => {

@@ -6,6 +6,101 @@ import {
 } from './context-usage-model';
 
 describe('context usage model', () => {
+  it('projects the requested context layers with honest exact, estimated, and unknown values', () => {
+    const snapshot: ContextXraySnapshot = {
+      available: true,
+      prompt: 'CURRENT_INPUT',
+      layers: [
+        layer('system', 'System', 1_000),
+        layer('skills', 'Skills', 400),
+        layer('tools', 'Tools', 2_000),
+        layer('project-context', 'Project', 3_000),
+        layer('workflow-control', 'Workflow', 200),
+        layer('session-memory', 'Session Memory', 700),
+        layer('memory-recall', 'Memory recall', 500),
+        layer('knowledge-rag', 'Knowledge/RAG', 600),
+        layer('timeline', 'Timeline', 4_000),
+        layer('user-messages', 'User', 1_000),
+        layer('assistant-messages', 'Assistant', 1_500),
+        layer('tool-calls', 'Tool calls', 300),
+        layer('tool-results', 'Tool results', 700),
+      ],
+      contextTokens: 18_000,
+      contextWindow: 100_000,
+      cacheHitPercent: 68,
+      cache: {
+        inputTokens: 18_000,
+        outputTokens: 500,
+        cacheReadTokens: 4_250,
+        cacheWriteTokens: 0,
+        prefixBytes: null,
+        duplicateBytes: null,
+        capability: 'reported',
+      },
+      compaction: { count: 2, status: 'completed', tokensBefore: 80_000, tokensAfter: 20_000 },
+      providerStatus: 200,
+      providerCaptured: true,
+      updatedAtMs: 1,
+    };
+
+    const view = buildContextUsageView({ snapshot });
+
+    expect(view.layers.map((item) => item.id)).toEqual([
+      'systemPrompt',
+      'skillsTools',
+      'projectContext',
+      'conversationHistory',
+      'memory',
+      'knowledge',
+      'currentInput',
+      'cache',
+      'compaction',
+    ]);
+    expect(view.layers.find((item) => item.id === 'systemPrompt')).toMatchObject({
+      characters: 1_000,
+      tokens: null,
+      tokenQuality: 'unknown',
+    });
+    expect(view.layers.find((item) => item.id === 'memory')).toMatchObject({
+      characters: 5_200,
+      tokens: null,
+      tokenQuality: 'unknown',
+    });
+    expect(view.layers.find((item) => item.id === 'currentInput')).toMatchObject({
+      characters: 'CURRENT_INPUT'.length,
+      tokenQuality: 'unknown',
+    });
+    expect(view.layers.find((item) => item.id === 'cache')).toMatchObject({
+      tokens: 4_250,
+      tokenQuality: 'exact',
+    });
+    expect(view.layers.find((item) => item.id === 'compaction')).toMatchObject({
+      tokens: 20_000,
+      tokenQuality: 'estimated',
+    });
+    expect(view.layers.find((item) => item.id === 'knowledge')).toMatchObject({
+      characters: 600,
+      tokenQuality: 'unknown',
+    });
+  });
+
+  it('keeps semantic layers explicitly unknown when the Runtime did not expose their contents', () => {
+    const view = buildContextUsageView({
+      telemetry: { tokens: 40_000, contextWindow: 100_000, percent: 40 },
+      snapshot: null,
+    });
+
+    expect(view.layers).toHaveLength(9);
+    expect(view.layers.every((item) => item.characters === null || item.id === 'cache')).toBe(true);
+    expect(view.layers.find((item) => item.id === 'memory')).toMatchObject({
+      characters: null,
+      tokens: null,
+      tokenQuality: 'unknown',
+      state: 'unknown',
+    });
+    expect(view.unclassifiedTokens).toBe(40_000);
+  });
+
   it('keeps exact captured characters separate from aggregate Runtime tokens', () => {
     const snapshot: ContextXraySnapshot = {
       available: true,

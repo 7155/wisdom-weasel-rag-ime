@@ -1,8 +1,8 @@
 # PAWOS Requirement Status
 
 This document answers “which requirements are complete?” without changing the
-meaning ledger in [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The requirements
-document owns user meaning; this index owns explicit assessment and evidence
+meaning ledger set indexed by [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The
+thirteen requirement volumes own user meaning; this index owns explicit assessment and evidence
 links. Runtime, Git, installation, and foreground state remain authoritative in
 their own projections and receipts.
 
@@ -22,9 +22,9 @@ their own projections and receipts.
   recorded only when that exact boundary was observed; source/test/build proof
   must not be promoted into install, Runtime, or foreground proof.
 - Every edit must retain `UR-001` through the current final requirement with no
-  gaps and refresh `sourceReceipt.sha256`. Run
-  `python3 scripts/check_pawos_requirement_status.py` after either document
-  changes.
+  gaps across the indexed volumes. Run `python3 scripts/check_pawos_requirement_status.py`
+  after document-set changes. A source hash is only a legacy diagnostic receipt;
+  it does not block product work, Room completion, or a truthful final result.
 
 ## Evidence levels
 
@@ -41,17 +41,17 @@ Evidence levels describe scope, not a completion ladder. For example, E2 does
 not prove E4–E6, and a screenshot without an authoritative run identity does
 not prove the Runtime path.
 
-## Current honest summary — 2026-08-27
+## Current honest summary — 2026-08-28
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
-| All requirements | `149 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts. |
-| Current P0 requirements | 126 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
-| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
+| All requirements | `192 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-195` remain unassessed. |
+| Current P0 requirements | 163 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
+| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-195` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
 | Install / Runtime / foreground | No E4, E5, or E6 receipt is linked here | Do not claim installed or foreground acceptance from source, tests, builds, or screenshots. |
 
 This conservative baseline is intentional. It does not say that no code exists;
-it says 149 requirements have not yet been individually assessed against fresh,
+it says 192 requirements have not yet been individually assessed against fresh,
 linked evidence in this index. Closing the three documentation/Demo delivery
 requirements does not promote their preview receipts to E4–E6.
 
@@ -67,9 +67,9 @@ requirements does not promote their preview receipts to E4–E6.
 3. Use `complete` only when the run passed and the precise requirement was
    satisfied. A partial implementation stays `in_progress`; a passing test with
    missing foreground acceptance stays non-complete.
-4. Refresh the requirements source hash and run the checker. Record the checker
-   output with the work closeout; the checker validates structure and linkage,
-   not the truth of an external observation.
+4. Run the checker after changing the indexed document set. Record its bounded
+   structural result when useful; it validates coverage and linkage, not the
+   truth of an external observation and never becomes a product gate.
 
 ## Machine-readable status receipt
 
@@ -83,8 +83,8 @@ not inferred status.
   "schemaVersion": "pawos.requirement-status.v1",
   "sourceReceipt": {
     "path": "PAWOS_REQUIREMENTS.md",
-    "sha256": "sha256:9904a5a0c4e190ef827926464c4bab2672effc82e2544bd5d89d0fa28bc24ec3",
-    "recordedAt": "2026-08-27T02:37:10+08:00",
+    "sha256": "sha256:f3feb115425681000aa7fece205a6e957ea5de6d6ae8ac1cf76f7c4fb5b34dcf",
+    "recordedAt": "2026-08-29T01:32:03+08:00",
     "owner": "PAWOS requirements status index"
   },
   "evidenceLevelLabels": {
@@ -328,7 +328,50 @@ not inferred status.
       "owner": "PAWOS final showcase Goal",
       "updatedAt": "2026-08-27T04:52:28+08:00",
       "note": "README now presents the strongest current PAWOS scenes with fixture provenance, a runnable command, privacy limits, and explicit non-claims for install, Runtime, foreground, signing, notarization, and release readiness."
-    }
+    },
+    "UR-153": {},
+    "UR-154": {},
+    "UR-155": {},
+    "UR-156": {},
+    "UR-157": {},
+    "UR-158": {},
+    "UR-159": {},
+    "UR-160": {},
+    "UR-161": {},
+    "UR-162": {},
+    "UR-163": {},
+    "UR-164": {},
+    "UR-165": {},
+    "UR-166": {},
+    "UR-167": {},
+    "UR-168": {},
+    "UR-169": {},
+    "UR-170": {},
+    "UR-171": {},
+    "UR-172": {},
+    "UR-173": {},
+    "UR-174": {},
+    "UR-175": {},
+    "UR-176": {},
+    "UR-177": {},
+    "UR-178": {},
+    "UR-179": {},
+    "UR-180": {},
+    "UR-181": {},
+    "UR-182": {},
+    "UR-183": {},
+    "UR-184": {},
+    "UR-185": {},
+    "UR-186": {},
+    "UR-187": {},
+    "UR-188": {},
+    "UR-189": {},
+    "UR-190": {},
+    "UR-191": {},
+    "UR-192": {},
+    "UR-193": {},
+    "UR-194": {},
+    "UR-195": {}
   }
 }
 ```

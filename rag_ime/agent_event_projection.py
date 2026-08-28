@@ -135,6 +135,12 @@ class AgentEventProjectionService:
                     else ""
                 ),
             )
+        if event.event_type in {
+            "provider_request_completed",
+            "provider_request_failed",
+        }:
+            # Provider receipts are Trace telemetry, not a second Room row.
+            return
         if participant is None:
             return
         registered_turn_for_event = getattr(

@@ -15,6 +15,7 @@ import { MockControlTransport } from '@/test/mock-transport';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { PawRoomConversation } from './PawRoomWorkspace';
 import { buildRoomFocusProjection, type RoomFocusProjection } from './room-focus-projection';
+import { buildRoomFocusMesh } from './room-focus-mesh';
 import {
   roomDispatchPlans,
   roomDispatchWaves,
@@ -32,13 +33,48 @@ import {
 
 const root = resolve(process.cwd(), 'e2e/fixtures/minecraft-harness-20260825');
 
+const firstRootId = 'room-turn:10000000-0000-4000-8000-000000000001';
+const latestRootId = 'room-turn:10000000-0000-4000-8000-000000000002';
+
+/**
+ * The harness is a history fixture containing several independent public
+ * inputs. Current Focus intentionally follows only the latest logical Root,
+ * so the rich first-input gravity assertions need an explicit root-scoped
+ * projection instead of accidentally depending on cross-round aggregation.
+ */
+function projectionForPublicRoot(projection: RoomProjectionState, rootId: string): RoomProjectionState {
+  const turn = projection.turnsById[rootId];
+  if (!turn) throw new Error(`missing harness root ${rootId}`);
+  const activityIds = new Set(turn.activityIds);
+  const messageIds = new Set(turn.messageIds);
+  const activityOrder = projection.activityOrder.filter((id) => activityIds.has(id));
+  const messageOrder = projection.messageOrder.filter((id) => messageIds.has(id));
+  return {
+    ...projection,
+    activityOrder,
+    activitiesById: Object.fromEntries(activityOrder.map((id) => [id, projection.activitiesById[id]])),
+    messageOrder,
+    messagesById: Object.fromEntries(messageOrder.map((id) => [id, projection.messagesById[id]])),
+    turnOrder: [rootId],
+    turnsById: { [rootId]: turn },
+  };
+}
+
 const harness = (() => {
   const events = readFileSync(resolve(root, 'room/history.jsonl'), 'utf8')
     .trim().split('\n').map((line) => parseRoomEvent(JSON.parse(line)));
   const snapshot = JSON.parse(readFileSync(resolve(root, 'room/snapshot.json'), 'utf8')) as { room: RoomSummary };
   const projection = reduceRoomEvents(createRoomProjection(snapshot.room.id), events);
   const focus = buildRoomFocusProjection(snapshot.room, projection);
-  return { events, room: snapshot.room, projection, focus };
+  const firstRootProjection = projectionForPublicRoot(projection, firstRootId);
+  const firstRootFocus = buildRoomFocusProjection(snapshot.room, firstRootProjection);
+  return {
+    events,
+    room: snapshot.room,
+    projection,
+    focus,
+    firstRoot: { projection: firstRootProjection, focus: firstRootFocus },
+  };
 })() satisfies { events: unknown[]; room: RoomSummary; projection: RoomProjectionState; focus: RoomFocusProjection };
 
 afterEach(() => {
@@ -58,21 +94,29 @@ function harnessToolActivities() {
 describe('room gravity projection over the minecraft harness', () => {
   it('recovers the real task counters and tree from 3261 events', () => {
     expect(harness.events).toHaveLength(3261);
-    // Real snapshot state: one blocked core WorkItem, everything else landed.
-    // Every child dispatch is bound to an explicit WorkItem, so the tree shows
-    // each task exactly once — no runtime duplicate rows.
-    expect(harness.focus.counts).toEqual({ active: 0, review: 0, blocked: 1, completed: 4 });
-    expect(harness.focus.workItems).toHaveLength(5);
-    expect(harness.focus.workItems.every((item) => item.source === 'work-item')).toBe(true);
+    // The first public input is the rich Minecraft collaboration scene. Its
+    // own root has one blocked core task and two completed first-round tracks.
+    // Every child dispatch is bound to an explicit WorkItem, so the sheet
+    // shows each first-round task exactly once — no runtime duplicate rows.
+    expect(harness.firstRoot.focus.counts).toEqual({ active: 0, review: 0, blocked: 1, completed: 2 });
+    expect(harness.firstRoot.focus.workItems).toHaveLength(3);
+    expect(harness.firstRoot.focus.workItems.every((item) => item.source === 'work-item')).toBe(true);
 
-    const blocked = harness.focus.workItems.find((item) => item.state === 'blocked');
+    const blocked = harness.firstRoot.focus.workItems.find((item) => item.state === 'blocked');
     expect(blocked?.id).toBe('room-work:10000000-0000-4000-8000-000000000001');
     expect(blocked?.blocker?.reason).toContain('WorkDocument');
+
+    // The same full projection still drives current Focus, but it is anchored
+    // to the latest logical public Root and cannot inherit this old blocker.
+    expect(harness.focus.goal.rootId).toBe(latestRootId);
+    expect(harness.focus.workItems.map((item) => item.id)).toEqual([
+      'room-work:10000000-0000-4000-8000-000000000002',
+    ]);
   });
 
   it('reconstructs the parallel wave with both partner planets on their own tracks', () => {
-    const activities = harness.projection.activityOrder
-      .map((id) => harness.projection.activitiesById[id])
+    const activities = harness.firstRoot.projection.activityOrder
+      .map((id) => harness.firstRoot.projection.activitiesById[id])
       .filter((activity): activity is NonNullable<typeof activity> => Boolean(activity));
     const waves = roomDispatchWaves(roomDispatchPlans(activities));
 
@@ -82,16 +126,16 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(waves[0]?.dispatches.map((dispatch) => dispatch.targetDisplayName)).toEqual(['Agent 2', 'Agent 4']);
 
     // The wave lands on the explicit WorkItems, so the tree can draw lanes.
-    const core = harness.focus.workItems.find((item) => item.id.endsWith('000000000001') && item.source === 'work-item');
-    const ui = harness.focus.workItems.find((item) => item.id.endsWith('000000000005') && item.source === 'work-item');
+    const core = harness.firstRoot.focus.workItems.find((item) => item.id.endsWith('000000000001') && item.source === 'work-item');
+    const ui = harness.firstRoot.focus.workItems.find((item) => item.id.endsWith('000000000005') && item.source === 'work-item');
     expect(core?.wave?.parallelIndex).toBe(0);
     expect(ui?.wave?.parallelIndex).toBe(1);
     expect(core?.wave?.waveId).toBe(ui?.wave?.waveId);
   });
 
   it('keeps the dual-axis review verdicts and the verifying planet on completed work', () => {
-    const reviewed = harness.focus.workItems.filter((item) => item.review);
-    expect(reviewed.length).toBeGreaterThanOrEqual(4);
+    const reviewed = harness.firstRoot.focus.workItems.filter((item) => item.review);
+    expect(reviewed.length).toBeGreaterThanOrEqual(2);
     for (const item of reviewed) {
       expect(item.review?.operability).toBe('passed');
       expect(item.review?.requirement).toBe('satisfied');
@@ -101,8 +145,11 @@ describe('room gravity projection over the minecraft harness', () => {
   });
 
   it('turns every route decision into a readable dispatch packet with a resolved source planet', () => {
-    const dispatches = harness.focus.flow.filter((packet) => packet.kind === 'dispatch');
-    expect(dispatches.length).toBeGreaterThanOrEqual(10);
+    const dispatches = harness.firstRoot.focus.flow.filter((packet) => packet.kind === 'dispatch');
+    // The first Root reaches its terminal fence after the opening facilitator
+    // route and the two parallel partner routes. Later retry routes are
+    // separate historical execution and must not be smuggled into this Root.
+    expect(dispatches).toHaveLength(3);
     expect(dispatches.every((packet) => packet.dispatchPlan)).toBe(true);
 
     // The delegate_batch wave: the coordinator planet pulls both partners.
@@ -120,16 +167,16 @@ describe('room gravity projection over the minecraft harness', () => {
   });
 
   it('renders the collaboration console as one mesh with owners, blockers and verifiers', () => {
-    const { container } = render(<PawRoomFocusOverview focus={harness.focus} onOpenParticipant={vi.fn()} />);
+    const { container } = render(<PawRoomFocusOverview focus={harness.firstRoot.focus} onOpenParticipant={vi.fn()} />);
 
     // Pulse counters mirror the real numbers.
     const pulse = screen.getByLabelText('协作摘要');
     expect(pulse).toHaveTextContent('受阻');
     expect(pulse.querySelectorAll('.paw-room-focus-overview__pulse-bar > i').length).toBeGreaterThanOrEqual(2);
 
-    // The mesh is a relationship graph: only real partners are actors.
-    // WorkItems remain selected through the shared inspector instead of being
-    // drawn a second time as fake collaborators.
+    // Gravity is a planet-to-planet relation graph. WorkItems remain in the
+    // round task sheet and detail inspector, so they cannot duplicate the
+    // same task as graph nodes here.
     const mesh = screen.getByRole('group', { name: '协作网状图' });
     expect(within(mesh).getAllByRole('button')).toHaveLength(harness.focus.partners.length);
     expect(mesh.querySelector('.paw-room-focus-overview__mesh-node--work')).toBeNull();
@@ -137,16 +184,16 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(within(mesh).getByRole('button', { name: /^Venus，/ })).toBeInTheDocument();
     expect(within(mesh).getByRole('button', { name: /^Jupiter，/ })).toBeInTheDocument();
 
-    // Recorded partner relations live in their own non-overlapping ledger;
-    // no path or floating label can cross a planet's name or responsibility.
-    const relations = within(mesh).getByRole('list', { name: '协作关系' });
-    expect(relations.querySelectorAll('li').length).toBeGreaterThanOrEqual(4);
-    expect(relations.querySelectorAll('li[data-kind="ownership"]')).toHaveLength(0);
-    expect(relations.querySelectorAll('li[data-kind="review"]').length).toBeGreaterThanOrEqual(1);
-    expect(mesh.querySelector(':scope > svg, .paw-room-focus-overview__mesh-edge-label')).toBeNull();
+    // Edges exist only between real planets. Work ownership whose other end is
+    // a task stays in the task sheet; only recorded partner-to-partner gravity
+    // is rendered in this graph.
+    const projectedMesh = buildRoomFocusMesh(harness.firstRoot.focus);
+    expect(projectedMesh.edges.length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge')).toHaveLength(projectedMesh.edges.length);
+    expect(container.querySelectorAll('.paw-room-focus-overview__mesh-edge-label')).toHaveLength(projectedMesh.edges.length);
 
-    // The strongest WorkItem is still the default inspector selection even
-    // though WorkItems are deliberately absent from the actor mesh.
+    // The strongest WorkItem remains the default detail selection even though
+    // tasks are no longer duplicated as gravity nodes.
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('WorkDocument 尚未完成开工与交付同步');
 
     // The machine enum never leaks into the reader-facing console.
@@ -154,21 +201,27 @@ describe('room gravity projection over the minecraft harness', () => {
   });
 
   it('keeps one row per task in the production snapshot window — the paper UI double-count is gone', () => {
-    // Production reduces the snapshot's recent event page (373 events), not the
-    // full history. In that window the paper UI showed 任务树 6 项 / 完成 5,
-    // because the Core acceptance migration task was counted twice: once as
-    // WorkItem …0002 and again as its own bare dispatch row. One task, one row.
+    // The first root keeps the rich task-sheet fixture for the one-task/one-row
+    // invariant; the production snapshot window is independently asserted as
+    // the latest public Root and must not reintroduce old rounds.
+    const firstRootObjectives = harness.firstRoot.focus.workItems.map((item) => item.objective);
+    expect(harness.firstRoot.focus.workItems).toHaveLength(3);
+    expect(new Set(firstRootObjectives).size).toBe(firstRootObjectives.length);
+
     const page = parseRoomEventSnapshot(JSON.parse(readFileSync(resolve(root, 'room/snapshot.json'), 'utf8')));
     const projection = reduceRoomEvents(createRoomProjection(harness.room.id), page.events);
     const focus = buildRoomFocusProjection(harness.room, projection);
 
-    expect(focus.counts).toEqual({ active: 0, review: 0, blocked: 1, completed: 4 });
-    expect(focus.workItems).toHaveLength(5);
+    expect(focus.goal.rootId).toBe(latestRootId);
+    expect(focus.counts).toEqual({ active: 0, review: 0, blocked: 0, completed: 1 });
+    expect(focus.workItems).toHaveLength(1);
+    expect(focus.workItems[0]?.id).toBe('room-work:10000000-0000-4000-8000-000000000002');
     const objectives = focus.workItems.map((item) => item.objective);
     expect(new Set(objectives).size).toBe(objectives.length);
-    // Every task the designer named stays visible with its real long text.
+    // The latest round remains visible with its real long text; historical
+    // first-round objectives belong to their own sheet, never this one.
     expect(objectives.some((objective) => objective.includes('Core acceptance migration'))).toBe(true);
-    expect(objectives.some((objective) => objective.includes('smoke test'))).toBe(true);
+    expect(objectives.some((objective) => objective.includes('smoke test'))).toBe(false);
     // The dispatch itself is flow, not a duplicate task row.
     expect(focus.flow.some((packet) => packet.kind === 'dispatch')).toBe(true);
   });
@@ -287,7 +340,7 @@ describe('room gravity projection over the minecraft harness', () => {
       </ControlTransportProvider>,
     );
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     const receipts = [...timeline.querySelectorAll('.ccui-tool-card')];
     const messages = receipts.map((card) => card.querySelector('.ccui-tool-main')?.textContent?.trim() ?? '');
     expect(messages.length).toBeGreaterThanOrEqual(5);

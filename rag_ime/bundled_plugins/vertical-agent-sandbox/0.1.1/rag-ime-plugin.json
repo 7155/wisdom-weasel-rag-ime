@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "vertical-agent-sandbox",
+  "name": "Vertical Agent Sandbox",
+  "version": "0.1.1",
+  "description": "Grant a Session-scoped, Host-owned vertical Agent sandbox connector.",
+  "entry": "index.ts",
+  "permissions": ["sandbox.run"]
+}

@@ -13,13 +13,15 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
 
 1. `docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md` 与相邻 JSON manifest：先证明每个功能的当前选择链、
    render owner 和原生构建 owner；禁止按文件名猜。
-2. `docs/pawos/PAWOS_REQUIREMENTS.md`：用户原始需求与最新纠正。它是 append-only ledger；读取当前文件，
-   不信任旧 handoff 中硬编码的末尾 `UR-*` 数字。
+2. `docs/pawos/PAWOS_REQUIREMENTS.md`：需求总索引。按索引继续读取十三个 append-only 分卷（`UR-001`–`UR-195`）、
+   `requirements/PAWOS_REQUIREMENT_EVIDENCE.md`、`PAWOS_PRODUCT_CONTRACT.md` 和 `PAWOS_REQUIREMENT_STATUS.md`；
+   每份末尾都写明下一份。不要只读索引，也不信任旧 handoff 中硬编码的末尾 `UR-*` 数字。
 3. `docs/handoffs/PAWOS_WEB_MODEL_APP_FUNCTION_HANDOFF.md`：11 个 App 的真实用户流程。
 4. `docs/handoffs/PAWOS_WEB_MODEL_REAL_DATA_FIXTURES.md`：生产采样与完整渲染场景。
 5. `docs/handoffs/PAWOS_FUNCTION_INTERFACE_GUIDE.md`：typed route 与前端能力地图；route 数量以当前生成结果为准。
 6. `docs/pawos/PAWOS_FRONTEND_HANDOFF.md`：已迁移内容、验证证据和仍未闭环边界。
-7. `docs/project/DESIGN.md`、`docs/project/PRODUCT.md`、`docs/project/ARCHITECTURE.md`：视觉、产品和权威边界。
+7. `../../../PROJECT.md`、`../../../OUTCOMES.md`、`../../../CONTEXT.md`、`../../../DECISIONS.md`、
+   `../../../ARCHITECTURE.md`：视觉、产品和权威边界。
 8. 再读并修改 `control-center-web/`；`rag_ime/` 是后端合同参考，不要在纯前端优化中重写它。
 
 当前 checkout 没有可依赖的 `PAWOS_FRONTEND_MODEL_BUNDLE.md` 单文件镜像；不要搜索或虚构它。原始源码树
@@ -44,11 +46,11 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
 4. Knowledge：知识库选择器，以及资料、材料、检索、图谱、处理、设置六页。
 5. Input：输入法、词库、语音、输入记录。
 6. App Center：已安装、目录、建议与真实 preview/apply/rollback mutation。
-7. Monitor：活动、上下文、诊断。
+7. Monitor：活动、上下文、Trace Agent 诊断、诊断。
 8. Settings：Agent、外观、配置、治理、审批。
 9. Files：真实授权目录树、选择、预览、错误和空态。
 10. Browser：同窗可上网浏览器、标签页、地址栏、页面、下载、查找、打印、缩放、设置与 Ego/CDP 控制。
-11. Terminal：同窗真实 PTY、输入输出、resize、Stop 与后台进程卫星。
+11. Terminal：同窗真实 PTY、输入输出、resize、Stop 与后台进程运行窗口。
 
 ## 视觉与交互硬约束
 
@@ -59,9 +61,10 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
 - 顶部只允许一层 App chrome。减少按钮，主动作唯一，二级能力按需披露，空态不写说明书。
 - Agent 顶层只保留“对话 / Agent 轨迹”和一个按需 `Session 工具` 入口；轨迹不复制聊天原文或私有 Tool 参数。
 - Room 顶层只保留“对话 / 协作工具”。四个协作工具页复用同一互斥面板；默认关闭，窄窗进入正常
-  底部布局，不覆盖对话或 composer。`铺开 N 位伙伴` 是卫星/Room Focus 唯一主动作。
-- 卫星不是普通随意堆叠窗口，而是专注当前 Room 的模式：背景弱化、主叙事强化、伙伴真实上下文可读、
+  底部布局，不覆盖对话或 composer。`铺开 N 位伙伴` 是行星/Room Focus 唯一主动作。
+- 行星窗口不是普通随意堆叠窗口，而是专注当前 Room 的模式：背景弱化、主叙事强化、伙伴真实上下文可读、
   信息流向可理解，0/1/5/7 伙伴和窄窗都不能匿名、遮挡、错行或乱位。
+- 只有行星 Session 内的 subagent 才称为卫星；Room participant / Partner Session 始终称为行星。
 - 动效用于空间连续性、状态、直接操作反馈和信息流转；以 transform/opacity 为主，普通交互低于 300ms，
   可中断，并完整支持 `prefers-reduced-motion`。
 - 所有界面文案只说当前对象、状态、可执行动作、结果或恢复步骤；不要把架构和产品宣言写进 App UI。
@@ -76,7 +79,7 @@ PAWOS 是一个明亮、轻透、年轻、精致、真正可日常使用的个�
   Browser、Terminal、Memory、Knowledge 和其他 App 状态。
 
 数据用于把页面撑到真实长度和状态，不得复制进生产 store。一条 event 不等于一张卡；必须先经过当前
-reducer，再分别投影到对话、Agent 轨迹、Room 主窗、协作面板或卫星。
+reducer，再分别投影到对话、Agent 轨迹、Room 主窗、协作面板、行星窗口或 subagent 卫星。
 
 ## 源码地图
 

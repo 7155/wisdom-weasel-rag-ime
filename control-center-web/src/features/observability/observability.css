@@ -120,7 +120,8 @@ main[data-route-id='observability'] .observation-category-tabs button[data-activ
 main[data-route-id='observability'] .observation-category-tabs button:focus-visible,
 main[data-route-id='observability'] .observation-timeline button:focus-visible,
 main[data-route-id='observability'] .observation-trace__summary:focus-visible,
-main[data-route-id='observability'] .observation-facts__disclosure > summary:focus-visible {
+main[data-route-id='observability'] .observation-facts__disclosure > summary:focus-visible,
+main[data-route-id='observability'] .observation-canonical__disclosure > summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
@@ -546,6 +547,270 @@ main[data-route-id='observability'] .observation-facts dd {
   font-weight: 650;
 }
 
+/* Canonical trace details stay subordinate to the event timeline: compact
+   disclosure rows expose the machine envelope without turning every span
+   into another card. */
+main[data-route-id='observability'] .observation-canonical {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+main[data-route-id='observability'] .observation-canonical__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-canonical__heading span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+}
+
+main[data-route-id='observability'] .observation-canonical__heading small,
+main[data-route-id='observability'] .observation-canonical__copy small,
+main[data-route-id='observability'] .observation-canonical__evidence small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-canonical__relations {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+}
+
+main[data-route-id='observability'] .observation-canonical__relations > header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+main[data-route-id='observability'] .observation-canonical__relations :is(dl, ul) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='observability'] .observation-canonical__relations dl > div,
+main[data-route-id='observability'] .observation-canonical__relations li {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-canonical__relations dt,
+main[data-route-id='observability'] .observation-canonical__relations li > span {
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='observability'] .observation-canonical__relations dd { min-width: 0; margin: 0; }
+main[data-route-id='observability'] .observation-canonical__relations code {
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+  font: 11px/1.4 var(--font-mono);
+}
+
+main[data-route-id='observability'] .observation-canonical__relations a {
+  overflow-wrap: anywhere;
+  color: var(--color-accent);
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-canonical__relations nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding-top: 2px;
+}
+
+main[data-route-id='observability'] .observation-canonical__disclosure > summary {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+main[data-route-id='observability'] .observation-canonical__disclosure > summary:hover {
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+main[data-route-id='observability'] .observation-canonical__list,
+main[data-route-id='observability'] .observation-canonical__evidence,
+main[data-route-id='observability'] .observation-canonical__artifacts {
+  display: grid;
+  gap: 1px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='observability'] .observation-canonical__list > li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+main[data-route-id='observability'] .observation-canonical__index {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='observability'] .observation-canonical__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+main[data-route-id='observability'] .observation-canonical__copy strong,
+main[data-route-id='observability'] .observation-canonical__evidence-head strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-canonical__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-canonical__span-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  margin: 3px 0 0;
+}
+
+main[data-route-id='observability'] .observation-canonical__span-facts > div {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-canonical__span-facts dt {
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='observability'] .observation-canonical__span-facts dd {
+  max-width: 34ch;
+  overflow: hidden;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-canonical__duration {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-canonical__evidence > li {
+  display: grid;
+  gap: 4px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+main[data-route-id='observability'] .observation-canonical__artifacts > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--color-border-soft);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-canonical__artifacts strong,
+main[data-route-id='observability'] .observation-canonical__artifacts small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-canonical__artifacts strong {
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-canonical__artifacts small {
+  grid-column: 1 / -1;
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='observability'] .observation-canonical__evidence-head,
+main[data-route-id='observability'] .observation-canonical__evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+}
+
+main[data-route-id='observability'] .observation-canonical__evidence-meta span {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+main[data-route-id='observability'] .observation-canonical__evidence > li > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-canonical-loading {
+  padding: 8px 4px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
 main[data-route-id='observability'] .observation-debug-actions {
   display: grid;
   gap: 6px;
@@ -587,6 +852,194 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
 
 /* The privacy boundary is a standing property of this surface, not an alert;
    it closes the console as quiet fine print instead of a leading banner. */
+main[data-route-id='observability'] .observation-eval {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+main[data-route-id='observability'] .observation-eval__heading,
+main[data-route-id='observability'] .observation-eval__run-head,
+main[data-route-id='observability'] .observation-eval__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+main[data-route-id='observability'] .observation-eval__heading span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+main[data-route-id='observability'] .observation-eval__heading small,
+main[data-route-id='observability'] .observation-eval__run-meta,
+main[data-route-id='observability'] .observation-eval__receipt small,
+main[data-route-id='observability'] .observation-eval__hint,
+main[data-route-id='observability'] .observation-eval__actions > span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-eval__list,
+main[data-route-id='observability'] .observation-eval__evidence {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='observability'] .observation-eval__list > li {
+  display: grid;
+  gap: 7px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+}
+
+main[data-route-id='observability'] .observation-eval__run-head strong {
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+main[data-route-id='observability'] .observation-eval__run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+main[data-route-id='observability'] .observation-eval__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+main[data-route-id='observability'] .observation-eval__metrics div {
+  display: inline-flex;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-eval__metrics dt { color: var(--color-text-tertiary); }
+main[data-route-id='observability'] .observation-eval__metrics dd { margin: 0; color: var(--color-text); font-variant-numeric: tabular-nums; }
+
+main[data-route-id='observability'] .observation-eval__form {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+}
+
+main[data-route-id='observability'] .observation-eval__hint { margin: 0; line-height: 1.5; }
+
+main[data-route-id='observability'] .observation-eval__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+main[data-route-id='observability'] .observation-eval__fields label {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+main[data-route-id='observability'] .observation-eval__fields input {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+main[data-route-id='observability'] .observation-eval__missing-evidence {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+main[data-route-id='observability'] .observation-eval__missing-evidence textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  padding: 8px 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 12px/1.5 var(--font-mono);
+}
+
+main[data-route-id='observability'] .observation-eval__evidence {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+}
+
+main[data-route-id='observability'] .observation-eval__evidence legend {
+  padding-inline: 4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+main[data-route-id='observability'] .observation-eval__evidence-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px;
+  border-radius: var(--radius-2);
+  cursor: pointer;
+}
+
+main[data-route-id='observability'] .observation-eval__evidence-row:hover { background: var(--color-surface-muted); }
+main[data-route-id='observability'] .observation-eval__evidence-row input { margin-top: 3px; accent-color: var(--color-accent); }
+main[data-route-id='observability'] .observation-eval__evidence-row span { display: grid; min-width: 0; gap: 2px; }
+main[data-route-id='observability'] .observation-eval__evidence-row strong { overflow-wrap: anywhere; color: var(--color-text); font-size: 12px; }
+main[data-route-id='observability'] .observation-eval__evidence-row small { overflow-wrap: anywhere; color: var(--color-text-tertiary); font-size: 12px; }
+main[data-route-id='observability'] .observation-eval__empty,
+main[data-route-id='observability'] .observation-eval__loading,
+main[data-route-id='observability'] .observation-eval__no-metrics { margin: 0; color: var(--color-text-tertiary); font-size: 12px; }
+
+main[data-route-id='observability'] .observation-eval__receipt {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 24%, transparent);
+  border-radius: var(--radius-2);
+  background: var(--color-success-soft);
+}
+
+main[data-route-id='observability'] .observation-eval__receipt strong { color: var(--color-text); font-size: 12px; }
+main[data-route-id='observability'] .observation-eval__receipt span { color: var(--color-text-secondary); font-size: 12px; }
+
+@media (max-width: 760px) {
+  main[data-route-id='observability'] .observation-eval__fields { grid-template-columns: 1fr; }
+  main[data-route-id='observability'] .observation-eval__actions { align-items: stretch; flex-direction: column; }
+  main[data-route-id='observability'] .observation-eval__actions .ui-button { min-height: 44px; }
+}
+
 main[data-route-id='observability'] .observation-privacy {
   display: flex;
   align-items: flex-start;
@@ -707,6 +1160,362 @@ main[data-route-id='observability'] .observation-privacy p {
     justify-self: start;
     margin-top: 0;
   }
+
+  main[data-route-id='observability'] .observation-canonical__list > li {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+  }
+
+  main[data-route-id='observability'] .observation-canonical__duration {
+    grid-column: 2 / 3;
+  }
+
+  main[data-route-id='observability'] .observation-canonical__list > li > .mgmt-status {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__heading > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__heading small,
+main[data-route-id='observability'] .observation-sandbox-runs__loading {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__loading { margin: 0; }
+
+main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state {
+  min-height: 0;
+  padding: 14px 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__icon {
+  display: none;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__title {
+  font-size: 13px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__description {
+  max-width: none;
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__row {
+  display: grid;
+  grid-template-columns: minmax(130px, .48fr) minmax(0, 1.7fr) minmax(220px, .9fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 9px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__identity,
+main[data-route-id='observability'] .observation-sandbox-runs__node {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__identity {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__identity strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node code,
+main[data-route-id='observability'] .observation-sandbox-runs__node a {
+  font: 11px/1.4 var(--font-mono);
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__policy code {
+  font: 11px/1.4 var(--font-mono);
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__identity .mgmt-status {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__chain {
+  display: grid;
+  grid-template-columns: max-content auto max-content auto max-content;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node a:hover {
+  text-decoration: underline;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node code {
+  color: var(--color-text-secondary);
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__arrow {
+  color: var(--color-text-tertiary);
+  font-size: 15px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__policy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__policy span {
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__policy code {
+  color: var(--color-text-tertiary);
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+main[data-route-id='observability'] .observation-schedules {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
+}
+
+main[data-route-id='observability'] .observation-schedules__heading,
+main[data-route-id='observability'] .observation-schedules__heading > span,
+main[data-route-id='observability'] .observation-schedules__runs > header,
+main[data-route-id='observability'] .observation-schedules__create-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+main[data-route-id='observability'] .observation-schedules__heading > span { justify-content: flex-start; }
+main[data-route-id='observability'] .observation-schedules__heading small,
+main[data-route-id='observability'] .observation-schedules__hint,
+main[data-route-id='observability'] .observation-schedules__list small,
+main[data-route-id='observability'] .observation-schedules__runs small,
+main[data-route-id='observability'] .observation-schedules__create-action > span {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-schedules__hint { margin: 0; }
+
+main[data-route-id='observability'] .observation-schedules__workspace {
+  display: grid;
+  grid-template-columns: minmax(240px, .8fr) minmax(280px, 1.2fr);
+  gap: 10px;
+}
+
+main[data-route-id='observability'] .observation-schedules__workspace > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+}
+
+main[data-route-id='observability'] .observation-schedules__list,
+main[data-route-id='observability'] .observation-schedules__runs ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+main[data-route-id='observability'] .observation-schedules__list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 48px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+main[data-route-id='observability'] .observation-schedules__list button:hover,
+main[data-route-id='observability'] .observation-schedules__list button[data-active] {
+  border-color: var(--color-accent-border);
+  background: var(--color-accent-soft);
+}
+
+main[data-route-id='observability'] .observation-schedules__list button > span,
+main[data-route-id='observability'] .observation-schedules__runs header > span,
+main[data-route-id='observability'] .observation-schedules__runs li > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+main[data-route-id='observability'] .observation-schedules__list strong,
+main[data-route-id='observability'] .observation-schedules__runs strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main[data-route-id='observability'] .observation-schedules__runs { display: grid; align-content: start; gap: 7px; }
+main[data-route-id='observability'] .observation-schedules__runs > header { padding-bottom: 7px; border-bottom: 1px solid var(--color-border); font-size: 12px; }
+main[data-route-id='observability'] .observation-schedules__runs li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--color-border-soft);
+  font-size: 12px;
+  text-align: right;
+}
+main[data-route-id='observability'] .observation-schedules__runs li > span:first-child { text-align: left; }
+main[data-route-id='observability'] .observation-schedules__runs li[data-state='failed'] { color: var(--color-danger); }
+
+main[data-route-id='observability'] .observation-schedules__create > summary {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+main[data-route-id='observability'] .observation-schedules__form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  padding-top: 10px;
+}
+
+main[data-route-id='observability'] .observation-schedules__form > label { display: grid; gap: 4px; min-width: 0; }
+main[data-route-id='observability'] .observation-schedules__form > label > span { color: var(--color-text-tertiary); font-size: 11px; }
+main[data-route-id='observability'] .observation-schedules__form :is(input, select) {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+main[data-route-id='observability'] .observation-schedules__suite-revision {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-2);
+  background: var(--color-surface-muted);
+}
+
+main[data-route-id='observability'] .observation-schedules__suite-revision > span,
+main[data-route-id='observability'] .observation-schedules__suite-revision > small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-schedules__suite-revision > strong {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+main[data-route-id='observability'] .observation-schedules__create-action,
+main[data-route-id='observability'] .observation-schedules__form > .mgmt-inline-notice,
+main[data-route-id='observability'] .observation-schedules__form > .observation-eval__receipt {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 760px) {
+  main[data-route-id='observability'] .observation-schedules__workspace,
+  main[data-route-id='observability'] .observation-schedules__form { grid-template-columns: 1fr; }
+  main[data-route-id='observability'] .observation-schedules__create-action { align-items: stretch; flex-direction: column; }
+  main[data-route-id='observability'] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr) auto; }
+  main[data-route-id='observability'] .observation-sandbox-runs__chain,
+  main[data-route-id='observability'] .observation-sandbox-runs__policy { grid-column: 1 / -1; }
+  main[data-route-id='observability'] .observation-sandbox-runs__chain { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -723,6 +1532,9 @@ main[data-route-id='observability'] .observation-privacy p {
   main[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: 1 / -1; }
   main[data-route-id='observability'][data-paw-os-app] .observation-workspace { grid-template-columns: minmax(0, 1fr); }
   main[data-route-id='observability'][data-paw-os-app] .observation-timeline { max-height: 520px; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__chain,
+  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__policy { grid-column: 1; }
 }
 
 @container paw-window (max-width: 620px) {

@@ -29,6 +29,7 @@ __pycache__/
 .pytest_cache/
 .pip-cache/
 .uv-cache/
+.pnpm-store/
 .mypy_cache/
 .ruff_cache/
 *.userdb/

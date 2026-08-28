@@ -1,6 +1,6 @@
 {
   "schemaVersion": "rag-ime.plugin-catalog.v1",
-  "catalogVersion": "2026.07.19",
+  "catalogVersion": "2026.08.29",
   "entries": [
     {
       "id": "session-review",
@@ -35,6 +35,42 @@
           "sourcePath": "bundled_plugins/session-review/1.0.0",
           "releasedAt": "2026-07-18",
           "notes": "Initial first-party read-only review action."
+        }
+      ]
+    },
+    {
+      "id": "vertical-agent-sandbox",
+      "displayName": "Vertical Agent Sandbox",
+      "description": "Runs allowlisted vertical Agent examples through PAW Trace, Eval, and the session-scoped sandbox gateway.",
+      "publisher": "Personal Agent Workbench",
+      "source": {
+        "kind": "bundled",
+        "label": "Product bundle",
+        "url": "https://github.com/7155/personal-agent-workbench"
+      },
+      "permissions": ["sandbox.run"],
+      "compatibility": {
+        "runtimeProtocol": "2",
+        "product": ">=0.1.0"
+      },
+      "security": {
+        "reviewed": true,
+        "networkAccess": false,
+        "enforcement": "session_scoped_sandbox_gateway",
+        "notes": "First-party interview demo package. The plugin calls the typed sandbox gateway; the host owns the allowlist, process boundary, Trace receipts, and Eval result."
+      },
+      "versions": [
+        {
+          "version": "0.1.1",
+          "sourcePath": "bundled_plugins/vertical-agent-sandbox/0.1.1",
+          "releasedAt": "2026-08-29",
+          "notes": "Moves Session identity and sandbox execution into the PAW Runtime Host so concurrent Sessions receive the correct connector."
+        },
+        {
+          "version": "0.1.0",
+          "sourcePath": "bundled_plugins/vertical-agent-sandbox/0.1.0",
+          "releasedAt": "2026-08-28",
+          "notes": "Adds SGG and 掌柜问数 self-test examples with Trace, Eval, and SandboxRun receipts."
         }
       ]
     },

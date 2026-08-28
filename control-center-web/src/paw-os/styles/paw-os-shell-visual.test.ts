@@ -147,6 +147,15 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#171a21'), hexToRgb('#ffffff'))).toBeGreaterThanOrEqual(7);
   });
 
+  it('keeps the resident Dock available while Room collaboration focus is open', () => {
+    // Collaboration focus covers the desktop field with the Room plane, but
+    // the Dock remains the user's persistent App switcher. Hiding or disabling
+    // it makes an open planet/session impossible to recover from the focus
+    // composition and contradicts the macOS-style desktop contract.
+    expect(pawOsCss).not.toMatch(/\.paw-desktop\[data-collaboration-focus\][^{]*\.paw-dock/);
+    expect(shellCss).not.toMatch(/:has\(\.paw-window-layer\[data-room-focus\]\)[^{]*\.paw-dock/);
+  });
+
   it('binds every identity placement to the one size ladder and one paper token', () => {
     // Five steps, defined once; a placement may only resolve a ladder step,
     // so identical surfaces can never drift apart by a stray pixel value.
@@ -214,10 +223,10 @@ describe('PAWOS shell visual language', () => {
     // the large-text threshold rather than the body one.
     expect(contrast(hexToRgb('#1e50d8'), ground)).toBeGreaterThanOrEqual(3);
     expect(contrast(hexToRgb('#ffffff'), hexToRgb('#1e50d8'))).toBeGreaterThanOrEqual(4.5);
-    // One owner: the migrated theme may not re-style the identity rail, so the
-    // identity wash/ring language can never be overridden back into a second
-    // hardcoded plate recipe like the pre-density desktop.
-    expect(shellCss).not.toContain('.paw-desktop-shortcuts');
+    // The desktop shortcut plane may own its neutral hover ink in the migrated
+    // theme, but it must stay a flat hit surface: no blur or second chrome
+    // plate can be introduced behind the real App icons.
+    expect(rule(shellCss, '.paw-desktop-root .paw-desktop-shortcuts button')).not.toContain('backdrop-filter');
     expect(rule(pawOsCss, '.paw-desktop-shortcuts')).not.toContain('backdrop-filter');
     // Tiles carry the Dock's running shape language: long pill = visible
     // window, short soft pill = minimized only — never colour alone.
@@ -227,6 +236,19 @@ describe('PAWOS shell visual language', () => {
     expect(rule(pawOsCss, '.paw-desktop-shortcuts button[data-minimized] > i')).toContain('width: 6px');
     // Dense tiles resolve the md ladder step, not the launcher's 48px tile.
     expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-md)');
+  });
+
+  it('keeps desktop project names fully readable instead of clamping them to an ellipsis', () => {
+    const projectNameStart = shellCss.lastIndexOf('.paw-desktop-root .paw-wayfinder-work__project-copy strong');
+    expect(projectNameStart, 'desktop project-name override').toBeGreaterThan(-1);
+    const projectNameRule = shellCss.slice(projectNameStart, shellCss.indexOf('}', projectNameStart));
+
+    expect(projectNameRule).toContain('max-width: 96px');
+    expect(projectNameRule).toContain('display: block');
+    expect(projectNameRule).toContain('overflow: visible');
+    expect(projectNameRule).toContain('text-overflow: clip');
+    expect(projectNameRule).toContain('white-space: normal');
+    expect(projectNameRule).toContain('-webkit-line-clamp: unset');
   });
 
   it('re-pairs the window title ink on the dark Terminal chrome', () => {

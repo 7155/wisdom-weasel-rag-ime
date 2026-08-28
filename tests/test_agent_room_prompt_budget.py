@@ -111,6 +111,9 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
         self.assertIn("恰好一次", prompt)
         self.assertIn("才能调用 agent_goal complete", prompt)
         self.assertIn("普通 turn_completed", prompt)
+        self.assertIn("documentSync pending/failed", prompt)
+        self.assertIn("不阻断满足功能证据的 WorkItem", prompt)
+        self.assertIn("只有交付本身就是文档时才影响 requirementVerdict", prompt)
         self.assertEqual(prompt.count("op=post、kind=result"), 1)
         self.assertNotIn("documentRevision >= 2）后才会自动验收", prompt)
         self.assertTrue(prompt.endswith("</room-context>"))
@@ -182,6 +185,8 @@ class AgentRoomPromptBudgetTests(unittest.TestCase):
 
         self.assertIn("只会把 WorkItem 提交到 review", prompt)
         self.assertIn("不会自动验收", prompt)
+        self.assertIn("WorkDocument 绑定最多尝试一次", prompt)
+        self.assertIn("不要仅因文档同步失败 retry/return", prompt)
         self.assertIn("网页验收只用 product browser", prompt)
         self.assertIn("live authorityRevision", prompt)
         self.assertNotIn("当前尚未形成结构化 WorkItem", prompt)

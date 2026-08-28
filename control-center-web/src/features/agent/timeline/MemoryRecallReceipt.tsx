@@ -6,6 +6,7 @@ import { Disclosure } from '@/components/primitives';
 import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
 import {
   evidenceEchoNodeEntities,
+  evidenceEchoAppLabel,
   evidenceEchoSessionRoute,
   openEvidenceEchoEntity,
   type EvidenceEchoEntity,
@@ -46,12 +47,12 @@ export function MemoryRecallReceipt({ receipt }: { receipt: MemoryRecallReceiptV
         <div className="agent-memory-recall-receipt__actions">
           {receipt.entities.map((entity) => (
             <button
-              aria-label={`在记忆中打开 ${entity.label}`}
+              aria-label={`在${evidenceEchoAppLabel(entity.appId)}中打开 ${entity.label}`}
               key={`${entity.appId}:${entity.entityId}`}
               onClick={() => openEvidenceEchoEntity(desktop, entity)}
               type="button"
             >
-              打开记忆来源 <ExternalLink aria-hidden="true" size={12} />
+              打开{evidenceEchoAppLabel(entity.appId)}来源 <ExternalLink aria-hidden="true" size={12} />
             </button>
           ))}
           <button
@@ -92,7 +93,7 @@ export function memoryRecallReceiptFromTrace(
     durationMs: Math.max(0, finiteInteger(node.durationMs) ?? 0),
     sourceTitles: commaSeparated(node.metadata.sourceTitles, 12),
     entities: evidenceEchoNodeEntities(node, { sessionId: trace.sessionId })
-      .filter((entity) => entity.appId === 'memory'),
+      .filter((entity) => entity.appId === 'memory' || entity.appId === 'knowledge'),
   };
 }
 

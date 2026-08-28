@@ -295,7 +295,7 @@ class AgentContextRuntimeTests(unittest.TestCase):
             stage="input",
             label="用户消息",
             source_kind="user",
-            summary="/Users/undo/private.txt api_key=secret-value",
+            summary="/Users/example/private.txt api_key=secret-value",
             content="不能出现在公开 trace 的原始正文",
         )
         final_node = self.runtime.add_trace_node(
@@ -321,7 +321,7 @@ class AgentContextRuntimeTests(unittest.TestCase):
         serialized = json.dumps(trace, ensure_ascii=False)
         self.assertNotIn("不能出现在", serialized)
         self.assertNotIn("最终运行时正文", serialized)
-        self.assertNotIn("/Users/undo", serialized)
+        self.assertNotIn("/Users/example", serialized)
         self.assertNotIn("secret-value", serialized)
         self.assertNotIn("systemPrompt", serialized)
         self.assertIn("sha256:", serialized)

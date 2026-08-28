@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.eval-schedule-run-list.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "schedule", "items"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.eval-schedule-run-list.v1"},
+    "ok": {"const": true},
+    "schedule": {"$ref": "#/$defs/schedule"},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/run"}
+    }
+  },
+  "$defs": {
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "suiteId", "suiteRevision", "recurrenceKind", "recurrenceInterval",
+        "maxRuns", "runCount", "status", "initialDueAtMs", "nextDueAtMs",
+        "lastErrorCode", "createdAtMs", "updatedAtMs", "latestRun"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "suiteId": {"type": "string", "minLength": 1},
+        "suiteRevision": {"type": "string", "minLength": 1},
+        "recurrenceKind": {"enum": ["daily", "weekly"]},
+        "recurrenceInterval": {"type": "integer", "minimum": 1, "maximum": 30},
+        "maxRuns": {"type": "integer", "minimum": 1, "maximum": 100},
+        "runCount": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["scheduled", "running", "completed", "failed"]},
+        "initialDueAtMs": {"type": "integer", "minimum": 0},
+        "nextDueAtMs": {"type": "integer", "minimum": 0},
+        "lastErrorCode": {"type": "string"},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0},
+        "latestRun": {"$ref": "#/$defs/latestRun"}
+      }
+    },
+    "latestRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "scheduleId": {"type": "string", "minLength": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "state": {"enum": ["claimed", "succeeded", "failed"]},
+        "dueAtMs": {"type": "integer", "minimum": 0},
+        "claimedAtMs": {"type": "integer", "minimum": 0},
+        "finishedAtMs": {"type": "integer", "minimum": 0},
+        "evalRunId": {"type": "string"},
+        "errorCode": {"type": "string"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "scheduleId", "attempt", "state", "dueAtMs", "claimedAtMs",
+        "finishedAtMs", "evalRunId", "errorCode", "traceIds", "traceIdsTruncated"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "scheduleId": {"type": "string", "minLength": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "state": {"enum": ["claimed", "succeeded", "failed"]},
+        "dueAtMs": {"type": "integer", "minimum": 0},
+        "claimedAtMs": {"type": "integer", "minimum": 0},
+        "finishedAtMs": {"type": "integer", "minimum": 0},
+        "evalRunId": {"type": "string"},
+        "errorCode": {"type": "string"},
+        "traceIds": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "traceIdsTruncated": {"type": "boolean"}
+      }
+    }
+  }
+}

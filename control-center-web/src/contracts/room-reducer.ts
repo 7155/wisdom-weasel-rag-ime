@@ -110,6 +110,12 @@ export interface RoomParticipantPublicProgressProjection {
 }
 export interface RoomTurnProjection {
   id: string;
+  /**
+   * UI-only identity for a turn that was first rendered optimistically. The
+   * Room event stream remains keyed by `id`; this alias lets projections keep
+   * the same logical round when the server replaces the local turn id.
+   */
+  logicalRootId?: string;
   rootId?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted';
   messageIds: string[];
@@ -595,6 +601,7 @@ export function applyRoomSnapshot(
   const clientIds = new Set(snapshot.messages.map((message) => message.clientMessageId).filter(Boolean));
   for (const message of snapshot.messages) upsertMessage(next, message);
   preserveOptimisticMessages(state, next, clientIds);
+  preserveLogicalTurnAliases(state, next);
   return next;
 }
 
@@ -699,7 +706,75 @@ export function replayRoomEventSnapshot(
       .filter((value): value is string => Boolean(value)),
   );
   preserveOptimisticMessages(state, next, clientIds);
+  preserveLogicalTurnAliases(state, next);
   return next;
+}
+
+/**
+ * Snapshot replay rebuilds turns from authoritative events, so it cannot see
+ * the provisional turn that was replaced during the live stream. Carry the
+ * alias only from this in-memory projection, keyed by the user's client
+ * message id and explicit retry lineage; it is a UI continuity hint, never a
+ * persisted Room identity.
+ */
+function preserveLogicalTurnAliases(
+  previous: RoomProjectionState,
+  next: RoomProjectionState,
+): void {
+  const aliasesByClientMessageId = new Map<string, string>();
+  const aliasesByTurnId = new Map<string, string>();
+  for (const turn of Object.values(previous.turnsById)) {
+    const alias = turn.logicalRootId
+      || (!turn.retryOfRootId && turn.id.startsWith('local-room-turn:') ? turn.id : '');
+    if (!alias) continue;
+    aliasesByTurnId.set(turn.id, alias);
+    if (turn.rootId) aliasesByTurnId.set(turn.rootId, alias);
+    for (const messageId of turn.messageIds) {
+      const clientMessageId = previous.messagesById[messageId]?.clientMessageId;
+      if (clientMessageId) aliasesByClientMessageId.set(clientMessageId, alias);
+    }
+  }
+  /* A retry can itself be the only retained turn in the previous projection.
+   * Resolve its explicit parent to the same alias without treating ordinary
+   * new turns as descendants. */
+  for (const turn of Object.values(previous.turnsById)) {
+    if (aliasesByTurnId.has(turn.id)) continue;
+    const alias = retryLineageAlias(previous, turn.retryOfRootId, aliasesByTurnId);
+    if (!alias) continue;
+    aliasesByTurnId.set(turn.id, alias);
+    if (turn.rootId) aliasesByTurnId.set(turn.rootId, alias);
+    for (const messageId of turn.messageIds) {
+      const clientMessageId = previous.messagesById[messageId]?.clientMessageId;
+      if (clientMessageId) aliasesByClientMessageId.set(clientMessageId, alias);
+    }
+  }
+  if (!aliasesByClientMessageId.size && !aliasesByTurnId.size) return;
+  for (const turn of Object.values(next.turnsById)) {
+    const clientMessageId = turn.messageIds
+      .map((messageId) => next.messagesById[messageId]?.clientMessageId)
+      .find((value): value is string => Boolean(value));
+    const alias = (clientMessageId ? aliasesByClientMessageId.get(clientMessageId) : undefined)
+      || (turn.retryOfRootId ? aliasesByTurnId.get(turn.retryOfRootId) : undefined);
+    if (!alias || alias === turn.id) continue;
+    const writable = writableTurn(next, turn.id);
+    if (writable) writable.logicalRootId = alias;
+  }
+}
+
+function retryLineageAlias(
+  projection: RoomProjectionState,
+  retryOfRootId: string | undefined,
+  aliasesByTurnId: ReadonlyMap<string, string>,
+): string | undefined {
+  let current = retryOfRootId || '';
+  const visited = new Set<string>();
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const alias = aliasesByTurnId.get(current);
+    if (alias) return alias;
+    current = projection.turnsById[current]?.retryOfRootId || '';
+  }
+  return undefined;
 }
 
 function preserveOptimisticMessages(
@@ -1442,9 +1517,21 @@ function upsertMessage(
     : undefined;
   const replacedId = optimisticId ?? acceptedId;
   let replacedExisting = false;
+  let replacedTurnId = '';
+  let replacedLogicalRootId = '';
   if (replacedId && replacedId !== message.id) {
     const index = state.messageOrder.indexOf(replacedId);
     const previous = state.messagesById[replacedId];
+    replacedTurnId = previous?.turnId ?? '';
+    replacedLogicalRootId = (replacedTurnId ? state.turnsById[replacedTurnId]?.logicalRootId : '')
+      || (previous
+      ? previous.rootId && previous.rootId !== previous.turnId
+        ? previous.rootId
+        : ''
+      : '');
+    if (!replacedLogicalRootId && replacedTurnId.startsWith('local-room-turn:')) {
+      replacedLogicalRootId = replacedTurnId;
+    }
     delete state.messagesById[replacedId];
     if (index >= 0) {
       state.messageOrder[index] = message.id;
@@ -1456,6 +1543,10 @@ function upsertMessage(
   if (!state.messagesById[message.id] && !replacedExisting) state.messageOrder.push(message.id);
   state.messagesById[message.id] = message;
   attachMessage(state, message);
+  if (replacedLogicalRootId) {
+    const turn = writableTurn(state, message.turnId);
+    if (turn) turn.logicalRootId = replacedLogicalRootId;
+  }
 }
 
 function upsertActivity(
@@ -1623,7 +1714,16 @@ function mergeRoomActivityPayload(
 ): Record<string, unknown> {
   const previousPayload = previous?.payload ?? {};
   const sourceEventType = text(payload.sourceEventType);
-  if (!['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
+  const recordsPublicHistory = [
+    'tool_started',
+    'tool_progress',
+    'tool_finished',
+    'reasoning_summary',
+    'current_progress',
+    'progress',
+    'status_changed',
+  ].includes(sourceEventType);
+  if (!recordsPublicHistory) {
     return { ...previousPayload, ...payload };
   }
   const suppliedHistory = Array.isArray(payload.progressHistory)
@@ -1631,12 +1731,13 @@ function mergeRoomActivityPayload(
     : Array.isArray(previousPayload.progressHistory)
       ? previousPayload.progressHistory
       : [];
+  const boundedHistory = suppliedHistory.slice(-20);
   const sourceEventId = text(payload.sourceEventId) || event.eventId;
-  const history = suppliedHistory.some((entry) => (
+  const history = boundedHistory.some((entry) => (
     text(record(entry).eventId ?? record(entry).sourceEventId) === sourceEventId
   ))
-    ? suppliedHistory
-    : [...suppliedHistory, {
+    ? boundedHistory
+    : [...boundedHistory, {
         eventId: sourceEventId,
         kind: sourceEventType,
         status,
@@ -1648,7 +1749,12 @@ function mergeRoomActivityPayload(
     ...payload,
     progressHistory: history,
   };
+  const isToolLifecycle = ['tool_started', 'tool_progress', 'tool_finished'].includes(
+    sourceEventType,
+  );
   if (
+    isToolLifecycle
+    &&
     Object.keys(record(payload.arguments ?? payload.args)).length === 0
     && Object.keys(record(previousPayload.arguments ?? previousPayload.args)).length > 0
   ) {

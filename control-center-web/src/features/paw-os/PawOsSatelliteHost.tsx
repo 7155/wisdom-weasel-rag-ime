@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { BrainCircuit, CalendarDays, CheckCircle2, ChevronDown, CircleAlert, CircleStop, ExternalLink, FileText, FolderKanban, ListChecks, LoaderCircle, MessageSquare, Network, PackageCheck, PackageOpen, PackageX, Power, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
+import { Activity, BrainCircuit, CalendarDays, CheckCircle2, ChevronDown, CircleAlert, CircleStop, ExternalLink, FileText, FolderKanban, ListChecks, LoaderCircle, MessageSquare, Network, PackageCheck, PackageOpen, PackageX, Power, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Skeleton } from '@/components/primitives';
 import type { WorkDocumentDetailV1 } from '@/contracts/work-documents';
+import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import { roleItems, sessionItems, sessionPermissionLabel } from '@/features/agent/types';
 import { subagentRuns } from '@/features/agent/status/subagent-data';
 import { arrayRecords, asRecord, formatTime, publicErrorText, StatusBadge, stringValue } from '@/features/overview/management-ui';
@@ -17,11 +18,11 @@ import type { PawOsWindowTarget } from './model/desktop';
 import { roomPlanetWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
 import { PawRoomFocusOverview } from '@/paw-os/apps/PawRoomFocusOverview';
 import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
-import { PawRoomConversation, roomProcessWindowRequest } from '@/paw-os/apps/PawRoomConversation';
+import { PawRoomConversation } from '@/paw-os/apps/PawRoomConversation';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
-import { buildRoomFocusProjection, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
+import { buildRoomFocusProjection, roomFocusCelestialName, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
 import { RoomActivityGlyph } from '@/paw-os/apps/room-tool-glyph';
 import './paw-os-satellite.css';
 
@@ -384,7 +385,6 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
 }
 
 function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'participant' }> }) {
-  const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const roomQuery = useRoomDetail(target.roomId);
   const room = roomFromResponse(roomQuery.data, target.roomId);
@@ -393,55 +393,39 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
   const focusPartner = useMemo(() => (
     room ? buildRoomFocusProjection(room, projection).partners.find((partner) => partner.participantId === target.id) : undefined
   ), [projection, room, target.id]);
-  const [error, setError] = useState('');
-
-  /* An approval raised inside a partner's lane is decided where it is read;
-     the satellite calls the same Runtime route the main Room does. */
-  const decideApproval = async (approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string) => {
-    try {
-      await transport.request({
-        pathId: 'agent.approval.decide',
-        params: { approvalId },
-        body: { decision: decision === 'approved' ? 'approve' : 'reject', payloadSha256 },
-      });
-      setError('');
-    } catch (reason) {
-      setError(publicErrorText(reason, '审批没有完成，请重试。'));
-      throw reason;
-    }
-  };
-
   return (
-    <section className="paw-os-satellite paw-os-satellite--participant-chat">
+    <section className="paw-os-satellite paw-os-satellite--participant-chat" data-presentation="planet-observer">
       {roomQuery.isPending ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
-      {roomQuery.error ? <SatelliteLoadError error={roomQuery.error} icon={MessageSquare} onRetry={() => void roomQuery.refetch()} title="伙伴窗口没有打开" /> : null}
-      {!roomQuery.isPending && !roomQuery.error && !participant ? <SatelliteMissing copy="这位伙伴已经不在当前 Room 中。" icon={MessageSquare} route="rooms" title="找不到这位伙伴" /> : null}
+      {roomQuery.error ? <SatelliteLoadError error={roomQuery.error} icon={MessageSquare} onRetry={() => void roomQuery.refetch()} title="行星窗口没有打开" /> : null}
+      {!roomQuery.isPending && !roomQuery.error && !participant ? <SatelliteMissing copy="这颗行星已经不在当前 Room 中。" icon={MessageSquare} route="rooms" title="找不到这颗行星" /> : null}
       {participant && room ? (
         <>
-          {/* UR-056：窗口标题栏已标识伙伴身份，内容区只保留该伙伴的真实公开
+          {/* UR-056：窗口标题栏已标识行星身份，内容区只保留该行星的真实公开
               对话与运行轨迹；WorkItem/责任摘要留在 Room 主窗。The transcript is
               the same shared conversation surface the Room reads, scoped to
               this partner's public lane, so a long history stays virtualized
               instead of windowed behind a「加载更早」boundary. */}
           {projection ? <PawRoomConversation
             empty={<div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>还没有消息或执行轨迹</span></div>}
-            onApprovalDecision={decideApproval}
-            onOpenProcessActivity={(activity) => {
-              const request = roomProcessWindowRequest(activity, room.id);
-              if (request) desktop?.openWindow({ ...request, background: false });
-            }}
             participantId={participant.id}
             projection={projection}
+            readOnly
             room={room}
           /> : null}
-          {error ? <p className="paw-participant-chat__error" role="alert">{error}</p> : null}
-          {/* PF-CM-013：卫星只补一条极薄状态行——当前工作一句、文字+色状态、
-              去完整 Session 的入口；身份与治理留在标题栏和主 Room。 */}
+          {/* PF-CM-013 / UR-170：行星窗只补一条极薄状态行。它没有第二个
+              composer；Trace 与完整 Session 入口都保持为导航，不在观察窗改状态。 */}
           <SatelliteStatusline
+            action={{
+              label: 'Session',
+              ariaLabel: `在 Agent 中打开 ${focusPartner?.celestialName ?? roomFocusCelestialName(participant.ordinal)} 的完整 Session`,
+              route: `${routePath('agent')}?session=${encodeURIComponent(participant.sessionId)}`,
+            }}
             currentWork={conciseParticipantEntry(focusPartner?.currentAction ?? '', satelliteStatuslineFallback(focusPartner?.state ?? 'idle'))}
-            sessionId={participant.sessionId}
-            sessionLabel={`在 Agent 中打开 ${participant.displayName} 的完整 Session`}
             state={focusPartner?.state ?? 'idle'}
+            traceAction={{
+              ariaLabel: `查看 ${focusPartner?.celestialName ?? roomFocusCelestialName(participant.ordinal)} 的 Trace`,
+              route: `${routePath('observability')}?sessionId=${encodeURIComponent(participant.sessionId)}`,
+            }}
           />
         </>
       ) : null}
@@ -449,25 +433,35 @@ function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarge
   );
 }
 
-function SatelliteStatusline({ currentWork, sessionId, sessionLabel, state }: {
+function SatelliteStatusline({ action, currentWork, state, traceAction }: {
+  action?: { ariaLabel: string; label: string; route: string };
   currentWork: string;
-  sessionId: string;
-  sessionLabel: string;
   state: RoomFocusState;
+  traceAction?: { ariaLabel: string; route: string };
 }) {
   const desktop = usePawOsDesktop();
   return (
     <footer aria-label="当前工作与状态" className="paw-participant-chat__statusline" data-state={state}>
       <span className="paw-participant-chat__statusline-state"><i aria-hidden="true" />{roomFocusStateLabel(state)}</span>
       <p title={currentWork}>{currentWork}</p>
-      {sessionId ? (
+      {traceAction ? (
         <button
-          aria-label={sessionLabel}
-          onClick={() => openPawOsRoute(desktop, `${routePath('agent')}?session=${encodeURIComponent(sessionId)}`)}
+          aria-label={traceAction.ariaLabel}
+          onClick={() => openPawOsRoute(desktop, traceAction.route)}
+          type="button"
+        >
+          <Activity aria-hidden="true" size={12} />
+          <span>Trace</span>
+        </button>
+      ) : null}
+      {action ? (
+        <button
+          aria-label={action.ariaLabel}
+          onClick={() => openPawOsRoute(desktop, action.route)}
           type="button"
         >
           <ExternalLink aria-hidden="true" size={12} />
-          <span>Session</span>
+          <span>{action.label}</span>
         </button>
       ) : null}
     </footer>
@@ -626,6 +620,19 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
         <>
           <div aria-label={`子 Agent ${target.title || run.task || target.id} 公开对话与运行事件`} aria-live="polite" className="paw-participant-chat__timeline" onScroll={(event) => { followLatestRef.current = timelineNearLatest(event.currentTarget); }} ref={timelineRef} role="log">
             <SubagentHistoryBoundary loadedRunCount={runs.length} onOpenAgent={() => openPawOsRoute(desktop, routePath('agent'))} />
+            {subagentRunFailed(run) && run.error.trim() ? (
+              <section className="paw-participant-chat__failure" data-state={run.state} role="alert">
+                <div>
+                  <CircleAlert aria-hidden="true" size={14} />
+                  <span title={run.error}>失败原因：{subagentFailureSummary(run.error)}</span>
+                </div>
+                <SatelliteRawDetail
+                  contentId={`subagent-failure-${run.id.replace(/[^a-zA-Z0-9_-]/gu, '-')}`}
+                  label="查看完整失败原因"
+                  text={run.error}
+                />
+              </section>
+            ) : null}
             {entries.length ? <div className="paw-participant-chat__history-boundary" data-unknown-total role="status">控制台已加载 {entries.length} 条真实记录；更早历史此处暂不可加载。</div> : null}
             {timelineItems.map((item) => item.kind === 'activity-group' ? (
               <SatelliteDisclosure active={item.active} className="paw-participant-chat__activity-group" contentId={`subagent-activity-${item.id}`} dataActive={item.active} key={item.id} summary={(
@@ -640,15 +647,31 @@ function SubagentSatellite({ target }: { target: Extract<PawOsWindowTarget, { ki
             {!entries.length ? <div className="paw-participant-chat__empty"><MessageSquare size={17} /><span>{run.state === 'queued' ? '等待开始' : '还没有公开进度'}</span></div> : null}
           </div>
           <SatelliteStatusline
+            action={{
+              ariaLabel: '在 Agent 中打开所属 Session',
+              label: 'Session',
+              route: `${routePath('agent')}?session=${encodeURIComponent(target.sessionId)}`,
+            }}
             currentWork={conciseParticipantEntry(run.task || run.todoTask, satelliteStatuslineFallback(subagentFocusState(run.state)))}
-            sessionId={target.sessionId}
-            sessionLabel="在 Agent 中打开所属 Session"
             state={subagentFocusState(run.state)}
+            traceAction={{
+              ariaLabel: '查看子 Agent Trace',
+              route: `${routePath('observability')}?runId=${encodeURIComponent(target.id)}`,
+            }}
           />
         </>
       ) : null}
     </section>
   );
+}
+
+function subagentRunFailed(run: AgentSubagentRunV1): boolean {
+  return run.state === 'failed' || run.state === 'timed_out';
+}
+
+function subagentFailureSummary(error: string): string {
+  const compact = error.replace(/\s+/gu, ' ').trim();
+  return compact.length > 160 ? `${compact.slice(0, 157).trimEnd()}…` : compact;
 }
 
 function subagentFocusState(state: string): RoomFocusState {
@@ -731,6 +754,10 @@ function subagentTimeline(value: unknown): SubagentTimelineEntry[] {
   const activity = arrayRecords(snapshot.activity).map((item, index): SubagentTimelineEntry => {
     const eventType = stringValue(item.eventType);
     const payload = asRecord(item.payload);
+    const summary = stringValue(item.summary) || stringValue(payload.summary) || subagentActivityLabel(eventType, payload);
+    const toolError = ['tool_failed', 'tool_error'].includes(eventType)
+      ? deepText(payload, new Set(['error', 'errorMessage', 'stderr']))
+      : '';
     return {
       id: stringValue(item.id, `activity:${index}`),
       actor: '运行进度',
@@ -738,7 +765,7 @@ function subagentTimeline(value: unknown): SubagentTimelineEntry[] {
       kind: 'activity',
       eventType,
       status: subagentEventStatus(eventType, payload),
-      text: stringValue(item.summary) || stringValue(payload.summary) || subagentActivityLabel(eventType, payload),
+      text: toolError && !summary.includes(toolError) ? `${summary}：${toolError}` : summary,
       time: Number(item.createdAtMs) || 0,
     };
   });

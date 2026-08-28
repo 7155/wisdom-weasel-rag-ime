@@ -1,0 +1,675 @@
+.paw-room-rounds {
+  --paw-room-motion-ease: cubic-bezier(.23, 1, .32, 1);
+  --paw-room-motion-fast: 180ms;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  scrollbar-color: color-mix(in srgb, #65758a 38%, transparent) transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+/* PAWOS hides generic window scrollbars. The round sheet is a long-lived
+   reading surface, so keep one visible, narrow affordance on its sole
+   vertical scroller. */
+.paw-window-body .paw-room-rounds::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.paw-window-body .paw-room-rounds::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, #65758a 38%, transparent);
+  background-clip: padding-box;
+}
+
+.paw-room-rounds--empty {
+  place-content: center;
+  justify-items: center;
+  min-height: 280px;
+  color: var(--paw-text-secondary, #58677d);
+  text-align: center;
+}
+
+.paw-room-rounds--empty strong {
+  color: var(--paw-text-primary, #162235);
+  font-size: 14px;
+}
+
+.paw-room-rounds--empty p {
+  max-width: 46ch;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.paw-room-round {
+  height: max-content;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--paw-border, #ccd6e3) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--paw-surface, #fff) 97%, #edf5ff);
+}
+
+.paw-room-round__header {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--paw-border, #ccd6e3) 72%, transparent);
+}
+
+.paw-room-round__toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.paw-room-round__toggle-icon {
+  display: grid;
+  flex: none;
+  color: var(--paw-text-secondary, #65758a);
+  transform: rotate(0deg);
+  transition: transform var(--paw-room-motion-fast) var(--paw-room-motion-ease), color 120ms ease;
+}
+
+.paw-room-round__toggle-icon[data-open] {
+  transform: rotate(90deg);
+}
+
+.paw-room-round__toggle > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.paw-room-round__toggle strong,
+.paw-room-round__toggle small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-room-round__toggle strong {
+  color: var(--paw-text-primary, #162235);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.paw-room-round__toggle small {
+  color: var(--paw-text-secondary, #65758a);
+  font-size: 12px;
+}
+
+.paw-room-round__state,
+.paw-room-round__row-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--paw-text-secondary, #5e6c80);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.paw-room-round__state i,
+.paw-room-round__row-state i,
+.paw-room-round__detail li > i {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #91a1b4;
+}
+
+.paw-room-round__state[data-state="running"] i,
+.paw-room-round__row-state[data-state="running"] i,
+.paw-room-round__detail li[data-state="running"] > i {
+  background: #2878d0;
+  animation: paw-room-round-live-pulse 1.6s ease-in-out infinite;
+}
+
+.paw-room-round__state[data-state="completed"] i,
+.paw-room-round__row-state[data-state="completed"] i,
+.paw-room-round__detail li[data-state="completed"] > i {
+  background: #268263;
+}
+
+.paw-room-round__state[data-state="failed"] i,
+.paw-room-round__row-state[data-state="failed"] i,
+.paw-room-round__detail li[data-state="failed"] > i {
+  background: #c64f55;
+}
+
+.paw-room-round__state[data-state="blocked"] i,
+.paw-room-round__row-state[data-state="blocked"] i,
+.paw-room-round__detail li[data-state="blocked"] > i {
+  background: #bd7626;
+}
+
+.paw-room-round__state[data-state="aborted"] i,
+.paw-room-round__row-state[data-state="aborted"] i,
+.paw-room-round__detail li[data-state="aborted"] > i {
+  background: #806d91;
+}
+
+.paw-room-round__table-scroll {
+  /* The round list is the only vertical reading surface. Keep this wrapper
+     for a wide table's horizontal overflow, otherwise every round becomes a
+     second scroll well inside the Room. */
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: clip;
+  overscroll-behavior-x: contain;
+  animation: paw-room-round-reveal var(--paw-room-motion-fast) var(--paw-room-motion-ease) both;
+}
+
+.paw-room-round table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.paw-room-round thead {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: color-mix(in srgb, var(--paw-surface, #fff) 96%, #eef5fd);
+}
+
+.paw-room-round th,
+.paw-room-round td {
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--paw-border, #ccd6e3) 60%, transparent);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.paw-room-round thead th {
+  color: var(--paw-text-secondary, #66768a);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+.paw-room-round thead th:nth-child(1) { width: 19%; }
+.paw-room-round thead th:nth-child(2) { width: 24%; }
+.paw-room-round thead th:nth-child(3) { width: 12%; }
+.paw-room-round thead th:nth-child(4) { width: 37%; }
+.paw-room-round thead th:nth-child(5) { width: 8%; }
+
+.paw-room-round tbody:last-child > tr:last-child > * {
+  border-bottom: 0;
+}
+
+.paw-room-round tbody > tr:first-child:hover {
+  background-color: color-mix(in srgb, #ddecff 28%, transparent);
+}
+
+.paw-room-round tbody > tr[data-planet-row][aria-selected="true"] {
+  background-color: color-mix(in srgb, #ddecff 42%, transparent);
+  box-shadow: inset 2px 0 #2878d0;
+}
+
+.paw-room-round tbody > tr[data-planet-row] {
+  cursor: pointer;
+}
+
+.paw-room-round tbody > tr[data-planet-row][data-state='running'] {
+  background-color: color-mix(in srgb, #2878d0 3%, transparent);
+  background-image: linear-gradient(
+    106deg,
+    transparent 0%,
+    rgb(69 123 235 / .02) 32%,
+    rgb(124 96 221 / .11) 50%,
+    rgb(69 123 235 / .02) 68%,
+    transparent 100%
+  );
+  background-position: 140% 0;
+  background-repeat: no-repeat;
+  background-size: 240% 100%;
+  animation: paw-room-round-row-sheen 3.4s linear infinite;
+}
+
+.paw-room-round__blocker {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, #f4bd70 18%, transparent);
+}
+
+.paw-room-round__blocker > strong,
+.paw-room-round__blocker > p,
+.paw-room-round__blocker > small {
+  margin: 0;
+}
+
+.paw-room-round__blocker > small {
+  color: var(--paw-text-secondary, #65758a);
+}
+
+.paw-room-round td > p,
+.paw-room-round td > .agent-markdown,
+.paw-room-round td > .paw-room-round__result {
+  margin: 0;
+  color: var(--paw-text-primary, #26364a);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.paw-room-round td > .agent-markdown p,
+.paw-room-round__result .agent-markdown p {
+  margin: 0;
+}
+
+.paw-room-round__result {
+  display: grid;
+  gap: 4px;
+}
+
+.paw-room-round__planet {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.paw-room-round__planet > span:first-child {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 9px;
+  background: #eaf3ff;
+  color: #236eba;
+}
+
+.paw-room-round__planet > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.paw-room-round__planet strong,
+.paw-room-round__planet small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-room-round__planet strong {
+  color: var(--paw-text-primary, #162235);
+  font-size: 13px;
+}
+
+.paw-room-round__planet small {
+  color: var(--paw-text-secondary, #6b798b);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.paw-room-round__actions {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.paw-room-round__actions .paw-room-round__resume-error {
+  max-width: 12ch;
+  overflow: hidden;
+  color: #b3444b;
+  font-size: 12px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-room-round__actions button,
+.paw-room-round__detail section > button {
+  display: inline-flex;
+  min-width: 28px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #47617f;
+}
+
+.paw-room-round__actions button:hover,
+.paw-room-round__detail section > button:hover,
+.paw-room-round__planet:hover > span:first-child {
+  background: #dcecff;
+  color: #165d9f;
+}
+
+.paw-room-round button:focus-visible {
+  outline: 2px solid #3486d6;
+  outline-offset: 2px;
+}
+
+.paw-room-round__detail-row > td {
+  padding: 0;
+  background: color-mix(in srgb, var(--paw-surface, #fff) 93%, #edf5ff);
+}
+
+.paw-room-round__detail {
+  display: grid;
+  max-height: none;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, .75fr);
+  gap: 18px;
+  overflow: visible;
+  padding: 12px 16px 14px 48px;
+  animation: paw-room-round-reveal var(--paw-room-motion-fast) var(--paw-room-motion-ease) both;
+}
+
+.paw-room-round__detail section {
+  min-width: 0;
+}
+
+.paw-room-round__detail section > strong {
+  color: var(--paw-text-primary, #26364a);
+  font-size: 13px;
+}
+
+.paw-room-round__detail ol,
+.paw-room-round__detail ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paw-room-round__detail li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--paw-text-secondary, #5c6b7f);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.paw-room-round__detail p {
+  margin: 8px 0 0;
+  color: var(--paw-text-secondary, #5c6b7f);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.paw-room-round__detail li > span,
+.paw-room-round__detail li > .agent-markdown,
+.paw-room-round__detail p {
+  word-break: break-word;
+}
+
+.paw-room-round__detail li > .agent-markdown {
+  min-width: 0;
+  flex: 1;
+}
+
+.paw-room-round__blocker > .agent-markdown p {
+  margin: 0;
+}
+
+.paw-room-round__blocker small .agent-markdown,
+.paw-room-round__blocker small .agent-markdown p {
+  display: inline;
+  margin: 0;
+}
+
+.paw-room-round__file-reference {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #236eba;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+.paw-room-round__file-reference > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-room-round__file-reference:hover {
+  border-color: color-mix(in srgb, #236eba 20%, transparent);
+  background: #eaf3ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.paw-room-round__file-reference:focus-visible {
+  outline: 2px solid #3486d6;
+  outline-offset: 2px;
+}
+
+.paw-room-round__progress-text {
+  display: inline;
+}
+
+.paw-room-round td > .paw-room-round__progress-text[data-live] {
+  animation: paw-room-round-progress-arrive var(--paw-room-motion-fast) var(--paw-room-motion-ease) both;
+}
+
+.paw-room-round__detail section > button {
+  min-height: 30px;
+  margin-top: 8px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+@keyframes paw-room-round-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes paw-room-round-progress-arrive {
+  from {
+    opacity: .45;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes paw-room-round-live-pulse {
+  0%, 100% {
+    opacity: .72;
+    transform: scale(.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes paw-room-round-row-sheen {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .paw-room-rounds {
+    padding: 10px;
+  }
+
+  .paw-room-round__detail {
+    grid-template-columns: 1fr;
+    padding-left: 16px;
+  }
+}
+
+/* The main Room can be a compact PAW window. Preserve the same semantic
+   planet row, but turn its five desktop columns into a scannable card: planet
+   and actions first, task and state together, then the latest progress. */
+@container paw-room-main (max-width: 760px) {
+  .paw-room-round__table-scroll {
+    overflow: visible;
+  }
+
+  .paw-room-round table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    table-layout: auto;
+  }
+
+  .paw-room-round thead { display: none; }
+  .paw-room-round tbody { display: block; }
+
+  .paw-room-round tbody > tr[data-planet-row] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "planet actions"
+      "task phase"
+      "progress progress";
+    gap: 8px 10px;
+    padding: 11px 12px;
+  }
+
+  .paw-room-round tbody > tr[data-planet-row] > th,
+  .paw-room-round tbody > tr[data-planet-row] > td {
+    min-width: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+
+  .paw-room-round tbody > tr[data-planet-row] > th { grid-area: planet; }
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(2) { grid-area: task; }
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(3) {
+    grid-area: phase;
+    justify-self: end;
+  }
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(4) { grid-area: progress; }
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(5) { grid-area: actions; }
+
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(2)::before,
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(4)::before {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--paw-text-secondary, #6b798b);
+    font-size: 12px;
+    line-height: 14px;
+    content: attr(data-label);
+  }
+
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(3)::before {
+    display: inline-block;
+    margin-right: 5px;
+    color: var(--paw-text-secondary, #6b798b);
+    font-size: 12px;
+    line-height: 14px;
+    content: attr(data-label);
+  }
+
+  .paw-room-round tbody > tr[data-planet-row] > td:nth-child(5)::before { display: none; }
+
+  .paw-room-round tbody > tr.paw-room-round__detail-row {
+    display: block;
+  }
+
+  .paw-room-round tbody > tr.paw-room-round__detail-row > td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-room-round *,
+  .paw-room-round *::before,
+  .paw-room-round *::after {
+    scroll-behavior: auto !important;
+  }
+
+  .paw-room-round__toggle-icon,
+  .paw-room-round__table-scroll,
+  .paw-room-round__detail,
+  .paw-room-round td > .paw-room-round__progress-text[data-live],
+  .paw-room-round__state[data-state="running"] i,
+  .paw-room-round__row-state[data-state="running"] i,
+  .paw-room-round__detail li[data-state="running"] > i,
+  .paw-room-round tbody > tr[data-planet-row][data-state='running'] {
+    animation: none;
+    transition: none;
+  }
+
+  .paw-room-round tbody > tr[data-planet-row][data-state='running'] {
+    background-position: 50% 0;
+    background-color: color-mix(in srgb, #5b73cf 7%, transparent);
+  }
+}
+
+:root[data-reduce-motion='true'] .paw-room-round__toggle-icon,
+:root[data-reduce-motion='true'] .paw-room-round__table-scroll,
+:root[data-reduce-motion='true'] .paw-room-round__detail,
+:root[data-reduce-motion='true'] .paw-room-round td > .paw-room-round__progress-text[data-live],
+:root[data-reduce-motion='true'] .paw-room-round__state[data-state='running'] i,
+:root[data-reduce-motion='true'] .paw-room-round__row-state[data-state='running'] i,
+:root[data-reduce-motion='true'] .paw-room-round__detail li[data-state='running'] > i {
+  animation: none;
+  transition: none;
+}
+
+:root[data-reduce-motion='true'] .paw-room-round tbody > tr[data-planet-row][data-state='running'] {
+  animation: none;
+  background-position: 50% 0;
+  background-color: color-mix(in srgb, #5b73cf 7%, transparent);
+}

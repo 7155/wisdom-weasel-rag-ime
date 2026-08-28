@@ -101,10 +101,12 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(within(titlebar).queryByRole('button', { name: '打开子 Agent 工作台' })).not.toBeInTheDocument();
     expect(within(titlebar).queryByRole('button', { name: '打开 Session 任务中心' })).not.toBeInTheDocument();
     expect(window.querySelector('.paw-session-workspace__side')).toBeNull();
-    expect(window.querySelector('.agent-conversation-nav')).toBeNull();
+    const conversationNav = window.querySelector('.agent-conversation-nav');
+    expect(conversationNav).not.toBeNull();
+    expect(conversationNav?.querySelectorAll('button')).toHaveLength(2);
   });
 
-  it('opens the conversation with truthful workspace and permission context chips', async () => {
+  it('does not repeat workspace and permission context as a conversation header strip', async () => {
     const { container } = render(
       <ControlTransportProvider transport={createPreviewTransport()}>
         <TooltipProvider>
@@ -120,9 +122,9 @@ describe('PAWOS Agent Session structural migration', () => {
     );
 
     await screen.findByRole('textbox', { name: '消息' });
-    const lead = await screen.findByRole('note', { name: 'Session 上下文' });
-    expect(lead).toHaveTextContent('personal-agent-workbench · 工作区');
-    expect(lead).toHaveTextContent('权限 · 按风险确认');
+    expect(screen.queryByRole('note', { name: 'Session 上下文' })).not.toBeInTheDocument();
+    expect(screen.queryByText('personal-agent-workbench · 工作区')).not.toBeInTheDocument();
+    expect(screen.queryByText('权限 · 按风险确认')).not.toBeInTheDocument();
     // fx keeps message side as identity: no repeated "Agent/状态" caption row.
     expect(container.querySelector('.agent-assistant-turn__body > header')).toBeNull();
   });
@@ -1129,7 +1131,7 @@ function liveSession(): SessionSummary {
     roleVersion: '1',
     roleBookRevisionId: '',
     updatedAtMs: 170,
-    workspaceRoots: ['/Volumes/undo 4t/git/personal-agent-workbench'],
+    workspaceRoots: ['/Users/example/personal-agent-workbench'],
     executionMode: 'per_action',
     modelProfile: 'openai/gpt-5.6-sol',
   };

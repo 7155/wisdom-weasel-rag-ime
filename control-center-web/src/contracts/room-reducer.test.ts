@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendOptimisticRoomMessage,
+  applyRoomSnapshot,
   createRoomProjection,
   parseRoomEventPage,
   parseRoomEventSnapshot,
@@ -633,6 +634,106 @@ describe('RoomEventReducer', () => {
     });
   });
 
+  it('retains the live optimistic sheet alias when an accepted turn is rebuilt from a snapshot', () => {
+    const clientMessageId = 'room-client-snapshot-alias';
+    const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
+      clientMessageId,
+      text: '跨快照保持这一轮',
+      nowMs: 1,
+    });
+    const acceptedWireEvent = {
+      ...wireRoomEvent(1, 'user_message', {
+        messageId: 'room-user-snapshot-alias',
+        clientMessageId,
+        rootId: 'room-turn-authoritative',
+        text: '跨快照保持这一轮',
+      }),
+      turnId: 'room-turn-authoritative',
+      participantId: null,
+      sourceSessionId: '',
+    };
+    const acceptedEvent = parseRoomEvent(acceptedWireEvent);
+    const accepted = reduceRoomEvent(optimistic, acceptedEvent).state;
+    expect(accepted.turnsById['room-turn-authoritative']?.logicalRootId).toBe(
+      'local-room-turn:room-client-snapshot-alias',
+    );
+
+    const snapshot = parseRoomEventSnapshot(roomSnapshotFixture([
+      acceptedWireEvent,
+    ]));
+    const replayed = replayRoomEventSnapshot(accepted, snapshot);
+    expect(replayed.turnsById['room-turn-authoritative']?.logicalRootId).toBe(
+      'local-room-turn:room-client-snapshot-alias',
+    );
+
+    const applied = applyRoomSnapshot(accepted, {
+      messages: [replayed.messagesById['room-user-snapshot-alias']!],
+      lastSequence: 1,
+      resumeToken: 'room-1:1',
+    });
+    expect(applied.turnsById['room-turn-authoritative']?.logicalRootId).toBe(
+      'local-room-turn:room-client-snapshot-alias',
+    );
+  });
+
+  it('retains the original sheet alias when a truncated snapshot/replay keeps only a retry turn', () => {
+    const firstClientMessageId = 'room-client-retry-lineage';
+    const retryClientMessageId = 'room-client-retry-only';
+    const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
+      clientMessageId: firstClientMessageId,
+      text: '原始用户轮次',
+      nowMs: 1,
+    });
+    const accepted = reduceRoomEvent(optimistic, parseRoomEvent({
+      ...wireRoomEvent(1, 'user_message', {
+        messageId: 'room-user-authoritative',
+        clientMessageId: firstClientMessageId,
+        rootId: 'room-turn-authoritative',
+        text: '原始用户轮次',
+      }),
+      turnId: 'room-turn-authoritative',
+      participantId: null,
+      sourceSessionId: '',
+    })).state;
+    const retrying = appendOptimisticRoomMessage(accepted, {
+      clientMessageId: retryClientMessageId,
+      text: '原始用户轮次（重试）',
+      retryOfRootId: 'room-turn-authoritative',
+      nowMs: 3,
+    });
+    const retryWireEvent = {
+      ...wireRoomEvent(2, 'user_message', {
+        messageId: 'room-user-retry-authoritative',
+        clientMessageId: retryClientMessageId,
+        rootId: 'room-turn-retry-authoritative',
+        retryOfRootId: 'room-turn-authoritative',
+        text: '原始用户轮次（重试）',
+      }),
+      turnId: 'room-turn-retry-authoritative',
+      participantId: null,
+      sourceSessionId: '',
+    };
+    const snapshot = parseRoomEventSnapshot(roomSnapshotFixture([retryWireEvent], {
+      firstSequence: 2,
+      truncated: true,
+    }));
+
+    const replayed = replayRoomEventSnapshot(retrying, snapshot);
+    const applied = applyRoomSnapshot(retrying, {
+      messages: [replayed.messagesById['room-user-retry-authoritative']!],
+      lastSequence: 2,
+      resumeToken: 'room-1:2',
+    });
+
+    for (const projection of [replayed, applied]) {
+      expect(projection.turnOrder).toEqual(['room-turn-retry-authoritative']);
+      expect(projection.turnsById['room-turn-retry-authoritative']?.logicalRootId).toBe(
+        `local-room-turn:${firstClientMessageId}`,
+      );
+      expect(projection.optimisticByClientMessageId[retryClientMessageId]).toBeUndefined();
+    }
+  });
+
   it('unwraps the public data envelope used by real participant runtime events', () => {
     const delta = reduceRoomEvent(
       createRoomProjection('room-1'),
@@ -1029,6 +1130,40 @@ describe('RoomEventReducer', () => {
     expect(Object.values(projection.activitiesById).map((activity) => activity.summary)).toEqual([
       '边界检查完成',
       '正在等待审阅',
+    ]);
+    const progress = Object.values(projection.activitiesById).find((activity) => (
+      activity.payload.sourceEventType === 'current_progress'
+    ));
+    expect(progress?.payload.progressHistory).toEqual([
+      expect.objectContaining({ summary: '正在整理结果', status: 'running' }),
+      expect.objectContaining({ summary: '正在等待审阅', status: 'running' }),
+    ]);
+  });
+
+  it('bounds producer-supplied public progress history before retaining it', () => {
+    const projection = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventId: 'progress-24',
+        sourceEventType: 'current_progress',
+        summary: '最新公开进展',
+        progressHistory: Array.from({ length: 25 }, (_, index) => ({
+          eventId: `progress-${index}`,
+          status: 'running',
+          summary: `公开进展 ${index}`,
+          createdAtMs: index,
+        })),
+      }),
+    ).state;
+
+    const activity = Object.values(projection.activitiesById)[0];
+    expect(activity?.payload.progressHistory).toHaveLength(20);
+    expect(activity?.payload.progressHistory).toEqual([
+      expect.objectContaining({ eventId: 'progress-5' }),
+      ...Array.from({ length: 18 }, () => expect.any(Object)),
+      expect.objectContaining({ eventId: 'progress-24' }),
     ]);
   });
 

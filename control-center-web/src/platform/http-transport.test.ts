@@ -124,6 +124,58 @@ describe('HttpControlTransport', () => {
     });
   });
 
+  it('encodes trace IDs in the observation detail request path', async () => {
+    const calls: string[] = [];
+    const response = {
+      schemaVersion: 'rag-ime.observability-trace-get.v1',
+      traceId: 'trace:active-rag:alpha',
+      trace: {
+        schemaVersion: 'rag-ime.trace-envelope.v1',
+        traceId: 'trace:active-rag:alpha',
+        sourceKind: 'retrieval',
+        status: 'completed',
+        binding: {},
+        input: {
+          fingerprint: `sha256:${'0'.repeat(64)}`,
+          contentPolicy: 'hash_only',
+          normalization: 'observation-redacted',
+        },
+        spans: [],
+        evidence: [],
+        artifacts: [],
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      },
+      truncated: false,
+      projectionSource: 'observation_journal',
+      observationWindow: {
+        firstSequence: 1,
+        lastSequence: 1,
+        resumeToken: 'observation:1',
+        nextBeforeSequence: null,
+      },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify(response), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+
+    await expect(transport.request({
+      pathId: 'observability.trace.get',
+      params: { traceId: 'trace:active-rag:alpha' },
+    })).resolves.toEqual(response);
+
+    expect(calls).toEqual([
+      'http://127.0.0.1:8766/api/observability/traces/trace%3Aactive-rag%3Aalpha',
+    ]);
+  });
+
   it('marks bodyless delete requests as JSON management writes', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -445,6 +445,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
             app_code = app_support / "app"
             app_code.mkdir(parents=True)
             shutil.copytree(root / "rag_ime", app_code / "rag_ime")
+            shutil.copytree(
+                root / "examples" / "vertical_agents",
+                app_code / "examples" / "vertical_agents",
+            )
             wrapper = app_code / "sidecar_launch.py"
             shutil.copy2(root / "scripts" / "sidecar_launch.py", wrapper)
             (app_code / "rag-ime-install-marker.json").write_text(
@@ -1152,7 +1156,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_MLX_PYTHON": sys.executable,
                 "RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN": "1",
                 "RAG_IME_MLX_PORT": "18767",
-                "RAG_IME_MLX_MODEL": "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local",
+                "RAG_IME_MLX_MODEL": "/Users/example/Models/mlx-community-Qwen3.5-0.8B-text-4bit-local",
                 "RAG_IME_MLX_PROFILE": "qwen3_06b_ime_hot",
                 "RAG_IME_MLX_PROMPT_CACHE": "1",
                 "RAG_IME_MLX_PREFIX_CACHE": "0",
@@ -1197,12 +1201,12 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["ProgramArguments"][0], sys.executable)
         self.assertIn("mlx-predictor-server", payload["ProgramArguments"])
         self.assertIn("18767", payload["ProgramArguments"])
-        self.assertIn("/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local", payload["ProgramArguments"])
+        self.assertIn("/Users/example/Models/mlx-community-Qwen3.5-0.8B-text-4bit-local", payload["ProgramArguments"])
         self.assertIn("--profile", payload["ProgramArguments"])
         self.assertIn("qwen3_06b_ime_hot", payload["ProgramArguments"])
         self.assertIn("--prompt-cache", payload["ProgramArguments"])
         env_vars = payload["EnvironmentVariables"]
-        self.assertEqual(env_vars["RAG_IME_MLX_MODEL"], "/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local")
+        self.assertEqual(env_vars["RAG_IME_MLX_MODEL"], "/Users/example/Models/mlx-community-Qwen3.5-0.8B-text-4bit-local")
         self.assertEqual(env_vars["RAG_IME_MLX_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_MLX_PORT"], "18767")
         self.assertEqual(env_vars["RAG_IME_MLX_PROMPT_MODE"], "base-completion")

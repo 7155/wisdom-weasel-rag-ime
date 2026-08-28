@@ -4,8 +4,13 @@ import threading
 import time
 import unittest
 from collections.abc import Mapping
+from unittest.mock import patch
 
-from rag_ime.owner_memory_maintenance import GatewayMemoryMaintenanceJobs, build_parser
+from rag_ime.owner_memory_maintenance import (
+    GatewayMemoryMaintenanceJobs,
+    build_parser,
+    run_gateway_memory_maintenance,
+)
 
 
 class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
@@ -132,6 +137,50 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         self.assertEqual(failed["result"]["remainingDayCount"], 3)
         self.assertEqual(failed["error"], "model request failed")
 
+    def test_semantic_verification_warning_keeps_job_completed_and_traceable(self) -> None:
+        jobs = GatewayMemoryMaintenanceJobs(
+            lambda _payload: {
+                "ok": True,
+                "status": "draft",
+                "autoPublished": False,
+                "semanticOrganization": {
+                    "status": "warning",
+                    "reviewRequired": True,
+                    "error": "Activity organization did not pass independent semantic verification",
+                    "verification": {"verdict": "reject"},
+                    "receipt": {
+                        "verifierRequest": {
+                            "traceId": "trace:activity-repair-verifier",
+                        },
+                    },
+                },
+            }
+        )
+        started = jobs.trigger(
+            {
+                "project": "project-a",
+                "timelineOnly": True,
+                "timelineDate": "2026-08-12",
+                "timelineThroughDate": "",
+            }
+        )
+        self._wait_for_terminal(jobs, str(started["jobId"]))
+
+        status = jobs.activity_timeline_status(project="project-a")
+
+        self.assertEqual(status["state"], "completed")
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["error"], "")
+        self.assertEqual(status["result"]["semanticOrganization"]["status"], "warning")
+        self.assertEqual(
+            status["result"]["semanticOrganization"]["error"],
+            "Activity organization did not pass independent semantic verification",
+        )
+        self.assertEqual(
+            status["result"]["semanticOrganization"]["receipt"]["verifierRequest"]["traceId"],
+            "trace:activity-repair-verifier",
+        )
+
     def test_failed_execution_is_observable_and_close_stops_admission(self) -> None:
         def fail(_payload: Mapping[str, object]) -> dict[str, object]:
             raise RuntimeError("provider down")
@@ -146,6 +195,66 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         jobs.close()
         with self.assertRaisesRegex(RuntimeError, "closed"):
             jobs.trigger({})
+
+    def test_missing_job_returns_truthful_expired_recovery_payload(self) -> None:
+        jobs = GatewayMemoryMaintenanceJobs(lambda _payload: {"ok": True})
+
+        status = jobs.status("memory-maintenance:after-gateway-restart")
+
+        self.assertFalse(status["ok"])
+        self.assertEqual(status["state"], "expired")
+        self.assertEqual(
+            status["errorCode"],
+            "memory_maintenance_job_expired",
+        )
+        self.assertIn("Gateway restarted", status["error"])
+        self.assertEqual(status["result"], {})
+        self.assertEqual(status["progress"], {})
+        self.assertEqual(
+            status["recovery"],
+            {
+                "recoverable": False,
+                "retryable": True,
+                "action": "trigger_new_job",
+                "reason": "process_local_job_registry_lost",
+            },
+        )
+
+    def test_gateway_client_stops_polling_when_the_job_expires_after_restart(self) -> None:
+        expired = {
+            "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
+            "ok": False,
+            "jobId": "memory-maintenance:after-gateway-restart",
+            "state": "expired",
+            "errorCode": "memory_maintenance_job_expired",
+            "error": "Gateway restarted before this process-local Memory maintenance job could be read; the old job cannot be recovered.",
+            "recovery": {
+                "recoverable": False,
+                "retryable": True,
+                "action": "trigger_new_job",
+                "reason": "process_local_job_registry_lost",
+            },
+        }
+        with (
+            patch(
+                "rag_ime.owner_memory_maintenance._request_json",
+                side_effect=[
+                    {"jobId": expired["jobId"], "state": "queued"},
+                    expired,
+                ],
+            ) as request_json,
+            patch("rag_ime.owner_memory_maintenance.time.sleep") as sleep,
+        ):
+            result = run_gateway_memory_maintenance(
+                "http://127.0.0.1:18768",
+                {"manual": True},
+                timeout_seconds=1,
+                poll_interval=0.01,
+            )
+
+        self.assertEqual(result, expired)
+        self.assertEqual(request_json.call_count, 2)
+        sleep.assert_called_once()
 
     @staticmethod
     def _wait_for_terminal(

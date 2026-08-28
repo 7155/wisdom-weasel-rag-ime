@@ -85,6 +85,42 @@ describe('PawOsSatelliteHost', () => {
     expect(statusline).toHaveTextContent('进行中');
     expect(statusline).toHaveTextContent('实现子 Agent 卫星窗');
     expect(screen.getByRole('button', { name: '在 Agent 中打开所属 Session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看子 Agent Trace' })).toBeInTheDocument();
+  });
+
+  it('surfaces the failed run reason and traces the exact subagent run', async () => {
+    const run = {
+      ...sampleRun(),
+      state: 'failed' as const,
+      error: 'workspace read failed: permission denied while opening config.toml',
+    };
+    const openRoute = vi.fn();
+    const transport = new MockControlTransport({ routes: {
+      'agent.subagents.list': { tree: { roots: [{ run, children: [] }] } },
+      'agent.subagent.console': {
+        conversation: { items: [] },
+        activity: [{
+          id: 'event:failed',
+          eventType: 'tool_failed',
+          createdAtMs: 101,
+          summary: '读取 config.toml 失败',
+          payload: { toolName: 'read', status: 'failed', error: 'permission denied from the read tool' },
+        }],
+        inbox: [],
+      },
+    } });
+
+    renderSatellite(transport, {
+      kind: 'subagent', id: run.id, sessionId: 'session-parent', title: run.task,
+    }, { openRoute });
+
+    expect(await screen.findByText(/读取 config\.toml 失败/)).toBeInTheDocument();
+    expect(screen.getByText(/permission denied from the read tool/)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('workspace read failed: permission denied while opening config.toml');
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看完整失败原因' }));
+    expect(await screen.findByText(run.error)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看子 Agent Trace' }));
+    expect(openRoute).toHaveBeenCalledWith('/observability?runId=subagent-run%3Atest');
   });
 
   it('reads one authoritative background run log without starting a second command', async () => {
@@ -236,7 +272,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     expect(document.querySelector('.paw-participant-chat__workline')).not.toBeInTheDocument();
     expect(timeline.querySelector('.ccui-tool-card.status-running')).toHaveTextContent('正在读取 PawWindowLayer.tsx');
     expect(screen.queryByRole('banner', { name: '实现伙伴 当前上下文' })).not.toBeInTheDocument();
@@ -244,7 +280,7 @@ describe('PawOsSatelliteHost', () => {
     expect(transport.requests.map(({ request }) => request.pathId)).toEqual(['agent.room.get']);
   });
 
-  it('shows one thin statusline with current work, text+colour state, and a full Session route', async () => {
+  it('keeps a planet read-only while retaining Trace and full Session navigation', async () => {
     const room = participantRoom();
     const projection = participantProjectionWithActivities(room.id, [
       roomActivity('participant-tool-1', 'participant-a', 101, '正在读取 PawWindowLayer.tsx'),
@@ -260,10 +296,16 @@ describe('PawOsSatelliteHost', () => {
 
     const statusline = await screen.findByLabelText('当前工作与状态');
     expect(statusline).toHaveClass('paw-participant-chat__statusline');
+    expect(statusline.closest('.paw-os-satellite--participant-chat')).toHaveAttribute('data-presentation', 'planet-observer');
     expect(statusline).toHaveAttribute('data-state', 'running');
     expect(statusline).toHaveTextContent('进行中');
     expect(statusline).toHaveTextContent('正在读取 PawWindowLayer.tsx');
-    await userEvent.setup().click(screen.getByRole('button', { name: '在 Agent 中打开 实现伙伴 的完整 Session' }));
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '批准并继续' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '拒绝' })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看 Mars 的 Trace' }));
+    expect(openRoute).toHaveBeenCalledWith('/observability?sessionId=session-a');
+    await userEvent.setup().click(screen.getByRole('button', { name: '在 Agent 中打开 Mars 的完整 Session' }));
     expect(openRoute).toHaveBeenCalledWith('/agent?session=session-a');
   });
 
@@ -280,7 +322,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     // The Runtime tool id reaches the reader as its label (`read` → 读取文件),
     // and the receipt carries its own state instead of a second status row.
     const card = timeline.querySelector<HTMLElement>('.ccui-tool-card');
@@ -311,7 +353,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     const card = timeline.querySelector<HTMLElement>('.ccui-tool-card.status-error');
     expect(card).not.toBeNull();
     expect(card?.querySelector('.ccui-tool-meta')).toHaveTextContent('失败');
@@ -392,7 +434,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     expect(timeline.querySelectorAll('.ccui-tool-card, .ccui-thinking')).toHaveLength(5);
     expect(timeline).toHaveTextContent('路由已确定');
     expect(timeline).toHaveTextContent('已派发');
@@ -434,6 +476,15 @@ describe('PawOsSatelliteHost', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.room.get': { room },
     } });
+    const projection = createRoomProjection(room.id);
+    projection.messageOrder.push('message-root');
+    projection.messagesById['message-root'] = {
+      id: 'message-root', roomId: room.id, turnId: 'root-a', participantId: null,
+      sourceSessionId: 'session-root', role: 'user', status: 'completed',
+      text: '请实现 Room 任务图交互', projectionKind: 'post',
+      mentionedParticipantIds: ['participant-a'], createdAtMs: 110,
+    };
+    useRoomLiveStore.setState({ projections: { [room.id]: projection } });
 
     const { container } = renderSatellite(transport, {
       kind: 'room', id: room.id, panel: 'focus', title: room.title,
@@ -468,7 +519,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     setScrollMetrics(timeline, 600);
     fireEvent.scroll(timeline);
     const nearBottomProjection = participantProjectionWithActivities(room.id, [
@@ -544,7 +595,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     // Raw Runtime tool ids map to reader-facing labels (`read` → 读取文件),
     // and the raw call stays reachable instead of becoming the headline.
     const card = timeline.querySelector<HTMLElement>('.ccui-tool-card.status-running');
@@ -571,7 +622,7 @@ describe('PawOsSatelliteHost', () => {
       title: '实现伙伴', subtitle: '实现 · session-a',
     });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     /* Virtualization replaced the 48-entry page: the oldest activity is part
        of the transcript from the first paint, with no 「加载更早」 gate. */
     expect(within(timeline).getByText(/活动 0$/)).toBeInTheDocument();
@@ -623,7 +674,7 @@ describe('PawOsSatelliteHost', () => {
     const transport = new MockControlTransport({ routes: { 'agent.room.get': { room } } });
     renderSatellite(transport, { kind: 'participant', id: 'participant-a', roomId: room.id, title: '实现伙伴', subtitle: '实现 · session-a' });
 
-    const timeline = await screen.findByRole('log', { name: '伙伴公开对话时间线' });
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
     await user.click(await screen.findByRole('button', { name: /读取文件/ }));
     expect(await within(timeline).findByText(/需要在公开原文中逐层读取/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /读取文件/ }));
@@ -642,6 +693,21 @@ describe('PawOsSatelliteHost', () => {
     expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='running'] { --paw-satellite-state: #2783de; }");
     expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='blocked'],\n.paw-participant-chat__statusline[data-state='failed'] { --paw-satellite-state: #c64747; }");
     expect(satelliteCss).toContain('.paw-participant-chat__statusline > button > span { display: none; }');
+  });
+
+  it('uses a scoped linear no-card treatment for planet observers', () => {
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-user-bubble");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-card");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-error-card");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .paw-room-tool-facts");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .agent-tool-result-panel");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .agent-code-block");
+    expect(satelliteCss).toContain('border-left: 1px solid var(--ccui-border);');
+    expect(satelliteCss).toContain('border-radius: 0;');
+    expect(satelliteCss).toContain('border-block: 1px solid var(--ccui-border);');
+    // The selector is intentionally rooted at the planet marker; subagent
+    // satellite cards and the main Room/Agent surfaces keep their own seam.
+    expect(satelliteCss).not.toContain('.ccui-tool-card {\n  border: 0;');
   });
 });
 

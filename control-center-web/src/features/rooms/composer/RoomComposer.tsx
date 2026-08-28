@@ -14,6 +14,7 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { ComposerShell } from '@/features/composer/ComposerShell';
 import { roomCollaborationRoleLabel } from '../room-copy';
+import { roomParticipantPlanetName } from '../room-participant-identity';
 
 interface ComposerParticipant {
   id: string;
@@ -21,6 +22,7 @@ interface ComposerParticipant {
   roleId: string;
   roleVersion: string;
   displayName: string;
+  ordinal?: number;
   collaborationRole?: 'coordinator' | 'researcher' | 'implementer' | 'reviewer' | 'specialist';
   status: string;
 }
@@ -468,7 +470,7 @@ function roomMentionMatches(
   if (!needle) return true;
   return roomParticipantMentionNames(participant, participantAliases)
     .some((name) => name.toLocaleLowerCase().includes(needle))
-    || participant.roleId.toLocaleLowerCase().includes(needle);
+    ;
 }
 
 function stripLeadingRoomMention(
@@ -490,15 +492,14 @@ function roomParticipantMentionName(
   participant: ComposerParticipant,
   participantAliases: Readonly<Record<string, string>>,
 ): string {
-  return participantAliases[participant.id]?.trim() || participant.displayName;
+  return participantAliases[participant.id]?.trim() || roomParticipantPlanetName(participant);
 }
 
 function roomParticipantMentionNames(
   participant: ComposerParticipant,
   participantAliases: Readonly<Record<string, string>>,
 ): string[] {
-  const preferred = roomParticipantMentionName(participant, participantAliases);
-  return preferred === participant.displayName ? [preferred] : [preferred, participant.displayName];
+  return [roomParticipantMentionName(participant, participantAliases)];
 }
 
 function composerPlaceholder(room?: ComposerRoom): string {

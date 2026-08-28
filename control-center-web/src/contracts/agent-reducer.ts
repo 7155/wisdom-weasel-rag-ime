@@ -1212,7 +1212,7 @@ function applyTextDelta(
         citations: [],
         createdAtMs: event.createdAtMs,
         completedAtMs: null,
-        timelineSequence: event.sequence,
+        timelineSequence: sourceTimelineSequence(event),
       };
   upsertMessage(state, message);
   touchTurn(state, event.turnId, 'running', event.createdAtMs);
@@ -1249,7 +1249,10 @@ function applyCompletedMessage(
     : parsed.value;
   const completedMessage = enriched.role === 'assistant'
     ? completedAssistantSegment(state, event, enriched)
-    : { ...parsed.value, timelineSequence: event.sequence };
+    : {
+        ...parsed.value,
+        timelineSequence: parsed.value.timelineSequence ?? sourceTimelineSequence(event),
+      };
   upsertMessage(
     state,
     clientMessageId ? { ...completedMessage, clientMessageId } : completedMessage,
@@ -1291,7 +1294,7 @@ function upsertCompactionActivity(
     payload: { ...previous?.payload, ...payload },
     createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: event.createdAtMs,
-    timelineSequence: previous?.timelineSequence ?? event.sequence,
+    timelineSequence: previous?.timelineSequence ?? sourceTimelineSequence(event),
   };
   activity.summary = status === 'failed'
     ? '上下文压缩失败'
@@ -1362,8 +1365,8 @@ function completedAssistantSegment(
     id: targetId,
     createdAtMs: latest?.status === 'streaming' ? latest.createdAtMs : message.createdAtMs,
     timelineSequence: latest?.status === 'streaming'
-      ? latest.timelineSequence ?? event.sequence
-      : event.sequence,
+      ? latest.timelineSequence ?? message.timelineSequence ?? sourceTimelineSequence(event)
+      : message.timelineSequence ?? sourceTimelineSequence(event),
   };
 }
 
@@ -1516,7 +1519,7 @@ function upsertActivity(
     payload: activityPayload,
     createdAtMs: previous?.createdAtMs ?? event.createdAtMs,
     updatedAtMs: event.createdAtMs,
-    timelineSequence: previous?.timelineSequence ?? event.sequence,
+    timelineSequence: previous?.timelineSequence ?? sourceTimelineSequence(event),
   };
   if (!previous) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
@@ -2382,6 +2385,13 @@ function updateAgentTodoFromActivity(
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function sourceTimelineSequence(event: UiAgentEvent): number {
+  return typeof event.timelineSequence === 'number'
+    && Number.isFinite(event.timelineSequence)
+    ? event.timelineSequence
+    : event.sequence;
 }
 
 function integer(value: unknown): number {

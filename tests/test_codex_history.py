@@ -461,7 +461,7 @@ class CodexHistoryTests(unittest.TestCase):
                                         "type": "input_text",
                                         "text": (
                                             "Welcome to fish, the friendly interactive shell "
-                                            "❯ cd \"/Volumes/undo 4t/langchain\" "
+                                            "❯ cd \"/Volumes/example/langchain\" "
                                             "curl -s -H \"x-scoutpi-browser-token: $TOKEN\" http://127.0.0.1:17391/doctor"
                                         ),
                                     }
@@ -649,7 +649,7 @@ class CodexHistoryTests(unittest.TestCase):
                                 "content": [
                                     {
                                         "type": "input_text",
-                                        "text": "# AGENTS.md instructions for /Volumes/undo 4t/git/learnA",
+                                        "text": "# AGENTS.md instructions for /Volumes/example/git/learnA",
                                     }
                                 ],
                             },
@@ -1127,7 +1127,7 @@ class CodexHistoryTests(unittest.TestCase):
 
     def test_launchctl_field_parses_running_launch_agent_status(self) -> None:
         output = """
-        path = /Users/undo/Library/LaunchAgents/com.rag-ime.sidecar.plist
+        path = /Users/example/Library/LaunchAgents/com.rag-ime.sidecar.plist
         state = running
         pid = 13454
         program = /usr/local/bin/python3
@@ -1137,7 +1137,7 @@ class CodexHistoryTests(unittest.TestCase):
         self.assertEqual(_launchctl_field(output, "pid"), "13454")
         self.assertEqual(
             _launchctl_field(output, "path"),
-            "/Users/undo/Library/LaunchAgents/com.rag-ime.sidecar.plist",
+            "/Users/example/Library/LaunchAgents/com.rag-ime.sidecar.plist",
         )
         self.assertEqual(_launchctl_field(output, "program"), "/usr/local/bin/python3")
         self.assertEqual(_launchctl_field(output, "missing"), "")

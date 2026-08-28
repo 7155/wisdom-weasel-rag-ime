@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
 from .agent_definitions import canonical_collaboration_role_id
 from .agent_role_identity import canonical_agent_role_id
@@ -262,15 +263,80 @@ class AgentRoomStore:
             work_items,
         )
 
-    def list(self, *, include_archived: bool = False, limit: int = 100) -> list[dict[str, object]]:
+    def list(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+        before_updated_at_ms: int | None = None,
+        before_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        page = self.list_page(
+            include_archived=include_archived,
+            limit=limit,
+            before_updated_at_ms=before_updated_at_ms,
+            before_id=before_id,
+        )
+        return cast(list[dict[str, object]], page["items"])
+
+    def list_page(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+        before_updated_at_ms: int | None = None,
+        before_id: str | None = None,
+    ) -> dict[str, object]:
+        """Return a keyset-paginated Room listing.
+
+        Room ids are the deterministic tie-breaker for equal update times.
+        The legacy ``list`` method continues to return only the item array.
+        """
         bounded = max(1, min(int(limit), 200))
-        where = "" if include_archived else "WHERE status = 'active'"
+        clauses = [] if include_archived else ["status = 'active'"]
+        normalized_before_id = str(before_id or "").strip()
+        if before_updated_at_ms is not None and normalized_before_id:
+            clauses.append(
+                "(updated_at_ms < ? OR "
+                "(updated_at_ms = ? AND id < ?))"
+            )
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query_params: list[object] = []
+        if before_updated_at_ms is not None and normalized_before_id:
+            query_params.extend(
+                [before_updated_at_ms, before_updated_at_ms, normalized_before_id]
+            )
+        query_params.append(bounded + 1)
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT id FROM agent_rooms {where} ORDER BY updated_at_ms DESC LIMIT ?",  # noqa: S608
-                (bounded,),
+                f"SELECT id, updated_at_ms FROM agent_rooms {where} "
+                "ORDER BY updated_at_ms DESC, id DESC LIMIT ?",  # noqa: S608
+                query_params,
             ).fetchall()
-        return [self.get(str(row["id"])) for row in rows]
+        has_more = len(rows) > bounded
+        page_rows = rows[:bounded]
+        items = [self.get(str(row["id"])) for row in page_rows]
+        next_updated_at_ms = (
+            int(page_rows[-1]["updated_at_ms"])
+            if has_more and page_rows
+            else None
+        )
+        next_id = str(page_rows[-1]["id"]) if has_more and page_rows else None
+        next_cursor = (
+            {
+                "beforeUpdatedAtMs": next_updated_at_ms,
+                "beforeId": next_id,
+            }
+            if has_more
+            else None
+        )
+        return {
+            "items": items,
+            "hasMore": has_more,
+            "nextBeforeUpdatedAtMs": next_updated_at_ms,
+            "nextBeforeId": next_id,
+            "nextCursor": next_cursor,
+        }
 
     def archive(self, room_id: str, *, archived: bool, updated_at_ms: int | None = None) -> dict[str, object]:
         timestamp = _timestamp(updated_at_ms)
@@ -571,10 +637,9 @@ class AgentRoomStore:
                     accountable_participant_id = ?
                     OR current_owner_participant_id = ?
                     OR offered_to_participant_id = ?
-                    OR created_by_participant_id = ?
                   )
                 """,
-                (room_id, participant_id, participant_id, participant_id, participant_id),
+                (room_id, participant_id, participant_id, participant_id),
             ).fetchone()
             if int(open_work[0] if open_work is not None else 0) > 0:
                 raise ValueError(

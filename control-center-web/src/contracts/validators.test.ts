@@ -31,7 +31,7 @@ describe('generated JSON contracts', () => {
   });
 
   it('builds a stable schema index for every source contract', () => {
-    expect(Object.keys(contractSchemas)).toHaveLength(137);
+    expect(Object.keys(contractSchemas)).toHaveLength(154);
     expect(contractSchemas['agent-event.v1'].$id).toBe('rag-ime.contract.agent-event.v1');
     expect(contractSchemas['agent-background-job.v1'].$id).toBe(
       'rag-ime.contract.agent-background-job.v1',
@@ -78,6 +78,30 @@ describe('generated JSON contracts', () => {
     );
     expect(contractSchemas['session-memory-recall.v1'].$id).toBe(
       'rag-ime.contract.session-memory-recall.v1',
+    );
+    expect(contractSchemas['trace-envelope.v1'].$id).toBe(
+      'rag-ime.contract.trace-envelope.v1',
+    );
+    expect(contractSchemas['observability-trace-get.v1'].$id).toBe(
+      'rag-ime.contract.observability-trace-get.v1',
+    );
+    expect(contractSchemas['eval-run.v1'].$id).toBe(
+      'rag-ime.contract.eval-run.v1',
+    );
+    expect(contractSchemas['eval-schedule.v1'].$id).toBe(
+      'rag-ime.contract.eval-schedule.v1',
+    );
+    expect(contractSchemas['eval-schedule-create.v1'].$id).toBe(
+      'rag-ime.contract.eval-schedule-create.v1',
+    );
+    expect(contractSchemas['eval-schedule-error.v1'].$id).toBe(
+      'rag-ime.contract.eval-schedule-error.v1',
+    );
+    expect(contractSchemas['eval-schedule-list.v1'].$id).toBe(
+      'rag-ime.contract.eval-schedule-list.v1',
+    );
+    expect(contractSchemas['eval-schedule-run-list.v1'].$id).toBe(
+      'rag-ime.contract.eval-schedule-run-list.v1',
     );
   });
 

@@ -324,6 +324,15 @@ class AgentDelegationStore:
 
     def get_batch(self, batch_id: str) -> dict[str, object]:
         with self._connect() as conn:
+            # A batch projection is made from two related rows.  In SQLite,
+            # SELECTs do not start a transaction by themselves, so without an
+            # explicit read transaction a concurrent terminal callback can
+            # commit between these queries and produce the impossible
+            # combination ``batch.state == running`` with an aborted run (or
+            # the reverse).  Lifecycle cancellation records this projection
+            # as its replay receipt; keep the batch and its runs on one
+            # snapshot so the first receipt is byte-for-byte replayable.
+            conn.execute("BEGIN")
             row = conn.execute(
                 "SELECT * FROM agent_subagent_batches WHERE id = ?", (batch_id,)
             ).fetchone()

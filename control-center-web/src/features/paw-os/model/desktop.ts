@@ -13,7 +13,7 @@ export type PawOsWindowTarget =
   | { kind: 'task'; id: string; title: string; subtitle?: string; date: string; project?: string }
   | { kind: 'session'; id: string; title: string; subtitle?: string }
   | { kind: 'room'; id: string; title: string; subtitle?: string; panel?: 'focus' | 'progress' | 'governance' }
-  | { kind: 'participant'; id: string; title: string; subtitle?: string; roomId: string }
+  | { kind: 'participant'; id: string; title: string; subtitle?: string; roomId: string; sessionId?: string }
   | { kind: 'subagent'; id: string; title: string; subtitle?: string; sessionId: string }
   | {
     kind: 'process-terminal';

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
 from threading import Event, Lock
 from types import SimpleNamespace
 
@@ -721,7 +722,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         self.assertEqual(receipt["settledWorkItems"], [])
         self.assertEqual(published_phases, ["assigned", "submitted"])
 
-    def test_completed_work_blocks_until_its_document_has_opening_and_final_updates(self) -> None:
+    def test_completed_work_submits_when_document_sync_is_pending(self) -> None:
         source = {
             "id": "room-a:p1", "roomId": "room-a", "sessionId": "room-a:s1",
             "displayName": "澄·远", "status": "active",
@@ -736,6 +737,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         }
         ledger = _RoomWorkLedger()
         published_phases: list[str] = []
+        published_syncs: list[Mapping[str, object] | None] = []
         service = RoomPartnerApplicationService(
             rooms=SimpleNamespace(
                 participant_for_session=lambda *_args, **_kwargs: source,
@@ -752,8 +754,9 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             abort_session=lambda *_args, **_kwargs: {},
             room_topic_for_turn=lambda _root_id: "topic-a",
             room_work=ledger,
-            publish_room_work_activity=lambda _work, **kwargs: published_phases.append(
-                str(kwargs["phase"])
+            publish_room_work_activity=lambda _work, **kwargs: (
+                published_phases.append(str(kwargs["phase"]))
+                or published_syncs.append(kwargs.get("document_sync"))
             ),
             work_document_for_authority=lambda _kind, _identifier: {
                 "documentId": "workdoc:1",
@@ -772,7 +775,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             acceptance_criteria=["同步工作文档"],
         )
 
-        blocked = service._settle_delegated_work(
+        submitted = service._settle_delegated_work(
             work,
             phase="completed",
             result="代码已完成但文档未同步",
@@ -781,9 +784,19 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             target=target,
         )
 
-        self.assertEqual(blocked["state"], "blocked")  # type: ignore[index]
-        self.assertIn("WorkDocument", blocked["blocker"]["reason"])  # type: ignore[index]
-        self.assertEqual(published_phases, ["assigned", "blocked"])
+        self.assertEqual(submitted["state"], "review")  # type: ignore[index]
+        self.assertEqual(
+            submitted["evidenceRefs"],  # type: ignore[index]
+            [
+                "room-child:doc",
+                "workdoc:workdoc:1@1",
+                "trace:room-document-sync:room-child:doc",
+                "document-sync:pending:room-work:1",
+            ],
+        )
+        self.assertEqual(published_phases, ["assigned", "submitted"])
+        self.assertEqual(published_syncs[-1]["state"], "pending")  # type: ignore[index]
+        self.assertEqual(published_syncs[-1]["attemptCount"], 1)  # type: ignore[index]
 
     def test_work_result_delivery_submits_without_automatic_acceptance(self) -> None:
         source = {

@@ -21,7 +21,7 @@
 1. `src/main.tsx` 启动 `startControlCenter`，再挂载 `App`。
 2. `frontend-product.ts` 默认选择 `paw-os`；`App.tsx` 因而渲染 `PawOsApp`。`legacy` 仍可显式选择，但不是默认产品。
 3. `features/paw-os/model/app-registry.ts` 只定义 11 个 App 的身份和 route，不能单独证明哪个组件实际渲染。
-4. `paw-os/apps/PawAppsRuntime.tsx` 的 `renderApp` 是 App 和卫星的当前总分派点。
+4. `paw-os/apps/PawAppsRuntime.tsx` 的 `renderApp` 是 App、行星、subagent 卫星和结果窗口的当前总分派点。
 5. 再沿它的 import/JSX 进入下表的叶子 render owner；CSS 只解释样式，不能反过来证明组件被选中。
 6. 原生 Swift 表面必须由构建脚本证明。文件名像 UI、出现在 patch 或截图里都不够。
 
@@ -61,16 +61,16 @@ PAWOS React 源码当前由 Electron 发布宿主加载：`scripts/build_control
 | App / 要展示的功能 | 真实 render owner | 当前选择证据 | 介绍页应打开/覆盖 |
 | --- | --- | --- | --- |
 | 项目工作台：概览、计划/目标/任务、工作文档 | `paw-os/apps/PawNativeApps.tsx`；`PawWorkbenchMigrated.tsx`；`PawWorkbenchDocumentLifecycle.tsx`；`PawWorkbenchOperations.tsx`；`PawWorkbenchPlanningTools.tsx` | `PawAppsRuntime.renderApp('project-workbench') -> PawNativeApp -> ProjectSurface` | `/overview`、`/planning`、`/work-documents`，含空态、preview/confirm、stale revision、receipt |
-| Agent：首页、Session 对话、Agent 轨迹、Room、协同模式、卫星/结果 | `PawAgentApp.tsx`；`PawAgentHome.tsx`；`PawSessionWorkspace.tsx`；`PawContextTrace.tsx`；`PawRoomWorkspace.tsx`；`features/paw-os/PawOsSatelliteHost.tsx`；`PawResultWindow.tsx` | `renderApp('agent') -> PawAgentApp`；带 panel 的 Room、participant、subagent、work-document、project、task、package、result、process-terminal 目标由同一分派点送进卫星/结果 owner | `/agent`、`/rooms`；对话和轨迹分开展示，Room 不是第 12 个 App，不能用多路消息刷屏代替真实协作投影 |
+| Agent：首页、Session 对话、Agent 轨迹、Room、协同模式、行星/卫星/结果 | `PawAgentApp.tsx`；`PawAgentHome.tsx`；`PawSessionWorkspace.tsx`；`PawContextTrace.tsx`；`PawRoomWorkspace.tsx`；`features/paw-os/PawOsSatelliteHost.tsx`；`PawResultWindow.tsx` | `renderApp('agent') -> PawAgentApp`；带 panel 的 Room participant 行星、subagent 卫星、work-document、project、task、package、result、process-terminal 目标由同一分派点送进对应窗口 owner | `/agent`、`/rooms`；对话和轨迹分开展示，Room 不是第 12 个 App，不能用多路消息刷屏代替真实协作投影 |
 | Memory：记忆库、伙伴记忆、时间线、关系图、整理、偏好 | `features/memory/index.tsx` 及 `RoleBookLayer.tsx`、`ActivityTimeline.tsx`、`MemoryRelations.tsx`、`MemoryCurationWorkbench.tsx`、`MemoryPreferences.tsx` | `renderApp('memory') -> PawNativeApp -> MemoryFeature` | `/memory` 与各 `view`；召回/整理结果和 Trace/Eval 状态必须来自真实 transport，不造记忆 |
 | Knowledge：知识库、资料/文档、检索/处理、图谱 | `features/knowledge/index.tsx`；`document-workspace.tsx`；`knowledge-graph.tsx`；`interactive-graph-canvas.tsx` | `renderApp('knowledge') -> PawNativeApp -> KnowledgeFeature` | `/knowledge`；材料、索引 job、查询、图谱、空/失败/处理中状态 |
 | Input Studio：输入法、词库、语音管理、输入记录 | `paw-os/apps/PawSystemAppsMigrated.tsx`；`features/input-method/index.tsx`；`lexicon-workflow.tsx`；`features/voice/index.tsx`；`features/history/index.tsx` | `renderApp('input-studio') -> PawNativeApp -> PawSystemAppsMigrated -> InputMethodFeature/InputLexiconFeature/VoiceFeature/HistoryFeature` | `/input`、`/input?view=lexicon`、`/voice`、`/history`；这是管理 UI，不是输入时浮层 |
 | App Center：已安装、目录、Agent 建议 | `PawSystemAppsMigrated.tsx`；`features/plugins/index.tsx` | `renderApp('app-center') -> PawNativeApp -> PawSystemAppsMigrated -> PluginsFeature/PawPackageCatalog` | `/plugins`、`?view=catalog`、`?view=proposals`；保留 validate/preview/confirm/apply/rollback 边界 |
-| System Monitor：活动/Trace/Eval、上下文、诊断 | `PawSystemAppsMigrated.tsx`；`features/observability/index.tsx`；`features/context-debug/index.tsx`；`features/diagnostics/index.tsx` | `renderApp('system-monitor') -> PawNativeApp -> PawSystemAppsMigrated` | `/observability`、`/context-debug`、`/diagnostics`；真实指标与 AI Judge 估计必须分栏/分字段，不互相冒充 |
+| System Monitor：活动/Trace/Eval、上下文、Trace Agent、诊断 | `PawSystemAppsMigrated.tsx`；`features/observability/index.tsx`；`features/context-debug/index.tsx`；`features/trace-agent/index.tsx`；`features/diagnostics/index.tsx` | `renderApp('system-monitor') -> PawNativeApp -> PawSystemAppsMigrated` | `/observability`、`/context-debug`、`/trace-agent`、`/diagnostics`；Trace Agent 可看原对话和实际动作并进入诊断对话；真实指标与 AI Judge 估计必须分栏/分字段，不互相冒充 |
 | System Settings：配置、外观、Agent 默认、治理、审批 | `PawSystemAppsMigrated.tsx`；`features/configuration/index.tsx`；`PawOsAppearanceSettings.tsx`；`features/governance/index.tsx`；`features/approvals/index.tsx` | `renderApp('system-settings') -> PawNativeApp -> PawSystemAppsMigrated` | `/configuration`、`/appearance`、`?view=agent`、`/governance`、`/approvals` |
 | Files：授权工作区树、选择、预览、真实错误 | `features/files/PawOsFilesApp.tsx`；`SvgFilePreview.tsx` | `renderApp('files') -> lazy import PawOsFilesApp -> FilesApp` | `/files`；文件/文件夹是 OS 投影，不能复制 transcript、写 Finder/Git 或成为第二权威 |
 | Browser：标签、地址栏、同一个可见 guest、查找/状态/历史/下载/设置 | `paw-os/apps/PawBrowserApp.tsx`；`features/browser/BrowserTabStrip.tsx`、`BrowserOmnibox.tsx`、`BrowserFindBar.tsx`、`BrowserPageStatus.tsx`；host 语义在 `paw-browser-host.ts` 和 `electron/` | `renderApp('browser') -> PawBrowserApp`；组件创建 `<webview>`；Electron `will-attach-webview` 固定隔离 partition | `/browser`；PAW React chrome 加同窗真实 guest，不能拿后端截图或另一浏览器窗口冒充 |
-| Terminal：内嵌 PTY 与后台进程卫星 | `features/terminal/PawOsTerminalApp.tsx`；后台 process 由 `PawOsSatelliteHost.tsx` | `renderApp('terminal') -> lazy import PawOsTerminalApp`；`process-terminal` target 走卫星分派 | `/terminal`；真实 session/read/write/resize/close 状态，不打开系统终端或用假日志 |
+| Terminal：内嵌 PTY 与后台进程运行窗口 | `features/terminal/PawOsTerminalApp.tsx`；后台 process 由 `PawOsSatelliteHost.tsx` | `renderApp('terminal') -> lazy import PawOsTerminalApp`；`process-terminal` target 走运行窗口分派 | `/terminal`；真实 session/read/write/resize/close 状态，不打开系统终端或用假日志 |
 
 上述所有相对路径都以 `control-center-web/src/` 为基准，除非表中明确写了 `electron/` 或 `features/`。
 完整、无缩写的路径和选择标记在 JSON manifest 中。
@@ -83,7 +83,7 @@ PAWOS React 源码当前由 Electron 发布宿主加载：`scripts/build_control
   Runtime 事实。
 - 窗口、Dock、Overview、拖拽/缩放、协作 Focus：从 `PawDesktop.tsx`、`PawWindowLayer.tsx` 和
   `paw-os/runtime/desktop-store.ts` 读取；App 自己不另画一套窗口权威。
-- 卫星和结果窗：`PawAppsRuntime.tsx` 的 target 分支加 `PawOsSatelliteHost.tsx`、`PawResultWindow.tsx`。
+- 行星、subagent 卫星和结果窗：`PawAppsRuntime.tsx` 的 target 分支加 `PawOsSatelliteHost.tsx`、`PawResultWindow.tsx`。
 - 共用视觉入口：`paw-os/styles/paw-os.css` 及其 import 的 PAWOS 样式层。单个历史 CSS 文件存在，不代表
   它当前会生效；必须从 import 链确认。
 
@@ -178,7 +178,7 @@ builder 会复制 `electron/` 与 `dist/`，并在 release manifest 中声明 `b
 - 11 App registry；
 - `PawAppsRuntime.renderApp`；
 - 某 App 的叶子 render owner；
-- Wayfinder、卫星或窗口总分派；
+- Wayfinder、行星/卫星或窗口总分派；
 - Squirrel/Voice/Electron host 构建脚本；
 - 当前生产前端入口。
 

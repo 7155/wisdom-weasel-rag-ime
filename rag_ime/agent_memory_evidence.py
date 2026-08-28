@@ -5,6 +5,7 @@ from typing import Any
 
 from .agent_protocol import AgentEventEnvelope
 from .memory_evidence_policy import memory_evidence_exclusion_reason
+from .memory_maintenance_settings import memory_enabled_from_settings
 
 
 class AgentMemoryEvidenceService:
@@ -16,10 +17,15 @@ class AgentMemoryEvidenceService:
         sessions: Any,
         memory_evidence: Any,
         message_text: Callable[[Mapping[str, object]], str],
+        memory_enabled_provider: Callable[[], bool] | None = None,
     ) -> None:
         self.sessions = sessions
         self.memory_evidence = memory_evidence
         self.message_text = message_text
+        sessions_db_path = getattr(sessions, "db_path", "")
+        self._memory_enabled_provider = memory_enabled_provider or (
+            lambda: memory_enabled_from_settings(sessions_db_path)
+        )
 
     def record_user(
         self,
@@ -29,6 +35,8 @@ class AgentMemoryEvidenceService:
         turn_id: str,
         text: str,
     ) -> dict[str, object]:
+        if not self._memory_enabled():
+            return _skipped("skipped_memory_disabled")
         if reason := memory_evidence_exclusion_reason(text):
             return _skipped(f"skipped_{reason}")
         try:
@@ -47,6 +55,8 @@ class AgentMemoryEvidenceService:
         self,
         event: AgentEventEnvelope,
     ) -> dict[str, object]:
+        if not self._memory_enabled():
+            return _skipped("skipped_memory_disabled")
         message = event.payload.get("message")
         if (
             not isinstance(message, Mapping)
@@ -77,6 +87,8 @@ class AgentMemoryEvidenceService:
         self,
         approval: Mapping[str, object],
     ) -> dict[str, object]:
+        if not self._memory_enabled():
+            return _skipped("skipped_memory_disabled")
         session_id = str(approval.get("sessionId") or "")
         try:
             session = self.sessions.get(session_id)
@@ -98,6 +110,8 @@ class AgentMemoryEvidenceService:
         event_type: str,
         accepted: bool,
     ) -> dict[str, object]:
+        if not self._memory_enabled():
+            return _skipped("skipped_memory_disabled")
         try:
             return self.memory_evidence.record_room_event(
                 room_id=room_id,
@@ -115,6 +129,12 @@ class AgentMemoryEvidenceService:
             )
         except Exception as exc:
             return _failure("room_event", exc)
+
+    def _memory_enabled(self) -> bool:
+        try:
+            return bool(self._memory_enabled_provider())
+        except Exception:
+            return False
 
 
 def _skipped(status: str) -> dict[str, object]:

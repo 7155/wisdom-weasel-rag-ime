@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.observability-trace-get.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "traceId", "trace", "truncated", "projectionSource", "observationWindow"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.observability-trace-get.v1"},
+    "traceId": {"type": "string", "minLength": 1},
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "traceId", "sourceKind", "status", "binding",
+        "input", "spans", "evidence", "artifacts", "createdAtMs", "updatedAtMs"
+      ],
+      "properties": {
+        "schemaVersion": {"const": "rag-ime.trace-envelope.v1"},
+        "traceId": {"type": "string", "minLength": 1},
+        "sourceKind": {"type": "string", "minLength": 1},
+        "status": {"enum": ["building", "completed", "failed", "cancelled"]},
+        "binding": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "sessionId": {"type": "string"}, "turnId": {"type": "string"},
+            "roomId": {"type": "string"}, "runId": {"type": "string"},
+            "sourceLoopId": {"type": "string"}, "workItemId": {"type": "string"},
+            "caseId": {"type": "string"}
+          }
+        },
+        "parentTraceId": {"type": ["string", "null"], "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},
+        "links": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/traceLink"}},
+        "input": {
+          "type": "object", "additionalProperties": false,
+          "required": ["fingerprint", "contentPolicy", "normalization"],
+          "properties": {
+            "fingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+            "contentPolicy": {"enum": ["hash_only", "redacted", "owner_local"]},
+            "normalization": {"type": "string", "minLength": 1}
+          }
+        },
+        "spans": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/span"}},
+        "evidence": {"type": "array", "maxItems": 2048, "items": {"$ref": "#/$defs/evidence"}},
+        "artifacts": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/artifact"}},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "truncated": {"type": "boolean"},
+    "projectionSource": {"enum": ["observation_journal", "source_adapter", "trace_store"]},
+    "observationWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["firstSequence", "lastSequence", "resumeToken", "nextBeforeSequence"],
+      "properties": {
+        "firstSequence": {"type": "integer", "minimum": 0},
+        "lastSequence": {"type": "integer", "minimum": 0},
+        "resumeToken": {"type": "string", "minLength": 1},
+        "nextBeforeSequence": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "span": {
+      "type": "object", "additionalProperties": false,
+      "required": ["spanId", "name", "parentSpanId", "status", "startedAtMs", "endedAtMs", "durationMs", "recorded", "unavailableReason", "metrics", "attributes"],
+      "properties": {
+        "spanId": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1},
+        "parentSpanId": {"type": ["string", "null"]},
+        "status": {"enum": ["queued", "running", "waiting", "completed", "failed", "cancelled", "info"]},
+        "startedAtMs": {"type": "integer", "minimum": 0},
+        "endedAtMs": {"type": ["integer", "null"], "minimum": 0},
+        "durationMs": {"type": ["integer", "null"], "minimum": 0},
+        "recorded": {"type": "boolean"},
+        "unavailableReason": {"type": "string"},
+        "metrics": {"type": "object"}, "attributes": {"type": "object"}
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidenceId", "sourceKind", "sourceRef", "sourceLane", "evidenceStage", "disposition", "scores", "rankBefore", "rankAfter", "omissionReason"],
+      "properties": {
+        "evidenceId": {"type": "string", "minLength": 1}, "sourceKind": {"type": "string", "minLength": 1},
+        "sourceRef": {"type": "string", "minLength": 1},
+        "sourceLane": {"type": "string"},
+        "evidenceStage": {"type": "string", "minLength": 1},
+        "disposition": {"enum": ["included", "omitted", "filtered", "redacted"]},
+        "scores": {"type": "object", "additionalProperties": {"type": "number"}},
+        "rankBefore": {"type": ["integer", "null"], "minimum": 1},
+        "rankAfter": {"type": ["integer", "null"], "minimum": 1},
+        "omissionReason": {"type": "string"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifactId", "kind", "mediaType", "sha256", "byteSize", "recordCount"],
+      "properties": {
+        "artifactId": {"type": "string", "minLength": 1}, "kind": {"type": "string", "minLength": 1},
+        "mediaType": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "byteSize": {"type": "integer", "minimum": 0}, "recordCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "traceLink": {
+      "type": "object", "additionalProperties": false,
+      "required": ["traceId", "relation", "targetKind"],
+      "properties": {
+        "traceId": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"},
+        "relation": {"enum": ["retry", "related"]},
+        "targetKind": {"const": "trace"}
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.observability-eval-list.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "traceId", "total", "truncated", "items"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.observability-eval-list.v1"},
+    "traceId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "total": {"type": "integer", "minimum": 0},
+    "truncated": {"type": "boolean"},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/evalSummary"}
+    }
+  },
+  "$defs": {
+    "evalSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evalRunId", "mode", "metricAuthority", "truthStatus",
+        "datasetId", "labelRevision", "evaluatorDisplayName", "metrics",
+        "status", "createdAtMs", "updatedAtMs"
+      ],
+      "properties": {
+        "evalRunId": {"type": "string", "minLength": 1},
+        "mode": {"enum": ["ground_truth", "ai_judge"]},
+        "metricAuthority": {"enum": ["ground_truth", "ai_judge_estimate"]},
+        "truthStatus": {"enum": ["none", "human", "frozen"]},
+        "datasetId": {"type": "string"},
+        "labelRevision": {"type": "string"},
+        "evaluatorDisplayName": {"type": "string"},
+        "suiteBinding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["suiteId", "suiteRevision"],
+          "properties": {
+            "suiteId": {"type": "string", "minLength": 1},
+            "suiteRevision": {"type": "string", "minLength": 1}
+          }
+        },
+        "metrics": {"type": "object", "additionalProperties": {"type": "number"}},
+        "status": {"enum": ["queued", "running", "completed", "failed"]},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

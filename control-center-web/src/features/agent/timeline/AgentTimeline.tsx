@@ -944,6 +944,13 @@ export const AgentTurn = memo(function AgentTurn({
         Boolean(message && isRenderableAssistantMessage(message))
       ));
   }));
+  const inlineUserMessages = useAgentLiveStore(useShallow((state) => {
+    const projection = state.projections[sessionId];
+    return logicalRetryRootUserIds(projection, turnId)
+      .slice(1)
+      .map((id) => projection?.messagesById[id])
+      .filter((message): message is AgentMessageProjection => Boolean(message));
+  }));
   const activities = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.activityIds ?? []).map((id) => projection?.activitiesById[id]).filter(Boolean);
@@ -1030,33 +1037,46 @@ export const AgentTurn = memo(function AgentTurn({
   const retryRequested = retryRequestedFor === `${turnId}:${turn.status}`;
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const turnSettled = turn.status === 'completed' || turn.status === 'failed' || turn.status === 'aborted';
-  const timelineEntries = interleavedTurnEntries(assistantMessages, activities, activityPresentation);
+  const timelineEntries = interleavedTurnEntries(
+    [...assistantMessages, ...inlineUserMessages],
+    activities,
+    activityPresentation,
+  );
   const turnWorkModel = buildAgentTurnWorkModel(turn.status, timelineEntries);
   const streamingMessageId = activeStreamingMessageId(turn.status, assistantMessages);
   const renderTimelineEntry = (entry: AgentTurnSequenceEntry) => entry.kind === 'message' ? (
-    <div data-timeline-kind="message" key={entry.message.id}>
+    <div
+      data-timeline-kind={entry.message.role === 'user' ? 'user-message' : 'message'}
+      key={entry.message.id}
+    >
       <MessageView
         sessionId={sessionId}
         messageId={entry.message.id}
         presentation={presentation}
+        user={entry.message.role === 'user'}
         forkAvailable={forkAvailable}
+        rewriteAvailable={rewriteAvailable}
         historyTarget={activeTargetId === entry.message.id}
         streaming={entry.message.id === streamingMessageId}
         onApprovalDecision={onApprovalDecision}
         onForkFromMessage={onForkFromMessage}
+        onEditMessage={onEditMessage}
       />
     </div>
   ) : presentation === 'fx' ? (
-    <FxActivityStack
-      key={entry.key}
-      activities={entry.activities}
-      onApprovalDecision={onApprovalDecision}
-      onOpenApproval={onOpenApproval}
-      onRequestPermission={onRequestPermission}
-    />
+    <div data-timeline-kind="activity" key={entry.key}>
+      <FxActivityStack
+        activities={entry.activities}
+        sessionId={sessionId}
+        onApprovalDecision={onApprovalDecision}
+        onOpenApproval={onOpenApproval}
+        onRequestPermission={onRequestPermission}
+      />
+    </div>
   ) : (
     <div data-timeline-kind="activity" key={entry.key}>
       <ActivityGroupView
+        sessionId={sessionId}
         activities={entry.activities}
         onApprovalDecision={onApprovalDecision}
         onOpenApproval={onOpenApproval}
@@ -1067,8 +1087,8 @@ export const AgentTurn = memo(function AgentTurn({
   return (
     <article className="agent-turn" data-agent-turn-id={turnId} data-turn-status={turn.status}>
       {dayStartLabel ? <div aria-hidden="true" className="agent-fx-day"><span>{dayStartLabel}</span></div> : null}
-      {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
-      {assistantMessages.length > 0 || activities.length > 0 || memoryRecallReceipt || failure || showWorking ? (
+      {userIds.slice(0, 1).map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
+      {assistantMessages.length > 0 || inlineUserMessages.length > 0 || activities.length > 0 || memoryRecallReceipt || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <div className="agent-assistant-turn__body">
             {/* fx keeps message side as identity (UR-075): no repeated
@@ -1188,10 +1208,10 @@ export function interleavedTurnEntries(
       // retain `sourceMessageId`, so anchor that durable body immediately
       // after the last matching reasoning event instead of falling back to
       // the message-first array order when both share one timestamp.
-      sequence: message.timelineSequence
-        ?? derivedHistoricalMessageSequence(
-          historicalReasoningSequenceByMessage.get(message.id),
-        ),
+      sequence: historicalMessageSequence(
+        message.timelineSequence,
+        historicalReasoningSequenceByMessage.get(message.id),
+      ),
       fallbackOrder: index,
     })),
     ...activities.map((activity, index): TurnTimelineItem => ({
@@ -1223,8 +1243,19 @@ export function interleavedTurnEntries(
   }, []);
 }
 
-function derivedHistoricalMessageSequence(reasoningSequence: number | undefined): number | undefined {
-  return reasoningSequence === undefined ? undefined : reasoningSequence + 0.5;
+function historicalMessageSequence(
+  messageSequence: number | undefined,
+  reasoningSequence: number | undefined,
+): number | undefined {
+  if (reasoningSequence === undefined) return messageSequence;
+  if (messageSequence === undefined || messageSequence <= reasoningSequence) {
+    // Pi's durable assistant row and its public reasoning receipt can share
+    // one JSONL append ordinal. The receipt is emitted with a fractional
+    // suffix, so move the durable body after that receipt instead of letting
+    // the provider's integer anchor put the final before its own thinking.
+    return reasoningSequence + 0.5;
+  }
+  return messageSequence;
 }
 
 function activeStreamingMessageId(
@@ -1545,11 +1576,13 @@ function AgentTurnUsage({ messages }: { messages: AgentMessageProjection[] }) {
 }
 
 function ActivityGroupView({
+  sessionId,
   activities,
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
 }: {
+  sessionId: string;
   activities: AgentActivityProjection[];
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -1570,6 +1603,7 @@ function ActivityGroupView({
           <ActivitySummary
             key={`ordinary:${run.activities[0]?.id}`}
             activities={run.activities}
+            sessionId={sessionId}
             inline
             onApprovalDecision={onApprovalDecision}
             onOpenApproval={onOpenApproval}

@@ -131,7 +131,7 @@ class AgentProtocolTests(unittest.TestCase):
 
     def test_media_block_rejects_paths_and_remote_urls(self) -> None:
         for media_id in (
-            "/Users/undo/private.png",
+            "/Users/example/private.png",
             "../../private.png",
             "https://example.com/a.png",
             "plain-but-unmanaged-id",

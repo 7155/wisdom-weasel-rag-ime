@@ -136,67 +136,64 @@ function ContextUsageBody({
     return <p className="agent-context-usage__empty">正在读取上下文占用…</p>;
   }
   if (!view.available) {
-    return <p className="agent-context-usage__empty">下一轮模型响应后显示精确上下文占用</p>;
+    return (
+      <>
+        <p className="agent-context-usage__empty">尚未收到 Runtime 上下文快照；各层明确标为未知，不用总量推算。</p>
+        <ContextUsageLayerList layers={view.layers} />
+      </>
+    );
   }
 
   const used = view.tokens ?? 0;
-  const dominantId = view.segments.reduce<string | null>((best, segment) => {
-    if (!best) return segment.id;
-    const current = view.segments.find((item) => item.id === best);
-    return (current?.characters ?? 0) >= segment.characters ? best : segment.id;
-  }, null);
   const barTotal = Math.max(view.contextWindow, used, 1);
-  const characterTotal = Math.max(view.capturedCharacters, 1);
+  // Runtime's prompt is also normally present as the latest user message in
+  // contextMessages. Keep the dedicated row, but do not double-count it in
+  // the illustrative character strip.
+  const measurableLayers = view.layers.filter(
+    (layer) => layer.id !== 'currentInput' && layer.characters !== null && layer.characters > 0,
+  );
+  const characterTotal = Math.max(
+    measurableLayers.reduce((sum, layer) => sum + (layer.characters ?? 0), 0),
+    1,
+  );
 
   return (
     <>
       <div className="agent-context-usage__summary">
         <b>{view.percent === null ? '占用未知' : `${Math.round(view.percent)}% Full`}</b>
         <span>
-          ~
-          {formatContextTokenCount(used)}
+          {view.tokens === null ? '未知' : `约 ${formatContextTokenCount(view.tokens)}`}
           {' / '}
-          {formatContextTokenCount(view.contextWindow)}
+          {view.contextWindow > 0 ? formatContextTokenCount(view.contextWindow) : '未知'}
           {' Tokens'}
         </span>
       </div>
       <div aria-hidden="true" className="agent-context-usage__bar">
         {used > 0 ? <i data-used style={{ width: `${(used / barTotal) * 100}%` }} /> : null}
-        {view.freeTokens > 0 ? (
+        {view.freeTokens !== null && view.freeTokens > 0 ? (
           <i data-free style={{ flex: view.freeTokens / barTotal }} />
         ) : null}
       </div>
-      {view.segments.length ? (
-        <>
-          <p className="agent-context-usage__composition-label">捕获字符构成（非 Token）</p>
-          <div aria-hidden="true" className="agent-context-usage__composition">
-            {view.segments.map((segment) => (
-              <i
-                key={segment.id}
-                style={{
-                  background: segment.color,
-                  width: `${Math.max(0.6, (segment.characters / characterTotal) * 100)}%`,
-                }}
-              />
-            ))}
-          </div>
-          <ul className="agent-context-usage__list" aria-label="上下文分层占用">
-            {view.segments.map((segment) => (
-              <li data-dominant={segment.id === dominantId || undefined} key={segment.id}>
-                <span aria-hidden="true" className="agent-context-usage__swatch" style={{ background: segment.color }} />
-                <strong>{segment.label}</strong>
-                <span className="agent-context-usage__metric">
-                  <b>{formatCharacterCount(segment.characters)} 字符</b>
-                  <small>Token 未单独统计</small>
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="agent-context-usage__note">总 Token 仅有整轮统计，不能可靠分摊到各层。</p>
-        </>
-      ) : (
-        <p className="agent-context-usage__note">已有整轮总占用；分层内容尚不可用，Token 未单独统计。</p>
-      )}
+      {measurableLayers.length ? (
+        <p className="agent-context-usage__composition-label">已捕获层字符示意（当前输入可能已在对话历史中，不重复计入）</p>
+      ) : null}
+      {measurableLayers.length ? (
+        <div aria-hidden="true" className="agent-context-usage__composition">
+          {measurableLayers.map((layer) => (
+            <i
+              key={layer.id}
+              style={{
+                background: layerColor(layer.id),
+                width: `${Math.max(0.6, ((layer.characters ?? 0) / characterTotal) * 100)}%`,
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
+      <ContextUsageLayerList layers={view.layers} />
+      {view.layers.some((layer) => layer.characters !== null && layer.tokenQuality === 'unknown') ? (
+        <p className="agent-context-usage__note">总 Token 仅有整轮统计，不能可靠分摊到各层。</p>
+      ) : null}
       {view.compaction ? (
         <p className="agent-context-usage__note" data-compaction={view.compaction.status || undefined}>
           最近压缩
@@ -207,6 +204,54 @@ function ContextUsageBody({
       ) : null}
     </>
   );
+}
+
+function ContextUsageLayerList({ layers }: { layers: ContextUsageView['layers'] }) {
+  return (
+    <ul className="agent-context-usage__list" aria-label="上下文分层占用">
+      {layers.map((layer) => (
+        <li data-state={layer.state} key={layer.id} title={layer.source}>
+          <span aria-hidden="true" className="agent-context-usage__swatch" style={{ background: layerColor(layer.id) }} />
+          <span className="agent-context-usage__layer-copy">
+            <strong>{layer.label}</strong>
+            <small>{layer.note}</small>
+          </span>
+          <span className="agent-context-usage__metric">
+            <b>{layerPrimaryValue(layer)}</b>
+            <small>{layerQualityLabel(layer)}</small>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function layerPrimaryValue(layer: ContextUsageView['layers'][number]): string {
+  if (layer.tokens !== null) return `${formatContextTokenCount(layer.tokens)} Tokens`;
+  if (layer.characters !== null) return `${formatCharacterCount(layer.characters)} 字符`;
+  return '未知';
+}
+
+function layerQualityLabel(layer: ContextUsageView['layers'][number]): string {
+  if (layer.tokens !== null && layer.tokenQuality === 'exact') return '精确 Token';
+  if (layer.tokens !== null && layer.tokenQuality === 'estimated') return '估算 Token';
+  if (layer.characters !== null && layer.state === 'absent') return '明确未注入';
+  if (layer.characters !== null) return 'Token 未单独统计';
+  return '数据未知';
+}
+
+function layerColor(id: ContextUsageView['layers'][number]['id']): string {
+  return ({
+    systemPrompt: '#8b919a',
+    skillsTools: '#7c5cbf',
+    projectContext: '#2f9a5f',
+    conversationHistory: '#d45a7a',
+    memory: '#e07a3f',
+    knowledge: '#c44d9a',
+    currentInput: '#4a7fd4',
+    cache: '#0e8270',
+    compaction: '#a66a35',
+  } as const)[id];
 }
 
 function formatCharacterCount(value: number): string {

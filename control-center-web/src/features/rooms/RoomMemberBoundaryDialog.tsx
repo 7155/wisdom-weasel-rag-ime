@@ -14,10 +14,9 @@ import {
 } from '@/components/primitives';
 import { publicToolName } from '@/features/agent/tool-presentation';
 import { publicErrorText } from '@/features/overview/management-ui';
-import { roomPlanetName } from './room-copy';
+import { roomParticipantPlanetName } from './room-participant-identity';
 
 interface RoomMemberIdentity {
-  displayName: string;
   sessionId: string;
   ordinal: number;
 }
@@ -115,7 +114,7 @@ export function RoomMemberBoundaryDialog({
     <Dialog open={Boolean(participant)} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="room-policy-dialog">
         <DialogHeader>
-          <DialogTitle>{participant ? roomPlanetName(participant.ordinal) : '这位伙伴'}能做什么</DialogTitle>
+          <DialogTitle>{roomParticipantPlanetName(participant)} 能做什么</DialogTitle>
           <DialogDescription>
             这里显示真正生效的工作权限、目录和工具。分工只是协作提示，不会让伙伴绕过你的授权。
           </DialogDescription>

@@ -2243,6 +2243,8 @@ export const contractSchemas = {
           "memory_maintenance_updated",
           "user_input_required",
           "message_completed",
+          "provider_request_completed",
+          "provider_request_failed",
           "compaction_started",
           "compaction_completed",
           "turn_completed",
@@ -7886,6 +7888,7 @@ export const contractSchemas = {
           "todo",
           "agent_goal",
           "plugins",
+          "sandbox",
           "work_documents",
           "desktop_semantic",
           "ls",
@@ -8024,6 +8027,7 @@ export const contractSchemas = {
           "agent_goal",
           "desktop_semantic",
           "plugins",
+          "sandbox",
           "work_documents",
           "workspace_list",
           "workspace_lsp",
@@ -8105,6 +8109,11 @@ export const contractSchemas = {
           "create_package",
           "validate",
           "propose_install",
+          "propose_enable",
+          "propose_disable",
+          "propose_update",
+          "propose_rollback",
+          "propose_uninstall",
           "list_bases",
           "get_base",
           "list_documents",
@@ -10810,6 +10819,909 @@ export const contractSchemas = {
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
+      }
+    }
+  },
+  "eval-run.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-run.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "evalRunId",
+      "traceIds",
+      "mode",
+      "metricAuthority",
+      "truth",
+      "evaluator",
+      "metrics",
+      "status",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-run.v1"
+      },
+      "evalRunId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "traceIds": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 2048,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "mode": {
+        "enum": [
+          "ground_truth",
+          "ai_judge"
+        ]
+      },
+      "metricAuthority": {
+        "enum": [
+          "ground_truth",
+          "ai_judge_estimate"
+        ]
+      },
+      "truth": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "datasetId",
+          "labelRevision"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "none",
+              "human",
+              "frozen"
+            ]
+          },
+          "datasetId": {
+            "type": "string"
+          },
+          "labelRevision": {
+            "type": "string"
+          }
+        }
+      },
+      "evaluator": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "model",
+          "thinking",
+          "displayName"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
+      "suiteBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suiteId",
+          "suiteRevision"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "metrics": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "number"
+        }
+      },
+      "status": {
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed"
+        ]
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "eval-schedule-create.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-schedule-create.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "schedule"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-schedule-create.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "schedule": {
+        "$ref": "#/$defs/schedule"
+      }
+    },
+    "$defs": {
+      "schedule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "suiteId",
+          "suiteRevision",
+          "recurrenceKind",
+          "recurrenceInterval",
+          "maxRuns",
+          "runCount",
+          "status",
+          "initialDueAtMs",
+          "nextDueAtMs",
+          "lastErrorCode",
+          "createdAtMs",
+          "updatedAtMs",
+          "latestRun"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recurrenceKind": {
+            "enum": [
+              "daily",
+              "weekly"
+            ]
+          },
+          "recurrenceInterval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "maxRuns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "runCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "initialDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nextDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastErrorCode": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latestRun": {
+            "$ref": "#/$defs/latestRun"
+          }
+        }
+      },
+      "latestRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scheduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "enum": [
+              "claimed",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "dueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evalRunId": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "eval-schedule-error.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-schedule-error.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "errorCode",
+      "error"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-schedule-error.v1"
+      },
+      "ok": {
+        "const": false
+      },
+      "errorCode": {
+        "enum": [
+          "invalid_request",
+          "schedule_not_found",
+          "schedule_unavailable"
+        ]
+      },
+      "error": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "eval-schedule-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-schedule-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-schedule-list.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/$defs/schedule"
+        }
+      }
+    },
+    "$defs": {
+      "schedule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "suiteId",
+          "suiteRevision",
+          "recurrenceKind",
+          "recurrenceInterval",
+          "maxRuns",
+          "runCount",
+          "status",
+          "initialDueAtMs",
+          "nextDueAtMs",
+          "lastErrorCode",
+          "createdAtMs",
+          "updatedAtMs",
+          "latestRun"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recurrenceKind": {
+            "enum": [
+              "daily",
+              "weekly"
+            ]
+          },
+          "recurrenceInterval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "maxRuns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "runCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "initialDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nextDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastErrorCode": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latestRun": {
+            "$ref": "#/$defs/latestRun"
+          }
+        }
+      },
+      "latestRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scheduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "enum": [
+              "claimed",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "dueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evalRunId": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "eval-schedule-run-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-schedule-run-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "schedule",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-schedule-run-list.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "schedule": {
+        "$ref": "#/$defs/schedule"
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/$defs/run"
+        }
+      }
+    },
+    "$defs": {
+      "schedule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "suiteId",
+          "suiteRevision",
+          "recurrenceKind",
+          "recurrenceInterval",
+          "maxRuns",
+          "runCount",
+          "status",
+          "initialDueAtMs",
+          "nextDueAtMs",
+          "lastErrorCode",
+          "createdAtMs",
+          "updatedAtMs",
+          "latestRun"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recurrenceKind": {
+            "enum": [
+              "daily",
+              "weekly"
+            ]
+          },
+          "recurrenceInterval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          },
+          "maxRuns": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "runCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "initialDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nextDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastErrorCode": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latestRun": {
+            "$ref": "#/$defs/latestRun"
+          }
+        }
+      },
+      "latestRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scheduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "enum": [
+              "claimed",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "dueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evalRunId": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        }
+      },
+      "run": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "scheduleId",
+          "attempt",
+          "state",
+          "dueAtMs",
+          "claimedAtMs",
+          "finishedAtMs",
+          "evalRunId",
+          "errorCode",
+          "traceIds",
+          "traceIdsTruncated"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scheduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "enum": [
+              "claimed",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "dueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evalRunId": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "traceIds": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "traceIdsTruncated": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "eval-schedule.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-schedule.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "suiteId",
+      "suiteRevision",
+      "recurrenceKind",
+      "recurrenceInterval",
+      "maxRuns",
+      "runCount",
+      "status",
+      "initialDueAtMs",
+      "nextDueAtMs",
+      "lastErrorCode",
+      "createdAtMs",
+      "updatedAtMs",
+      "latestRun"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "suiteId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "suiteRevision": {
+        "type": "string",
+        "minLength": 1
+      },
+      "recurrenceKind": {
+        "enum": [
+          "daily",
+          "weekly"
+        ]
+      },
+      "recurrenceInterval": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 30
+      },
+      "maxRuns": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "runCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "status": {
+        "enum": [
+          "scheduled",
+          "running",
+          "completed",
+          "failed"
+        ]
+      },
+      "initialDueAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "nextDueAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "lastErrorCode": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "latestRun": {
+        "$ref": "#/$defs/latestRun"
+      }
+    },
+    "$defs": {
+      "latestRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scheduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "enum": [
+              "claimed",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "dueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "claimedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "finishedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evalRunId": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "eval-suite-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-suite-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-suite-list.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "$ref": "#/$defs/suite"
+        }
+      }
+    },
+    "$defs": {
+      "suite": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suiteId",
+          "suiteRevision",
+          "displayName",
+          "fixtureCount",
+          "capabilities"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "fixtureCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "capabilities": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
+          }
+        }
       }
     }
   },
@@ -14738,6 +15650,755 @@ export const contractSchemas = {
       }
     }
   },
+  "observability-eval-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observability-eval-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "traceId",
+      "total",
+      "truncated",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.observability-eval-list.v1"
+      },
+      "traceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "total": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/$defs/evalSummary"
+        }
+      }
+    },
+    "$defs": {
+      "evalSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evalRunId",
+          "mode",
+          "metricAuthority",
+          "truthStatus",
+          "datasetId",
+          "labelRevision",
+          "evaluatorDisplayName",
+          "metrics",
+          "status",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "evalRunId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "enum": [
+              "ground_truth",
+              "ai_judge"
+            ]
+          },
+          "metricAuthority": {
+            "enum": [
+              "ground_truth",
+              "ai_judge_estimate"
+            ]
+          },
+          "truthStatus": {
+            "enum": [
+              "none",
+              "human",
+              "frozen"
+            ]
+          },
+          "datasetId": {
+            "type": "string"
+          },
+          "labelRevision": {
+            "type": "string"
+          },
+          "evaluatorDisplayName": {
+            "type": "string"
+          },
+          "suiteBinding": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "suiteId",
+              "suiteRevision"
+            ],
+            "properties": {
+              "suiteId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "suiteRevision": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "observability-evidence-eval-request.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observability-evidence-eval-request.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "traceId",
+      "requiredEvidenceIds",
+      "datasetId",
+      "labelRevision",
+      "truthKind"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.observability-evidence-eval-request.v1"
+      },
+      "traceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "requiredEvidenceIds": {
+        "type": "array",
+        "maxItems": 2048,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "datasetId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "labelRevision": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "truthKind": {
+        "const": "human"
+      }
+    }
+  },
+  "observability-sandbox-run-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observability-sandbox-run-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "items",
+      "total"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.observability-sandbox-run-list.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/$defs/sandboxRun"
+        }
+      },
+      "total": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "sandboxRun": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "sandboxRunId",
+          "appId",
+          "status",
+          "policy",
+          "traceIds",
+          "evalRunIds",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.sandbox-run.v1"
+          },
+          "sandboxRunId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "appId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "workspaceBindingId",
+              "workspaceFingerprint",
+              "mutationMode",
+              "network",
+              "productionWriteBlocked"
+            ],
+            "properties": {
+              "workspaceBindingId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "workspaceFingerprint": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "mutationMode": {
+                "enum": [
+                  "read_only",
+                  "staged"
+                ]
+              },
+              "network": {
+                "enum": [
+                  "blocked",
+                  "allowlisted"
+                ]
+              },
+              "productionWriteBlocked": {
+                "const": true
+              }
+            }
+          },
+          "traceIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "evalRunIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "observability-trace-error.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observability-trace-error.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "errorCode",
+      "error",
+      "traceId"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.observability-trace-error.v1"
+      },
+      "ok": {
+        "const": false
+      },
+      "errorCode": {
+        "enum": [
+          "trace_not_found",
+          "invalid_trace_id",
+          "trace_invalid"
+        ]
+      },
+      "error": {
+        "type": "string",
+        "minLength": 1
+      },
+      "traceId": {
+        "type": "string"
+      }
+    }
+  },
+  "observability-trace-get.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.observability-trace-get.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "traceId",
+      "trace",
+      "truncated",
+      "projectionSource",
+      "observationWindow"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.observability-trace-get.v1"
+      },
+      "traceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "trace": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "traceId",
+          "sourceKind",
+          "status",
+          "binding",
+          "input",
+          "spans",
+          "evidence",
+          "artifacts",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.trace-envelope.v1"
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "building",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "binding": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              },
+              "turnId": {
+                "type": "string"
+              },
+              "roomId": {
+                "type": "string"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "sourceLoopId": {
+                "type": "string"
+              },
+              "workItemId": {
+                "type": "string"
+              },
+              "caseId": {
+                "type": "string"
+              }
+            }
+          },
+          "parentTraceId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"
+          },
+          "links": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/$defs/traceLink"
+            }
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fingerprint",
+              "contentPolicy",
+              "normalization"
+            ],
+            "properties": {
+              "fingerprint": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "contentPolicy": {
+                "enum": [
+                  "hash_only",
+                  "redacted",
+                  "owner_local"
+                ]
+              },
+              "normalization": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "spans": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/$defs/span"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 2048,
+            "items": {
+              "$ref": "#/$defs/evidence"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/$defs/artifact"
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "projectionSource": {
+        "enum": [
+          "observation_journal",
+          "source_adapter",
+          "trace_store"
+        ]
+      },
+      "observationWindow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "firstSequence",
+          "lastSequence",
+          "resumeToken",
+          "nextBeforeSequence"
+        ],
+        "properties": {
+          "firstSequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastSequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "resumeToken": {
+            "type": "string",
+            "minLength": 1
+          },
+          "nextBeforeSequence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "$defs": {
+      "span": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "spanId",
+          "name",
+          "parentSpanId",
+          "status",
+          "startedAtMs",
+          "endedAtMs",
+          "durationMs",
+          "recorded",
+          "unavailableReason",
+          "metrics",
+          "attributes"
+        ],
+        "properties": {
+          "spanId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parentSpanId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled",
+              "info"
+            ]
+          },
+          "startedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "recorded": {
+            "type": "boolean"
+          },
+          "unavailableReason": {
+            "type": "string"
+          },
+          "metrics": {
+            "type": "object"
+          },
+          "attributes": {
+            "type": "object"
+          }
+        }
+      },
+      "evidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidenceId",
+          "sourceKind",
+          "sourceRef",
+          "sourceLane",
+          "evidenceStage",
+          "disposition",
+          "scores",
+          "rankBefore",
+          "rankAfter",
+          "omissionReason"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceLane": {
+            "type": "string"
+          },
+          "evidenceStage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "enum": [
+              "included",
+              "omitted",
+              "filtered",
+              "redacted"
+            ]
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "rankBefore": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "rankAfter": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "omissionReason": {
+            "type": "string"
+          }
+        }
+      },
+      "artifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifactId",
+          "kind",
+          "mediaType",
+          "sha256",
+          "byteSize",
+          "recordCount"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mediaType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recordCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "traceLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "traceId",
+          "relation",
+          "targetKind"
+        ],
+        "properties": {
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"
+          },
+          "relation": {
+            "enum": [
+              "retry",
+              "related"
+            ]
+          },
+          "targetKind": {
+            "const": "trace"
+          }
+        }
+      }
+    }
+  },
   "observation-event.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.observation-event.v1",
@@ -15257,6 +16918,420 @@ export const contractSchemas = {
         }
       }
     }
+  },
+  "paw.plugin-usage-query.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "paw.plugin-usage-query.v1",
+    "$defs": {
+      "event": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "eventId",
+          "occurredAtMs",
+          "sessionId",
+          "packageId",
+          "packageVersion",
+          "resourceKind",
+          "resourceId",
+          "activity"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "paw.plugin-usage.v1"
+          },
+          "eventId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "occurredAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "packageId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "packageVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "resourceKind": {
+            "enum": [
+              "extension",
+              "tool",
+              "command",
+              "skill",
+              "prompt",
+              "theme"
+            ]
+          },
+          "resourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "activity": {
+            "enum": [
+              "loaded",
+              "invoked",
+              "finished"
+            ]
+          },
+          "invocationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "outcome": {
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "events",
+      "aggregates"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "paw.plugin-usage-query.v1"
+      },
+      "events": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "aggregates": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "packageId",
+            "packageVersion",
+            "resourceKind",
+            "resourceId",
+            "loadedCount",
+            "invocationCount",
+            "terminalCount",
+            "succeededCount",
+            "failedCount",
+            "cancelledCount",
+            "averageDurationMs",
+            "lastLoadedAtMs",
+            "lastInvokedAtMs"
+          ],
+          "properties": {
+            "packageId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "packageVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "resourceKind": {
+              "enum": [
+                "extension",
+                "tool",
+                "command",
+                "skill",
+                "prompt",
+                "theme"
+              ]
+            },
+            "resourceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "loadedCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "invocationCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "terminalCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "succeededCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failedCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cancelledCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "averageDurationMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "lastLoadedAtMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "lastInvokedAtMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "paw.plugin-usage.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "paw.plugin-usage.v1",
+    "title": "Privacy-preserving Pi Package resource usage event",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "eventId",
+      "occurredAtMs",
+      "sessionId",
+      "packageId",
+      "packageVersion",
+      "resourceKind",
+      "resourceId",
+      "activity"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "paw.plugin-usage.v1"
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "occurredAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "packageId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "packageVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "resourceKind": {
+        "enum": [
+          "extension",
+          "tool",
+          "command",
+          "skill",
+          "prompt",
+          "theme"
+        ]
+      },
+      "resourceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "activity": {
+        "enum": [
+          "loaded",
+          "invoked",
+          "finished"
+        ]
+      },
+      "invocationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "outcome": {
+        "enum": [
+          "succeeded",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "durationMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "activity": {
+              "const": "loaded"
+            }
+          },
+          "required": [
+            "activity"
+          ]
+        },
+        "then": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "invocationId"
+                ]
+              },
+              {
+                "required": [
+                  "outcome"
+                ]
+              },
+              {
+                "required": [
+                  "durationMs"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "activity": {
+              "const": "invoked"
+            }
+          },
+          "required": [
+            "activity"
+          ]
+        },
+        "then": {
+          "required": [
+            "invocationId"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "outcome"
+                ]
+              },
+              {
+                "required": [
+                  "durationMs"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "activity": {
+              "const": "finished"
+            }
+          },
+          "required": [
+            "activity"
+          ]
+        },
+        "then": {
+          "required": [
+            "invocationId",
+            "outcome",
+            "durationMs"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "resourceKind": {
+              "enum": [
+                "extension",
+                "theme"
+              ]
+            }
+          },
+          "required": [
+            "resourceKind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "activity": {
+              "const": "loaded"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "resourceKind": {
+              "const": "prompt"
+            }
+          },
+          "required": [
+            "resourceKind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "activity": {
+              "enum": [
+                "loaded",
+                "invoked"
+              ]
+            }
+          }
+        }
+      }
+    ]
   },
   "pi-runtime-manifest.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -19008,6 +21083,105 @@ export const contractSchemas = {
       }
     }
   },
+  "sandbox-run.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.sandbox-run.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "sandboxRunId",
+      "appId",
+      "status",
+      "policy",
+      "traceIds",
+      "evalRunIds",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.sandbox-run.v1"
+      },
+      "sandboxRunId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "appId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workspaceBindingId",
+          "workspaceFingerprint",
+          "mutationMode",
+          "network",
+          "productionWriteBlocked"
+        ],
+        "properties": {
+          "workspaceBindingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workspaceFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "mutationMode": {
+            "enum": [
+              "read_only",
+              "staged"
+            ]
+          },
+          "network": {
+            "enum": [
+              "blocked",
+              "allowlisted"
+            ]
+          },
+          "productionWriteBlocked": {
+            "const": true
+          }
+        }
+      },
+      "traceIds": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "evalRunIds": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "session-memory-recall.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.session-memory-recall.v1",
@@ -19740,6 +21914,350 @@ export const contractSchemas = {
       }
     }
   },
+  "trace-envelope.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-envelope.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "traceId",
+      "sourceKind",
+      "status",
+      "binding",
+      "input",
+      "spans",
+      "evidence",
+      "artifacts",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-envelope.v1"
+      },
+      "traceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceKind": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "enum": [
+          "building",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "binding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "roomId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "sourceLoopId": {
+            "type": "string"
+          },
+          "workItemId": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          }
+        }
+      },
+      "parentTraceId": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"
+      },
+      "links": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/traceLink"
+        }
+      },
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fingerprint",
+          "contentPolicy",
+          "normalization"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "contentPolicy": {
+            "enum": [
+              "hash_only",
+              "redacted",
+              "owner_local"
+            ]
+          },
+          "normalization": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "spans": {
+        "type": "array",
+        "maxItems": 256,
+        "items": {
+          "$ref": "#/$defs/span"
+        }
+      },
+      "evidence": {
+        "type": "array",
+        "maxItems": 2048,
+        "items": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "artifacts": {
+        "type": "array",
+        "maxItems": 256,
+        "items": {
+          "$ref": "#/$defs/artifact"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "span": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "spanId",
+          "name",
+          "parentSpanId",
+          "status",
+          "startedAtMs",
+          "endedAtMs",
+          "durationMs",
+          "recorded",
+          "unavailableReason",
+          "metrics",
+          "attributes"
+        ],
+        "properties": {
+          "spanId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parentSpanId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled",
+              "info"
+            ]
+          },
+          "startedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "durationMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "recorded": {
+            "type": "boolean"
+          },
+          "unavailableReason": {
+            "type": "string"
+          },
+          "metrics": {
+            "type": "object"
+          },
+          "attributes": {
+            "type": "object"
+          }
+        }
+      },
+      "evidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidenceId",
+          "sourceKind",
+          "sourceRef",
+          "sourceLane",
+          "evidenceStage",
+          "disposition",
+          "scores",
+          "rankBefore",
+          "rankAfter",
+          "omissionReason"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceLane": {
+            "type": "string"
+          },
+          "evidenceStage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "enum": [
+              "included",
+              "omitted",
+              "filtered",
+              "redacted"
+            ]
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "rankBefore": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "rankAfter": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "omissionReason": {
+            "type": "string"
+          }
+        }
+      },
+      "artifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifactId",
+          "kind",
+          "mediaType",
+          "sha256",
+          "byteSize",
+          "recordCount"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mediaType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recordCount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "traceLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "traceId",
+          "relation",
+          "targetKind"
+        ],
+        "properties": {
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$"
+          },
+          "relation": {
+            "enum": [
+              "retry",
+              "related"
+            ]
+          },
+          "targetKind": {
+            "const": "trace"
+          }
+        }
+      }
+    }
+  },
   "typed-verification-receipt.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "wisdom-weasel.typed-verification-receipt.v1",
@@ -19891,6 +22409,137 @@ export const contractSchemas = {
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
+      }
+    }
+  },
+  "vertical-agent-self-test-suite.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.vertical-agent-self-test-suite.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "status",
+      "totalCount",
+      "passedCount",
+      "failedCount",
+      "results",
+      "failures"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.vertical-agent-self-test-suite.v1"
+      },
+      "status": {
+        "enum": [
+          "completed",
+          "failed"
+        ]
+      },
+      "totalCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "passedCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "failedCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "results": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/result"
+        }
+      },
+      "failures": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/failure"
+        }
+      }
+    },
+    "$defs": {
+      "result": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "appId",
+          "fixtureId",
+          "traceId",
+          "evalRunId",
+          "sandboxRunId",
+          "metrics",
+          "providerCalls",
+          "productionWriteBlocked",
+          "status"
+        ],
+        "properties": {
+          "appId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fixtureId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evalRunId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sandboxRunId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "providerCalls": {
+            "const": 0
+          },
+          "productionWriteBlocked": {
+            "const": true
+          },
+          "status": {
+            "const": "passed"
+          }
+        }
+      },
+      "failure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "appId",
+          "status",
+          "errorCode",
+          "errorFingerprint"
+        ],
+        "properties": {
+          "appId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "const": "failed"
+          },
+          "errorCode": {
+            "type": "string",
+            "minLength": 1
+          },
+          "errorFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
       }
     }
   },

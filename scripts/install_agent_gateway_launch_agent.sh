@@ -45,6 +45,8 @@ if ! python3 - \
   "$INSTALL_MARKER" \
   "$ROOT/rag_ime" \
   "$APP_CODE_DIR/rag_ime" \
+  "$ROOT/examples/vertical_agents" \
+  "$APP_CODE_DIR/examples/vertical_agents" \
   "$ROOT/scripts/sidecar_launch.py" \
   "$WRAPPER" <<'PY'
 import hashlib
@@ -73,7 +75,15 @@ def tree_digest(root: Path) -> str:
 
 
 try:
-    marker_path, source_tree, installed_tree, source_wrapper, installed_wrapper = map(
+    (
+        marker_path,
+        source_tree,
+        installed_tree,
+        source_vertical_agents,
+        installed_vertical_agents,
+        source_wrapper,
+        installed_wrapper,
+    ) = map(
         Path,
         sys.argv[1:],
     )
@@ -83,6 +93,10 @@ try:
         and bool(marker.get("sourceCommit"))
     )
     runtime_matches = tree_digest(source_tree) == tree_digest(installed_tree)
+    vertical_agents_match = (
+        tree_digest(source_vertical_agents)
+        == tree_digest(installed_vertical_agents)
+    )
     wrapper_matches = (
         source_wrapper.is_file()
         and installed_wrapper.is_file()
@@ -90,7 +104,14 @@ try:
     )
 except (OSError, ValueError, json.JSONDecodeError):
     raise SystemExit(1)
-raise SystemExit(0 if provenance_valid and runtime_matches and wrapper_matches else 1)
+raise SystemExit(
+    0
+    if provenance_valid
+    and runtime_matches
+    and vertical_agents_match
+    and wrapper_matches
+    else 1
+)
 PY
 then
   echo "installed sidecar code does not match this source checkout; reinstall the sidecar first" >&2

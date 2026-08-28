@@ -414,17 +414,7 @@ export function AgentComposer({
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
     // Any pasted file — image, PDF, code, archive — rides the managed
     // attachment path; plain text keeps the browser's default insertion.
-    const files = [...event.clipboardData.files];
-    const items = event.clipboardData.items;
-    let hasFileItem = files.length > 0;
-    if (!files.length && items) {
-      for (const item of items) {
-        if (item.kind !== 'file') continue;
-        hasFileItem = true;
-        const file = item.getAsFile();
-        if (file) files.push(file);
-      }
-    }
+    const { files, hasFileItem } = clipboardFilesFromEvent(event);
     if (!files.length && !hasFileItem) {
       const pastedText = event.clipboardData.getData?.('text/plain') ?? '';
       if (pastedText || !onPasteFromClipboard) return;
@@ -524,7 +514,7 @@ export function AgentComposer({
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
-            placeholder={composerPlaceholder(persona?.displayName ?? 'Agent', imageSupport)}
+            placeholder={composerPlaceholder(imageSupport)}
             aria-label="消息"
             aria-autocomplete="list"
             aria-expanded={commandPanelVisible}
@@ -614,8 +604,31 @@ function isCommandLookupDraft(value: string): boolean {
   return value.startsWith('/') && !/\s/u.test(value);
 }
 
-function composerPlaceholder(name: string, support: 'supported' | 'unsupported' | 'unknown'): string {
-  if (support === 'supported') return `给${name}发消息，输入 / 查看命令，或粘贴图片、文件…`;
-  if (support === 'unsupported') return `给${name}发消息，输入 / 查看命令，或粘贴文件；当前模型不识别图片…`;
-  return `给${name}发消息，输入 / 查看命令，或粘贴文件；当前模型图片能力未知…`;
+function composerPlaceholder(support: 'supported' | 'unsupported' | 'unknown'): string {
+  const target = '当前 Session';
+  if (support === 'supported') return `给${target}发消息，输入 / 查看命令，或粘贴图片、文件…`;
+  if (support === 'unsupported') return `给${target}发消息，输入 / 查看命令，或粘贴文件；当前模型不识别图片…`;
+  return `给${target}发消息，输入 / 查看命令，或粘贴文件；当前模型图片能力未知…`;
+}
+
+/**
+ * Read clipboard files using the same browser/WebKit path as the Session
+ * composer. WebKit can expose a file item without exposing its bytes; callers
+ * use `hasFileItem` to hand that case to the trusted native pasteboard path.
+ */
+export function clipboardFilesFromEvent(
+  event: ClipboardEvent<HTMLTextAreaElement>,
+): { files: File[]; hasFileItem: boolean } {
+  const files = [...event.clipboardData.files];
+  const items = event.clipboardData.items;
+  let hasFileItem = files.length > 0;
+  if (!files.length && items) {
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      hasFileItem = true;
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  return { files, hasFileItem };
 }

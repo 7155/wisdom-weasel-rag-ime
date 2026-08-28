@@ -2358,14 +2358,14 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
     expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: /Earth/ })).toHaveAccessibleName(/Earth.*最终汇合与回复/);
-    expect(screen.getByRole('checkbox', { name: /Earth/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Mars/ })).toHaveAccessibleName(/Mars.*实现与验证/);
-    expect(screen.getByRole('checkbox', { name: /Mars/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Venus/ })).toHaveAccessibleName(/Venus.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /候选行星 1/ })).toHaveAccessibleName(/候选行星 1.*最终汇合与回复/);
+    expect(screen.getByRole('checkbox', { name: /候选行星 1/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /候选行星 2/ })).toHaveAccessibleName(/候选行星 2.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /候选行星 2/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /候选行星 3/ })).toHaveAccessibleName(/候选行星 3.*实现与验证/);
     expect(screen.getByText(/所有伙伴地位平等，可以直接互相 @、提问和回复/)).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /Venus/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Jupiter/ })).toHaveAccessibleName(/Jupiter.*实现与验证/);
+    expect(screen.getByRole('checkbox', { name: /候选行星 3/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /候选行星 4/ })).toHaveAccessibleName(/候选行星 4.*实现与验证/);
     expect(screen.getByRole('radio', { name: /全自动/ })).toBeChecked();
     expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: '发言方式' })).not.toBeInTheDocument();
@@ -2667,7 +2667,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
-    const invite = screen.getByRole('button', { name: '邀请 Venus 分工' });
+    const invite = screen.getByRole('button', { name: '邀请 候选行星 1' });
     expect(invite).toBeEnabled();
     expect(screen.getByText(/不会补读此前的完整对话/)).toBeInTheDocument();
     await user.click(invite);
@@ -3016,9 +3016,9 @@ describe('Rooms experience', () => {
     expect(create).toBeEnabled();
     await user.click(create);
     expect(screen.getByRole('dialog', { name: '开始一起做事' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /Earth/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Mars/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /Venus/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /候选行星 1/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /候选行星 2/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /候选行星 3/ })).toBeChecked();
   });
 
   it('keeps a Room creation failure inside the dialog and preserves the draft', async () => {
@@ -3245,7 +3245,7 @@ describe('Rooms experience', () => {
       (call) => call.request.pathId === 'agent.sessions.list',
     ).length;
     await user.click((await screen.findAllByRole('button', { name: '查看能做什么' }))[0]!);
-    expect(await screen.findByRole('dialog', { name: /Earth能做什么/ })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /Earth\s+能做什么/ })).toBeInTheDocument();
     expect(transport.requests.filter(
       (call) => call.request.pathId === 'agent.sessions.list',
     )).toHaveLength(sessionListRequestsBeforeBoundary);

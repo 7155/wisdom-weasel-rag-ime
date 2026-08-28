@@ -1519,6 +1519,7 @@ describe('Agent experience', () => {
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="queued"] .agent-status-subagent__state svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="completed"]')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="failed"]')).toBeInTheDocument();
+    expect(statusPanel.querySelector('.agent-status-subagent[data-state="failed"]')).toHaveTextContent('public failure');
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="running"] time')).toHaveTextContent(/^\d+(?:分\d{2})?秒$/);
     expect(within(subagentTree).getAllByRole('button', { name: '查看进度' })).toHaveLength(2);
     expect(within(subagentTree).getAllByRole('button', { name: '查看结果' })).toHaveLength(2);
@@ -4110,7 +4111,7 @@ describe('Agent experience', () => {
     expect(document.querySelector('.agent-persona-avatar')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开子 Agent 工作台' })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: '消息' });
-    expect(composer).toHaveAttribute('placeholder', expect.stringContaining('给Agent发消息'));
+    expect(composer).toHaveAttribute('placeholder', expect.stringContaining('给当前 Session发消息'));
     await user.type(composer, '/');
     expect(screen.queryByRole('option', { name: /\/subagents/ })).not.toBeInTheDocument();
   });

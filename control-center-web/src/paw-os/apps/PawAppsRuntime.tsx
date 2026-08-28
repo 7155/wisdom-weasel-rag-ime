@@ -39,6 +39,10 @@ export function PawAppBody({
 function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, target?: PawOsWindowTarget) {
   if (target?.kind === 'result') return <PawResultWindow target={target} />;
   if (target?.kind === 'process-terminal') return <PawOsSatelliteHost target={target} />;
+  /* A Room participant is a planet observation window, not its full Session
+   * workspace. Keep the participant target for Room grouping and the
+   * Earth/Mars titleplate; the compact host retains the public timeline and
+   * exposes Trace/full-Session navigation when intervention is needed. */
   if (
     (target?.kind === 'room' && Boolean(target.panel))
     || target?.kind === 'participant'

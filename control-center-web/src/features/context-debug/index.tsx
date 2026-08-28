@@ -695,6 +695,7 @@ function ContextCallDocument({ call, context }: { call: DebugModelCall; context:
         callIndex={call.index}
         emptyLabel="本次调用没有新增消息"
         messages={call.contextDelta.addedMessages}
+        sessionId={context.sessionId}
       />
 
       {call.assistantMessage !== undefined ? (
@@ -703,6 +704,7 @@ function ContextCallDocument({ call, context }: { call: DebugModelCall; context:
           emptyLabel="没有捕获模型回复"
           messageId={(index) => assistantEntryId(call.index, index)}
           messages={[call.assistantMessage]}
+          sessionId={context.sessionId}
         />
       ) : null}
 
@@ -724,7 +726,7 @@ function ContextCallDocument({ call, context }: { call: DebugModelCall; context:
             <pre className="context-debug-reader__code context-debug-reader__code--text">{callProviderSystemPrompt(call, context) || '没有捕获系统指令'}</pre>
           </ContextDisclosure>
           <ContextDisclosure label="完整消息" meta={`${providerMessages.length} 条`} tone="messages">
-            <ReadableMessageList callIndex={call.index} emptyLabel="当前调用上下文为空" messages={providerMessages} nested />
+            <ReadableMessageList callIndex={call.index} emptyLabel="当前调用上下文为空" messages={providerMessages} nested sessionId={context.sessionId} />
           </ContextDisclosure>
           <ContextDisclosure label="工具定义" meta={`${callProviderTools(call, context).length} 个`} tone="tools">
             <pre className="context-debug-reader__code">{formatJson(callProviderTools(call, context))}</pre>
@@ -747,12 +749,14 @@ function ReadableMessageList({
   messageId,
   messages,
   nested = false,
+  sessionId,
 }: {
   callIndex: number;
   emptyLabel: string;
   messageId?: (index: number) => string;
   messages: unknown[];
   nested?: boolean;
+  sessionId: string;
 }) {
   if (!messages.length) return <p className="context-debug-reader__empty-copy">{emptyLabel}</p>;
   return (
@@ -776,7 +780,7 @@ function ReadableMessageList({
               <small>#{index + 1}</small>
             </header>
             <div className="context-debug-session-message__body">
-              {customType ? body : <MarkdownBody text={body} />}
+              {customType ? body : <MarkdownBody sessionId={sessionId} text={body} />}
             </div>
             <ContextDisclosure label="原始消息" meta="逐字段核对" tone="raw">
               <pre className="context-debug-reader__code">{formatJson(message)}</pre>

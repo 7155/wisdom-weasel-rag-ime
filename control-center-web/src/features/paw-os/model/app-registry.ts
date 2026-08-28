@@ -100,7 +100,7 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     id: 'system-monitor',
     label: 'System Monitor',
     shortLabel: '监控',
-    routeIds: ['context-debug', 'observability', 'diagnostics'],
+    routeIds: ['context-debug', 'observability', 'trace-agent', 'diagnostics'],
     defaultRouteId: 'observability',
     presentation: 'system',
     accent: 'cyan',

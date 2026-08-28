@@ -22,8 +22,18 @@ class ControlPathId(str, Enum):
     INPUT_LEXICON_REVIEW = "input.lexicon.review"
     INPUT_LEXICON_APPLY = "input.lexicon.apply"
     INPUT_LEXICON_ROLLBACK = "input.lexicon.rollback"
+    INPUT_PREDICTION_LIVE_TRACE = "input.prediction.liveTrace"
     OBSERVABILITY_SNAPSHOT = "observability.snapshot"
     OBSERVABILITY_EVENTS = "observability.events"
+    OBSERVABILITY_TRACE_GET = "observability.trace.get"
+    OBSERVABILITY_EVALS_LIST = "observability.evals.list"
+    OBSERVABILITY_EVAL_SUITES_LIST = "observability.evalSuites.list"
+    OBSERVABILITY_SANDBOX_RUNS_LIST = "observability.sandboxRuns.list"
+    OBSERVABILITY_SANDBOX_RUN_GET = "observability.sandboxRun.get"
+    OBSERVABILITY_EVIDENCE_EVAL_RUN = "observability.evals.evidence.run"
+    OBSERVABILITY_EVAL_SCHEDULES_LIST = "observability.evalSchedules.list"
+    OBSERVABILITY_EVAL_SCHEDULES_CREATE = "observability.evalSchedules.create"
+    OBSERVABILITY_EVAL_SCHEDULE_RUNS = "observability.evalSchedule.runs"
 
     AGENT_RUNTIME_GET = "agent.runtime.get"
     AGENT_RUNTIME_ENSURE = "agent.runtime.ensure"
@@ -99,6 +109,7 @@ class ControlPathId(str, Enum):
     AGENT_ROOM_WORK_ITEM_CREATE = "agent.room.workItem.create"
     AGENT_ROOM_WORK_ITEM_GET = "agent.room.workItem.get"
     AGENT_ROOM_WORK_ITEM_REASSIGN = "agent.room.workItem.reassign"
+    AGENT_ROOM_WORK_ITEM_RESUME = "agent.room.workItem.resume"
     AGENT_COLLABORATION_PROFILE_GET = "agent.collaborationProfile.get"
     AGENT_COLLABORATION_PROFILE_COMMAND = "agent.collaborationProfile.command"
     AGENT_KNOWLEDGE_SEARCH = "agent.knowledge.search"
@@ -128,6 +139,7 @@ class ControlPathId(str, Enum):
     AGENT_PERSONAL_CONTEXT_OBSERVABILITY = "agent.personalContext.observability"
     AGENT_TOOLS_LIST = "agent.tools.list"
     AGENT_EXTENSIONS_LIST = "agent.extensions.list"
+    AGENT_EXTENSIONS_USAGE = "agent.extensions.usage"
     AGENT_EXTENSIONS_CATALOG = "agent.extensions.catalog"
     AGENT_EXTENSIONS_CREATE = "agent.extensions.create"
     AGENT_EXTENSIONS_PROPOSALS = "agent.extensions.proposals"
@@ -675,9 +687,13 @@ _OBSERVATION_FILTER_QUERY = {
     "sessionId",
     "roomId",
     "traceId",
+    "runId",
     "category",
     "status",
 }
+_OBSERVABILITY_TRACE = {"traceId"}
+_OBSERVABILITY_SANDBOX_RUN = {"sandboxRunId"}
+_EVAL_SCHEDULE = {"scheduleId"}
 _SUBAGENT_DELEGATION_BODY = {
     "sessionId",
     "tasks",
@@ -712,8 +728,20 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.INPUT_LEXICON_REVIEW, ControlMethod.GET, "/api/rime-lexicon/review", "/control/v1/input/lexicon/review", query={"limit", "project"}),
         _route(ControlPathId.INPUT_LEXICON_APPLY, ControlMethod.POST, "/api/rime-lexicon/apply", "/control/v1/input/lexicon/apply", body={"reviewToken", "selectedKeys", "confirmText", "project", "limit"}, required_body={"reviewToken", "selectedKeys", "confirmText"}),
         _route(ControlPathId.INPUT_LEXICON_ROLLBACK, ControlMethod.POST, "/api/rime-lexicon/rollback", "/control/v1/input/lexicon/rollback", body={"rollbackId"}, required_body={"rollbackId"}),
+        _route(ControlPathId.INPUT_PREDICTION_LIVE_TRACE, ControlMethod.GET, "/api/prediction/live-trace", None, query={"limit", "sessionId"}),
         _route(ControlPathId.OBSERVABILITY_SNAPSHOT, ControlMethod.GET, "/api/observability/snapshot", "/control/v1/observability/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit", "beforeSequence", *_OBSERVATION_FILTER_QUERY}),
         _route(ControlPathId.OBSERVABILITY_EVENTS, ControlMethod.GET, "/api/observability/events", "/control/v1/observability/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, query={*_LAST_EVENT_QUERY, *_OBSERVATION_FILTER_QUERY}, required_query=_LAST_EVENT_QUERY),
+        _route(ControlPathId.OBSERVABILITY_TRACE_GET, ControlMethod.GET, "/api/observability/traces/{traceId}", "/control/v1/observability/traces/{traceId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_OBSERVABILITY_TRACE, query={"limit", "beforeSequence"}),
+        _route(ControlPathId.OBSERVABILITY_EVALS_LIST, ControlMethod.GET, "/api/observability/evals", "/control/v1/observability/evals", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"traceId", "limit"}, required_query={"traceId"}),
+        _route(ControlPathId.OBSERVABILITY_EVAL_SUITES_LIST, ControlMethod.GET, "/api/observability/eval-suites", "/control/v1/observability/eval-suites", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit"}),
+        _route(ControlPathId.OBSERVABILITY_SANDBOX_RUNS_LIST, ControlMethod.GET, "/api/observability/sandbox-runs", "/control/v1/observability/sandbox-runs", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit"}),
+        _route(ControlPathId.OBSERVABILITY_SANDBOX_RUN_GET, ControlMethod.GET, "/api/observability/sandbox-runs/{sandboxRunId}", "/control/v1/observability/sandbox-runs/{sandboxRunId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_OBSERVABILITY_SANDBOX_RUN),
+        _route(ControlPathId.OBSERVABILITY_EVIDENCE_EVAL_RUN, ControlMethod.POST, "/api/observability/evals/evidence-ground-truth", None, body={"schemaVersion", "traceId", "requiredEvidenceIds", "datasetId", "labelRevision", "truthKind"}, required_body={"schemaVersion", "traceId", "requiredEvidenceIds", "datasetId", "labelRevision", "truthKind"}),
+        # Eval schedules are a local ledger.  Their lease token and evaluator
+        # remain runtime-owned, so neither schedule route is gateway-safe.
+        _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULES_LIST, ControlMethod.GET, "/api/observability/eval-schedules", None, query={"limit"}),
+        _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULES_CREATE, ControlMethod.POST, "/api/observability/eval-schedules", None, body={"scheduleId", "suiteId", "suiteRevision", "recurrenceKind", "recurrenceInterval", "maxRuns", "nextDueAtMs"}, required_body={"suiteId", "suiteRevision", "recurrenceKind", "nextDueAtMs"}),
+        _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULE_RUNS, ControlMethod.GET, "/api/observability/eval-schedules/{scheduleId}/runs", None, params=_EVAL_SCHEDULE, query={"limit"}),
 
         _route(ControlPathId.AGENT_RUNTIME_GET, ControlMethod.GET, "/api/agent/runtime", "/control/v1/agent/runtime", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_RUNTIME_ENSURE, ControlMethod.POST, "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", body={"sessionId"}, required_body={"sessionId"}),
@@ -724,7 +752,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_PROVIDER_OAUTH_CANCEL, ControlMethod.POST, "/api/agent/providers/oauth/cancel", "/control/v1/agent/providers/oauth/cancel", body={"loginId"}, required_body={"loginId"}),
         _route(ControlPathId.AGENT_CONFIGURATION_GET, ControlMethod.GET, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_CONFIGURATION_UPDATE, ControlMethod.POST, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"expectedRevision", "changes", "updatedBy"}, required_body={"expectedRevision", "changes"}, remote_body={"expectedRevision", "changes"}),
-        _route(ControlPathId.AGENT_SESSIONS_LIST, ControlMethod.GET, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "includeInternal", "limit"}, remote_query={"includeArchived", "limit"}),
+        _route(ControlPathId.AGENT_SESSIONS_LIST, ControlMethod.GET, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "includeInternal", "limit", "beforeUpdatedAtMs", "beforeId"}, remote_query={"includeArchived", "limit", "beforeUpdatedAtMs", "beforeId"}),
         _route(ControlPathId.AGENT_SESSIONS_CREATE, ControlMethod.POST, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "dangerousModeConfirmation"}, remote_body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion"}, remote_body_values={"mode": {"assistant"}}),
         _route(ControlPathId.AGENT_SESSION_SNAPSHOT, ControlMethod.GET, "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"view"}),
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workspace", None, params=_SESSION, query={"path", "depth", "limit"}),
@@ -766,7 +794,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_MEDIA_PREVIEW, ControlMethod.GET, "/api/agent/media/{mediaId}/preview", "/control/v1/agent/media/{mediaId}/preview", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_MEDIA, query={"sessionId", "sha256"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),
 
-        _route(ControlPathId.AGENT_ROOMS_LIST, ControlMethod.GET, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "limit"}),
+        _route(ControlPathId.AGENT_ROOMS_LIST, ControlMethod.GET, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "limit", "beforeUpdatedAtMs", "beforeId"}),
         _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", body={"title", "roomKind", "avatar", "description", "scenarioPrompt", "participants", "routingPolicy", "routingConfig", "moderatorRoleId", "workspaceRoots", "executionMode", "workspaceScopeConfirmation", "dangerousModeConfirmation"}, required_body={"participants"}),
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
@@ -805,6 +833,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_WORK_ITEM_CREATE, ControlMethod.POST, "/api/agent/rooms/{roomId}/work-items", "/control/v1/agent/rooms/{roomId}/work-items", params=_ROOM, body={"objective", "expectedOutput", "currentOwnerParticipantId", "createdByParticipantId", "clientMessageId", "accountableParticipantId", "topicId", "rootTurnId", "parentWorkId", "acceptanceCriteria", "state", "depth"}, required_body={"objective", "expectedOutput", "currentOwnerParticipantId", "clientMessageId"}),
         _route(ControlPathId.AGENT_ROOM_WORK_ITEM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}/work-items/{workItemId}", "/control/v1/agent/rooms/{roomId}/work-items/{workItemId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM_WORK_ITEM),
         _route(ControlPathId.AGENT_ROOM_WORK_ITEM_REASSIGN, ControlMethod.POST, "/api/agent/rooms/{roomId}/work-items/{workItemId}/reassign", "/control/v1/agent/rooms/{roomId}/work-items/{workItemId}/reassign", params=_ROOM_WORK_ITEM, body={"actorParticipantId", "targetParticipantId", "reason"}, required_body={"actorParticipantId", "targetParticipantId"}),
+        _route(ControlPathId.AGENT_ROOM_WORK_ITEM_RESUME, ControlMethod.POST, "/api/agent/rooms/{roomId}/work-items/{workItemId}/resume", None, params=_ROOM_WORK_ITEM, body={"actorParticipantId", "clientActionId", "phase", "timeoutSeconds"}, required_body={"actorParticipantId"}),
         _route(ControlPathId.AGENT_ROLES_LIST, ControlMethod.GET, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_ROLES_CREATE, ControlMethod.POST, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes", "suitableTasks", "unsuitableTasks"}, required_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes", "suitableTasks", "unsuitableTasks"}, remote_body={"displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes", "suitableTasks", "unsuitableTasks"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
         _route(ControlPathId.AGENT_ROLES_UPDATE, ControlMethod.PATCH, "/api/agent/roles", "/control/v1/agent/roles", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"roleId", "roleVersion", "displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes", "suitableTasks", "unsuitableTasks"}, required_body={"roleId", "roleVersion", "displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes", "suitableTasks", "unsuitableTasks"}, remote_body={"roleId", "roleVersion", "displayName", "tagline", "summary", "traits", "timelineModel", "selectableModes", "suitableTasks", "unsuitableTasks"}, remote_body_values={"timelineModel": {"luna", "terra", "sol"}}),
@@ -819,6 +848,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_PERSONAL_CONTEXT_OBSERVABILITY, ControlMethod.GET, "/api/agent/personal-context/observability", "/control/v1/agent/personal-context/observability", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "roleId", "limit"}),
         _route(ControlPathId.AGENT_TOOLS_LIST, ControlMethod.GET, "/api/agent/tools", "/control/v1/agent/tools", query={"sessionId"}),
         _route(ControlPathId.AGENT_EXTENSIONS_LIST, ControlMethod.GET, "/api/agent/extensions", "/control/v1/agent/extensions"),
+        _route(ControlPathId.AGENT_EXTENSIONS_USAGE, ControlMethod.GET, "/api/agent/extensions/usage", None, query={"packageId", "resourceKind", "sessionId", "sinceMs", "limit"}),
         _route(ControlPathId.AGENT_EXTENSIONS_CATALOG, ControlMethod.GET, "/api/agent/extensions/catalog", "/control/v1/agent/extensions/catalog"),
         _route(ControlPathId.AGENT_EXTENSIONS_CREATE, ControlMethod.POST, "/api/agent/extensions/drafts", "/control/v1/agent/extensions/drafts", body={"draftId", "packageJson", "files"}, required_body={"draftId", "packageJson", "files"}),
         _route(ControlPathId.AGENT_EXTENSIONS_PROPOSALS, ControlMethod.GET, "/api/agent/extensions/proposals", "/control/v1/agent/extensions/proposals"),

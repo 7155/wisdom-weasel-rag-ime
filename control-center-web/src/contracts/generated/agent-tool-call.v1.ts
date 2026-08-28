@@ -27,6 +27,7 @@ export interface AgentToolCallV1 {
     | 'todo'
     | 'agent_goal'
     | 'plugins'
+    | 'sandbox'
     | 'work_documents'
     | 'desktop_semantic'
     | 'ls'

@@ -1,5 +1,6 @@
 import { BriefcaseBusiness, MessagesSquare, Sparkles, UsersRound } from 'lucide-react';
-import { roomCollaborationRoleLabel, roomPlanetName } from './room-copy';
+import { roomCollaborationRoleLabel } from './room-copy';
+import { roomParticipantPlanetName } from './room-participant-identity';
 import type {
   RoomCollaborationRole,
   RoomExecutionMode,
@@ -81,7 +82,7 @@ export function roomCreateParticipantLabel(
 
 export function participantName(room: RoomSummary, participantId: string): string {
   const participant = room.participants.find((item) => item.id === participantId);
-  return participant ? roomPlanetName(participant.ordinal) : '待接收';
+  return participant ? roomParticipantPlanetName(participant) : '待接收';
 }
 
 export function roomWorkStateLabel(state: RoomWorkState): string {

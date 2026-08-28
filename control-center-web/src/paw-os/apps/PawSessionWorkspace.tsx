@@ -31,7 +31,6 @@ import {
   type AgentMessageDelivery,
 } from '@/features/agent/composer/AgentComposer';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
-import { PermissionMark, WorkspaceMark } from '@/features/agent/marks/ConversationMarks';
 import {
   isAgentCommandPending,
   isAgentSessionIdleFailure,
@@ -1079,38 +1078,6 @@ export function PawSessionWorkspace({
   }
 
   const title = record?.title || '未命名 Session';
-  /* Conversation lead-in: the two facts a reader needs before the first turn —
-     which workspace this Session can touch and under which permission mode.
-     Both come from the durable session record, never from prose. */
-  /* Each chip leads with its mark so a narrow window can drop the words and
-     still say which workspace and which permission mode this Session runs
-     under; the text stays in the accessibility tree rather than unmounting. */
-  const conversationLead = record ? (
-    <div aria-label="Session 上下文" className="fx-context-chips" role="note">
-      <span
-        className="fx-context-chip"
-        data-tone={record.workspaceRoots?.length ? 'bound' : 'neutral'}
-        title={record.workspaceRoots?.length ? record.workspaceRoots.join('\n') : '未绑定工作区'}
-      >
-        <WorkspaceMark bound={Boolean(record.workspaceRoots?.length)} size={14} />
-        <span className="fx-context-chip__text">
-          {record.workspaceRoots?.length ? `${projectName(record.workspaceRoots)} · 工作区` : '未绑定工作区'}
-        </span>
-      </span>
-      {record.executionMode ? (
-        <span
-          className="fx-context-chip"
-          data-tone="permission"
-          title={`权限 · ${executionModeLabel(record.executionMode)}`}
-        >
-          <PermissionMark mode={record.executionMode} size={14} />
-          <span className="fx-context-chip__text">
-            权限 · {executionModeLabel(record.executionMode)}
-          </span>
-        </span>
-      ) : null}
-    </div>
-  ) : undefined;
   const sessionChrome = (
       <div className="paw-session-workspace__header" data-status={stopping ? 'stopping' : busy ? 'busy' : 'idle'}>
         {!windowChromeTarget ? <div className="paw-session-workspace__identity">
@@ -1194,7 +1161,7 @@ export function PawSessionWorkspace({
               <AgentTimeline
                 activityPresentation="grouped"
                 presentation="fx"
-                showConversationNavigation={false}
+                showConversationNavigation
                 sessionId={recordId}
                 persona={persona}
                 loading={loading}
@@ -1203,7 +1170,6 @@ export function PawSessionWorkspace({
                 forkAvailable={conversationForkAvailable && !busy && !sending && !record?.roomParticipant}
                 rewriteAvailable={conversationRewriteAvailable && !busy && !sending && !record?.roomParticipant}
                 jumpRequest={jumpRequest}
-                leadingContent={conversationLead}
                 scrollToLatestRequest={scrollToLatestRequest}
                 onFollowStateChange={setTimelineFollow}
                 onForkFromMessage={openForkDialog}
@@ -1546,18 +1512,6 @@ function recentAgentSnapshotIsPresentable(value: unknown): boolean {
 
 function isCommand(value: string, command: string): boolean {
   return value === command || value.startsWith(`${command} `);
-}
-
-function projectName(roots: readonly string[] | undefined): string {
-  const root = roots?.[0] ?? '';
-  return root.split('/').filter(Boolean).at(-1) ?? '未绑定项目';
-}
-
-function executionModeLabel(mode: string): string {
-  if (mode === 'read_only') return '只读';
-  if (mode === 'workspace_managed') return '工作区托管';
-  if (mode === 'full_trust') return '全自动';
-  return '按风险确认';
 }
 
 function errorText(reason: unknown): string {

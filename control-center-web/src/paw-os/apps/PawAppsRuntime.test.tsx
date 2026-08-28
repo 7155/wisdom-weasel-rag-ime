@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsAppearanceProvider } from '@/design/paw-os-themes';
 import { MockControlTransport } from '@/test/mock-transport';
@@ -21,6 +21,8 @@ vi.mock('@/features/paw-os/PawOsSatelliteHost', () => ({
     <aside data-testid="satellite-host">{`${target.kind}:${target.panel ?? 'none'}`}</aside>
   ),
 }));
+
+afterEach(cleanup);
 
 describe('PAWOS App runtime', () => {
   it('mounts the direct PAW Browser surface', async () => {
@@ -66,6 +68,25 @@ describe('PAWOS App runtime', () => {
     );
 
     expect(await screen.findByTestId('satellite-host')).toHaveTextContent('room:focus');
+    expect(screen.queryByTestId('agent-app')).not.toBeInTheDocument();
+  });
+
+  it('renders a Room planet in the compact observation host, not the full Session workspace', async () => {
+    render(
+      <PawAppBody
+        appId="agent"
+        target={{
+          kind: 'participant',
+          id: 'participant-earth',
+          roomId: 'room-sol',
+          sessionId: 'session-earth',
+          title: 'Earth',
+          subtitle: '最终汇合与回复',
+        }}
+      />,
+    );
+
+    expect(await screen.findByTestId('satellite-host')).toHaveTextContent('participant:none');
     expect(screen.queryByTestId('agent-app')).not.toBeInTheDocument();
   });
 

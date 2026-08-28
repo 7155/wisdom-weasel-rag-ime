@@ -135,6 +135,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
     buildJobProgress,
     buildJobResult,
     buildJobState,
+    buildJobWarning,
     calendar,
     canRead,
     canReadCalendar,
@@ -179,9 +180,11 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
           : buildRunning
             ? '整理任务已进入队列，等待开始…'
             : buildJobState === 'completed'
-              ? catchUpCompletedCopy(buildJobProgress, buildJobResult)
+              ? buildJobWarning
+                ? '整理完成：语义验收待检查，草稿已保留，未自动发布。'
+                : catchUpCompletedCopy(buildJobProgress, buildJobResult)
               : '';
-  const semanticReady = timelineId
+  const semanticReady = !buildJobWarning && timelineId
     ? calendarDays.some((day) => (
       day.date === date && day.organized && day.modelOrganized
     ))
@@ -266,6 +269,12 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             timelineId={timelineId}
             busy={busy}
           />
+
+          {buildJobWarning ? (
+            <InlineNotice title="语义整理待检查" tone="warning">
+              {buildJobWarning} 当前结果已保留，未自动发布；可以重新整理后再检查。
+            </InlineNotice>
+          ) : null}
 
           {error ? (
             <InlineNotice title="时间线暂时不可用" tone="danger">
@@ -378,6 +387,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             organizeRange={organizeRange}
             organizeActive={buildActive}
             organizeFailed={Boolean(buildError)}
+            organizeWarning={Boolean(buildJobWarning)}
             organizeJobId={buildJobId}
             organizeJobState={buildJobState}
             organizeMessage={buildProgressMessage}
@@ -604,6 +614,7 @@ function ActivityTimelineCalendar({
   organizeRange,
   organizeActive,
   organizeFailed,
+  organizeWarning,
   organizeJobId,
   organizeJobState,
   organizeMessage,
@@ -623,6 +634,7 @@ function ActivityTimelineCalendar({
   organizeRange: { start: string; end: string };
   organizeActive: boolean;
   organizeFailed: boolean;
+  organizeWarning: boolean;
   organizeJobId: string;
   organizeJobState: string;
   organizeMessage: string;
@@ -697,11 +709,13 @@ function ActivityTimelineCalendar({
         <div
           aria-label="历史日记整理进度"
           className="activity-calendar__organize-status"
-          data-tone={organizeFailed ? 'danger' : 'info'}
+          data-tone={organizeFailed ? 'danger' : organizeWarning ? 'warning' : 'info'}
           role={organizeFailed ? 'alert' : 'status'}
         >
           {organizeFailed
             ? <X aria-hidden="true" size={15} />
+            : organizeWarning
+              ? <Sparkles aria-hidden="true" size={15} />
             : organizeJobState === 'completed'
               ? <Check aria-hidden="true" size={15} />
               : <RefreshCw aria-hidden="true" size={15} />}
@@ -1686,6 +1700,12 @@ function sourceLabel(value: string): string {
 
 function friendlyTimelineError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || '');
+  if (/session already has an active turn/i.test(message)) {
+    return '记忆整理的内部 Session 仍被上一回合占用，因此当天结果没有写入。重新整理时会换用新的 Session。';
+  }
+  if (/expired|gateway restarted|process-local|cannot be recovered/i.test(message)) {
+    return 'Gateway 重启后旧的记忆整理任务已过期，无法恢复；请重新整理以创建新任务。';
+  }
   if (/stale|hash|source/i.test(message)) return '来源记录已变化，请刷新并重新整理。';
   if (/not found|does not exist/i.test(message)) return '没有找到这份时间线，请重新整理当天活动。';
   return '读取或保存失败，请稍后重试。';

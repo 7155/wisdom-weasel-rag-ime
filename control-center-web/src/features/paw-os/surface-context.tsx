@@ -27,6 +27,8 @@ type PawOsDesktopControls = {
     target?: Extract<PawOsWindowTarget, { kind: 'session' | 'room' }>,
   ) => void;
   bindRoomMain?: (target: Extract<PawOsWindowTarget, { kind: 'room' }>) => void;
+  setCollaborationFocusGroup?: (group: string | null) => void;
+  closeWindow?: (windowId: string) => void;
 };
 
 const PawOsDesktopContext = createContext<PawOsDesktopControls | null>(null);
@@ -35,6 +37,8 @@ export function PawOsDesktopProvider({
   children,
   bindAgentMain,
   bindRoomMain,
+  setCollaborationFocusGroup,
+  closeWindow,
   openApp,
   openRoute,
   openWindow,
@@ -42,11 +46,13 @@ export function PawOsDesktopProvider({
   children: ReactNode;
   bindAgentMain?: PawOsDesktopControls['bindAgentMain'];
   bindRoomMain?: PawOsDesktopControls['bindRoomMain'];
+  setCollaborationFocusGroup?: PawOsDesktopControls['setCollaborationFocusGroup'];
+  closeWindow?: PawOsDesktopControls['closeWindow'];
   openApp?: PawOsDesktopControls['openApp'];
   openRoute?: PawOsDesktopControls['openRoute'];
   openWindow: PawOsDesktopControls['openWindow'];
 }) {
-  const value = useMemo(() => ({ bindAgentMain, bindRoomMain, openApp, openRoute, openWindow }), [bindAgentMain, bindRoomMain, openApp, openRoute, openWindow]);
+  const value = useMemo(() => ({ bindAgentMain, bindRoomMain, setCollaborationFocusGroup, closeWindow, openApp, openRoute, openWindow }), [bindAgentMain, bindRoomMain, setCollaborationFocusGroup, closeWindow, openApp, openRoute, openWindow]);
   return <PawOsDesktopContext.Provider value={value}>{children}</PawOsDesktopContext.Provider>;
 }
 

@@ -425,7 +425,7 @@ class CodexHistoryDemoQualityTests(unittest.TestCase):
                         "content": [
                             {
                                 "type": "input_text",
-                                "text": "# AGENTS.md instructions for /Volumes/undo 4t/git/learnA",
+                                "text": "# AGENTS.md instructions for /Volumes/example/git/learnA",
                             }
                         ],
                     },

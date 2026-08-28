@@ -41,12 +41,13 @@ import {
   type RoomExecutionLane,
 } from './runtime/room-execution-lanes';
 import type { RoomArtifact, RoomSummary, RoomWorkItem, RoomWorkState } from './room-types';
+import { roomParticipantPlanetName } from './room-participant-identity';
 import {
   type RoomTaskSessionFact,
   useRoomTaskSessionFacts,
 } from './use-room-task-session-facts';
 import { RoomModulePanel } from './RoomModulePanel';
-import { roomCollaborationRoleLabel, roomPlanetName } from './room-copy';
+import { roomCollaborationRoleLabel } from './room-copy';
 import { useRoomSurfaceModules } from './room-surface-modules';
 import {
   useRoomNavigationDocuments,
@@ -290,7 +291,7 @@ export function RoomTaskGraph({
           detail={rootReply ? '已汇总伙伴公开交付' : '等待伙伴工作汇合'}
         />
         {rootReply
-          ? <MarkdownBody text={rootReply.text} />
+          ? <MarkdownBody sessionId={rootReply.message?.sessionId ?? rootReply.sourceSessionId} text={rootReply.text} />
           : <p>最终答复只在 Root 完成集成后出现；单个子 Agent 失败不会把整个 Room 判成失败。</p>}
       </section>
     </main>
@@ -391,7 +392,7 @@ function roomSubagentParents(room: RoomSummary) {
     })
     .map((participant) => ({
       sessionId: participant.sessionId,
-      label: roomPlanetName(participant.ordinal),
+      label: roomParticipantPlanetName(participant),
       detail: participant.id === room.moderatorParticipantId
         ? 'Root 主持'
         : roomCollaborationRoleLabel(participant.collaborationRole),
@@ -862,7 +863,7 @@ function PartnerSection({
     <div className="room-cockpit__handoff"><span />回传给 @ {partner.name}</div>
     <section className="room-cockpit__reply">
       <h3><MessageSquareText size={15} />伙伴公开回复</h3>
-      {replies.length ? replies.map((message) => <div key={message.id}><MarkdownBody text={message.text} /></div>) : <p>等待伙伴发布可见交付。</p>}
+      {replies.length ? replies.map((message) => <div key={message.id}><MarkdownBody sessionId={message.message?.sessionId ?? message.sourceSessionId} text={message.text} /></div>) : <p>等待伙伴发布可见交付。</p>}
     </section>
   </article>;
 }
@@ -1009,7 +1010,7 @@ function buildPartnerProjections(
     const combinedMessages = [...(existing?.messages ?? []), ...messages];
     result.set(participant.id, {
       participantId: participant.id,
-      name: roomPlanetName(participant.ordinal),
+      name: roomParticipantPlanetName(participant),
       sessionId: participant.sessionId || lane.sourceSessionId,
       assignment: participant.id === room.moderatorParticipantId
         ? 'Root 汇合与最终答复'
@@ -1040,7 +1041,7 @@ function buildPartnerProjections(
     if (!participant) continue;
     result.set(participantId, {
       participantId,
-      name: roomPlanetName(participant.ordinal),
+      name: roomParticipantPlanetName(participant),
       sessionId: participant.sessionId,
       assignment: workItem.objective,
       state: workItemState(workItem.state),
@@ -1627,7 +1628,7 @@ function roomPeerParticipants(
     .filter((participant) => participant.status === 'active')
     .map((participant) => partners.find((partner) => partner.participantId === participant.id) ?? {
       participantId: participant.id,
-      name: roomPlanetName(participant.ordinal),
+      name: roomParticipantPlanetName(participant),
       assignment: '等待直接通信或分工',
       state: participant.id === room.moderatorParticipantId ? 'active' : 'waiting',
     });
@@ -1882,7 +1883,7 @@ function knowledgeReferenceLabel(reference: string): string {
 
 function roomParticipantName(room: RoomSummary, participantId: string): string {
   const participant = room.participants.find((item) => item.id === participantId);
-  return participant ? roomPlanetName(participant.ordinal) : '待接收';
+  return participant ? roomParticipantPlanetName(participant) : '待接收';
 }
 
 function unique(values: string[]): string[] {

@@ -298,6 +298,194 @@ describe('preview control transport', () => {
     });
   });
 
+  it('keeps the Preview Trace, Eval, suite, and schedule chain coherent', async () => {
+    const transport = createPreviewTransport();
+    const traceId = 'trace:turn:preview';
+
+    const sandboxRuns = record(await transport.request({
+      pathId: 'observability.sandboxRuns.list',
+      query: { limit: 20 },
+    }));
+    expect(sandboxRuns).toMatchObject({
+      schemaVersion: 'rag-ime.observability-sandbox-run-list.v1',
+      total: 1,
+      items: [expect.objectContaining({
+        sandboxRunId: 'sandbox:sgg:preview',
+        traceIds: [traceId],
+        evalRunIds: ['eval:sgg:preview'],
+      })],
+    });
+
+    const trace = record(await transport.request({
+      pathId: 'observability.trace.get',
+      params: { traceId },
+      query: { limit: 500 },
+    }));
+    expect(trace).toMatchObject({
+      schemaVersion: 'rag-ime.observability-trace-get.v1',
+      traceId,
+      trace: expect.objectContaining({
+        traceId,
+        status: 'completed',
+        spans: expect.arrayContaining([
+          expect.objectContaining({ name: 'agent.turn' }),
+          expect.objectContaining({ name: 'active_rag.retrieve' }),
+        ]),
+        evidence: expect.arrayContaining([
+          expect.objectContaining({ evidenceId: 'evidence:rag:1' }),
+        ]),
+      }),
+    });
+
+    const evals = record(await transport.request({
+      pathId: 'observability.evals.list',
+      query: { traceId, limit: 100 },
+    }));
+    expect(arrayRecords(evals.items)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        evalRunId: 'eval:sgg:preview',
+        status: 'completed',
+        suiteBinding: { suiteId: 'sgg', suiteRevision: 'fixture-v2' },
+      }),
+    ]));
+    expect(arrayRecords(evals.items).find((item) => item.evalRunId === 'eval:ai-judge:sgg:preview'))
+      .not.toHaveProperty('suiteBinding');
+
+    const submitted = record(await transport.request({
+      pathId: 'observability.evals.evidence.run',
+      body: {
+        schemaVersion: 'rag-ime.observability-evidence-eval-request.v1',
+        traceId,
+        requiredEvidenceIds: ['evidence:rag:1'],
+        datasetId: 'dataset:sgg-preview-reviewed',
+        labelRevision: 'labels:2',
+        truthKind: 'human',
+      },
+    }));
+    expect(submitted).toMatchObject({
+      schemaVersion: 'rag-ime.eval-run.v1',
+      traceIds: [traceId],
+      status: 'completed',
+      truth: { datasetId: 'dataset:sgg-preview-reviewed', labelRevision: 'labels:2' },
+    });
+    const refreshedEvals = record(await transport.request({
+      pathId: 'observability.evals.list',
+      query: { traceId, limit: 100 },
+    }));
+    expect(arrayRecords(refreshedEvals.items)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ evalRunId: submitted.evalRunId }),
+    ]));
+    expect(arrayRecords(refreshedEvals.items).find((item) => item.evalRunId === submitted.evalRunId))
+      .not.toHaveProperty('suiteBinding');
+
+    const suites = record(await transport.request({
+      pathId: 'observability.evalSuites.list',
+      query: { limit: 100 },
+    }));
+    expect(arrayRecords(suites.items).map((item) => item.suiteId)).toEqual(
+      expect.arrayContaining(['sgg', 'zhanggui-wenshu']),
+    );
+    expect(arrayRecords(suites.items).map((item) => item.suiteId)).not.toContain('rag-memory');
+
+    const ragTrace = record(await transport.request({
+      pathId: 'observability.trace.get',
+      params: { traceId: 'trace:active-rag:preview' },
+      query: { limit: 500 },
+    }));
+    expect(ragTrace.trace).toEqual(expect.objectContaining({
+      sourceKind: 'active_rag',
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ evidenceId: 'evidence:memory:1' }),
+      ]),
+    }));
+    const ragEvals = record(await transport.request({
+      pathId: 'observability.evals.list',
+      query: { traceId: 'trace:active-rag:preview', limit: 100 },
+    }));
+    expect(arrayRecords(ragEvals.items).find((item) => item.evalRunId === 'eval:ai-judge:rag-preview'))
+      .not.toHaveProperty('suiteBinding');
+
+    const schedules = record(await transport.request({
+      pathId: 'observability.evalSchedules.list',
+      query: { limit: 100 },
+    }));
+    const firstSchedule = arrayRecords(schedules.items)[0];
+    expect(firstSchedule).toMatchObject({ suiteId: 'sgg', suiteRevision: 'fixture-v2' });
+
+    const runs = record(await transport.request({
+      pathId: 'observability.evalSchedule.runs',
+      params: { scheduleId: String(firstSchedule.id) },
+      query: { limit: 100 },
+    }));
+    expect(runs).toMatchObject({
+      schedule: { id: firstSchedule.id },
+      items: expect.arrayContaining([
+        expect.objectContaining({ evalRunId: 'eval:sgg:preview', traceIds: [traceId] }),
+      ]),
+    });
+
+    const created = record(await transport.request({
+      pathId: 'observability.evalSchedules.create',
+      body: {
+        suiteId: 'zhanggui-wenshu',
+        suiteRevision: 'fixture-v2',
+        recurrenceKind: 'weekly',
+        recurrenceInterval: 1,
+        maxRuns: 4,
+        nextDueAtMs: Date.now() + 60_000,
+      },
+    }));
+    expect(created).toMatchObject({
+      schemaVersion: 'rag-ime.eval-schedule-create.v1',
+      schedule: { suiteId: 'zhanggui-wenshu', suiteRevision: 'fixture-v2', status: 'scheduled' },
+    });
+    const schedulesAfterCreate = record(await transport.request({
+      pathId: 'observability.evalSchedules.list',
+      query: { limit: 100 },
+    }));
+    expect(arrayRecords(schedulesAfterCreate.items)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: created.schedule && record(created.schedule).id, suiteId: 'zhanggui-wenshu' }),
+    ]));
+
+    const oneShot = record(await transport.request({
+      pathId: 'observability.evalSchedules.create',
+      body: {
+        suiteId: 'sgg',
+        suiteRevision: 'fixture-v2',
+        recurrenceKind: 'daily',
+        recurrenceInterval: 1,
+        maxRuns: 1,
+        nextDueAtMs: Date.now() + 1_000,
+      },
+    }));
+    expect(oneShot).toMatchObject({
+      schedule: { status: 'completed', runCount: 1, maxRuns: 1 },
+    });
+    const oneShotRuns = record(await transport.request({
+      pathId: 'observability.evalSchedule.runs',
+      params: { scheduleId: String(record(oneShot.schedule).id) },
+      query: { limit: 100 },
+    }));
+    expect(oneShotRuns.items).toEqual([
+      expect.objectContaining({
+        state: 'succeeded',
+        evalRunId: 'eval:sgg:preview:one-shot',
+        traceIds: [traceId],
+      }),
+    ]);
+    const oneShotEvals = record(await transport.request({
+      pathId: 'observability.evals.list',
+      query: { traceId, limit: 100 },
+    }));
+    expect(arrayRecords(oneShotEvals.items)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        evalRunId: 'eval:sgg:preview:one-shot',
+        suiteBinding: { suiteId: 'sgg', suiteRevision: 'fixture-v2' },
+        status: 'completed',
+      }),
+    ]));
+  });
+
 
   it('returns verifiable Room projections for preview creation and topic mutations', async () => {
     const transport = createPreviewTransport();

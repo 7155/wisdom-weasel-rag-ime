@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "vertical-agent-sandbox",
+  "name": "Vertical Agent Sandbox",
+  "version": "0.1.0",
+  "description": "Run an allowlisted vertical Agent suite through the session-scoped PAW sandbox gateway.",
+  "entry": "index.ts",
+  "permissions": ["sandbox.run"]
+}

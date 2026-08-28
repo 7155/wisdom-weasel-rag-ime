@@ -74,7 +74,7 @@ class AgentSessionApplicationService:
         payload: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         value = dict(payload or {})
-        sessions = self.sessions.list(
+        page = self.sessions.list_page(
             include_archived=_bool(value.get("includeArchived")),
             include_internal=_bool(value.get("includeInternal")),
             limit=_integer(
@@ -83,7 +83,12 @@ class AgentSessionApplicationService:
                 minimum=1,
                 maximum=500,
             ),
+            before_updated_at_ms=_optional_integer(value.get("beforeUpdatedAtMs")),
+            before_id=_optional_cursor_id(value.get("beforeId")),
         )
+        sessions = page["items"]
+        if not isinstance(sessions, list):
+            raise TypeError("agent session list page items must be a list")
         room_participants = self.rooms.participants_for_sessions(
             [
                 str(session.get("id") or "")
@@ -107,6 +112,10 @@ class AgentSessionApplicationService:
             "ok": True,
             "items": projected_sessions,
             "activeSessionId": self.runtime_status().get("activeSessionId"),
+            "hasMore": page["hasMore"],
+            "nextBeforeUpdatedAtMs": page["nextBeforeUpdatedAtMs"],
+            "nextBeforeId": page["nextBeforeId"],
+            "nextCursor": page["nextCursor"],
         }
 
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -349,6 +358,21 @@ def _integer(
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _optional_integer(value: object) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(9_223_372_036_854_775_807, parsed))
+
+
+def _optional_cursor_id(value: object) -> str | None:
+    normalized = " ".join(str(value or "").split())[:200]
+    return normalized or None
 
 
 def _is_within(path: Path, root: Path) -> bool:

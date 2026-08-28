@@ -2181,6 +2181,13 @@ main[data-route-id='memory'] {
 .memory-preferences__recall-policy p { margin: 2px 0 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
 .memory-preferences__recall-policy > small { color: var(--color-text-tertiary); font-size: 12px; white-space: nowrap; }
 
+.memory-preferences__master {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--memory-line-soft, var(--color-border));
+}
+
+.memory-preferences__master .ui-switch-field { min-height: 0; }
+
 .memory-preferences__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

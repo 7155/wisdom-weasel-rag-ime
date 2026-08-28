@@ -6,7 +6,7 @@ import type {
   ReferenceKind as MemoryReferenceKind,
 } from '@/contracts/generated/memory-reference.v1';
 import type { MutationAvailability } from '@/features/overview/management-mutation';
-import { asRecord, stringValue } from '@/features/overview/management-ui';
+import { arrayRecords, asRecord, stringValue } from '@/features/overview/management-ui';
 import type { ControlTransport, JsonValue } from '@/platform/transport';
 
 export type MemoryKind =
@@ -261,7 +261,7 @@ export function useActivityTimeline(date: string, enabled: boolean, catchUpTarge
     }),
     refetchInterval: (query) => {
       const state = stringValue(asRecord(query.state.data).state);
-      return state === 'completed' || state === 'failed' ? false : 1_200;
+      return state === 'completed' || state === 'failed' || state === 'expired' ? false : 1_200;
     },
   });
   const buildJobPayload = useMemo(() => {
@@ -271,8 +271,9 @@ export function useActivityTimeline(date: string, enabled: boolean, catchUpTarge
   const buildJobState = stringValue(buildJobPayload.state);
   const buildJobProgress = asRecord(buildJobPayload.progress);
   const buildJobResult = asRecord(buildJobPayload.result);
+  const buildJobWarning = activityTimelineWarning(buildJobResult, date);
   const buildJobError = buildJob.error
-    ?? (buildJobState === 'failed'
+    ?? (buildJobState === 'failed' || buildJobState === 'expired'
       ? new Error(stringValue(buildJobPayload.error, '当天语义整理未通过校验。'))
       : null);
   useEffect(() => {
@@ -310,6 +311,7 @@ export function useActivityTimeline(date: string, enabled: boolean, catchUpTarge
     buildJobProgress,
     buildJobResult,
     buildJobState,
+    buildJobWarning,
     calendar,
     canRead,
     canReadCalendar,
@@ -318,6 +320,20 @@ export function useActivityTimeline(date: string, enabled: boolean, catchUpTarge
     reject,
     timeline,
   };
+}
+
+function activityTimelineWarning(result: Record<string, unknown>, date: string): string {
+  const semantic = asRecord(result.semanticOrganization);
+  if (stringValue(semantic.status) === 'warning') {
+    return stringValue(semantic.error, '语义整理未通过独立验收，当前结果待检查。');
+  }
+  const warningItem = arrayRecords(result.activityTimelines).find((item) => (
+    stringValue(item.semanticStatus) === 'warning'
+      && (!stringValue(item.date) || stringValue(item.date) === date)
+  ));
+  return warningItem
+    ? stringValue(warningItem.error, '部分日期的语义整理待检查。')
+    : '';
 }
 
 function activityTimelineJobMatchesDate(
@@ -460,12 +476,12 @@ export function useMemoryCurationQueries(enabled: boolean) {
     }),
     refetchInterval: (query) => {
       const state = stringValue(asRecord(query.state.data).state);
-      return state === 'completed' || state === 'failed' ? false : 1_200;
+      return state === 'completed' || state === 'failed' || state === 'expired' ? false : 1_200;
     },
   });
   const jobState = stringValue(asRecord(job.data).state);
   useEffect(() => {
-    if (jobState !== 'completed' && jobState !== 'failed') return;
+    if (jobState !== 'completed' && jobState !== 'failed' && jobState !== 'expired') return;
     void queryClient.invalidateQueries({ queryKey: memoryQueryKeys.curationStatus() });
   }, [jobState, queryClient]);
   return { job, jobId, jobState, run, runId, status, trigger };

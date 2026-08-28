@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import time
 from collections.abc import Callable, Mapping, Sequence
+from numbers import Real
 from threading import RLock
 from typing import Any
 
@@ -13,6 +16,7 @@ from .agent_memory_context_support import (
     task_aware_recall_query,
 )
 from .agent_prompt_support import bounded_text
+from .memory_maintenance_settings import memory_enabled_from_settings
 from .session_recall_policy import session_recall_policy
 from .text_utils import compact_whitespace
 
@@ -28,12 +32,19 @@ class AgentMemoryContextService:
         context_runtime: Any,
         task_context: Any,
         runtime_provider: Callable[[], Any],
+        observation_callback: Callable[[dict[str, object]], None] | None = None,
+        memory_enabled_provider: Callable[[], bool] | None = None,
     ) -> None:
         self.sessions = sessions
         self.memory_bootstrap = memory_bootstrap
         self.context_runtime = context_runtime
         self.task_context = task_context
         self._runtime_provider = runtime_provider
+        self._observation_callback = observation_callback
+        sessions_db_path = getattr(sessions, "db_path", "")
+        self._memory_enabled_provider = memory_enabled_provider or (
+            lambda: memory_enabled_from_settings(sessions_db_path)
+        )
         self._state_lock = RLock()
         self._recent_messages: dict[
             str,
@@ -67,6 +78,11 @@ class AgentMemoryContextService:
         query_text: str,
     ) -> dict[str, object]:
         session_id = str(session.get("id") or "")
+        if not self._memory_enabled():
+            # Keep the persisted memory/context rows untouched. Prompt
+            # delivery filters any already-active memory item while disabled,
+            # so re-enabling the switch can reuse the same durable evidence.
+            return _memory_disabled_bootstrap(session_id)
         # Persona visibility is injected only by an installed Persona Package.
         # The core memory bootstrap deliberately ignores legacy role metadata.
         role_id = ""
@@ -139,7 +155,13 @@ class AgentMemoryContextService:
                 **specification
             )
         except Exception as exc:
+            self._emit_recall_failure(
+                session_id,
+                trigger="first_user_prompt",
+                error=exc,
+            )
             return _bootstrap_failure(session_id, exc)
+        self._emit_recall_observation(specification)
         payload = specification.get("payload")
         source_count = (
             len(payload.get("items") or [])
@@ -164,6 +186,24 @@ class AgentMemoryContextService:
 
 
     def refresh(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        session_id = str(payload.get("sessionId") or "")
+        if not self._memory_enabled():
+            return _memory_disabled_refresh(session_id)
+        try:
+            return self._refresh(payload)
+        except Exception as exc:
+            self._emit_recall_failure(
+                session_id,
+                trigger=str(payload.get("trigger") or "session_start"),
+                error=exc,
+                turn_id=_recall_turn_id(payload.get("turnId")),
+            )
+            raise
+
+    def _refresh(
         self,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
@@ -279,6 +319,13 @@ class AgentMemoryContextService:
         rendered = _render_specification(specification)
         item = self.context_runtime.replace_active(
             **specification
+        )
+        # ``refresh`` is the existing agent-tool lifecycle where the caller
+        # already owns a trusted runtime turn.  Keep bootstrap (which runs
+        # before Runtime returns a turn) unbound rather than guessing one.
+        self._emit_recall_observation(
+            specification,
+            turn_id=_recall_turn_id(payload.get("turnId")),
         )
         recall_payload = (
             specification.get("payload")
@@ -402,6 +449,9 @@ class AgentMemoryContextService:
         Session recovery protocol.
         """
 
+        if not self._memory_enabled():
+            return ""
+
         materialized = self.context_runtime.materialize(
             session_id
         )
@@ -413,6 +463,15 @@ class AgentMemoryContextService:
             and item.get("sourceKind") in allowed_source_kinds
         ]
         return render_provider_context_items(items)
+
+    def _memory_enabled(self) -> bool:
+        try:
+            return bool(self._memory_enabled_provider())
+        except Exception:
+            # The setting reader itself is fail-closed for an existing DB.
+            # Keep this guard for injected providers so a broken policy
+            # adapter cannot accidentally re-enable recall.
+            return False
 
     def _refresh_query(
         self,
@@ -429,6 +488,228 @@ class AgentMemoryContextService:
             maximum=8_000,
         )
         return explicit_query or latest_user
+
+    def _emit_recall_observation(
+        self,
+        specification: Mapping[str, object],
+        *,
+        turn_id: str = "",
+    ) -> None:
+        callback = self._observation_callback
+        payload = specification.get("payload")
+        if not callable(callback) or not isinstance(payload, Mapping):
+            return
+        try:
+            callback(_memory_recall_observation(payload, turn_id=turn_id))
+        except Exception:
+            # Observation is a side-channel.  An unavailable observer must not
+            # turn a successful Session context enqueue/replace into a prompt
+            # failure.
+            return
+
+    def _emit_recall_failure(
+        self,
+        session_id: str,
+        *,
+        trigger: str,
+        error: BaseException,
+        turn_id: str = "",
+    ) -> None:
+        callback = self._observation_callback
+        if not callable(callback):
+            return
+        try:
+            callback(
+                _memory_recall_failure_observation(
+                    session_id,
+                    trigger=trigger,
+                    error=error,
+                    turn_id=turn_id,
+                )
+            )
+        except Exception:
+            # Observation is a side-channel. An unavailable observer must not
+            # hide the original recall failure or change its control flow.
+            return
+
+
+def _memory_recall_observation(
+    payload: Mapping[str, object],
+    *,
+    turn_id: str = "",
+) -> dict[str, object]:
+    """Project Session memory recall into a privacy-safe trace receipt."""
+
+    query = payload.get("query")
+    query = query if isinstance(query, Mapping) else {}
+    retrieval = payload.get("retrieval")
+    retrieval = retrieval if isinstance(retrieval, Mapping) else {}
+    budget = payload.get("budget")
+    budget = budget if isinstance(budget, Mapping) else {}
+    items = payload.get("items")
+    items = items if isinstance(items, (list, tuple)) else []
+
+    evidence: list[dict[str, object]] = []
+    for raw_item in items[:64]:
+        if not isinstance(raw_item, Mapping):
+            continue
+        source_id = _recall_text(raw_item.get("sourceId"))
+        if not source_id:
+            continue
+        source_lane = _recall_text(raw_item.get("sourceLane"))
+        if not source_lane:
+            lanes = raw_item.get("lanes")
+            if isinstance(lanes, (list, tuple)) and len(lanes) == 1:
+                source_lane = _recall_text(lanes[0])
+        scores = _recall_numeric_mapping(raw_item.get("rawScores"))
+        for key in ("score", "confidence"):
+            value = _recall_number(raw_item.get(key))
+            if value is not None:
+                scores[key] = value
+        rank = _recall_integer(raw_item.get("rank"), minimum=1)
+        evidence.append(
+            {
+                "evidenceId": source_id,
+                "sourceKind": "memory",
+                "sourceRef": source_id,
+                "sourceLane": source_lane,
+                "disposition": "included",
+                "scores": scores,
+                "rankBefore": None,
+                "rankAfter": rank,
+                "omissionReason": "",
+            }
+        )
+
+    result: dict[str, object] = {
+        "recallId": _recall_text(payload.get("recallId")),
+        "sessionId": _recall_text(payload.get("sessionId")),
+        "trigger": _recall_text(payload.get("trigger")),
+        "status": "completed",
+        "generatedAtMs": _recall_integer(
+            payload.get("generatedAtMs"), minimum=0
+        ) or 0,
+        "metrics": {
+            "selectedCount": len(evidence),
+            "omittedCount": _recall_integer(
+                budget.get("omittedCount"), minimum=0
+            ) or 0,
+            "recentCompleteInputCount": _recall_integer(
+                query.get("recentCompleteInputCount"), minimum=0
+            ) or 0,
+            "recentConversationCount": _recall_integer(
+                query.get("recentConversationCount"), minimum=0
+            ) or 0,
+            "usedChars": _recall_integer(
+                budget.get("usedChars"), minimum=0
+            ) or 0,
+            "maxItems": _recall_integer(
+                budget.get("maxItems"), minimum=0
+            ) or 0,
+        },
+        "attributes": {
+            "embeddingFallback": retrieval.get("embeddingFallback") is True,
+            "evidenceStage": "memory_recall",
+        },
+        "traceEvidence": evidence,
+    }
+    safe_turn_id = _recall_turn_id(turn_id)
+    if safe_turn_id:
+        result["turnId"] = safe_turn_id
+    return result
+
+
+def _memory_recall_failure_observation(
+    session_id: str,
+    *,
+    trigger: str,
+    error: BaseException,
+    turn_id: str = "",
+) -> dict[str, object]:
+    """Build a metadata-only failed recall receipt without the exception text."""
+
+    safe_session_id = _recall_text(session_id)
+    safe_trigger = _recall_text(trigger) or "unknown"
+    generated_at_ms = max(0, int(time.time() * 1_000))
+    failure_reason = _recall_text(type(error).__name__) or "unknown"
+    identity_material = "\0".join(
+        (safe_session_id, safe_trigger, str(generated_at_ms), failure_reason)
+    )
+    recall_id = (
+        "session-memory-recall:"
+        + hashlib.sha256(identity_material.encode("utf-8")).hexdigest()[:24]
+    )
+    result: dict[str, object] = {
+        "recallId": recall_id,
+        "sessionId": safe_session_id,
+        "trigger": safe_trigger,
+        "generatedAtMs": generated_at_ms,
+        "status": "failed",
+        "failureReason": failure_reason,
+        "metrics": {},
+        "attributes": {
+            "failureRecorded": True,
+            "evidenceStage": "memory_recall",
+        },
+        "traceEvidence": [],
+    }
+    safe_turn_id = _recall_turn_id(turn_id)
+    if safe_turn_id:
+        result["turnId"] = safe_turn_id
+    return result
+
+
+def _recall_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:256]
+
+
+def _recall_turn_id(value: object) -> str:
+    """Accept only an opaque lifecycle ID for the refresh observation link."""
+
+    if not isinstance(value, str):
+        return ""
+    candidate = value.strip()
+    if (
+        not candidate
+        or len(candidate) > 240
+        or any(char.isspace() for char in candidate)
+        or any(ord(char) < 32 for char in candidate)
+    ):
+        return ""
+    return candidate
+
+
+def _recall_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        return None
+    bounded = max(-1_000_000.0, min(1_000_000.0, numeric))
+    return int(bounded) if bounded.is_integer() else bounded
+
+
+def _recall_integer(value: object, *, minimum: int) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < minimum:
+        return None
+    return value
+
+
+def _recall_numeric_mapping(value: object) -> dict[str, int | float]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, int | float] = {}
+    for key, raw_value in list(value.items())[:32]:
+        name = _recall_text(key)
+        number = _recall_number(raw_value)
+        if name and number is not None:
+            result[name] = number
+    return result
+
 
 def _memory_task_projection(
     task: Mapping[str, object],
@@ -556,6 +837,44 @@ def _ready_existing(
         "priority": "developer",
         "lifecycle": "session",
         "expiredLegacyItems": expired_legacy,
+    }
+
+
+def _memory_disabled_bootstrap(session_id: str) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.memory-bootstrap-enqueue-result.v1",
+        "ok": True,
+        "sessionId": session_id,
+        "status": "disabled",
+        "memoryEnabled": False,
+        "queryAware": True,
+        "priority": "developer",
+        "lifecycle": "session",
+    }
+
+
+def _memory_disabled_refresh(session_id: str) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
+        "ok": True,
+        "memoryEnabled": False,
+        "result": {
+            "sessionId": session_id,
+            "trigger": "disabled",
+            "sessionContext": "",
+            "itemId": "",
+            "dedupeKey": "",
+            "recallId": "",
+            "sourceCount": 0,
+            "recentConversationCount": 0,
+            "compactionRecoveryPacket": False,
+            "roomContextRecovery": None,
+            "roomToolRecovery": None,
+            "roomRecoveryContext": "",
+            "contextEpochTransition": None,
+            "contextEpoch": None,
+            "contextEpochReason": None,
+        },
     }
 
 

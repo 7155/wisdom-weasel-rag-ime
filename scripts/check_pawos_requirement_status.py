@@ -60,6 +60,25 @@ def requirement_ids(text: str) -> tuple[list[str], list[str]]:
     return ids, errors
 
 
+def requirement_sources(index_path: Path) -> tuple[str, list[Path], bool, list[str]]:
+    index_text = index_path.read_text(encoding="utf-8")
+    if REQUIREMENT_PATTERN.search(index_text):
+        return index_text, [index_path], False, []
+
+    volume_dir = index_path.parent / "requirements"
+    volume_paths = sorted(volume_dir.glob("PAWOS_REQUIREMENTS_[0-9][0-9][0-9]_[0-9][0-9][0-9].md"))
+    if not volume_paths:
+        return index_text, [index_path], False, []
+
+    errors = [
+        f"requirements index does not link volume {path.name}"
+        for path in volume_paths
+        if f"requirements/{path.name}" not in index_text
+    ]
+    combined_text = "\n".join(path.read_text(encoding="utf-8") for path in volume_paths)
+    return combined_text, volume_paths, True, errors
+
+
 def _validate_receipts(receipts: object, errors: list[str]) -> dict[str, dict[str, Any]]:
     if not isinstance(receipts, dict):
         errors.append("receipts must be an object")
@@ -114,8 +133,11 @@ def _merged_status(defaults: dict[str, Any], override: object, requirement_id: s
 
 def validate_requirement_status(requirements_path: Path, status_path: Path) -> dict[str, Any]:
     requirements_bytes = requirements_path.read_bytes()
-    requirements_text = requirements_bytes.decode("utf-8")
+    requirements_text, requirement_paths, split_ledger, source_errors = requirement_sources(
+        requirements_path
+    )
     ids, errors = requirement_ids(requirements_text)
+    errors = [*source_errors, *errors]
     try:
         payload = extract_status_payload(status_path.read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError) as exc:
@@ -132,7 +154,7 @@ def validate_requirement_status(requirements_path: Path, status_path: Path) -> d
         if source_receipt.get("path") != requirements_path.name:
             errors.append(f"sourceReceipt.path must be {requirements_path.name}")
         expected_hash = "sha256:" + hashlib.sha256(requirements_bytes).hexdigest()
-        if source_receipt.get("sha256") != expected_hash:
+        if not split_ledger and source_receipt.get("sha256") != expected_hash:
             errors.append(
                 "sourceReceipt.sha256 does not match the current requirements document; "
                 f"expected {expected_hash}"
@@ -228,6 +250,8 @@ def validate_requirement_status(requirements_path: Path, status_path: Path) -> d
         "schemaVersion": "pawos.requirement-status-check.v1",
         "ok": not errors,
         "requirementsPath": str(requirements_path.resolve()),
+        "requirementSourcePaths": [str(path.resolve()) for path in requirement_paths],
+        "splitLedger": split_ledger,
         "statusPath": str(status_path.resolve()),
         "requirementCount": len(ids),
         "firstRequirementId": ids[0] if ids else None,

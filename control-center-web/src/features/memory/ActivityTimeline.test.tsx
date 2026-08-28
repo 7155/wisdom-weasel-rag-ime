@@ -144,21 +144,103 @@ describe('ActivityTimeline activity projection', () => {
           state: 'failed',
           mode: 'manual_catch_up',
           progress: { throughDate: localDateForTest(), completedDayCount: 1, totalDayCount: 3 },
-          error: '第二天的语义整理未通过',
+          error: 'selected memory model request failed: Session already has an active turn',
         },
       },
       jobResult: {
         jobId: 'memory-maintenance:failed-timeline',
         state: 'failed',
         progress: { throughDate: localDateForTest(), completedDayCount: 1, totalDayCount: 3 },
-        error: '第二天的语义整理未通过',
+        error: 'selected memory model request failed: Session already has an active turn',
       },
     });
 
     const failure = await screen.findByRole('alert', { name: '历史日记整理进度' });
     expect(failure).toHaveTextContent('任务 memory-maintenance:failed-timeline');
+    expect(failure).toHaveTextContent('内部 Session 仍被上一回合占用');
     await user.click(within(failure).getByRole('button', { name: '重新检查范围' }));
     expect(await screen.findByRole('dialog', { name: '整理本月' })).toBeInTheDocument();
+  });
+
+  it('explains that a post-restart job expired and offers a fresh retry', async () => {
+    const user = userEvent.setup();
+    const jobId = 'memory-maintenance:after-gateway-restart';
+    renderTimeline(semanticTimeline(), {
+      calendarAutomation: {
+        state: 'expired',
+        job: {
+          jobId,
+          state: 'expired',
+          mode: 'manual_catch_up',
+          progress: { throughDate: localDateForTest() },
+          errorCode: 'memory_maintenance_job_expired',
+          error: 'Gateway restarted before this process-local Memory maintenance job could be read; the old job cannot be recovered.',
+          recovery: {
+            recoverable: false,
+            retryable: true,
+            action: 'trigger_new_job',
+            reason: 'process_local_job_registry_lost',
+          },
+        },
+      },
+      jobResult: {
+        jobId,
+        state: 'expired',
+        errorCode: 'memory_maintenance_job_expired',
+        error: 'Gateway restarted before this process-local Memory maintenance job could be read; the old job cannot be recovered.',
+        recovery: {
+          recoverable: false,
+          retryable: true,
+          action: 'trigger_new_job',
+          reason: 'process_local_job_registry_lost',
+        },
+      },
+    });
+
+    const expired = await screen.findByRole('alert', { name: '历史日记整理进度' });
+    expect(expired).toHaveTextContent('Gateway 重启后旧的记忆整理任务已过期，无法恢复');
+    expect(expired).toHaveTextContent(`任务 ${jobId}`);
+    await user.click(within(expired).getByRole('button', { name: '重新检查范围' }));
+    expect(await screen.findByRole('dialog', { name: '整理本月' })).toBeInTheDocument();
+  });
+
+  it('keeps semantic verification failures as a visible warning instead of a job error', async () => {
+    renderTimeline(semanticTimeline(), {
+      calendarAutomation: {
+        state: 'caught_up',
+        job: {
+          jobId: 'memory-maintenance:semantic-warning',
+          state: 'completed',
+          mode: 'single_day',
+          progress: { currentDate: localDateForTest(), completedDayCount: 1, totalDayCount: 1 },
+          result: {
+            ok: true,
+            semanticOrganization: {
+              status: 'warning',
+              reviewRequired: true,
+              error: 'Activity organization did not pass independent semantic verification',
+            },
+          },
+        },
+      },
+      jobResult: {
+        jobId: 'memory-maintenance:semantic-warning',
+        state: 'completed',
+        progress: { currentDate: localDateForTest(), completedDayCount: 1, totalDayCount: 1 },
+        result: {
+          ok: true,
+          semanticOrganization: {
+            status: 'warning',
+            reviewRequired: true,
+            error: 'Activity organization did not pass independent semantic verification',
+          },
+        },
+      },
+    });
+
+    expect(await screen.findByText('语义整理待检查')).toBeInTheDocument();
+    expect(screen.getByText(/Activity organization did not pass independent semantic verification/u)).toBeInTheDocument();
+    expect(screen.queryByRole('alert', { name: '历史日记整理进度' })).not.toBeInTheDocument();
   });
 
   it('keeps the daily journal as the first-screen main pane with the calendar in the rail', async () => {

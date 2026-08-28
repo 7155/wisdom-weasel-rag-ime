@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 16,
+    "bundledSkillEntries": 17,
     "projectedBundledCards": 5,
     "canonicalCards": 40
   },
@@ -25,7 +25,8 @@
         "project-maintainer",
         "rag-retrieval-optimization",
         "systematic-debugging",
-        "test-driven-implementation"
+        "test-driven-implementation",
+        "trace-agent-diagnostics"
       ]
     }
   },

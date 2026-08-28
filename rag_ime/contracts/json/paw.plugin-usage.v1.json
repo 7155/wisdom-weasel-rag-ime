@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paw.plugin-usage.v1",
+  "title": "Privacy-preserving Pi Package resource usage event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "occurredAtMs",
+    "sessionId",
+    "packageId",
+    "packageVersion",
+    "resourceKind",
+    "resourceId",
+    "activity"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "paw.plugin-usage.v1"},
+    "eventId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "occurredAtMs": {"type": "integer", "minimum": 0},
+    "sessionId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "packageId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "packageVersion": {"type": "string", "minLength": 1, "maxLength": 80},
+    "resourceKind": {"enum": ["extension", "tool", "command", "skill", "prompt", "theme"]},
+    "resourceId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "activity": {"enum": ["loaded", "invoked", "finished"]},
+    "invocationId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
+    "durationMs": {"type": "integer", "minimum": 0}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"activity": {"const": "loaded"}}, "required": ["activity"]},
+      "then": {"not": {"anyOf": [{"required": ["invocationId"]}, {"required": ["outcome"]}, {"required": ["durationMs"]}]}}
+    },
+    {
+      "if": {"properties": {"activity": {"const": "invoked"}}, "required": ["activity"]},
+      "then": {"required": ["invocationId"], "not": {"anyOf": [{"required": ["outcome"]}, {"required": ["durationMs"]}]}}
+    },
+    {
+      "if": {"properties": {"activity": {"const": "finished"}}, "required": ["activity"]},
+      "then": {"required": ["invocationId", "outcome", "durationMs"]}
+    },
+    {
+      "if": {"properties": {"resourceKind": {"enum": ["extension", "theme"]}}, "required": ["resourceKind"]},
+      "then": {"properties": {"activity": {"const": "loaded"}}}
+    },
+    {
+      "if": {"properties": {"resourceKind": {"const": "prompt"}}, "required": ["resourceKind"]},
+      "then": {"properties": {"activity": {"enum": ["loaded", "invoked"]}}}
+    }
+  ]
+}

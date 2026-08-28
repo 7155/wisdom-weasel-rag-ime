@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
@@ -51,10 +52,12 @@ class KnowledgePromotionStore:
         *,
         authority_secrets: Mapping[str, bytes | str] | None = None,
         index_adapter: Callable[[Mapping[str, object]], Sequence[Mapping[str, object]]] | None = None,
+        observation_callback: Callable[[Mapping[str, object]], None] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._authority_secrets = {str(key): value if isinstance(value, bytes) else str(value).encode() for key, value in (authority_secrets or {}).items()}
         self._index_adapter = index_adapter
+        self._observation_callback = observation_callback
 
     def initialize(self) -> int:
         with self._connect() as conn:
@@ -368,7 +371,68 @@ class KnowledgePromotionStore:
             rows = conn.execute(f"""SELECT projection.*,pointer.scope_key,pointer.knowledge_epoch,version.created_at_ms FROM room_v2_knowledge_search_projections projection JOIN room_v2_knowledge_claim_versions version ON version.claim_version_id=projection.claim_version_id JOIN room_v2_knowledge_claim_pointers pointer ON pointer.current_claim_version_id=projection.claim_version_id AND pointer.lifecycle_status='current' WHERE projection.knowledge_domain IN ({','.join('?' for _ in domains)}) AND ({scope_clause}) AND projection.claim_text LIKE ? ORDER BY version.created_at_ms DESC LIMIT ?""", (*domains, *(part for scope in scopes for part in scope), f"%{query}%", max(1, min(int(limit), 50)))).fetchall()
             refs = [str(row["claim_version_id"]) for row in rows]; hashes = {str(row["claim_version_id"]): str(row["claim_hash"]) for row in rows}; epochs = {str(row["scope_key"]): int(row["knowledge_epoch"]) for row in rows}
             conn.execute("INSERT INTO room_v2_knowledge_retrieval_receipts VALUES (?,?,?,?,?,?,?,?)", (retrieval_receipt_id, caller.binding_id, caller.authorization_revision, _hash_json({"query": query, "domains": domains, "scopes": scopes}), _json(epochs), _json(refs), _json(hashes), created_at_ms))
-        return {"retrievalReceiptId": retrieval_receipt_id, "groups": [{"claimRef": str(row["claim_version_id"]), "claimHash": str(row["claim_hash"]), "provenance": json.loads(str(row["provenance_json"])), "contradictionRefs": json.loads(str(row["contradiction_refs_json"])), "freshness": {"createdAtMs": int(row["created_at_ms"]), "status": "current"}} for row in rows], "scopeEpochs": epochs}
+        result = {"retrievalReceiptId": retrieval_receipt_id, "groups": [{"claimRef": str(row["claim_version_id"]), "claimHash": str(row["claim_hash"]), "provenance": json.loads(str(row["provenance_json"])), "contradictionRefs": json.loads(str(row["contradiction_refs_json"])), "freshness": {"createdAtMs": int(row["created_at_ms"]), "status": "current"}} for row in rows], "scopeEpochs": epochs}
+        self._emit_retrieval_observation(
+            retrieval_receipt_id=retrieval_receipt_id,
+            caller=caller,
+            rows=rows,
+            created_at_ms=created_at_ms,
+        )
+        return result
+
+    def _emit_retrieval_observation(
+        self,
+        *,
+        retrieval_receipt_id: str,
+        caller: KnowledgeCallerContext,
+        rows: Sequence[Mapping[str, object]],
+        created_at_ms: int,
+    ) -> None:
+        callback = self._observation_callback
+        if not callable(callback):
+            return
+        evidence = []
+        for rank, row in enumerate(rows, start=1):
+            score = row.get("score") if isinstance(row, Mapping) else None
+            if score is None and hasattr(row, "keys") and "score" in row.keys():
+                score = row["score"]
+            scores = {}
+            if (
+                not isinstance(score, bool)
+                and isinstance(score, (int, float))
+                and math.isfinite(float(score))
+            ):
+                scores["score"] = float(score)
+            evidence.append(
+                {
+                    "evidenceId": str(row["claim_version_id"]),
+                    "sourceKind": "knowledge",
+                    "sourceRef": str(row["claim_version_id"]),
+                    "sourceLane": str(row["knowledge_domain"]),
+                    "disposition": "included",
+                    **({"scores": scores} if scores else {}),
+                    "rankAfter": rank,
+                    "omissionReason": "",
+                }
+            )
+        record = {
+            "schemaVersion": "rag-ime.knowledge-retrieval-observation.v1",
+            "sourceKind": "knowledge",
+            "evidenceStage": "retrieval_output",
+            "retrievalReceiptId": retrieval_receipt_id,
+            "sessionId": caller.session_id,
+            "roomId": caller.room_id,
+            "timestampMs": created_at_ms,
+            "retrieval": {
+                "evidenceCount": len(evidence),
+                "traceEvidence": evidence,
+            },
+        }
+        try:
+            callback(record)
+        except Exception:
+            # Trace projection is passive and must not fail an authorized search.
+            return
 
     def read(self, *, claim_ref: str, retrieval_receipt_id: str, expected_hash: str, caller: KnowledgeCallerContext) -> dict[str, object]:
         with self._connect() as conn:

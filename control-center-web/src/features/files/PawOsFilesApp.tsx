@@ -244,7 +244,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
      它的目录链并直接打开它。只走一次——之后这扇窗属于翻看它的人。 */
   const openedRequestRef = useRef('');
   useEffect(() => {
-    const path = requested.path;
+    const path = resolveRequestedWorkspacePath(requested.path, roots);
     if (!path || !selectedSessionId || !roots.length) return;
     const chain = ancestorDirectories(path, roots);
     if (!chain.length) return;
@@ -912,8 +912,29 @@ function requestedWorkspaceFile(initialRoute: string): { sessionId: string; path
   const path = (query.get('path') ?? '').trim();
   return {
     sessionId: (query.get('session') ?? '').trim().slice(0, 200),
-    path: path.startsWith('/') ? path.slice(0, 1_000) : '',
+    path: path.slice(0, 1_000),
   };
+}
+
+/** Markdown in a Session usually names files relative to its workspace. The
+ * workspace route still uses an absolute path internally so directory listing
+ * and reads keep one canonical identity. A root-name prefix remains supported
+ * for the common `repository/src/file.ts` form. */
+function resolveRequestedWorkspacePath(path: string, roots: string[]): string {
+  const normalized = path.trim();
+  if (!normalized) return '';
+  if (normalized.startsWith('/')) return normalized;
+  const relative = normalized.replace(/^\.\//u, '');
+  if (!relative || relative.split('/').some((segment) => !segment || segment === '..')) return '';
+  const namedRoot = roots.find((root) => (
+    relative === pathName(root) || relative.startsWith(`${pathName(root)}/`)
+  ));
+  if (namedRoot) {
+    const suffix = relative.slice(pathName(namedRoot).length).replace(/^\//u, '');
+    return suffix ? `${namedRoot}/${suffix}` : namedRoot;
+  }
+  const root = roots[0];
+  return root ? `${root}/${relative}` : '';
 }
 
 function authorizedRoots(session: SessionSummary | null): string[] {

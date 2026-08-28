@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.vertical-agent-self-test-suite.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "status", "totalCount", "passedCount",
+    "failedCount", "results", "failures"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.vertical-agent-self-test-suite.v1"},
+    "status": {"enum": ["completed", "failed"]},
+    "totalCount": {"type": "integer", "minimum": 1},
+    "passedCount": {"type": "integer", "minimum": 0},
+    "failedCount": {"type": "integer", "minimum": 0},
+    "results": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/result"}
+    },
+    "failures": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/failure"}
+    }
+  },
+  "$defs": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appId", "fixtureId", "traceId", "evalRunId", "sandboxRunId",
+        "metrics", "providerCalls", "productionWriteBlocked", "status"
+      ],
+      "properties": {
+        "appId": {"type": "string", "minLength": 1},
+        "fixtureId": {"type": "string", "minLength": 1},
+        "traceId": {"type": "string", "minLength": 1},
+        "evalRunId": {"type": "string", "minLength": 1},
+        "sandboxRunId": {"type": "string", "minLength": 1},
+        "metrics": {"type": "object", "additionalProperties": {"type": "number"}},
+        "providerCalls": {"const": 0},
+        "productionWriteBlocked": {"const": true},
+        "status": {"const": "passed"}
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appId", "status", "errorCode", "errorFingerprint"],
+      "properties": {
+        "appId": {"type": "string", "minLength": 1},
+        "status": {"const": "failed"},
+        "errorCode": {"type": "string", "minLength": 1},
+        "errorFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

@@ -37,6 +37,60 @@ describe('Agent live store snapshot hydration', () => {
     });
   });
 
+  it('does not replace durable history with a newer empty full snapshot', () => {
+    const store = useAgentLiveStore.getState();
+    store.hydrateSnapshot(sessionId, {
+      messages: [
+        message('history-user', 'user', 'history', '之前的消息'),
+        message('history-assistant', 'assistant', 'history', '之前的回复'),
+      ],
+      liveEvents: [],
+      lastSequence: 10,
+      resumeToken: `${sessionId}:10`,
+      status: 'idle',
+    });
+    const before = useAgentLiveStore.getState().projections[sessionId];
+
+    store.hydrateSnapshot(sessionId, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 11,
+      resumeToken: `${sessionId}:11`,
+      status: 'idle',
+    });
+
+    const after = useAgentLiveStore.getState().projections[sessionId];
+    expect(after).not.toBe(before);
+    expect(after.lastSequence).toBe(11);
+    expect(after.messageOrder).toEqual(['history-user', 'history-assistant']);
+    expect(after.messagesById['history-assistant']).toBeDefined();
+  });
+
+  it('does not replace cached history with an empty recent snapshot', () => {
+    const store = useAgentLiveStore.getState();
+    store.hydrateSnapshot(sessionId, {
+      messages: [message('recent-cached', 'assistant', 'history', '缓存中的回答')],
+      liveEvents: [],
+      lastSequence: 20,
+      resumeToken: `${sessionId}:20`,
+      status: 'idle',
+    });
+
+    store.hydrateSnapshot(sessionId, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 21,
+      resumeToken: `${sessionId}:21`,
+      snapshotScope: 'recent',
+      partial: true,
+      status: 'active',
+    });
+
+    const after = useAgentLiveStore.getState().projections[sessionId];
+    expect(after.messageOrder).toEqual(['recent-cached']);
+    expect(after.status).toBe('active');
+  });
+
   it('does not leave an equal-cursor history alias active after the real turn completes', () => {
     const clientMessageId = 'client-equal-cursor-race';
     const store = useAgentLiveStore.getState();

@@ -85,6 +85,7 @@ export const inputMethodQueryKeys = {
   settings: () => [...inputMethodQueryKeys.root, 'settings'] as const,
   schema: () => [...inputMethodQueryKeys.root, 'schema'] as const,
   capabilities: () => [...inputMethodQueryKeys.root, 'capabilities'] as const,
+  predictionLiveTrace: () => [...inputMethodQueryKeys.root, 'prediction-live-trace'] as const,
   lexiconReview: () => [...inputMethodQueryKeys.root, 'lexicon-review'] as const,
 };
 
@@ -135,6 +136,16 @@ export function useInputMethodQueries(scope: InputMethodQueryScope = 'input') {
     queryFn: () => transport.capabilities(),
     staleTime: Infinity,
   });
+  const predictionLiveTrace = useQuery({
+    enabled: inputEnabled,
+    queryKey: inputMethodQueryKeys.predictionLiveTrace(),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'input.prediction.liveTrace',
+      query: { limit: 5 },
+      signal,
+    }),
+    refetchInterval: 5_000,
+  });
   const lexiconAvailable = Boolean(
     capabilities.data
       && lexiconPathIds.every((pathId) => capabilities.data.routeIds.includes(pathId)),
@@ -178,6 +189,7 @@ export function useInputMethodQueries(scope: InputMethodQueryScope = 'input') {
     lexiconReview,
     models,
     overview,
+    predictionLiveTrace,
     schema,
     settings,
     settingsMutationAvailability,

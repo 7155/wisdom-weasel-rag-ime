@@ -29,6 +29,9 @@ class MemoryMaintenanceSettings:
     recall_detail_level: str = "compact"
     timeline_recall_enabled: bool = True
     timeline_max_items: int = 2
+    # Keep the new master switch last so positional callers of the existing
+    # settings value object retain their previous field order.
+    memory_enabled: bool = True
 
     @classmethod
     def load(
@@ -47,8 +50,12 @@ class MemoryMaintenanceSettings:
         automatic = _mapping(memory.get("automaticOrganization"))
         dreaming = _mapping(memory.get("dreaming"))
         recall = _mapping(memory.get("recall"))
+        memory_enabled = bool(memory.get("enabled", True))
         return cls(
-            automatic_organization_enabled=bool(automatic.get("enabled", True)),
+            memory_enabled=memory_enabled,
+            automatic_organization_enabled=(
+                memory_enabled and bool(automatic.get("enabled", True))
+            ),
             automatic_organization_model=_maintenance_model(
                 automatic.get("model")
             ),
@@ -61,7 +68,7 @@ class MemoryMaintenanceSettings:
             include_agent_dialogue=bool(
                 automatic.get("includeAgentDialogue", True)
             ),
-            dreaming_enabled=bool(dreaming.get("enabled", True)),
+            dreaming_enabled=memory_enabled and bool(dreaming.get("enabled", True)),
             dreaming_model=_maintenance_model(dreaming.get("model")),
             dreaming_thinking_level=_thinking_level(dreaming.get("thinkingLevel")),
             dreaming_runs_per_day=_runs_per_day(dreaming.get("runsPerDay")),
@@ -89,6 +96,7 @@ class MemoryMaintenanceSettings:
     def as_dict(self) -> dict[str, object]:
         return {
             "schemaVersion": "rag-ime.memory-maintenance-settings.v1",
+            "enabled": self.memory_enabled,
             "automaticOrganization": {
                 "enabled": self.automatic_organization_enabled,
                 "model": self.automatic_organization_model,
@@ -111,6 +119,30 @@ class MemoryMaintenanceSettings:
                 "timelineMaxItems": self.timeline_max_items,
             },
         }
+
+
+def memory_enabled_from_settings(db_path: str | Path) -> bool:
+    """Read the live memory master switch without replaying migrations.
+
+    Runtime callers use this small adapter so a settings change takes effect
+    on the next turn/tool call without rebuilding the long-lived Agent.  A
+    missing database is treated as the default-on state for lightweight
+    standalone gateways; an existing database that cannot be read is treated
+    as disabled to avoid leaking memory while its policy is unknowable.
+    """
+
+    if not db_path:
+        return True
+    path = Path(db_path)
+    if not path.is_file():
+        return True
+    try:
+        return MemoryMaintenanceSettings.load(
+            path,
+            preverified_schema=True,
+        ).memory_enabled
+    except Exception:
+        return False
 
 
 def _mapping(value: object) -> Mapping[str, object]:

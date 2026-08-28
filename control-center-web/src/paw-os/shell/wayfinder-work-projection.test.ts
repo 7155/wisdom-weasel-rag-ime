@@ -37,7 +37,7 @@ function room(overrides: Partial<WayfinderWorkRoomSource> & { id: string }): Way
 }
 
 describe('projectWayfinderWork', () => {
-  it('folds orphan Room partner clones into one synthesized Room row', () => {
+  it('does not synthesize a Room row when the canonical Room record is absent', () => {
     const view = projectWayfinderWork({
       nowMs: NOW,
       rooms: [],
@@ -48,16 +48,9 @@ describe('projectWayfinderWork', () => {
       ],
     });
 
-    expect(view.rowCount).toBe(1);
+    expect(view.rowCount).toBe(0);
     expect(view.foldedCount).toBe(3);
-    const [row] = view.buckets[0]!.items;
-    expect(row).toMatchObject({
-      kind: 'room',
-      id: 'room-9',
-      title: '迁移作战室',
-      activity: 'running',
-    });
-    expect(row!.agents).toEqual(['Earth', 'Mars', 'Venus']);
+    expect(view.projects).toEqual([]);
   });
 
   it('keeps partner Sessions off the list entirely when their Room record exists', () => {
@@ -148,6 +141,32 @@ describe('projectWayfinderWork', () => {
     expect(view.rowCount).toBe(1);
     expect(view.buckets.map((bucket) => bucket.id)).toEqual(['today']);
     expect(view.buckets[0]!.items[0]!.title).toBe('仍在进行');
+  });
+
+  it('projects workspace roots and current status counts for a project context', () => {
+    const view = projectWayfinderWork({
+      nowMs: NOW,
+      sessions: [
+        session({ id: 's-running', title: '运行中对话', status: 'busy', workspaceRoots: ['/work/paw', '/work/shared'] }),
+        session({ id: 's-attention', title: '待处理对话', status: 'faulted', workspaceRoots: ['/work/paw', '/work/shared'] }),
+      ],
+      rooms: [room({
+        id: 'room-blocked',
+        title: '阻塞协作',
+        status: 'active',
+        workspaceRoots: ['/work/shared', '/work/paw'],
+        workItems: [{ state: 'blocked', blocker: { reason: '等待输入' }, updatedAtMs: NOW }],
+      })],
+    });
+
+    expect(view.projects).toHaveLength(1);
+    expect(view.projects[0]).toMatchObject({
+      workspaceRoots: ['/work/paw', '/work/shared'],
+      sessionCount: 2,
+      roomCount: 1,
+      runningCount: 1,
+      attentionCount: 2,
+    });
   });
 
   it('searches title, project leaf and partner names without touching the caps', () => {

@@ -46,6 +46,7 @@ from .contracts.json_schema import validate_contract
 from .desktop_bridge import DesktopBridgeClient
 from .management_service import ManagementService, page_request
 from .memory_ownership import agent_visible_memory_owners
+from .memory_maintenance_settings import memory_enabled_from_settings
 from .settings_schema import default_settings, flatten_settings, settings_schema
 
 
@@ -369,7 +370,9 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "Room 伙伴协作",
         "description": (
             "在 Room 中查看伙伴、异步委派有界工作、显式收集或等待结果、验收或退回 WorkItem、"
-            "直接通信，或发布公开回执。恢复规则：Facilitator 看到 active 且带 reviewFeedback 的退回项时，"
+            "直接通信，发布公开回执，或在当前任务中按需增删 Room participant。新增 participant 会创建"
+            "独立 Session；移除 participant 会保留历史，并把其未完成 WorkItem 交回 Room 待重新分配。"
+            "恢复规则：Facilitator 看到 active 且带 reviewFeedback 的退回项时，"
             "list 会在 recoverableWorkItems 给出原 workItemId、expectedRevision 和 retry 动作；"
             "先按该动作调用 retry，不要 delegate 新复核项，也不要直接 accept。"
         ),
@@ -382,11 +385,13 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "普通 Session 的临时微型子 Agent，或主伙伴自己即可完成的单步工作",
             "存在前后依赖、写入范围重叠，或需要上一阶段交付才能开始的任务",
         ),
-        "input": "委派合同；childDispatchId 或 workItemId；Facilitator 的两轴判定与证据；或直接通信/公开回执参数",
+        "input": "委派合同；participant roleId/participantId；childDispatchId 或 workItemId；Facilitator 的两轴判定与证据；或直接通信/公开回执参数",
         "output": "立即委派回执、显式收集/等待结果、WorkItem 审核回执、直接 Intercom 回执或类型明确的公开回执",
         "does": "委派立即返回持久回执；Partner 完成由持久 wake 通知，collect/wait 只读取停止点且 wait 超时不取消；Facilitator 依据证据显式 accept 或 return。",
         "operations": (
             "list",
+            "add_participant",
+            "remove_participant",
             "delegate",
             "delegate_batch",
             "retry",
@@ -511,6 +516,24 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "validate",
             "propose_install",
         ),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "sandbox",
+        "modelVisible": False,
+        "runtimeProjected": False,
+        "domain": "agents",
+        "displayName": "垂直 Agent 沙箱",
+        "description": "通过已安装的 Connector 在 PAW Host 中运行受控垂直 Agent，并返回 SandboxRun、Trace 与 EvalRun 链路",
+        "when": ("用户要求运行已注册的垂直 Agent 自测，或检查它的沙箱、Trace 与 Eval 结果",),
+        "notFor": (
+            "运行任意主机命令或未注册代码",
+            "让插件直接写 TraceStore、EvalRunStore 或生产 Memory/Knowledge",
+        ),
+        "input": "操作名，以及已注册的垂直 Agent suiteId 与可选精确版本",
+        "output": "Host 管理的沙箱状态，或 SandboxRun、Trace 与 EvalRun 身份及指标",
+        "does": "把插件入口路由到 PAW Host 的受控执行与测评链；插件本身不是 OS 安全边界。",
+        "operations": ("status", "run"),
         "resultPresentation": "tool_result",
     },
     {
@@ -829,6 +852,8 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 ),
                 "enum": [
                     "list",
+                    "add_participant",
+                    "remove_participant",
                     "delegate",
                     "delegate_batch",
                     "retry",
@@ -851,6 +876,29 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "delegate 时必须原样使用 list 返回的 participantId；retry 可省略，"
                     "省略时继续使用 WorkItem 当前负责人。"
                 ),
+            },
+            "roleId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 320,
+                "description": "add_participant 使用的活动 Persona roleId；每个 Room participant role 不能重复。",
+            },
+            "roleVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "description": "add_participant 可选的 Persona 版本；省略时使用 1。",
+            },
+            "collaborationRole": {
+                "type": "string",
+                "enum": ["coordinator", "researcher", "implementer", "reviewer"],
+                "description": "add_participant 的 Room 职责；新增成员不能担任 Facilitator。",
+            },
+            "participantId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 320,
+                "description": "remove_participant 必须原样使用 list 返回的 participantId。",
             },
             "task": {
                 "type": "string",
@@ -1040,6 +1088,14 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             {
                 "required": ["op"],
                 "properties": {"op": {"const": "list"}},
+            },
+            {
+                "required": ["op", "roleId"],
+                "properties": {"op": {"const": "add_participant"}},
+            },
+            {
+                "required": ["op", "participantId"],
+                "properties": {"op": {"const": "remove_participant"}},
             },
             {
                 "required": [
@@ -1725,6 +1781,8 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
 
 _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "query": {"type": "string", "maxLength": 500},
+    "suiteId": {"type": "string", "minLength": 1, "maxLength": 120},
+    "suiteRevision": {"type": "string", "minLength": 1, "maxLength": 120},
     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
     "includeArchived": {"type": "boolean"},
     "workDocument": {
@@ -1741,7 +1799,8 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
             "title": {"type": "string", "maxLength": 240},
         },
         "description": (
-            "可选的显式权威绑定。仅在 workspace_write 成功且回执哈希匹配后注册；"
+            "可选的显式权威绑定。workspace_write 成功后最多尝试一次注册；"
+            "注册失败只生成 documentSync pending/failed 回执和 Trace 引用，不阻断真实写入；"
             "禁止根据目录或文件名推断。"
         ),
     },
@@ -2222,6 +2281,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     ),
     "session_search": ("query", "limit", "includeArchived"),
     "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
+    "sandbox": ("suiteId", "suiteRevision"),
     "browser": (
         "deviceId", "tabId", "refId", "url", "text", "script", "clear", "direction",
         "amount", "timeoutMs", "maxChars", "limit",
@@ -2736,7 +2796,9 @@ class ControlToolGateway:
         role_books: object | None = None,
         artifact_projector: AgentToolArtifactProjector | None = None,
         work_documents: object | None = None,
+        sandbox_connector: object | None = None,
         workflow_publisher: Callable[[str, str], object] | None = None,
+        memory_enabled_provider: Callable[[], bool] | None = None,
     ) -> None:
         self.sessions = sessions
         self.management = management
@@ -2758,7 +2820,12 @@ class ControlToolGateway:
         self.role_books = role_books
         self.artifact_projector = artifact_projector
         self.work_documents = work_documents
+        self.sandbox_connector = sandbox_connector
         self.workflow_publisher = workflow_publisher
+        sessions_db_path = getattr(sessions, "db_path", "")
+        self._memory_enabled_provider = memory_enabled_provider or (
+            lambda: memory_enabled_from_settings(sessions_db_path)
+        )
         self._role_book_tool_adapter: AgentRoleBookToolAdapter | None = None
         self._memory_governance_store: MemoryGovernanceProposalStore | None = None
         self._desktop_cursor_lock = threading.Lock()
@@ -2847,6 +2914,11 @@ class ControlToolGateway:
         manifests: list[Mapping[str, object]] = []
         for manifest in manifest_items:
             tool_id = str(manifest["id"])
+            spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
+            package_owned_connector = (
+                tool_id == "sandbox"
+                and self._managed_extension_enabled("vertical-agent-sandbox")
+            )
             audited_goal_for_facilitator = (
                 tool_id == "agent_goal" and active_room_facilitator
             )
@@ -2859,9 +2931,19 @@ class ControlToolGateway:
                 # workflow state; only a real Room Facilitator also receives
                 # the distinct evidence-audited Product Goal capability.
                 continue
+            if (
+                spec.get("runtimeProjected") is False
+                and not package_owned_connector
+            ):
+                # This target is registered and described by its Pi Package.
+                # Keep it out of the resident extension before installation.
+                # Once the Connector package is enabled, PAW projects the
+                # Host-owned target so the long-lived multi-Session Runtime
+                # never needs a process-global Session id or gateway token in
+                # third-party extension code.
+                continue
             if manifest.get("enabled") is not True or manifest["id"] not in disclosed_tools:
                 continue
-            spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
             operations = list(manifest.get("effectiveOperations") or [])
             projections = [
                 copy.deepcopy(projection)
@@ -2900,7 +2982,11 @@ class ControlToolGateway:
                     else {}
                 ),
             }
-            if spec.get("modelVisible") is False and not audited_goal_for_facilitator:
+            if (
+                spec.get("modelVisible") is False
+                and not audited_goal_for_facilitator
+                and not package_owned_connector
+            ):
                 item["modelVisible"] = False
             if projections:
                 item["runtimeProjections"] = [
@@ -2921,6 +3007,31 @@ class ControlToolGateway:
             if isinstance(structured_manifest, Mapping):
                 manifests.append(dict(structured_manifest))
         return manifests
+
+    def _memory_enabled(self) -> bool:
+        try:
+            return bool(self._memory_enabled_provider())
+        except Exception:
+            return False
+
+    def _managed_extension_enabled(self, extension_id: str) -> bool:
+        catalog_provider = getattr(self.extensions, "catalog", None)
+        if not callable(catalog_provider):
+            return False
+        try:
+            catalog = catalog_provider()
+        except (RuntimeError, ValueError):
+            return False
+        items = catalog.get("items") if isinstance(catalog, Mapping) else None
+        if not isinstance(items, list):
+            return False
+        return any(
+            isinstance(item, Mapping)
+            and str(item.get("id") or "") == extension_id
+            and item.get("installed") is True
+            and item.get("enabled") is True
+            for item in items
+        )
 
     def _is_active_room_facilitator(self, session: Mapping[str, object]) -> bool:
         if (
@@ -2952,23 +3063,10 @@ class ControlToolGateway:
             raise ValueError(
                 "Act Gate blocked workspace mutation (Room delegation requires an active session Goal)"
             )
-        if self.work_documents is None:
-            raise ValueError(
-                "Act Gate blocked workspace mutation (Room delegation cannot verify the Root WorkDocument lifecycle)"
-            )
-        authority_key = f"session_goal:{goal_id}"
-        documents = self.work_documents.list(limit=500)  # type: ignore[attr-defined,union-attr]
-        items = documents.get("items") if isinstance(documents, Mapping) else []
-        if not any(
-            isinstance(item, Mapping)
-            and str(item.get("authorityKey") or "") == authority_key
-            and str(item.get("state") or "") == "active"
-            for item in (items if isinstance(items, list) else [])
-        ):
-            raise ValueError(
-                "Act Gate blocked workspace mutation (Room delegation requires an active Root WorkDocument bound to "
-                f"{authority_key})"
-            )
+        # A Goal is still required before a Facilitator can dispatch work, but
+        # the WorkDocument is an advisory audit trail. Its registration is a
+        # best-effort, one-shot side effect of the actual workspace write; a
+        # stale/archived document must never turn delegation into a retry loop.
 
     def _manifest_items(
         self,
@@ -2984,10 +3082,16 @@ class ControlToolGateway:
                 for operation in operations
             }
             available = (
-                str(spec["id"]) != "workspace_job"
-                or (
-                    self.background_jobs is not None
-                    and self.background_jobs.execution_owner
+                (
+                    str(spec["id"]) != "workspace_job"
+                    or (
+                        self.background_jobs is not None
+                        and self.background_jobs.execution_owner
+                    )
+                )
+                and (
+                    str(spec["id"]) != "sandbox"
+                    or self.sandbox_connector is not None
                 )
             )
             if str(spec["id"]) == "room_partner":
@@ -3064,6 +3168,11 @@ class ControlToolGateway:
                         spec=spec,
                     )
                 ]
+                if str(spec["id"]) == "memory" and not self._memory_enabled():
+                    # Keep the public capability card available so the UI can
+                    # explain that Memory is off, but expose no executable
+                    # operation to a model/runtime manifest.
+                    effective_operations = []
                 # A coordinator without a selected directory must not expose
                 # filesystem tools to Pi. The control center still lists the
                 # capability and can prompt for a directory, but the runtime
@@ -3103,6 +3212,8 @@ class ControlToolGateway:
         tool = str(request["tool"])
         raw_args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
         tool, args = _normalize_runtime_tool_call(tool, raw_args)
+        if tool == "memory" and not self._memory_enabled():
+            raise ValueError("memory tool is disabled by settings.memory.enabled")
         if tool == "structured_output":
             submit = getattr(self.delegation, "submit_structured_output", None)
             if not callable(submit):
@@ -3165,6 +3276,8 @@ class ControlToolGateway:
         operation: str,
     ) -> dict[str, object]:
         session_id = str(session["id"])
+        if tool == "memory" and not self._memory_enabled():
+            raise ValueError("memory tool is disabled by settings.memory.enabled")
         # Re-read immediately before authorization/approval so a waiting Room
         # Dispatch cannot apply a mutation after its workspace lease becomes
         # read-only.
@@ -3217,6 +3330,7 @@ class ControlToolGateway:
             "todo": self._todo,
             "agent_goal": self._agent_goal,
             "plugins": self._plugins,
+            "sandbox": self._sandbox,
             "work_documents": self._work_documents,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
@@ -3480,6 +3594,18 @@ class ControlToolGateway:
                 )
             )
         raise ValueError("unsupported plugins operation")
+
+    def _sandbox(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if self.sandbox_connector is None:
+            raise ValueError("vertical Agent sandbox connector is unavailable")
+        execute = getattr(self.sandbox_connector, "execute", None)
+        if not callable(execute):
+            raise ValueError("vertical Agent sandbox connector is invalid")
+        session_id = str(args.get("_sessionId") or "").strip()
+        result = execute(session_id, operation, args)
+        if not isinstance(result, Mapping):
+            raise ValueError("vertical Agent sandbox connector returned an invalid result")
+        return dict(result)
 
     def _browser(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         service = self.browser_control
@@ -3967,6 +4093,8 @@ class ControlToolGateway:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
         session_id = str(approval.get("sessionId") or "")
+        if tool == "memory" and not self._memory_enabled():
+            raise ValueError("memory tool is disabled by settings.memory.enabled")
         live_session = self.sessions.get(session_id)
         if read_only_policy_active(live_session) and read_only_blocks_effect(
             tool,
@@ -4140,6 +4268,8 @@ class ControlToolGateway:
         args: Mapping[str, object],
         risk_level: str,
     ) -> dict[str, object]:
+        if tool == "memory" and not self._memory_enabled():
+            raise ValueError("memory tool is disabled by settings.memory.enabled")
         if (tool, operation) == ("workspace_job", "start"):
             return self._prepare_background_job_start(
                 session_id=session_id,
@@ -6902,10 +7032,8 @@ class ControlToolGateway:
             else None
         )
         registration_payload: dict[str, object] | None = None
-        rollback_snapshot = None
+        document_sync: dict[str, object] | None = None
         if work_document is not None:
-            if self.work_documents is None:
-                raise ValueError("work document lifecycle is unavailable")
             authority_kind = str(work_document.get("authorityKind") or "")
             authority_id = str(work_document.get("authorityId") or "")
             if (
@@ -6941,13 +7069,28 @@ class ControlToolGateway:
                 "sourcePath": str(relative_path),
                 "title": work_document.get("title"),
             }
-            self.work_documents.preflight_register(  # type: ignore[attr-defined,union-attr]
-                registration_payload
-            )
-            rollback_snapshot = self.workspace_harness.prepare_write(
-                session,
-                action_payload,
-            )
+            if self.work_documents is None:
+                document_sync = _work_document_sync_receipt(
+                    registration_payload,
+                    approval_id=str(approval.get("approvalId") or ""),
+                    state="failed",
+                    reason="work document lifecycle is unavailable",
+                )
+            else:
+                try:
+                    self.work_documents.preflight_register(  # type: ignore[attr-defined,union-attr]
+                        registration_payload
+                    )
+                except Exception as registration_error:
+                    # The workspace mutation remains the source of truth. A
+                    # stale/archived authority is recorded once and surfaced
+                    # to the Room, but must not roll back real product work.
+                    document_sync = _work_document_sync_receipt(
+                        registration_payload,
+                        approval_id=str(approval.get("approvalId") or ""),
+                        state="failed",
+                        reason=_bounded_text(registration_error, maximum=240),
+                    )
         receipt = self.workspace_harness.apply_write(session, action_payload, base_state)
         result = {
             **receipt,
@@ -6957,38 +7100,53 @@ class ControlToolGateway:
             "auditId": str(approval.get("approvalId") or ""),
         }
         if registration_payload is not None:
-            try:
-                registration = dict(
-                    self.work_documents.register(registration_payload)  # type: ignore[attr-defined,union-attr]
-                )
-                registration_receipt = (
-                    registration.get("receipt")
-                    if isinstance(registration.get("receipt"), Mapping)
-                    else {}
-                )
-                registration_document = (
-                    registration.get("document")
-                    if isinstance(registration.get("document"), Mapping)
-                    else {}
-                )
-                if (
-                    str(registration_receipt.get("status") or "") != "applied"
-                    or str(registration_document.get("state") or "") != "active"
-                ):
-                    raise ValueError(
-                        "work document registration did not become active"
-                    )
-                result["workDocumentRegistration"] = registration
-            except Exception as registration_error:
-                assert rollback_snapshot is not None
+            if document_sync is None:
                 try:
-                    self.workspace_harness.rollback_write(rollback_snapshot)
-                except Exception as rollback_error:
-                    raise WorkspaceHarnessError(
-                        "work document registration failed and its workspace write "
-                        "could not be rolled back safely"
-                    ) from rollback_error
-                raise registration_error
+                    registration = dict(
+                        self.work_documents.register(registration_payload)  # type: ignore[attr-defined,union-attr]
+                    )
+                    registration_receipt = (
+                        registration.get("receipt")
+                        if isinstance(registration.get("receipt"), Mapping)
+                        else {}
+                    )
+                    registration_document = (
+                        registration.get("document")
+                        if isinstance(registration.get("document"), Mapping)
+                        else {}
+                    )
+                    receipt_status = str(registration_receipt.get("status") or "")
+                    document_state = str(registration_document.get("state") or "")
+                    if receipt_status == "applied" and document_state == "active":
+                        result["workDocumentRegistration"] = registration
+                        document_sync = _work_document_sync_receipt(
+                            registration_payload,
+                            approval_id=str(approval.get("approvalId") or ""),
+                            state="applied",
+                            document_id=str(registration_document.get("documentId") or ""),
+                            document_revision=registration_document.get("documentRevision"),
+                        )
+                    else:
+                        document_sync = _work_document_sync_receipt(
+                            registration_payload,
+                            approval_id=str(approval.get("approvalId") or ""),
+                            state=(
+                                "failed"
+                                if receipt_status == "failed" or document_state == "error"
+                                else "pending"
+                            ),
+                            reason="work document registration did not become active",
+                            receipt_status=receipt_status,
+                            document_state=document_state,
+                        )
+                except Exception as registration_error:
+                    document_sync = _work_document_sync_receipt(
+                        registration_payload,
+                        approval_id=str(approval.get("approvalId") or ""),
+                        state="failed",
+                        reason=_bounded_text(registration_error, maximum=240),
+                    )
+            result["documentSync"] = dict(document_sync or {})
         if self.artifact_projector is not None:
             projection = self.artifact_projector.project_workspace_mutation(
                 session=session,
@@ -7640,6 +7798,8 @@ class ControlToolGateway:
         }
 
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        if not self._memory_enabled():
+            raise ValueError("memory tool is disabled by settings.memory.enabled")
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         if operation == "capture":
             try:
@@ -9496,6 +9656,64 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _work_document_sync_receipt(
+    registration: Mapping[str, object],
+    *,
+    approval_id: str,
+    state: str,
+    reason: str = "",
+    document_id: str = "",
+    document_revision: object = None,
+    receipt_status: str = "",
+    document_state: str = "",
+) -> dict[str, object]:
+    """Describe one best-effort WorkDocument registration attempt.
+
+    This is deliberately a Tool receipt rather than a second lifecycle write:
+    the workspace mutation has already been applied, and callers must not
+    replay it merely to repair an auxiliary document binding.
+    """
+
+    authority_kind = _bounded_text(registration.get("authorityKind"), maximum=40)
+    authority_id = _bounded_text(registration.get("authorityId"), maximum=240)
+    trace_material = "|".join(
+        (
+            approval_id,
+            authority_kind,
+            authority_id,
+            _bounded_text(registration.get("authorityRevision"), maximum=40),
+        )
+    )
+    trace_id = f"trace:work-document-sync:{_sha256_text(trace_material)[:32]}"
+    normalized_state = state if state in {"applied", "pending", "failed"} else "failed"
+    receipt: dict[str, object] = {
+        "state": normalized_state,
+        "attemptCount": 1,
+        "retryable": False,
+        "authorityKind": authority_kind,
+        "authorityId": authority_id,
+        "authorityRevision": _safe_int(registration.get("authorityRevision")),
+        "traceId": trace_id,
+        "publicNotice": (
+            "WorkDocument 同步已记录一次；不阻断真实工作结果，也不要仅因文档同步失败自动 retry/return。"
+            if normalized_state != "applied"
+            else "WorkDocument 已同步。"
+        ),
+    }
+    if document_id:
+        receipt["documentId"] = _bounded_text(document_id, maximum=240)
+    if document_revision is not None:
+        receipt["documentRevision"] = _safe_int(document_revision)
+    if receipt_status:
+        receipt["receiptStatus"] = _bounded_text(receipt_status, maximum=40)
+    if document_state:
+        receipt["documentState"] = _bounded_text(document_state, maximum=40)
+    normalized_reason = _bounded_text(reason, maximum=240)
+    if normalized_reason:
+        receipt["reason"] = normalized_reason
+    return receipt
+
+
 def _sha256_json(value: object) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -9717,6 +9935,9 @@ def _tool_profile_allows(
         "models": frozenset({"status", "profiles", "probe", "cache_stats"}),
         "runtime": frozenset({"health", "components", "diagnose"}),
         "browser": frozenset({"status", "tabs", "snapshot", "screenshot", "trace"}),
+        # The Connector is a read-only profile capability: PAW Host keeps the
+        # process, workspace, network, and persistence fences authoritative.
+        "sandbox": frozenset({"status", "run"}),
         "agents": frozenset(
             {
                 "catalog",
@@ -9735,6 +9956,8 @@ def _tool_profile_allows(
         "room_partner": frozenset(
             {
                 "list",
+                "add_participant",
+                "remove_participant",
                 "delegate",
                 "delegate_batch",
                 "retry",

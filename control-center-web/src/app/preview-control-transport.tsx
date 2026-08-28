@@ -184,6 +184,17 @@ export function createPreviewTransport(): MockControlTransport {
     roleVersion: '1',
   };
   const wakeSchedules: Record<string, unknown>[] = [];
+  let previewEvalRunsByTrace: Record<string, Record<string, unknown>[]> = {};
+  let previewEvalSchedules: Record<string, unknown>[] = [
+    previewEvalSchedule('eval-schedule:sgg'),
+  ];
+  let nextPreviewEvalScheduleId = 1;
+  const previewEvalScheduleRuns = new Map<string, Record<string, unknown>[]>([
+    [
+      'eval-schedule:sgg',
+      [previewEvalScheduleRun('eval-schedule:sgg', 'eval:sgg:preview', 'trace:turn:preview')],
+    ],
+  ]);
   const routes = Object.fromEntries(
     (Object.keys(CONTROL_ROUTES) as ControlPathId[])
       .filter((pathId) => !controlRoute(pathId).subscription)
@@ -192,6 +203,120 @@ export function createPreviewTransport(): MockControlTransport {
   routes['agent.session.snapshot'] = (request: ControlRequest) => (
     previewAgentSnapshot(stringValue(record(request.params).sessionId) || 'session-preview')
   );
+  routes['observability.trace.get'] = (request: ControlRequest) => previewCanonicalTrace(
+    stringValue(record(request.params).traceId) || 'trace:turn:preview',
+  );
+  routes['observability.sandboxRuns.list'] = () => ({
+    schemaVersion: 'rag-ime.observability-sandbox-run-list.v1',
+    ok: true,
+    items: [{
+      schemaVersion: 'rag-ime.sandbox-run.v1',
+      sandboxRunId: 'sandbox:sgg:preview',
+      appId: 'sgg',
+      status: 'completed',
+      policy: {
+        workspaceBindingId: 'workspace-binding:vertical-sandbox:sgg',
+        workspaceFingerprint: `sha256:${'0'.repeat(64)}`,
+        mutationMode: 'read_only',
+        network: 'blocked',
+        productionWriteBlocked: true,
+      },
+      traceIds: ['trace:turn:preview'],
+      evalRunIds: ['eval:sgg:preview'],
+      createdAtMs: 1_800_000_000_000,
+      updatedAtMs: 1_800_000_000_100,
+    }],
+    total: 1,
+  });
+  routes['observability.evals.list'] = (request: ControlRequest) => {
+    const traceId = stringValue(record(request.query).traceId) || 'trace:turn:preview';
+    return previewEvalList(traceId, previewEvalRunsByTrace[traceId] ?? []);
+  };
+  routes['observability.evals.evidence.run'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const traceId = stringValue(body.traceId) || 'trace:turn:preview';
+    const evalRun = previewEvidenceEvalRun(
+      body,
+      traceId,
+      previewEvalRunsByTrace[traceId]?.length ?? 0,
+    );
+    const summary = previewEvalSummary(evalRun);
+    previewEvalRunsByTrace = {
+      ...previewEvalRunsByTrace,
+      [traceId]: [...(previewEvalRunsByTrace[traceId] ?? []), summary],
+    };
+    return evalRun;
+  };
+  routes['observability.evalSuites.list'] = () => previewEvalSuiteList();
+  routes['observability.evalSchedules.list'] = () => ({
+    schemaVersion: 'rag-ime.eval-schedule-list.v1',
+    ok: true,
+    items: previewEvalSchedules,
+  });
+  routes['observability.evalSchedule.runs'] = (request: ControlRequest) => {
+    const scheduleId = stringValue(record(request.params).scheduleId);
+    const schedule = previewEvalSchedules.find((item) => stringValue(item.id) === scheduleId)
+      ?? previewEvalSchedules[0];
+    if (!schedule) throw new Error('Preview Eval schedule is unavailable.');
+    return {
+      schemaVersion: 'rag-ime.eval-schedule-run-list.v1',
+      ok: true,
+      schedule,
+      items: previewEvalScheduleRuns.get(stringValue(schedule.id)) ?? [],
+    };
+  };
+  routes['observability.evalSchedules.create'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const suiteId = stringValue(body.suiteId) || 'sgg';
+    const suiteRevision = stringValue(body.suiteRevision) || 'fixture-v2';
+    const scheduleId = stringValue(body.scheduleId)
+      || `eval-schedule:${suiteId}:${nextPreviewEvalScheduleId++}`;
+    const now = Date.now();
+    const requestedNextDueAtMs = Number(body.nextDueAtMs);
+    const nextDueAtMs = Number.isFinite(requestedNextDueAtMs)
+      ? requestedNextDueAtMs
+      : now + 60_000;
+    const maxRuns = Number(body.maxRuns) || 30;
+    const oneShot = maxRuns === 1 && nextDueAtMs <= now + 1_500;
+    const runTraceId = suiteId === 'zhanggui-wenshu'
+      ? 'trace:room-turn:preview'
+      : 'trace:turn:preview';
+    const completedRun = oneShot
+      ? previewEvalScheduleRun(scheduleId, `eval:${suiteId}:preview:one-shot`, runTraceId)
+      : undefined;
+    const schedule = previewEvalSchedule(scheduleId, {
+      suiteId,
+      suiteRevision,
+      recurrenceKind: stringValue(body.recurrenceKind) === 'weekly' ? 'weekly' : 'daily',
+      recurrenceInterval: Number(body.recurrenceInterval) || 1,
+      maxRuns,
+      runCount: oneShot ? 1 : 0,
+      status: oneShot ? 'completed' : 'scheduled',
+      initialDueAtMs: nextDueAtMs,
+      nextDueAtMs,
+      ...(completedRun ? { latestRun: previewEvalLatestRun(completedRun) } : {}),
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+    previewEvalSchedules = [...previewEvalSchedules, schedule];
+    previewEvalScheduleRuns.set(scheduleId, completedRun ? [completedRun] : []);
+    if (completedRun) {
+      const summary = previewScheduledEvalSummary({
+        evalRunId: stringValue(completedRun.evalRunId),
+        suiteId,
+        suiteRevision,
+      });
+      previewEvalRunsByTrace = {
+        ...previewEvalRunsByTrace,
+        [runTraceId]: [...(previewEvalRunsByTrace[runTraceId] ?? []), summary],
+      };
+    }
+    return {
+      schemaVersion: 'rag-ime.eval-schedule-create.v1',
+      ok: true,
+      schedule,
+    };
+  };
   routes['terminal.sessions.list'] = () => ({ schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: previewTerminals });
   routes['terminal.session.create'] = (request: ControlRequest) => {
     const body = record(request.body);
@@ -1873,6 +1998,7 @@ function previewObservationSnapshot(filters: Record<string, unknown> = {}) {
     && (!stringValue(filters.sessionId) || item.sessionId === stringValue(filters.sessionId))
     && (!stringValue(filters.roomId) || item.roomId === stringValue(filters.roomId))
     && (!stringValue(filters.traceId) || item.traceId === stringValue(filters.traceId))
+    && (!stringValue(filters.runId) || item.runId === stringValue(filters.runId))
   ));
   const byCategory: Record<string, number> = {};
   const byStatus: Record<string, number> = {};
@@ -1896,6 +2022,380 @@ function previewObservationSnapshot(filters: Record<string, unknown> = {}) {
       byStatus,
     },
     items,
+  };
+}
+
+function previewCanonicalTrace(traceId: string): Record<string, unknown> {
+  const now = Date.now();
+  const isRag = traceId.includes('active-rag');
+  const isRoom = traceId.includes('room-turn');
+  const binding = isRag
+    ? { sessionId: 'active-rag:preview', caseId: 'case:rag-memory:preview' }
+    : isRoom
+      ? {
+          sessionId: 'session-room-present',
+          roomId: 'room-preview',
+          turnId: 'turn-room-preview',
+          workItemId: 'work:room-preview',
+        }
+      : {
+          sessionId: 'session-preview',
+          turnId: 'turn-preview',
+          workItemId: 'work:sgg-preview',
+          caseId: 'case:sgg-preview',
+        };
+  const relatedTraceId = isRag ? 'trace:turn:preview' : 'trace:active-rag:preview';
+  return {
+    schemaVersion: 'rag-ime.observability-trace-get.v1',
+    traceId,
+    trace: {
+      schemaVersion: 'rag-ime.trace-envelope.v1',
+      traceId,
+      sourceKind: isRag ? 'active_rag' : isRoom ? 'room' : 'agent',
+      status: 'completed',
+      binding,
+      parentTraceId: null,
+      links: [{ traceId: relatedTraceId, relation: 'related', targetKind: 'trace' }],
+      input: {
+        fingerprint: `sha256:${'1'.repeat(64)}`,
+        contentPolicy: 'redacted',
+        normalization: 'unicode_nfc',
+      },
+      spans: [
+        {
+          spanId: `${traceId}:span:turn`,
+          name: 'agent.turn',
+          parentSpanId: null,
+          status: 'completed',
+          startedAtMs: now - 2_200,
+          endedAtMs: now - 400,
+          durationMs: 1_800,
+          recorded: true,
+          unavailableReason: '',
+          metrics: { inputTokens: 1_024, outputTokens: 312 },
+          attributes: { provider: 'preview-provider', model: 'preview-agent-v1' },
+        },
+        {
+          spanId: `${traceId}:span:retrieval`,
+          name: 'active_rag.retrieve',
+          parentSpanId: `${traceId}:span:turn`,
+          status: 'completed',
+          startedAtMs: now - 1_900,
+          endedAtMs: now - 1_600,
+          durationMs: 300,
+          recorded: true,
+          unavailableReason: '',
+          metrics: { candidateCount: 12, selectedCount: 3 },
+          attributes: { provider: 'preview-rag', lane: 'hybrid' },
+        },
+        {
+          spanId: `${traceId}:span:memory`,
+          name: 'memory.recall',
+          parentSpanId: `${traceId}:span:retrieval`,
+          status: 'completed',
+          startedAtMs: now - 1_500,
+          endedAtMs: now - 1_300,
+          durationMs: 200,
+          recorded: true,
+          unavailableReason: '',
+          metrics: { recalledCount: 2 },
+          attributes: { store: 'preview-memory' },
+        },
+      ],
+      evidence: [
+        {
+          evidenceId: 'evidence:rag:1',
+          sourceKind: 'knowledge',
+          sourceRef: 'kb:preview-project-docs/chunk:12',
+          sourceLane: 'hybrid',
+          evidenceStage: 'retrieval_output',
+          disposition: 'included',
+          scores: { hybrid: 0.91 },
+          rankBefore: 2,
+          rankAfter: 1,
+          omissionReason: '',
+        },
+        {
+          evidenceId: 'evidence:memory:1',
+          sourceKind: 'memory',
+          sourceRef: 'memory:preview:room-semantics',
+          sourceLane: 'lexical',
+          evidenceStage: 'retrieval_output',
+          disposition: 'omitted',
+          scores: { lexical: 0.42 },
+          rankBefore: 4,
+          rankAfter: null,
+          omissionReason: '低于当前回答阈值',
+        },
+      ],
+      artifacts: [
+        {
+          artifactId: `artifact:${traceId}:eval-report`,
+          kind: 'eval_report',
+          mediaType: 'application/json',
+          sha256: 'b'.repeat(64),
+          byteSize: 2_048,
+          recordCount: 3,
+        },
+      ],
+      createdAtMs: now - 2_200,
+      updatedAtMs: now - 400,
+    },
+    truncated: false,
+    projectionSource: 'observation_journal',
+    observationWindow: {
+      firstSequence: 1,
+      lastSequence: 8,
+      resumeToken: 'observation:8',
+      nextBeforeSequence: null,
+    },
+  };
+}
+
+function previewEvalList(
+  traceId: string,
+  additionalItems: Record<string, unknown>[] = [],
+): Record<string, unknown> {
+  const now = Date.now();
+  const suite = previewSuiteForTrace(traceId);
+  const items = [
+    ...(suite ? [{
+        evalRunId: `eval:${suite.suiteId}:preview`,
+        mode: 'ground_truth',
+        metricAuthority: 'ground_truth',
+        truthStatus: 'frozen',
+        datasetId: `dataset:${suite.suiteId}:fixture`,
+        labelRevision: suite.suiteRevision,
+        evaluatorDisplayName: suite.displayName,
+        suiteBinding: {
+          suiteId: suite.suiteId,
+          suiteRevision: suite.suiteRevision,
+        },
+        metrics: { evidenceRecall: 0.92, answerGrounding: 0.88 },
+        status: 'completed',
+        createdAtMs: now - 1_800,
+        updatedAtMs: now - 1_700,
+      }] : []),
+    {
+      evalRunId: suite ? `eval:ai-judge:${suite.suiteId}:preview` : 'eval:ai-judge:rag-preview',
+      mode: 'ai_judge',
+      metricAuthority: 'ai_judge_estimate',
+      truthStatus: 'none',
+      datasetId: suite ? `dataset:${suite.suiteId}:judge` : 'dataset:rag-memory:trace-evidence',
+      labelRevision: 'judge:preview',
+      evaluatorDisplayName: suite ? 'Preview AI Judge' : 'Preview AI Judge · RAG/Memory',
+      metrics: { qualityEstimate: 0.84 },
+      status: 'completed',
+      createdAtMs: now - 1_600,
+      updatedAtMs: now - 1_500,
+    },
+    ...additionalItems,
+  ];
+  return {
+    schemaVersion: 'rag-ime.observability-eval-list.v1',
+    traceId,
+    total: items.length,
+    truncated: false,
+    items,
+  };
+}
+
+function previewEvidenceEvalRun(
+  body: Record<string, unknown>,
+  traceId: string,
+  existingCount: number,
+): Record<string, unknown> {
+  const now = Date.now();
+  const datasetId = stringValue(body.datasetId) || `manual:${traceId}`;
+  const labelRevision = stringValue(body.labelRevision) || 'manual:1';
+  return {
+    schemaVersion: 'rag-ime.eval-run.v1',
+    evalRunId: `eval:human:${traceId}:${existingCount + 1}`,
+    traceIds: [traceId],
+    mode: 'ground_truth',
+    metricAuthority: 'ground_truth',
+    truth: { status: 'human', datasetId, labelRevision },
+    evaluator: {
+      provider: 'human',
+      model: 'manual',
+      thinking: 'manual',
+      displayName: '人工标注',
+    },
+    metrics: { evidenceRecall: 1, evidencePrecision: 1 },
+    status: 'completed',
+    createdAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+function previewEvalSummary(run: Record<string, unknown>): Record<string, unknown> {
+  const truth = record(run.truth);
+  const evaluator = record(run.evaluator);
+  const mode = stringValue(run.mode) === 'ai_judge' ? 'ai_judge' : 'ground_truth';
+  return {
+    evalRunId: stringValue(run.evalRunId),
+    mode,
+    metricAuthority: mode === 'ai_judge' ? 'ai_judge_estimate' : 'ground_truth',
+    truthStatus: stringValue(truth.status) || 'human',
+    datasetId: stringValue(truth.datasetId),
+    labelRevision: stringValue(truth.labelRevision),
+    evaluatorDisplayName: stringValue(evaluator.displayName) || '人工标注',
+    metrics: record(run.metrics),
+    status: stringValue(run.status) || 'completed',
+    createdAtMs: Number(run.createdAtMs) || Date.now(),
+    updatedAtMs: Number(run.updatedAtMs) || Date.now(),
+  };
+}
+
+function previewScheduledEvalSummary({
+  evalRunId,
+  suiteId,
+  suiteRevision,
+}: {
+  evalRunId: string;
+  suiteId: string;
+  suiteRevision: string;
+}): Record<string, unknown> {
+  const now = Date.now();
+  const evaluatorDisplayName = suiteId === 'zhanggui-wenshu'
+    ? '掌柜问数'
+    : suiteId === 'sgg'
+      ? 'SGG 示例垂直 Agent'
+      : '垂直 Agent 自测';
+  return {
+    evalRunId,
+    mode: 'ground_truth',
+    metricAuthority: 'ground_truth',
+    truthStatus: 'frozen',
+    datasetId: `dataset:${suiteId}:fixture`,
+    labelRevision: suiteRevision,
+    evaluatorDisplayName,
+    suiteBinding: { suiteId, suiteRevision },
+    metrics: { evidencePrecision: 1, evidenceRecall: 1, evidenceF1: 1 },
+    status: 'completed',
+    createdAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+function previewSuiteForTrace(traceId: string): {
+  suiteId: string;
+  suiteRevision: string;
+  displayName: string;
+} | null {
+  if (traceId.includes('active-rag')) {
+    return null;
+  }
+  if (traceId.includes('room-turn')) {
+    return { suiteId: 'zhanggui-wenshu', suiteRevision: 'fixture-v2', displayName: '掌柜问数' };
+  }
+  return { suiteId: 'sgg', suiteRevision: 'fixture-v2', displayName: 'SGG 示例垂直 Agent' };
+}
+
+function previewEvalSuiteList(): Record<string, unknown> {
+  return {
+    schemaVersion: 'rag-ime.eval-suite-list.v1',
+    ok: true,
+    items: [
+      {
+        suiteId: 'sgg',
+        suiteRevision: 'fixture-v2',
+        displayName: 'SGG 示例垂直 Agent',
+        fixtureCount: 2,
+        capabilities: ['trace.emit', 'rag.retrieval', 'memory.recall', 'sandbox.self_test', 'eval.ground_truth'],
+      },
+      {
+        suiteId: 'zhanggui-wenshu',
+        suiteRevision: 'fixture-v2',
+        displayName: '掌柜问数',
+        fixtureCount: 2,
+        capabilities: ['trace.emit', 'rag.retrieval', 'memory.recall', 'sandbox.self_test', 'eval.ground_truth'],
+      },
+    ],
+  };
+}
+
+function previewEvalSchedule(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const now = Date.now();
+  const nextDueAtMs = now + 60 * 60 * 1_000;
+  const suiteId = stringValue(overrides.suiteId) || 'sgg';
+  const suiteRevision = stringValue(overrides.suiteRevision) || 'fixture-v2';
+  const latestRun = suiteId === 'sgg' && id === 'eval-schedule:sgg'
+    ? {
+        id: `${id}:run:1`,
+        scheduleId: id,
+        attempt: 1,
+        state: 'succeeded',
+        dueAtMs: now - 3_600_000,
+        claimedAtMs: now - 3_599_000,
+        finishedAtMs: now - 3_598_000,
+        evalRunId: 'eval:sgg:preview',
+        errorCode: '',
+      }
+    : {};
+  const requestedLatestRun = record(overrides.latestRun);
+  const resolvedLatestRun = Object.keys(requestedLatestRun).length
+    ? requestedLatestRun
+    : latestRun;
+  const requestedStatus = stringValue(overrides.status);
+  const status = requestedStatus === 'running'
+    || requestedStatus === 'completed'
+    || requestedStatus === 'failed'
+    ? requestedStatus
+    : 'scheduled';
+  return {
+    id,
+    suiteId,
+    suiteRevision,
+    recurrenceKind: overrides.recurrenceKind === 'weekly' ? 'weekly' : 'daily',
+    recurrenceInterval: Number(overrides.recurrenceInterval) || 1,
+    maxRuns: Number(overrides.maxRuns) || 30,
+    runCount: Number(overrides.runCount) || (Object.keys(latestRun).length ? 1 : 0),
+    status,
+    initialDueAtMs: Number(overrides.initialDueAtMs) || nextDueAtMs,
+    nextDueAtMs: Number(overrides.nextDueAtMs) || nextDueAtMs,
+    lastErrorCode: '',
+    createdAtMs: Number(overrides.createdAtMs) || now - 3_600_000,
+    updatedAtMs: Number(overrides.updatedAtMs) || now,
+    latestRun: resolvedLatestRun,
+  };
+}
+
+function previewEvalScheduleRun(
+  scheduleId: string,
+  evalRunId: string,
+  traceId: string,
+): Record<string, unknown> {
+  const now = Date.now();
+  return {
+    id: `${scheduleId}:run:1`,
+    scheduleId,
+    attempt: 1,
+    state: 'succeeded',
+    dueAtMs: now - 3_600_000,
+    claimedAtMs: now - 3_599_000,
+    finishedAtMs: now - 3_598_000,
+    evalRunId,
+    errorCode: '',
+    traceIds: [traceId],
+    traceIdsTruncated: false,
+  };
+}
+
+function previewEvalLatestRun(run: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: run.id,
+    scheduleId: run.scheduleId,
+    attempt: run.attempt,
+    state: run.state,
+    dueAtMs: run.dueAtMs,
+    claimedAtMs: run.claimedAtMs,
+    finishedAtMs: run.finishedAtMs,
+    evalRunId: run.evalRunId,
+    errorCode: run.errorCode,
   };
 }
 
@@ -3014,7 +3514,7 @@ function previewApprovalItems(now = Date.now()): AgentApprovalV1[] {
       preview: {
         summary: '构建并安装 Control Center 开发版本',
         command: 'scripts/install_product_stack.sh --include-pi --skip-mlx',
-        path: '/Volumes/undo 4t/git/personal-agent-workbench',
+        path: '/Users/example/personal-agent-workbench',
         target: 'Control Center.app',
         scope: '当前用户的开发安装',
         changes: ['重新构建前端', '替换开发版应用', '保留现有个人数据'],

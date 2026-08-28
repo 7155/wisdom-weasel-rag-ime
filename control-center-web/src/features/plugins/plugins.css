@@ -577,6 +577,34 @@ main[data-route-id='plugins'] .plugins-count {
 
 .installed-plugin__facts svg { flex: 0 0 auto; color: var(--color-text-tertiary); }
 
+.installed-plugin__usage {
+  display: grid;
+  margin: 0;
+  border-block: 1px solid var(--color-border-soft);
+  grid-column: 1 / -1;
+}
+
+.installed-plugin__usage > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border-soft);
+  grid-template-columns: minmax(84px, .28fr) minmax(0, 1.72fr);
+}
+
+.installed-plugin__usage > div:last-child { border-bottom: 0; }
+
+.installed-plugin__usage dt,
+.installed-plugin__usage dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.installed-plugin__usage dt { color: var(--color-text-tertiary); }
+.installed-plugin__usage dd { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+
 .installed-plugin[data-selected] {
   border-color: color-mix(in srgb, var(--color-accent) 62%, var(--color-border));
   background: var(--color-accent-subtle);

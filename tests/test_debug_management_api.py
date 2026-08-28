@@ -213,6 +213,15 @@ class DebugManagementApiTests(unittest.TestCase):
             (self.db_path.parent / "Agent" / "plugin-inbox").resolve(),
         )
 
+    def test_debug_service_binds_the_host_owned_vertical_sandbox_connector(self) -> None:
+        connector = self.service.agent_tools.sandbox_connector
+
+        self.assertIsNotNone(connector)
+        status = connector.status()
+        self.assertEqual(status["executionOwner"], "paw_host")
+        self.assertEqual(status["connectorOwner"], "pi_package")
+        self.assertIn("sgg", {item["suiteId"] for item in status["supportedSuites"]})
+
     def test_candidate_explain_returns_ranking_reasons(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(
@@ -2603,6 +2612,37 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(updated["session"]["title"], "深度检索")
         self.assertEqual(deleted["sessionId"], session_id)
 
+    def test_memory_maintenance_missing_job_is_json_expired_after_gateway_restart(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        job_id = "memory-maintenance:after-gateway-restart"
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/agent/memory-maintenance"
+                f"?jobId={quote(job_id)}",
+                timeout=5,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                status_code = response.status
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(status_code, 200)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["jobId"], job_id)
+        self.assertEqual(payload["state"], "expired")
+        self.assertFalse(payload["recovery"]["recoverable"])
+        self.assertTrue(payload["recovery"]["retryable"])
+        self.assertEqual(payload["recovery"]["action"], "trigger_new_job")
+
     def test_agent_session_models_projects_missing_workspace_as_json_conflict(self) -> None:
         class Handler(DebugRequestHandler):
             pass
@@ -3915,8 +3955,8 @@ class DebugManagementApiTests(unittest.TestCase):
         try:
             payloads = []
             for path in (
-                "/api/observability/snapshot?category=memory&limit=10",
-                "/control/v1/observability/snapshot?category=memory&limit=10",
+                "/api/observability/snapshot?category=memory&runId=memory-run-http&limit=10",
+                "/control/v1/observability/snapshot?category=memory&runId=memory-run-http&limit=10",
             ):
                 with urlopen(
                     f"http://127.0.0.1:{server.server_port}{path}",

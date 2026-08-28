@@ -83,20 +83,23 @@ class RoomLifecycleService:
         payload: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         value = dict(payload or {})
+        page = self.rooms.list_page(
+            include_archived=_bool(
+                value.get("includeArchived")
+            ),
+            limit=_integer(
+                value.get("limit"),
+                default=100,
+                minimum=1,
+                maximum=200,
+            ),
+            before_updated_at_ms=_optional_integer(value.get("beforeUpdatedAtMs")),
+            before_id=_optional_cursor_id(value.get("beforeId")),
+        )
         return {
             "schemaVersion": "rag-ime.agent-room-list.v1",
             "ok": True,
-            "items": self.rooms.list(
-                include_archived=_bool(
-                    value.get("includeArchived")
-                ),
-                limit=_integer(
-                    value.get("limit"),
-                    default=100,
-                    minimum=1,
-                    maximum=200,
-                ),
-            ),
+            **page,
         }
 
     def get_room(self, room_id: str) -> dict[str, object]:
@@ -746,3 +749,18 @@ def _integer(
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _optional_integer(value: object) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(9_223_372_036_854_775_807, parsed))
+
+
+def _optional_cursor_id(value: object) -> str | None:
+    normalized = " ".join(str(value or "").split())[:200]
+    return normalized or None
