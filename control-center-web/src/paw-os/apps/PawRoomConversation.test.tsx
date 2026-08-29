@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appendOptimisticRoomMessage, createRoomProjection } from '@/contracts/room-reducer';
 import { clearConversationScrollMemory } from '@/features/conversation-ui';
 import type { RoomSummary } from '@/features/rooms/room-types';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 import { PawRoomConversation } from './PawRoomWorkspace';
 
 afterEach(() => {
@@ -56,11 +58,37 @@ describe('PawRoomConversation', () => {
   it('surfaces an approval failure next to the decision it belongs to', async () => {
     const user = userEvent.setup();
     const decide = vi.fn().mockRejectedValue(new Error('approval store unreachable'));
-    renderRoom({ onApprovalDecision: decide });
+    const routes: string[] = [];
+    const fixture = roomConversation();
+    render(
+      <PawOsDesktopProvider openRoute={(route) => routes.push(route)} openWindow={() => undefined}>
+        <PawRoomConversation
+          onApprovalDecision={decide}
+          onRetryTurn={() => undefined}
+          projection={fixture.projection}
+          retryingTurn={false}
+          room={fixture.room}
+        />
+      </PawOsDesktopProvider>,
+    );
 
     await user.click(screen.getByRole('button', { name: '拒绝' }));
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: '拒绝' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '交给 Trace Agent' }));
+    const handoff = parseTraceAgentHandoff(routes[0]?.split('?', 2)[1] ?? '');
+    expect(handoff).toMatchObject({
+      kind: 'room',
+      entityId: 'approval-a',
+      roomId: 'room-live',
+      sessionId: 'session-a',
+      sourceRoute: '/rooms?room=room-live',
+      refs: {
+        approvalId: 'approval-a',
+        participantId: 'participant-a',
+        turnId: 'root-a',
+      },
+    });
   });
 
   it('expands an edit receipt into the shared structured diff reader, not a flat text wall', async () => {

@@ -70,16 +70,16 @@
     {
       "name": "plugin-creator",
       "when": [
-        "用户要求管理或创建可复用 Pi Package",
+        "安装、更新、回滚或创建 Pi Package",
         "缺少可复用 Tool 或 Skill"
       ],
       "notFor": [
-        "普通任务或一次性修改",
+        "已有能力可完成的一次性修改",
         "密钥、不明代码或绕过确认"
       ],
-      "does": "搜索、校验并生成安装预览；缺少时创建包。",
+      "does": "先搜索；无匹配时创建、校验并预览。",
       "input": "能力、来源和验收。",
-      "output": "包、校验与安装提议。"
+      "output": "匹配包或草案、校验和安装提议。"
     },
     {
       "name": "bootstrap-project-context",

@@ -5,6 +5,7 @@ import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { ActivitySummary, FxActivityStack, PublicActivityFeed, ReasoningActivitySummary, resetActivityDisclosureOverrides } from './ActivitySummary';
 import { inspectableRawResultText, publicToolResultView } from './public-tool-result';
+import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 
 afterEach(() => {
   cleanup();
@@ -426,6 +427,34 @@ describe('Agent tool activity details', () => {
 
     rerender(<ActivitySummary activities={[{ ...activity, updatedAtMs: 3 }]} inline />);
     expect(group).toHaveAttribute('open');
+  });
+
+  it('can send an exact failed Tool receipt to Trace Agent', async () => {
+    const user = userEvent.setup();
+    const routes: string[] = [];
+    const activity = toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-trace-edit',
+      toolName: 'edit',
+      isError: true,
+      result: { details: { error: 'resourceRevision must be sha256' } },
+    });
+    const { container } = render(
+      <PawOsDesktopProvider openRoute={(route) => routes.push(route)} openWindow={() => undefined}>
+        <ActivitySummary activities={[activity]} inline sessionId="session-trace" />
+      </PawOsDesktopProvider>,
+    );
+
+    fireEvent.click(container.querySelector<HTMLDetailsElement>('details.agent-activity--inline > summary')!);
+    fireEvent.click(screen.getByText('编辑文件').closest('summary')!);
+    await user.click(screen.getByRole('button', { name: '交给 Trace Agent' }));
+
+    const handoff = parseTraceAgentHandoff(routes[0].split('?', 2)[1] ?? '');
+    expect(handoff).toMatchObject({
+      kind: 'tool',
+      sessionId: 'session-trace',
+      error: 'resourceRevision must be sha256',
+      refs: { toolCallId: 'call-trace-edit', toolName: 'edit' },
+    });
   });
 
   it('shows a Pi validation message when the Tool receipt has content but empty details', () => {

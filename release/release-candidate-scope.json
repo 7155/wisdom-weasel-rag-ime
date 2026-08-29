@@ -1,9 +1,9 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-28T20:59:18Z",
+  "generatedAt": "2026-08-29T03:54:18Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
-    "branch": "codex/paw-final-20260829",
+    "branch": "main",
     "baseCommit": "69ccce70a000414dea752e4f68e2a6a5c931d1c1",
     "candidateCommitPolicy": "This inventory covers the exact base-to-HEAD source candidate; final installation and foreground acceptance remain separate evidence."
   },
@@ -19,7 +19,7 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 827
+      "pathCount": 829
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 27
+      "pathCount": 35
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -47,16 +47,16 @@
     }
   },
   "summary": {
-    "pathCount": 1378,
+    "pathCount": 1388,
     "dispositionCounts": {
       "delete_old_implementation": 22,
-      "keep_release": 1356
+      "keep_release": 1366
     },
     "groupCounts": {
-      "control_center_release_ui": 827,
+      "control_center_release_ui": 829,
       "desktop_semantic_accessibility": 12,
       "installation_reliability": 13,
-      "memory_curation": 27,
+      "memory_curation": 35,
       "project_harness": 18,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
@@ -78,13 +78,13 @@
     }
   ],
   "verification": {
-    "projectHarness": "passed after exact 1378-path inventory refresh",
+    "projectHarness": "passed after exact 1388-path inventory refresh",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
-    "frontendTypecheck": "passed on canonical implementation before clean integration",
-    "frontendUnitTests": "2316/2316 passed on canonical implementation before clean integration",
-    "frontendBuild": "passed on canonical implementation before clean integration",
+    "frontendTypecheck": "passed on the canonical main worktree during final integration",
+    "frontendUnitTests": "262/262 focused changed-scope tests passed across 14 files on the canonical main worktree",
+    "frontendBuild": "passed on the canonical main worktree; Vite transformed 4458 modules",
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
     "installedPiPackageCanary": "active managed Pi Runtime created and prepared one isolated local Package with one Skill; no real package state was mutated",
@@ -92,12 +92,16 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1378/1378 base-to-HEAD paths classified; 1356 retained and 22 old implementations deleted",
-    "repositoryPublicAudit": "Current 2026-08-27 repository-only audit is blocked by tracked handoff artifacts, machine-specific paths, the dirty worktree, pending foreground acceptance, declared blocked product status, and a missing release manifest. This file is a path-classification inventory, not a current public-release readiness receipt.",
+    "releaseScopeCoverage": "1388/1388 base-to-HEAD paths classified; 1366 retained and 22 old implementations deleted",
+    "repositoryPublicAudit": "Current 2026-08-29 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
     "electronUnitTests": "14/14 passed on canonical implementation before clean integration",
-    "focusedMemoryMasterGate": "290/290 passed on canonical implementation before clean integration"
+    "focusedMemoryMasterGate": "290/290 passed on canonical implementation before clean integration",
+    "focusedFinalBackendTests": "9/9 passed for interview metrics, knowledge provider identity, Pi idle admission, and managed Skill routing",
+    "finalTraceIndependentReview": "CLEAR after structured handoff privacy and source-binding review; 19/19 focused Trace tests passed",
+    "framelessPlanetFocusedTests": "106/106 passed across compositor and PAWOS style tests; TypeScript project build passed",
+    "pluginLifecycleProposalFocusedTests": "2/2 focused Tool lifecycle tests passed; all five lifecycle operations stop at a bound preview and expose no apply operation"
   },
   "items": [
     {
@@ -9745,6 +9749,76 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/handoff.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep structured, bounded, privacy-safe Trace Agent handoff regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/handoff.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep structured, bounded, privacy-safe Trace Agent handoff navigation."
+    },
+    {
+      "path": "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the source-qualified Memory and RAG evaluation coverage map."
+    },
+    {
+      "path": "eval/interview-metrics/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the bounded interview-metrics evidence and claim guide."
+    },
+    {
+      "path": "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the Trace and Eval compatibility evidence map."
+    },
+    {
+      "path": "eval/interview-metrics/evidence-ledger.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the machine-validated metrics, run, dataset, and claim-boundary ledger."
+    },
+    {
+      "path": "scripts/check_interview_metrics.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the deterministic interview-metrics evidence validator."
+    },
+    {
+      "path": "tests/test_interview_metrics.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep regression coverage for metrics evidence and claim boundaries."
+    },
+    {
+      "path": "rag_ime/knowledge_library/identity.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep canonical knowledge embedding provider identity normalization across configured and runtime projections."
+    },
+    {
+      "path": "tests/test_knowledge_library_worker.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep regression coverage for canonical knowledge embedding provider identity."
     }
   ]
 }

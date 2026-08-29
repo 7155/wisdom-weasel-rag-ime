@@ -515,6 +515,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "create_package",
             "validate",
             "propose_install",
+            "propose_enable",
+            "propose_disable",
+            "propose_update",
+            "propose_rollback",
+            "propose_uninstall",
         ),
         "resultPresentation": "tool_result",
     },
@@ -2111,6 +2116,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "artifactId": {"type": "string", "minLength": 1, "maxLength": 240},
     "reason": {"type": "string", "minLength": 1, "maxLength": 2_000},
     "draftId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "pluginId": {"type": "string", "minLength": 1, "maxLength": 240},
     "manifest": {"type": "object"},
     "files": {"type": "object"},
     "sourcePath": {"type": "string", "minLength": 1, "maxLength": 1_024},
@@ -2280,7 +2286,9 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "runId", "batchId", "targetRunId", "message", "artifactId", "limit",
     ),
     "session_search": ("query", "limit", "includeArchived"),
-    "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
+    "plugins": (
+        "draftId", "manifest", "files", "sourcePath", "validationToken", "pluginId", "enable"
+    ),
     "sandbox": ("suiteId", "suiteRevision"),
     "browser": (
         "deviceId", "tabId", "refId", "url", "text", "script", "clear", "direction",
@@ -2358,6 +2366,11 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("agents", "call"): ("targetRunId", "message"),
     ("plugins", "create_package"): ("draftId", "packageJson", "files"),
     ("plugins", "propose_install"): ("validationToken",),
+    ("plugins", "propose_enable"): ("pluginId",),
+    ("plugins", "propose_disable"): ("pluginId",),
+    ("plugins", "propose_update"): ("validationToken",),
+    ("plugins", "propose_rollback"): ("pluginId",),
+    ("plugins", "propose_uninstall"): ("pluginId",),
     ("browser", "run"): ("script",),
     ("browser", "navigate"): ("url",),
     ("browser", "click"): ("refId",),
@@ -3583,16 +3596,27 @@ class ControlToolGateway:
             return dict(self.extensions.create_package_draft(args))  # type: ignore[attr-defined]
         if operation == "validate":
             return dict(self.extensions.validate(args))  # type: ignore[attr-defined]
-        if operation == "propose_install":
-            return dict(
-                self.extensions.preview(  # type: ignore[attr-defined]
+        proposal_actions = {
+            "propose_install": "install",
+            "propose_enable": "enable",
+            "propose_disable": "disable",
+            "propose_update": "update",
+            "propose_rollback": "rollback",
+            "propose_uninstall": "uninstall",
+        }
+        action = proposal_actions.get(operation)
+        if action is not None:
+            preview: dict[str, object] = {"action": action}
+            if action in {"install", "update"}:
+                preview.update(
                     {
-                        "action": "install",
                         "validationToken": args.get("validationToken"),
                         "enable": args.get("enable") is True,
                     }
                 )
-            )
+            else:
+                preview["pluginId"] = args.get("pluginId")
+            return dict(self.extensions.preview(preview))  # type: ignore[attr-defined]
         raise ValueError("unsupported plugins operation")
 
     def _sandbox(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:

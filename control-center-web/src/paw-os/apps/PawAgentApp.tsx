@@ -41,6 +41,7 @@ import { PawSessionWorkspace } from './PawSessionWorkspace';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
 import { PawAgentHome } from './PawAgentHome';
 import { PawWindowLeadingPortal, usePawWindowLeadingChromeTarget } from '../shell/PawWindowChrome';
+import { TraceAgentHandoffButton, type TraceAgentHandoffInput } from '@/features/trace-agent/handoff';
 
 type Selection =
   | { kind: 'new'; draft?: string }
@@ -76,6 +77,7 @@ export function PawAgentApp({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
+  const [actionTrace, setActionTrace] = useState<TraceAgentHandoffInput>();
   const [showArchived, setShowArchived] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary>();
   const [deleting, setDeleting] = useState(false);
@@ -209,6 +211,7 @@ export function PawAgentApp({
   async function archiveSession(session: SessionSummary): Promise<void> {
     const archived = session.status === 'archived';
     setActionError('');
+    setActionTrace(undefined);
     try {
       await transport.request({
         pathId: 'agent.session.archive',
@@ -226,6 +229,7 @@ export function PawAgentApp({
       setCatalogRevision((value) => value + 1);
     } catch (reason) {
       setActionError(errorText(reason));
+      setActionTrace(agentDirectoryActionHandoff(session, archived ? 'restore' : 'archive', reason));
     }
   }
 
@@ -233,6 +237,7 @@ export function PawAgentApp({
     if (!deleteTarget || deleting) return;
     setDeleting(true);
     setActionError('');
+    setActionTrace(undefined);
     try {
       await transport.request({ pathId: 'agent.session.delete', params: { sessionId: deleteTarget.id } });
       useAgentLiveStore.getState().clear(deleteTarget.id);
@@ -242,6 +247,7 @@ export function PawAgentApp({
       setDeleteTarget(undefined);
     } catch (reason) {
       setActionError(errorText(reason));
+      setActionTrace(agentDirectoryActionHandoff(deleteTarget, 'delete', reason));
     } finally {
       setDeleting(false);
     }
@@ -270,8 +276,28 @@ export function PawAgentApp({
         </label>
         <div className="paw-agent-recents" aria-busy={loading || undefined}>
           {loading && !sessions.length && !rooms.length ? <RailNotice icon={<LoaderCircle className="ui-spin" size={15} />} text="正在读取工作记录" /> : null}
-          {loadError ? <RailNotice action={() => setCatalogRevision((value) => value + 1)} text={loadError} /> : null}
-          {actionError ? <RailNotice action={() => setActionError('')} text={actionError} /> : null}
+          {loadError ? (
+            <RailNotice
+              action={() => setCatalogRevision((value) => value + 1)}
+              text={loadError}
+              traceHandoff={{
+                kind: 'generic',
+                entityId: 'agent-catalog',
+                title: 'Agent 工作记录读取失败',
+                summary: loadError,
+                error: loadError,
+                sourceRoute: '/agent',
+                refs: { operation: 'catalog-load', surface: 'agent-directory' },
+              }}
+            />
+          ) : null}
+          {actionError ? (
+            <RailNotice
+              action={() => { setActionError(''); setActionTrace(undefined); }}
+              text={actionError}
+              traceHandoff={actionTrace}
+            />
+          ) : null}
           {projectGroups.map((group) => (
             <ProjectFolder
               group={group}
@@ -279,7 +305,7 @@ export function PawAgentApp({
               onOpenRoom={(id) => { setSelection({ kind: 'room', id }); setRailOpen(false); }}
               onOpenSession={(id) => { setSelection({ kind: 'session', id }); setRailOpen(false); }}
               onArchiveSession={(session) => void archiveSession(session)}
-              onDeleteSession={(session) => { setActionError(''); setDeleteTarget(session); }}
+              onDeleteSession={(session) => { setActionError(''); setActionTrace(undefined); setDeleteTarget(session); }}
               selection={selection}
             />
           ))}
@@ -460,8 +486,16 @@ function SessionActions({ onArchive, onDelete, session }: { onArchive: () => voi
   return <Menu><MenuTrigger asChild><button aria-label={`更多“${session.title}”操作`} className="paw-agent-row-menu" type="button"><MoreHorizontal size={14} /></button></MenuTrigger><MenuContent align="end"><MenuItem onSelect={onArchive}>{archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}{archived ? '恢复 Session' : '归档 Session'}</MenuItem><MenuSeparator /><MenuItem className="paw-agent-row-menu__danger" onSelect={onDelete}><Trash2 size={15} />删除 Session</MenuItem></MenuContent></Menu>;
 }
 
-function RailNotice({ action, icon, text }: { action?: () => void; icon?: ReactNode; text: string }) {
-  return <div className="paw-agent-rail-notice">{icon}<span>{text}</span>{action ? <button onClick={action} type="button">重试</button> : null}</div>;
+function RailNotice({ action, icon, text, traceHandoff }: {
+  action?: () => void;
+  icon?: ReactNode;
+  text: string;
+  traceHandoff?: TraceAgentHandoffInput;
+}) {
+  return <div className="paw-agent-rail-notice">
+    {icon}<span>{text}</span>{action ? <button onClick={action} type="button">重试</button> : null}
+    {traceHandoff ? <TraceAgentHandoffButton handoff={traceHandoff} /> : null}
+  </div>;
 }
 
 function initialSelection(
@@ -633,4 +667,23 @@ function record(value: unknown): Record<string, unknown> {
 
 function errorText(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '工作没有成功开始，请重试。';
+}
+
+function agentDirectoryActionHandoff(
+  session: SessionSummary,
+  operation: 'archive' | 'restore' | 'delete',
+  reason: unknown,
+): TraceAgentHandoffInput {
+  const message = errorText(reason);
+  const operationLabel = operation === 'archive' ? '归档' : operation === 'restore' ? '恢复' : '删除';
+  return {
+    kind: 'session',
+    entityId: session.id,
+    title: `Session ${operationLabel}失败`,
+    summary: message,
+    error: reason instanceof Error ? reason.message : message,
+    sessionId: session.id,
+    sourceRoute: `/agent?session=${encodeURIComponent(session.id)}`,
+    refs: { operation, surface: 'agent-directory', sessionStatus: session.status },
+  };
 }

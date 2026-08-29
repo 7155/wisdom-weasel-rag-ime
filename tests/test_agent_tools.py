@@ -5267,6 +5267,88 @@ class ControlToolGatewayTests(unittest.TestCase):
             item for item in self.gateway.manifests()["items"] if item["id"] == "plugins"
         )
         self.assertNotIn("apply", plugin_manifest["operations"])
+        self.assertEqual(
+            plugin_manifest["operations"],
+            [
+                "catalog",
+                "list",
+                "create_package",
+                "validate",
+                "propose_install",
+                "propose_enable",
+                "propose_disable",
+                "propose_update",
+                "propose_rollback",
+                "propose_uninstall",
+            ],
+        )
+        runtime_plugin = next(
+            item
+            for item in self.gateway.runtime_manifests(self.session)
+            if item["name"] == "plugins"
+        )
+        runtime_branches = {
+            branch["properties"]["op"]["const"]: branch
+            for branch in runtime_plugin["parameters"]["oneOf"]
+        }
+        self.assertEqual(
+            runtime_branches["propose_enable"]["required"],
+            ["op", "pluginId"],
+        )
+        self.assertEqual(
+            runtime_branches["propose_update"]["required"],
+            ["op", "validationToken"],
+        )
+
+    def test_agent_can_propose_plugin_lifecycle_previews_without_applying_them(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class _Extensions:
+            def preview(self, payload):
+                calls.append(dict(payload))
+                return {
+                    "ok": True,
+                    "proposalId": f"proposal-{payload['action']}",
+                    "requiredConfirm": "apply",
+                }
+
+        self.gateway.extensions = _Extensions()
+        requests = (
+            ("propose_enable", {"pluginId": "example.plugin"}),
+            ("propose_disable", {"pluginId": "example.plugin"}),
+            (
+                "propose_update",
+                {"validationToken": "validation:example.plugin:2"},
+            ),
+            ("propose_rollback", {"pluginId": "example.plugin"}),
+            ("propose_uninstall", {"pluginId": "example.plugin"}),
+        )
+
+        for operation, args in requests:
+            with self.subTest(operation=operation):
+                response = self.gateway.execute(
+                    self._tool_call("plugins", operation, **args)
+                )
+                self.assertTrue(response["result"]["ok"])
+                self.assertEqual(
+                    response["result"]["proposalId"],
+                    f"proposal-{operation.removeprefix('propose_')}",
+                )
+
+        self.assertEqual(
+            calls,
+            [
+                {"action": "enable", "pluginId": "example.plugin"},
+                {"action": "disable", "pluginId": "example.plugin"},
+                {
+                    "action": "update",
+                    "validationToken": "validation:example.plugin:2",
+                    "enable": False,
+                },
+                {"action": "rollback", "pluginId": "example.plugin"},
+                {"action": "uninstall", "pluginId": "example.plugin"},
+            ],
+        )
 
     def test_agent_schedule_requires_approval_and_applies_the_bound_preview(self) -> None:
         calls: list[tuple[str, object]] = []

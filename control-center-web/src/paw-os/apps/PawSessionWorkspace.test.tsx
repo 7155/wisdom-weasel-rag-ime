@@ -11,9 +11,11 @@ import { parseAgentEvent } from '@/contracts/validators';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import type { SessionSummary } from '@/features/agent/types';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { ControlTransportHttpError } from '@/platform/http-transport';
 import type { ControlRequest } from '@/platform/transport';
+import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import appsCss from './paw-apps.css?raw';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
@@ -993,6 +995,44 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(screen.queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('请开始这轮实现');
     useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('offers the current Session to Trace Agent from the shared error alert', async () => {
+    const sessionId = 'session-snapshot-failure';
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': () => { throw new Error('snapshot unavailable'); },
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+    });
+    const routes: string[] = [];
+    render(
+      <PawOsDesktopProvider openRoute={(route) => routes.push(route)} openWindow={() => undefined}>
+        <ControlTransportProvider transport={transport}>
+          <TooltipProvider>
+            <PawSessionWorkspace
+              record={{ ...liveSession(), id: sessionId }}
+              recordId={sessionId}
+              onNewWork={vi.fn()}
+              onSessionCreated={vi.fn()}
+              onSessionUpdated={vi.fn()}
+            />
+          </TooltipProvider>
+        </ControlTransportProvider>
+      </PawOsDesktopProvider>,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session 操作没有完成，请重新同步后重试。');
+    await userEvent.setup().click(screen.getByRole('button', { name: '交给 Trace Agent' }));
+    const handoff = parseTraceAgentHandoff(routes[0]?.split('?', 2)[1] ?? '');
+    expect(handoff).toMatchObject({
+      kind: 'session',
+      entityId: `session:${sessionId}:error`,
+      sessionId,
+      sourceRoute: `/agent?session=${sessionId}`,
+      refs: { surface: 'session-workspace' },
+    });
   });
 
   it('uses one compact on-demand row when the Session has no subagents', async () => {

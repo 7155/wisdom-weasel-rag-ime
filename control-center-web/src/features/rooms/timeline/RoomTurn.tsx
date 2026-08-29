@@ -746,6 +746,7 @@ export function RoomTurn({
           participantName={participant ? roomParticipantPlanetName(participant) : undefined}
           attention={laneState === 'failed'}
           onApprovalDecision={onApprovalDecision}
+          roomId={projection.roomId}
         /> : null}
         {visibleMessages.length ? <div className="room-agent-lane__posts">
           {visibleMessages.map((message) => <Fragment key={message.id}>
@@ -918,6 +919,7 @@ function ActivityLog({
   participantName,
   participantNames = {},
   onApprovalDecision,
+  roomId,
 }: {
   activities: RoomActivityProjection[];
   active: boolean;
@@ -926,6 +928,7 @@ function ActivityLog({
   participantName?: string;
   participantNames?: Readonly<Record<string, string>>;
   onApprovalDecision?: RoomTurnProps['onApprovalDecision'];
+  roomId: string;
 }) {
   const publicActivities = roomVisibleIncrementalActivities(activities);
   const requiresRoomApproval = publicActivities.some((activity) => (
@@ -1023,6 +1026,7 @@ function ActivityLog({
           arriving={arriving}
           key={activity.id}
           recovered={recovered}
+          roomId={roomId}
         />;
       }
       const description = describeRoomActivity(activity, participantName, participantNames);
@@ -1734,10 +1738,12 @@ function RoomToolActivity({
   activity,
   arriving,
   recovered,
+  roomId,
 }: {
   activity: RoomActivityProjection;
   arriving: boolean;
   recovered?: boolean;
+  roomId: string;
 }) {
   const payload = activity.payload;
   const approvalId = textValue(payload.approvalId);
@@ -1830,7 +1836,27 @@ function RoomToolActivity({
           {detailView.request.length ? <PublicToolRequest view={detailView} /> : null}
           {detailView.output ? <PublicToolOutput view={detailView} /> : null}
           <PublicToolFields view={detailView} />
-          {detailView.error ? <PublicToolError reason={detailView.error} /> : null}
+          {detailView.error ? (
+            <PublicToolError
+              handoff={{
+                kind: 'tool',
+                entityId: textValue(payload.toolCallId) || activity.id,
+                title: `${detailView.toolLabel}失败`,
+                summary: detailView.summary || detailView.error,
+                error: detailView.error,
+                roomId,
+                sessionId: activity.sourceSessionId,
+                refs: {
+                  activityId: activity.id,
+                  turnId: activity.turnId,
+                  participantId: activity.participantId,
+                  toolCallId: textValue(payload.toolCallId),
+                  toolName: textValue(payload.toolName),
+                },
+              }}
+              reason={detailView.error}
+            />
+          ) : null}
           {approvalDescription ? (
             <section className="room-agent-activity__approval" aria-label="Tool 审批状态">
               <ShieldAlert aria-hidden="true" size={14} />

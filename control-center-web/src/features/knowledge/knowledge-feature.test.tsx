@@ -239,6 +239,7 @@ describe('document knowledge library', () => {
     renderKnowledge(transport);
 
     expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '重新解析 runtime.pdf' }));
     const reparseDialog = screen.getByRole('dialog', { name: '重新解析文档' });
     await user.click(within(reparseDialog).getByRole('combobox', { name: '解析方式' }));

@@ -116,7 +116,7 @@ describe('PAWOS compositor window frame', () => {
     expect(groups[0]?.packets.map((packet) => packet.id)).toEqual(['activity:dispatch-a']);
   });
 
-  it('keeps the Room reduced and participant Sessions draggable with complete window chrome', async () => {
+  it('keeps the Room reduced while participant planets use a compact frameless surface', async () => {
     const originalWidth = window.innerWidth;
     const originalHeight = window.innerHeight;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
@@ -141,47 +141,24 @@ describe('PAWOS compositor window frame', () => {
       expect(screen.queryByRole('region', { name: /横向滚动查看/ })).not.toBeInTheDocument();
       const shell = await screen.findByLabelText('伙伴 1窗口');
       expect(shell).not.toHaveAttribute('data-focus-locked');
-      expect(shell).toHaveAttribute('data-frame-mode', 'window');
-      /* A planet carries the complete Session in the same normal window
-         traffic-light cluster, in the same slot and the same order, as the
-         Room window it collaborates with — never a lone top-right X. Inside the focus
-         layout both drop maximize together, because the layout owns
-         geometry, so the two clusters stay verb-for-verb identical. */
+      expect(shell).toHaveAttribute('data-frame-mode', 'planet');
+      expect(shell.querySelector('.paw-planet-surface')).toBeInTheDocument();
+      expect(shell.querySelector('.paw-window')).toBeNull();
+      expect(shell.querySelector('.paw-window-titlebar')).toBeNull();
+      expect(shell.querySelector('.paw-traffic-lights')).toBeNull();
+      expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(0);
+      expect(within(shell).getByText('伙伴 1')).toBeInTheDocument();
+      expect(within(shell).getByRole('button', { name: '关闭伙伴 1行星窗口' })).toBeInTheDocument();
+      /* The Room remains the only generic desktop window. A planet keeps its
+         identity and low-weight close affordance inside the content surface,
+         while its Session/Trace actions stay owned by the read-only observer. */
       const roomShell = await screen.findByLabelText('Room A窗口');
       expect(roomShell.querySelectorAll('.paw-traffic-lights')).toHaveLength(1);
-      const clusterVerbs = (host: HTMLElement) => [...host.querySelectorAll('.paw-traffic-lights button')]
-        .map((button) => button.getAttribute('data-action'));
-      expect(clusterVerbs(shell)).toEqual(['close', 'minimize']);
-      expect(clusterVerbs(roomShell)).toEqual(['close', 'minimize']);
-      expect(within(shell).getByRole('button', { name: '关闭窗口' })).toBeInTheDocument();
-      expect(within(shell).getByRole('button', { name: '最小化窗口' })).toBeInTheDocument();
-      /* The lights stay the first children so the shared nth-child
-         red/yellow/green rules never slide onto the wrong verb. */
-      expect(shell.querySelector('.paw-traffic-lights')!.firstElementChild)
-        .toHaveAttribute('data-action', 'close');
-      expect(roomShell.querySelector('.paw-traffic-lights')!.firstElementChild)
-        .toHaveAttribute('data-action', 'close');
-      expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(8);
       expect(Number.parseFloat(shell.style.width)).toBeGreaterThanOrEqual(280);
       expect(Number.parseFloat(shell.style.height)).toBeGreaterThanOrEqual(210);
       expect(Number.parseFloat(roomShell.style.width)).toBeLessThan(1440 * .8);
 
-      const initialTransform = shell.style.transform;
-      const initialY = transformCoordinate(initialTransform, 'y');
-      const initialWidth = Number.parseFloat(shell.style.width);
-      const titlebar = shell.querySelector('.paw-window-titlebar')!;
-      fireEvent.pointerDown(titlebar, { button: 0, clientX: 220, clientY: 500, pointerId: 41 });
-      fireEvent.pointerMove(window, { clientX: 232, clientY: 508, pointerId: 41 });
-      fireEvent.pointerUp(window, { clientX: 232, clientY: 508, pointerId: 41 });
-      await waitFor(() => expect(transformCoordinate(shell.style.transform, 'y')).toBe(initialY + 8));
-
-      const eastResize = shell.querySelector('[data-handle="east"]') as HTMLElement;
-      fireEvent.pointerDown(eastResize, { button: 0, clientX: 500, clientY: 500, pointerId: 42 });
-      fireEvent.pointerMove(window, { clientX: 520, clientY: 500, pointerId: 42 });
-      fireEvent.pointerUp(window, { clientX: 520, clientY: 500, pointerId: 42 });
-      await waitFor(() => expect(Number.parseFloat(shell.style.width)).toBe(initialWidth + 20));
-
-      fireEvent.click(within(shell).getByRole('button', { name: '关闭窗口' }));
+      fireEvent.click(within(shell).getByRole('button', { name: '关闭伙伴 1行星窗口' }));
       await waitFor(() => expect(screen.queryByLabelText('伙伴 1窗口')).not.toBeInTheDocument());
       expect(screen.getByLabelText('伙伴 2窗口')).toBeInTheDocument();
     } finally {
@@ -271,7 +248,11 @@ describe('PAWOS compositor window frame', () => {
       expect(Math.min(...planetShells.map((shell) => Number.parseFloat(shell.style.width)))).toBeGreaterThanOrEqual(280);
       expect(Math.min(...planetShells.map((shell) => Number.parseFloat(shell.style.height)))).toBeGreaterThanOrEqual(210);
       for (const shell of planetShells) {
-        expect(shell).toHaveAttribute('data-frame-mode', 'window');
+        expect(shell).toHaveAttribute('data-frame-mode', 'planet');
+        expect(shell.querySelector('.paw-window')).toBeNull();
+        expect(shell.querySelector('.paw-window-titlebar')).toBeNull();
+        expect(shell.querySelector('.paw-traffic-lights')).toBeNull();
+        expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(0);
         const x = transformCoordinate(shell.style.transform, 'x');
         const y = transformCoordinate(shell.style.transform, 'y');
         expect(x + Number.parseFloat(shell.style.width)).toBeLessThanOrEqual(window.innerWidth);
@@ -299,6 +280,34 @@ describe('PAWOS compositor window frame', () => {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });
     }
+  });
+
+  it('routes flow state and tracking onto the frameless planet surface', () => {
+    render(
+      <FrameHarness
+        flowState="arrival"
+        flowTracked
+        focusFrame={{ x: 120, y: 70, width: 420, height: 300 }}
+        frameMode="planet"
+        initial={{ x: 20, y: 30, width: 760, height: 560 }}
+        onCommit={() => undefined}
+        targetKind="participant"
+        title="Mars"
+      >
+        <div>公开对话</div>
+      </FrameHarness>,
+    );
+
+    const shell = screen.getByLabelText('Mars窗口');
+    const surface = shell.querySelector('.paw-planet-surface');
+    expect(surface).toBeInTheDocument();
+    expect(surface).toHaveAttribute('data-flow-state', 'arrival');
+    expect(surface).toHaveAttribute('data-flow-tracked', 'true');
+    expect(within(surface as HTMLElement).getByText('Mars')).toBeInTheDocument();
+    expect(within(surface as HTMLElement).getByRole('button', { name: '关闭Mars行星窗口' })).toBeInTheDocument();
+    expect(shell.querySelector('.paw-window')).toBeNull();
+    expect(shell.querySelector('.paw-window-titlebar')).toBeNull();
+    expect(shell.querySelectorAll('.paw-window-resize')).toHaveLength(0);
   });
 
   it('moves on the compositor and commits state only when the pointer finishes', () => {
@@ -867,15 +876,18 @@ function LiveRoomChrome() {
   );
 }
 
-function FrameHarness({ appId = 'agent', children, flowTracked, focusFrame, initial, onCommit, overview, placement, targetKind, windowChrome }: { appId?: PawAppId; children: React.ReactNode; flowTracked?: boolean; focusFrame?: PawWindowBounds; initial: PawWindowBounds; onCommit: (bounds: PawWindowBounds) => void; overview?: boolean; placement?: 'maximized' | 'left' | 'right'; targetKind?: 'room'; windowChrome?: string }) {
+function FrameHarness({ appId = 'agent', children, collaborationRole, flowState, flowTracked, focusFrame, frameMode, initial, onCommit, overview, placement, targetKind, title = 'Rooms', windowChrome }: { appId?: PawAppId; children: React.ReactNode; collaborationRole?: 'primary' | 'satellite' | 'unrelated' | 'hidden'; flowState?: 'source' | 'arrival'; flowTracked?: boolean; focusFrame?: PawWindowBounds; frameMode?: 'window' | 'focus-card' | 'planet'; initial: PawWindowBounds; onCommit: (bounds: PawWindowBounds) => void; overview?: boolean; placement?: 'maximized' | 'left' | 'right'; targetKind?: 'room' | 'participant'; title?: string; windowChrome?: string }) {
   const [bounds, setBounds] = useState(initial);
   return (
     <PawWindowFrame
       active
       appId={appId}
       bounds={bounds}
+      collaborationRole={collaborationRole}
+      flowState={flowState}
       flowTracked={flowTracked}
       focusFrame={focusFrame}
+      frameMode={frameMode}
       onBoundsCommit={(next) => { onCommit(next); setBounds(next); }}
       onClose={() => undefined}
       onFocus={() => undefined}
@@ -885,7 +897,7 @@ function FrameHarness({ appId = 'agent', children, flowTracked, focusFrame, init
       onOpenFromOverview={() => undefined}
       placement={placement}
       targetKind={targetKind}
-      title="Rooms"
+      title={title}
       windowChrome={windowChrome}
       windowId="rooms"
       zIndex={10}

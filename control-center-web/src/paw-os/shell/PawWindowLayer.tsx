@@ -94,10 +94,13 @@ export function PawWindowLayer() {
         focusReservation,
       )
     : new Map<string, PawWindowBounds>(), [collaborationFocusGroup, focusReservation, viewport, windows]);
-  const focusFrames = useMemo(() => new Map([...computedFocusFrames].map(([id, frame]) => [
-    id,
-    focusFrameOverrides[id] ?? frame,
-  ])), [computedFocusFrames, focusFrameOverrides]);
+  const focusFrames = useMemo(() => normalizeCollaborationFocusFrames(
+    computedFocusFrames,
+    focusFrameOverrides,
+    viewport,
+    focusReservation,
+    Boolean(focusedRoomId),
+  ), [computedFocusFrames, focusFrameOverrides, focusReservation, focusedRoomId, viewport]);
   const focusedRoomNodes = useMemo(() => focusedRoomId
     ? Object.values(windows).filter((node) => windowBelongsToFocus(node, `room:${focusedRoomId}`))
     : [], [focusedRoomId, windows]);
@@ -1077,6 +1080,79 @@ function clampFocusBounds(
   };
 }
 
+type CollaborationRail = {
+  ids: ReadonlySet<string>;
+  trackWidth: number;
+};
+
+function collaborationHorizontalRail(
+  frames: ReadonlyMap<string, PawWindowBounds>,
+  viewport: { width: number; height: number },
+): CollaborationRail | null {
+  /* A focus rail is the only collaboration layout that intentionally lets
+   * several same-row frames run past the viewport. Looking only for an
+   * overflowing frame would mistake a stale one-window override for that
+   * layout, so require a real same-row run with at least two members. */
+  const rows = new Map<number, Array<[string, PawWindowBounds]>>();
+  for (const entry of frames) {
+    const row = Math.round(entry[1].y);
+    const current = rows.get(row) ?? [];
+    current.push(entry);
+    rows.set(row, current);
+  }
+  for (const row of rows.values()) {
+    if (row.length < 2 || !row.some(([, frame]) => frame.x + frame.width > viewport.width)) continue;
+    const ordered = row.slice().sort((left, right) => left[1].x - right[1].x);
+    return {
+      ids: new Set(ordered.map(([id]) => id)),
+      trackWidth: Math.max(viewport.width, ...ordered.map(([, frame]) => frame.x + frame.width + 10)),
+    };
+  }
+  return null;
+}
+
+function clampCollaborationRailBounds(
+  bounds: PawWindowBounds,
+  viewport: { width: number; height: number },
+  reserved: { modeBarHeight?: number; ledgerHeight?: number },
+  trackWidth: number,
+): PawWindowBounds {
+  const top = Math.max(0, reserved.modeBarHeight ?? 0);
+  const bottom = Math.max(top, viewport.height - Math.max(0, reserved.ledgerHeight ?? 0));
+  const width = Math.min(Math.max(PAW_WINDOW_MIN_WIDTH, bounds.width), Math.max(PAW_WINDOW_MIN_WIDTH, trackWidth));
+  const height = Math.min(Math.max(PAW_WINDOW_MIN_HEIGHT, bounds.height), Math.max(PAW_WINDOW_MIN_HEIGHT, bottom - top));
+  return {
+    x: Math.min(Math.max(0, bounds.x), Math.max(0, trackWidth - width)),
+    y: Math.min(Math.max(top, bounds.y), Math.max(top, bottom - height)),
+    width,
+    height,
+  };
+}
+
+/**
+ * Merge user-adjusted focus frames while keeping ordinary Room grid frames
+ * inside the desktop after roster or viewport changes. A horizontal Room rail
+ * is an intentional scroll region: its frames may extend past the viewport,
+ * but stale overrides are still bounded to that rail's reachable track.
+ */
+export function normalizeCollaborationFocusFrames(
+  computed: ReadonlyMap<string, PawWindowBounds>,
+  overrides: Readonly<Record<string, PawWindowBounds>>,
+  viewport: { width: number; height: number },
+  reserved: { modeBarHeight?: number; ledgerHeight?: number },
+  containRoomFrames = false,
+): Map<string, PawWindowBounds> {
+  const rail = containRoomFrames ? collaborationHorizontalRail(computed, viewport) : null;
+  return new Map([...computed].map(([id, frame]) => [
+    id,
+    containRoomFrames
+      ? rail?.ids.has(id)
+        ? clampCollaborationRailBounds(overrides[id] ?? frame, viewport, reserved, rail.trackWidth)
+        : clampFocusBounds(overrides[id] ?? frame, viewport, reserved)
+      : overrides[id] ?? frame,
+  ]));
+}
+
 function windowCenter(bounds: PawWindowBounds): WindowFlowPoint {
   return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
 }
@@ -1192,7 +1268,11 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
       flowState={flowState}
       flowTracked={flowTracked}
       focusFrame={focusFrame}
-      frameMode={focusFrame && collaborationRole === 'satellite' && target?.kind !== 'participant' ? 'focus-card' : 'window'}
+      frameMode={focusFrame && target?.kind === 'participant'
+        ? 'planet'
+        : focusFrame && collaborationRole === 'satellite'
+          ? 'focus-card'
+          : 'window'}
       onBoundsCommit={(bounds) => {
         if (focusFrame) {
           onFocusFrameCommit(windowId, bounds);
@@ -1283,7 +1363,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   flowState?: 'source' | 'arrival';
   flowTracked?: boolean;
   focusFrame?: PawWindowBounds;
-  frameMode?: 'window' | 'focus-card';
+  frameMode?: 'window' | 'focus-card' | 'planet';
   onBoundsCommit: (bounds: PawWindowBounds) => void;
   onClose: () => void;
   onFocus: () => void;
@@ -1306,6 +1386,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   const [windowChromeTarget, setWindowChromeTarget] = useState<HTMLElement | null>(null);
   const maximized = placement === 'maximized';
   const identityIconId = targetKind === 'room' ? 'room' : appId;
+  const planetFrame = frameMode === 'planet' && !overview;
   const interactionBounds = focusFrame ?? bounds;
   /* A focus frame or rail slot is laid out by its owning mode and clamped on
    * commit against that mode's own box, so only an ordinary desktop window
@@ -1332,31 +1413,52 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   return (
     <PawWindowChromeProvider leading={windowLeadingChromeTarget} trailing={windowChromeTarget}>
       <section aria-label={`${title}${subtitle ? ` · ${subtitle}` : ''}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-flow-tracked={flowTracked || undefined} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
-        <div className="paw-window">
-          <header className="paw-window-titlebar" data-window-chrome={windowChrome} onDoubleClick={overview || focusFrame ? undefined : onToggleMaximize} onPointerDown={overview ? undefined : drag}>
-            {/* One chrome language: every window — main Room, collaboration
-              * focus primary and focus-card satellite alike — opens with the
-              * same red/yellow/green cluster in the same slot. The lights stay
-              * the first children so the shared nth-child colour rules keep
-              * mapping onto close/minimize/maximize; App-owned leading chrome
-              * docks after them instead of pushing them out of position.
-              * Inside the collaboration focus layout the layout owns geometry,
-              * so the maximize verb drops for primary and satellite together
-              * rather than only for satellites. */}
-            <div className="paw-traffic-lights" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-              <button aria-label="关闭窗口" data-action="close" onClick={() => exit('close', onClose)} title="关闭" type="button"><X size={9} /></button>
-              <button aria-label="最小化窗口" data-action="minimize" onClick={() => exit('minimize', onMinimize)} title="最小化" type="button"><Minus size={9} /></button>
-              {focusFrame ? null : <button aria-label={maximized ? '还原窗口' : '最大化窗口'} data-action={maximized ? 'restore' : 'maximize'} onClick={onToggleMaximize} title={maximized ? '还原' : '最大化'} type="button">{maximized ? <Minimize2 size={8} /> : <Maximize2 size={8} />}</button>}
-              {windowChrome ? <div className="paw-window-leading-slot" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} ref={setWindowLeadingChromeTarget} /> : null}
-            </div>
-            <div className="paw-window-title"><PawAppIcon appId={identityIconId} size={16} /><strong>{title}</strong>{subtitle ? <small>{subtitle}</small> : null}</div>
-            {windowChrome ? <div className="paw-window-chrome-slot" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} ref={setWindowChromeTarget} /> : null}
-          </header>
-          <MemoizedWindowBody>{children}</MemoizedWindowBody>
-        </div>
+        {planetFrame ? (
+          <div className="paw-planet-surface" data-flow-state={flowState} data-flow-tracked={flowTracked || undefined}>
+            <header className="paw-planet-identity" onPointerDown={drag}>
+              <span aria-hidden="true" className="paw-planet-identity-mark" />
+              <strong>{title}</strong>
+              {subtitle ? <small>{subtitle}</small> : null}
+              <button
+                aria-label={`关闭${title}行星窗口`}
+                className="paw-planet-close"
+                onClick={() => exit('close', onClose)}
+                onPointerDown={(event) => event.stopPropagation()}
+                title="关闭行星窗口"
+                type="button"
+              >
+                <X aria-hidden="true" size={12} />
+              </button>
+            </header>
+            <MemoizedWindowBody>{children}</MemoizedWindowBody>
+          </div>
+        ) : (
+          <div className="paw-window">
+            <header className="paw-window-titlebar" data-window-chrome={windowChrome} onDoubleClick={overview || focusFrame ? undefined : onToggleMaximize} onPointerDown={overview ? undefined : drag}>
+              {/* One chrome language: every window — main Room, collaboration
+                * focus primary and focus-card satellite alike — opens with the
+                * same red/yellow/green cluster in the same slot. The lights stay
+                * the first children so the shared nth-child colour rules keep
+                * mapping onto close/minimize/maximize; App-owned leading chrome
+                * docks after them instead of pushing them out of position.
+                * Inside the collaboration focus layout the layout owns geometry,
+                * so the maximize verb drops for primary and satellite together
+                * rather than only for satellites. */}
+              <div className="paw-traffic-lights" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                <button aria-label="关闭窗口" data-action="close" onClick={() => exit('close', onClose)} title="关闭" type="button"><X size={9} /></button>
+                <button aria-label="最小化窗口" data-action="minimize" onClick={() => exit('minimize', onMinimize)} title="最小化" type="button"><Minus size={9} /></button>
+                {focusFrame ? null : <button aria-label={maximized ? '还原窗口' : '最大化窗口'} data-action={maximized ? 'restore' : 'maximize'} onClick={onToggleMaximize} title={maximized ? '还原' : '最大化'} type="button">{maximized ? <Minimize2 size={8} /> : <Maximize2 size={8} />}</button>}
+                {windowChrome ? <div className="paw-window-leading-slot" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} ref={setWindowLeadingChromeTarget} /> : null}
+              </div>
+              <div className="paw-window-title"><PawAppIcon appId={identityIconId} size={16} /><strong>{title}</strong>{subtitle ? <small>{subtitle}</small> : null}</div>
+              {windowChrome ? <div className="paw-window-chrome-slot" onDoubleClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} ref={setWindowChromeTarget} /> : null}
+            </header>
+            <MemoizedWindowBody>{children}</MemoizedWindowBody>
+          </div>
+        )}
         {overview ? (
           <button aria-label={`打开 ${title}`} className="paw-overview-window-target" onClick={onOpenFromOverview} type="button"><PawAppIcon appId={identityIconId} size={24} /><span>{title}</span></button>
-        ) : (
+        ) : planetFrame ? null : (
           <PawWindowResizeHandles active={active} bounds={interactionBounds} containToDesktop={containToDesktop} deferPointerInteractionUntilFocused={deferPointerInteractionUntilFocused} onBoundsCommit={onBoundsCommit} onFocus={onFocus} shellRef={shellRef} />
         )}
       </section>

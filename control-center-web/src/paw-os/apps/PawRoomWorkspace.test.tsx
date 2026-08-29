@@ -224,6 +224,7 @@ describe('PAWOS Room collaboration tools', () => {
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent('1 颗活跃行星未能打开');
     expect(within(alert).getByRole('button', { name: '重试打开 Earth' })).toBeInTheDocument();
+    expect(within(alert).getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
 
     await user.click(within(alert).getByRole('button', { name: '重试打开 Earth' }));
 

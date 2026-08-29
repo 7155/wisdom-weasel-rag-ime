@@ -798,6 +798,29 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
 }
+/* Room participant planets are content surfaces, not desktop windows. The
+ * compositor shell keeps their geometry and pointer ownership, but the
+ * participant-specific branch in PawWindowFrame deliberately omits the
+ * generic .paw-window/titlebar/resize chrome. */
+.paw-window-shell[data-frame-mode='planet'] {
+  min-width: 280px;
+  min-height: 210px;
+}
+.paw-window-shell[data-frame-mode='planet'] > .paw-planet-surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  contain: layout paint;
+}
 .paw-desktop[data-collaboration-focus] .paw-window-shell[data-collaboration-role='unrelated'] .paw-window {
   opacity: .84;
   filter: brightness(.94) saturate(.72);
@@ -846,6 +869,31 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   background: var(--paw-accent);
   content: '';
   animation: paw-window-flow-arrival-blink 900ms ease both;
+}
+.paw-window-shell[data-frame-mode='planet'][data-flow-state='source'] > .paw-planet-surface,
+.paw-window-shell[data-frame-mode='planet'][data-flow-state='arrival'] > .paw-planet-surface {
+  animation: paw-planet-flow-pulse 880ms var(--paw-ease-out) both;
+}
+/* A tracked Room relationship keeps a quiet moving sheen on the content
+ * surface. It is intentionally not a border or a permanent frame shadow. */
+.paw-window-shell[data-frame-mode='planet'][data-flow-tracked='true'] > .paw-planet-surface::after {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0%, transparent 38%, color-mix(in srgb, var(--paw-accent) 13%, transparent) 50%, transparent 62%, transparent 100%);
+  content: '';
+  opacity: 0;
+  animation: paw-planet-flow-sheen 2400ms ease-in-out infinite;
+}
+@keyframes paw-planet-flow-pulse {
+  0%, 100% { box-shadow: none; }
+  38% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-accent) 44%, transparent), 0 0 30px color-mix(in srgb, var(--paw-accent) 22%, transparent); }
+}
+@keyframes paw-planet-flow-sheen {
+  0%, 100% { opacity: 0; transform: translateX(-9%); }
+  35%, 65% { opacity: .72; }
+  50% { transform: translateX(9%); }
 }
 @keyframes paw-window-flow-arrival-blink {
   0%, 55%, 100% { opacity: 0; }
@@ -960,6 +1008,18 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
+}
+.paw-window-shell[data-frame-mode='planet'] > .paw-planet-surface > .paw-window-body {
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  padding-top: 0;
+  overflow: hidden;
+}
+.paw-window-shell[data-frame-mode='planet'] > .paw-planet-surface > .paw-window-body > .paw-window-route-surface {
+  min-width: 0;
+  min-height: 0;
 }
 .paw-window-resize { position: absolute; z-index: 8; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; touch-action: none; }
 .paw-window-resize:focus-visible { outline: 2px solid var(--paw-app-accent, var(--paw-accent)); outline-offset: -2px; background: color-mix(in srgb, var(--paw-app-accent, var(--paw-accent)) 12%, transparent); }
@@ -1438,6 +1498,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-room-window-flow__packet { display: none; }
   .paw-window-shell[data-collaboration-role='satellite'] .paw-window,
   .paw-window-shell[data-flow-state] .paw-window,
+  .paw-window-shell[data-frame-mode='planet'][data-flow-state] > .paw-planet-surface,
+  .paw-window-shell[data-frame-mode='planet'][data-flow-tracked='true'] > .paw-planet-surface::after,
   .paw-window-shell[data-flow-state='arrival'] .paw-window-title > strong::after {
     animation: paw-window-flow-reduced-fade 240ms ease both !important;
     transform: none !important;

@@ -20,6 +20,7 @@ import {
 import type { AssistantBlock, AssistantMessage } from '@/features/conversation-ui';
 import { roomCollaborationRoleLabel } from '@/features/rooms/room-copy';
 import type { RoomSummary } from '@/features/rooms/room-types';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import { runtimeToolWindowRequest } from '../runtime/runtime-tool-window';
 import { roomFocusCelestialName } from './room-focus-projection';
 import { roomToolEvidence } from './room-gravity-projection';
@@ -110,7 +111,16 @@ export function PawRoomConversation({
     const processWindow = !readOnly && onOpenProcessActivity ? roomProcessWindowRequest(activity, room.id) : null;
     if (!approval && !processWindow) return undefined;
     return <>
-      {approval ? <RoomApprovalAction decision={onApprovalDecision!} {...approval} /> : null}
+      {approval ? (
+        <RoomApprovalAction
+          decision={onApprovalDecision!}
+          participantId={activity.participantId}
+          roomId={room.id}
+          sourceSessionId={activity.sourceSessionId}
+          turnId={activity.turnId}
+          {...approval}
+        />
+      ) : null}
       {processWindow ? (
         <button onClick={() => onOpenProcessActivity?.(activity)} type="button">查看后台 Bash</button>
       ) : null}
@@ -167,10 +177,14 @@ export function PawRoomConversation({
   />;
 }
 
-function RoomApprovalAction({ approvalId, decision, payloadSha256 }: {
+function RoomApprovalAction({ approvalId, decision, participantId, payloadSha256, roomId, sourceSessionId, turnId }: {
   approvalId: string;
   payloadSha256: string;
   decision: (approvalId: string, choice: 'approved' | 'rejected', payloadSha256: string) => Promise<void>;
+  participantId: string | null;
+  roomId: string;
+  sourceSessionId: string;
+  turnId: string;
 }) {
   const [submitting, setSubmitting] = useState<'' | 'approved' | 'rejected'>('');
   const [error, setError] = useState('');
@@ -189,7 +203,28 @@ function RoomApprovalAction({ approvalId, decision, payloadSha256 }: {
     <button disabled={Boolean(submitting)} onClick={() => decide('rejected')} type="button">
       {submitting === 'rejected' ? '正在拒绝' : '拒绝'}
     </button>
-    {error ? <small role="alert">{error}</small> : null}
+    {error ? (
+      <small role="alert">
+        {error}
+        <TraceAgentHandoffButton
+          handoff={{
+            kind: 'room',
+            entityId: approvalId,
+            title: 'Room 审批操作失败',
+            summary: error,
+            error,
+            ...(sourceSessionId ? { sessionId: sourceSessionId } : {}),
+            roomId,
+            sourceRoute: `/rooms?room=${encodeURIComponent(roomId)}`,
+            refs: {
+              approvalId,
+              participantId,
+              turnId,
+            },
+          }}
+        />
+      </small>
+    ) : null}
   </>;
 }
 

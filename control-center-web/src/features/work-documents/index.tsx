@@ -55,6 +55,7 @@ import {
   publicErrorText,
 } from '@/features/overview/management-ui';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import {
   requestWorkDocumentCommand,
   requestWorkDocumentErasePreview,
@@ -316,6 +317,16 @@ export function WorkDocumentsFeature() {
               {registerMutation.error ? (
                 <InlineNotice title="登记未完成" tone="danger">
                   {publicErrorText(registerMutation.error)} 列表已保持原状，可以核对来源与版本后重试。
+                  <TraceAgentHandoffButton handoff={{
+                    kind: 'file',
+                    entityId: authorityId || sourcePath || 'work-document-registration',
+                    title: '工作文档登记失败',
+                    summary: publicErrorText(registerMutation.error),
+                    error: registerMutation.error instanceof Error ? registerMutation.error.message : String(registerMutation.error),
+                    sourceRoute: '/work-documents',
+                    workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+                    refs: { authorityKind, authorityId, authorityRevision, sourcePath },
+                  }} />
                 </InlineNotice>
               ) : null}
               {registerMutation.data?.receipt?.status === 'applied' ? (
@@ -331,6 +342,17 @@ export function WorkDocumentsFeature() {
               {registerMutation.data?.receipt?.status === 'failed' ? (
                 <InlineNotice title="登记未完成" tone="danger">
                   Registry 返回失败收据；列表已重新同步，请修正来源后重试。
+                  <TraceAgentHandoffButton
+                    handoff={{
+                      kind: 'file',
+                      entityId: authorityId || sourcePath || 'work-document-registration',
+                      title: '工作文档登记返回失败收据',
+                      summary: 'Registry 返回失败收据。',
+                      sourceRoute: '/work-documents',
+                      workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+                      refs: { authorityKind, authorityId, authorityRevision, sourcePath },
+                    }}
+                  />
                 </InlineNotice>
               ) : null}
               <DialogFooter>
@@ -597,9 +619,43 @@ function WorkDocumentDetail({
             </Disclosure>
 
             {receipt && (!eraseOpen || receipt.operation !== 'erase') ? <CommandReceipt receipt={receipt} /> : null}
+            {receipt?.status === 'failed' && (!eraseOpen || receipt.operation !== 'erase') ? (
+              <TraceAgentHandoffButton
+                handoff={{
+                  kind: 'file',
+                  entityId: document.documentId,
+                  title: `工作文档${operationLabel(receipt.operation)}失败`,
+                  summary: 'Registry 返回失败收据。',
+                  failureRef: receipt.receiptId,
+                  sourceRoute: `/work-documents?document=${encodeURIComponent(document.documentId)}`,
+                  workspaceRoots: document.workspaceRoot ? [document.workspaceRoot] : [],
+                  refs: {
+                    operation: receipt.operation,
+                    documentRevision: document.documentRevision,
+                    authorityRevision: document.authorityRevision,
+                  },
+                }}
+              />
+            ) : null}
             {command.error ? (
               <InlineNotice title="操作未完成" tone="danger">
                 {publicErrorText(command.error)} 状态重新同步前，请勿假定文件已经移动或清除。
+                <TraceAgentHandoffButton
+                  handoff={{
+                    kind: 'file',
+                    entityId: document.documentId,
+                    title: '工作文档操作失败',
+                    summary: publicErrorText(command.error),
+                    error: command.error instanceof Error ? command.error.message : String(command.error),
+                    sourceRoute: `/work-documents?document=${encodeURIComponent(document.documentId)}`,
+                    workspaceRoots: document.workspaceRoot ? [document.workspaceRoot] : [],
+                    refs: {
+                      operation: command.variables?.command.operation ?? '',
+                      documentRevision: document.documentRevision,
+                      authorityRevision: document.authorityRevision,
+                    },
+                  }}
+                />
               </InlineNotice>
             ) : null}
 
@@ -828,7 +884,22 @@ function EraseDialog({
             准备永久清除
           </Button>
           {preview.error ? (
-            <InlineNotice title="无法获取清除审批" tone="danger">{publicErrorText(preview.error)}</InlineNotice>
+            <InlineNotice title="无法获取清除审批" tone="danger">
+              {publicErrorText(preview.error)}
+              <TraceAgentHandoffButton
+                handoff={{
+                  kind: 'file',
+                  entityId: document.documentId,
+                  title: '工作文档清除审批失败',
+                  summary: publicErrorText(preview.error),
+                  error: preview.error instanceof Error ? preview.error.message : String(preview.error),
+                  sessionId: sessionId.trim() || undefined,
+                  sourceRoute: `/work-documents?document=${encodeURIComponent(document.documentId)}`,
+                  workspaceRoots: document.workspaceRoot ? [document.workspaceRoot] : [],
+                  refs: { operation: 'erase-preview', documentRevision: document.documentRevision },
+                }}
+              />
+            </InlineNotice>
           ) : null}
           {approvalId && payloadSha256 ? (
             <div className="work-documents__approval" role="status" aria-label="清除审批已就绪">
@@ -853,9 +924,39 @@ function EraseDialog({
             />
           </Field>
           {command.error ? (
-            <InlineNotice title="永久清除未完成" tone="danger">{publicErrorText(command.error)}</InlineNotice>
+            <InlineNotice title="永久清除未完成" tone="danger">
+              {publicErrorText(command.error)}
+              <TraceAgentHandoffButton
+                handoff={{
+                  kind: 'file',
+                  entityId: document.documentId,
+                  title: '工作文档永久清除失败',
+                  summary: publicErrorText(command.error),
+                  error: command.error instanceof Error ? command.error.message : String(command.error),
+                  sessionId: sessionId.trim() || undefined,
+                  sourceRoute: `/work-documents?document=${encodeURIComponent(document.documentId)}`,
+                  workspaceRoots: document.workspaceRoot ? [document.workspaceRoot] : [],
+                  refs: { operation: 'erase', documentRevision: document.documentRevision },
+                }}
+              />
+            </InlineNotice>
           ) : null}
           {receipt?.operation === 'erase' ? <CommandReceipt receipt={receipt} /> : null}
+          {receipt?.operation === 'erase' && receipt.status === 'failed' ? (
+            <TraceAgentHandoffButton
+              handoff={{
+                kind: 'file',
+                entityId: document.documentId,
+                title: '工作文档永久清除返回失败收据',
+                summary: 'Registry 返回失败收据。',
+                failureRef: receipt.receiptId,
+                sessionId: sessionId.trim() || undefined,
+                sourceRoute: `/work-documents?document=${encodeURIComponent(document.documentId)}`,
+                workspaceRoots: document.workspaceRoot ? [document.workspaceRoot] : [],
+                refs: { operation: 'erase', documentRevision: document.documentRevision },
+              }}
+            />
+          ) : null}
         </div>
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)} variant="quiet">取消</Button>

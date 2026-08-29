@@ -25,6 +25,7 @@ import remarkGfm from 'remark-gfm';
 import { Button, Disclosure, EmptyState, IconButton, Input, Select, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/primitives';
 import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { InlineNotice, StatusBadge, publicErrorText } from '@/features/overview/management-ui';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import type { ControlTransport } from '@/platform/transport';
 import type {
   KnowledgeAsset,
@@ -334,6 +335,15 @@ function DocumentPipeline({
           >
             {document.status === 'stale' ? '重新解析以重建' : '重新解析'}
           </Button>
+          <TraceAgentHandoffButton handoff={{
+            kind: 'knowledge',
+            entityId: document.id,
+            title: `知识文档解析${document.status === 'failed' ? '失败' : '过期'}`,
+            summary: document.error || pipelineNote(document),
+            error: document.error || undefined,
+            sourceRoute: `/knowledge?base=${encodeURIComponent(document.baseId)}&document=${encodeURIComponent(document.id)}`,
+            refs: { baseId: document.baseId, documentId: document.id, status: document.status },
+          }} />
         </div>
       ) : null}
     </div>

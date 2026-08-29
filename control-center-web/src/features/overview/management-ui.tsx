@@ -17,6 +17,7 @@ import {
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Skeleton } from '@/components/primitives';
 import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import './management.css';
 
 export type JsonRecord = Record<string, unknown>;
@@ -136,6 +137,14 @@ export function QueryState({
             <div className="mgmt-query-actions">
               <Button onClick={onRetry}>重试</Button>
               {errorAction}
+              <TraceAgentHandoffButton
+                handoff={{
+                  kind: 'generic',
+                  title: '读取失败',
+                  summary: publicErrorText(error, '暂时无法读取这部分内容，请稍后重试。'),
+                  error: error.message,
+                }}
+              />
             </div>
           )}
           description={publicErrorText(error, '暂时无法读取这部分内容，请稍后重试。')}

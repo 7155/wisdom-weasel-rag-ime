@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState } from '@/components/primitives';
 import type { EvalRunV1 } from '@/contracts/generated/eval-run.v1';
@@ -36,6 +37,12 @@ import {
 import { parseRoomEventPage, type RoomEventPage } from '@/contracts/room-reducer';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import type { LucideIcon } from 'lucide-react';
+import {
+  parseTraceAgentHandoff,
+  redactTraceAgentError,
+  redactTraceAgentText,
+  type TraceAgentHandoff,
+} from './handoff';
 import './trace-agent.css';
 
 const TRACE_AGENT_SKILL_REF = 'integrations/pi/skills/trace-agent-diagnostics/SKILL.md';
@@ -52,6 +59,8 @@ type TraceTarget = {
   updatedAtMs: number;
   detail: string;
   workspaceRoots: string[];
+  handoffOnly?: boolean;
+  handoff?: TraceAgentHandoff;
 };
 
 type TraceAgentReport = {
@@ -83,23 +92,35 @@ type TraceTargetCatalog = {
 export function TraceAgentFeature() {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
+  const [searchParams] = useSearchParams();
+  const incomingHandoff = useMemo(
+    () => parseTraceAgentHandoff(searchParams),
+    [searchParams],
+  );
+  const incomingTarget = useMemo(
+    () => incomingHandoff ? traceTargetFromHandoff(incomingHandoff) : null,
+    [incomingHandoff],
+  );
   const targets = useTraceTargets(transport);
-  const [kind, setKind] = useState<TraceTargetKind>('session');
-  const [selectedId, setSelectedId] = useState('');
+  const [kind, setKind] = useState<TraceTargetKind>(incomingTarget?.kind ?? 'session');
+  const [selectedId, setSelectedId] = useState(incomingTarget?.id ?? '');
   const [report, setReport] = useState<TraceAgentReport | null>(null);
   const [repairHandoff, setRepairHandoff] = useState<TraceRepairHandoff | null>(null);
   const [evalReceipt, setEvalReceipt] = useState<TraceEvalReceipt | null>(null);
-  const items = kind === 'session'
+  const catalogItems = kind === 'session'
     ? targets.data?.sessions ?? []
     : kind === 'room'
       ? targets.data?.rooms ?? []
       : targets.data?.runs ?? [];
+  const items = incomingTarget?.kind === kind
+    ? [incomingTarget, ...catalogItems.filter((item) => item.id !== incomingTarget.id)]
+    : catalogItems;
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const persistedReports = (targets.data?.sessions ?? []).filter(isTraceDiagnosticSession);
   const moreTargetsAvailable = targets.data?.hasMore[kind] ?? false;
   const snapshot = useQuery({
     queryKey: ['trace-agent', 'observations', kind, selected?.id ?? ''],
-    enabled: Boolean(selected),
+    enabled: Boolean(selected && !selected.handoffOnly),
     queryFn: ({ signal }) => transport.request<ObservationSnapshotV1>({
       pathId: 'observability.snapshot',
       query: {
@@ -116,7 +137,10 @@ export function TraceAgentFeature() {
     retry: false,
     refetchOnWindowFocus: false,
   });
-  const latestTraceId = useMemo(() => latestTrace(snapshot.data), [snapshot.data]);
+  const latestTraceId = useMemo(
+    () => selected?.handoff?.traceId || latestTrace(snapshot.data),
+    [selected, snapshot.data],
+  );
   const evalTraceId = evalReceipt?.repairTraceId ?? '';
   const evals = useQuery<ObservabilityEvalListV1>({
     queryKey: ['trace-agent', 'evals', evalTraceId],
@@ -302,6 +326,12 @@ export function TraceAgentFeature() {
   });
 
   useEffect(() => {
+    if (!incomingTarget) return;
+    setKind(incomingTarget.kind);
+    setSelectedId(incomingTarget.id);
+  }, [incomingTarget]);
+
+  useEffect(() => {
     if (!items.length) {
       setSelectedId('');
       return;
@@ -319,7 +349,7 @@ export function TraceAgentFeature() {
 
   const refresh = () => {
     void targets.refetch();
-    if (selected) void snapshot.refetch();
+    if (selected && !selected.handoffOnly) void snapshot.refetch();
     if (selected && selected.kind !== 'run') void sourceSnapshot.refetch();
   };
   const error = targets.error as Error | null;
@@ -373,6 +403,11 @@ export function TraceAgentFeature() {
                 </button>
               ))}
             </div>
+            {incomingHandoff ? (
+              <div className="trace-agent-inline-note" data-testid="trace-agent-incoming-handoff">
+                已从原位置带入：{incomingHandoff.title} · {incomingHandoff.entityId}。启动诊断时会同时提交原对象、错误和证据引用。
+              </div>
+            ) : null}
             {persistedReports.length ? (
               <section aria-label="已保存的 Trace 诊断报告" className="trace-agent-persisted-reports">
                 <div className="trace-agent-persisted-reports__heading">
@@ -412,8 +447,8 @@ export function TraceAgentFeature() {
                 data-testid="trace-agent-diagnostic-action"
               >
                 <div>
-                  <strong>诊断当前{selected.kind === 'room' ? ' Room' : selected.kind === 'session' ? ' Session' : '运行'}</strong>
-                  <span>{selected.kind === 'room' ? '当前 Room · 全部行星 · WorkItems · 失败工具 · Context / Trace' : selected.kind === 'session' ? '完整时间线 · 失败工具 · Context / Trace' : '当前运行 · 关联 Trace / Eval / Sandbox'}</span>
+                  <strong>诊断当前{selected.handoffOnly ? '交接输入' : selected.kind === 'room' ? ' Room' : selected.kind === 'session' ? ' Session' : '运行'}</strong>
+                  <span>{selected.handoffOnly ? '仅依据结构化交接包 · 不伪造 Session / Room / Run 快照' : selected.kind === 'room' ? '当前 Room · 全部行星 · WorkItems · 失败工具 · Context / Trace' : selected.kind === 'session' ? '完整时间线 · 失败工具 · Context / Trace' : '当前运行 · 关联 Trace / Eval / Sandbox'}</span>
                 </div>
                 <Button
                   disabled={start.isPending || Boolean(report)}
@@ -488,7 +523,7 @@ export function TraceAgentFeature() {
                 <div>
                   <span className="trace-agent-kicker">当前输入</span>
                   <h2>{selected.title}</h2>
-                  <p>{selected.kind === 'room' ? 'Room 全量协作拓扑' : selected.kind === 'run' ? '单个运行及其关联 Trace' : '单个 Session 对话与运行记录'} · {selected.id}</p>
+                  <p>{selected.handoffOnly ? '仅结构化交接包；没有可用的 canonical Session / Room / Run' : selected.kind === 'room' ? 'Room 全量协作拓扑' : selected.kind === 'run' ? '单个运行及其关联 Trace' : '单个 Session 对话与运行记录'} · {selected.id}</p>
                 </div>
               </div>
               <div className="trace-agent-scope-grid" aria-label="诊断范围">
@@ -500,7 +535,7 @@ export function TraceAgentFeature() {
               <div className="trace-agent-source-links" aria-label="原始证据入口">
                 <span>原始证据</span>
                 <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openOriginal(desktop, selected)} size="small" variant="quiet">
-                  {selected.kind === 'run' ? '打开运行记录' : '打开原对话'}
+                  {selected.handoff ? '回到原位置' : selected.kind === 'run' ? '打开运行记录' : '打开原对话'}
                 </Button>
                 <Button
                   disabled={!latestTraceId}
@@ -526,6 +561,7 @@ export function TraceAgentFeature() {
                 />
               ) : null}
               <TraceEvidence desktop={desktop} evidence={evidence} loading={sourceSnapshot.isFetching || snapshot.isFetching} />
+              {selected.handoffOnly ? <p className="trace-agent-inline-note">这是 handoff-only 输入；没有 Session、Room 或 Run 标识，因此未请求 canonical snapshot。诊断 Agent 会以交接包和可回跳原位置为边界报告未知。</p> : null}
               {snapshot.error ? <p className="trace-agent-inline-note">最新 Trace 暂时无法读取；仍可以启动诊断，Agent 会在 Session 内按权限重新查询。</p> : null}
               {sourceSnapshot.error ? <p className="trace-agent-inline-note">原始对话快照暂时无法读取；诊断 Agent 仍会以可用的 Trace、Room 和运行证据标注未知边界。</p> : null}
             </section>
@@ -1419,13 +1455,53 @@ function createdSessionId(value: unknown): string {
   return stringValue(asRecord(payload.session).id) || stringValue(payload.sessionId);
 }
 
+function traceTargetFromHandoff(handoff: TraceAgentHandoff): TraceTarget {
+  const roomScoped = ['room', 'planet', 'satellite'].includes(handoff.kind) && handoff.roomId;
+  const handoffOnly = !handoff.sessionId && !handoff.roomId && !handoff.runId;
+  const kind: TraceTargetKind = roomScoped
+    ? 'room'
+    : handoff.sessionId
+      ? 'session'
+      : handoff.roomId
+        ? 'room'
+        : 'run';
+  const id = kind === 'session'
+    ? handoff.sessionId!
+    : kind === 'room'
+      ? handoff.roomId!
+      : handoff.runId || handoff.entityId;
+  return {
+    kind,
+    id,
+    title: handoff.title,
+    status: 'failed',
+    updatedAtMs: handoff.occurredAtMs,
+    detail: handoff.summary,
+    workspaceRoots: handoff.workspaceRoots,
+    handoffOnly,
+    handoff,
+  };
+}
+
 function diagnosticPrompt(target: TraceTarget, traceId: string): string {
+  const safeTargetId = redactTraceAgentText(target.id, 180);
+  const safeTargetTitle = redactTraceAgentText(target.title, 180);
+  const safeTraceId = redactTraceAgentText(traceId, 180);
   return [
     `先调用 skill_load 加载 name=trace-agent-diagnostics；SkillRef=${TRACE_AGENT_SKILL_REF}。`,
     '',
     '这是一次只读诊断。不要修改代码、配置、Prompt、路由或评测数据；只输出证据、根因判断和候选修复，任何真实改动都交给用户授权后的普通 Agent。',
-    `诊断对象：${target.kind} ${target.id}（${target.title}）`,
-    traceId ? `当前已发现的最新 Trace：${traceId}` : '当前尚未发现单一最新 Trace，请从对象范围读取关联 Trace。',
+    `诊断对象：${target.kind} ${safeTargetId}（${safeTargetTitle}）`,
+    target.handoffOnly
+      ? '这是 handoff-only 输入，没有可用的 canonical Session / Room / Run；不要把 entityId 当作 runId，也不要调用 observability.snapshot 伪造查询。'
+      : traceId ? `当前已发现的最新 Trace：${safeTraceId}` : '当前尚未发现单一最新 Trace，请从对象范围读取关联 Trace。',
+    ...(target.handoff ? [
+      '',
+      '下面是用户从原位置明确送来的结构化诊断输入。它是本次诊断的精确入口；保留所有 ID 和引用，并回跳到 sourceRoute 复核原记录。',
+      '--- TRACE_AGENT_HANDOFF ---',
+      JSON.stringify(target.handoff, null, 2),
+      '--- END TRACE_AGENT_HANDOFF ---',
+    ] : []),
     '',
     '请使用现有 Observability/TraceStore/Eval 与对象本身的真实记录，覆盖：',
     '1. Tool、Browser、Provider、Runtime 的失败、超时、重复调用和未闭合状态；',
@@ -1442,21 +1518,25 @@ function repairPrompt(report: TraceAgentReport): string {
   const handoff = {
     target: {
       kind: report.target.kind,
-      id: report.target.id,
-      title: report.target.title,
+      id: redactTraceAgentText(report.target.id, 180),
+      title: redactTraceAgentText(report.target.title, 180),
       status: report.target.status,
+      handoff: report.target.handoff,
     },
-    diagnosticSessionId: report.sessionId,
-    diagnosticReportRef: `agent-session:${report.sessionId}`,
-    traceId: report.traceId || null,
-    workspaceRoots: report.target.workspaceRoots,
+    diagnosticSessionId: redactTraceAgentText(report.sessionId, 180),
+    diagnosticReportRef: `agent-session:${redactTraceAgentText(report.sessionId, 180)}`,
+    traceId: report.traceId ? redactTraceAgentText(report.traceId, 180) : null,
+    // Roots from a URL handoff are deliberately not trusted or echoed into
+    // the repair prompt.  A canonical catalog target gets its authoritative
+    // binding from the backend and may retain it for the per-action Session.
+    workspaceRoots: report.target.handoff ? [] : report.target.workspaceRoots,
     failedEvidence: report.evidence.map((item) => ({
-      id: item.id,
-      source: item.source,
+      id: redactTraceAgentText(item.id, 180),
+      source: redactTraceAgentText(item.source, 240),
       status: item.status,
-      title: item.title,
-      summary: item.summary,
-      traceId: item.traceId ?? null,
+      title: redactTraceAgentText(item.title, 180),
+      summary: redactTraceAgentError(item.summary) || redactTraceAgentText(item.summary, 640),
+      traceId: item.traceId ? redactTraceAgentText(item.traceId, 180) : null,
       createdAtMs: item.createdAtMs,
     })),
   };
@@ -1476,6 +1556,10 @@ function openDiagnosticSession(desktop: ReturnType<typeof usePawOsDesktop>, sess
 }
 
 function openOriginal(desktop: ReturnType<typeof usePawOsDesktop>, target: TraceTarget): void {
+  if (target.handoff?.sourceRoute) {
+    openPawOsRoute(desktop, target.handoff.sourceRoute);
+    return;
+  }
   openPawOsRoute(desktop, target.kind === 'room'
     ? `/rooms?room=${encodeURIComponent(target.id)}`
     : target.kind === 'run'

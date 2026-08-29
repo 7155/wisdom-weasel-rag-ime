@@ -16,7 +16,10 @@ from pathlib import Path
 from unittest import mock
 
 from rag_ime.knowledge_library import HttpKnowledgeClient, KnowledgeLibraryConfig, KnowledgeLibraryError, KnowledgeLibraryService
-from rag_ime.knowledge_library.identity import knowledge_worker_fingerprint
+from rag_ime.knowledge_library.identity import (
+    knowledge_worker_fingerprint,
+    normalized_knowledge_embedding_provider,
+)
 from rag_ime.knowledge_library.worker import IMPORT_SCHEMA_VERSION, KnowledgeWorkerServer
 from rag_ime.knowledge_worker_supervisor import (
     KnowledgeWorkerSupervisor,
@@ -381,6 +384,45 @@ class KnowledgeWorkerSupervisorTests(unittest.TestCase):
 
             self.assertNotEqual(first, second)
             self.assertNotEqual(second, third)
+
+    def test_worker_server_identity_matches_supervisor_for_embedding_alias(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-knowledge-alias-") as tmp:
+            root = Path(tmp) / "Knowledge"
+            settings = {
+                "knowledgeLibrary": {
+                    "parser": {"mineru": {"enabled": False, "port": 30_001}},
+                },
+            }
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_EMBEDDING_PROVIDER": "local-bge-mlx",
+                    "RAG_IME_KNOWLEDGE_PYTHON": sys.executable,
+                },
+                clear=False,
+            ):
+                service = KnowledgeLibraryService(KnowledgeLibraryConfig(root))
+                server = KnowledgeWorkerServer(
+                    ("127.0.0.1", 0), service, idle_seconds=900,
+                )
+                self.addCleanup(server.server_close)
+                supervisor = KnowledgeWorkerSupervisor(
+                    settings_provider=lambda: settings,
+                    root_dir=root,
+                    base_url=f"http://127.0.0.1:{_free_port()}",
+                    idle_seconds=900,
+                )
+
+                self.assertEqual(
+                    server.config_fingerprint,
+                    supervisor._worker_settings(settings)[0],
+                )
+
+    def test_unknown_embedding_provider_identity_matches_null_runtime(self) -> None:
+        self.assertEqual(
+            "none",
+            normalized_knowledge_embedding_provider("unregistered-provider"),
+        )
 
     def test_persisted_embedding_profile_controls_worker_identity_and_environment(self) -> None:
         settings = {

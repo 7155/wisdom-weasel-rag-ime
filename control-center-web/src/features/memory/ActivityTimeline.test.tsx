@@ -10,6 +10,8 @@ import type {
   ControlTransport,
 } from '@/platform/transport';
 import { ActivityTimeline } from './ActivityTimeline';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 
 afterEach(cleanup);
 
@@ -136,7 +138,9 @@ describe('ActivityTimeline activity projection', () => {
     completed.unmount();
 
     const user = userEvent.setup();
+    const routes: string[] = [];
     renderTimeline(semanticTimeline(), {
+      routes,
       calendarAutomation: {
         state: 'retry_scheduled',
         job: {
@@ -158,6 +162,14 @@ describe('ActivityTimeline activity projection', () => {
     const failure = await screen.findByRole('alert', { name: '历史日记整理进度' });
     expect(failure).toHaveTextContent('任务 memory-maintenance:failed-timeline');
     expect(failure).toHaveTextContent('内部 Session 仍被上一回合占用');
+    await user.click(within(failure).getByRole('button', { name: '交给 Trace Agent' }));
+    const handoff = parseTraceAgentHandoff(routes.at(-1)?.split('?', 2)[1] ?? '');
+    expect(handoff).toMatchObject({
+      kind: 'memory',
+      entityId: 'memory-maintenance:failed-timeline',
+      failureRef: 'memory-maintenance:failed-timeline',
+      refs: { jobId: 'memory-maintenance:failed-timeline', state: 'failed' },
+    });
     await user.click(within(failure).getByRole('button', { name: '重新检查范围' }));
     expect(await screen.findByRole('dialog', { name: '整理本月' })).toBeInTheDocument();
   });
@@ -445,13 +457,15 @@ function renderTimeline(
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <TooltipProvider delayDuration={0}>
-      <ControlTransportProvider transport={timelineTransport(timeline, options)}>
-        <QueryClientProvider client={client}>
-          <ActivityTimeline initialDate={options.initialDate} />
-        </QueryClientProvider>
-      </ControlTransportProvider>
-    </TooltipProvider>,
+    <PawOsDesktopProvider openRoute={(route) => options.routes?.push(route)} openWindow={() => undefined}>
+      <TooltipProvider delayDuration={0}>
+        <ControlTransportProvider transport={timelineTransport(timeline, options)}>
+          <QueryClientProvider client={client}>
+            <ActivityTimeline initialDate={options.initialDate} />
+          </QueryClientProvider>
+        </ControlTransportProvider>
+      </TooltipProvider>
+    </PawOsDesktopProvider>,
   );
 }
 
@@ -556,6 +570,7 @@ interface TimelineTransportOptions {
   calendarAutomation?: Record<string, unknown>;
   jobResult?: Record<string, unknown>;
   requests?: ControlRequest[];
+  routes?: string[];
 }
 
 function shiftMonthForTest(monthValue: string, offset: number): string {

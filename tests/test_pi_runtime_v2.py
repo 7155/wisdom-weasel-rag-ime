@@ -3349,6 +3349,32 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(prompt_timeouts, [3_600.0])
         _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
 
+    def test_pending_prompt_admission_prevents_idle_shutdown(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.config = replace(
+            self.runtime.config,
+            idle_timeout_seconds=60,
+        )
+        self.runtime.ensure(session_id)
+        self.runtime.reserve_prompt_admission(
+            session_id,
+            client_message_id="memory-curation-admission",
+        )
+
+        # An unrelated idle projection may try to reschedule the shared Host
+        # while Pi is still admitting this prompt and has not returned a turn
+        # id. That admission is active work and must fence idle shutdown.
+        with self.runtime._lock:
+            self.runtime._schedule_idle_locked()
+
+        self.assertIsNone(self.runtime._idle_timer)
+        self.assertTrue(
+            self.runtime.release_prompt_admission(
+                session_id,
+                client_message_id="memory-curation-admission",
+            )
+        )
+
     def test_busy_turn_accepts_native_steer_and_follow_up_messages(self) -> None:
         session_id = str(self.first["id"])
         active = self.runtime.prompt(session_id, "hang-without-settled", client_message_id="initial")

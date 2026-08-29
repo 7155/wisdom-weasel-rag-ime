@@ -89,6 +89,7 @@ import { routeDecisionPlanView } from './route-decision-plan';
 import { RouteDecisionPlan } from './RouteDecisionPlan';
 import { SmoothDisclosureReveal } from './SmoothDisclosureReveal';
 import { ConversationPlanetMark, type ConversationPlanetState } from './ConversationPlanetMark';
+import { TraceAgentHandoffButton, type TraceAgentHandoffInput } from '@/features/trace-agent/handoff';
 
 const activityDisclosureOverrides = new Map<string, boolean>();
 const activityDisclosureOverrideLimit = 512;
@@ -493,7 +494,25 @@ const ActivityRow = memo(function ActivityRow({
               : routePlan
                 ? null
                 : <SafeFieldList data={payload} />}
-          {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
+          {toolView?.error ? (
+            <PublicToolError
+              handoff={{
+                kind: 'tool',
+                entityId: text(payload.toolCallId) || activity.id,
+                title: `${publicToolName(text(payload.toolId ?? payload.toolName), text(payload.displayName))}失败`,
+                summary: toolView.summary || toolView.error,
+                error: toolView.error,
+                sessionId,
+                refs: {
+                  activityId: activity.id,
+                  turnId: activity.turnId,
+                  toolCallId: text(payload.toolCallId),
+                  toolName: text(payload.toolId ?? payload.toolName),
+                },
+              }}
+              reason={toolView.error}
+            />
+          ) : null}
           <SourceList
             items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)}
             links={toolView?.sourceLinks ?? []}
@@ -1295,7 +1314,7 @@ function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResul
   );
 }
 
-export function PublicToolError({ reason }: { reason: string }) {
+export function PublicToolError({ handoff, reason }: { handoff?: TraceAgentHandoffInput; reason: string }) {
   const { copy, state } = useCopyableText(reason);
   return (
     <section className="agent-tool-result-panel" data-tone="error" aria-label="工具失败">
@@ -1310,6 +1329,7 @@ export function PublicToolError({ reason }: { reason: string }) {
         >
           {state === 'copied' ? '已复制错误' : '复制错误'}
         </Button>
+        {handoff ? <TraceAgentHandoffButton handoff={handoff} /> : null}
       </header>
       <p>{reason}</p>
       {state === 'failed' ? <small role="alert">无法复制错误，请手动选择内容。</small> : null}

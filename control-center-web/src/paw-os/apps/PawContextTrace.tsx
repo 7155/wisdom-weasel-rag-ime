@@ -65,6 +65,7 @@ import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
 import { CopyTextButton } from '@/features/agent/file-preview/CopyTextButton';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
@@ -140,6 +141,18 @@ export function PawContextTrace({
   const [error, setError] = useState('');
   const [unavailable, setUnavailable] = useState<TraceUnavailable>();
   const requestGeneration = useRef(0);
+
+  /* A historical Session can have a complete persisted event projection while
+     its Pi runtime is no longer resident. Keep the event-derived rounds as a
+     read-only rail fallback; debugContext remains the only source for the
+     assembly view and is still allowed to report unavailable. */
+  const traceTurns = useMemo(() => projectionTraceTurns(projection), [projection]);
+  const projectedTurnSummaries = useMemo(
+    () => projectionDebugTurnSummaries(traceTurns),
+    [traceTurns],
+  );
+  const visibleTurns = turns.length ? turns : projectedTurnSummaries;
+  const projectionOnly = turns.length === 0 && projectedTurnSummaries.length > 0;
 
   const fetchTraceForTurn = useCallback(async (turnId: string): Promise<AgentContextTraceV1 | undefined> => {
     if (!turnId) return undefined;
@@ -252,14 +265,19 @@ export function PawContextTrace({
     };
   }, [active, loadLatest]);
 
-  const description = context ? describeDebugTurn(context, turns) : undefined;
+  const description = context ? describeDebugTurn(context, visibleTurns) : undefined;
   const assemblyNodes = useMemo(() => orderContextTraceNodes(trace?.nodes), [trace]);
   const stageSegments = useMemo(() => buildStageSegments(assemblyNodes, context), [assemblyNodes, context]);
   const totalTokens = stageSegments.reduce((sum, segment) => sum + segment.tokens, 0);
   const cacheSummary = useMemo(() => summarizeCache(context), [context]);
-  const traceTurns = useMemo(() => projectionTraceTurns(projection), [projection]);
   const traceCounts = useMemo(() => countTraceEvents(traceTurns), [traceTurns]);
   const traceRootRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!selectedTurnId && visibleTurns.length) {
+      setSelectedTurnId(visibleTurns.at(-1)?.turnId ?? '');
+    }
+  }, [selectedTurnId, visibleTurns]);
 
   /* 反向落点：Session 打开后把那一个装配节点滚进视野。找不到就什么也不做，
      不改变用户当前的阅读位置。 */
@@ -274,10 +292,14 @@ export function PawContextTrace({
       <aside className="an-trace-rail">
         <header>
           <strong>轮次</strong>
-          <small>{turns.length ? `本机保留 ${turns.length} 轮 · 真实上下文装配记录` : '等待 Session 事件'}</small>
+          <small>{visibleTurns.length
+            ? projectionOnly
+              ? `已投影 ${visibleTurns.length} 轮 · 持久化 Session 事件`
+              : `本机保留 ${visibleTurns.length} 轮 · 真实上下文装配记录`
+            : '等待 Session 事件'}</small>
         </header>
         <div className="an-turn-list">
-          {turns.map((turn, index) => {
+          {visibleTurns.map((turn, index) => {
             const status = turn.runningToolCount > 0 ? 'is-run' : 'is-ok';
             return (
               <button
@@ -296,12 +318,12 @@ export function PawContextTrace({
                 <span className="ti-meta">
                   <span>{turn.modelCallCount} 调用</span>
                   <span>{turn.toolCallCount} 工具</span>
-                  <span>{phaseLabel(turn.assemblyPhase)}</span>
+                  <span>{projectionOnly ? '事件投影' : phaseLabel(turn.assemblyPhase)}</span>
                 </span>
               </button>
             );
           })}
-          {!loading && !turns.length ? (
+          {!loading && !visibleTurns.length ? (
             <div className="an-trace-empty" style={{ padding: 20 }}>还没有可显示的轮次。</div>
           ) : null}
         </div>
@@ -310,7 +332,7 @@ export function PawContextTrace({
       <div className="an-trace-main">
         <div className="an-topbar an-topbar--flush">
           <div className="an-crumb">
-            <h1>{selectedTurnId ? `T${turnOrdinalOf(turns, selectedTurnId)} · Agent 轨迹` : 'Agent 轨迹'}</h1>
+            <h1>{selectedTurnId ? `T${turnOrdinalOf(visibleTurns, selectedTurnId)} · Agent 轨迹` : 'Agent 轨迹'}</h1>
             <div className="an-crumb-sub">
               <span className={`an-dot ${context ? 'is-ok' : ''}`} />
               {description ? `${description.label} · ${shortId(selectedTurnId)}` : loading ? '读取中…' : '无数据'}
@@ -326,6 +348,17 @@ export function PawContextTrace({
           <div className="an-trace-notice" role="status">
             <span>{error}</span>
             <button onClick={() => void loadLatest()} type="button">重试</button>
+            <TraceAgentHandoffButton handoff={{
+              kind: 'context',
+              entityId: selectedTurnId || sessionId,
+              title: 'Agent 轨迹读取失败',
+              summary: error,
+              error,
+              sessionId,
+              traceId: trace?.traceId,
+              sourceRoute: `/agent?session=${encodeURIComponent(sessionId)}`,
+              refs: { selectedTurnId, mode },
+            }} />
           </div>
         ) : null}
         {unavailable ? (
@@ -334,6 +367,16 @@ export function PawContextTrace({
             {unavailable.retryable ? (
               <button onClick={() => void loadLatest()} type="button">重新读取</button>
             ) : null}
+            <TraceAgentHandoffButton handoff={{
+              kind: 'context',
+              entityId: selectedTurnId || sessionId,
+              title: 'Agent 轨迹暂不可用',
+              summary: unavailable.message,
+              sessionId,
+              traceId: trace?.traceId,
+              sourceRoute: `/agent?session=${encodeURIComponent(sessionId)}`,
+              refs: { selectedTurnId, mode, retryable: unavailable.retryable },
+            }} />
           </div>
         ) : null}
 
@@ -341,7 +384,7 @@ export function PawContextTrace({
           <SessionEventTrace
             assemblyAvailable={Boolean(context)}
             counts={traceCounts}
-            debugTurn={turns.find((turn) => turn.turnId === selectedTurnId)}
+            debugTurn={visibleTurns.find((turn) => turn.turnId === selectedTurnId)}
             filter={filter}
             onFilterChange={setFilter}
             onShowAssembly={() => setMode('assembly')}
@@ -1042,6 +1085,28 @@ export function projectionTraceTurns(projection: AgentProjectionState | undefine
       events,
     };
   }).filter((turn): turn is ProjectedTraceTurn => Boolean(turn));
+}
+
+function projectionDebugTurnSummaries(turns: ProjectedTraceTurn[]): DebugTurnSummary[] {
+  return turns.map((turn) => {
+    const toolActivities = turn.events.filter((event) => (
+      event.category === 'tool' && event.evidence.kind === 'activity'
+    ));
+    return {
+      turnId: turn.id,
+      clientMessageId: '',
+      capturedAtMs: turn.createdAtMs,
+      updatedAtMs: turn.updatedAtMs,
+      /* The persisted projection has no model-call boundary. Keep these
+         counters honest instead of inferring provider work from UI events. */
+      modelCallCount: 0,
+      providerRequestCount: 0,
+      toolCallCount: toolActivities.length,
+      runningToolCount: toolActivities.filter((event) => event.status === 'running').length,
+      turnOrdinal: turn.ordinal,
+      summary: turn.title,
+    };
+  });
 }
 
 function projectMessageTraceEvent(message: AgentMessageProjection): ProjectedTraceEvent {

@@ -4318,7 +4318,10 @@ class PiRuntimeHostManager:
         if (
             self.config.idle_timeout_seconds <= 0
             or self._active_completion_ids
-            or any(state.turn_id for state in self._states.values())
+            or any(
+                state.turn_id or state.prompt_admission_in_flight
+                for state in self._states.values()
+            )
         ):
             return
         timer = threading.Timer(self.config.idle_timeout_seconds, self.stop)

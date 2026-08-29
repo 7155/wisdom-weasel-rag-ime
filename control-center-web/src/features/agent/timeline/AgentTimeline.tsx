@@ -44,6 +44,7 @@ import {
 } from './agent-turn-work-model';
 import { useAgentLiveStore } from '../state/live-store';
 import { isAgentNetworkInterruption, publicAgentErrorText } from '../public-error';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 
 export function isRoomPublicPostMessage(message: AgentMessageProjection): boolean {
   if (message.id.startsWith('room-post:')) return true;
@@ -1119,8 +1120,27 @@ export const AgentTurn = memo(function AgentTurn({
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
-                {onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
-                  <div className="agent-turn__failure-actions">
+                <div className="agent-turn__failure-actions">
+                  <TraceAgentHandoffButton
+                    handoff={{
+                      kind: 'session',
+                      entityId: `turn:${turnId}`,
+                      title: `${failureTitle} · ${turnId}`,
+                      summary: failureDetail,
+                      error: rawFailure || failure,
+                      sessionId,
+                      failureRef: terminalFailureActivity?.id || turnId,
+                      sourceRoute: `/agent?session=${encodeURIComponent(sessionId)}`,
+                      refs: {
+                        turnId,
+                        turnStatus: turn.status,
+                        failureKind: String(terminalFailureActivity?.payload.failureKind ?? ''),
+                        providerRetryAttempts,
+                      },
+                    }}
+                  />
+                  {onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
+                    <>
                     {safeContinuation ? (
                       onContinueTurn && latestTurnId === turnId ? (
                         <Button
@@ -1153,8 +1173,9 @@ export const AgentTurn = memo(function AgentTurn({
                       </Button>
                     ) : null}
                     <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
-                  </div>
-                ) : null}
+                    </>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>

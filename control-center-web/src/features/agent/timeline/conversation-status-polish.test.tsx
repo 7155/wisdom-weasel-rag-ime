@@ -82,6 +82,7 @@ describe('conversation status polish', () => {
     const failure = screen.getByRole('alert');
     expect(failure).toHaveClass('agent-turn__failure');
     expect(failure).toHaveTextContent('本轮未完成');
+    expect(screen.getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重试本轮' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '切换模型' })).toBeInTheDocument();
     expect(agentCss).toMatch(/\.agent-turn__failure \{[^}]*width: fit-content;/);

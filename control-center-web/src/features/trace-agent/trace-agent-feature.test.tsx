@@ -9,10 +9,106 @@ import { MockControlTransport } from '@/test/mock-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import { TRACE_AGENT_SKILL_REF, TraceAgentFeature } from './index';
+import { buildTraceAgentHandoffRoute } from './handoff';
 
 afterEach(cleanup);
 
 describe('TraceAgentFeature', () => {
+  it('preselects an incoming failure handoff and includes its exact envelope in the diagnostic prompt', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'memory',
+      entityId: 'memory-maintenance:job-1',
+      title: '记忆整理失败',
+      summary: '读取或保存失败',
+      error: 'invalid Pi Runtime Host JSONL: Unterminated string',
+      failureRef: 'memory-maintenance:job-1',
+      sourceRoute: '/memory?view=activity',
+      refs: { phase: 'managed_memory_model' },
+      occurredAtMs: 123,
+    });
+    const routes: string[] = [];
+    renderFeature(transport, routes, [route]);
+
+    const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
+    expect(selected).toHaveTextContent('记忆整理失败');
+    expect(screen.getByTestId('trace-agent-incoming-handoff')).toHaveTextContent('memory-maintenance:job-1');
+    await user.click(within(selected).getByRole('button', { name: '回到原位置' }));
+    expect(routes).toContain('/memory?view=activity');
+
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const promptRequest = await waitFor(() => {
+      const request = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
+      expect(request).toBeTruthy();
+      return request!;
+    });
+    const prompt = String((promptRequest.body as Record<string, unknown> | undefined)?.message);
+    expect(prompt).toContain('paw.trace-agent-handoff.v1');
+    expect(prompt).toContain('memory-maintenance:job-1');
+    expect(prompt).toContain('Unterminated string');
+    expect(prompt).toContain('managed_memory_model');
+  });
+
+  it('keeps a handoff-only input usable without inventing a runId or fetching a canonical snapshot', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'memory',
+      entityId: 'memory-maintenance:job-only',
+      title: '记忆维护失败',
+      summary: '只有失败交接包，没有可用的 Session、Room 或 Run。',
+      error: '读取或保存失败',
+      failureRef: 'memory-maintenance:job-only',
+      sourceRoute: '/memory?view=activity',
+      refs: { phase: 'managed_memory_model' },
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
+    expect(selected).toHaveTextContent('仅结构化交接包');
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'observability.snapshot' && request.query?.runId === 'memory-maintenance:job-only'
+    ))).toBe(false));
+
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const promptRequest = await waitFor(() => {
+      const request = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
+      expect(request).toBeTruthy();
+      return request!;
+    });
+    expect(String((promptRequest.body as Record<string, unknown> | undefined)?.message)).toContain('没有可用的 canonical Session / Room / Run');
+  });
+
+  it('uses the newly selected target Trace after leaving an incoming handoff', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'session',
+      entityId: 'session-handoff',
+      title: '旧交接对象',
+      summary: '从旧对象进入 Trace Agent。',
+      sessionId: 'session-handoff',
+      traceId: 'trace:handoff',
+      sourceRoute: '/agent?session=session-handoff',
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    await user.click(await screen.findByRole('option', { name: /失败的对话/ }));
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+
+    const promptRequest = await waitFor(() => {
+      const request = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
+      expect(request).toBeTruthy();
+      return request!;
+    });
+    const prompt = String((promptRequest.body as Record<string, unknown> | undefined)?.message);
+    expect(prompt).toContain('trace:source');
+    expect(prompt).not.toContain('trace:handoff');
+  });
+
   it('shows transcript and Trace failure evidence, then starts a read-only Skill-bound diagnostic Session', async () => {
     const user = userEvent.setup();
     const routes: string[] = [];
@@ -365,12 +461,12 @@ describe('TraceAgentFeature', () => {
   });
 });
 
-function renderFeature(transport: MockControlTransport, routes: string[]) {
+function renderFeature(transport: MockControlTransport, routes: string[], initialEntries = ['/trace-agent']) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <MemoryRouter initialEntries={['/trace-agent']}>
+    <MemoryRouter initialEntries={initialEntries}>
       <ControlTransportProvider transport={transport}>
         <QueryClientProvider client={client}>
           <TooltipProvider>

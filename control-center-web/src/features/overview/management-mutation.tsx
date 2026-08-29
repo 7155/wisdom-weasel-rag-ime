@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from 'react';
 import { Button } from '@/components/primitives';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import {
   InlineNotice,
   StatusBadge,
@@ -236,6 +237,14 @@ export function ManagementMutationWorkflow<Context>({
         <div ref={previewErrorRef} className="mgmt-workflow__feedback" tabIndex={-1}>
           <InlineNotice title={declaredDangerous ? '暂时无法查看影响' : '保存失败'} tone="danger">
             {publicErrorText(previewMutation.error, declaredDangerous ? '暂时无法查看影响，请稍后重试。' : '暂时无法保存，请稍后重试。')}
+            <TraceAgentHandoffButton handoff={{
+              kind: 'runtime',
+              entityId: `${draftKey}:preview`,
+              title: `${title}预检失败`,
+              summary: publicErrorText(previewMutation.error, '操作预检失败。'),
+              error: previewMutation.error instanceof Error ? previewMutation.error.message : String(previewMutation.error),
+              refs: { stage: 'preview', risk: effectiveRisk },
+            }} />
           </InlineNotice>
         </div>
       ) : null}
@@ -313,7 +322,18 @@ export function ManagementMutationWorkflow<Context>({
 
       {applyMutation.error ? (
         <div ref={applyErrorRef} className="mgmt-workflow__panel" tabIndex={-1}>
-          <InlineNotice title="更改未完成" tone="danger">{publicErrorText(applyMutation.error, '暂时无法保存，请稍后重试。')}</InlineNotice>
+          <InlineNotice title="更改未完成" tone="danger">
+            {publicErrorText(applyMutation.error, '暂时无法保存，请稍后重试。')}
+            <TraceAgentHandoffButton handoff={{
+              kind: 'runtime',
+              entityId: preview?.pathId || `${draftKey}:apply`,
+              title: `${title}执行失败`,
+              summary: publicErrorText(applyMutation.error, '暂时无法保存，请稍后重试。'),
+              error: applyMutation.error instanceof Error ? applyMutation.error.message : String(applyMutation.error),
+              failureRef: preview?.payloadSha256,
+              refs: { stage: 'apply', pathId: preview?.pathId, risk: effectiveRisk },
+            }} />
+          </InlineNotice>
           <div className="mgmt-workflow__buttons">
             <Button onClick={() => reset()} size="small" variant="quiet">{requiresConfirmation ? '重新查看影响' : '返回'}</Button>
           </div>
@@ -344,7 +364,18 @@ export function ManagementMutationWorkflow<Context>({
 
       {rollbackMutation.error ? (
         <div ref={rollbackErrorRef} className="mgmt-workflow__feedback" tabIndex={-1}>
-          <InlineNotice title="撤销失败" tone="danger">{publicErrorText(rollbackMutation.error)}</InlineNotice>
+          <InlineNotice title="撤销失败" tone="danger">
+            {publicErrorText(rollbackMutation.error)}
+            <TraceAgentHandoffButton handoff={{
+              kind: 'runtime',
+              entityId: receipt?.receiptId || `${draftKey}:rollback`,
+              title: `${title}撤销失败`,
+              summary: publicErrorText(rollbackMutation.error),
+              error: rollbackMutation.error instanceof Error ? rollbackMutation.error.message : String(rollbackMutation.error),
+              failureRef: receipt?.receiptId,
+              refs: { stage: 'rollback', pathId: receipt?.pathId, risk: effectiveRisk },
+            }} />
+          </InlineNotice>
         </div>
       ) : null}
 

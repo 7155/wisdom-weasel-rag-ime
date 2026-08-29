@@ -230,6 +230,7 @@ describe('PawContextTrace', () => {
 
     expect(await screen.findByRole('heading', { name: 'T1 · Agent 轨迹' })).toBeInTheDocument();
     expect(screen.getByText('TURN #1')).toBeInTheDocument();
+    expect(screen.queryByText('还没有可显示的轮次。')).not.toBeInTheDocument();
     expect(screen.getByText('Agent 回复')).toBeInTheDocument();
     expect(screen.queryByText('已完成真实上下文检查')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '全部1' })).toHaveAttribute('aria-pressed', 'true');
@@ -418,6 +419,94 @@ describe('PawContextTrace', () => {
     );
 
     expect(await screen.findByText('这段 Session 当前未驻留 Pi Runtime。重新打开或发送一条消息后，再查看 Agent 轨迹。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
+  });
+
+  it('projects persisted Session events into trace rounds when debug context is non-resident', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': {
+          available: false,
+          transient: true,
+          sessionId: 'session-history',
+          turnId: '',
+          error: 'session_not_resident',
+          availableTurns: [],
+          telemetry: {},
+        },
+      },
+    });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawContextTrace
+          active
+          projection={{
+            turnOrder: ['turn-history'],
+            turnsById: {
+              'turn-history': {
+                id: 'turn-history',
+                status: 'completed',
+                messageIds: ['user-history', 'assistant-history'],
+                activityIds: ['thinking-history'],
+                createdAtMs: 100,
+                updatedAtMs: 300,
+              },
+            },
+            messagesById: {
+              'user-history': {
+                id: 'user-history',
+                sessionId: 'session-history',
+                turnId: 'turn-history',
+                role: 'user',
+                status: 'completed',
+                createdAtMs: 100,
+                timelineSequence: 1,
+                blocks: [{ type: 'text', data: { text: '历史问题' } }],
+                attachments: [],
+              },
+              'assistant-history': {
+                id: 'assistant-history',
+                sessionId: 'session-history',
+                turnId: 'turn-history',
+                role: 'assistant',
+                status: 'completed',
+                createdAtMs: 300,
+                completedAtMs: 300,
+                timelineSequence: 3,
+                blocks: [{ type: 'text', data: { text: '历史回答' } }],
+                attachments: [],
+              },
+            },
+            activitiesById: {
+              'thinking-history': {
+                id: 'thinking-history',
+                turnId: 'turn-history',
+                kind: 'reasoning_summary',
+                status: 'completed',
+                summary: '检查历史上下文',
+                payload: {},
+                createdAtMs: 200,
+                updatedAtMs: 200,
+                timelineSequence: 2,
+              },
+            },
+          } as never}
+          sessionId="session-history"
+        />
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'T1 · Agent 轨迹' })).toBeInTheDocument();
+    expect(screen.getByText('TURN #1')).toBeInTheDocument();
+    expect(screen.getByText('用户输入')).toBeInTheDocument();
+    expect(screen.getByText('thinking', { selector: '.paw-agent-trace-v1__event-type' })).toBeInTheDocument();
+    expect(screen.getByText('Agent 回复')).toBeInTheDocument();
+    expect([...document.querySelectorAll('.paw-agent-trace-v1__event-type')].map((node) => node.textContent)).toEqual([
+      'user.prompt',
+      'thinking',
+      'assistant.msg',
+    ]);
   });
 
   it('turns a Runtime snapshot timeout into readable copy with a working retry', async () => {

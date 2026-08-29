@@ -160,6 +160,7 @@ describe('WorkDocumentsFeature', () => {
     const receiptId = await screen.findByText('操作结果 · 未完成');
     expect(screen.getByText('操作结果 · 未完成')).toBeInTheDocument();
     expect(receiptId.closest('.work-documents__receipt')).toHaveAttribute('data-tone', 'danger');
+    expect(screen.getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
   });
 
   it('reopens an archived document with the backend-projected authority transition', async () => {

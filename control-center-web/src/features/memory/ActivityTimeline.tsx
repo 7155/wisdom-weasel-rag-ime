@@ -40,6 +40,7 @@ import {
   stringValue,
 } from '@/features/overview/management-ui';
 import { useActivityTimeline } from './api';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import {
   MemoryReferenceDialog,
   type MemoryReferenceSelection,
@@ -279,6 +280,17 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
           {error ? (
             <InlineNotice title="时间线暂时不可用" tone="danger">
               {friendlyTimelineError(error)}
+              <TraceAgentHandoffButton
+                handoff={{
+                  kind: 'memory',
+                  entityId: timelineId || `activity-timeline:${date}`,
+                  title: '记忆时间线读取失败',
+                  summary: friendlyTimelineError(error),
+                  error: error instanceof Error ? error.message : String(error),
+                  failureRef: timelineId || undefined,
+                  refs: { date },
+                }}
+              />
             </InlineNotice>
           ) : null}
 
@@ -387,6 +399,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             organizeRange={organizeRange}
             organizeActive={buildActive}
             organizeFailed={Boolean(buildError)}
+            organizeError={buildError}
             organizeWarning={Boolean(buildJobWarning)}
             organizeJobId={buildJobId}
             organizeJobState={buildJobState}
@@ -614,6 +627,7 @@ function ActivityTimelineCalendar({
   organizeRange,
   organizeActive,
   organizeFailed,
+  organizeError,
   organizeWarning,
   organizeJobId,
   organizeJobState,
@@ -634,6 +648,7 @@ function ActivityTimelineCalendar({
   organizeRange: { start: string; end: string };
   organizeActive: boolean;
   organizeFailed: boolean;
+  organizeError: unknown;
   organizeWarning: boolean;
   organizeJobId: string;
   organizeJobState: string;
@@ -724,7 +739,25 @@ function ActivityTimelineCalendar({
             {organizeJobId ? <small>任务 {organizeJobId}</small> : null}
           </span>
           {organizeFailed ? (
-            <Button onClick={() => setOrganizePreviewOpen(true)} size="small" variant="quiet">重新检查范围</Button>
+            <>
+              <Button onClick={() => setOrganizePreviewOpen(true)} size="small" variant="quiet">重新检查范围</Button>
+              <TraceAgentHandoffButton
+                handoff={{
+                  kind: 'memory',
+                  entityId: organizeJobId || `memory-maintenance:${organizeRange.start}:${organizeRange.end}`,
+                  title: '记忆整理任务失败',
+                  summary: organizeMessage,
+                  error: organizeError instanceof Error ? organizeError.message : String(organizeError || organizeMessage),
+                  failureRef: organizeJobId || undefined,
+                  refs: {
+                    jobId: organizeJobId,
+                    state: organizeJobState,
+                    rangeStart: organizeRange.start,
+                    rangeEnd: organizeRange.end,
+                  },
+                }}
+              />
+            </>
           ) : null}
         </div>
       ) : null}

@@ -63,6 +63,7 @@ import { AgentTimeline } from '@/features/agent/timeline/AgentTimeline';
 import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import { PawContextTrace } from './PawContextTrace';
 /* 星空按钮按下之前，星空代码不进入 Agent 主页/对话的 bundle 路径。 */
 import { LazyPawSessionStarfield } from './PawStarfieldLazy';
@@ -1228,7 +1229,25 @@ export function PawSessionWorkspace({
           </div>
 
           <div className="paw-session-workspace__composer">
-            {error ? <div className="paw-session-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button></div> : null}
+            {error ? (
+              <div className="paw-session-workspace__error" role="alert">
+                <CircleAlert size={14} />
+                <span>{error}</span>
+                <button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button>
+                <TraceAgentHandoffButton
+                  handoff={{
+                    kind: 'session',
+                    entityId: `session:${recordId}:error`,
+                    title: 'Session 操作失败',
+                    summary: error,
+                    error,
+                    sessionId: recordId,
+                    sourceRoute: `/agent?session=${encodeURIComponent(recordId)}`,
+                    refs: { surface: 'session-workspace' },
+                  }}
+                />
+              </div>
+            ) : null}
             {record ? <QueueTray busy={busy || sending} controller={queue} /> : null}
             {pendingGenericInput && !pendingApproval && !pendingMemoryReview ? (
               <GenericUserInputCard activity={pendingGenericInput} sessionId={recordId} onError={setError} />

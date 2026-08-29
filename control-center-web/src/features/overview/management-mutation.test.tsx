@@ -8,6 +8,8 @@ import {
   type ManagementWorkReceipt,
 } from './management-mutation';
 import { QueryState } from './management-ui';
+import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 
 type TestContext = { value: string };
 
@@ -118,6 +120,7 @@ describe('ManagementMutationWorkflow feedback and confirmation', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('暂时无法保存，请稍后重试。');
     expect(alert).not.toHaveTextContent('/api/internal');
+    expect(within(alert).getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
     expect(alert.parentElement).toHaveFocus();
 
     await user.click(screen.getByRole('button', { name: '重新尝试' }));
@@ -131,14 +134,17 @@ describe('shared management query feedback', () => {
   it('announces a sanitized read error and provides a real retry action', async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();
+    const routes: string[] = [];
     render(
-      <QueryState
-        error={new Error('GET /api/private runtimeRevision=10')}
-        isPending={false}
-        onRetry={onRetry}
-      >
-        loaded
-      </QueryState>,
+      <PawOsDesktopProvider openRoute={(route) => routes.push(route)} openWindow={() => undefined}>
+        <QueryState
+          error={new Error('GET /api/private runtimeRevision=10')}
+          isPending={false}
+          onRetry={onRetry}
+        >
+          loaded
+        </QueryState>
+      </PawOsDesktopProvider>,
     );
 
     const alert = screen.getByRole('alert');
@@ -146,6 +152,14 @@ describe('shared management query feedback', () => {
     expect(alert).not.toHaveTextContent('/api/private');
     await user.click(within(alert).getByRole('button', { name: '重试' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+    await user.click(within(alert).getByRole('button', { name: '交给 Trace Agent' }));
+    const handoff = parseTraceAgentHandoff(routes[0].split('?', 2)[1] ?? '');
+    expect(handoff).toMatchObject({
+      kind: 'generic',
+      title: '读取失败',
+      error: 'GET[path redacted] runtimeRevision=10',
+    });
+    expect(handoff?.error).not.toContain('/api/private');
   });
 });
 

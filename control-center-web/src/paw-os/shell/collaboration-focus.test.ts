@@ -11,6 +11,7 @@ import {
 import {
   isCollaborationSatellite,
   layoutCollaborationFocus,
+  normalizeCollaborationFocusFrames,
   PAW_WINDOW_FLOW_GEOMETRY_EVENT,
   PawRoomWindowFlowLayer,
   roomWindowFlowGroups,
@@ -164,6 +165,31 @@ describe('PAWOS collaboration focus', () => {
     }
   });
 
+  it('contains five Room planet windows when a stale focus override is outside the desktop', () => {
+    const viewport = { width: 1440, height: 940 };
+    const nodes = [
+      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+      ...Array.from({ length: 5 }, (_, index) => windowNode(`participant-${index}`, {
+        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
+      })),
+    ];
+    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
+    const overrides = {
+      'participant-0': { ...computed.get('participant-0')!, x: -117.5 },
+    };
+
+    const frames = normalizeCollaborationFocusFrames(computed, overrides, viewport, { modeBarHeight: 46 }, true);
+
+    expect(frames.size).toBe(6);
+    for (const frame of frames.values()) {
+      expect(frame.x).toBeGreaterThanOrEqual(0);
+      expect(frame.y).toBeGreaterThanOrEqual(46);
+      expect(frame.x + frame.width).toBeLessThanOrEqual(viewport.width);
+      expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height);
+    }
+    expect(frames.get('participant-0')!.x).toBe(0);
+  });
+
   it('lets wide focus canvases grow the perimeter slots instead of leaving thumbnail-sized planets', () => {
     const width = 1920;
     const height = 1080;
@@ -205,6 +231,42 @@ describe('PAWOS collaboration focus', () => {
     expect(planets.every((frame) => frame.y === planets[0]!.y)).toBe(true);
     expect(planets.every((frame, index) => index === 0 || frame.x > planets[index - 1]!.x)).toBe(true);
     expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(390);
+  });
+
+  it('preserves intentional narrow Room rail overflow during focus-frame normalization', () => {
+    const viewport = { width: 390, height: 720 };
+    const nodes = [
+      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+      ...Array.from({ length: 8 }, (_, index) => windowNode(`participant-${index}`, {
+        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
+      })),
+    ];
+    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
+    const frames = normalizeCollaborationFocusFrames(computed, {}, viewport, { modeBarHeight: 46 }, true);
+    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
+
+    expect(planets.every((frame) => frame.y === planets[0]!.y)).toBe(true);
+    expect(planets.every((frame, index) => index === 0 || frame.x > planets[index - 1]!.x)).toBe(true);
+    expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(viewport.width);
+  });
+
+  it('contains a stale Room rail override without collapsing the remaining rail', () => {
+    const viewport = { width: 390, height: 720 };
+    const nodes = [
+      windowNode('main', { kind: 'room', id: 'room-a', title: 'Room A' }),
+      ...Array.from({ length: 8 }, (_, index) => windowNode(`participant-${index}`, {
+        kind: 'participant', id: `participant-${index}`, roomId: 'room-a', title: `伙伴 ${index + 1}`,
+      })),
+    ];
+    const computed = layoutCollaborationFocus(nodes, viewport, { modeBarHeight: 46 });
+    const frames = normalizeCollaborationFocusFrames(computed, {
+      'participant-0': { ...computed.get('participant-0')!, x: -500 },
+    }, viewport, { modeBarHeight: 46 }, true);
+    const planets = nodes.slice(1).map((node) => frames.get(node.id)!);
+
+    expect(frames.get('participant-0')!.x).toBe(0);
+    expect(planets.at(-1)!.x + planets.at(-1)!.width).toBeGreaterThan(viewport.width);
+    expect(planets.slice(1).every((frame, index) => frame.x > planets[index]!.x)).toBe(true);
   });
 
   it('keeps the Room reduced and centered when collaboration has no running participant Sessions', () => {

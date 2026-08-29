@@ -29,6 +29,7 @@ import { GenericUserInputCard } from '@/features/agent/review/AgentReviewDialogs
 import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { publicErrorText } from '@/features/overview/management-ui';
+import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import { RoomComposer, roomMentionedParticipants } from '@/features/rooms/composer/RoomComposer';
 import { roomCollaborationRoleLabel, roomPlanetName } from '@/features/rooms/room-copy';
 import { latestPendingGroupedRoomInput, type PendingRoomQuestion } from '@/features/rooms/room-question';
@@ -726,9 +727,38 @@ export function PawRoomWorkspace({
                       type="button"
                     >{participantAliases[participantId] ?? participantId} · 重试</button>)}
                   </div>
+                  <TraceAgentHandoffButton handoff={{
+                    kind: 'room',
+                    entityId: `room-planets:${recordId}`,
+                    title: 'Room 行星窗口打开失败',
+                    summary: `${collaborationOpenFailures.size} 颗活跃行星未能打开。`,
+                    roomId: recordId,
+                    sourceRoute: `/rooms?room=${encodeURIComponent(recordId)}`,
+                    refs: {
+                      participantIds: [...collaborationOpenFailures].join(','),
+                      participantCount: collaborationOpenFailures.size,
+                    },
+                  }} />
                 </div>
               </div> : null}
-              {error ? <div className="paw-room-workspace__error" role="alert"><CircleAlert size={14} /><span>{error}</span><button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button></div> : null}
+              {error ? (
+                <div className="paw-room-workspace__error" role="alert">
+                  <CircleAlert size={14} />
+                  <span>{error}</span>
+                  <button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button>
+                  <TraceAgentHandoffButton
+                    handoff={{
+                      kind: 'room',
+                      entityId: recordId,
+                      title: 'Room 同步失败',
+                      summary: error,
+                      error,
+                      roomId: recordId,
+                      sourceRoute: `/rooms?room=${encodeURIComponent(recordId)}`,
+                    }}
+                  />
+                </div>
+              ) : null}
               {pendingGroupedInput ? <GenericUserInputCard activity={pendingGroupedInput} sessionId={pendingGroupedInput.sourceSessionId} onError={setError} /> : (
                 <>
                   <QueueTray busy={sending} controller={queue} />

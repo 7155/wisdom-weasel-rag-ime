@@ -5,6 +5,37 @@ import json
 from pathlib import Path
 
 
+_EMBEDDING_PROVIDER_ALIASES = {
+    "hash": "local-hash",
+    "term-vector": "local-hash",
+    "local-term-vector": "local-hash",
+    "sentence-transformer": "sentence-transformers",
+    "local-model": "sentence-transformers",
+    "local-bge": "sentence-transformers",
+    "mlx-bge": "mlx-bert",
+    "local-bge-mlx": "mlx-bert",
+    "openai": "openai-compatible",
+}
+_KNOWN_EMBEDDING_PROVIDERS = frozenset(
+    {
+        "none",
+        "local-hash",
+        "sentence-transformers",
+        "mlx-bert",
+        "openai-compatible",
+    }
+)
+
+
+def normalized_knowledge_embedding_provider(value: object) -> str:
+    provider = str(value or "none").strip().lower()
+    normalized = _EMBEDDING_PROVIDER_ALIASES.get(provider, provider)
+    # Keep the identity in lockstep with the embedding runtime: unknown
+    # environment values select the null provider there, so they must not
+    # make the supervisor reject an otherwise healthy worker as a mismatch.
+    return normalized if normalized in _KNOWN_EMBEDDING_PROVIDERS else "none"
+
+
 def normalized_knowledge_root(root: Path) -> str:
     return str(Path(root).expanduser().resolve(strict=False))
 
@@ -36,7 +67,7 @@ def knowledge_worker_fingerprint(
         # dependencies cannot be mistaken for the same worker identity.
         "pythonExecutable": str(Path(python_executable).expanduser().absolute()),
         "pythonVersion": str(python_version),
-        "embeddingProvider": str(embedding_provider).strip().lower(),
+        "embeddingProvider": normalized_knowledge_embedding_provider(embedding_provider),
         "embeddingModel": str(embedding_model).strip(),
         "embeddingProfileSha256": str(embedding_profile_sha256).strip().lower(),
         "denseBackend": str(dense_backend).strip().lower(),

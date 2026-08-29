@@ -1,0 +1,999 @@
+{
+  "schemaVersion": "paw.interview-metrics-ledger.v1",
+  "generatedAt": "2026-08-28",
+  "sourceRevision": "b8ee1753b0dd9f0d0900be820ebe7d34bc45841c",
+  "workingTreeSnapshot": {
+    "dirty": true,
+    "scope": "This ledger covers tracked evidence at sourceRevision plus the fresh commands recorded below. Concurrent PAWOS Room, Trace/Eval, plugin, and Runtime changes are excluded.",
+    "releaseStatus": "blocked",
+    "productStatus": "backend_only"
+  },
+  "validation": {
+    "lastValidatedAt": "2026-08-28",
+    "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
+    "ledgerValid": true,
+    "testsPassed": 17
+  },
+  "evidenceLevels": [
+    "E1",
+    "E2",
+    "E3",
+    "E4",
+    "E5",
+    "E6"
+  ],
+  "evidenceLevelDefinitions": {
+    "E1": "Owning source or contract exists at the recorded revision.",
+    "E2": "The named executable test or benchmark passed in its stated scope.",
+    "E3": "The named build or package step succeeded for the recorded source.",
+    "E4": "The recorded artifact was installed through the named product path.",
+    "E5": "The installed or current Runtime produced the recorded authoritative event or state.",
+    "E6": "A real user-visible foreground interaction satisfied the recorded acceptance."
+  },
+  "claimPolicy": {
+    "deterministicVsJudge": "Exact counters, timings, hashes, test outcomes, retrieval metrics, and state transitions remain deterministic fields. AI Judge outputs must be labeled ai_estimate and never replace ground truth.",
+    "proofBoundary": "Source, tests, build, install, Runtime, foreground acceptance, and release readiness are independent claims.",
+    "sampleBoundary": "Repeated observations improve timing stability but do not increase the number of unique cases.",
+    "snapshotBoundary": "A tracked historical receipt may support a revision-qualified interview claim; it does not prove the current dirty worktree or current installed foreground."
+  },
+  "inventory": {
+    "memory": {
+      "pythonOwnerFiles": 56,
+      "testFilesMatchingName": 64,
+      "jsonContractsMatchingName": 12,
+      "appendOnlyMigrationsMatchingName": 23
+    },
+    "knowledge": {
+      "pythonOwnerFiles": 9,
+      "testFilesMatchingName": 12,
+      "jsonContractsMatchingName": 5
+    },
+    "note": "Counts describe the current source inventory only; they are not quality or completion metrics."
+  },
+  "metrics": [
+    {
+      "id": "knowledge.crud.heldout60",
+      "domain": "knowledge",
+      "title": "Chinese Knowledge retrieval on the frozen CRUD-RAG-derived held-out slice",
+      "status": "headline",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "tracked frozen snapshot; date not encoded in scorecard",
+      "values": {
+        "mrrBaseline": 0.25,
+        "mrrOptimized": 0.922222,
+        "mrrAbsoluteDelta": 0.672222,
+        "mrrRelativeDeltaPercent": 268.89,
+        "recallAt10Baseline": 0.244444,
+        "recallAt10Optimized": 0.988889,
+        "recallAt10AbsoluteDelta": 0.744444,
+        "recallAt10RelativeDeltaPercent": 304.55,
+        "ndcgAt10Baseline": 0.236945,
+        "ndcgAt10Optimized": 0.926829,
+        "ndcgAt10AbsoluteDelta": 0.689884,
+        "ndcgAt10RelativeDeltaPercent": 291.16
+      },
+      "sample": {
+        "count": 60,
+        "unit": "frozen held-out queries",
+        "population": "CRUD-RAG Chinese QA adapter with derived qrels"
+      },
+      "reproduction": {
+        "command": ".venv/bin/python scripts/build_rag_interview_scorecard.py --knowledge-report .rag-ime-data/results/rag-interview/crud-rag-qwen3-rerank-diverse-exact-heldout60-final-v1.json --memory-report .rag-ime-data/results/rag-interview/longmemeval-memory-official-user-lexical-full-v2.json --output eval/rag-interview/scorecard.v1.json",
+        "status": "blocked in this checkout because both ignored private source reports are absent"
+      },
+      "evidenceRefs": [
+        "eval/rag-interview/scorecard.v1.json",
+        "eval/rag-interview/public-dataset-receipt.v1.json",
+        "eval/rag-interview/README.md"
+      ],
+      "missingEvidenceRefs": [
+        ".rag-ime-data/results/rag-interview/crud-rag-qwen3-rerank-diverse-exact-heldout60-final-v1.json"
+      ],
+      "claim": {
+        "allowed": "在冻结的 60 题中文 held-out 诊断切片上，混合检索加重排相对词法基线把 MRR 从 0.25 提升到 0.922、Recall@10 从 0.244 提升到 0.989。",
+        "forbidden": "CRUD-RAG 官方榜单 SOTA、当前工作树已重新复现、或所有企业知识库都能达到该分数。"
+      },
+      "limitations": [
+        "qrels are product-derived rather than an official CRUD-RAG retrieval leaderboard",
+        "the current checkout contains the scorecard and hashes but not the ignored private source report",
+        "latency and resource cost are not present in the public scorecard"
+      ]
+    },
+    {
+      "id": "memory.longmemeval.heldout82",
+      "domain": "memory",
+      "title": "Personal Memory retrieval on the frozen LongMemEval-S cleaned slice",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "tracked frozen snapshot; date not encoded in scorecard",
+      "values": {
+        "mrrBaseline": 0.836619,
+        "mrrOptimized": 0.837805,
+        "recallAt1Baseline": 0.43374,
+        "recallAt1Optimized": 0.447967,
+        "recallAt10Baseline": 0.928455,
+        "recallAt10Optimized": 0.928455,
+        "recallAt3RelativeDeltaPercent": -3.17,
+        "recallAt5RelativeDeltaPercent": -1.03,
+        "abstentionPrecision": 0.033333,
+        "abstentionRecall": 0.166667,
+        "abstentionF1": 0.055556
+      },
+      "sample": {
+        "count": 82,
+        "unit": "frozen held-out queries",
+        "population": "LongMemEval-S cleaned official-user profile"
+      },
+      "reproduction": {
+        "command": ".venv/bin/python scripts/build_rag_interview_scorecard.py --knowledge-report .rag-ime-data/results/rag-interview/crud-rag-qwen3-rerank-diverse-exact-heldout60-final-v1.json --memory-report .rag-ime-data/results/rag-interview/longmemeval-memory-official-user-lexical-full-v2.json --output eval/rag-interview/scorecard.v1.json",
+        "status": "blocked in this checkout because the ignored private source report is absent"
+      },
+      "evidenceRefs": [
+        "eval/rag-interview/scorecard.v1.json",
+        "eval/rag-interview/longmemeval-s-cleaned-receipt.v1.json",
+        "eval/rag-interview/README.md"
+      ],
+      "missingEvidenceRefs": [
+        ".rag-ime-data/results/rag-interview/longmemeval-memory-official-user-lexical-full-v2.json"
+      ],
+      "claim": {
+        "allowed": "LongMemEval-S 的冻结 82 题切片已建立可审计基线；当前优化只带来很小的 MRR/Recall@1 增益，并暴露拒答 F1 仅 0.056 的明确缺口。",
+        "forbidden": "记忆检索显著提升、拒答可靠、或 Personal Memory 已完成公开基准验收。"
+      },
+      "limitations": [
+        "Recall@3 and Recall@5 regressed",
+        "abstention quality is too weak for a positive headline",
+        "the ignored private source report is missing from the current checkout"
+      ]
+    },
+    {
+      "id": "memory.optimizer.case_gate.20260828",
+      "domain": "memory",
+      "title": "Memory optimizer deterministic case gate",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "uniqueCases": 16,
+        "observations": 48,
+        "passedObservations": 48,
+        "passRate": 1.0,
+        "endToEndP95Ms": 37.0,
+        "optimizerOnlyP95Ms": 0.218,
+        "traceStoredCount": 48,
+        "suppressedMemoryBlocks": 6,
+        "recentEchoBlocks": 3,
+        "coldKnowledgeBlocks": 3
+      },
+      "sample": {
+        "count": 16,
+        "unit": "unique deterministic cases",
+        "observations": 48
+      },
+      "reproduction": {
+        "command": "RAG_IME_MEMORY_OPTIMIZER_EVAL_REPEAT=3 scripts/run_memory_optimizer_algorithm_gate.sh"
+      },
+      "evidenceRefs": [
+        "scripts/run_memory_optimizer_algorithm_gate.sh",
+        "eval/memory_optimizer_cases.jsonl",
+        "rag_ime/memory_eval.py"
+      ],
+      "claim": {
+        "allowed": "16 个 Memory optimizer 行为 case 重复 3 轮共 48 次全部通过，并为每次保存 Trace；本机端到端 p95 37 ms。",
+        "forbidden": "48 个独立样本、LongMemEval 质量 100%、生产前台延迟 37 ms。"
+      },
+      "limitations": [
+        "case fixtures are synthetic and deterministic",
+        "three repeats are timing observations, not 48 unique cases",
+        "not an installed foreground measurement"
+      ]
+    },
+    {
+      "id": "memory.hybrid_rag.case_gate.20260828",
+      "domain": "memory",
+      "title": "Hybrid Memory retrieval safety and latency case gate",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "uniqueCases": 4,
+        "observations": 12,
+        "passedObservations": 12,
+        "hybridHitAt3": 1.0,
+        "bm25TagHitAt3": 1.0,
+        "timeBookHitAt3": 1.0,
+        "rawSentenceLeakRate": 0.0,
+        "oldInputEchoRate": 0.0,
+        "tombstoneLeakRate": 0.0,
+        "duplicateSurfaceRate": 0.0,
+        "p95LatencyMs": 8.0
+      },
+      "sample": {
+        "count": 4,
+        "unit": "unique deterministic cases",
+        "observations": 12
+      },
+      "reproduction": {
+        "command": "RAG_IME_HYBRID_RAG_EVAL_REPEAT=3 scripts/run_hybrid_rag_gate.sh"
+      },
+      "evidenceRefs": [
+        "scripts/run_hybrid_rag_gate.sh",
+        "eval/hybrid_rag_core_cases.jsonl"
+      ],
+      "claim": {
+        "allowed": "4 个多路召回/安全 case 重复 3 轮全部通过，本机 p95 8 ms，fixture 中原句、旧输入、墓碑和重复候选泄漏率均为 0。",
+        "forbidden": "真实用户数据零泄漏、公开检索集 Recall@3 为 100%、生产端到端 p95 8 ms。"
+      },
+      "limitations": [
+        "small synthetic case set",
+        "vector-tag boost win rate remained 0.0 in these fixtures",
+        "not a foreground or public-dataset result"
+      ]
+    },
+    {
+      "id": "active_rag.case_gate.20260828",
+      "domain": "knowledge",
+      "title": "Explicit Active RAG readiness and privacy case gate",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "uniqueCases": 3,
+        "observations": 9,
+        "passedObservations": 9,
+        "passRate": 1.0,
+        "maxReadyMs": 45,
+        "selectedTextLeaks": 0,
+        "staleAcceptRejections": 9
+      },
+      "sample": {
+        "count": 3,
+        "unit": "unique deterministic cases",
+        "observations": 9
+      },
+      "reproduction": {
+        "command": "RAG_IME_ACTIVE_RAG_EVAL_REPEAT=3 scripts/run_active_rag_gate.sh"
+      },
+      "evidenceRefs": [
+        "scripts/run_active_rag_gate.sh",
+        "eval/active_rag_cases.jsonl"
+      ],
+      "claim": {
+        "allowed": "3 个 Active RAG case 重复 3 轮共 9 次全部 ready，最大 ready 时间 45 ms，fixture 检查未泄露 selected text 且 stale accept 全部拒绝。",
+        "forbidden": "真实 macOS 选区替换已经验收、所有隐私路径零泄漏、或用户可见 TTFC 为 45 ms。"
+      },
+      "limitations": [
+        "local core-mode fixture",
+        "foreground capture, replacement, commit, and feedback remain unverified"
+      ]
+    },
+    {
+      "id": "session.recall.effect.six_case",
+      "domain": "memory",
+      "title": "Session recall query/summary blend micro-eval",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "tracked receipt",
+      "values": {
+        "baselineUsefulHits": 4,
+        "selectedUsefulHits": 6,
+        "baselineCompactionRecovery": 0,
+        "selectedCompactionRecovery": 2,
+        "baselineIrrelevantInjection": 2,
+        "selectedIrrelevantInjection": 0,
+        "selectedCrossScopeLeak": 0,
+        "selectedWrongOldTopic": 0,
+        "baselineTokenBytes": 192,
+        "selectedTokenBytes": 264,
+        "queryWeight": 0.8,
+        "summaryWeight": 0.2
+      },
+      "sample": {
+        "count": 6,
+        "unit": "task-labeled synthetic recall cases"
+      },
+      "reproduction": {
+        "command": "python3 -m rag_ime.session_recall_effect_eval eval/session-recall/session-recall-fixtures.v1.json"
+      },
+      "evidenceRefs": [
+        "eval/session-recall/session-recall-effect-receipt.v1.json",
+        "eval/session-recall/session-recall-effect-eval.md",
+        "tests/test_session_recall_effect_eval.py"
+      ],
+      "claim": {
+        "allowed": "6-case 微评测中，0.8 query + 0.2 compaction-summary 向量融合把有用命中从 4 提到 6，并把无关注入从 2 降到 0。",
+        "forbidden": "通用 Recall 提升 50%、跨项目永不泄漏、或六题等于真实多轮对话分布。"
+      },
+      "limitations": [
+        "six deterministic fixtures only",
+        "task-labeled rather than generic relevance judgments",
+        "selected context bytes increased from 192 to 264"
+      ]
+    },
+    {
+      "id": "workspace.search.synthetic.20260828",
+      "domain": "tool",
+      "title": "Governed workspace search versus Python scan",
+      "status": "headline",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "files1000": {
+          "pythonP50Ms": 33.041,
+          "pythonP95Ms": 33.576,
+          "rgP50Ms": 14.527,
+          "rgP95Ms": 15.687,
+          "p95Speedup": 2.14,
+          "matches": 11,
+          "checksumParity": true
+        },
+        "files5000": {
+          "pythonP50Ms": 152.983,
+          "pythonP95Ms": 192.087,
+          "rgP50Ms": 43.194,
+          "rgP95Ms": 43.663,
+          "p95Speedup": 4.399,
+          "matches": 52,
+          "checksumParity": true
+        }
+      },
+      "sample": {
+        "count": 2,
+        "unit": "synthetic corpus sizes",
+        "timedRepeats": [
+          7,
+          5
+        ]
+      },
+      "reproduction": {
+        "command": "python3 scripts/benchmark_workspace_tools.py --files 1000 --repeat 7 --warmup 2 && python3 scripts/benchmark_workspace_tools.py --files 5000 --repeat 5 --warmup 1"
+      },
+      "evidenceRefs": [
+        "scripts/benchmark_workspace_tools.py",
+        "eval/workspace-tool-benchmark-baseline.v1.json",
+        "eval/workspace-tool-benchmark-5000.v1.json"
+      ],
+      "claim": {
+        "allowed": "在结果 checksum 完全一致的 1k/5k 合成工作区上，受治理的 rg 搜索相对 Python 扫描取得 2.14x/4.40x 的 p95 加速。",
+        "forbidden": "所有仓库搜索都快 4.40 倍、真实生产吞吐提升 4.40 倍、或该结果没有环境依赖。"
+      },
+      "limitations": [
+        "synthetic sparse literal search corpus",
+        "single macOS arm64 host with Python 3.14.6 and 10 logical CPUs",
+        "fresh summary is recorded here; historical raw sample arrays remain in the two referenced receipts"
+      ]
+    },
+    {
+      "id": "room.installed.self_host.20260816",
+      "domain": "room",
+      "title": "Installed development Room self-host acceptance",
+      "status": "headline",
+      "evidenceLevel": "E5",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-16",
+      "values": {
+        "participants": 3,
+        "delegatedPartners": 2,
+        "executionLines": 3,
+        "toolSteps": 19,
+        "completedTasks": 1,
+        "totalTasks": 1,
+        "uniqueFinal": true,
+        "browserReloadRecovery": true
+      },
+      "sample": {
+        "count": 1,
+        "unit": "installed live Luna Room self-host run"
+      },
+      "reproduction": {
+        "command": "python3 scripts/check_product_status.py",
+        "status": "validates the frozen receipt; it does not rerun the historical live Room"
+      },
+      "evidenceRefs": [
+        "release/product-status.json",
+        "OUTCOMES.md"
+      ],
+      "claim": {
+        "allowed": "在 2026-08-16 的安装开发版自举验收中，3 个参与者、2 个受委派 Partner 完成 19 个 Tool step、1/1 任务、唯一 final，并通过浏览器刷新恢复。",
+        "forbidden": "当前脏工作树或公开发行版已复验、Room 长时间稳定、或所有协同模式均已验收。"
+      },
+      "limitations": [
+        "single historical self-host run",
+        "revision-qualified installed-development evidence",
+        "not whole-product foreground or signed release acceptance"
+      ]
+    },
+    {
+      "id": "session.installed.lifecycle.20260816",
+      "domain": "session",
+      "title": "Installed Session lifecycle canary",
+      "status": "supporting",
+      "evidenceLevel": "E5",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-16",
+      "values": {
+        "firstPublicActivitySeconds": 6.4,
+        "browserStoppingProjectionMs": 35,
+        "runtimeStopMs": 384,
+        "terminalToolCalls": 8,
+        "issuedToolCalls": 8,
+        "maxPublicEventPayloadBytes": 660,
+        "activeGhostAfterRefresh": false
+      },
+      "sample": {
+        "count": 1,
+        "unit": "installed bounded Session canary"
+      },
+      "reproduction": {
+        "command": "rg -n '6.4 seconds|stopping.*35 ms|384 ms|eight terminal events|660 bytes' OUTCOMES.md",
+        "status": "reads the recorded outcome; the original installed canary command is not retained in this ledger"
+      },
+      "evidenceRefs": [
+        "OUTCOMES.md"
+      ],
+      "claim": {
+        "allowed": "2026-08-16 安装版有一轮有界生命周期 canary：Stop 384 ms、浏览器 stopping 投影 35 ms、8/8 Tool 终态、最大公开事件 660 B。",
+        "forbidden": "多日稳定性、当前 Runtime 仍是同一延迟、或 6.4 秒首活动满足最终体验目标。"
+      },
+      "limitations": [
+        "historical single canary",
+        "long-duration soak and repeated real compaction/recovery remain open",
+        "the original live-run command is not recorded in the current receipt"
+      ]
+    },
+    {
+      "id": "session_room.clean_checkpoint.20260816",
+      "domain": "quality",
+      "title": "Clean Session/Room checkpoint automated verification",
+      "status": "supporting",
+      "evidenceLevel": "E3",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-16",
+      "values": {
+        "frontendUnitTests": 931,
+        "focusedBackendTests": 298,
+        "totalNamedTests": 1229,
+        "typescriptCheck": "passed",
+        "productionWebBuild": "passed"
+      },
+      "sample": {
+        "count": 1229,
+        "unit": "automated tests at clean checkpoint 4f95c405"
+      },
+      "reproduction": {
+        "command": "python3 scripts/check_product_status.py",
+        "status": "validates the tracked checkpoint receipt; does not rerun all 1229 tests"
+      },
+      "evidenceRefs": [
+        "release/product-status.json"
+      ],
+      "claim": {
+        "allowed": "干净提交 4f95c405 的 Session/Room 检查点记录了 931 个前端单测、298 个聚焦后端测试、TypeScript 与生产 Web build 通过。",
+        "forbidden": "当前工作树 1229 项全绿、全仓所有测试通过、安装或前台已通过。"
+      },
+      "limitations": [
+        "historical clean-commit receipt",
+        "focused suites are not the entire repository",
+        "build evidence is not install or foreground evidence"
+      ]
+    },
+    {
+      "id": "memory.test_matrix.20260828",
+      "domain": "memory",
+      "title": "Fresh Memory-focused automated test matrix",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "discoveredTests": 484,
+        "passedTests": 482,
+        "sandboxBlockedHttpTests": 2,
+        "offlineSubsetPassed": 459,
+        "referenceLoopbackPassed": 10,
+        "actionModulePassed": 9,
+        "actionModuleHttpErrors": 1,
+        "graphModulePassed": 4,
+        "graphModuleHttpErrors": 1
+      },
+      "sample": {
+        "count": 484,
+        "unit": "unique Memory-named unittest cases"
+      },
+      "reproduction": {
+        "command": "find tests -name 'test_*memory*.py' ! -name test_memory_actions.py ! -name test_memory_graph_read.py ! -name test_memory_references.py -print0 | xargs -0 .venv/bin/python -m unittest; .venv/bin/python -m unittest tests/test_memory_references.py; .venv/bin/python -m unittest tests/test_memory_actions.py; .venv/bin/python -m unittest tests/test_memory_graph_read.py"
+      },
+      "evidenceRefs": [
+        "tests",
+        "rag_ime/memory_optimizer.py",
+        "rag_ime/memory_projection.py"
+      ],
+      "claim": {
+        "allowed": "本轮拆分执行 484 个 Memory 命名测试，482 个通过；另 2 个 HTTP 集成用例因执行沙盒返回 403，明确留作真实 loopback 环境复验。",
+        "forbidden": "484/484 全绿、两个 403 是产品回归、或这些单测证明安装版 Memory 全链路可用。"
+      },
+      "limitations": [
+        "two HTTP integration cases remain unverified in this sandbox",
+        "SQLite ResourceWarnings appeared in several passing suites",
+        "test filename matching is an inventory heuristic"
+      ]
+    },
+    {
+      "id": "minimind.backend.latency_and_quality.20260816",
+      "domain": "input",
+      "title": "MiniMind backend latency with negative semantic baseline",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-08-16",
+      "values": {
+        "latencySamples": 20,
+        "backendP50Ms": 117,
+        "backendP95Ms": 251,
+        "threeCandidateRate": 1.0,
+        "semanticJudgmentCoverage": 1.0,
+        "semanticTop1": 0.0,
+        "semanticTop3": 0.0,
+        "boundaryValidity": 0.833333,
+        "continuousTab": 0.0
+      },
+      "sample": {
+        "count": 20,
+        "unit": "backend complete-response latency samples"
+      },
+      "reproduction": {
+        "command": "scripts/run_predictor_latency_gate.sh",
+        "status": "historical product-status receipt; active service and foreground were not rerun in this Goal"
+      },
+      "evidenceRefs": [
+        "release/product-status.json",
+        "scripts/run_predictor_latency_gate.sh"
+      ],
+      "claim": {
+        "allowed": "历史后端基线 p50/p95 为 117/251 ms 且每次返回 3 个候选，但人工覆盖下 Top-1/Top-3 都为 0，已把延迟与语义质量拆开验收。",
+        "forbidden": "输入法首屏 p95 251 ms、候选质量已达标、或后端三候选率代表用户有效率。"
+      },
+      "limitations": [
+        "backend complete-response latency is not foreground first-visible latency",
+        "semantic gate failed",
+        "historical active deployment receipt"
+      ]
+    },
+    {
+      "id": "memory.source_inventory.20260828",
+      "domain": "memory",
+      "title": "Memory implementation and governance inventory",
+      "status": "supporting",
+      "evidenceLevel": "E1",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "pythonOwnerFiles": 56,
+        "testFiles": 64,
+        "jsonContracts": 12,
+        "appendOnlyMigrations": 23,
+        "governedPreviewOperations": 3
+      },
+      "sample": {
+        "count": 155,
+        "unit": "source, test, contract, and migration path matches"
+      },
+      "reproduction": {
+        "command": "python3 -c \"from pathlib import Path; r=Path('.'); print(len([p for p in (r/'rag_ime').rglob('*.py') if 'memory' in p.name.lower()]), len(list((r/'tests').glob('test_*memory*.py'))), len(list((r/'rag_ime/contracts/json').glob('*memory*.json'))), len(list((r/'rag_ime/db/migrations').glob('*memory*.sql'))))\""
+      },
+      "evidenceRefs": [
+        "rag_ime",
+        "tests",
+        "rag_ime/contracts/json",
+        "rag_ime/db/migrations"
+      ],
+      "claim": {
+        "allowed": "Memory 已形成独立的写入治理、Evidence/Atom/Book、投影、召回、维护、回滚、图读取与评测 owner，而不是单一向量检索函数。",
+        "forbidden": "155 个功能、Memory 已全部完成、或文件数量本身代表工程质量。"
+      },
+      "limitations": [
+        "filename-based inventory",
+        "some owners span multiple domains",
+        "inventory is architecture evidence rather than behavior acceptance"
+      ]
+    },
+    {
+      "id": "trace_eval.contract_skeleton.20260828",
+      "domain": "trace-eval",
+      "title": "Common Trace/Eval/Sandbox contract skeleton",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-28",
+      "values": {
+        "focusedTests": 10,
+        "passedTests": 10,
+        "verticalExampleManifests": 2,
+        "groundTruthJudgeSeparation": true,
+        "inputHashByDefault": true,
+        "productionWriteBlockedByContract": true
+      },
+      "sample": {
+        "count": 10,
+        "unit": "focused contract/adapter/harness tests"
+      },
+      "reproduction": {
+        "command": "python3 -m unittest tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py"
+      },
+      "evidenceRefs": [
+        "rag_ime/contracts/json/trace-envelope.v1.json",
+        "rag_ime/contracts/json/eval-run.v1.json",
+        "rag_ime/contracts/json/sandbox-run.v1.json",
+        "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md"
+      ],
+      "claim": {
+        "allowed": "公共 Trace/Eval/Sandbox 契约骨架已有 10 个聚焦测试通过，并以构造约束分开 Ground Truth 与 AI Judge，提供两个共用 harness 的公开垂直示例。",
+        "forbidden": "统一 Trace/Eval 平台已完成、已持久化或周期运行、垂直 Agent 已能自主开发生产应用、或两个公开 fixture 是 held-out benchmark。"
+      },
+      "limitations": [
+        "concurrent uncommitted source snapshot",
+        "no persistence, scheduler, production adapters, installed Runtime, or foreground proof",
+        "metric provenance and interview-claim fields remain incomplete"
+      ]
+    },
+    {
+      "id": "memory.synthetic_retrieval_probe.20260828",
+      "domain": "memory",
+      "title": "Ad-hoc isolated Memory retrieval/cache probe",
+      "status": "blocked",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "values": {
+        "syntheticEvents": 1000,
+        "queries": 6,
+        "repeats": 10,
+        "lexicalUncachedP95Ms": 208.007,
+        "lexicalCachedP95Ms": 0.024,
+        "localHashUncachedP95Ms": 287.783,
+        "localHashCachedP95Ms": 0.02,
+        "projectionBacklog": 941,
+        "retrievalDocuments": 0,
+        "checkpointCaughtUp": false,
+        "projectionFresh": false
+      },
+      "blocker": "The ad-hoc probe exercised a legacy/synthetic candidate path while the projection was stale, and its exact probe source was not persisted. It is not resume-eligible until rebuilt as a checked-in benchmark with projectionFresh=true.",
+      "evidenceRefs": [
+        "rag_ime/local_sqlite_core.py",
+        "rag_ime/memory_projection.py"
+      ]
+    },
+    {
+      "id": "agent.formal_four_lane",
+      "domain": "agent",
+      "title": "Formal baseline/Skill/tuned/agentic comparison",
+      "status": "target",
+      "evidenceLevel": "E1",
+      "measurementKind": "status",
+      "values": {},
+      "blocker": "No formal four-lane Luna report is present; the tracked scorecard marks pending_formal_run.",
+      "evidenceRefs": [
+        "eval/rag-interview/scorecard.v1.json",
+        "eval/rag-interview/README.md"
+      ]
+    },
+    {
+      "id": "trace_eval.unified_platform",
+      "domain": "trace-eval",
+      "title": "Unified Session/Room/Tool/Browser/Memory/Knowledge/Input Trace and Eval",
+      "status": "target",
+      "evidenceLevel": "E1",
+      "measurementKind": "status",
+      "values": {},
+      "blocker": "The contract is being developed on a separate active PAWOS lane. This ledger does not promote source drafts to a working platform, scheduled Eval, sandbox, Runtime, or foreground claim.",
+      "evidenceRefs": [
+        "control-center-web/docs/pawos/PAWOS_TRACE_EVAL.md"
+      ]
+    },
+    {
+      "id": "input.foreground_ttfc",
+      "domain": "input",
+      "title": "Foreground first-visible candidate latency and acceptance",
+      "status": "target",
+      "evidenceLevel": "E1",
+      "measurementKind": "status",
+      "values": {},
+      "blocker": "Current product status explicitly says foreground first-visible latency and the full Squirrel acceptance matrix are unverified.",
+      "evidenceRefs": [
+        "release/product-status.json",
+        "scripts/verify_squirrel_foreground_trace.sh"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "id": "RUN-20260828-001",
+      "measuredAt": "2026-08-28",
+      "command": "python3 scripts/check_product_status.py",
+      "outcome": "passed",
+      "summary": "Tracked product status validated OK; it remains backend_only and releaseStatus=blocked at sourceCommit 4f95c405."
+    },
+    {
+      "id": "RUN-20260828-002",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_product_status.py tests/test_predictor_benchmark.py tests/test_predictor_latency.py tests/test_trace_contracts.py",
+      "outcome": "passed",
+      "summary": "12 tests passed in 0.059 seconds. This is source/test evidence, not Runtime or foreground evidence."
+    },
+    {
+      "id": "RUN-20260828-003",
+      "measuredAt": "2026-08-28",
+      "command": ".venv/bin/python -m unittest tests/test_rag_interview_scorecard.py tests/test_rag_benchmark_datasets.py tests/test_longmemeval_memory_retrieval.py tests/test_session_recall_effect_eval.py tests/test_trace_contracts.py tests/test_knowledge_search_use_eval.py tests/test_rag_benchmark.py tests/test_rag_benchmark_sandbox.py tests/test_rag_benchmark_exact_dense.py tests/test_retrieval_quality_evaluation.py",
+      "outcome": "failed",
+      "summary": "47/48 passed; exact-dense cache expectation failed because this venv lacks NumPy and intentionally fell back to repeated SQLite scanning (query_calls 3 rather than 1)."
+    },
+    {
+      "id": "RUN-20260828-004",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_rag_benchmark_exact_dense.py",
+      "outcome": "passed",
+      "summary": "The exact-dense cache test passed 1/1 under system Python 3.14.6 with NumPy 2.4.3, isolating the prior result to environment qualification rather than a product regression."
+    },
+    {
+      "id": "RUN-20260828-005",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_rag_interview_scorecard.py tests/test_rag_benchmark_datasets.py tests/test_longmemeval_memory_retrieval.py tests/test_session_recall_effect_eval.py tests/test_trace_contracts.py tests/test_knowledge_search_use_eval.py tests/test_rag_benchmark.py tests/test_rag_benchmark_sandbox.py tests/test_rag_benchmark_exact_dense.py tests/test_retrieval_quality_evaluation.py",
+      "outcome": "passed",
+      "summary": "48/48 passed in 7.517 seconds under system Python; SQLite ResourceWarnings were observed and retained as residual hygiene work."
+    },
+    {
+      "id": "RUN-20260828-006",
+      "measuredAt": "2026-08-28",
+      "command": ".venv/bin/python -m unittest discover -s tests -p 'test_*memory*.py'",
+      "outcome": "interrupted",
+      "summary": "The monolithic Memory discovery run was interrupted after the sandbox blocked a local 127.0.0.1 HTTP path; no aggregate pass count is claimed from this run."
+    },
+    {
+      "id": "RUN-20260828-007",
+      "measuredAt": "2026-08-28",
+      "command": "find tests -name 'test_*memory*.py' ! -name test_memory_actions.py ! -name test_memory_graph_read.py ! -name test_memory_references.py -print0 | xargs -0 .venv/bin/python -m unittest",
+      "outcome": "passed",
+      "summary": "459 offline-friendly Memory tests passed in 328.224 seconds; SQLite ResourceWarnings appeared in migration_runner, memory_pipeline_diagnostics, and owner_memory_curation paths."
+    },
+    {
+      "id": "RUN-20260828-008",
+      "measuredAt": "2026-08-28",
+      "command": ".venv/bin/python -m unittest tests/test_memory_references.py",
+      "outcome": "passed",
+      "summary": "10/10 Memory reference tests passed in 12.519 seconds, including their loopback path."
+    },
+    {
+      "id": "RUN-20260828-009",
+      "measuredAt": "2026-08-28",
+      "command": ".venv/bin/python -m unittest tests/test_memory_actions.py",
+      "outcome": "failed",
+      "summary": "9/10 passed; one HTTP integration case errored because the execution sandbox returned HTTP 403. Product regression is not inferred."
+    },
+    {
+      "id": "RUN-20260828-010",
+      "measuredAt": "2026-08-28",
+      "command": ".venv/bin/python -m unittest tests/test_memory_graph_read.py",
+      "outcome": "failed",
+      "summary": "4/5 passed; one HTTP integration case errored because the execution sandbox returned HTTP 403. Product regression is not inferred."
+    },
+    {
+      "id": "RUN-20260828-011",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_memory_optimizer_anti_echo.py tests/test_memory_optimizer_candidate_compiler.py tests/test_memory_optimizer_context_frame.py tests/test_memory_optimizer_feedback.py tests/test_memory_optimizer_latency.py tests/test_memory_optimizer_query_plan.py tests/test_memory_optimizer_scoring.py tests/test_memory_optimizer_sidecar_integration.py",
+      "outcome": "passed",
+      "summary": "16 focused Memory optimizer tests passed in 1.633 seconds."
+    },
+    {
+      "id": "RUN-20260828-012",
+      "measuredAt": "2026-08-28",
+      "command": "focused performance/predictor suite; exact file selection was not retained after context compaction",
+      "outcome": "passed",
+      "summary": "10 tests passed in 2.224 seconds; because the exact selection was not retained, this run is recorded but is not used as claim evidence."
+    },
+    {
+      "id": "RUN-20260828-013",
+      "measuredAt": "2026-08-28",
+      "command": "python3 scripts/benchmark_workspace_tools.py --files 1000 --repeat 7 --warmup 2",
+      "outcome": "passed",
+      "summary": "Checksum parity true with 11 matches; Python p50/p95 33.041/33.576 ms, rg p50/p95 14.527/15.687 ms, p95 speedup 2.14x."
+    },
+    {
+      "id": "RUN-20260828-014",
+      "measuredAt": "2026-08-28",
+      "command": "python3 scripts/benchmark_workspace_tools.py --files 5000 --repeat 5 --warmup 1",
+      "outcome": "passed",
+      "summary": "Checksum parity true with 52 matches; Python p50/p95 152.983/192.087 ms, rg p50/p95 43.194/43.663 ms, p95 speedup 4.399x."
+    },
+    {
+      "id": "RUN-20260828-015",
+      "measuredAt": "2026-08-28",
+      "command": "ad-hoc isolated LocalSqliteCore lexical Memory probe; exact probe source was not persisted",
+      "outcome": "passed",
+      "summary": "60 uncached and 60 hot-cache samples completed, but projection backlog was 941, retrievalDocuments was 0, and freshness was false; result is blocked from reuse as a production metric."
+    },
+    {
+      "id": "RUN-20260828-016",
+      "measuredAt": "2026-08-28",
+      "command": "ad-hoc isolated LocalSqliteCore local-hash:96 Memory probe; exact probe source was not persisted",
+      "outcome": "passed",
+      "summary": "909 vectors and 60 uncached plus 60 hot-cache samples completed, but the same stale projection invalidates a production retrieval claim."
+    },
+    {
+      "id": "RUN-20260828-017",
+      "measuredAt": "2026-08-28",
+      "command": "RAG_IME_MEMORY_OPTIMIZER_EVAL_REPEAT=3 scripts/run_memory_optimizer_algorithm_gate.sh",
+      "outcome": "passed",
+      "summary": "16 unique cases repeated three times: 48/48 observations passed, p95 end-to-end 37 ms, p95 optimizer-only 0.218 ms, and 48 traces stored."
+    },
+    {
+      "id": "RUN-20260828-018",
+      "measuredAt": "2026-08-28",
+      "command": "scripts/run_hybrid_rag_gate.sh",
+      "outcome": "passed",
+      "summary": "Hybrid gate passed 12/12 observations from four unique cases at p95 8 ms; the accompanying post-commit Memory gate passed 5/5."
+    },
+    {
+      "id": "RUN-20260828-019",
+      "measuredAt": "2026-08-28",
+      "command": "RAG_IME_ACTIVE_RAG_EVAL_REPEAT=3 scripts/run_active_rag_gate.sh",
+      "outcome": "passed",
+      "summary": "Three unique cases repeated three times passed 9/9; maximum local ready time was 45 ms with no selected-text leak in the fixtures."
+    },
+    {
+      "id": "RUN-20260828-020",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_interview_metrics.py",
+      "outcome": "failed",
+      "summary": "Expected red phase: import failed because scripts.check_interview_metrics did not exist before the implementation."
+    },
+    {
+      "id": "RUN-20260828-021",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_interview_metrics.py",
+      "outcome": "passed",
+      "summary": "Green phase: three ledger contract tests passed in 0.011 seconds after adding the validator and evidence ledger."
+    },
+    {
+      "id": "RUN-20260828-022",
+      "measuredAt": "2026-08-28",
+      "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py",
+      "outcome": "passed",
+      "summary": "The ledger validated with 17 metrics, 21 then-recorded runs, and 11 datasets; seven focused ledger/RAG/Session-recall tests passed in 0.013 seconds."
+    },
+    {
+      "id": "RUN-20260828-023",
+      "measuredAt": "2026-08-28",
+      "command": "python3 scripts/check_project_harness.py",
+      "outcome": "failed",
+      "summary": "The existing release-candidate scope is stale against base-to-HEAD: it misses multiple control-center-web documentation paths, contains one extra route-registry test, and records seven modified frontend files as deleted. None of the new interview-metrics paths appeared in the failure list; this lane did not rewrite the concurrent release scope."
+    },
+    {
+      "id": "RUN-20260828-024",
+      "measuredAt": "2026-08-28",
+      "command": "python3 scripts/check_import_boundaries.py",
+      "outcome": "passed",
+      "summary": "Import boundaries passed."
+    },
+    {
+      "id": "RUN-20260828-025",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m py_compile scripts/check_interview_metrics.py tests/test_interview_metrics.py && git diff --check -- eval/interview-metrics scripts/check_interview_metrics.py tests/test_interview_metrics.py",
+      "outcome": "passed",
+      "summary": "The new Python files compiled and the scoped whitespace check reported no errors."
+    },
+    {
+      "id": "RUN-20260828-026",
+      "measuredAt": "2026-08-28",
+      "command": "python3 -m unittest tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
+      "outcome": "passed",
+      "summary": "Read-only compatibility check of the concurrent Trace/Eval lane passed 10/10 focused contract, adapter, and vertical-harness tests in 0.002 seconds; remaining provenance gaps are recorded separately."
+    }
+  ],
+  "datasets": [
+    {
+      "id": "crud-rag-derived",
+      "domain": "knowledge",
+      "priority": "A-current",
+      "sourceUrl": "https://github.com/IAAR-Shanghai/CRUD_RAG",
+      "localStatus": "2394-case adapter receipt and 60-case scorecard present; raw corpus and private source report absent",
+      "fit": "Chinese RAG retrieval and generation; current adapter uses derived qrels and is not an official leaderboard submission",
+      "nextAction": "restore the hash-matched ignored source report or rerun the frozen pipeline before refreshing the headline"
+    },
+    {
+      "id": "longmemeval-s-cleaned",
+      "domain": "memory",
+      "priority": "A-current",
+      "sourceUrl": "https://github.com/xiaowu0162/LongMemEval",
+      "localStatus": "500-case manifest receipt and 82-case scorecard present; corpus and private source report absent",
+      "fit": "information extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention",
+      "nextAction": "fix abstention and regression slices on validation, then run the frozen 99-case held-out split once"
+    },
+    {
+      "id": "miracl-zh",
+      "domain": "knowledge",
+      "priority": "A-next",
+      "sourceUrl": "https://github.com/project-miracl/miracl",
+      "localStatus": "not imported",
+      "fit": "independent Chinese retrieval relevance judgments that avoid the current derived-qrels limitation",
+      "nextAction": "add a pinned receipt and a small development slice, then preserve the official dev qrels as hidden evaluator data"
+    },
+    {
+      "id": "longmemeval-v2",
+      "domain": "memory",
+      "priority": "A-next",
+      "sourceUrl": "https://github.com/xiaowu0162/LongMemEval-V2",
+      "localStatus": "not imported",
+      "fit": "long-horizon agent memory and latency-accuracy trade-offs aligned with self-testing vertical agents",
+      "nextAction": "inspect license/schema, pin a revision, and map event/session identities into the unified Trace contract"
+    },
+    {
+      "id": "multihop-rag",
+      "domain": "knowledge",
+      "priority": "B-next",
+      "sourceUrl": "https://github.com/yixuantt/MultiHop-RAG",
+      "localStatus": "not imported",
+      "fit": "multi-hop retrieval and evidence coverage beyond single-document Recall@K",
+      "nextAction": "use after single-hop MIRACL-zh parity so multi-hop failures can be localized"
+    },
+    {
+      "id": "enterprise-rag-bench",
+      "domain": "knowledge",
+      "priority": "B-later",
+      "sourceUrl": "https://github.com/onyx-dot-app/EnterpriseRAG-Bench",
+      "localStatus": "not imported; large corpus",
+      "fit": "enterprise document retrieval, metadata filtering, answer correctness/completeness, and invalid-extra checks",
+      "nextAction": "start with the official core slice and record storage, indexing time, query latency, and cost separately"
+    },
+    {
+      "id": "locomo",
+      "domain": "memory",
+      "priority": "C-secondary",
+      "sourceUrl": "https://github.com/snap-research/locomo",
+      "localStatus": "not imported",
+      "fit": "long-conversation QA and summarization as a secondary qualitative Memory check",
+      "nextAction": "do not replace LongMemEval with this small-conversation benchmark; label any Judge-based score as ai_estimate"
+    },
+    {
+      "id": "bfcl-v4",
+      "domain": "tool",
+      "priority": "A-next",
+      "sourceUrl": "https://gorilla.cs.berkeley.edu/leaderboard",
+      "localStatus": "not imported",
+      "fit": "function/tool calling, multi-turn state, memory, and agentic search for the unified Tool Trace lane",
+      "nextAction": "adapt only cases whose tools can be deterministically sandboxed and keep official scoring separate"
+    },
+    {
+      "id": "toolsandbox",
+      "domain": "tool",
+      "priority": "A-next",
+      "sourceUrl": "https://github.com/apple/ToolSandbox",
+      "localStatus": "not imported",
+      "fit": "stateful conversational tool-use evaluation with inspectable before/after state",
+      "nextAction": "map tool call/result/state diffs into the common Trace envelope"
+    },
+    {
+      "id": "spider-2",
+      "domain": "data-agent",
+      "priority": "A-vertical-app",
+      "sourceUrl": "https://spider2-sql.github.io/",
+      "localStatus": "not imported",
+      "fit": "enterprise Text-to-SQL for 掌柜问数-style vertical Agent development",
+      "nextAction": "start with a sandboxed local database slice and deterministic execution accuracy before AI Judge scoring"
+    },
+    {
+      "id": "webarena",
+      "domain": "browser",
+      "priority": "B-later",
+      "sourceUrl": "https://github.com/web-arena-x/webarena",
+      "localStatus": "not imported; requires self-hosted sites",
+      "fit": "end-to-end browser Agent tasks and state-based acceptance",
+      "nextAction": "defer until PAW has one shared visible browser guest and stable Browser Trace lifecycle"
+    }
+  ]
+}

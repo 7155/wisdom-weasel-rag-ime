@@ -8,6 +8,7 @@ import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import { MockControlTransport } from '@/test/mock-transport';
 import type { ControlRequest } from '@/platform/transport';
 import { PawOsAppSurfaceProvider, PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import { PawAgentApp } from './PawAgentApp';
 
@@ -240,6 +241,30 @@ describe('PAWOS Agent App', () => {
     expect(screen.queryByText(/Pi Runtime/)).not.toBeInTheDocument();
   });
 
+  it('offers a Trace Agent handoff when the Agent directory operation fails', async () => {
+    const user = userEvent.setup();
+    const transport = createTransport({
+      archiveHandler: () => { throw new Error('archive unavailable'); },
+    });
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '更多“发布检查”操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '归档 Session' }));
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    await waitFor(() => expect(within(rail).getByText('archive unavailable')).toBeInTheDocument());
+
+    window.location.hash = '';
+    await user.click(screen.getByRole('button', { name: '交给 Trace Agent' }));
+    const handoff = parseTraceAgentHandoff(window.location.hash.replace(/^#\/trace-agent\?/u, ''));
+    expect(handoff).toMatchObject({
+      kind: 'session',
+      entityId: 'session-old',
+      sessionId: 'session-old',
+      sourceRoute: '/agent?session=session-old',
+      refs: { operation: 'archive', surface: 'agent-directory' },
+    });
+  });
+
   it('reflects the selected permission risk on the composer chip mark', async () => {
     const user = userEvent.setup();
     renderAgent();
@@ -429,6 +454,7 @@ describe('PAWOS Agent App', () => {
 
     expect(await screen.findByRole('status')).toHaveTextContent('部分 Agent 目录暂时不可用。');
     expect(screen.queryByText(/Pi Runtime 已连接/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '交给 Trace Agent' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '重新读取目录' }));
 
@@ -551,6 +577,7 @@ function renderAgent(transport = createTransport(), props: { initialRoute?: stri
 }
 
 function createTransport(options: {
+  archiveHandler?: (request: ControlRequest) => unknown | Promise<unknown>;
   promptHandler?: () => Promise<unknown>;
   modelHandler?: () => Promise<unknown>;
   modelCatalog?: unknown;
@@ -593,14 +620,14 @@ function createTransport(options: {
         return { ok: true, session: created };
       },
       'agent.session.prompt': options.promptHandler ?? { ok: true },
-      'agent.session.archive': (request: ControlRequest) => {
+      'agent.session.archive': options.archiveHandler ?? ((request: ControlRequest) => {
         const sessionId = String(request.params?.sessionId ?? '');
         const archived = Boolean((request.body as Record<string, unknown>)?.archived);
         sessions = sessions.map((session) => session.id === sessionId
           ? { ...session, status: archived ? 'archived' : 'idle', updatedAtMs: session.updatedAtMs + 1 }
           : session);
         return { ok: true };
-      },
+      }),
       'agent.session.delete': (request: ControlRequest) => {
         const sessionId = String(request.params?.sessionId ?? '');
         sessions = sessions.filter((session) => session.id !== sessionId);
