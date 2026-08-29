@@ -35,6 +35,10 @@ SESSION_RUNTIME_CONTRACT = (
 )
 SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
+# The legacy @paw/pi-subagent package runs child Sessions inline and blocks the
+# parent turn. Product Sessions use the native agents gateway instead, so this
+# package must not be present in a newly built managed Runtime catalog.
+DISABLED_BUNDLED_PI_PACKAGE_DIRS: frozenset[str] = frozenset({"subagent"})
 PROJECT_ROUTING_SKILLS = frozenset(
     {
         "bootstrap-project-context",
@@ -746,7 +750,39 @@ def _copy_bundled_pi_packages(source_root: Path, destination: Path) -> None:
             f"bundled Pi Package destination already exists: {destination}"
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_root, destination)
+    destination.mkdir(parents=True, exist_ok=False)
+    for item in source_root.iterdir():
+        if item.name in DISABLED_BUNDLED_PI_PACKAGE_DIRS:
+            continue
+        target = destination / item.name
+        if item.is_dir():
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+    try:
+        catalog_payload = json.loads(
+            (destination / "catalog.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise ManagedPiRuntimeError(
+            "bundled Pi Package catalog cannot be parsed after filtering"
+        ) from error
+    packages = catalog_payload.get("packages")
+    if not isinstance(packages, list):
+        raise ManagedPiRuntimeError("bundled Pi Package catalog has no packages list")
+    filtered_packages = [
+        package
+        for package in packages
+        if not isinstance(package, dict)
+        or package.get("directory") not in DISABLED_BUNDLED_PI_PACKAGE_DIRS
+    ]
+    if len(filtered_packages) != len(packages):
+        catalog_payload["packages"] = filtered_packages
+        (destination / "catalog.json").write_text(
+            json.dumps(catalog_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _runtime_host_banner(

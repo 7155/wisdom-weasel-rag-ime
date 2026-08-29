@@ -1303,6 +1303,42 @@ describe('AgentEventReducer', () => {
     expect(completed.optimisticByClientMessageId).toEqual({});
   });
 
+  it('reconciles the first Home prompt when the durable user SSE omits clientMessageId', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-created'), {
+      // PawAgentHome creates this id before navigating into the new Session.
+      clientMessageId: 'session-mte2oj9y-ek4g69yt',
+      text: '进行记忆整理',
+      nowMs: 10,
+    });
+    const durableMessage = {
+      ...serverMessage('durable-home-user', 'user', 'turn-1', '进行记忆整理'),
+      sessionId: 'session-created',
+    };
+
+    const received = reduceAgentEvent(
+      optimistic,
+      {
+        ...agentEvent(2, 'message_completed', {
+          // Pi's durable user row can arrive over SSE without the product
+          // clientMessageId that was attached to the optimistic Home row.
+          message: durableMessage,
+        }),
+        sessionId: 'session-created',
+        turnId: 'turn-1',
+        payload: {
+          message: durableMessage,
+        },
+      },
+    ).state;
+
+    expect(received.messageOrder).toEqual(['durable-home-user']);
+    expect(received.messagesById['local:session-mte2oj9y-ek4g69yt']).toBeUndefined();
+    expect(received.messagesById['durable-home-user']?.clientMessageId).toBe(
+      'session-mte2oj9y-ek4g69yt',
+    );
+    expect(received.optimisticByClientMessageId).toEqual({});
+  });
+
   it('settles a synthetic busy snapshot turn when the real turn completes', () => {
     const clientMessageId = 'client-equal-cursor-race';
     const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
@@ -1384,6 +1420,32 @@ describe('AgentEventReducer', () => {
     expect(restored.messagesById['server-user'].clientMessageId).toBe('client-without-persisted-id');
     expect(restored.optimisticByClientMessageId).toEqual({});
     expect(restored.turnsById['history:server-user']?.status).toBe('completed');
+    expect(restored.status).toBe('idle');
+  });
+
+  it('does not revive an unmatched optimistic turn after an authoritative idle snapshot', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-idle-without-receipt',
+      text: '这条请求没有出现在空闲快照里',
+      nowMs: 10,
+    });
+
+    const restored = applyAgentSnapshot(optimistic, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 8,
+      resumeToken: 'session-1:8',
+      status: 'idle',
+    });
+
+    expect(restored.messagesById['local:client-idle-without-receipt']).toBeDefined();
+    expect(restored.turnsById['local-turn:client-idle-without-receipt']).toMatchObject({
+      status: 'failed',
+      failure: '未收到助手回复。',
+    });
+    expect(restored.turnOrder.filter((turnId) => (
+      ['queued', 'running', 'waiting'].includes(restored.turnsById[turnId]?.status ?? '')
+    ))).toEqual([]);
     expect(restored.status).toBe('idle');
   });
 

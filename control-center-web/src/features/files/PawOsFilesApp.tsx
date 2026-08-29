@@ -97,6 +97,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   const windowChromeTarget = usePawWindowChromeTarget();
   const requested = useMemo(() => requestedWorkspaceFile(initialRoute), [initialRoute]);
   const generationRef = useRef(0);
+  const directoryGenerationRef = useRef(0);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState('');
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -202,24 +203,30 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   }, [requested.sessionId, transport]);
 
   const loadDirectory = useCallback(async (path: string, force = false) => {
-    if (!selectedSessionId || loadingPaths.has(path) || (!force && entries[path])) return;
+    if (!selectedSessionId || (!force && (loadingPaths.has(path) || entries[path]))) return;
+    const requestGeneration = directoryGenerationRef.current;
+    const requestSessionId = selectedSessionId;
     setLoadingPaths((current) => new Set(current).add(path));
     setPathErrors((current) => omitKey(current, path));
     try {
       const response = await transport.request({
         pathId: 'agent.session.workspace.list',
-        params: { sessionId: selectedSessionId },
+        params: { sessionId: requestSessionId },
         query: { path, depth: 1, limit: 240 },
       });
+      if (requestGeneration !== directoryGenerationRef.current) return;
       setEntries((current) => ({ ...current, [path]: workspaceListing(response) }));
     } catch (error) {
+      if (requestGeneration !== directoryGenerationRef.current) return;
       setPathErrors((current) => ({ ...current, [path]: publicError(error, '目录读取失败。') }));
     } finally {
-      setLoadingPaths((current) => {
-        const next = new Set(current);
-        next.delete(path);
-        return next;
-      });
+      if (requestGeneration === directoryGenerationRef.current) {
+        setLoadingPaths((current) => {
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
+      }
     }
   }, [entries, loadingPaths, selectedSessionId, transport]);
 
@@ -227,7 +234,9 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
 
   useEffect(() => {
     generationRef.current += 1;
+    directoryGenerationRef.current += 1;
     setEntries({});
+    setLoadingPaths(new Set());
     setPathErrors({});
     setExpanded(new Set(roots));
     setSelectedFile(null);
@@ -235,7 +244,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     setPreviewError('');
     setPreviewMoreError('');
     setFilterQuery('');
-    for (const root of roots) void loadDirectory(root);
+    for (const root of roots) void loadDirectory(root, true);
     // Directory state is intentionally reset whenever Session authority changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSessionId, roots.join('\u0000')]);
@@ -253,6 +262,16 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     openedRequestRef.current = request;
     setExpanded((current) => new Set([...current, ...chain]));
     for (const directory of chain) if (!roots.includes(directory)) void loadDirectory(directory, true);
+    if (roots.includes(path)) {
+      // 深链指名的是一个工作区根目录（项目桌面的“在 Files 中打开”走这里）。
+      // 目录不是文件，不进入读取链：展开它、把目录树焦点交给它，预览面板
+      // 保持空态，由翻看的人自己选文件。
+      setSelectedFile(null);
+      setPreview(null);
+      setPreviewError('');
+      pendingFocusPathRef.current = path;
+      return;
+    }
     setSelectedFile({ path, name: pathName(path), kind: 'file' });
     // loadDirectory changes identity with every listing; the one-shot guard,
     // not the dependency list, is what keeps this from re-opening the file.

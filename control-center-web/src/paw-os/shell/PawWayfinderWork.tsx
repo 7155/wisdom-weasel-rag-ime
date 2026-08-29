@@ -178,6 +178,15 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
     api.getState().openApp('system-settings', { initialRoute: '/configuration' });
   }, [api]);
 
+  const openProjectRootInFiles = useCallback((root: string, sessionId: string) => {
+    const leaf = root.split('/').filter(Boolean).pop() ?? root;
+    api.getState().openApp('files', {
+      entityId: `${sessionId}:${root}`,
+      initialRoute: `/files?session=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(root)}`,
+      title: `Files · ${leaf}`,
+    });
+  }, [api]);
+
   const openObservability = useCallback(() => {
     api.getState().openApp('system-monitor', { initialRoute: '/observability' });
   }, [api]);
@@ -264,6 +273,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
   const canvasMinHeight = Math.max(360, Math.ceil(view.projects.length / 4) * 112 + 122);
   return (
     <section aria-label="最近工作" className="paw-wayfinder-work" data-paw-desktop-panel data-paw-desktop-work-files onPointerDown={(event) => event.stopPropagation()}>
+      <div className="paw-wayfinder-work__masthead">
       <header className="paw-wayfinder-work__head">
         <span>
           <strong>项目桌面</strong>
@@ -312,6 +322,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
           </button>
         ) : null}
       </div> : null}
+      </div>
       {showArchived && !contextProject ? (
         <ArchiveTray entries={archivedEntries} onDragEnd={endDrag} onDragStart={startDrag} onOpen={openItem} onRestore={restoreItem} />
       ) : null}
@@ -372,6 +383,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
         <ProjectContextSheet
           onBack={() => setContextProjectId(null)}
           onOpen={openItem}
+          onOpenInFiles={openProjectRootInFiles}
           onOpenObservability={openObservability}
           onOpenSystemSettings={openSystemSettings}
           project={contextProject}
@@ -476,8 +488,12 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
             <i aria-hidden="true" />
           </span>
           <span className="paw-wayfinder-work__project-copy">
-            <strong>{project.label}</strong>
-            <small>{project.runningCount ? `${project.runningCount} 个进行中` : project.attentionCount ? `${project.attentionCount} 个需处理` : '项目对话'}</small>
+            <strong><span className="paw-wayfinder-work__label-ink">{project.label}</span></strong>
+            {project.runningCount || project.attentionCount ? (
+              <small data-state={project.runningCount ? 'running' : 'attention'}>
+                {project.runningCount ? `${project.runningCount} 个进行中` : `${project.attentionCount} 个需处理`}
+              </small>
+            ) : null}
           </span>
           <small className="paw-wayfinder-work__project-count">{project.items.length} 个文件</small>
         </summary>
@@ -542,9 +558,17 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
   );
 }
 
-function ProjectContextSheet({ onBack, onOpen, onOpenObservability, onOpenSystemSettings, project, sheetRef }: {
+/** The Files App only browses Session-authorized workspace roots, so a root
+ * is openable there exactly when one of the project's Sessions names it. */
+function filesSessionForRoot(project: WayfinderWorkProject, root: string): string | null {
+  const item = project.items.find((candidate) => candidate.kind === 'session' && candidate.workspaceRoots.includes(root));
+  return item?.id ?? null;
+}
+
+function ProjectContextSheet({ onBack, onOpen, onOpenInFiles, onOpenObservability, onOpenSystemSettings, project, sheetRef }: {
   onBack: () => void;
   onOpen: (kind: 'session' | 'room', id: string, title: string) => void;
+  onOpenInFiles: (root: string, sessionId: string) => void;
   onOpenObservability: () => void;
   onOpenSystemSettings: () => void;
   project: WayfinderWorkProject;
@@ -578,9 +602,25 @@ function ProjectContextSheet({ onBack, onOpen, onOpenObservability, onOpenSystem
 
       <section className="paw-wayfinder-work__context-roots">
         <h3>工作区</h3>
-        {project.workspaceRoots.length ? project.workspaceRoots.map((root) => (
-          <code key={root}>{root}</code>
-        )) : <p>未绑定工作区</p>}
+        {project.workspaceRoots.length ? project.workspaceRoots.map((root) => {
+          const sessionId = filesSessionForRoot(project, root);
+          return (
+            <div className="paw-wayfinder-work__context-root" key={root}>
+              <code>{root}</code>
+              {sessionId ? (
+                <button
+                  aria-label={`在 Files 中打开 ${root}`}
+                  onClick={() => onOpenInFiles(root, sessionId)}
+                  title="在 Files 中打开这个工作区"
+                  type="button"
+                >
+                  <FolderOpen aria-hidden="true" size={13} />
+                  <span>在 Files 中打开</span>
+                </button>
+              ) : null}
+            </div>
+          );
+        }) : <p>未绑定工作区</p>}
       </section>
 
       <section className="paw-wayfinder-work__context-conversations">

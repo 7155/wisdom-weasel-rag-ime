@@ -7939,8 +7939,10 @@ class ControlToolGateway:
             pending_count = _safe_int(
                 _mapping_value(payload, "compileState", "pendingEventCount")
             )
+            auto_apply = payload.get("autoApply") is True
+            draft_label = "份草案待审阅" if not auto_apply else "份草案未自动应用"
             return {
-                "summary": f"有 {pending_count} 条来源待整理、{draft_count} 份草案待审阅",
+                "summary": f"有 {pending_count} 条来源待整理、{draft_count} {draft_label}",
                 "maintenance": _safe_payload(payload),
             }
         if operation in {"curation_prepare", "maintenance_preview"}:
@@ -8005,45 +8007,44 @@ class ControlToolGateway:
             run = review.get("run") if isinstance(review.get("run"), Mapping) else {}
             _require_memory_run_owner(run, curation_owner)
             diff_count = _safe_int(run.get("diffCount"))
+            applied_diff_count = _safe_int(run.get("appliedDiffCount")) or _safe_int(
+                payload.get("appliedDiffCount")
+            )
             reused = payload.get("reusedDraft") is True
             receipt = _compact_memory_run_for_agent(run)
+            auto_applied = payload.get("autoApplied") is True or (
+                receipt["status"] in {"applied", "partial"}
+                and applied_diff_count > 0
+            )
             needs_review = receipt["status"] == "draft" and diff_count > 0
+            pending_suffix = (
+                f"；另有 {pending_count} 条证据留待下一轮整理"
+                if pending_count > 0
+                else ""
+            )
+            if auto_applied:
+                summary = (
+                    f"已自动应用 {applied_diff_count or diff_count} 项记忆整理"
+                    f"{pending_suffix}"
+                )
+            elif reused:
+                summary = f"已复用现有记忆草案，共 {diff_count} 项差异{pending_suffix}"
+            elif needs_review:
+                summary = f"已生成记忆草案，共 {diff_count} 项差异{pending_suffix}"
+            elif needs_review_count > 0:
+                summary = (
+                    f"已整理 {max(batch_count, 1)} 批证据，有 "
+                    f"{needs_review_count} 条需要人工确认"
+                )
+            elif pending_count > 0:
+                summary = (
+                    f"已整理 {max(batch_count, 1)} 批证据，仍有 "
+                    f"{pending_count} 条等待后续整理"
+                )
+            else:
+                summary = "全部新增证据已完成整理，没有需要写入的变更"
             return {
-                "summary": (
-                    (
-                        f"已复用现有记忆草案，共 {diff_count} 项差异"
-                        + (
-                            f"；另有 {pending_count} 条证据留待下一轮整理"
-                            if pending_count > 0
-                            else ""
-                        )
-                    )
-                    if reused
-                    else (
-                        (
-                            f"已生成记忆草案，共 {diff_count} 项差异"
-                            + (
-                                f"；另有 {pending_count} 条证据留待下一轮整理"
-                                if pending_count > 0
-                                else ""
-                            )
-                        )
-                        if needs_review
-                        else (
-                            (
-                                f"已整理 {max(batch_count, 1)} 批证据，有 "
-                                f"{needs_review_count} 条需要人工确认"
-                            )
-                            if needs_review_count > 0
-                            else (
-                                f"已整理 {max(batch_count, 1)} 批证据，仍有 "
-                                f"{pending_count} 条等待后续整理"
-                                if pending_count > 0
-                                else "全部新增证据已完成整理，没有需要写入的变更"
-                            )
-                        )
-                    )
-                ),
+                "summary": summary,
                 "runId": receipt["runId"],
                 "counts": receipt["operationCounts"],
                 "diffCount": receipt["diffCount"],
@@ -8052,6 +8053,8 @@ class ControlToolGateway:
                 # field; the semantic result field is needsReview.
                 "reviewRequired": needs_review,
                 "storedDraft": needs_review,
+                "autoApplied": auto_applied,
+                "appliedDiffCount": applied_diff_count,
                 "reusedDraft": reused,
                 "pendingSourceCount": pending_count,
                 "needsReviewSourceCount": needs_review_count,

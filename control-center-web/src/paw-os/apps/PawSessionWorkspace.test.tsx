@@ -186,7 +186,14 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(screen.queryByRole('region', { name: 'Session 星空' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '星空' }));
-    const sky = await screen.findByRole('region', { name: 'Session 星空' });
+    // This is the cold lazy-import acceptance path.  PawStarfield intentionally
+    // stays out of the default Session bundle, so a clean test worker can spend
+    // more than Testing Library's one-second default transforming the chunk.
+    const sky = await screen.findByRole(
+      'region',
+      { name: 'Session 星空' },
+      { timeout: 15_000 },
+    );
     await within(sky).findByRole('button', { name: /研究员 卫星/ });
     expect(within(sky).getByRole('button', { name: /审阅者 卫星/ })).toBeInTheDocument();
     expect(container.querySelector('.paw-session-workspace__conversation')).toHaveAttribute('inert');
@@ -994,6 +1001,72 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(document.querySelector('.paw-session-workspace__error')).toBeNull();
     expect(screen.queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('请开始这轮实现');
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('does not submit a sibling retry when the failed row is clicked twice', async () => {
+    const sessionId = 'session-retry-sibling-guard';
+    const promptRequests: ControlRequest[] = [];
+    const transport = new StubControlTransport('mock', {
+      'agent.session.snapshot': {
+        messages: [{
+          schemaVersion: 'rag-ime.agent-message.v1',
+          id: `${sessionId}:user`,
+          sessionId,
+          turnId: 'turn-failed',
+          role: 'user',
+          status: 'completed',
+          clientMessageId: 'client-failed-root',
+          blocks: [{
+            id: `${sessionId}:user:text`,
+            type: 'text',
+            status: 'completed',
+            presentationKind: 'markdown',
+            data: { text: '只允许一个重试后继' },
+          }],
+          attachments: [],
+          citations: [],
+          createdAtMs: 1,
+          completedAtMs: 1,
+        }],
+        liveEvents: [],
+        lastSequence: 1,
+        resumeToken: `${sessionId}:1`,
+        status: 'idle',
+      },
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+      'agent.session.prompt': (request: ControlRequest) => {
+        promptRequests.push(request);
+        return new Promise(() => undefined);
+      },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    fireEvent.click(retry);
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(promptRequests).toHaveLength(1));
+    expect(promptRequests[0]?.body).toMatchObject({
+      message: '只允许一个重试后继',
+      retryOfClientMessageId: 'client-failed-root',
+    });
     useAgentLiveStore.getState().clear(sessionId);
   });
 

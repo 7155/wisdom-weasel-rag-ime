@@ -1268,6 +1268,7 @@ const toolSpecs: ToolSpec[] = [
     guidelines: [
       "只能使用 catalog 返回的固定 Agent；每项任务必须写明有界 expectedOutput 和一到八条 acceptanceCriteria，可选 outputSchema；单批最多两个任务、最大深度 2，不得请求加载市场自定义代码。",
       "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
+      "delegate 默认 wait=false：只返回持久回执，父 Session 继续执行；仅在用户明确要求同步等待结果时才传 wait=true。不要使用或加载会阻塞父回合的单数 subagent 包。",
       "用户明确要求先规划再执行时，优先委派只读 planner：它只返回带依赖、风险、产物和验收证据的方案；用户确认后再把可执行步骤写入 todo，不能把规划结果当作已经执行。",
       "Todo 只作为可选导航；未显式传入 todoTask 时，delegate 必须独立启动，不得因 Todo 存在而拒绝或自动绑定。",
       "allowedTools 只接受产品 Tool ID；不要把 tool_search、read、grep、find 或 bash 填入 allowedTools，这些 Pi 原生工具由子 Session 运行时按访问模式投影。",
@@ -1891,6 +1892,12 @@ const coordinatorToolSpecs: ToolSpec[] = [
 ];
 
 function gatewayParamsFor(spec: ToolSpec, params: ToolParams): ToolParams {
+  if (spec.name === "agents" && params.op === "delegate") {
+    // The native agents path is the product's background delegation seam.
+    // Keep explicit wait=true available for a caller that really asks for it,
+    // but never let an omitted wait fall back to the blocking legacy package.
+    return { ...params, wait: params.wait === true };
+  }
   if (!spec.fixedOperation) return params;
   const op = spec.fixedOperation;
   if (spec.name === "ls") {
@@ -2499,7 +2506,11 @@ function parametersFor(spec: ToolSpec) {
         description: "可选导航链接；仅在确实需要将子 Agent 工作定位到当前 Todo 时传入。",
       },
       contextMode: { type: "string", enum: ["fresh", "fork"] },
-      wait: { type: "boolean" },
+      wait: {
+        type: "boolean",
+        default: false,
+        description: "delegate 默认后台执行并在 next_turn 回传结果；仅明确要求同步等待时设为 true。",
+      },
       batchId: { type: "string", maxLength: 240 },
       targetRunId: { type: "string", minLength: 1, maxLength: 240 },
       message: { type: "string", minLength: 1, maxLength: 4000 },

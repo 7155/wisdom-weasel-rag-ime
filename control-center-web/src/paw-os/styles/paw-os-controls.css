@@ -145,6 +145,17 @@
   padding-top: 5px;
   border-top: 1px solid var(--paw-menu-line);
 }
+/* Shortcut hints print at the row's right edge, dimmed by opacity so they
+   follow the row's own ink through hover, focus and disabled states. */
+.paw-desktop-root :is(.paw-menu, .paw-context-menu) :is(button, [role='menuitem']) kbd {
+  margin-left: auto;
+  padding-left: 20px;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: .05em;
+  opacity: .52;
+}
 
 /* ---------------------------------------------------------------- Button
  * Opt-in shared button. Default is the quiet bordered field look; variants

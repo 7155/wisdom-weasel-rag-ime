@@ -1,4 +1,4 @@
-import { BrainCircuit, LoaderCircle, Search } from 'lucide-react';
+import { LoaderCircle, Search } from 'lucide-react';
 import {
   useEffect,
   useMemo,
@@ -26,10 +26,10 @@ import {
 } from './model-choice';
 
 /**
- * Model and reasoning are related Runtime fields, but different user choices.
- * Keep them as two compact controls: the model button opens only a searchable
- * catalog, while the adjacent reasoning button opens only the current model's
- * discrete levels. Both still commit through the same Pi selection contract.
+ * Model and reasoning commit through the same Pi selection contract, so the
+ * composer carries them as one control: a single trigger naming both facts,
+ * opening one popover with a searchable catalog section and the current
+ * model's discrete reasoning levels side by side.
  */
 export function ModelPicker({
   catalog,
@@ -46,8 +46,8 @@ export function ModelPicker({
   thinkingRequestOpen?: number;
   onChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
 }) {
-  const [modelOpen, setModelOpen] = useState(false);
-  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [focusSection, setFocusSection] = useState<'model' | 'thinking'>('model');
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -76,25 +76,25 @@ export function ModelPicker({
 
   useEffect(() => {
     if (requestOpen <= 0 || !catalog || disabled) return;
-    setThinkingOpen(false);
     setQuery('');
-    setModelOpen(true);
+    setFocusSection('model');
+    setOpen(true);
   }, [catalog, disabled, requestOpen]);
 
   useEffect(() => {
     if (thinkingRequestOpen <= 0 || !catalog || disabled || levels.length === 0) return;
-    setModelOpen(false);
-    setThinkingOpen(true);
+    setFocusSection('thinking');
+    setOpen(true);
   }, [catalog, disabled, levels.length, thinkingRequestOpen]);
 
   useEffect(() => {
-    if (!modelOpen) return undefined;
+    if (!open || focusSection !== 'model') return undefined;
     const frame = window.requestAnimationFrame(() => searchRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [modelOpen]);
+  }, [focusSection, open]);
 
   useEffect(() => {
-    if (!thinkingOpen) return undefined;
+    if (!open || focusSection !== 'thinking') return undefined;
     const frame = window.requestAnimationFrame(() => {
       const selected = reasoningRef.current?.querySelector<HTMLButtonElement>(
         '[role="radio"][aria-checked="true"]',
@@ -102,141 +102,111 @@ export function ModelPicker({
       selected?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [thinkingOpen]);
+  }, [focusSection, open]);
 
   return (
-    <div
-      aria-label="模型与推理设置"
-      className="agent-composer__model-controls"
-      role="group"
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen) {
+          setQuery('');
+          setFocusSection('model');
+        }
+      }}
     >
-      <Popover
-        open={modelOpen}
-        onOpenChange={(nextOpen) => {
-          setModelOpen(nextOpen);
-          if (nextOpen) {
-            setThinkingOpen(false);
-            setQuery('');
-          }
-        }}
-      >
-        <PopoverTrigger asChild>
-          <Button
-            aria-busy={pending || undefined}
-            aria-label={`模型：${selectedLabel}`}
-            className="agent-composer__picker"
-            disabled={!catalog || disabled}
-            leadingIcon={pending
-              ? <LoaderCircle className="ui-spin" size={15} />
-              : (
-                <ProviderMark
-                  displayName={selectedProvider?.displayName}
-                  providerId={selectedProvider?.id ?? selection?.provider}
-                  size={16}
-                />
-              )}
-            size="small"
-            title={`模型：${selectedLabel}`}
-            variant="quiet"
-          >
-            <span className="agent-composer__picker-text">
-              {selectedModel ? selectedModel.name : '选择模型'}
-            </span>
-            {selectedModel && providerName ? (
-              <span className="agent-composer__picker-detail"> · {providerName}</span>
-            ) : null}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          aria-label="选择模型"
-          className="agent-model-picker"
+      <PopoverTrigger asChild>
+        <Button
+          aria-busy={pending || undefined}
+          aria-label={`模型与推理：${selectedLabel} · ${thinkingLabel(thinking)}`}
+          className="agent-composer__picker"
+          disabled={!catalog || disabled}
+          leadingIcon={pending
+            ? <LoaderCircle className="ui-spin" size={15} />
+            : (
+              <ProviderMark
+                displayName={selectedProvider?.displayName}
+                providerId={selectedProvider?.id ?? selection?.provider}
+                size={16}
+              />
+            )}
+          size="small"
+          title={`模型与推理：${selectedLabel} · ${thinkingLabel(thinking)}`}
+          variant="quiet"
         >
-          <label className="agent-model-picker__search">
-            <Search aria-hidden="true" size={15} />
-            <Input
-              aria-label="搜索模型"
-              autoComplete="off"
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'ArrowDown') return;
-                event.preventDefault();
-                const selected = listRef.current?.querySelector<HTMLButtonElement>(
-                  '[role="option"][aria-selected="true"]',
-                );
-                const first = listRef.current?.querySelector<HTMLButtonElement>('[role="option"]');
-                (selected ?? first)?.focus();
-              }}
-              placeholder="搜索模型"
-              ref={searchRef}
-              type="search"
-              value={query}
-            />
-          </label>
-          <ModelChoiceList
-            ariaLabel="可用模型"
-            groups={filteredGroups}
-            listRef={listRef}
-            onChoose={(option) => {
-              setModelOpen(false);
-              if (option.key === selectedKey) return;
-              const model = catalog?.providers
-                .find((item) => item.id === option.providerId)
-                ?.models.find((item) => item.id === option.modelId);
-              onChange(
-                option.providerId,
-                option.modelId,
-                preferredThinkingLevel(model?.thinkingLevels ?? [], thinking),
+          <span className="agent-composer__picker-text">
+            {selectedModel ? selectedModel.name : '选择模型'}
+          </span>
+          {selectedModel && providerName ? (
+            <span className="agent-composer__picker-detail"> · {providerName}</span>
+          ) : null}
+          <strong className="agent-composer__picker-thinking"> · {compactThinkingLabel(thinking)}</strong>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        aria-label="选择模型与推理强度"
+        className="agent-model-picker"
+      >
+        <label className="agent-model-picker__search">
+          <Search aria-hidden="true" size={15} />
+          <Input
+            aria-label="搜索模型"
+            autoComplete="off"
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowDown') return;
+              event.preventDefault();
+              const selected = listRef.current?.querySelector<HTMLButtonElement>(
+                '[role="option"][aria-selected="true"]',
               );
+              const first = listRef.current?.querySelector<HTMLButtonElement>('[role="option"]');
+              (selected ?? first)?.focus();
             }}
-            selectedKey={selectedKey}
+            placeholder="搜索模型"
+            ref={searchRef}
+            type="search"
+            value={query}
           />
-        </PopoverContent>
-      </Popover>
-
-      <Popover
-        open={thinkingOpen}
-        onOpenChange={(nextOpen) => {
-          setThinkingOpen(nextOpen);
-          if (nextOpen) setModelOpen(false);
-        }}
-      >
-        <PopoverTrigger asChild>
-          <Button
-            aria-label={`推理强度：${thinkingLabel(thinking)}`}
-            className="agent-composer__thinking-picker"
-            disabled={!catalog || disabled || levels.length === 0}
-            leadingIcon={<BrainCircuit size={15} />}
-            size="small"
-            title={`推理强度：${thinkingLabel(thinking)}`}
-            variant="quiet"
-          >
-            <span className="agent-composer__thinking-label">推理</span>
-            <strong>{compactThinkingLabel(thinking)}</strong>
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          aria-label="选择推理强度"
-          className="agent-thinking-picker"
-        >
-          <p className="agent-thinking-picker__heading">
-            <span>推理强度</span>
-            <strong>{thinkingLabel(thinking)}</strong>
-          </p>
-          <ReasoningRail
-            levels={levels}
-            onChoose={(level) => {
-              setThinkingOpen(false);
-              if (!selection || level === thinking) return;
-              onChange(selection.provider, selection.modelId, level);
-            }}
-            railRef={reasoningRef}
-            selected={thinking}
-          />
-        </PopoverContent>
-      </Popover>
-    </div>
+        </label>
+        <ModelChoiceList
+          ariaLabel="可用模型"
+          groups={filteredGroups}
+          listRef={listRef}
+          onChoose={(option) => {
+            setOpen(false);
+            if (option.key === selectedKey) return;
+            const model = catalog?.providers
+              .find((item) => item.id === option.providerId)
+              ?.models.find((item) => item.id === option.modelId);
+            onChange(
+              option.providerId,
+              option.modelId,
+              preferredThinkingLevel(model?.thinkingLevels ?? [], thinking),
+            );
+          }}
+          selectedKey={selectedKey}
+        />
+        {levels.length > 0 ? (
+          <div className="agent-model-picker__thinking">
+            <p className="agent-thinking-picker__heading">
+              <span>推理强度</span>
+              <strong>{thinkingLabel(thinking)}</strong>
+            </p>
+            <ReasoningRail
+              levels={levels}
+              onChoose={(level) => {
+                setOpen(false);
+                if (!selection || level === thinking) return;
+                onChange(selection.provider, selection.modelId, level);
+              }}
+              railRef={reasoningRef}
+              selected={thinking}
+            />
+          </div>
+        ) : null}
+      </PopoverContent>
+    </Popover>
   );
 }
 

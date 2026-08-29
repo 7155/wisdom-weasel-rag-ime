@@ -102,6 +102,17 @@ describe('PAWOS desktop', () => {
     expect(agentDock).toHaveAttribute('data-minimized');
   });
 
+  it('hides the Dock only while the active App window is maximized', () => {
+    renderDesktop('agent');
+    expect(screen.getByRole('navigation', { name: 'PAWOS 工具架' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '最大化窗口' }));
+    expect(screen.queryByRole('navigation', { name: 'PAWOS 工具架' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '还原窗口' }));
+    expect(screen.getByRole('navigation', { name: 'PAWOS 工具架' })).toBeInTheDocument();
+  });
+
   it('filters Launchpad Apps from the archive search field', () => {
     renderDesktop();
     fireEvent.click(screen.getByRole('button', { name: '全部 App' }));

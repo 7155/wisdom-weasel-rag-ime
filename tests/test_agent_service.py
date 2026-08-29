@@ -5800,6 +5800,181 @@ class AgentServiceTests(unittest.TestCase):
                 {"runId": "memory-run-1", "decision": "approve"},
             )
 
+    def test_applied_memory_review_retires_the_exact_recovered_turn(self) -> None:
+        session = self.service.create_session({"title": "恢复已应用的记忆审阅"})["session"]
+        session_id = str(session["id"])
+        run_id = "memory-run-applied-recovery"
+        recovered_turn_id = "turn:memory-review-recovered"
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(
+                    run_id, created_at_ms, status, summary
+                ) VALUES (?, ?, 'applied', ?)
+                """,
+                (run_id, 1, "记忆草案已应用"),
+            )
+        self.service.events.publish(
+            session_id,
+            "user_input_required",
+            {
+                "requestKind": "memory_review",
+                "runId": run_id,
+                "method": "confirm",
+            },
+            turn_id=recovered_turn_id,
+        )
+        recovered_state = {
+            "schemaVersion": "rag-ime.pi-session-control-state.v1",
+            "sessionId": session_id,
+            "isIdle": True,
+            "activeTurn": {"turnId": recovered_turn_id},
+        }
+        with (
+            patch.object(self.service.runtime, "has_pending_review", return_value=False),
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                return_value={"state": recovered_state},
+            ) as ensure,
+            patch.object(
+                self.service.runtime,
+                "retire_recovered_turn",
+                create=True,
+                return_value={
+                    "schemaVersion": "rag-ime.pi-recovered-turn-retirement.v1",
+                    "sessionId": session_id,
+                    "turnId": recovered_turn_id,
+                    "retired": True,
+                },
+            ) as retire,
+        ):
+            result = self.service.resolve_review(
+                session_id,
+                {"runId": run_id, "decision": "reviewed"},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["runtimeNotified"])
+        self.assertTrue(result["recovered"])
+        self.assertEqual(result["recoveryAction"], "retire_recovered_turn")
+        ensure.assert_called_once_with(session_id)
+        retire.assert_called_once_with(session_id, recovered_turn_id)
+
+    def test_applied_memory_review_never_retires_a_newer_active_turn(self) -> None:
+        session = self.service.create_session({"title": "不误伤新回合"})["session"]
+        session_id = str(session["id"])
+        run_id = "memory-run-applied-newer-turn"
+        recovered_turn_id = "turn:memory-review-original"
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(
+                    run_id, created_at_ms, status, summary
+                ) VALUES (?, ?, 'applied', ?)
+                """,
+                (run_id, 1, "记忆草案已应用"),
+            )
+        self.service.events.publish(
+            session_id,
+            "user_input_required",
+            {"requestKind": "memory_review", "runId": run_id},
+            turn_id=recovered_turn_id,
+        )
+        newer_state = {
+            "schemaVersion": "rag-ime.pi-session-control-state.v1",
+            "sessionId": session_id,
+            "isIdle": True,
+            "activeTurn": {"turnId": "turn:newer"},
+        }
+        with (
+            patch.object(self.service.runtime, "has_pending_review", return_value=False),
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                return_value={"state": newer_state},
+            ),
+            patch.object(
+                self.service.runtime,
+                "retire_recovered_turn",
+                create=True,
+            ) as retire,
+            self.assertRaisesRegex(
+                ValueError,
+                "does not match the expected recovered turn",
+            ),
+        ):
+            self.service.resolve_review(
+                session_id,
+                {"runId": run_id, "decision": "reviewed"},
+            )
+
+        retire.assert_not_called()
+
+    def test_applied_memory_review_recovers_from_durable_event_after_replay_reset(self) -> None:
+        session = self.service.create_session({"title": "从持久事件恢复审阅"})["session"]
+        session_id = str(session["id"])
+        run_id = "memory-run-applied-durable-recovery"
+        recovered_turn_id = "turn:memory-review-durable"
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(
+                    run_id, created_at_ms, status, summary
+                ) VALUES (?, ?, 'applied', ?)
+                """,
+                (run_id, 1, "记忆草案已应用"),
+            )
+        self.service.events.publish(
+            session_id,
+            "user_input_required",
+            {
+                "requestId": "ui-memory-review-durable",
+                "requestKind": "memory_review",
+                "runId": run_id,
+            },
+            turn_id=recovered_turn_id,
+        )
+        self.service.events.invalidate_projection(session_id)
+        replayed, gap = self.service.events.replay(session_id)
+        self.assertFalse(gap)
+        self.assertFalse(
+            any(event.event_type == "user_input_required" for event in replayed)
+        )
+        recovered_state = {
+            "schemaVersion": "rag-ime.pi-session-control-state.v1",
+            "sessionId": session_id,
+            "isIdle": True,
+            "activeTurn": {"turnId": recovered_turn_id},
+        }
+        with (
+            patch.object(self.service.runtime, "has_pending_review", return_value=False),
+            patch.object(
+                self.service.runtime,
+                "ensure",
+                return_value={"state": recovered_state},
+            ),
+            patch.object(
+                self.service.runtime,
+                "retire_recovered_turn",
+                create=True,
+                return_value={
+                    "schemaVersion": "rag-ime.pi-recovered-turn-retirement.v1",
+                    "sessionId": session_id,
+                    "turnId": recovered_turn_id,
+                    "retired": True,
+                },
+            ) as retire,
+        ):
+            result = self.service.resolve_review(
+                session_id,
+                {"runId": run_id, "decision": "reviewed"},
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["recovered"])
+        retire.assert_called_once_with(session_id, recovered_turn_id)
+
 
     def test_final_user_prompt_creates_private_source_checkpoint_without_activity(self) -> None:
         session = self.service.create_session({"title": "连续记忆"})["session"]

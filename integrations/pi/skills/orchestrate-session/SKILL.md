@@ -17,6 +17,7 @@ or verification responsibilities; they never replace that supervision.
 - **Batch dispatch**: when subagents are warranted, dispatch multiple subagents at once in a batch across distinct, independent facets (e.g. multi-path exploration, parallel code checks, distinct research areas) rather than launching single subagents serially.
 - **Non-blocking background tools**: treat subagents as background tools. Once dispatched, the parent Session **continues executing its own work concurrently** (synthesizing existing context, preparing integration seams, organizing requirements, inspecting other layers) and must not be blocked in an idle wait loop.
 - **Reactive event integration**: reactively consume subagent events (progress, findings, completions) when delivered; do not busy-poll.
+- **Native background contract**: every native `agents` `delegate` call uses `wait=false` (the PAW bridge normalizes an omitted value to false). Never select or load the legacy standalone `subagent` package/tool: it waits for child completion inside the parent turn and is not a background path.
 - **Per-task context choice**: select `fresh/new` or `fork` for each child from that task's continuity and context-reuse needs. Both are supported first-class modes; this Skill does not rank either mode as intrinsically better.
 
 ## Workflow

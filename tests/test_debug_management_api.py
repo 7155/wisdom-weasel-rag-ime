@@ -1285,7 +1285,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertIn("pollConfigured", route["notion"])
         self.assertFalse(route["notion"]["ready"])
 
-    def test_agent_memory_maintenance_status_is_review_only_and_counts_drafts(self) -> None:
+    def test_agent_memory_maintenance_status_auto_applies_governed_runs_and_counts_legacy_drafts(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(
                 event_id=None,
@@ -1329,8 +1329,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(status["ok"])
         self.assertEqual(status["policy"], "auto_governed")
-        self.assertFalse(status["autoApply"])
-        self.assertTrue(status["scheduledDraftOnly"])
+        self.assertTrue(status["autoApply"])
+        self.assertFalse(status["scheduledDraftOnly"])
         self.assertEqual(status["automation"]["runsPerDay"], 2)
         self.assertEqual(
             status["automation"]["model"],
@@ -1350,13 +1350,14 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(status["modelCuration"]["runs"], [])
         self.assertTrue(status["bookProjection"]["inSync"])
         self.assertEqual(status["ownerCuration"]["policy"]["cadence"], "twice_daily")
-        self.assertFalse(
+        self.assertTrue(
             status["ownerCuration"]["policy"]["autoApplyGovernedWrites"]
         )
-        self.assertTrue(
+        self.assertFalse(
             status["ownerCuration"]["policy"]["semanticWritesRequireReview"]
         )
         self.assertGreaterEqual(status["compileState"]["pendingEventCount"], 1)
+
         self.assertEqual(status["pendingDraftCount"], 1)
         self.assertEqual(status["runs"][0]["runId"], plan["runId"])
         self.assertEqual(status["runs"][0]["status"], "draft")
@@ -1388,6 +1389,54 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         self.assertEqual(stale_status["pendingDraftCount"], 0)
         self.assertEqual(stale_status["runs"][0]["status"], "superseded")
+
+    def test_generic_memory_organizer_auto_applies_a_valid_reused_draft(self) -> None:
+        event_ref = self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_100_035,
+                source="manual",
+                committed_text="记忆整理通过治理校验后自动应用。",
+                privacy_disposition="allowed",
+                project="wisdom-weasel-rag-ime",
+            )
+        )
+        event_id = int(event_ref.split(":", 1)[1])
+        plan = memory_book_plan_from_compile_output(
+            {
+                "phraseCandidates": [{
+                    "text": "记忆整理自动应用",
+                    "tags": ["memory"],
+                    "sourceEventIds": [event_id],
+                    "weight": 0.8,
+                }],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            stored = store_memory_book_plan(conn, plan)
+
+        request = KnowledgeWorkbenchRequest(
+            question="整理记忆",
+            mode="database_organize",
+            project="wisdom-weasel-rag-ime",
+            curation_scope="incremental",
+            curation_policy="conservative",
+        )
+        with patch(
+            "rag_ime.debug_server.find_memory_book_draft_for_bundle",
+            return_value=stored,
+        ):
+            result = self.service._knowledge_workbench_database_organizer(request)
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["autoApplied"], result)
+        self.assertFalse(result["dryRun"])
+        self.assertFalse(result["applyRequiresReview"])
+        self.assertFalse(result["storedDraft"])
+        self.assertIn(result["storedRun"]["status"], {"applied", "partial"})
 
     def test_gateway_maintenance_runs_dreaming_when_automatic_organization_is_disabled(
         self,
@@ -1467,7 +1516,7 @@ class DebugManagementApiTests(unittest.TestCase):
         runner.run_once.assert_called_once_with(force=True)
         organizer.close.assert_called_once_with()
 
-    def test_scheduled_gateway_memory_maintenance_never_auto_applies_its_draft(self) -> None:
+    def test_scheduled_gateway_memory_maintenance_auto_applies_governed_drafts(self) -> None:
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,
             dreaming_enabled=False,
@@ -1511,7 +1560,7 @@ class DebugManagementApiTests(unittest.TestCase):
             report = self.service._execute_gateway_memory_maintenance({})
 
         self.assertTrue(report["ok"])
-        self.assertFalse(curator_type.call_args.kwargs["auto_apply"])
+        self.assertTrue(curator_type.call_args.kwargs["auto_apply"])
         curator.run_due.assert_called_once_with(
             manual=False,
             owner_kind="",
@@ -2011,15 +2060,17 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertFalse(rolled_back_review["canRollback"])
         self.assertIn("retrieval", applied)
 
-    def test_legacy_control_surfaces_are_removed_in_favor_of_the_web_host(self) -> None:
+    def test_legacy_control_surfaces_are_removed_in_favor_of_the_electron_host(self) -> None:
         root = Path(__file__).resolve().parents[1]
 
         self.assertFalse((root / "debug" / "index.html").exists())
         self.assertFalse((root / "debug" / "app.js").exists())
         self.assertFalse((root / "debug" / "styles.css").exists())
         self.assertFalse((root / "macos" / "RagImeControl").exists())
+        self.assertFalse((root / "macos" / "RagImeControlWebHost").exists())
+        self.assertFalse((root / "scripts" / "build_control_center_web_host.sh").exists())
         self.assertTrue((root / "control-center-web" / "src" / "app" / "App.tsx").is_file())
-        self.assertTrue((root / "macos" / "RagImeControlWebHost" / "WebHostView.swift").is_file())
+        self.assertTrue((root / "control-center-web" / "electron" / "main.mjs").is_file())
 
     def test_memory_book_preview_is_dry_run_and_redacted(self) -> None:
         self.core.record_event_with_capture_receipt(
@@ -2566,8 +2617,8 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(roles["items"][0]["displayName"], "Agent 3")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "auto_governed")
-        self.assertFalse(maintenance["autoApply"])
-        self.assertTrue(maintenance["scheduledDraftOnly"])
+        self.assertTrue(maintenance["autoApply"])
+        self.assertFalse(maintenance["scheduledDraftOnly"])
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
         self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
         self.assertTrue(command_invocation["handled"])

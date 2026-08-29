@@ -2384,7 +2384,7 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '切换模型' }));
 
-    const picker = await screen.findByRole('dialog', { name: '选择模型' });
+    const picker = await screen.findByRole('dialog', { name: '选择模型与推理强度' });
     expect(within(picker).getByRole('option', { name: '选择模型 GPT-5.4' })).toBeInTheDocument();
   });
 
@@ -3074,6 +3074,56 @@ describe('Agent experience', () => {
     })));
   });
 
+  it('closes an already-applied memory review by resuming the paused Pi turn', async () => {
+    const appliedRun = memoryRunFixture();
+    appliedRun.run.status = 'applied';
+    appliedRun.run.pendingDiffCount = 0;
+    appliedRun.run.changes = appliedRun.run.changes.map((change) => ({
+      ...change,
+      status: 'applied',
+    }));
+    const transport = productionTransport({
+      'agent.memoryMaintenance.run': appliedRun,
+      'agent.session.review.resolve': { ok: true },
+    });
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.lastSequence,
+    ).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-applied-memory-review';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'memory-review-already-applied',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'user_input_required',
+        payload: {
+          requestId: 'memory-review-already-applied-request',
+          requestKind: 'memory_review',
+          runId: 'memory-run-1',
+          title: '审阅记忆草案',
+        },
+        resumeToken: 'memory-review-already-applied',
+      }]);
+    });
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.review.resolve',
+      params: { sessionId: 'session-preview' },
+      body: { runId: 'memory-run-1', decision: 'reviewed' },
+    })));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(transport.requests.some((call) => (
+      call.pathId === 'knowledge.database.apply.preview'
+    ))).toBe(false);
+  });
+
   it('keeps a late memory-review failure inside its source Session', async () => {
     const pendingReview = deferred<unknown>();
     const transport = productionTransport({
@@ -3222,7 +3272,7 @@ describe('Agent experience', () => {
 
     await openCommandPalette();
     await user.click(screen.getByRole('option', { name: /\/model/ }));
-    expect(await screen.findByRole('dialog', { name: '选择模型' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: '选择模型与推理强度' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
 
     await openCommandPalette();
@@ -3548,7 +3598,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5\.4/ }, { timeout: 15_000 });
     const image = new File([new Uint8Array([137, 80, 78, 71])], 'clipboard.png', { type: 'image/png' });
 
     fireEvent.paste(composer, {
@@ -3581,7 +3631,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
     const composerA = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5\.4/ }, { timeout: 15_000 });
     const image = new File([new Uint8Array([137, 80, 78, 71])], 'late.png', { type: 'image/png' });
 
     fireEvent.paste(composerA, {
@@ -3613,7 +3663,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5\.4/ }, { timeout: 15_000 });
     const attachmentButton = await screen.findByRole('button', { name: '添加附件' });
     expect(attachmentButton).toBeVisible();
     expect(attachmentButton).toBeEnabled();
@@ -3633,7 +3683,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5\.4/ }, { timeout: 15_000 });
     expect(fireEvent.paste(composer, { clipboardData: { files: [], getData: () => '普通文本' } })).toBe(true);
     expect(transport.imagePasteCalls).toHaveLength(0);
 
@@ -3655,7 +3705,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5\.4/ }, { timeout: 15_000 });
     expect(screen.getByRole('button', { name: '添加附件' })).toBeEnabled();
 
     expect(fireEvent.paste(composer, {
@@ -3672,7 +3722,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport);
     const composer = await screen.findByRole('textbox', { name: '消息' });
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5\.4/ }, { timeout: 15_000 });
 
     expect(fireEvent.paste(composer, {
       clipboardData: { files: [], items: [], getData: () => '' },
@@ -3693,11 +3743,9 @@ describe('Agent experience', () => {
     const composer = await screen.findByRole('textbox', { name: '消息' });
 
     const modelPicker = await screen.findByRole('button', {
-      name: '模型：DeepSeek V4 · DeepSeek',
+      name: '模型与推理：DeepSeek V4 · DeepSeek · 不启用推理',
     });
     expect(modelPicker).toHaveTextContent('DeepSeek V4 · DeepSeek');
-    expect(screen.getByRole('button', { name: '推理强度：不启用推理' }))
-      .toBeInTheDocument();
     // Documents still attach on a text-only model; only images are the problem.
     expect(screen.getByRole('button', { name: '添加附件（当前模型不识别图片）' })).toBeEnabled();
 
@@ -3930,27 +3978,27 @@ describe('Agent experience', () => {
 
     await screen.findByRole(
       'button',
-      { name: /模型：GPT-5\.4/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5\.4/ },
+      { timeout: 15_000 },
     );
     await user.click(screen.getByRole('button', { name: '记忆整理' }));
     await screen.findByRole(
       'button',
-      { name: /模型：DeepSeek V4/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：DeepSeek V4/ },
+      { timeout: 15_000 },
     );
 
     await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     await waitFor(() => expect(
       screen.getByRole('button', { name: '控制中心迁移' }),
     ).toHaveAttribute('aria-current', 'true'));
-    expect(screen.getByRole('button', { name: /模型：GPT-5\.4/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /模型与推理：GPT-5\.4/ })).toBeEnabled();
 
     await act(async () => returningRefresh.reject(new Error('provider probe failed')));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '模型目录刷新失败，正在继续使用这段对话上次由 Pi 确认的模型状态',
     );
-    expect(screen.getByRole('button', { name: /模型：GPT-5\.4/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /模型与推理：GPT-5\.4/ })).toBeEnabled();
   });
 
   it('identifies an expired Session workspace separately from Provider availability', async () => {
@@ -3997,8 +4045,8 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5\.4/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5\.4/ },
+      { timeout: 15_000 },
     )).toBeEnabled();
     expect(await screen.findByRole(
       'button',
@@ -4049,8 +4097,8 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5.6 Luna/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5.6 Luna/ },
+      { timeout: 15_000 },
     )).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '新建对话' }));
     const dialog = await screen.findByRole('dialog', { name: '新建对话' });
@@ -4121,9 +4169,9 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }, { timeout: 5_000 });
-    await user.click(screen.getByRole('button', { name: '推理强度：中' }));
-    const picker = screen.getByRole('dialog', { name: '选择推理强度' });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }, { timeout: 15_000 });
+    await user.click(screen.getByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }));
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
     for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
       expect(within(picker).getByRole('radio', { name: level })).toBeInTheDocument();
     }
@@ -4146,10 +4194,10 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5\.4/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5\.4/ },
+      { timeout: 15_000 },
     ));
-    const picker = screen.getByRole('dialog', { name: '选择模型' });
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
 
     expect(within(picker).getByRole('searchbox', { name: '搜索模型' })).toBeInTheDocument();
     expect(within(picker).getByRole('group', { name: 'OpenAI' })).toBeInTheDocument();
@@ -4160,12 +4208,11 @@ describe('Agent experience', () => {
     expect(within(picker).getByRole('option', {
       name: '选择模型 DeepSeek V4',
     })).toBeInTheDocument();
-    expect(within(picker).queryByRole('radiogroup', { name: '推理强度' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '推理强度：中' })).toBeInTheDocument();
+    expect(within(picker).getByRole('radiogroup', { name: '推理强度' })).toBeInTheDocument();
     expect(within(picker).queryByRole('tab')).not.toBeInTheDocument();
   });
 
-  it('keeps model search and reasoning keyboard interactions independent', async () => {
+  it('keeps model search and reasoning keyboard interactions working in the merged popover', async () => {
     const initial = lunaModelCatalog();
     const confirmed = { ...initial, thinkingLevel: 'high' as ThinkingLevel };
     let catalogCalls = 0;
@@ -4176,30 +4223,29 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const modelTrigger = await screen.findByRole(
+    const trigger = await screen.findByRole(
       'button',
-      { name: /模型：GPT-5.6 Luna/ },
+      { name: /模型与推理：GPT-5.6 Luna/ },
       { timeout: 15_000 },
     );
-    await user.click(modelTrigger);
-    let picker = screen.getByRole('dialog', { name: '选择模型' });
+    await user.click(trigger);
+    let picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
     await waitFor(() => expect(within(picker).getByRole('searchbox', { name: '搜索模型' }))
       .toHaveFocus());
     await user.keyboard('{Escape}');
     await waitFor(() => expect(picker).not.toBeInTheDocument());
-    expect(modelTrigger).toHaveFocus();
+    expect(trigger).toHaveFocus();
 
-    const reasoningTrigger = screen.getByRole('button', { name: '推理强度：中' });
-    await user.click(reasoningTrigger);
-    picker = screen.getByRole('dialog', { name: '选择推理强度' });
-    const medium = within(picker).getByRole('radio', { name: '中' });
-    await waitFor(() => expect(medium).toHaveFocus());
+    await user.click(trigger);
+    picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    within(picker).getByRole('radio', { name: '中' }).focus();
     await user.keyboard('{ArrowRight}{Enter}');
 
     await waitFor(() => expect(picker).not.toBeInTheDocument());
-    await waitFor(() => expect(reasoningTrigger).toHaveFocus());
-    await waitFor(() => expect(screen.getByRole('button', { name: '推理强度：高' }))
-      .toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('button', {
+      name: '模型与推理：GPT-5.6 Luna · GPT · 高',
+    })).toBeInTheDocument());
   });
 
   it('switches models from the model row without requiring a reasoning-level click', async () => {
@@ -4237,7 +4283,7 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5.6 Luna/ },
+      { name: /模型与推理：GPT-5.6 Luna/ },
       { timeout: 15_000 },
     ));
     await user.click(screen.getByLabelText('选择模型 Codex Mini'));
@@ -4245,9 +4291,9 @@ describe('Agent experience', () => {
     expect(transport.requests.map((call) => call.request.pathId)).toContain(
       'agent.session.model.select',
     );
-    expect(screen.queryByRole('dialog', { name: '选择模型' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', {
-      name: '模型：Codex Mini · GPT',
+      name: '模型与推理：Codex Mini · GPT · 中',
     })).toHaveAttribute('aria-busy', 'true');
     await waitFor(() => expect(transport.requests).toEqual(expect.arrayContaining([
       expect.objectContaining({ request: expect.objectContaining({
@@ -4263,7 +4309,7 @@ describe('Agent experience', () => {
       }) }),
     ])));
     await waitFor(() => expect(screen.getByRole('button', {
-      name: '模型：Codex Mini · GPT',
+      name: '模型与推理：Codex Mini · GPT · 中',
     })).not.toHaveAttribute('aria-busy'));
   });
 
@@ -4286,9 +4332,9 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(featureTransport(catalog));
 
-    await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }, { timeout: 5_000 });
-    await user.click(screen.getByRole('button', { name: '推理强度：中' }));
-    const picker = screen.getByRole('dialog', { name: '选择推理强度' });
+    await screen.findByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }, { timeout: 15_000 });
+    await user.click(screen.getByRole('button', { name: /模型与推理：GPT-5.6 Luna/ }));
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
     expect(within(picker).queryByRole('radio', { name: 'Max' })).not.toBeInTheDocument();
   });
 
@@ -4299,8 +4345,8 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5.6 Luna/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5.6 Luna/ },
+      { timeout: 15_000 },
     ));
     await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
@@ -4352,14 +4398,14 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5.6 Luna/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5.6 Luna/ },
+      { timeout: 15_000 },
     ));
     await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
-    expect(screen.queryByRole('dialog', { name: '选择模型' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' })).not.toBeInTheDocument();
     const optimistic = screen.getByRole('button', {
-      name: '模型：Codex Mini · GPT',
+      name: '模型与推理：Codex Mini · GPT · 中',
     });
     expect(optimistic).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByRole('textbox', { name: '消息' })).toBeEnabled();
@@ -4413,25 +4459,24 @@ describe('Agent experience', () => {
 
     await user.click(await screen.findByRole(
       'button',
-      { name: /模型：GPT-5.6 Luna/ },
-      { timeout: 5_000 },
+      { name: /模型与推理：GPT-5.6 Luna/ },
+      { timeout: 15_000 },
     ));
     await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
-    await user.click(screen.getByRole('button', { name: '模型：Codex Mini · GPT' }));
+    await user.click(screen.getByRole('button', { name: '模型与推理：Codex Mini · GPT · 中' }));
     await user.click(screen.getByRole('option', { name: '选择模型 GPT-5.6 Luna' }));
-    await user.click(screen.getByRole('button', { name: '推理强度：中' }));
-    const picker = screen.getByRole('dialog', { name: '选择推理强度' });
+    await user.click(screen.getByRole('button', { name: '模型与推理：GPT-5.6 Luna · GPT · 中' }));
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
     await user.click(within(picker).getByRole('radio', { name: '高' }));
     expect(screen.getByRole('button', {
-      name: '模型：GPT-5.6 Luna · GPT',
+      name: '模型与推理：GPT-5.6 Luna · GPT · 高',
     })).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByRole('button', { name: '推理强度：高' })).toBeInTheDocument();
 
     firstSelection.resolve({ ok: true });
     await waitFor(() => expect(modelSelectionCalls).toBe(2));
     await waitFor(() => expect(screen.getByRole('button', {
-      name: '模型：GPT-5.6 Luna · GPT',
+      name: '模型与推理：GPT-5.6 Luna · GPT · 高',
     })).not.toHaveAttribute('aria-busy'));
     expect(transport.requests.filter((call) => (
       call.request.pathId === 'agent.session.model.select'
@@ -4478,9 +4523,8 @@ describe('Agent experience', () => {
     });
 
     expect(await screen.findByRole('button', {
-      name: '模型：GPT-5.6 Luna · GPT',
+      name: '模型与推理：GPT-5.6 Luna · GPT · 高',
     })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '推理强度：高' })).toBeInTheDocument();
     expect(modelCatalogCalls).toBe(1);
   });
 
@@ -5245,7 +5289,7 @@ function lunaModelCatalog(): ModelCatalog {
     schemaVersion: 'rag-ime.agent-model-catalog.v1',
     ok: true,
     sessionId: 'session-preview',
-    selected: { provider: 'gpt', id: 'gpt-5.6-luna', modelId: 'codex-mini-latest', name: 'GPT-5.6 Luna' },
+    selected: { provider: 'gpt', id: 'gpt-5.6-luna', modelId: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
     thinkingLevel: 'medium',
     providers: [{
       id: 'gpt',

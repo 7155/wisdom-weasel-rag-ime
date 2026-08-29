@@ -219,14 +219,6 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn('case .nativeStreaming: return "流式 ASR"', keychain)
         self.assertNotIn("providerHandoffAvailable", page)
 
-        bridge = (ROOT / "macos/RagImeControlWebHost/NativeBridge.swift").read_text(encoding="utf-8")
-        self.assertIn('"voiceCredentialStatus"', bridge)
-        self.assertIn('"voiceCredentialSave"', bridge)
-        self.assertIn('"voiceAction"', bridge)
-        self.assertIn("VoiceKeychainStore.save", bridge)
-        self.assertIn("VoiceKeychainStore.hasConfiguredCredentialMetadata", bridge)
-        self.assertNotIn("accessToken", bridge[bridge.index("private func voiceCredentialStatus"):bridge.index("private func voiceCredentialSave")])
-
         metadata_start = keychain.index("static func hasConfiguredCredentialMetadata")
         metadata_end = keychain.index("private static func service", metadata_start)
         metadata_query = keychain[metadata_start:metadata_end]

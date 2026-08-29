@@ -25,7 +25,7 @@ or clean-machine distribution gates.
 ```text
 explicit control path
   React Control Center
-    -> HTTP or allowlisted WKWebView native bridge
+    -> Electron-hosted loopback HTTP transport
     -> route policy + route adapter
     -> application service
     -> memory / knowledge / planning / Agent owner

@@ -19,15 +19,15 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 829
+      "pathCount": 830
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 476
+      "pathCount": 477
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
-      "pathCount": 12
+      "pathCount": 19
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
@@ -43,24 +43,24 @@
     },
     "installation_reliability": {
       "description": "Clean installation compatibility for full Xcode paths and immutable installed database history.",
-      "pathCount": 13
+      "pathCount": 14
     }
   },
   "summary": {
-    "pathCount": 1388,
+    "pathCount": 1398,
     "dispositionCounts": {
-      "delete_old_implementation": 22,
-      "keep_release": 1366
+      "delete_old_implementation": 38,
+      "keep_release": 1360
     },
     "groupCounts": {
-      "control_center_release_ui": 829,
-      "desktop_semantic_accessibility": 12,
-      "installation_reliability": 13,
+      "control_center_release_ui": 830,
+      "desktop_semantic_accessibility": 19,
+      "installation_reliability": 14,
       "memory_curation": 35,
       "project_harness": 18,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 476
+      "session_room_skill_flow": 477
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -78,7 +78,7 @@
     }
   ],
   "verification": {
-    "projectHarness": "passed after exact 1388-path inventory refresh",
+    "projectHarness": "passed after exact 1398-path inventory refresh",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
@@ -92,7 +92,7 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1388/1388 base-to-HEAD paths classified; 1366 retained and 22 old implementations deleted",
+    "releaseScopeCoverage": "1398/1398 base-to-HEAD paths classified; 1360 retained and 38 old implementations deleted",
     "repositoryPublicAudit": "Current 2026-08-29 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
@@ -2791,6 +2791,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/agent/review/AgentReviewDialogs.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep memory review recovery state and its user-visible review dialog synchronized."
     },
     {
       "path": "control-center-web/src/features/agent/sessions/ConversationForkDialog.tsx",
@@ -7582,24 +7589,66 @@
     },
     {
       "path": "macos/RagImeControlWebHost/ControlCenterAssetSchemeHandler.swift",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "desktop_semantic_accessibility",
-      "reason": "Keep the native desktop host boundary, navigation policy, and regression coverage."
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/Info.plist",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/NativeBinaryTransfer.swift",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/NativeBridge.swift",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/NativeEventBridge.swift",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "macos/RagImeControlWebHost/NativeNavigationPolicy.swift",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "desktop_semantic_accessibility",
-      "reason": "Keep the native desktop host boundary, navigation policy, and regression coverage."
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "macos/RagImeControlWebHost/NativeRoutePolicy.swift",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "session_room_skill_flow",
-      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+      "reason": "Remove the obsolete WebKit route policy so Browser release authority remains in Electron WebView with Ego/CDP."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/RagImeControlWebApp.swift",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
+    },
+    {
+      "path": "macos/RagImeControlWebHost/WebHostView.swift",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "macos/RagImeDesktopBridge/DesktopAccessibilityService.swift",
@@ -8716,10 +8765,10 @@
     },
     {
       "path": "scripts/build_control_center_web_host.sh",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "installation_reliability",
-      "reason": "Keep build and install verification aligned with the current product generation."
+      "reason": "Remove the obsolete WebKit host builder so installation can only produce the Electron WebView release host."
     },
     {
       "path": "scripts/build_desktop_bridge.sh",
@@ -8904,6 +8953,13 @@
       "reason": "Keep the current Pi-native Session/Room context, lifecycle, and acceptance contract."
     },
     {
+      "path": "scripts/test_control_center_web.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "installation_reliability",
+      "reason": "Keep Control Center release verification pointed at the canonical Electron WebView host."
+    },
+    {
       "path": "scripts/verify_desktop_semantic_foreground.py",
       "status": "added",
       "disposition": "keep_release",
@@ -8933,24 +8989,31 @@
     },
     {
       "path": "tests/fixtures/native_control_bridge_contract.json",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "session_room_skill_flow",
-      "reason": "Keep Pi-owned Session/Room, observability, and native route contracts synchronized across product boundaries."
+      "reason": "Remove the obsolete native WebKit bridge contract; Electron WebView with Ego/CDP is the sole Browser release path."
+    },
+    {
+      "path": "tests/swift/NativeBinaryTransferTests.swift",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "desktop_semantic_accessibility",
+      "reason": "Remove regression coverage for the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "tests/swift/NativeNavigationPolicyTests.swift",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "desktop_semantic_accessibility",
-      "reason": "Keep the native desktop host boundary, navigation policy, and regression coverage."
+      "reason": "Remove regression coverage for the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "tests/swift/NativeRoutePolicyTests.swift",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "session_room_skill_flow",
-      "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
+      "reason": "Remove regression coverage for the obsolete WebKit route policy; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "tests/test_active_rag_service.py",
@@ -9346,10 +9409,10 @@
     },
     {
       "path": "tests/test_control_center_web_host.py",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "desktop_semantic_accessibility",
-      "reason": "Keep the native desktop host boundary, navigation policy, and regression coverage."
+      "reason": "Remove regression coverage for the obsolete WebKit host; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "tests/test_database_migrations.py",
@@ -9521,10 +9584,10 @@
     },
     {
       "path": "tests/test_native_control_bridge_contract.py",
-      "status": "modified",
-      "disposition": "keep_release",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "session_room_skill_flow",
-      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+      "reason": "Remove regression coverage for the obsolete native WebKit bridge contract; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
       "path": "tests/test_observability.py",
@@ -9630,6 +9693,13 @@
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep governed memory, retrieval, maintenance controls, and evidence-backed regression coverage."
+    },
+    {
+      "path": "tests/test_runtime_lifecycle_control_plane.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-native Runtime lifecycle and Electron control-plane contract coverage synchronized."
     },
     {
       "path": "tests/test_sandbox_run_store.py",

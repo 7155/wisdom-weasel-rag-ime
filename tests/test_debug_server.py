@@ -15,7 +15,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -534,6 +534,11 @@ class DebugImeServiceTests(unittest.TestCase):
                 debug_server_module,
                 "ManagedPiMemoryOrganizer",
                 return_value=organizer,
+            ), patch.object(
+                debug_server_module.MemoryMaintenanceSettings,
+                "automatic_organization_auto_apply",
+                new_callable=PropertyMock,
+                return_value=False,
             ):
                 result = service.agent_memory_maintenance_prepare(
                     {

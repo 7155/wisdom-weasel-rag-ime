@@ -1216,6 +1216,63 @@ class AgentSessionStore:
             ).fetchone()
         return str(row["turn_id"]) if row is not None else ""
 
+    def runtime_review_request_turn_ids(
+        self,
+        session_id: str,
+        run_id: str,
+        *,
+        limit: int = 512,
+    ) -> list[str]:
+        """Return durable turn IDs for one memory-review request.
+
+        Runtime event payloads are intentionally not persisted wholesale. The
+        event projection stores a small ``uiRequest`` identity index instead,
+        which is enough to bind stale review recovery to the original turn.
+        """
+
+        normalized_run_id = str(run_id or "").strip()
+        if not normalized_run_id:
+            return []
+        self.get(session_id)
+        bounded_limit = max(1, min(int(limit), 512))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT turn_id, metrics_json
+                FROM agent_runtime_events
+                WHERE session_id = ?
+                  AND event_type = 'user_input_required'
+                  AND turn_id <> ''
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (session_id, bounded_limit),
+            ).fetchall()
+        turn_ids: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            try:
+                metrics = json.loads(str(row["metrics_json"] or "{}"))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(metrics, dict):
+                continue
+            ui_request = metrics.get("uiRequest")
+            if not isinstance(ui_request, dict):
+                continue
+            if (
+                str(ui_request.get("requestKind") or "")
+                != "memory_review"
+                or str(ui_request.get("runId") or "")
+                != normalized_run_id
+            ):
+                continue
+            turn_id = str(row["turn_id"] or "").strip()
+            if turn_id and turn_id not in seen:
+                seen.add(turn_id)
+                turn_ids.append(turn_id)
+        return turn_ids
+
     def prompt_acceptance_evidence(
         self,
         session_id: str,

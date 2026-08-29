@@ -771,11 +771,10 @@ export function applyAgentSnapshot(
   // active-but-quiescent snapshot as terminal so reopening an old conversation
   // cannot turn its last completed answer into a multi-day "thinking" turn.
   const replayStatus = next.status;
-  if (
-    !snapshot.partial
-    && snapshot.status
-    && ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status)
-  ) {
+  const authoritativeQuiescent = !snapshot.partial
+    && Boolean(snapshot.status)
+    && ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status ?? '');
+  if (authoritativeQuiescent && snapshot.status) {
     next.status = snapshot.status;
     // `status` is the Runtime's authoritative process boundary. A bounded
     // event journal can end after `message_completed` without retaining the
@@ -825,12 +824,36 @@ export function applyAgentSnapshot(
     const previousTurn = state.turnsById[optimistic.turnId];
     const restoredTurn = next.turnsById[optimistic.turnId];
     if (previousTurn && restoredTurn) {
-      next.turnsById[optimistic.turnId] = {
-        ...restoredTurn,
-        status: previousTurn.status,
-        updatedAtMs: Math.max(restoredTurn.updatedAtMs, previousTurn.updatedAtMs),
-        failure: previousTurn.failure,
-      };
+      const restoredAtMs = Math.max(restoredTurn.updatedAtMs, previousTurn.updatedAtMs);
+      if (
+        authoritativeQuiescent
+        && ['queued', 'running', 'waiting'].includes(previousTurn.status)
+      ) {
+        // A full quiescent snapshot is the Runtime boundary: if it contains
+        // neither this local admission nor a live turn, retaining `queued`
+        // would resurrect the composer spinner forever. Keep the user's text
+        // visible and retryable, but settle the unmatched admission honestly.
+        next.messagesById[messageId] = {
+          ...optimistic,
+          status: 'failed',
+          completedAtMs: restoredAtMs,
+        };
+        completeTurn(
+          next,
+          optimistic.turnId,
+          'failed',
+          restoredAtMs,
+          '未收到助手回复。',
+          true,
+        );
+      } else {
+        next.turnsById[optimistic.turnId] = {
+          ...restoredTurn,
+          status: previousTurn.status,
+          updatedAtMs: restoredAtMs,
+          failure: previousTurn.failure,
+        };
+      }
     }
   }
   reconcileSnapshotTurnStatuses(next);
@@ -1253,10 +1276,23 @@ function applyCompletedMessage(
         ...parsed.value,
         timelineSequence: parsed.value.timelineSequence ?? sourceTimelineSequence(event),
       };
+  // A newly-created Session is navigated into before Pi has appended its first
+  // user row.  That row may arrive as a durable `message_completed` SSE event
+  // without the product clientMessageId, leaving Home's `session-*` optimistic
+  // bubble beside the real row.  Reconcile that one bounded Home admission by
+  // its exact message fingerprint and nearby Runtime timestamp; failed,
+  // pending, ambiguous, and non-Home admissions stay auditable and untouched.
+  const inferredClientMessageId = clientMessageId || (
+    completedMessage.role === 'user'
+      ? matchingHomeOptimisticClientMessageId(state, completedMessage)
+      : ''
+  );
   upsertMessage(
     state,
-    clientMessageId ? { ...completedMessage, clientMessageId } : completedMessage,
-    clientMessageId,
+    inferredClientMessageId
+      ? { ...completedMessage, clientMessageId: inferredClientMessageId }
+      : completedMessage,
+    inferredClientMessageId,
   );
   touchTurn(
     state,
@@ -1268,6 +1304,34 @@ function applyCompletedMessage(
         : 'running',
     event.createdAtMs,
   );
+}
+
+function matchingHomeOptimisticClientMessageId(
+  state: AgentProjectionState,
+  durableMessage: AgentMessageProjection,
+): string {
+  const fingerprint = replayFingerprint(durableMessage);
+  if (!fingerprint) return '';
+  const candidates = Object.entries(state.optimisticByClientMessageId)
+    .flatMap(([clientMessageId, messageId]) => {
+      const optimistic = state.messagesById[messageId];
+      if (
+        !optimistic
+        || !clientMessageId.startsWith('session-')
+        || optimistic.role !== 'user'
+        || optimistic.status !== 'queued'
+        || optimistic.admissionState
+        || replayFingerprint(optimistic) !== fingerprint
+        || Math.abs(optimistic.createdAtMs - durableMessage.createdAtMs) > 5_000
+      ) return [];
+      return [{ clientMessageId, distance: Math.abs(optimistic.createdAtMs - durableMessage.createdAtMs) }];
+    })
+    .sort((left, right) => left.distance - right.distance);
+  // Two equal nearby prompts are not enough evidence to assign identity. The
+  // next snapshot has the broader transcript reconciliation with the same
+  // conservative rule, so do not silently merge a legitimate duplicate here.
+  if (!candidates[0] || candidates[0].distance === candidates[1]?.distance) return '';
+  return candidates[0].clientMessageId;
 }
 
 function upsertCompactionActivity(

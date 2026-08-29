@@ -12,6 +12,11 @@ from .text_utils import compact_whitespace
 
 DEFAULT_MAINTENANCE_MODEL = "openai-codex/gpt-5.6-luna"
 DEFAULT_MAINTENANCE_THINKING_LEVEL = "max"
+# Routine owner-scoped curation is allowed to promote only after the existing
+# Evidence, Atom-first, and plan validation gates pass. The resulting run keeps
+# its immutable source references and rollback receipt; it does not wait for a
+# second human approval step.
+MEMORY_CURATION_AUTO_APPLY = True
 SECONDS_PER_DAY = 24 * 60 * 60
 
 
@@ -32,6 +37,12 @@ class MemoryMaintenanceSettings:
     # Keep the new master switch last so positional callers of the existing
     # settings value object retain their previous field order.
     memory_enabled: bool = True
+
+    @property
+    def automatic_organization_auto_apply(self) -> bool:
+        """Whether validated routine curation promotes its stored run."""
+
+        return MEMORY_CURATION_AUTO_APPLY
 
     @classmethod
     def load(
@@ -103,7 +114,7 @@ class MemoryMaintenanceSettings:
                 "thinkingLevel": self.automatic_organization_thinking_level,
                 "runsPerDay": self.automatic_organization_runs_per_day,
                 "intervalSeconds": self.automatic_organization_interval_seconds,
-                "autoApply": True,
+                "autoApply": self.automatic_organization_auto_apply,
                 "includeAgentDialogue": self.include_agent_dialogue,
             },
             "dreaming": {

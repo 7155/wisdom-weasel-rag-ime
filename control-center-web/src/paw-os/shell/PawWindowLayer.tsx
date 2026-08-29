@@ -1393,7 +1393,26 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
    * answers to the shared desktop area. */
   const containToDesktop = !focusFrame;
   const drag = useWindowDrag(shellRef, interactionBounds, onBoundsCommit, onFocus, focusFrame ? undefined : onSnap, active, deferPointerInteractionUntilFocused, containToDesktop);
-  const exit = useWindowExit(shellRef);
+  const exit = useWindowExit(shellRef, appId);
+  /* Windows arrive the way a real OS opens them: a short scale-up fade on the
+   * inner surface (the shell's transform belongs to drag, snap and overview).
+   * The same mount path covers restore-from-minimize, so a restored window
+   * reads as returning instead of popping. Room-flow arrivals and
+   * collaboration satellites carry their own authored choreography and are
+   * left to it. */
+  const authoredArrival = Boolean(flowState) || collaborationRole === 'satellite';
+  useEffect(() => {
+    if (authoredArrival) return;
+    const surface = shellRef.current?.querySelector<HTMLElement>('.paw-window');
+    if (!surface || typeof surface.animate !== 'function' || pawWindowReducedMotion()) return;
+    surface.animate([
+      { opacity: 0, transform: 'translate3d(0, 8px, 0) scale(.96)' },
+      { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
+    ], { duration: 200, easing: 'cubic-bezier(.2, .85, .25, 1)' });
+    // Mount-only by design: re-running on prop drift would re-arrive a window
+    // that is already on stage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const transform = focusFrame
     ? `translate3d(${focusFrame.x}px, ${focusFrame.y}px, 0)`
     : overview && overviewFrame
@@ -1575,28 +1594,56 @@ const MemoizedWindowBody = memo(function WindowBody({ children }: { children: Re
   return <div className="paw-window-body">{children}</div>;
 });
 
-function useWindowExit(ref: RefObject<HTMLElement | null>) {
+function pawWindowReducedMotion(): boolean {
+  if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return true;
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function useWindowExit(ref: RefObject<HTMLElement | null>, appId: PawAppId) {
   return useCallback((kind: 'close' | 'minimize', finish: () => void) => {
     const surface = ref.current?.querySelector<HTMLElement>('.paw-window');
-    if (!surface || typeof surface.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!surface || typeof surface.animate !== 'function' || pawWindowReducedMotion()) {
       finish();
       return;
     }
     if (surface.dataset.exiting) return;
     surface.dataset.exiting = kind;
-    const target = kind === 'minimize'
-      ? 'translate3d(0, 34px, 0) scale(.9)'
-      : 'translate3d(0, 10px, 0) scale(.97)';
+    let duration = 160;
+    let easing = 'cubic-bezier(.77, 0, .175, 1)';
+    let target = 'translate3d(0, 10px, 0) scale(.97)';
+    if (kind === 'minimize') {
+      duration = 180;
+      target = 'translate3d(0, 34px, 0) scale(.9)';
+      /* Minimize flies to the App's Dock tile, the way the reference genie
+       * reads: window centre travels to the tile centre while the frame
+       * scales toward the tile, 280ms on the shared in-out curve. When the
+       * Dock is hidden (a maximized window owns the desktop) or the tile
+       * cannot be measured, the window keeps the older sink-in-place exit. */
+      const tile = document.querySelector<HTMLElement>(`.paw-dock [data-desktop-app="${appId}"]`);
+      if (tile) {
+        const windowRect = surface.getBoundingClientRect();
+        const tileRect = tile.getBoundingClientRect();
+        if (windowRect.width > 0 && tileRect.width > 0) {
+          const dx = tileRect.left + tileRect.width / 2 - (windowRect.left + windowRect.width / 2);
+          const dy = tileRect.top + tileRect.height / 2 - (windowRect.top + windowRect.height / 2);
+          const scale = Math.max(.06, Math.min(.24, tileRect.width / windowRect.width));
+          target = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(${scale.toFixed(3)})`;
+          duration = 280;
+          easing = 'cubic-bezier(.4, 0, .2, 1)';
+        }
+      }
+    }
     const animation = surface.animate([
       { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
       { opacity: 0, transform: target },
     ], {
-      duration: kind === 'minimize' ? 180 : 160,
-      easing: 'cubic-bezier(.77, 0, .175, 1)',
+      duration,
+      easing,
       fill: 'forwards',
     });
     void animation.finished.then(finish, finish);
-  }, [ref]);
+  }, [ref, appId]);
 }
 
 function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBounds, commit: (bounds: PawWindowBounds) => void, focus: () => void, snap: ((placement: PawWindowPlacement) => void) | undefined, active: boolean, deferPointerInteractionUntilFocused: boolean, containToDesktop: boolean) {

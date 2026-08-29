@@ -99,7 +99,6 @@ BACKEND_SHELL_KEYWORDS = (
 FRONTEND_ONLY_SCRIPT_NAMES = {
     "build_control_center.sh",
     "build_control_center_web.sh",
-    "build_control_center_web_host.sh",
     "check_control_center_footprint.sh",
     "check_control_center_web_dist.sh",
     "install_frontend_launch_agent.sh",

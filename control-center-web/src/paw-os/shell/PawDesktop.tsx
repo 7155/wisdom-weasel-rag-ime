@@ -15,7 +15,7 @@ import { pawBrowserHost } from '../apps/paw-browser-host';
 
 type PawMenuTarget =
   | { kind: 'desktop' }
-  | { kind: 'menubar' }
+  | { kind: 'menubar'; menu: 'app' | 'window' }
   | { kind: 'apps'; appIds: PawAppId[]; label: string }
   | { kind: 'window'; windowId: string; label: string };
 
@@ -49,6 +49,9 @@ export function PawDesktop() {
   const activeAppId = usePawDesktopStore((state) => (
     activeWindowId ? state.windows[activeWindowId]?.appId ?? null : null
   ));
+  const activeWindowMaximized = usePawDesktopStore((state) => (
+    activeWindowId ? state.windows[activeWindowId]?.placement === 'maximized' : false
+  ));
   const launchpadOpen = usePawDesktopStore((state) => state.launchpadOpen);
   const overviewOpen = usePawDesktopStore((state) => state.overviewOpen);
   const collaborationFocusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup);
@@ -76,6 +79,7 @@ export function PawDesktop() {
   }), [menuSignature]);
   const viewportRef = useRef<HTMLElement>(null);
   const menuAppRef = useRef<HTMLButtonElement>(null);
+  const menuWindowRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -273,8 +277,8 @@ export function PawDesktop() {
       return [
         { id: 'new-agent', label: '新建 Agent 工作', icon: <Bot size={15} />, action: () => openApp('agent') },
         { id: 'browser', label: '打开 Browser', icon: <Earth size={15} />, action: () => openApp('browser') },
-        { id: 'launchpad', label: '全部 App', icon: <LayoutGrid size={15} />, separatorBefore: true, action: () => api.getState().setLaunchpadOpen(true) },
-        { id: 'settings', label: '系统设置', icon: <Settings size={15} />, action: () => openApp('system-settings') },
+        { id: 'launchpad', label: '全部 App', icon: <LayoutGrid size={15} />, shortcut: '⌘K', separatorBefore: true, action: () => api.getState().setLaunchpadOpen(true) },
+        { id: 'settings', label: '系统设置', icon: <Settings size={15} />, shortcut: '⌘,', action: () => openApp('system-settings') },
         {
           id: 'close-all-windows',
           label: '关闭全部窗口',
@@ -287,16 +291,37 @@ export function PawDesktop() {
       ];
     }
     if (contextMenu.kind === 'menubar') {
+      if (contextMenu.menu === 'window') {
+        /* The Window menu is always present like on macOS; with no focused
+         * window its verbs simply read disabled instead of disappearing. */
+        const activeNode = menuWindows.find((candidate) => candidate.id === activeWindowId);
+        return [
+          { id: 'minimize', label: '最小化', icon: <Minus size={15} />, shortcut: '⌘H', disabled: !activeNode, action: () => { if (activeNode) api.getState().minimizeWindow(activeNode.id); } },
+          { id: 'maximize', label: activeNode?.placement === 'maximized' ? '还原窗口' : '最大化', icon: <Maximize2 size={15} />, disabled: !activeNode, action: () => { if (activeNode) api.getState().toggleMaximize(activeNode.id); } },
+          { id: 'snap-left', label: '靠左排列', icon: <PanelLeft size={15} />, disabled: !activeNode, action: () => { if (activeNode) api.getState().snapWindow(activeNode.id, 'left'); } },
+          { id: 'snap-right', label: '靠右排列', icon: <PanelRight size={15} />, disabled: !activeNode, action: () => { if (activeNode) api.getState().snapWindow(activeNode.id, 'right'); } },
+          { id: 'overview', label: '窗口总览', icon: <PanelsTopLeft size={15} />, shortcut: 'F5', separatorBefore: true, action: () => api.getState().setOverviewOpen(true) },
+          {
+            id: 'close',
+            label: '关闭窗口',
+            icon: <X size={15} />,
+            danger: true,
+            separatorBefore: true,
+            disabled: !activeNode,
+            action: () => { if (activeNode) api.getState().closeWindow(activeNode.id); },
+          },
+        ];
+      }
       if (!activeWindowId || !activeAppId) {
         return [
-          { id: 'launchpad', label: '全部 App', icon: <LayoutGrid size={15} />, action: () => api.getState().setLaunchpadOpen(true) },
+          { id: 'launchpad', label: '全部 App', icon: <LayoutGrid size={15} />, shortcut: '⌘K', action: () => api.getState().setLaunchpadOpen(true) },
           { id: 'new-agent', label: '新建 Agent 工作', icon: <Bot size={15} />, action: () => openApp('agent') },
-          { id: 'settings', label: '系统设置', icon: <Settings size={15} />, action: () => openApp('system-settings') },
+          { id: 'settings', label: '系统设置', icon: <Settings size={15} />, shortcut: '⌘,', action: () => openApp('system-settings') },
         ];
       }
       return [
-        { id: 'hide', label: '隐藏窗口', icon: <Minus size={15} />, action: () => api.getState().minimizeWindow(activeWindowId) },
-        { id: 'overview', label: '窗口总览', icon: <PanelsTopLeft size={15} />, action: () => api.getState().setOverviewOpen(true) },
+        { id: 'hide', label: '隐藏窗口', icon: <Minus size={15} />, shortcut: '⌘H', action: () => api.getState().minimizeWindow(activeWindowId) },
+        { id: 'overview', label: '窗口总览', icon: <PanelsTopLeft size={15} />, shortcut: 'F5', action: () => api.getState().setOverviewOpen(true) },
         {
           id: 'close',
           label: '关闭窗口',
@@ -359,16 +384,35 @@ export function PawDesktop() {
     ];
   }, [activeAppId, activeWindowId, api, contextMenu, menuWindows]);
   const menuBarLabel = activeAppId ? pawApp(activeAppId).label : '桌面';
-  const openMenuBarMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (contextMenu?.kind === 'menubar') {
-      setContextMenu(null);
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    setContextMenu({ kind: 'menubar', x: rect.left, y: rect.bottom + 6 });
+  /* macOS menu-bar discipline: a menu opens on click, and while any menu-bar
+   * menu is open, hovering the neighbouring title (or pressing ←/→ inside the
+   * menu) moves the open menu across the bar instead of requiring a second
+   * click. The anchor rect comes from the refs so all three paths agree. */
+  const openMenuBarMenu = (menu: 'app' | 'window') => {
+    const anchor = menu === 'app' ? menuAppRef.current : menuWindowRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    setContextMenu({ kind: 'menubar', menu, x: rect.left, y: rect.bottom + 6 });
   };
+  const menuBarButtonHandlers = (menu: 'app' | 'window') => ({
+    onClick: (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (contextMenu?.kind === 'menubar' && contextMenu.menu === menu) {
+        setContextMenu(null);
+        return;
+      }
+      openMenuBarMenu(menu);
+    },
+    onPointerEnter: (event: ReactPointerEvent<HTMLButtonElement>) => {
+      // Touch taps fire pointerenter right before pointerdown; treating that
+      // as a hover-switch would make the following click close the menu it
+      // just opened. Only a real mouse glide carries the menu across.
+      if (event.pointerType !== 'mouse') return;
+      if (contextMenu?.kind === 'menubar' && contextMenu.menu !== menu) openMenuBarMenu(menu);
+    },
+  });
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
   return (
     <div
       className="paw-desktop"
@@ -379,20 +423,33 @@ export function PawDesktop() {
     >
       <header className="paw-menu-bar">
         <button aria-label="打开全部 App" className="paw-system-mark" onClick={toggleLaunchpad} type="button"><PawBrandMark size={15} /><span className="paw-brand-wordmark">PAW</span></button>
-        <button
-          aria-expanded={contextMenu?.kind === 'menubar'}
-          aria-haspopup="menu"
-          aria-label={`${menuBarLabel} 菜单`}
-          className="paw-menu-app"
-          data-app={activeAppId ?? undefined}
-          data-idle={activeAppId ? undefined : true}
-          onClick={openMenuBarMenu}
-          ref={menuAppRef}
-          type="button"
-        >
-          {activeAppId ? <PawAppIcon appId={activeAppId} size={14} /> : null}
-          <span>{menuBarLabel}</span>
-        </button>
+        <div className="paw-menu-menus">
+          <button
+            aria-expanded={contextMenu?.kind === 'menubar' && contextMenu.menu === 'app'}
+            aria-haspopup="menu"
+            aria-label={`${menuBarLabel} 菜单`}
+            className="paw-menu-app"
+            data-app={activeAppId ?? undefined}
+            data-idle={activeAppId ? undefined : true}
+            ref={menuAppRef}
+            type="button"
+            {...menuBarButtonHandlers('app')}
+          >
+            {activeAppId ? <PawAppIcon appId={activeAppId} size={14} /> : null}
+            <span>{menuBarLabel}</span>
+          </button>
+          <button
+            aria-expanded={contextMenu?.kind === 'menubar' && contextMenu.menu === 'window'}
+            aria-haspopup="menu"
+            aria-label="窗口菜单"
+            className="paw-menu-extra"
+            ref={menuWindowRef}
+            type="button"
+            {...menuBarButtonHandlers('window')}
+          >
+            <span>窗口</span>
+          </button>
+        </div>
         <div className="paw-menu-status"><ConnectionIndicator /><PawMenuClock /></div>
       </header>
 
@@ -406,20 +463,27 @@ export function PawDesktop() {
         onClick={() => api.getState().setCollaborationFocusGroup(null)}
         type="button"
       ><X size={14} />退出协作聚焦</button> : null}
-      <PawDock
+      {activeWindowMaximized ? null : <PawDock
         activeAppId={activeAppId}
         onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
         onOverview={toggleOverview}
         overviewOpen={overviewOpen}
-      />
+      />}
       {launchpadOpen ? <PawLaunchpad onClose={closeLaunchpad} onOpen={openApp} /> : null}
       {contextMenu ? (
         <PawContextMenu
-          anchor={contextMenu.kind === 'menubar' ? menuAppRef : undefined}
+          anchor={contextMenu.kind === 'menubar' ? (contextMenu.menu === 'app' ? menuAppRef : menuWindowRef) : undefined}
           ariaLabel={contextMenuAriaLabel(contextMenu, activeAppId)}
           items={menuItems}
-          onClose={() => setContextMenu(null)}
+          /* A distinct key per menu remounts on a hover/arrow switch, so the
+           * entrance replays from the new anchor and focus lands on the new
+           * first item instead of dying with the swapped-out list. */
+          key={contextMenuKey(contextMenu)}
+          onClose={closeContextMenu}
+          onHorizontalNavigate={contextMenu.kind === 'menubar'
+            ? () => openMenuBarMenu(contextMenu.menu === 'app' ? 'window' : 'app')
+            : undefined}
           x={contextMenu.x}
           y={contextMenu.y}
         />
@@ -549,7 +613,7 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
               type="button"
             >
               <span><PawAppIcon appId={id} size={28} /></span>
-              <strong>{pawApp(id).shortLabel}</strong>
+              <strong><span className="paw-desktop-shortcuts__label-ink">{pawApp(id).shortLabel}</span></strong>
               <i aria-hidden="true" />
             </button>
           );
@@ -614,9 +678,14 @@ const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOver
             data-desktop-app={appId}
             data-minimized={minimizedOnly || undefined}
             data-open={dockState.open.has(appId) || undefined}
-            key={appId}
-            onClick={() => onOpen(appId)}
-            title={minimizedOnly ? `${pawApp(appId).label} 已最小化，点击恢复` : undefined}
+          key={appId}
+          onClick={(event) => {
+            // macOS launch feedback: a shelf identity that is not running
+            // answers the click with one hop before its window arrives.
+            if (!dockState.open.has(appId)) bounceDockIcon(event.currentTarget);
+            onOpen(appId);
+          }}
+          title={minimizedOnly ? `${pawApp(appId).label} 已最小化，点击恢复` : undefined}
             type="button"
           >
             <PawAppIcon appId={appId} size={32} />
@@ -707,6 +776,30 @@ function useDockMagnification(dockRef: RefObject<HTMLElement | null>) {
       rest();
     };
   }, [dockRef]);
+}
+
+/* The launch hop rides the icon, never the button: the magnification
+ * conductor owns the button's transform through custom properties, and a
+ * WAAPI transform on the same element would replace it mid-gesture. Both
+ * reduced-motion signals (system preference and the in-app setting) opt out,
+ * matching the magnification conductor's own gates. */
+function bounceDockIcon(button: HTMLElement) {
+  if (pawShellReducedMotion()) return;
+  const icon = button.querySelector<HTMLElement>('.paw-app-icon');
+  if (!icon || typeof icon.animate !== 'function') return;
+  icon.animate([
+    { transform: 'translate3d(0, 0, 0)' },
+    { transform: 'translate3d(0, -16px, 0)' },
+    { transform: 'translate3d(0, 0, 0)' },
+    { transform: 'translate3d(0, -6px, 0)' },
+    { transform: 'translate3d(0, 0, 0)' },
+  ], { duration: 540, easing: 'cubic-bezier(.3, .7, .4, 1)' });
+}
+
+function pawShellReducedMotion(): boolean {
+  if (document.documentElement.getAttribute('data-reduce-motion') === 'true') return true;
+  return typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: PawAppId) => void }) {
@@ -815,6 +908,16 @@ function launchpadGroup(app: PawAppDefinition): (typeof LAUNCHPAD_GROUP_ORDER)[n
 
 function contextMenuAriaLabel(menu: PawMenuState, activeAppId: PawAppId | null): string {
   if (menu.kind === 'desktop') return '桌面菜单';
-  if (menu.kind === 'menubar') return activeAppId ? `${pawApp(activeAppId).label} 菜单` : '桌面菜单';
+  if (menu.kind === 'menubar') {
+    if (menu.menu === 'window') return '窗口菜单';
+    return activeAppId ? `${pawApp(activeAppId).label} 菜单` : '桌面菜单';
+  }
   return `${menu.label} 菜单`;
+}
+
+function contextMenuKey(menu: PawMenuState): string {
+  if (menu.kind === 'menubar') return `menubar-${menu.menu}`;
+  if (menu.kind === 'apps') return `apps-${menu.appIds.join(',')}`;
+  if (menu.kind === 'window') return `window-${menu.windowId}`;
+  return 'desktop';
 }

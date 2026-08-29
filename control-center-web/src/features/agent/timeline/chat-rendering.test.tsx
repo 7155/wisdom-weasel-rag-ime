@@ -1887,6 +1887,47 @@ describe('Agent chat rendering', () => {
     expect(screen.queryByText('本轮未完成')).not.toBeInTheDocument();
     expect(screen.getByText('正在处理')).toBeInTheDocument();
   });
+
+  it('shows only the latest attempt when a failed turn has sibling retries', () => {
+    const sessionId = 'session-1';
+    const rootTurnId = 'turn-root-siblings';
+    const rootMessage: UiAgentMessage = {
+      ...userMessage(sessionId, rootTurnId),
+      id: 'root-sibling-user',
+      clientMessageId: 'client-root-siblings',
+      blocks: [{
+        id: 'root-sibling-user-text',
+        type: 'text',
+        status: 'completed',
+        presentationKind: 'markdown',
+        data: { text: '只保留最新重试尝试' },
+      }],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [rootMessage, failedAssistantMessage(sessionId, rootTurnId)],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: `${sessionId}:1`,
+      status: 'faulted',
+    });
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'client-retry-sibling-1',
+      retryOfClientMessageId: 'client-root-siblings',
+      text: '只保留最新重试尝试',
+      attachments: [],
+      nowMs: 2,
+    });
+    useAgentLiveStore.getState().appendOptimistic(sessionId, {
+      clientMessageId: 'client-retry-sibling-2',
+      retryOfClientMessageId: 'client-root-siblings',
+      text: '只保留最新重试尝试',
+      attachments: [],
+      nowMs: 3,
+    });
+
+    const projection = useAgentLiveStore.getState().projections[sessionId]!;
+    expect(visibleAgentTurnIds(projection)).toEqual(['local-turn:client-retry-sibling-2']);
+  });
 });
 
 function imageBlock(data: Record<string, unknown>): UiAgentBlock {

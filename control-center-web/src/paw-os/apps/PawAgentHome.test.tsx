@@ -65,25 +65,33 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(agentNextCss).toMatch(/\.an-chip-text/);
   });
 
-  it('keeps model and thinking as adjacent independent menus', async () => {
+  it('merges model and thinking into one chip whose menu carries both sections', async () => {
     const user = userEvent.setup();
     renderHome({
       modelReference: 'gpt/gpt-5.6-luna',
       models: [model('gpt-5.6-luna', 'GPT-5.6 Luna')],
     });
 
-    const controls = await screen.findByRole('group', { name: '模型与推理设置' });
-    const modelTrigger = within(controls).getByRole('button', { name: '模型 · GPT-5.6 Luna' });
-    const thinkingTrigger = within(controls).getByRole('button', { name: '推理强度 · 高' });
-    await user.click(modelTrigger);
-    const modelMenu = screen.getByRole('menu', { name: '选择模型' });
-    expect(within(modelMenu).queryByText('推理强度')).not.toBeInTheDocument();
+    const trigger = await screen.findByRole('button', { name: '模型与推理 · GPT-5.6 Luna · 高' });
+    expect(screen.queryByRole('button', { name: /^模型 ·/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^推理强度 ·/ })).not.toBeInTheDocument();
 
-    await user.click(thinkingTrigger);
-    const thinkingMenu = screen.getByRole('menu', { name: '选择推理强度' });
-    expect(within(thinkingMenu).queryByText('GPT-5.6 Luna')).not.toBeInTheDocument();
+    await user.click(trigger);
+    const menu = screen.getByRole('menu', { name: '选择模型与推理强度' });
+    expect(within(menu).getByRole('group', { name: '模型' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitemradio', { name: 'GPT-5.6 Luna' })).toBeChecked();
+    const thinkingSection = within(menu).getByRole('group', { name: '推理强度' });
+    await user.click(within(thinkingSection).getByRole('menuitemradio', { name: '中' }));
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    const updated = screen.getByRole('button', { name: '模型与推理 · GPT-5.6 Luna · 中' });
+    expect(updated).toBeInTheDocument();
+
+    await user.click(updated);
+    expect(within(screen.getByRole('menu', { name: '选择模型与推理强度' }))
+      .getByRole('menuitemradio', { name: '中' })).toBeChecked();
     await user.keyboard('{Escape}');
-    expect(thinkingTrigger).toHaveFocus();
+    expect(updated).toHaveFocus();
   });
 
   it('keeps a pasted image visible, removable, and sends its managed receipt with a new Session', async () => {

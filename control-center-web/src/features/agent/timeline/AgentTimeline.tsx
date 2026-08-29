@@ -94,6 +94,7 @@ export function agentTurnMarkerKind(
 type ProjectionDerivedViews = {
   visibleTurnIds?: string[];
   retrySuccessors?: Map<string, string>;
+  retryChildren?: Set<string>;
   userMessagesByClientId?: Map<string, AgentMessageProjection>;
   retryRootUserIdsByTurn: Map<string, string[]>;
 };
@@ -116,7 +117,11 @@ export function visibleAgentTurnIds(projection: AgentProjectionState): string[] 
   const views = derivedViews(projection);
   if (views.visibleTurnIds) return views.visibleTurnIds;
   const retrySuccessors = retrySuccessorTurnIds(projection);
-  const retryChildren = new Set(retrySuccessors.values());
+  // More than one retry can be issued before the first receipt/snapshot
+  // settles. The successor map intentionally keeps the newest leaf, but all
+  // retry children still belong to that same logical slot; otherwise an older
+  // sibling renders as a second identical user bubble.
+  const retryChildren = retryChildTurnIds(projection);
   views.visibleTurnIds = projection.turnOrder.flatMap((turnId) => {
     // A retry is a new idempotent Runtime attempt, but it remains the same
     // logical conversation turn. Keep the durable attempts for audit, replace
@@ -148,6 +153,7 @@ function retrySuccessorTurnIds(projection: AgentProjectionState): Map<string, st
     }
   }
   const successors = new Map<string, string>();
+  const retryChildren = new Set<string>();
   for (const turnId of projection.turnOrder) {
     const turn = projection.turnsById[turnId];
     for (const messageId of turn?.messageIds ?? []) {
@@ -157,11 +163,20 @@ function retrySuccessorTurnIds(projection: AgentProjectionState): Map<string, st
         : undefined;
       if (predecessorTurnId && predecessorTurnId !== turnId) {
         successors.set(predecessorTurnId, turnId);
+        retryChildren.add(turnId);
       }
     }
   }
   views.retrySuccessors = successors;
+  views.retryChildren = retryChildren;
   return successors;
+}
+
+function retryChildTurnIds(projection: AgentProjectionState): Set<string> {
+  const views = derivedViews(projection);
+  if (views.retryChildren) return views.retryChildren;
+  retrySuccessorTurnIds(projection);
+  return views.retryChildren ?? new Set<string>();
 }
 
 function logicalRetryLeafTurnId(

@@ -77,6 +77,18 @@ class ControlCenterCutoverTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, script)
 
+    def test_legacy_webkit_host_source_and_builder_are_removed(self) -> None:
+        self.assertFalse((ROOT / "macos" / "RagImeControlWebHost").exists())
+        self.assertFalse((ROOT / "scripts" / "build_control_center_web_host.sh").exists())
+
+    def test_web_gate_never_invokes_the_legacy_webkit_host_builder(self) -> None:
+        script = (ROOT / "scripts" / "test_control_center_web.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("build_paw_os_electron_host.sh", script)
+        self.assertNotIn("build_control_center_web_host.sh", script)
+
     def test_release_footprint_gate_requires_the_electron_bundle(self) -> None:
         script = (ROOT / "scripts" / "check_control_center_footprint.sh").read_text(
             encoding="utf-8"
@@ -269,40 +281,19 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("RAG_IME_REMOTE_ALLOWED_LOGINS", script)
         self.assertNotIn('"$TAILSCALE" funnel', script)
 
-    def test_web_host_owns_the_release_bundle_and_agent_deep_link(self) -> None:
-        host = ROOT / "macos" / "RagImeControlWebHost"
-        app = (host / "RagImeControlWebApp.swift").read_text(encoding="utf-8")
-        view = (host / "WebHostView.swift").read_text(encoding="utf-8")
-        build = (ROOT / "scripts" / "build_control_center_web_host.sh").read_text(
+    def test_electron_host_owns_the_only_release_bundle(self) -> None:
+        build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("com.rag-ime.control.open-agent", app)
-        self.assertIn("openAgent", app)
-        self.assertIn("#/agent", view)
         self.assertIn('INSTALL_DEST="$HOME/Applications/RagImeControl.app"', build)
         self.assertIn("rag-ime-control-web-build-marker.json", build)
-        self.assertIn("source_signature()", build)
-        self.assertIn('SOURCE_SIGNATURE="$(source_signature)"', build)
-        self.assertEqual(build.count("require_source_stable"), 3)
-        self.assertIn(
-            "source changed during Control Center build; refusing to install a mixed app",
-            build,
-        )
-        self.assertLess(
-            build.rindex("require_source_stable"),
-            build.index(
-                'python3 - "$RESOURCES/rag-ime-control-web-build-marker.json"'
-            ),
-        )
+        self.assertIn('"browserHost": "electron-webview"', build)
+        self.assertIn('"browserControl": "ego-browser"', build)
+        self.assertIn('"browserTransport": "cdp"', build)
         self.assertIn("lsregister", build)
-        self.assertIn('PROCESS_PATTERN="/Contents/MacOS/$EXECUTABLE([[:space:]]|$)"', build)
-        self.assertIn('pkill -TERM -f "$PROCESS_PATTERN"', build)
-        self.assertIn("unable to stop the existing $EXECUTABLE", build)
-        self.assertIn(
-            '"$DEST/Contents/Resources/control-center-web" native "$FRONTEND_CHANNEL" "$SOURCE_COMMIT"',
-            build,
-        )
+        self.assertNotIn("WebKit.framework", build)
+        self.assertNotIn("RagImeControlWebHost", build)
 
 
 if __name__ == "__main__":

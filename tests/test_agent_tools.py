@@ -5159,6 +5159,19 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertIn("主持伙伴必须按验收条件核对结果", extension)
 
+    def test_agents_delegate_defaults_to_background_next_turn(self) -> None:
+        extension = (
+            Path(__file__).parents[1] / "integrations" / "pi" / "rag-ime-control.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'spec.name === "agents" && params.op === "delegate"',
+            extension,
+        )
+        self.assertIn("wait: params.wait === true", extension)
+        self.assertIn('default: false', extension)
+        self.assertIn("delegate 默认 wait=false", extension)
+
     def test_retired_room_operations_cannot_reenter_through_ime_agents(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []
 

@@ -25,7 +25,6 @@
 
 import {
   ArrowUp,
-  BrainCircuit,
   Check,
   ChevronDown,
   CircleAlert,
@@ -73,7 +72,7 @@ type Selection =
   | { kind: 'session'; id: string; draft?: string }
   | { kind: 'room'; id: string; draft?: string; error?: string };
 
-type OptionsPanel = 'project' | 'model' | 'thinking' | 'permission' | null;
+type OptionsPanel = 'project' | 'model' | 'permission' | null;
 
 type HomePendingAttachment = {
   id: string;
@@ -148,7 +147,6 @@ export function PawAgentHome({
   const chipRefs = useRef<Record<Exclude<OptionsPanel, null>, HTMLButtonElement | null>>({
     permission: null,
     model: null,
-    thinking: null,
     project: null,
   });
   const preferenceHydratedRef = useRef(false);
@@ -571,23 +569,25 @@ export function PawAgentHome({
                 ) : null}
               </span>
 
-              <span aria-label="模型与推理设置" className="an-model-controls" role="group">
-                <span className="an-anchor">
-                  <button
-                    aria-expanded={optionsPanel === 'model'}
-                    aria-label={`模型 · ${selectedModel?.name ?? '自动模型'}`}
-                    className="an-chip"
-                    onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
-                    ref={(node) => { chipRefs.current.model = node; }}
-                    title={`模型 · ${selectedModel?.name ?? '自动模型'}`}
-                    type="button"
-                  >
-                    <ProviderMark providerId={selectedModel?.provider} size={14} />
-                    <span className="an-chip-text">{selectedModel?.name ?? '自动模型'}</span>
-                    <ChevronDown className="caret" size={13} />
-                  </button>
-                  {optionsPanel === 'model' ? (
-                    <div aria-label="选择模型" className="an-menu" role="menu">
+              <span className="an-anchor">
+                <button
+                  aria-expanded={optionsPanel === 'model'}
+                  aria-label={`模型与推理 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
+                  className="an-chip"
+                  onClick={() => setOptionsPanel(optionsPanel === 'model' ? null : 'model')}
+                  ref={(node) => { chipRefs.current.model = node; }}
+                  title={`模型与推理 · ${selectedModel?.name ?? '自动模型'} · ${thinkingLabel(thinking)}`}
+                  type="button"
+                >
+                  <ProviderMark providerId={selectedModel?.provider} size={14} />
+                  <span className="an-chip-text">{selectedModel?.name ?? '自动模型'}</span>
+                  <span className="an-chip-detail"> · {thinkingLabel(thinking)}</span>
+                  <ChevronDown className="caret" size={13} />
+                </button>
+                {optionsPanel === 'model' ? (
+                  <div aria-label="选择模型与推理强度" className="an-menu" role="menu">
+                    <div aria-label="模型" role="group">
+                      <div className="an-menu-title">模型</div>
                       {modelGroups.map(([provider, group]) => (
                         <div key={provider}>
                           <div className="an-menu-group">{provider}</div>
@@ -612,45 +612,32 @@ export function PawAgentHome({
                         </div>
                       ))}
                     </div>
-                  ) : null}
-                </span>
-
-                <span className="an-anchor">
-                  <button
-                    aria-expanded={optionsPanel === 'thinking'}
-                    aria-label={`推理强度 · ${thinkingLabel(thinking)}`}
-                    className="an-chip an-thinking-chip"
-                    disabled={!selectedModel || thinkingLevels.length === 0}
-                    onClick={() => setOptionsPanel(optionsPanel === 'thinking' ? null : 'thinking')}
-                    ref={(node) => { chipRefs.current.thinking = node; }}
-                    title={`推理强度 · ${thinkingLabel(thinking)}`}
-                    type="button"
-                  >
-                    <BrainCircuit aria-hidden="true" size={14} />
-                    <span className="an-chip-text">{thinkingLabel(thinking)}</span>
-                    <ChevronDown className="caret" size={13} />
-                  </button>
-                  {optionsPanel === 'thinking' ? (
-                    <div aria-label="选择推理强度" className="an-menu an-thinking-menu" role="menu">
-                      {thinkingLevels.map((level) => (
-                        <button
-                          aria-checked={level === thinking}
-                          className="an-menu-item"
-                          key={level}
-                          onClick={() => {
-                            preferenceEditedRef.current.thinking = true;
-                            setThinking(level);
-                            setOptionsPanel(null);
-                          }}
-                          role="menuitemradio"
-                          type="button"
-                        >
-                          <span className="mi-tt">{level === thinking ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{thinkingLabel(level)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </span>
+                    {selectedModel && thinkingLevels.length > 0 ? (
+                      <>
+                        <div className="an-menu-sep" />
+                        <div aria-label="推理强度" role="group">
+                          <div className="an-menu-title">推理强度</div>
+                          {thinkingLevels.map((level) => (
+                            <button
+                              aria-checked={level === thinking}
+                              className="an-menu-item"
+                              key={level}
+                              onClick={() => {
+                                preferenceEditedRef.current.thinking = true;
+                                setThinking(level);
+                                setOptionsPanel(null);
+                              }}
+                              role="menuitemradio"
+                              type="button"
+                            >
+                              <span className="mi-tt">{level === thinking ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{thinkingLabel(level)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
               </span>
 
               <span className="an-anchor">

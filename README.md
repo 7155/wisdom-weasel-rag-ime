@@ -780,9 +780,8 @@ writes project files implicitly.
 | `ARCHITECTURE.md` | Runtime ownership, dependency direction, and primary flows. |
 | `rag_ime/` | Python sidecar, local RAG/memory core, model runtime adapters, management API, and release audit. |
 | `squirrel-patches/` | Pinned Squirrel patch, Swift overlay, and patch application checks. |
-| `control-center-web/` | React settings, diagnostics, knowledge, planning, and Agent UI. |
+| `control-center-web/` | React PAWOS UI plus the sole Electron release host. |
 | `integrations/browser-copilot/` | Local Chrome extension for compact page snapshots, screenshots, approved actions, and site-permission prompts. |
-| `macos/RagImeControlWebHost/` | Minimal AppKit/WebKit host and allowlisted native bridge for the Web Control Center. |
 | `macos/RagImeVoice/` | Headless push-to-talk agent, microphone pipeline, and cursor insertion. |
 | `macos/Shared/` | Shared native Keychain and streaming-ASR protocol code. |
 | `scripts/` | Build, install, runtime, evaluation, release, and foreground-verification commands. |

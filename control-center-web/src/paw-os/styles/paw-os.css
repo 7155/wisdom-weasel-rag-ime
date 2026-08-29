@@ -86,15 +86,17 @@
 .paw-desktop-root button { border: 0; background: none; }
 .paw-desktop { position: absolute; inset: 0; overflow: hidden; isolation: isolate; }
 
-/* Menu bar structure. The real DOM is mark | active App | status; the macOS
-   native host reserves a first column for its own traffic controls. */
+/* Menu bar structure. The real DOM is mark | menus | status; the macOS
+   native host reserves a first column for its own traffic controls. The
+   menus column is one flex row so the current App and the Window menu sit
+   shoulder to shoulder like a native menu row. */
 .paw-menu-bar {
   position: absolute; z-index: 80; inset: 0 0 auto; height: var(--paw-menu-h);
   display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 0 16px;
   user-select: none;
 }
 .paw-menu-bar > .paw-system-mark { min-width: 0; grid-column: 1; }
-.paw-menu-bar > .paw-menu-app { min-width: 0; grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paw-menu-bar > .paw-menu-menus { grid-column: 2; display: flex; align-items: center; gap: 4px; min-width: 0; }
 .paw-menu-bar > .paw-menu-status { min-width: 0; grid-column: 3; }
 html[data-paw-native-host='macos'] .paw-menu-bar {
   grid-template-columns: 68px max-content minmax(0, 1fr) auto;
@@ -102,7 +104,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar {
      the window drag surface while the native traffic lights occupy column 1. */
   -webkit-app-region: drag;
 }
-html[data-paw-native-host='macos'] .paw-menu-bar > :is(button, .paw-menu-status) {
+html[data-paw-native-host='macos'] .paw-menu-bar > :is(button, .paw-menu-menus, .paw-menu-status) {
   -webkit-app-region: no-drag;
 }
 html[data-paw-native-host='macos'] .paw-menu-bar::before {
@@ -113,10 +115,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar::before {
   pointer-events: none;
 }
 html[data-paw-native-host='macos'] .paw-menu-bar > .paw-system-mark { grid-column: 2; }
-html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-app { grid-column: 3; }
+html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-menus { grid-column: 3; }
 html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-column: 4; }
 .paw-system-mark { min-width: 0; height: 28px; display: grid; place-items: center; padding: 0 2px; cursor: pointer; }
-.paw-menu-app { display: inline-flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.paw-menu-app { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.paw-menu-extra { display: inline-flex; align-items: center; flex: 0 0 auto; cursor: pointer; }
 .paw-menu-status { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 
 .paw-desktop-viewport { position: absolute; left: 0; top: var(--paw-menu-h); right: 0; bottom: 0; overflow: hidden; }
@@ -647,6 +650,18 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   display: block; overflow: hidden; padding: 3px 5px; border-radius: 5px;
   color: var(--paw-muted); background: var(--paw-panel-soft); font-size: 10px; text-overflow: ellipsis; white-space: nowrap;
 }
+.paw-wayfinder-work__context-root { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.paw-wayfinder-work__context-root code { flex: 1; min-width: 0; }
+.paw-wayfinder-work__context-root button {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  min-height: 24px; padding: 0 8px;
+  border: 1px solid var(--paw-line); border-radius: 7px;
+  color: var(--paw-muted); font-size: 10.5px; cursor: pointer;
+}
+.paw-wayfinder-work__context-root button:hover,
+.paw-wayfinder-work__context-root button:focus-visible {
+  border-color: var(--paw-accent); color: var(--paw-accent-strong); background: var(--paw-accent-soft); outline: 0;
+}
 .paw-wayfinder-work__context-roots p { margin: 0; color: var(--paw-muted); font-size: 10px; }
 .paw-wayfinder-work__context-conversations { flex: 1; }
 .paw-wayfinder-work__context-conversations > header { display: flex; align-items: baseline; justify-content: space-between; gap: 7px; }
@@ -681,8 +696,20 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 
 /* Structure only. The menu material, item colours, hover/focus selection and
-   separators are the shared control language in paw-os-controls.css. */
-.paw-context-menu { position: fixed; z-index: 220; width: 220px; }
+   separators are the shared control language in paw-os-controls.css. The
+   entrance unfolds from the anchor corner the measurer stamped on
+   --paw-menu-origin, rising 4px toward its resting place (or falling 4px when
+   the menu flipped open upward at the bottom edge) — the reference OS's
+   120ms context-menu beat, kept on transform + opacity only. */
+.paw-context-menu {
+  position: fixed; z-index: 220; width: 220px;
+  transform-origin: var(--paw-menu-origin, 0 0);
+  animation: paw-context-menu-in 140ms var(--paw-ease-out) both;
+}
+@keyframes paw-context-menu-in {
+  from { opacity: 0; transform: translate3d(0, var(--paw-menu-rise, 4px), 0) scale(.98); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
 
 /* Windows fill the menu-below desktop plane. The resident Dock is an overlay,
    so it must not reserve a permanent gutter or make a maximized App visibly
@@ -1474,6 +1501,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
     transition: opacity 160ms ease !important;
     transform: none !important;
   }
+  /* The menu entrance is travel, so it goes; the menu simply appears. */
+  .paw-context-menu { animation: none !important; }
   .paw-dock button {
     transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease !important;
   }
@@ -1697,7 +1726,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 
 @media (max-width: 420px) {
-  .paw-menu-bar > .paw-menu-app { display: none; }
+  .paw-menu-bar > .paw-menu-menus { display: none; }
 }
 
 /* Wayfinder icon desktop ----------------------------------------------------
@@ -1707,7 +1736,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work {
   pointer-events: none;
 }
-.paw-wayfinder-work > :is(.paw-wayfinder-work__head, .paw-wayfinder-work__toolbar, .paw-wayfinder-work__archive-tray, .paw-wayfinder-work__list, .paw-wayfinder-work__context-sheet) {
+.paw-wayfinder-work > :is(.paw-wayfinder-work__masthead, .paw-wayfinder-work__archive-tray, .paw-wayfinder-work__list, .paw-wayfinder-work__context-sheet) {
   pointer-events: auto;
 }
 .paw-wayfinder-work__head { padding: 7px 8px 5px; }
@@ -1910,8 +1939,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   max-height: none;
   overflow: visible;
 }
-.paw-wayfinder-work__head,
-.paw-wayfinder-work__toolbar,
+.paw-wayfinder-work__masthead,
 .paw-wayfinder-work__archive-tray {
   position: relative;
   z-index: 20;
@@ -1951,8 +1979,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 
 @media (max-width: 820px) {
   .paw-wayfinder-work { position: absolute; inset: 0; width: auto; max-height: none; margin: 0; }
-  .paw-wayfinder-work__head,
-  .paw-wayfinder-work__toolbar,
+  .paw-wayfinder-work__masthead,
   .paw-wayfinder-work__archive-tray { width: calc(100% - 24px); margin-inline: 12px; }
   .paw-wayfinder-work__list { padding-top: 94px; }
 }

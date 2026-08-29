@@ -480,18 +480,18 @@ class SettingsValidationTests(unittest.TestCase):
 
 class WebControlRuntimeBoundaryTests(unittest.TestCase):
     def test_web_control_center_uses_hash_bound_diagnostics_actions_not_raw_runtime_commands(self) -> None:
-        route_policy = (ROOT / "macos" / "RagImeControlWebHost" / "NativeRoutePolicy.swift").read_text(
-            encoding="utf-8"
-        )
+        from rag_ime.control_api.route_policy import ControlPathId
+
+        path_ids = {item.value for item in ControlPathId}
         diagnostics = (ROOT / "control-center-web" / "src" / "features" / "diagnostics" / "index.tsx").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('"diagnostics.runtime": route("GET", "/api/runtime/status"', route_policy)
-        self.assertIn('"diagnostics.action.preview"', route_policy)
-        self.assertIn('"diagnostics.action.start"', route_policy)
-        self.assertIn('"diagnostics.action.job"', route_policy)
-        self.assertNotIn('"runtime.action"', route_policy)
+        self.assertIn("diagnostics.runtime", path_ids)
+        self.assertIn("diagnostics.action.preview", path_ids)
+        self.assertIn("diagnostics.action.start", path_ids)
+        self.assertIn("diagnostics.action.job", path_ids)
+        self.assertNotIn("runtime.action", path_ids)
         self.assertNotIn("externalCommand", diagnostics)
         self.assertIn("DiagnosticsRuntimeWorkflow", diagnostics)
 

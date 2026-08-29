@@ -69,18 +69,17 @@ function renderPicker(onChange = vi.fn()) {
   return onChange;
 }
 
-describe('compact model and reasoning controls', () => {
-  it('keeps model search separate and preserves a legal level when switching models', async () => {
+describe('merged model and reasoning control', () => {
+  it('searches models in the merged popover and preserves a legal level when switching models', async () => {
     const onChange = renderPicker();
     const user = userEvent.setup();
-    const modelTrigger = screen.getByRole('button', {
-      name: '模型：GPT-5.6 Luna · OpenAI Codex',
+    const trigger = screen.getByRole('button', {
+      name: '模型与推理：GPT-5.6 Luna · OpenAI Codex · 高',
     });
-    expect(screen.getByRole('button', { name: '推理强度：高' })).toBeInTheDocument();
 
-    await user.click(modelTrigger);
-    const picker = screen.getByRole('dialog', { name: '选择模型' });
-    expect(within(picker).queryByRole('radiogroup')).not.toBeInTheDocument();
+    await user.click(trigger);
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    expect(within(picker).getByRole('radiogroup', { name: '推理强度' })).toBeInTheDocument();
     const search = within(picker).getByRole('searchbox', { name: '搜索模型' });
     await waitFor(() => expect(search).toHaveFocus());
     await user.type(search, 'flash');
@@ -92,42 +91,44 @@ describe('compact model and reasoning controls', () => {
     await user.keyboard('{Enter}');
 
     expect(onChange).toHaveBeenCalledWith('deepseek', 'deepseek-v4-flash', 'off');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' }))
+      .not.toBeInTheDocument());
   });
 
   it('changes only the current model reasoning level and returns focus on Escape', async () => {
     const onChange = renderPicker();
     const user = userEvent.setup();
-    const reasoningTrigger = screen.getByRole('button', { name: '推理强度：高' });
-    await user.click(reasoningTrigger);
-    const reasoningPicker = screen.getByRole('dialog', { name: '选择推理强度' });
-    expect(within(reasoningPicker).queryByRole('option')).not.toBeInTheDocument();
-    await waitFor(() => expect(within(reasoningPicker).getByRole('radio', { name: '高' }))
-      .toHaveFocus());
+    const trigger = screen.getByRole('button', {
+      name: '模型与推理：GPT-5.6 Luna · OpenAI Codex · 高',
+    });
+
+    await user.click(trigger);
+    const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    within(picker).getByRole('radio', { name: '高' }).focus();
     await user.keyboard('{ArrowRight}{Enter}');
     expect(onChange).toHaveBeenCalledWith('gpt', 'gpt-5.6-luna', 'max');
-
-    const modelTrigger = screen.getByRole('button', {
-      name: '模型：GPT-5.6 Luna · OpenAI Codex',
-    });
-    await user.click(modelTrigger);
-    expect(screen.getByRole('dialog', { name: '选择模型' })).toBeInTheDocument();
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' }))
       .not.toBeInTheDocument());
-    expect(modelTrigger).toHaveFocus();
+
+    await user.click(trigger);
+    expect(screen.getByRole('dialog', { name: '选择模型与推理强度' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' }))
+      .not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
   });
 
-  it('exposes both compact controls with complete names when visible labels collapse', () => {
+  it('exposes one merged control whose accessible name carries both facts', () => {
     renderPicker();
-    const controls = screen.getByRole('group', { name: '模型与推理设置' });
-    expect(within(controls).getAllByRole('button')).toHaveLength(2);
-    expect(within(controls).getByRole('button', { name: /模型：GPT-5\.6 Luna/ }))
-      .toHaveClass('agent-composer__picker');
-    expect(within(controls).getByRole('button', { name: '推理强度：高' }))
-      .toHaveClass('agent-composer__thinking-picker');
+    const trigger = screen.getByRole('button', {
+      name: '模型与推理：GPT-5.6 Luna · OpenAI Codex · 高',
+    });
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(trigger).toHaveClass('agent-composer__picker');
+    expect(trigger).toHaveTextContent('GPT-5.6 Luna · OpenAI Codex · 高');
   });
 
-  it('opens the requested surface without routing a thinking command through the model list', async () => {
+  it('opens the merged popover on the requested section for each picker command', async () => {
     const { rerender } = render(
       <ModelPicker
         catalog={catalog()}
@@ -150,7 +151,28 @@ describe('compact model and reasoning controls', () => {
       />,
     );
 
-    expect(await screen.findByRole('dialog', { name: '选择推理强度' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: '选择模型' })).not.toBeInTheDocument();
+    let picker = await screen.findByRole('dialog', { name: '选择模型与推理强度' });
+    await waitFor(() => expect(within(picker).getByRole('radio', { name: '高' }))
+      .toHaveFocus());
+    expect(within(picker).getByRole('searchbox', { name: '搜索模型' })).toBeInTheDocument();
+
+    await userEvent.setup().keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择模型与推理强度' }))
+      .not.toBeInTheDocument());
+
+    rerender(
+      <ModelPicker
+        catalog={catalog()}
+        disabled={false}
+        pending={false}
+        requestOpen={1}
+        thinkingRequestOpen={1}
+        onChange={vi.fn()}
+      />,
+    );
+
+    picker = await screen.findByRole('dialog', { name: '选择模型与推理强度' });
+    await waitFor(() => expect(within(picker).getByRole('searchbox', { name: '搜索模型' }))
+      .toHaveFocus());
   });
 });

@@ -19,11 +19,8 @@ PACKAGE_EXPECTATIONS = {
         "commands": {"goal", "plan", "todos", "workflow", "skill:session-workflow"},
         "tools": {"session_workflow"},
     },
-    "@paw/pi-subagent": {
-        "commands": {"subagents", "skill:subagent"},
-        "tools": {"subagent"},
-    },
 }
+DISABLED_PACKAGE_IDS = {"@paw/pi-subagent"}
 
 
 def _names(values: object) -> set[str]:
@@ -145,6 +142,12 @@ def main() -> int:
                 for item in packages
                 if isinstance(item, dict) and item.get("id")
             }
+            leaked_disabled_packages = DISABLED_PACKAGE_IDS & set(catalog)
+            if leaked_disabled_packages:
+                raise RuntimeError(
+                    "blocked legacy Packages leaked into the bundled catalog: "
+                    f"{sorted(leaked_disabled_packages)}"
+                )
             if set(PACKAGE_EXPECTATIONS) - set(catalog):
                 raise RuntimeError(
                     "bundled Package catalog is incomplete: "
@@ -301,27 +304,9 @@ def main() -> int:
             commands = _names(request("session.commands", {"sessionId": session_id}).get("commands"))
             tools = _names(request("tools.list", {"sessionId": session_id}).get("tools"))
             workflow_expected = PACKAGE_EXPECTATIONS[workflow_id]
-            subagent_expected = PACKAGE_EXPECTATIONS["@paw/pi-subagent"]
             if commands & workflow_expected["commands"] or tools & workflow_expected["tools"]:
                 raise RuntimeError("disabled Workflow Package still owns Session resources")
-            if not subagent_expected["commands"] <= commands or not subagent_expected["tools"] <= tools:
-                raise RuntimeError("disabling Workflow incorrectly removed Subagent resources")
-
-            subagent_id = "@paw/pi-subagent"
-            subagent = installed[subagent_id]
-            disabled_subagent = request(
-                "plugins.disable",
-                {
-                    "pluginId": subagent_id,
-                    "expectedActiveDigest": subagent.get("digest"),
-                    "expectedEnabled": True,
-                    "approvalToken": APPROVAL_TOKEN,
-                },
-            )
-            for package_id, plugin in (
-                (workflow_id, disabled_workflow),
-                (subagent_id, disabled_subagent),
-            ):
+            for package_id, plugin in ((workflow_id, disabled_workflow),):
                 request(
                     "plugins.uninstall",
                     {
@@ -351,6 +336,7 @@ def main() -> int:
                 "manifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
                 "protocolVersion": hello.get("protocolVersion"),
                 "packages": sorted(PACKAGE_EXPECTATIONS),
+                "disabledPackages": sorted(DISABLED_PACKAGE_IDS),
                 "verifiedMethods": [
                     "plugins.catalog",
                     "plugins.package.prepare",
@@ -367,6 +353,7 @@ def main() -> int:
                     "tools.list",
                 ],
                 "disabledResourcesAbsent": True,
+                "disabledPackagesAbsent": True,
                 "enabledResourcesPresent": True,
                 "independentCapabilityRemoval": True,
                 "preAssistantStatePersisted": True,

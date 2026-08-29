@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -251,6 +251,40 @@ describe('PawOsFilesApp', () => {
     ))).toBe(true);
   });
 
+  it('reveals a workspace root in the tree when the deep link names a directory', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          items: [{ path: '/workspace/paw/AGENTS.md', name: 'AGENTS.md', kind: 'file', byteSize: 128 }],
+        }),
+        'agent.session.workspace.read': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          content: '# Project guide',
+          byteSize: 15,
+          truncated: false,
+        }),
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp initialRoute={`/files?session=session-work&path=${encodeURIComponent('/workspace/paw')}`} />);
+
+    // A directory is revealed, not read: the tree focuses the root, its
+    // listing loads, and the reader stays on its empty state.
+    const rootItem = await screen.findByRole('treeitem', { name: /paw/ });
+    await waitFor(() => expect(rootItem).toHaveFocus());
+    expect(await screen.findByRole('treeitem', { name: '打开文件 AGENTS.md' })).toBeInTheDocument();
+    expect(screen.getByText('选择要检查的文件')).toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.workspace.read')).toBe(false);
+  });
+
   it('projects its live Session selector and refresh action into window chrome', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
@@ -298,6 +332,56 @@ describe('PawOsFilesApp', () => {
     const requestsBeforeRefresh = transport.requests.filter((call) => call.request.pathId === 'agent.session.workspace.list').length;
     await user.click(within(titlebar).getByRole('button', { name: '刷新文件' }));
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.workspace.list')).toHaveLength(requestsBeforeRefresh + 1));
+  });
+
+  it('does not let a late directory response cross a Session authority change', async () => {
+    const user = userEvent.setup();
+    let resolveFirst: ((value: unknown) => void) | undefined;
+    const firstListing = new Promise<unknown>((resolve) => { resolveFirst = resolve; });
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-one',
+          items: [
+            { id: 'session-one', title: 'Project One', updatedAtMs: 2, workspaceRoots: ['/workspace/shared'], status: 'idle' },
+            { id: 'session-two', title: 'Project Two', updatedAtMs: 1, workspaceRoots: ['/workspace/shared'], status: 'idle' },
+          ],
+        },
+        'agent.session.workspace.list': (request: ControlRequest) => {
+          if (request.params?.sessionId === 'session-one') return firstListing;
+          return {
+            ok: true,
+            path: '/workspace/shared',
+            items: [{ path: '/workspace/shared/two.txt', name: 'two.txt', kind: 'file', byteSize: 2 }],
+          };
+        },
+      },
+    });
+
+    renderApp(transport, <PawOsFilesApp />);
+    const selector = await screen.findByRole('combobox', { name: '选择文件所属 Session' });
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.session.workspace.list'
+      && call.request.params?.sessionId === 'session-one'
+    ))).toBe(true));
+
+    await user.selectOptions(selector, 'session-two');
+    await act(async () => {
+      resolveFirst?.({
+        ok: true,
+        path: '/workspace/shared',
+        items: [{ path: '/workspace/shared/one.txt', name: 'one.txt', kind: 'file', byteSize: 1 }],
+      });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByRole('treeitem', { name: '打开文件 two.txt' })).toBeInTheDocument();
+    expect(screen.queryByRole('treeitem', { name: '打开文件 one.txt' })).not.toBeInTheDocument();
+    expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.session.workspace.list'
+      && call.request.params?.sessionId === 'session-two'
+    ))).toBe(true);
   });
 
   it('uses one roving keyboard tree and refreshes every expanded directory', async () => {

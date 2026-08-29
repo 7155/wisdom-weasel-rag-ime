@@ -3336,16 +3336,40 @@ class DebugImeService:
                 project=request.project,
                 bundle_hash=str(bundle.get("bundleHash") or ""),
             )
+        managed = MemoryMaintenanceSettings.load(self.core.db_path)
         if existing is not None:
             plan = memory_book_plan_from_stored_run(existing)
             validation = inspect_memory_book_plan(plan)
+            auto_applied = False
+            stored_run = existing
+            existing_diff_count = int(existing.get("diffCount") or 0) or len(
+                existing.get("diffs") or []
+            )
+            if (
+                managed.automatic_organization_auto_apply
+                and validation.get("ok")
+                and str(existing.get("status") or "") == "draft"
+                and existing_diff_count > 0
+            ):
+                with self.core._connect() as conn:  # type: ignore[attr-defined]
+                    stored_run = apply_stored_memory_book_run(
+                        conn,
+                        run_id=_string(existing.get("runId") or existing.get("run_id")),
+                    )
+                auto_applied = str(stored_run.get("status") or "") in {"applied", "partial"}
             response = {
                 "schemaVersion": "rag-ime.knowledge-database-organize.v1",
                 "ok": bool(validation.get("ok")),
-                "dryRun": True,
-                "applySupported": True,
-                "applyRequiresReview": True,
-                "storedDraft": True,
+                "dryRun": not auto_applied,
+                "applySupported": not auto_applied,
+                "applyRequiresReview": not auto_applied,
+                "autoApplied": auto_applied,
+                "appliedDiffCount": sum(
+                    1
+                    for item in stored_run.get("diffs") or []
+                    if isinstance(item, Mapping) and item.get("status") == "applied"
+                ),
+                "storedDraft": not auto_applied,
                 "reusedDraft": True,
                 "source": {
                     "bundleHash": bundle.get("bundleHash"),
@@ -3359,12 +3383,16 @@ class DebugImeService:
                 },
                 "plan": plan,
                 "validation": validation,
-                "storedRun": existing,
+                "storedRun": stored_run,
             }
             self.agent.observations.emit_memory_event(
-                phase="draft_ready",
-                status="waiting",
-                summary="记忆整理草案已复用，等待审阅",
+                phase="applied" if auto_applied else "draft_ready",
+                status="completed" if auto_applied else "waiting",
+                summary=(
+                    "记忆整理草案已复用并自动应用"
+                    if auto_applied
+                    else "记忆整理草案已复用，等待审阅"
+                ),
                 run_id=_string(existing.get("runId") or existing.get("run_id")),
                 metrics={
                     "eventCount": len(bundle.get("recentEvents") or []),
@@ -3373,7 +3401,6 @@ class DebugImeService:
                 },
             )
             return response
-        managed = MemoryMaintenanceSettings.load(self.core.db_path)
         executor = build_governed_memory_model_executor(
             self.agent.runtime,
             managed.automatic_organization_model,
@@ -3407,6 +3434,19 @@ class DebugImeService:
                     plan,
                     supersede_project_drafts=True,
                 )
+                if (
+                    managed.automatic_organization_auto_apply
+                    and str(stored_run.get("status") or "") == "draft"
+                    and (
+                        int(stored_run.get("diffCount") or 0) > 0
+                        or bool(stored_run.get("diffs"))
+                    )
+                ):
+                    stored_run = apply_stored_memory_book_run(
+                        conn,
+                        run_id=_string(stored_run.get("runId") or stored_run.get("run_id")),
+                    )
+        auto_applied = str(stored_run.get("status") or "") in {"applied", "partial"}
         stored_draft = bool(
             stored_run
             and str(stored_run.get("status") or "") == "draft"
@@ -3418,9 +3458,15 @@ class DebugImeService:
         response = {
             "schemaVersion": "rag-ime.knowledge-database-organize.v1",
             "ok": bool(validation.get("ok")),
-            "dryRun": True,
-            "applySupported": True,
-            "applyRequiresReview": True,
+            "dryRun": not auto_applied,
+            "applySupported": not auto_applied,
+            "applyRequiresReview": stored_draft,
+            "autoApplied": auto_applied,
+            "appliedDiffCount": sum(
+                1
+                for item in stored_run.get("diffs") or []
+                if isinstance(item, Mapping) and item.get("status") == "applied"
+            ),
             "storedDraft": stored_draft,
             "reviewRequired": stored_draft,
             "reusedDraft": False,
@@ -3438,10 +3484,12 @@ class DebugImeService:
         }
         run_id = _string(stored_run.get("runId") or stored_run.get("run_id"))
         self.agent.observations.emit_memory_event(
-            phase="draft_ready" if stored_draft else "draft_finished",
-            status="waiting" if stored_draft else "completed" if validation.get("ok") else "failed",
+            phase="applied" if auto_applied else "draft_ready" if stored_draft else "draft_finished",
+            status="completed" if auto_applied else "waiting" if stored_draft else "completed" if validation.get("ok") else "failed",
             summary=(
-                "记忆整理草案已生成，等待审阅"
+                "记忆整理变更已通过治理校验并自动应用"
+                if auto_applied
+                else "记忆整理草案已生成，等待审阅"
                 if stored_draft
                 else "本批记忆整理未产生待审变更"
                 if validation.get("ok")
@@ -3533,9 +3581,10 @@ class DebugImeService:
                         minimum=1,
                         maximum=MAX_PERSONAL_V2_SOURCES,
                     ),
-                    # Scheduled maintenance may prepare the next bounded draft,
-                    # but only the review/apply path can promote semantic writes.
-                    auto_apply=False,
+                    # Validated routine curation is the configured promotion
+                    # path; it keeps the stored run and rollback evidence but
+                    # does not wait for a second human approval.
+                    auto_apply=managed.automatic_organization_auto_apply,
                     include_agent_dialogue=managed.include_agent_dialogue,
                     daily_interval_ms=max(
                         60,
@@ -3710,7 +3759,7 @@ class DebugImeService:
 
     def agent_memory_maintenance_prepare(self, payload: dict[str, Any]) -> dict[str, object]:
         instruction = compact_whitespace(_string(payload.get("instruction")))[:800] or (
-            "根据新增最终消息和已验证工具回执增量整理长期记忆；只生成可审阅草案，不自动应用。"
+            "根据新增最终消息和已验证工具回执增量整理长期记忆；通过治理校验后自动应用，并保留可回滚回执。"
         )
         requested_owner_kind = _string(payload.get("ownerKind"))
         requested_owner_id = _string(payload.get("ownerId"))
@@ -3743,6 +3792,7 @@ class DebugImeService:
                     minimum=1,
                     maximum=MAX_PERSONAL_V2_SOURCES,
                 ),
+                auto_apply=managed.automatic_organization_auto_apply,
                 embedding_provider=self.core.embedding_provider,
             )
             curator.initialize()
@@ -3838,6 +3888,18 @@ class DebugImeService:
 
             pending_count = int(scope.get("pendingSourceCount") or 0)
             needs_review_count = int(scope.get("needsReviewSourceCount") or 0)
+            auto_applied = any(
+                bool(item.get("autoApplied"))
+                for report_item in reports
+                for item in report_item.get("results") or []
+                if isinstance(item, dict)
+            )
+            applied_diff_count = sum(
+                int(item.get("diffCount") or 0)
+                for report_item in reports
+                for item in report_item.get("results") or []
+                if isinstance(item, dict) and bool(item.get("autoApplied"))
+            )
             drain_limited = (
                 not stored_draft
                 and pending_count > 0
@@ -3847,9 +3909,11 @@ class DebugImeService:
             return {
                 "schemaVersion": "rag-ime.knowledge-database-organize.v1",
                 "ok": all(item.get("ok") is True for item in reports),
-                "dryRun": True,
-                "applySupported": True,
-                "applyRequiresReview": True,
+                "dryRun": not auto_applied,
+                "applySupported": not auto_applied,
+                "applyRequiresReview": stored_draft and not auto_applied,
+                "autoApplied": auto_applied,
+                "appliedDiffCount": applied_diff_count,
                 "storedDraft": stored_draft,
                 "reusedDraft": bool(
                     result.get("reason") == "draft_pending_review"
@@ -3866,6 +3930,8 @@ class DebugImeService:
                     ),
                     "pendingSourceCount": pending_count,
                     "needsReviewSourceCount": needs_review_count,
+                    "autoApplied": auto_applied,
+                    "appliedDiffCount": applied_diff_count,
                     "modelSourceCount": sum(
                         int(item.get("modelSourceCount") or 0)
                         for item in batch_summaries
@@ -4073,7 +4139,7 @@ class DebugImeService:
                 daily_interval_ms=automatic_interval_ms,
                 owner_kind="" if owner_filter is None else owner_filter[0],
                 owner_id="" if owner_filter is None else owner_filter[1],
-                auto_apply=False,
+                auto_apply=managed.automatic_organization_auto_apply,
                 include_agent_dialogue=managed.include_agent_dialogue,
                 canonical_personal=True,
             )
@@ -4142,8 +4208,10 @@ class DebugImeService:
             "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
             "ok": True,
             "policy": "auto_governed" if automatic_enabled else "disabled",
-            "autoApply": False,
-            "scheduledDraftOnly": automatic_enabled,
+            "autoApply": managed.automatic_organization_auto_apply,
+            "scheduledDraftOnly": (
+                automatic_enabled and not managed.automatic_organization_auto_apply
+            ),
             # The owner-scoped evidence curator is the authoritative scheduled
             # lane. Legacy compile state remains diagnostic only.
             "due": automatic_enabled and bool(owner_curation.get("due")),
@@ -4179,7 +4247,7 @@ class DebugImeService:
                 "model": managed.automatic_organization_model,
                 "thinkingLevel": managed.automatic_organization_thinking_level,
                 "runsPerDay": managed.automatic_organization_runs_per_day,
-                "autoApply": False,
+                "autoApply": managed.automatic_organization_auto_apply,
                 "curationProtocol": MEMORY_CURATION_ARCHITECTURE,
                 "targetSourceCount": DEFAULT_MAX_SOURCES,
                 "maximumSourceCount": MAX_PERSONAL_V2_SOURCES,

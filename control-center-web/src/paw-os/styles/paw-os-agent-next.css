@@ -90,7 +90,6 @@
 .an-mode-seg button[aria-checked="true"] { background: var(--an-paper-bright); color: var(--an-ink); box-shadow: 0 1px 3px rgba(24, 32, 43, .12); }
 .an-seg button[aria-selected="true"] { background: var(--an-ink); color: var(--an-paper-bright); }
 .an-anchor { position: relative; display: inline-flex; }
-.an-model-controls { display: inline-flex; min-width: 0; align-items: center; gap: 4px; }
 .an-chip {
   display: inline-flex;
   align-items: center;

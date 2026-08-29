@@ -288,6 +288,54 @@ describe('PawWayfinderWork', () => {
     expect(document.activeElement).toBe(contextTrigger);
   });
 
+  it('opens a project workspace root in the Files app from the context sheet', async () => {
+    renderPanel({
+      routes: {
+        'agent.sessions.list': { ok: true, items: [sessionRecord('s-files', 'Trace 地基', {
+          workspaceRoots: ['/work/paw'],
+        })] },
+        'agent.rooms.list': { ok: true, items: [] },
+      },
+    });
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    fireEvent.click(within(panel).getByRole('button', { name: '查看 paw 项目上下文' }));
+
+    const sheet = within(panel).getByRole('dialog', { name: 'paw 项目上下文' });
+    fireEvent.click(within(sheet).getByRole('button', { name: '在 Files 中打开 /work/paw' }));
+
+    await waitFor(() => {
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        windows?: Record<string, { appId?: string; initialRoute?: string }>;
+      };
+      expect(snapshot.windows?.['files:s-files:/work/paw']).toMatchObject({
+        appId: 'files',
+        initialRoute: `/files?session=s-files&path=${encodeURIComponent('/work/paw')}`,
+      });
+    });
+  });
+
+  it('keeps room-only workspace roots as plain paths without a Files action', async () => {
+    renderPanel({
+      routes: {
+        'agent.sessions.list': { ok: true, items: [] },
+        'agent.rooms.list': { ok: true, items: [{
+          id: 'room-only', title: '协作检查', status: 'active', updatedAtMs: NOW,
+          workspaceRoots: ['/work/room'],
+          participants: [{ displayName: 'Builder', ordinal: 1 }],
+          workItems: [],
+        }] },
+      },
+    });
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    fireEvent.click(within(panel).getByRole('button', { name: '查看 room 项目上下文' }));
+
+    const sheet = within(panel).getByRole('dialog', { name: 'room 项目上下文' });
+    expect(within(sheet).getByText('/work/room')).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: /在 Files 中打开/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the project context action operable after the folder is folded', async () => {
     renderPanel({
       routes: {

@@ -80,7 +80,9 @@ describe('conversation logo-first compact chrome', () => {
     expect(permissionPickerSource).toContain('<PermissionMark mode={current.executionMode}');
     expect(permissionPickerSource).not.toContain('ShieldCheck size={15}');
     expect(modelPickerSource).toContain('<ProviderMark');
-    expect(modelPickerSource).toMatch(/leadingIcon=\{<BrainCircuit size=\{15\} \/>\}[\s\S]*?>\s*<span className="agent-composer__thinking-label">/s);
+    // One merged trigger names both facts: model label plus the reasoning level.
+    expect(modelPickerSource).toContain('className="agent-composer__picker-thinking"');
+    expect(modelPickerSource).not.toContain('agent-composer__thinking-picker');
     expect(toolPickerSource).toContain('<CapabilityMark');
     expect(toolPickerSource).not.toContain('Wrench');
     // A pending model switch still needs its own motion, so the loader stays.

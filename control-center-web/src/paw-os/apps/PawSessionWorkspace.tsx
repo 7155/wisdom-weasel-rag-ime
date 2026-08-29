@@ -688,15 +688,28 @@ export function PawSessionWorkspace({
       setError('找不到这轮的原始输入，无法安全重试。');
       return false;
     }
-    replayTurnMessage(userMessage, message || '请查看附件。', onAdmissionRolledBack);
-    return true;
+    return replayTurnMessage(userMessage, message || '请查看附件。', onAdmissionRolledBack);
   }
 
   function replayTurnMessage(
     userMessage: AgentMessageProjection,
     message: string,
     onAdmissionRolledBack?: () => void,
-  ): void {
+  ): boolean {
+    const current = agentProjection(recordId);
+    const hasRetrySuccessor = Boolean(userMessage.clientMessageId) && current.messageOrder.some((messageId) => {
+      const candidate = current.messagesById[messageId];
+      return candidate?.role === 'user'
+        && candidate.retryOfClientMessageId === userMessage.clientMessageId;
+    });
+    if (hasRetrySuccessor) {
+      // The receipt store permits one successor per failed command. A stale
+      // timeline row or a double click must not submit a sibling with the same
+      // retryOfClientMessageId and turn into AGENT_COMMAND_CONFLICT.
+      setError('这轮已有重试请求，等待它完成后再继续。');
+      onAdmissionRolledBack?.();
+      return false;
+    }
     const replayAmbiguousAdmission = userMessage.admissionState === 'ambiguous' && Boolean(userMessage.clientMessageId);
     const clientMessageId = replayAmbiguousAdmission
       ? userMessage.clientMessageId!
@@ -745,6 +758,7 @@ export function PawSessionWorkspace({
         setSending(false);
       }
     })();
+    return true;
   }
 
   function continueTurn(turnId: string): boolean {

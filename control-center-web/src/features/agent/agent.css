@@ -1320,14 +1320,11 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
   from { background-position: 220% 0; }
   to { background-position: -120% 0; }
 }
-.agent-composer__model-controls { display: inline-flex; min-width: 0; flex: 0 1 auto; align-items: center; gap: 2px; }
 .agent-composer__picker { max-width: 190px; flex: 0 1 auto; }
 .agent-composer__picker .ui-button__label { display: inline-flex; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-composer__picker-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-composer__picker-detail { flex: 0 0 auto; white-space: nowrap; }
-.agent-composer__thinking-picker { min-width: 66px; flex: 0 0 auto; padding-inline: 7px; }
-.agent-composer__thinking-picker .ui-button__label { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.agent-composer__thinking-picker strong { font-size: inherit; font-weight: var(--font-weight-semibold); }
+.agent-composer__picker-thinking { flex: 0 0 auto; font-size: inherit; font-weight: var(--font-weight-semibold); white-space: nowrap; }
 
 /* ------------------------------------------------- composer logo collapse --
  * PF-CM-009/017: when the toolbar runs out of room the chrome sheds words in
@@ -1342,8 +1339,6 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
 @container paw-composer-toolbar (max-width: 620px) {
   .agent-composer__picker { max-width: 136px; }
   .agent-composer__picker-detail { display: none; }
-  .agent-composer__thinking-label { display: none; }
-  .agent-composer__thinking-picker { min-width: 48px; }
 }
 
 @container paw-composer-toolbar (max-width: 460px) {
@@ -1363,12 +1358,6 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  .agent-composer__model-controls { flex: 0 0 auto; }
-  .agent-composer__thinking-picker {
-    min-width: 40px;
-    padding-inline: 5px;
   }
 
   .agent-composer__delivery button { min-width: 36px; padding-inline: 5px; }
@@ -1466,15 +1455,16 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
 .agent-dangerous-permission-dialog__check button { display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid var(--color-danger); border-radius: var(--radius-1); background: var(--color-surface); color: #fff; }
 .agent-dangerous-permission-dialog__check button[data-state='checked'] { background: var(--color-danger); }
 /* ------------------------------------------------------------ model picker --
- * Model and reasoning are adjacent but independent controls. The catalog is a
- * compact searchable list; the discrete reasoning rail gets its own small
- * surface. Neither popover repeats information already visible in its trigger.
+ * Model and reasoning share one picker: the catalog is a compact searchable
+ * list and the current model's discrete reasoning rail sits in a separated
+ * section below it. Neither section repeats information already visible in
+ * the trigger.
  */
 .agent-model-picker {
   display: grid;
   width: min(320px, calc(100vw - 20px));
   max-height: min(360px, calc(100dvh - 84px));
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   padding: 0;
   overflow: hidden;
 }
@@ -1614,11 +1604,11 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
   font-size: 13px;
   text-align: center;
 }
-.agent-thinking-picker {
+.agent-model-picker__thinking {
   display: grid;
-  width: min(300px, calc(100vw - 20px));
   gap: 8px;
   padding: 9px;
+  border-top: 1px solid var(--color-border);
 }
 .agent-thinking-picker__heading {
   display: flex;

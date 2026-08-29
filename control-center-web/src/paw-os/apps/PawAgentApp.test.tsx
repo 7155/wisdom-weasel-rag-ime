@@ -198,8 +198,7 @@ describe('PAWOS Agent App', () => {
       }),
     }));
 
-    expect(await screen.findByRole('button', { name: '模型 · GPT-5.6 Sol' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '推理强度 · Max' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '模型与推理 · GPT-5.6 Sol · Max' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument();
   });
 

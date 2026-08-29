@@ -53,8 +53,8 @@ control-center-web/src/main.tsx
 
 PAWOS React 源码当前由 Electron 发布宿主加载：`scripts/build_control_center.sh` 明确转发给
 `scripts/build_paw_os_electron_host.sh`，后者把 `electron/` 与 `dist/` 一起装入 App Resources；
-`electron/main.mjs` 再显式加载 `?frontend=paw-os&pawHost=electron`。仓库中仍保留旧
-`RagImeControlWebHost` 源码，但当前公共构建入口不选择它，因此它既不是发布宿主，也不是第二套 Swift 前端。
+`electron/main.mjs` 再显式加载 `?frontend=paw-os&pawHost=electron`。旧 WKWebView Control Center
+源码与 builder 已从主线删除，因此 Electron 是唯一可构建、可安装的 PAWOS 宿主。
 
 ## 11 个 App 的真实前端
 
@@ -112,12 +112,6 @@ Overlay，不是用 React 或另一候选窗替换 Rime。
 `scripts/build_voice_input.sh` 将 `macos/RagImeVoice` 和 `macos/Shared` 下所有 Swift 源加入 `swiftc`，所以它与
 PAWOS 内 `/voice` 管理页是两个不同真实表面：一个负责输入时反馈，一个负责配置/状态。
 
-### 历史 WKWebView Control Center（当前不选中）
-
-`macos/RagImeControlWebHost/WebHostView.swift` 和 `scripts/build_control_center_web_host.sh` 仍在仓库中，
-但 `scripts/build_control_center.sh` 当前只分派到 Electron builder。网页模型不能因为文件仍存在就把它当作
-当前发布宿主，更不能把 Swift host 当成另一套 App UI。
-
 ## 明确排除的“像前端但不是当前 owner”
 
 - `src/app/preview-*`、fixture、seed：只用于预览/测试数据。
@@ -128,8 +122,6 @@ PAWOS 内 `/voice` 管理页是两个不同真实表面：一个负责输入时�
 - `src/contracts/generated/**`：数据类型合同，不是视觉组件。
 - `features/project-field/prototype-data.ts`：可为选中的 Wayfinder 提供显式预览回退，但不是 Runtime truth。
 - `integrations/ego-browser/**`：当前 untracked/reference 边界，不属于 PAWOS 生产前端入口。
-- `macos/RagImeControlWebHost/**`、`scripts/build_control_center_web_host.sh`：历史 WKWebView 宿主源码，当前公共
-  构建入口未选择。
 
 ## 直接贴给网页模型的固定指令
 

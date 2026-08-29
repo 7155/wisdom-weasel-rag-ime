@@ -743,14 +743,6 @@
     {
       "pattern": "integrations/ego-browser/**",
       "reason": "Untracked/reference browser code is outside the current PAWOS frontend authority."
-    },
-    {
-      "pattern": "macos/RagImeControlWebHost/**",
-      "reason": "Legacy WKWebView host source remains in the repository, but the current public build entry selects scripts/build_paw_os_electron_host.sh and Electron; it is not a current frontend authority."
-    },
-    {
-      "pattern": "scripts/build_control_center_web_host.sh",
-      "reason": "Legacy WKWebView builder remains in the repository, but scripts/build_control_center.sh no longer dispatches to it."
     }
   ],
   "knownPackagingGaps": []

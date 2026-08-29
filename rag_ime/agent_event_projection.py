@@ -653,6 +653,17 @@ def runtime_event_metrics(
         metrics["usage"] = normalized_usage
     if event.event_type == "tool_started":
         metrics["toolCalls"] = 1
+    if event.event_type == "user_input_required":
+        # Keep only opaque request identity so a later process can reconcile
+        # a review whose in-memory pending map was lost. The event payload is
+        # still the live UI contract; this bounded index is not user content.
+        ui_request: dict[str, object] = {}
+        for key in ("requestId", "requestKind", "runId"):
+            value = str(payload.get(key) or "").strip()[:240]
+            if value:
+                ui_request[key] = value
+        if ui_request:
+            metrics["uiRequest"] = ui_request
     duration = payload.get("durationMs")
     if (
         isinstance(duration, (int, float))

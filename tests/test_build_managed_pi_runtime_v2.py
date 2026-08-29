@@ -355,6 +355,42 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             self.assertTrue((destination / "example" / "package.json").is_file())
             self.assertTrue((destination / "example" / "index.ts").is_file())
 
+    def test_blocking_subagent_package_is_removed_from_bundled_catalog(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-pi-packages-policy-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            (source / "session-workflow").mkdir(parents=True)
+            (source / "subagent").mkdir()
+            (source / "catalog.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "packages": [
+                            {"directory": "session-workflow"},
+                            {"directory": "subagent"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (source / "session-workflow" / "package.json").write_text(
+                '{"name":"@paw/pi-session-workflow"}', encoding="utf-8"
+            )
+            (source / "subagent" / "package.json").write_text(
+                '{"name":"@paw/pi-subagent"}', encoding="utf-8"
+            )
+            destination = root / "payload" / "pi-packages"
+
+            _copy_bundled_pi_packages(source, destination)
+
+            catalog = json.loads((destination / "catalog.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["directory"] for item in catalog["packages"]],
+                ["session-workflow"],
+            )
+            self.assertTrue((destination / "session-workflow").is_dir())
+            self.assertFalse((destination / "subagent").exists())
+
     def test_staged_smoke_uses_session_lifecycle_contract(self) -> None:
         script = (ROOT / "scripts" / "smoke_pi_session_staged_runtime.py").read_text(
             encoding="utf-8"
@@ -390,6 +426,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         ):
             self.assertIn(f'"{method}"', script)
         self.assertIn("disabledResourcesAbsent", script)
+        self.assertIn("DISABLED_PACKAGE_IDS", script)
+        self.assertIn("blocked legacy Packages leaked", script)
+        self.assertIn("disabledPackagesAbsent", script)
         self.assertIn("independentCapabilityRemoval", script)
 
     def test_staged_resilience_smoke_covers_compaction_and_tool_failure_stop(self) -> None:

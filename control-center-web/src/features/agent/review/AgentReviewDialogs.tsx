@@ -106,19 +106,42 @@ export function MemoryReviewDialog({
       pathId: 'agent.memoryMaintenance.run',
       query: { runId },
     }).then((value) => {
-      if (active) setRun(parseMemoryRun(value));
+      if (!active) return;
+      const parsed = parseMemoryRun(value);
+      setRun(parsed);
+      /* The memory mutation and the paused Pi turn have separate receipts.
+         A refresh can therefore restore a still-pending review activity after
+         the selected memory changes were already applied. Reopening the draft
+         controls in that state guarantees a domain_not_applicable preview and
+         leaves Pi paused forever. The only legal next step is to settle the
+         existing review and resume that same turn; never apply the run again. */
+      if (parsed.status === 'applied') {
+        setSubmitting(true);
+        void transport.request({
+          pathId: 'agent.session.review.resolve',
+          params: { sessionId },
+          body: { runId, decision: 'reviewed' },
+        }).then(() => {
+          if (active) setResolved(true);
+        }).catch((reason: unknown) => {
+          if (active) setError(publicAgentErrorText(reason, '记忆已应用，但无法恢复当前 Agent 回合。'));
+        }).finally(() => {
+          if (active) setSubmitting(false);
+        });
+      }
     }).catch((reason: unknown) => {
       if (active) setError(publicAgentErrorText(reason, '记忆草案暂时无法读取。'));
     }).finally(() => {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [runId, transport]);
+  }, [runId, sessionId, transport]);
 
   const selectedCount = useMemo(
     () => run?.changes.filter((change) => change.selected).length ?? 0,
     [run],
   );
+  const alreadyApplied = run?.status === 'applied';
 
   async function resolve(decision: 'reviewed' | 'deferred'): Promise<void> {
     if (!runId) return;
@@ -224,16 +247,18 @@ export function MemoryReviewDialog({
         onInteractOutside={(event) => event.preventDefault()}
       >
         <DialogHeader>
-          <span className="agent-review-dialog__eyebrow"><FileCheck2 size={15} />需要你的审阅</span>
+          <span className="agent-review-dialog__eyebrow"><FileCheck2 size={15} />{alreadyApplied ? '记忆已应用' : '需要你的审阅'}</span>
           <DialogTitle>记忆整理草案</DialogTitle>
-          <DialogDescription>Agent 已暂停。逐项选择要保留的变更，完成或暂缓后会自动继续并结束本轮。</DialogDescription>
+          <DialogDescription>{alreadyApplied
+            ? '变更已经写入，正在恢复原 Agent 回合；不会再次应用这批记忆。'
+            : 'Agent 已暂停。逐项选择要保留的变更，完成或暂缓后会自动继续并结束本轮。'}</DialogDescription>
         </DialogHeader>
 
         {loading ? (
           <div className="agent-review-dialog__loading" role="status"><CircleDashed size={18} />正在读取草案</div>
         ) : null}
 
-        {run && !preview ? (
+        {run && !preview && !alreadyApplied ? (
           <>
             <div className="agent-review-dialog__summary">
               <span><strong>{run.summary || '增量记忆整理'}</strong><small>{run.diffCount} 项变更，已选择 {selectedCount} 项</small></span>
@@ -271,7 +296,9 @@ export function MemoryReviewDialog({
         {error ? <p className="agent-review-dialog__error" role="alert">{error}</p> : null}
 
         <footer className="agent-review-dialog__actions">
-          {preview ? (
+          {alreadyApplied ? (
+            <Button disabled={submitting} loading={submitting} onClick={() => void resolve('reviewed')} variant="primary">重新恢复 Agent</Button>
+          ) : preview ? (
             <>
               <Button disabled={submitting} onClick={() => { setPreview(undefined); setConfirmed(false); }} variant="quiet">返回修改</Button>
               <Button disabled={!confirmed || submitting} loading={submitting} onClick={() => void apply()} variant="primary">确认应用并继续</Button>

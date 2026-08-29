@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import sqlite3
 from typing import Any, Protocol
 
 from .agent_execution_policy import APPROVAL_AUTO, APPROVAL_MODEL, approval_strategy
@@ -114,7 +115,26 @@ class AgentApprovalApplicationService:
         if decision not in {"reviewed", "deferred"}:
             raise ValueError("decision must be reviewed or deferred")
         if not self.host.runtime.has_pending_review(session_id, run_id):
-            raise ValueError("review is no longer active in Pi")
+            recovery = self._recover_applied_memory_review(
+                session_id,
+                run_id,
+            )
+            if recovery is None:
+                raise ValueError("review is no longer active in Pi")
+            return {
+                "schemaVersion": "rag-ime.agent-review-decision.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "runId": run_id,
+                "decision": decision,
+                # The exact recovered turn was retired and Pi was confirmed
+                # idle. This is terminal runtime recovery, not a normal
+                # review.resolve delivery.
+                "runtimeNotified": True,
+                "recovered": True,
+                "recoveryAction": "retire_recovered_turn",
+                "recoveryReceipt": recovery,
+            }
         self.host.runtime.resolve_review(
             session_id,
             run_id,
@@ -128,6 +148,123 @@ class AgentApprovalApplicationService:
             "decision": decision,
             "runtimeNotified": True,
         }
+
+    def _recover_applied_memory_review(
+        self,
+        session_id: str,
+        run_id: str,
+    ) -> dict[str, object] | None:
+        """Retire one lost review turn only after durable identity checks.
+
+        ``pending_reviews`` is an in-memory Host map. It can disappear when
+        the Python process or Host is recreated even though the cleanup run is
+        already applied and the durable runtime event still identifies the
+        waiting turn. Recovery must never turn a newer turn into an abort, so
+        the current Host control state is compared with the exact event turn
+        before the existing Runtime retirement protocol is invoked.
+        """
+
+        if self._memory_cleanup_run_status(run_id) != "applied":
+            return None
+        candidate_turn_ids = self._memory_review_turn_ids(
+            session_id,
+            run_id,
+        )
+        if not candidate_turn_ids:
+            return None
+        ensure = getattr(self.host.runtime, "ensure", None)
+        retire = getattr(
+            self.host.runtime,
+            "retire_recovered_turn",
+            None,
+        )
+        if not callable(ensure) or not callable(retire):
+            # Older Runtime drivers have no exact-turn retirement contract;
+            # refusing here is safer than falling back to a broad abort.
+            return None
+        ensured = ensure(session_id)
+        state = ensured.get("state") if isinstance(ensured, Mapping) else None
+        state = state if isinstance(state, Mapping) else {}
+        active_turn = state.get("activeTurn")
+        active_turn = active_turn if isinstance(active_turn, Mapping) else {}
+        active_turn_id = str(active_turn.get("turnId") or "").strip()
+        if (
+            state.get("isIdle") is not True
+            or active_turn_id not in candidate_turn_ids
+        ):
+            raise ValueError(
+                "Pi Runtime active turn does not match the expected recovered turn"
+            )
+        receipt = retire(session_id, active_turn_id)
+        return dict(receipt) if isinstance(receipt, Mapping) else {}
+
+    def _memory_cleanup_run_status(self, run_id: str) -> str:
+        """Read only the durable status gate needed for stale review repair."""
+
+        db_path = getattr(self.host.sessions, "db_path", None)
+        if db_path is None:
+            return ""
+        try:
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    "SELECT status FROM memory_cleanup_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            # Preserve the existing API error if the status store cannot be
+            # read; this path must not guess that a review is recoverable.
+            return ""
+        return str(row[0] or "") if row is not None else ""
+
+    def _memory_review_turn_ids(
+        self,
+        session_id: str,
+        run_id: str,
+    ) -> list[str]:
+        """Collect live and durable exact turn identities for one review."""
+
+        candidates: list[str] = []
+        try:
+            replayed, _gap = self.host.events.replay(session_id)
+        except Exception:
+            replayed = []
+        for event in replayed:
+            if (
+                getattr(event, "event_type", "") != "user_input_required"
+                or str(getattr(event, "turn_id", "") or "").strip() == ""
+            ):
+                continue
+            event_payload = getattr(event, "payload", {})
+            if not isinstance(event_payload, Mapping):
+                continue
+            if (
+                str(event_payload.get("requestKind") or "")
+                != "memory_review"
+                or str(event_payload.get("runId") or "") != run_id
+            ):
+                continue
+            candidates.append(str(event.turn_id).strip())
+
+        durable_lookup = getattr(
+            self.host.sessions,
+            "runtime_review_request_turn_ids",
+            None,
+        )
+        if callable(durable_lookup):
+            try:
+                durable = durable_lookup(session_id, run_id)
+            except Exception:
+                durable = []
+            if isinstance(durable, (list, tuple)):
+                candidates.extend(str(value).strip() for value in durable)
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                unique.append(candidate)
+        return unique
 
     def decide_approval(
         self,
