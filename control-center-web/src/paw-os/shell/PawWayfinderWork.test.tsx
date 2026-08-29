@@ -4,7 +4,11 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { MockControlTransport, type MockControlTransportOptions } from '@/test/mock-transport';
 import type { ControlRequest } from '@/platform/transport';
 import { PawDesktopProvider } from '../runtime/desktop-context';
-import { PawWayfinderWork, WAYFINDER_DRAG_MIME } from './PawWayfinderWork';
+import {
+  PawWayfinderWork,
+  WAYFINDER_DRAG_MIME,
+  placeWayfinderProjectPanel,
+} from './PawWayfinderWork';
 
 /* The desktop panel is a projection, not a manager: it must fold the raw
  * directory to desktop density, keep its own scroll, and hand every click to
@@ -171,6 +175,61 @@ describe('PawWayfinderWork', () => {
     expect(folders[0]).not.toHaveAttribute('open');
   });
 
+  it('flips and clamps an expanded project panel inside the canvas at the right-bottom edge', () => {
+    const canvas = domRect(100, 80, 800, 600);
+    const shell = domRect(780, 560, 96, 92);
+    const placement = placeWayfinderProjectPanel({
+      canvasRect: canvas,
+      shellRect: shell,
+      panelWidth: 520,
+      panelHeight: 400,
+    });
+
+    expect(placement.horizontal).toBe('left');
+    expect(placement.vertical).toBe('above');
+    const panelLeft = shell.left + placement.x;
+    const panelTop = shell.top + placement.y;
+    expect(panelLeft).toBeGreaterThanOrEqual(canvas.left + 8);
+    expect(panelLeft + 520).toBeLessThanOrEqual(canvas.right - 8);
+    expect(panelTop).toBeGreaterThanOrEqual(canvas.top + 8);
+    expect(panelTop + 400).toBeLessThanOrEqual(canvas.bottom - 8);
+  });
+
+  it('re-measures the open project window on resize and writes an in-place flipped placement', async () => {
+    renderPanel({
+      routes: {
+        'agent.sessions.list': { ok: true, items: [sessionRecord('s-edge', '右下角项目', { workspaceRoots: ['/work/edge'] })] },
+        'agent.rooms.list': { ok: true, items: [] },
+      },
+    });
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    const canvas = panel.querySelector('[data-wayfinder-canvas]') as HTMLDivElement;
+    const shell = panel.querySelector('[data-project-folder]')?.parentElement as HTMLDivElement;
+    const projectWindow = within(panel).getByRole('dialog', { name: 'edge 项目窗口' });
+    Object.defineProperty(canvas, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => domRect(100, 80, 800, 600),
+    });
+    Object.defineProperty(shell, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => domRect(780, 560, 96, 92),
+    });
+    Object.defineProperty(projectWindow, 'offsetWidth', { configurable: true, value: 520 });
+    Object.defineProperty(projectWindow, 'offsetHeight', { configurable: true, value: 400 });
+    Object.defineProperty(projectWindow, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => domRect(780, 662, 520, 400),
+    });
+
+    fireEvent(window, new Event('resize'));
+
+    await waitFor(() => {
+      expect(shell.style.getPropertyValue('--wayfinder-panel-x')).toBe('-424px');
+      expect(shell.style.getPropertyValue('--wayfinder-panel-y')).toBe('-410px');
+    });
+  });
+
   it('opens a non-modal project context sheet with real roots, status and canonical shortcuts', async () => {
     renderPanel({
       routes: {
@@ -311,7 +370,7 @@ describe('PawWayfinderWork', () => {
       expect(snapshot.wayfinder?.iconPositions?.['project:/work/paw']).toEqual({ x: 162, y: 124 });
     });
 
-    const archive = within(panel).getByRole('button', { name: '归档 0 个对话' });
+    const archive = within(panel).getByRole('button', { name: '归档 0 个图标' });
     const rowTransfer = dragTransfer();
     fireEvent.dragStart(row, { dataTransfer: rowTransfer });
     fireDrop(archive, rowTransfer);
@@ -332,6 +391,50 @@ describe('PawWayfinderWork', () => {
         wayfinder?: { archived?: string[] };
       };
       expect(snapshot.wayfinder?.archived).not.toContain('session:s-drag');
+    });
+  });
+
+  it('archives and restores a project folder as a PAWOS-only projection', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': { ok: true, items: [sessionRecord('s-project-archive', '项目内对话', { workspaceRoots: ['/work/archive-project'] })] },
+        'agent.rooms.list': { ok: true, items: [] },
+      },
+    });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawDesktopProvider><PawWayfinderWork /></PawDesktopProvider>
+      </ControlTransportProvider>,
+    );
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    const project = panel.querySelector('[data-wayfinder-project]') as HTMLElement;
+    const archive = panel.querySelector('[data-wayfinder-archive]') as HTMLElement;
+    const projectTransfer = dragTransfer();
+
+    fireEvent.dragStart(project, { dataTransfer: projectTransfer });
+    fireDrop(archive, projectTransfer);
+
+    await waitFor(() => {
+      expect(panel.querySelector('[data-project-folder]')).toBeNull();
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        wayfinder?: { archived?: string[] };
+      };
+      expect(snapshot.wayfinder?.archived).toContain('project:/work/archive-project');
+    });
+    expect(transport.requests.map(({ request }) => request.pathId)).toEqual([
+      'agent.sessions.list',
+      'agent.rooms.list',
+    ]);
+
+    const archived = within(panel).getByRole('button', { name: '恢复项目 archive-project' });
+    fireEvent.click(archived);
+    await waitFor(() => {
+      expect(panel.querySelector('[data-project-folder]')).toBeInTheDocument();
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        wayfinder?: { archived?: string[] };
+      };
+      expect(snapshot.wayfinder?.archived).not.toContain('project:/work/archive-project');
     });
   });
 

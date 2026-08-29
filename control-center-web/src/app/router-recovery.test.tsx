@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RouteErrorBoundary, RouteLoading } from './router';
+import { RouteErrorBoundary, RouteLoading, router } from './router';
 
 function BrokenPage(): never {
   throw new Error('private implementation detail');
@@ -36,6 +36,11 @@ describe('route recovery', () => {
     await user.click(screen.getByRole('button', { name: '返回概览' }));
     expect(await screen.findByText('概览已打开')).toBeInTheDocument();
     errorLog.mockRestore();
+  });
+
+  it('keeps the Trace Agent reachable in the legacy shell instead of falling back to Agent', () => {
+    const paths = router.routes.flatMap((route) => route.children ?? []).map((route) => route.path);
+    expect(paths).toContain('/trace-agent');
   });
 
   it('turns an unusually slow initial route into an actionable state', async () => {

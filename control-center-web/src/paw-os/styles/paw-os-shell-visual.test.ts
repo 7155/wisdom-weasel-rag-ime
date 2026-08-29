@@ -61,6 +61,12 @@ function rule(css: string, selector: string): string {
   return css.slice(start, css.indexOf('}', start));
 }
 
+function lastRule(css: string, selector: string): string {
+  const start = css.lastIndexOf(`${selector} {`);
+  expect(start, `${selector} last rule`).toBeGreaterThan(-1);
+  return css.slice(start, css.indexOf('}', start));
+}
+
 /** The body of one top-level `@container paw-window (max-width: …)` block. */
 function windowContainerStep(css: string, maxWidth: string): string {
   const header = `@container paw-window (max-width: ${maxWidth})`;
@@ -249,6 +255,26 @@ describe('PAWOS shell visual language', () => {
     expect(projectNameRule).toContain('text-overflow: clip');
     expect(projectNameRule).toContain('white-space: normal');
     expect(projectNameRule).toContain('-webkit-line-clamp: unset');
+  });
+
+  it('anchors the one project window and lets App and dialogue names wrap naturally', () => {
+    const desktopProjectWindow = lastRule(pawOsCss, '.paw-wayfinder-work__project-content');
+    const narrowProjectWindow = lastRule(shellCss, '.paw-desktop-root .paw-wayfinder-work__project-content');
+    expect(desktopProjectWindow).toContain('position: absolute');
+    expect(desktopProjectWindow).not.toContain('position: fixed');
+    expect(narrowProjectWindow).toContain('position: absolute');
+    expect(narrowProjectWindow).not.toContain('position: fixed');
+    expect(lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll')).toContain('overflow-y: auto');
+
+    for (const [name, css, selector] of [
+      ['App name', pawOsCss, '.paw-desktop-shortcuts button strong'],
+      ['dialogue name', pawOsCss, '.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row strong'],
+      ['project copy', pawOsCss, '.paw-wayfinder-work__project-copy strong'],
+    ] as const) {
+      const styles = lastRule(css, selector);
+      expect(styles, `${name} must not clamp`).not.toContain('line-clamp: 2');
+      expect(styles, `${name} must stay visible`).toContain('overflow: visible');
+    }
   });
 
   it('re-pairs the window title ink on the dark Terminal chrome', () => {

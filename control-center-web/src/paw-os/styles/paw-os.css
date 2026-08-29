@@ -432,9 +432,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   border-radius: 8px;
 }
 .paw-desktop-shortcuts button strong {
-  max-width: 100%; overflow: hidden;
+  max-width: 100%; overflow: visible;
   font-size: 12px; font-weight: 570; line-height: 1.25;
-  text-overflow: ellipsis; white-space: nowrap;
+  overflow-wrap: anywhere; text-overflow: clip; white-space: normal;
 }
 /* Running state mirrors the Dock's shape language: long pill = visible
    window, short soft pill = minimized only — shape plus the App's own
@@ -514,7 +514,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__folder-art[data-running] > i { background: var(--paw-success); }
 .paw-wayfinder-work__folder-art[data-attention] > i { background: var(--paw-danger); }
 .paw-wayfinder-work__project-copy { min-width: 0; display: grid; gap: 2px; }
-.paw-wayfinder-work__project-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 680; }
+.paw-wayfinder-work__project-copy strong { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 12.5px; font-weight: 680; }
 .paw-wayfinder-work__project-copy small { color: var(--paw-muted); font-size: 10px; }
 .paw-wayfinder-work__project-count { font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .paw-wayfinder-work__project-context {
@@ -562,7 +562,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__copy { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .paw-wayfinder-work__copy strong {
   font-size: 12.5px; font-weight: 570; line-height: 1.35;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal;
 }
 .paw-wayfinder-work__copy small {
   display: flex; align-items: center; gap: 6px; min-width: 0;
@@ -1767,19 +1767,20 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__folder-art::before { inset: 1px 0 0; border-radius: 14px; }
 .paw-wayfinder-work__folder-art > svg { width: 39px; height: 39px; }
 .paw-wayfinder-work__project-copy { width: 100%; justify-items: center; gap: 1px; }
-.paw-wayfinder-work__project-copy strong { max-width: 92px; font-size: 11px; text-align: center; }
+.paw-wayfinder-work__project-copy strong { max-width: 92px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 11px; text-align: center; }
 .paw-wayfinder-work__project-copy small { max-width: 92px; overflow: hidden; font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .paw-wayfinder-work__project-count { display: none; }
 .paw-wayfinder-work__project-context { top: -4px; right: -8px; }
 .paw-wayfinder-work__project-content {
-  position: fixed;
-  top: 84px;
-  left: -10px;
-  width: 286px;
-  max-height: 292px;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(520px, calc(100vw - 24px));
+  max-height: calc(100vh - 128px);
+  height: min(620px, calc(100vh - 128px));
   margin: 0;
   padding: 8px;
-  overflow: auto;
+  overflow: hidden;
   border-radius: 14px;
 }
 .paw-wayfinder-work__bucket { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
@@ -1810,7 +1811,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-wayfinder-work__file-icon > svg { width: 21px; height: 21px; }
 .paw-wayfinder-work__copy { width: 100%; justify-items: center; gap: 1px; }
-.paw-wayfinder-work__copy strong { max-width: 116px; font-size: 10px; text-align: center; }
+.paw-wayfinder-work__copy strong { max-width: 116px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 10px; text-align: center; }
 .paw-wayfinder-work__copy small { justify-content: center; gap: 3px; font-size: 9px; text-align: center; }
 .paw-wayfinder-work__copy .paw-wayfinder-work__detail { max-width: 116px; -webkit-line-clamp: 1; text-align: center; }
 .paw-wayfinder-work__kind { display: none; }
@@ -1850,13 +1851,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__archive-item:active { cursor: grabbing; }
 .paw-wayfinder-work__archive-icon { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 11px; }
 .paw-wayfinder-work__archive-item strong,
-.paw-wayfinder-work__archive-item small { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paw-wayfinder-work__archive-item small { max-width: 76px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
 .paw-wayfinder-work__archive-item strong {
-  display: -webkit-box;
+  display: block;
   white-space: normal;
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow: visible;
+  text-overflow: clip;
 }
 .paw-wayfinder-work__archive-item strong { font-size: 9px; }
 .paw-wayfinder-work__archive-item small { font-size: 8px; }
@@ -1889,13 +1890,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   pointer-events: auto;
 }
 .paw-desktop-shortcuts button strong {
-  display: -webkit-box;
+  display: block;
   max-width: 88px;
-  overflow: hidden;
+  overflow: visible;
   white-space: normal;
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: clip;
   line-height: 1.25;
 }
 
@@ -1942,12 +1942,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-wayfinder-work__project-copy strong,
 .paw-wayfinder-work__copy strong {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   white-space: normal;
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: clip;
 }
 
 @media (max-width: 820px) {
@@ -1963,14 +1962,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
    into one bounded surface with one scroll owner instead of spawning several
    absolute cards that can cover one another. */
 .paw-wayfinder-work__project-content {
-  position: fixed;
+  position: absolute;
   z-index: 40;
-  top: 96px;
-  right: 22px;
-  left: auto;
-  width: min(520px, calc(100% - 44px));
-  height: min(620px, calc(100% - 116px));
-  max-height: none;
+  top: var(--wayfinder-panel-y, calc(100% + 10px));
+  right: auto;
+  left: var(--wayfinder-panel-x, 0px);
+  width: min(520px, calc(100vw - 24px));
+  height: min(620px, calc(100vh - 140px));
+  max-height: calc(100vh - 140px);
   min-height: 260px;
   display: flex;
   flex-direction: column;
@@ -2049,13 +2048,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   box-shadow: none;
 }
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row strong {
-  display: -webkit-box;
+  display: block;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: clip;
 }
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__kind,
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__agents {
@@ -2068,11 +2066,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__project-copy strong,
 .paw-desktop-shortcuts button strong {
   max-width: 112px;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-overflow: clip;
 }
 .paw-wayfinder-work__project-copy small {
   max-width: 112px;
@@ -2084,10 +2082,14 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 
 @media (max-width: 820px) {
   .paw-wayfinder-work__project-content {
-    top: 94px;
-    right: 12px;
-    width: calc(100% - 24px);
-    height: min(620px, calc(100% - 118px));
+    position: absolute;
+    top: var(--wayfinder-panel-y, calc(100% + 8px));
+    right: auto;
+    left: var(--wayfinder-panel-x, 0px);
+    width: min(520px, calc(100vw - 24px));
+    height: min(620px, calc(100vh - 128px));
+    max-height: calc(100vh - 128px);
+    overflow: hidden;
   }
 }
 

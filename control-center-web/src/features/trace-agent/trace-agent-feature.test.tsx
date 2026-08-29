@@ -1,17 +1,24 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
-import { TRACE_AGENT_SKILL_REF, TraceAgentFeature } from './index';
+import {
+  TRACE_AGENT_DIAGNOSTIC_MAX_POLL_DURATION_MS,
+  TRACE_AGENT_SKILL_REF,
+  TraceAgentFeature,
+} from './index';
 import { buildTraceAgentHandoffRoute } from './handoff';
 
-afterEach(cleanup);
+afterEach(() => {
+  vi.useRealTimers();
+  cleanup();
+});
 
 describe('TraceAgentFeature', () => {
   it('preselects an incoming failure handoff and includes its exact envelope in the diagnostic prompt', async () => {
@@ -158,12 +165,142 @@ describe('TraceAgentFeature', () => {
     expect(String((promptRequest?.body as Record<string, unknown> | undefined)?.message)).toContain('session-source');
 
     const report = screen.getByRole('region', { name: 'Trace 诊断报告' });
+    const diagnosticTimeline = await within(report).findByRole('region', { name: '诊断 Agent 对话与报告' });
+    expect(diagnosticTimeline).toHaveTextContent('用户 · 请诊断当前失败');
+    expect(diagnosticTimeline).toHaveTextContent('工具完成 · 已核对 Trace 与原始对话');
+    expect(diagnosticTimeline).toHaveTextContent('助手 · 根因是资源版本回执不合法；建议重新读取后再编辑。');
+    expect(transport.requests.some(({ request }) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.params?.sessionId === 'agent:trace-diagnostic'
+    ))).toBe(true);
     await user.click(within(report).getByRole('button', { name: '查看关联 Trace' }));
     await user.click(within(report).getByRole('button', { name: '打开诊断 Agent 对话' }));
     expect(routes).toEqual([
       '/observability?traceId=trace%3Asource',
       '/agent?session=agent%3Atrace-diagnostic',
     ]);
+  });
+
+  it('keeps polling while the diagnostic assistant is streaming, then stops on a completed report', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({
+      diagnosticSnapshots: [streamingDiagnosticSessionSnapshot(), diagnosticSessionSnapshot()],
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    expect(report).toHaveTextContent('生成中');
+
+    await waitFor(() => expect(report).toHaveTextContent('已完成'), { timeout: 3_500 });
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.params?.sessionId === 'agent:trace-diagnostic'
+    )).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('stops a diagnostic poll at the deadline and lets Refresh retry the diagnostic snapshot', async () => {
+    const transport = traceAgentTransport({
+      diagnosticSnapshots: [emptyDiagnosticSessionSnapshot()],
+    });
+    renderFeature(transport, []);
+    const start = await screen.findByRole('button', { name: '开始诊断' });
+
+    vi.useFakeTimers();
+    await act(async () => {
+      start.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const report = screen.getByRole('region', { name: 'Trace 诊断报告' });
+    expect(report).toHaveTextContent('生成中');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TRACE_AGENT_DIAGNOSTIC_MAX_POLL_DURATION_MS + 100);
+    });
+    expect(report).toHaveTextContent('读取超时');
+
+    const beforeRefresh = transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.params?.sessionId === 'agent:trace-diagnostic'
+    )).length;
+    await act(async () => {
+      screen.getByRole('button', { name: '刷新对象' }).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const afterRefresh = transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.params?.sessionId === 'agent:trace-diagnostic'
+    )).length;
+    expect(afterRefresh).toBeGreaterThan(beforeRefresh);
+  });
+
+  it('preserves timeline expansion and pagination when a Session snapshot receives new events', async () => {
+    const user = userEvent.setup();
+    const first = longSourceSnapshot(61, '源快照事件');
+    const second = longSourceSnapshot(62, '更新后的源快照事件');
+    const transport = traceAgentTransport({ sourceSnapshots: [first, second] });
+    renderFeature(transport, []);
+
+    const timeline = await screen.findByRole('region', { name: '原始对话时间线' });
+    await waitFor(() => expect(within(timeline).getAllByTestId('trace-agent-timeline-entry')).toHaveLength(60));
+    await user.click(within(timeline).getByRole('button', { name: '展开助手全文' }));
+    await user.click(within(timeline).getByRole('button', { name: '加载更早 1 条' }));
+    expect(within(timeline).getAllByTestId('trace-agent-timeline-entry')).toHaveLength(61);
+
+    await user.click(screen.getByRole('button', { name: '刷新对象' }));
+    await waitFor(() => expect(timeline).toHaveTextContent('更新后的源快照事件 61'));
+    expect(timeline).toHaveTextContent('完整消息结尾');
+    const refreshedEntries = within(timeline).getAllByTestId('trace-agent-timeline-entry');
+    expect(refreshedEntries).toHaveLength(62);
+    expect(refreshedEntries[0]).toHaveAttribute('data-sequence', '1');
+    expect(refreshedEntries.at(-1)).toHaveAttribute('data-sequence', '62');
+  });
+
+  it('replaces partial and final messages and blocks by stable identity', async () => {
+    const duplicateStream = {
+      ok: true,
+      sessionId: 'session-source',
+      status: 'idle',
+      items: [
+        {
+          id: 'assistant-stream',
+          role: 'assistant',
+          status: 'streaming',
+          timelineSequence: 2,
+          createdAtMs: 100,
+          blocks: [
+            { id: 'text-stream', type: 'text', status: 'streaming', data: { text: '临时回答' } },
+            { id: 'reasoning-stream', type: 'reasoning_summary', status: 'running', timelineSequence: 2.1, data: { summary: '临时思考' } },
+          ],
+        },
+        {
+          id: 'assistant-stream',
+          role: 'assistant',
+          status: 'completed',
+          timelineSequence: 2,
+          createdAtMs: 110,
+          blocks: [
+            { id: 'text-stream', type: 'text', status: 'completed', data: { text: '最终回答' } },
+            { id: 'reasoning-stream', type: 'reasoning_summary', status: 'completed', timelineSequence: 2.1, data: { summary: '最终思考' } },
+          ],
+        },
+      ],
+      liveEvents: [],
+    };
+    renderFeature(traceAgentTransport({ sourceSnapshot: duplicateStream }), []);
+
+    const timeline = await screen.findByRole('region', { name: '原始对话时间线' });
+    await waitFor(() => expect(within(timeline).getAllByTestId('trace-agent-timeline-entry')).toHaveLength(2));
+    const entries = within(timeline).getAllByTestId('trace-agent-timeline-entry');
+    expect(entries.filter((entry) => entry.getAttribute('data-kind') === 'assistant')).toHaveLength(1);
+    expect(entries.filter((entry) => entry.getAttribute('data-kind') === 'reasoning')).toHaveLength(1);
+    expect(timeline).toHaveTextContent('最终回答');
+    expect(timeline).toHaveTextContent('最终思考');
+    expect(timeline).not.toHaveTextContent('临时回答');
+    expect(timeline).not.toHaveTextContent('临时思考');
   });
 
   it('switches between Room and recorded runs while preserving precise source deep links', async () => {
@@ -190,8 +327,97 @@ describe('TraceAgentFeature', () => {
     const run = await screen.findByRole('option', { name: /运行失败/ });
     await user.click(run);
     const runSelected = await screen.findByRole('region', { name: '已选择诊断对象' });
+    const runTimeline = within(runSelected).getByRole('region', { name: '运行事件时间线' });
+    expect(runTimeline).toHaveTextContent('Tool · workspace_write');
+    expect(runTimeline).toHaveTextContent('write/edit validation error: target file changed');
+    await user.click(within(runSelected).getByRole('button', { name: '打开关联 Session' }));
+    await user.click(within(runSelected).getByRole('button', { name: '打开关联 Room' }));
     await user.click(within(runSelected).getByRole('button', { name: '打开运行记录' }));
+    expect(routes).toContain('/agent?session=session-source');
+    expect(routes).toContain('/rooms?room=room-source');
     expect(routes).toContain('/observability?runId=run-source');
+  });
+
+  it('paginates truncated run Observations and prefers canonical Trace binding for deep links', async () => {
+    const user = userEvent.setup();
+    const initial = runObservationSnapshot([
+      observationEvent(3, 'session-observation', 'room-observation'),
+      observationEvent(4, 'session-observation', 'room-observation'),
+    ], true);
+    const older = runObservationSnapshot([
+      observationEvent(1, 'session-observation', 'room-observation'),
+      observationEvent(2, 'session-observation', 'room-observation'),
+    ], false);
+    const routes: string[] = [];
+    const transport = traceAgentTransport({
+      runObservationSnapshots: [
+        { beforeSequence: 0, snapshot: initial },
+        { beforeSequence: 3, snapshot: older },
+      ],
+      traceDetails: { 'trace:source': canonicalTraceResponse('session-canonical', 'room-canonical') },
+    });
+    renderFeature(transport, routes);
+
+    await user.click(await screen.findByRole('tab', { name: '运行记录' }));
+    await user.click(await screen.findByRole('option', { name: /运行失败/ }));
+    const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
+    const timeline = within(selected).getByRole('region', { name: '运行事件时间线' });
+    expect(timeline).toHaveTextContent('#3');
+    expect(timeline).toHaveTextContent('#4');
+    await user.click(within(timeline).getByRole('button', { name: '从 Observation 加载更早' }));
+
+    await waitFor(() => expect(within(timeline).getAllByTestId('trace-agent-run-timeline-entry')).toHaveLength(4));
+    expect(within(timeline).getAllByTestId('trace-agent-run-timeline-entry').map((entry) => entry.getAttribute('data-sequence'))).toEqual(['1', '2', '3', '4']);
+    await user.click(within(selected).getByRole('button', { name: '打开关联 Session' }));
+    await user.click(within(selected).getByRole('button', { name: '打开关联 Room' }));
+    expect(routes).toContain('/agent?session=session-canonical');
+    expect(routes).toContain('/rooms?room=room-canonical');
+    const historyRequest = transport.requests.find(({ request }) => request.pathId === 'observability.snapshot' && request.query?.beforeSequence === 3);
+    expect(historyRequest?.request.query).toMatchObject({ runId: 'run-source', beforeSequence: 3, limit: 100 });
+  });
+
+  it('marks run bindings unknown when canonical Trace detail fails instead of using observation fallback', async () => {
+    const user = userEvent.setup();
+    const conflict = runObservationSnapshot([
+      observationEvent(3, 'session-a', 'room-consistent'),
+      observationEvent(4, 'session-b', 'room-consistent'),
+    ], false);
+    const transport = traceAgentTransport({
+      runObservationSnapshots: [{ beforeSequence: 0, snapshot: conflict }],
+      traceDetails: { 'trace:source': null },
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('tab', { name: '运行记录' }));
+    const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
+    expect(within(selected).queryByRole('button', { name: '打开关联 Session' })).not.toBeInTheDocument();
+    expect(within(selected).queryByRole('button', { name: '打开关联 Room' })).not.toBeInTheDocument();
+    expect(selected).toHaveTextContent('无法验证关联 Session / Room');
+  });
+
+  it('does not expose observation fallback links while canonical run binding is pending', async () => {
+    let resolveTrace!: (value: unknown) => void;
+    const pendingTrace = new Promise<unknown>((resolve) => {
+      resolveTrace = resolve;
+    });
+    const transport = traceAgentTransport({
+      traceDetails: { 'trace:source': pendingTrace },
+    });
+    renderFeature(transport, []);
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '运行记录' }));
+    const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
+    expect(within(selected).queryByRole('button', { name: '打开关联 Session' })).not.toBeInTheDocument();
+    expect(within(selected).queryByRole('button', { name: '打开关联 Room' })).not.toBeInTheDocument();
+    expect(selected).toHaveTextContent('正在验证关联 Session / Room');
+
+    await act(async () => {
+      resolveTrace(canonicalTraceResponse('session-canonical', 'room-canonical'));
+      await Promise.resolve();
+    });
+    expect(await within(selected).findByRole('button', { name: '打开关联 Session' })).toBeInTheDocument();
+    expect(within(selected).getByRole('button', { name: '打开关联 Room' })).toBeInTheDocument();
   });
 
   it('keeps the selected-object diagnostic action visible and reports its binding scope', async () => {
@@ -395,6 +621,61 @@ describe('TraceAgentFeature', () => {
     expect(entries.map((entry) => entry.getAttribute('data-sequence'))).toEqual(['1', '2', '3', '4', '5', '6']);
   });
 
+  it('keeps the oldest loaded Room history event visible when a tail event arrives', async () => {
+    const user = userEvent.setup();
+    const snapshot = roomSnapshot();
+    const retainedSnapshot = {
+      ...snapshot,
+      events: snapshot.events.slice(2),
+      firstSequence: 3,
+      lastSequence: 6,
+      resumeToken: 'room-source:6',
+      truncated: true,
+    };
+    const tailEvent = {
+      ...snapshot.events[5],
+      eventId: 'room-tail-source',
+      sequence: 7,
+      createdAtMs: 160,
+      payload: { post: { content: 'Room 追加进展' } },
+      resumeToken: 'room-source:7',
+    };
+    const appendedSnapshot = {
+      ...retainedSnapshot,
+      events: [...retainedSnapshot.events, tailEvent],
+      lastSequence: 7,
+      resumeToken: 'room-source:7',
+    };
+    const olderPage = {
+      schemaVersion: 'rag-ime.agent-room-event-page.v1' as const,
+      ok: true as const,
+      roomId: 'room-source',
+      items: snapshot.events.slice(0, 2),
+      firstSequence: 1,
+      lastSequence: 2,
+      nextBeforeSequence: 0,
+      hasMore: false,
+      retainedFirstSequence: 1,
+      retainedLastSequence: 6,
+      retainedPrefixTruncated: false,
+    };
+    const transport = traceAgentTransport({
+      roomSourceSnapshots: [retainedSnapshot, appendedSnapshot],
+      roomHistoryPage: olderPage,
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('tab', { name: 'Room 协作' }));
+    const timeline = await screen.findByRole('region', { name: '原始对话时间线' });
+    await user.click(within(timeline).getByRole('button', { name: '从 Room history 加载更早' }));
+    await waitFor(() => expect(within(timeline).getAllByTestId('trace-agent-timeline-entry')).toHaveLength(6));
+
+    await user.click(screen.getByRole('button', { name: '刷新对象' }));
+    await waitFor(() => expect(timeline).toHaveTextContent('Room 追加进展'));
+    const entries = within(timeline).getAllByTestId('trace-agent-timeline-entry');
+    expect(entries.map((entry) => entry.getAttribute('data-sequence'))).toEqual(['1', '2', '3', '4', '5', '6', '7']);
+  });
+
   it('keeps persisted Trace diagnostic Sessions available as report handles after a fresh mount', async () => {
     const routes: string[] = [];
     const transport = traceAgentTransport({
@@ -485,9 +766,20 @@ function traceAgentTransport(options: {
   rooms?: Array<Record<string, unknown>>;
   sessions?: Array<Record<string, unknown>>;
   sourceSnapshot?: unknown;
+  sourceSnapshots?: unknown[];
+  diagnosticSnapshots?: unknown[];
+  runObservationSnapshots?: Array<{ beforeSequence: number; snapshot: unknown }>;
+  traceDetails?: Record<string, unknown | null | Promise<unknown>>;
   roomSourceSnapshot?: unknown;
+  roomSourceSnapshots?: unknown[];
   roomHistoryPage?: unknown;
 } = {}) {
+  let diagnosticSnapshotIndex = 0;
+  let sourceSnapshotIndex = 0;
+  let roomSourceSnapshotIndex = 0;
+  const diagnosticSnapshots = options.diagnosticSnapshots ?? [diagnosticSessionSnapshot()];
+  const sourceSnapshots = options.sourceSnapshots ?? [options.sourceSnapshot ?? sessionSourceSnapshot()];
+  const roomSourceSnapshots = options.roomSourceSnapshots ?? [options.roomSourceSnapshot ?? roomSnapshot()];
   return new MockControlTransport({
     routes: {
       'agent.sessions.list': (request: ControlRequest) => paginatedTargetList(options.sessions ?? [{
@@ -510,13 +802,32 @@ function traceAgentTransport(options: {
         if (sessionId === 'agent:trace-repair') {
           return options.repairTrace === false ? emptyObservationSnapshot() : repairObservationSnapshot();
         }
+        if (request.query?.runId && options.runObservationSnapshots) {
+          const beforeSequence = Number(request.query.beforeSequence ?? 0);
+          const page = options.runObservationSnapshots.find((candidate) => candidate.beforeSequence === beforeSequence);
+          if (page) return page.snapshot;
+        }
         return observationSnapshot();
       },
-      'agent.session.snapshot': () => options.sourceSnapshot ?? sessionSourceSnapshot(),
-      'observability.trace.get': (request: ControlRequest) => traceResponse(
-        request.params?.traceId ?? 'trace:source',
-      ),
-      'agent.room.snapshot': () => options.roomSourceSnapshot ?? roomSnapshot(),
+      'agent.session.snapshot': (request: ControlRequest) => {
+        if (request.params?.sessionId === 'agent:trace-diagnostic') {
+          const index = Math.min(diagnosticSnapshotIndex++, Math.max(0, diagnosticSnapshots.length - 1));
+          return diagnosticSnapshots[index] ?? emptyDiagnosticSessionSnapshot();
+        }
+        const index = Math.min(sourceSnapshotIndex++, Math.max(0, sourceSnapshots.length - 1));
+        return sourceSnapshots[index] ?? emptyDiagnosticSessionSnapshot();
+      },
+      'observability.trace.get': (request: ControlRequest) => {
+        const traceId = String(request.params?.traceId ?? 'trace:source');
+        if (options.traceDetails && Object.prototype.hasOwnProperty.call(options.traceDetails, traceId)) {
+          return options.traceDetails[traceId];
+        }
+        return traceResponse(traceId);
+      },
+      'agent.room.snapshot': () => {
+        const index = Math.min(roomSourceSnapshotIndex++, Math.max(0, roomSourceSnapshots.length - 1));
+        return roomSourceSnapshots[index] ?? roomSnapshot();
+      },
       'agent.room.history': () => options.roomHistoryPage ?? emptyRoomHistoryPage(),
       'agent.sessions.create': (request: ControlRequest) => ({
         ok: true,
@@ -676,6 +987,148 @@ function sessionSourceSnapshot() {
         payload: { summary: '读取目标文件完成', toolId: 'workspace', operation: 'read' },
       },
     ],
+  };
+}
+
+function diagnosticSessionSnapshot() {
+  return {
+    ok: true,
+    sessionId: 'agent:trace-diagnostic',
+    status: 'idle',
+    items: [
+      {
+        id: 'message-user-diagnostic',
+        sessionId: 'agent:trace-diagnostic',
+        turnId: 'turn-diagnostic',
+        role: 'user',
+        status: 'completed',
+        timelineSequence: 1,
+        createdAtMs: 201,
+        blocks: [{ id: 'user-text-diagnostic', type: 'text', status: 'completed', data: { text: '请诊断当前失败' } }],
+      },
+      {
+        id: 'message-assistant-diagnostic',
+        sessionId: 'agent:trace-diagnostic',
+        turnId: 'turn-diagnostic',
+        role: 'assistant',
+        status: 'completed',
+        timelineSequence: 3,
+        createdAtMs: 230,
+        blocks: [{ id: 'assistant-text-diagnostic', type: 'text', status: 'completed', data: { text: '根因是资源版本回执不合法；建议重新读取后再编辑。' } }],
+      },
+    ],
+    liveEvents: [{
+      eventId: 'tool-finished-diagnostic',
+      eventType: 'tool_finished',
+      timelineSequence: 2,
+      sequence: 2,
+      createdAtMs: 220,
+      payload: { summary: '已核对 Trace 与原始对话', toolId: 'trace', operation: 'inspect' },
+    }],
+  };
+}
+
+function streamingDiagnosticSessionSnapshot() {
+  const snapshot = diagnosticSessionSnapshot();
+  return {
+    ...snapshot,
+    status: 'busy',
+    items: snapshot.items.map((item) => item.role === 'assistant'
+      ? {
+        ...item,
+        status: 'streaming',
+        blocks: item.blocks.map((block) => ({ ...block, status: 'running' })),
+      }
+      : item),
+  };
+}
+
+function emptyDiagnosticSessionSnapshot() {
+  return {
+    ok: true,
+    sessionId: 'agent:trace-diagnostic',
+    status: 'busy',
+    items: [],
+    liveEvents: [],
+  };
+}
+
+function longSourceSnapshot(count: number, eventPrefix: string) {
+  return {
+    ok: true,
+    sessionId: 'session-source',
+    status: 'idle',
+    items: [{
+      id: 'message-long',
+      sessionId: 'session-source',
+      turnId: 'turn-long',
+      role: 'assistant',
+      status: 'completed',
+      timelineSequence: count,
+      createdAtMs: count,
+      blocks: [{
+        id: 'text-long',
+        type: 'text',
+        status: 'completed',
+        data: { text: `完整消息开头 ${'原始内容'.repeat(50)} 完整消息结尾` },
+      }],
+    }],
+    liveEvents: Array.from({ length: Math.max(0, count - 1) }, (_, index) => ({
+      eventId: `event-long-${index + 1}`,
+      eventType: 'reasoning_summary',
+      timelineSequence: index + 1,
+      sequence: index + 1,
+      createdAtMs: index + 1,
+      payload: { summary: `${eventPrefix} ${index + 1}` },
+    })),
+  };
+}
+
+function observationEvent(sequence: number, sessionId: string, roomId: string) {
+  const base = observationSnapshot().items[0];
+  return {
+    ...base,
+    eventId: `observation-source-${sequence}-${sessionId}`,
+    sequence,
+    resumeToken: `observation:${sequence}`,
+    sessionId,
+    roomId,
+    traceId: 'trace:source',
+    spanId: `span:source:${sequence}`,
+    name: `workspace_write_${sequence}`,
+    summary: `run event ${sequence}`,
+    createdAtMs: sequence * 100,
+    startedAtMs: sequence * 100,
+    endedAtMs: sequence * 100 + 20,
+  };
+}
+
+function runObservationSnapshot(items: Array<ReturnType<typeof observationEvent>>, truncated: boolean) {
+  const base = observationSnapshot();
+  return {
+    ...base,
+    generatedAtMs: Math.max(...items.map((item) => item.createdAtMs), 0),
+    firstSequence: Math.min(...items.map((item) => item.sequence), 0),
+    lastSequence: Math.max(...items.map((item) => item.sequence), 0),
+    resumeToken: `observation:run:${Math.max(...items.map((item) => item.sequence), 0)}`,
+    truncated,
+    counts: {
+      total: items.length,
+      byCategory: { tool: items.length },
+      byStatus: { failed: items.length },
+    },
+    items,
+  };
+}
+
+function canonicalTraceResponse(sessionId: string, roomId: string) {
+  const response = traceResponse('trace:source');
+  return {
+    ...response,
+    trace: {
+      ...response.trace,
+      binding: { ...response.trace.binding, sessionId, roomId, runId: 'run-source' },
+    },
   };
 }
 

@@ -59,7 +59,8 @@ import { LazyPawRoomStarfield } from './PawStarfieldLazy';
 import { buildRoomFocusProjection, roomFocusHasCoordinator, roomFocusOriginLabel, type RoomFocusProjection } from './room-focus-projection';
 import {
   roomCollaborationPlanetRequests,
-  roomPlanetWindowRequest,
+  roomPartnerSessionWindowRequest,
+  roomPlanetObserverWindowRequest,
 } from './room-satellite-auto-open';
 /* Shared conversation modules (tool result panels, diff reader) style the
  * Room's tool receipts too; the Room window must not depend on a Session
@@ -456,19 +457,24 @@ export function PawRoomWorkspace({
     ? record.moderatorParticipantId
     : '';
   const abortingActiveTurn = Boolean(activeRootId && abortingTurnIds.has(activeRootId));
-  /* planet 窗口统一铭牌：从任何入口打开同一伙伴都走 roomPlanetWindowRequest。 */
-  const openParticipant = useCallback((participant: RoomSummary['participants'][number], background = false) => desktop?.openWindow(
-    roomPlanetWindowRequest(participant, recordId, background),
+  const openParticipantObserver = useCallback((participant: RoomSummary['participants'][number], background = false) => desktop?.openWindow(
+    roomPlanetObserverWindowRequest(participant, recordId, background),
   ), [desktop, recordId]);
   const openParticipantById = useCallback((participantId: string, background = false) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!participant) return;
-    openParticipant(participant, background);
-  }, [openParticipant, record?.participants]);
-  const selectAndOpenParticipant = useCallback((participantId: string, background = false) => {
+    openParticipantObserver(participant, background);
+  }, [openParticipantObserver, record?.participants]);
+  const selectAndOpenParticipant = useCallback((participantId: string) => {
     setSelectedParticipantId(participantId);
-    openParticipantById(participantId, background);
-  }, [openParticipantById]);
+    if (panel === 'focus') {
+      openParticipantById(participantId);
+      return;
+    }
+    const participant = record?.participants.find((candidate) => candidate.id === participantId);
+    if (!participant) return;
+    desktop?.openWindow(roomPartnerSessionWindowRequest(participant));
+  }, [desktop, openParticipantById, panel, record?.participants]);
   const openProcessActivity = useCallback((activity: RoomActivityProjection) => {
     const request = roomProcessWindowRequest(activity, recordId);
     if (request) desktop?.openWindow({ ...request, background: false });
@@ -540,11 +546,16 @@ export function PawRoomWorkspace({
     desktop.setCollaborationFocusGroup?.(`room:${record.id}`);
     setCollaborationOpenFailures(new Set());
   }, [desktop, record]);
+  const exitCollaborationFocus = useCallback(() => {
+    setPanel('none');
+    setSelectedParticipantId('');
+    desktop?.setCollaborationFocusGroup?.(null);
+  }, [desktop]);
   const retryCollaborationPlanet = useCallback((participantId: string) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!desktop || !participant) return;
     try {
-      desktop.openWindow(roomPlanetWindowRequest(participant, recordId, true));
+      desktop.openWindow(roomPlanetObserverWindowRequest(participant, recordId, true));
       setCollaborationOpenFailures((current) => {
         if (!current.has(participantId)) return current;
         const next = new Set(current);
@@ -628,10 +639,10 @@ export function PawRoomWorkspace({
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
-      <button aria-pressed={panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); setPanel('none'); setSelectedParticipantId(''); }} type="button"><ListChecks size={14} /><span>任务表</span></button>
+      <button aria-pressed={panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); exitCollaborationFocus(); }} type="button"><ListChecks size={14} /><span>任务表</span></button>
       <button aria-pressed={panel !== 'none'} data-room-view="collaboration" onClick={enterCollaborationMode} type="button"><Focus size={14} /><span>协同模式</span></button>
-      <button aria-pressed={panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); setPanel('none'); setSelectedParticipantId(''); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
-      <button aria-pressed={view === 'starfield'} data-room-view="starfield" onClick={() => { setView('starfield'); setPanel('none'); setSelectedParticipantId(''); }} type="button"><Orbit size={14} /><span>星空</span></button>
+      <button aria-pressed={panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); exitCollaborationFocus(); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
+      <button aria-pressed={view === 'starfield'} data-room-view="starfield" onClick={() => { setView('starfield'); exitCollaborationFocus(); }} type="button"><Orbit size={14} /><span>星空</span></button>
     </nav>
     <div className="paw-room-workspace__runtime"><span><i />{abortingActiveTurn ? '正在停止' : sending && activeTurn ? '正在干预' : activeTurn ? '协作中' : recoveryState === 'synced' ? '已同步' : '连接中'}</span>{activeTurn ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
   </div>;
@@ -785,7 +796,7 @@ export function PawRoomWorkspace({
           </div>
         </main>
         {panel !== 'none' && record ? <PawRoomToolWorkspace
-          onClose={() => { setPanel('none'); setSelectedParticipantId(''); }}
+          onClose={exitCollaborationFocus}
           onError={setError}
           onOpenParticipant={openParticipantById}
           onPanelChange={setPanel}

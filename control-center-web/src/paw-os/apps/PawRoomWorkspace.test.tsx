@@ -85,6 +85,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'rounds');
+    expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(null);
 
     /* Default conversation path pays nothing for the sky: no region, no
      * canvas, and the starfield module itself was never evaluated. */
@@ -138,6 +139,26 @@ describe('PAWOS Room collaboration tools', () => {
         target: expect.objectContaining({ id: 'participant-future', title: 'Venus' }),
       }),
     ]);
+  });
+
+  it('opens the canonical full Session when a task-table planet is clicked in the ordinary Room', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn();
+    renderRoom(900, openWindow);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    const marsRow = document.querySelector<HTMLElement>('[data-planet-row$=":participant-firstlight"]')!;
+    await user.click(marsRow.querySelector('td:nth-child(2)')!);
+
+    expect(openWindow).toHaveBeenCalledTimes(1);
+    expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
+      background: false,
+      target: expect.objectContaining({
+        kind: 'session',
+        id: 'session-room-firstlight',
+        title: 'Mars',
+      }),
+    }));
   });
 
   it('resumes a blocked WorkItem through the active Root and keeps failure retryable', async () => {
@@ -282,6 +303,25 @@ describe('PAWOS Room collaboration tools', () => {
     expect(document.querySelector('.paw-sf')).toBeNull();
     expect(document.querySelector('.paw-sf__canvas')).toBeNull();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'conversation');
+  });
+
+  it('leaves desktop collaboration focus when Room switches to any local view', async () => {
+    const user = userEvent.setup();
+    const setCollaborationFocusGroup = vi.fn();
+    const rendered = renderRoom(901, vi.fn(), undefined, undefined, undefined, undefined, setCollaborationFocusGroup);
+    const { room } = rendered;
+    await screen.findByRole('textbox', { name: '协作消息' });
+    const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
+
+    for (const view of ['任务表', '公开记录', '星空'] as const) {
+      await user.click(within(primaryNavigation).getByRole('button', { name: '协同模式' }));
+      await waitFor(() => expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(`room:${room.id}`));
+      await user.click(within(primaryNavigation).getByRole('button', { name: view }));
+      expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(null);
+      if (view === '星空') {
+        rendered.unmount();
+      }
+    }
   });
 
   it('links a selected task-table planet and its graph node while keeping collaboration open', async () => {

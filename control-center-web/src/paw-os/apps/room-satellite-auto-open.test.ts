@@ -3,14 +3,15 @@ import { createRoomProjection } from '@/contracts/room-reducer';
 import type { RoomParticipant, RoomSummary } from '@/features/rooms/room-types';
 import {
   roomCollaborationPlanetRequests,
-  roomPlanetWindowRequest,
+  roomPartnerSessionWindowRequest,
+  roomPlanetObserverWindowRequest,
   roomProjectionRuntimeActiveParticipantIds,
   roomRuntimeActiveParticipantIds,
 } from './room-satellite-auto-open';
 
-describe('roomPlanetWindowRequest (planet 窗口统一铭牌)', () => {
+describe('roomPlanetObserverWindowRequest (planet 观察窗统一铭牌)', () => {
   it('gives every entrance the same planet window: celestial title, role subtitle, no personal or machine identity', () => {
-    const request = roomPlanetWindowRequest(participant('participant-a', 0), 'room-a');
+    const request = roomPlanetObserverWindowRequest(participant('participant-a', 0), 'room-a');
 
     expect(request).toEqual({
       appId: 'agent',
@@ -29,10 +30,27 @@ describe('roomPlanetWindowRequest (planet 窗口统一铭牌)', () => {
   });
 
   it('keeps a readable planet name beyond the named celestial list', () => {
-    const request = roomPlanetWindowRequest(participant('participant-i', 8), 'room-a', true);
+    const request = roomPlanetObserverWindowRequest(participant('participant-i', 8), 'room-a', true);
 
     expect(request.background).toBe(true);
     expect(request.target.title).toBe('Planet 9');
+  });
+});
+
+describe('roomPartnerSessionWindowRequest (UR-170/172)', () => {
+  it('opens the canonical full Session for an explicit task-table planet click', () => {
+    const request = roomPartnerSessionWindowRequest(participant('participant-a', 0));
+
+    expect(request).toEqual({
+      appId: 'agent',
+      background: false,
+      target: {
+        kind: 'session',
+        id: 'session-participant-a',
+        title: 'Earth',
+        subtitle: '实现与验证',
+      },
+    });
   });
 });
 

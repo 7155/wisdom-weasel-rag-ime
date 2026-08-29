@@ -62,12 +62,11 @@ export function roomProjectionRuntimeActiveParticipantIds(
 }
 
 /**
- * planet 窗口统一铭牌：无论从主 Room、协同模式还是星空进来，
- * 同一位伙伴永远得到同一扇窗——标题是行星名，副标题只留人读得懂的
- * 分工。真实姓名和 Session id 都是内部身份，去完整 Session 的入口在
- * 窗内状态行，不占窗口铭牌。
+ * Compact read-only planet observer used by collaboration mode. The target
+ * keeps participant identity because WindowLayer lays these observers around
+ * the Room without turning them into a second writable Session surface.
  */
-export function roomPlanetWindowRequest(
+export function roomPlanetObserverWindowRequest(
   participant: RoomParticipant,
   roomId: string,
   background = false,
@@ -80,6 +79,28 @@ export function roomPlanetWindowRequest(
       id: participant.id,
       roomId,
       sessionId: participant.sessionId,
+      title: roomFocusCelestialName(participant.ordinal),
+      subtitle: roomCollaborationRoleLabel(participant.collaborationRole),
+    },
+  };
+}
+
+/**
+ * UR-170/172: a deliberate click in the ordinary Room task table opens the
+ * participant's canonical Session, not the compact collaboration observer.
+ * Session identity is the window key, so repeated clicks raise the same real
+ * Session instead of creating observer/session duplicates.
+ */
+export function roomPartnerSessionWindowRequest(
+  participant: RoomParticipant,
+  background = false,
+): PawOsWindowRequest {
+  return {
+    appId: 'agent',
+    background,
+    target: {
+      kind: 'session',
+      id: participant.sessionId,
       title: roomFocusCelestialName(participant.ordinal),
       subtitle: roomCollaborationRoleLabel(participant.collaborationRole),
     },
@@ -100,5 +121,5 @@ export function roomCollaborationPlanetRequests(
   return room.participants
     .filter((participant) => participant.status === 'active')
     .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id))
-    .map((participant) => roomPlanetWindowRequest(participant, room.id, true));
+    .map((participant) => roomPlanetObserverWindowRequest(participant, room.id, true));
 }

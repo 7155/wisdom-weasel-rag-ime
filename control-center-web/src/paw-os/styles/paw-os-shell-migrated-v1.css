@@ -1082,7 +1082,7 @@
 
 /* App shortcuts occupy the same desktop plane as project folders. Keep their
    identity colours in the glyph, while the hit surface follows the neutral
-   Stone/Moss desktop language and labels remain readable across two lines. */
+   Stone/Moss desktop language and labels remain fully readable. */
 .paw-desktop-root .paw-desktop-shortcuts button {
   color: var(--wayfinder-ink, #2e332f);
   transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
@@ -1097,11 +1097,12 @@
 }
 .paw-desktop-root .paw-desktop-shortcuts button strong {
   max-width: 92px;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   white-space: normal;
   overflow-wrap: anywhere;
   text-align: center;
-  -webkit-line-clamp: 2;
+  text-overflow: clip;
 }
 .paw-desktop-root .paw-desktop-shortcuts button[data-open] > i { background: #3f7658; }
 
@@ -1267,4 +1268,17 @@
   color: var(--wayfinder-muted);
   font-size: 12px;
   line-height: 1.2;
+}
+
+/* Keep the expanded folder anchored to its own icon. The content surface is
+   a single bounded window; only its child scroll area owns overflow. */
+.paw-desktop-root .paw-wayfinder-work__project-content {
+  position: absolute;
+  top: var(--wayfinder-panel-y, calc(100% + 10px));
+  right: auto;
+  left: var(--wayfinder-panel-x, 0px);
+  width: min(520px, calc(100vw - 24px));
+  height: min(620px, calc(100vh - 140px));
+  max-height: calc(100vh - 140px);
+  overflow: hidden;
 }

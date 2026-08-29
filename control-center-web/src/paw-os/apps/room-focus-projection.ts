@@ -215,10 +215,7 @@ export function buildRoomFocusProjection(
       const latestActivity = [...activities].reverse().find((activity) => activity.participantId === participant.id);
       const latestMessage = [...messages].reverse().find((message) => message.participantId === participant.id && message.role === 'assistant');
       const state = participant.status === 'active'
-        ? strongestState([
-            ...owned.map((item) => item.state),
-            ...(latestActivity ? [activityState(latestActivity.status)] : []),
-          ])
+        ? partnerFocusState(participant.id, owned, latestActivity, scope.turn)
         : 'disconnected';
       return {
         participantId: participant.id,
@@ -676,6 +673,48 @@ function activityState(status: RoomActivityProjection['status']): RoomFocusState
     failed: 'failed',
     aborted: 'stopped',
   } satisfies Record<RoomActivityProjection['status'], RoomFocusState>)[status];
+}
+
+/**
+ * A red tool receipt is not, by itself, a participant verdict. The current
+ * Room turn owns the live/completed lifecycle; explicit participant and
+ * WorkItem failures still win, while the failed receipt remains available to
+ * the activity/Trace surfaces through `latestActivity` and the scoped flow.
+ */
+function partnerFocusState(
+  participantId: string,
+  owned: RoomFocusWorkItem[],
+  latestActivity: RoomActivityProjection | undefined,
+  turn: RoomProjectionState['turnsById'][string] | undefined,
+): RoomFocusState {
+  const participates = Boolean(turn && (
+    turn.participantIds.includes(participantId)
+    || turn.failedParticipantIds?.includes(participantId)
+    || turn.abortedParticipantIds?.includes(participantId)
+    || turn.terminalParticipantIds?.includes(participantId)
+    || latestActivity
+  ));
+  const authoritativeState = turn && participates
+    ? participantTurnState(turn, participantId)
+    : undefined;
+  const recoverableActivityFailure = latestActivity?.status === 'failed'
+    && (authoritativeState === 'running' || authoritativeState === 'completed');
+
+  return strongestState([
+    ...owned.map((item) => item.state),
+    ...(authoritativeState ? [authoritativeState] : []),
+    ...(!recoverableActivityFailure && latestActivity ? [activityState(latestActivity.status)] : []),
+  ]);
+}
+
+function participantTurnState(
+  turn: RoomProjectionState['turnsById'][string],
+  participantId: string,
+): RoomFocusState {
+  if (turn.failedParticipantIds?.includes(participantId)) return 'failed';
+  if (turn.abortedParticipantIds?.includes(participantId)) return 'stopped';
+  if (turn.terminalParticipantIds?.includes(participantId)) return 'completed';
+  return turnStateValue(turn.status);
 }
 
 function turnStateValue(status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted'): RoomFocusState {

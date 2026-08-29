@@ -48,6 +48,8 @@ import './trace-agent.css';
 const TRACE_AGENT_SKILL_REF = 'integrations/pi/skills/trace-agent-diagnostics/SKILL.md';
 const TRACE_DIAGNOSTIC_TITLE_PREFIX = 'Trace 诊断 · ';
 const TRACE_TIMELINE_PAGE_SIZE = 60;
+const TRACE_AGENT_DIAGNOSTIC_POLL_INTERVAL_MS = 1_500;
+export const TRACE_AGENT_DIAGNOSTIC_MAX_POLL_DURATION_MS = 60_000;
 
 type TraceTargetKind = 'session' | 'room' | 'run';
 
@@ -107,6 +109,8 @@ export function TraceAgentFeature() {
   const [report, setReport] = useState<TraceAgentReport | null>(null);
   const [repairHandoff, setRepairHandoff] = useState<TraceRepairHandoff | null>(null);
   const [evalReceipt, setEvalReceipt] = useState<TraceEvalReceipt | null>(null);
+  const [diagnosticPollingExpired, setDiagnosticPollingExpired] = useState(false);
+  const [diagnosticPollingGeneration, setDiagnosticPollingGeneration] = useState(0);
   const catalogItems = kind === 'session'
     ? targets.data?.sessions ?? []
     : kind === 'room'
@@ -137,11 +141,43 @@ export function TraceAgentFeature() {
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const runHistory = useRunObservationHistory(
+    selected?.kind === 'run' ? selected.id : '',
+    snapshot.data,
+  );
   const latestTraceId = useMemo(
     () => selected?.handoff?.traceId || latestTrace(snapshot.data),
     [selected, snapshot.data],
   );
   const evalTraceId = evalReceipt?.repairTraceId ?? '';
+  const diagnosticSession = useQuery({
+    queryKey: ['trace-agent', 'diagnostic-session', report?.sessionId ?? ''],
+    enabled: Boolean(report?.sessionId),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.session.snapshot',
+      params: { sessionId: report?.sessionId ?? '' },
+      signal,
+    }),
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) => (
+      diagnosticPollingExpired || query.state.error || diagnosticReportReady(query.state.data)
+        ? false
+        : TRACE_AGENT_DIAGNOSTIC_POLL_INTERVAL_MS
+    ),
+  });
+  const runTrace = useQuery<ObservabilityTraceGetV1>({
+    queryKey: ['trace-agent', 'run-trace', selected?.id ?? '', latestTraceId],
+    enabled: selected?.kind === 'run' && Boolean(latestTraceId),
+    queryFn: ({ signal }) => transport.request<ObservabilityTraceGetV1>({
+      pathId: 'observability.trace.get',
+      params: { traceId: latestTraceId },
+      responseContract: 'observability-trace-get.v1',
+      signal,
+    }),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const evals = useQuery<ObservabilityEvalListV1>({
     queryKey: ['trace-agent', 'evals', evalTraceId],
     enabled: Boolean(evalTraceId),
@@ -173,8 +209,19 @@ export function TraceAgentFeature() {
     refetchOnWindowFocus: false,
   });
   const evidence = useMemo(
-    () => sourceEvidence(snapshot.data, sourceSnapshot.data),
-    [snapshot.data, sourceSnapshot.data],
+    () => sourceEvidence(selected?.kind === 'run' ? runHistory.source : snapshot.data, sourceSnapshot.data),
+    [runHistory.source, selected?.kind, snapshot.data, sourceSnapshot.data],
+  );
+  const runBinding = useMemo(
+    () => {
+      if (selected?.kind !== 'run') return null;
+      let bindingState: RunSourceBindingState = 'ready';
+      if (!latestTraceId) bindingState = 'unavailable';
+      else if (runTrace.isPending) bindingState = 'pending';
+      else if (runTrace.error || !runTrace.data) bindingState = 'error';
+      return runSourceBinding(runHistory.source, selected.id, runTrace.data, bindingState);
+    },
+    [latestTraceId, runHistory.source, runTrace.data, runTrace.error, runTrace.isPending, selected],
   );
   const start = useMutation({
     mutationFn: async (target: TraceTarget) => {
@@ -343,14 +390,34 @@ export function TraceAgentFeature() {
     setReport(null);
     setRepairHandoff(null);
     setEvalReceipt(null);
+    setDiagnosticPollingExpired(false);
     repair.reset();
     recheck.reset();
   }, [kind, selectedId]);
+
+  useEffect(() => {
+    if (!report?.sessionId) {
+      setDiagnosticPollingExpired(false);
+      return undefined;
+    }
+    setDiagnosticPollingExpired(false);
+    const timeoutId = window.setTimeout(
+      () => setDiagnosticPollingExpired(true),
+      TRACE_AGENT_DIAGNOSTIC_MAX_POLL_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [diagnosticPollingGeneration, report?.sessionId]);
 
   const refresh = () => {
     void targets.refetch();
     if (selected && !selected.handoffOnly) void snapshot.refetch();
     if (selected && selected.kind !== 'run') void sourceSnapshot.refetch();
+    if (selected?.kind === 'run' && latestTraceId) void runTrace.refetch();
+    if (report?.sessionId) {
+      setDiagnosticPollingExpired(false);
+      setDiagnosticPollingGeneration((current) => current + 1);
+      void diagnosticSession.refetch();
+    }
   };
   const error = targets.error as Error | null;
 
@@ -359,7 +426,7 @@ export function TraceAgentFeature() {
       actions={(
         <Button
           leadingIcon={<RefreshCw size={15} />}
-          loading={targets.isFetching || snapshot.isFetching || sourceSnapshot.isFetching}
+          loading={targets.isFetching || snapshot.isFetching || sourceSnapshot.isFetching || runTrace.isFetching || diagnosticSession.isFetching}
           onClick={refresh}
           size="small"
         >
@@ -551,6 +618,32 @@ export function TraceAgentFeature() {
                     打开工作区文件
                   </Button>
                 ) : null}
+                {selected.kind === 'run' && runBinding?.sessionId ? (
+                  <Button
+                    leadingIcon={<MessageSquareText size={14} />}
+                    onClick={() => openPawOsRoute(desktop, `/agent?session=${encodeURIComponent(runBinding.sessionId)}`)}
+                    size="small"
+                    variant="quiet"
+                  >
+                    打开关联 Session
+                  </Button>
+                ) : null}
+                {selected.kind === 'run' && runBinding?.roomId ? (
+                  <Button
+                    leadingIcon={<Network size={14} />}
+                    onClick={() => openPawOsRoute(desktop, `/rooms?room=${encodeURIComponent(runBinding.roomId)}`)}
+                    size="small"
+                    variant="quiet"
+                  >
+                    打开关联 Room
+                  </Button>
+                ) : null}
+                {selected.kind === 'run' && runBinding?.pending ? (
+                  <span aria-live="polite" className="trace-agent-inline-note" role="status">正在验证关联 Session / Room…</span>
+                ) : null}
+                {selected.kind === 'run' && runBinding?.unavailable ? (
+                  <span aria-live="polite" className="trace-agent-inline-note" role="status">无法验证关联 Session / Room，未显示不可靠的回跳。</span>
+                ) : null}
               </div>
               {selected.kind !== 'run' ? (
                 <TraceSourceTimeline
@@ -559,8 +652,13 @@ export function TraceAgentFeature() {
                   loading={sourceSnapshot.isFetching}
                   source={sourceSnapshot.data}
                 />
+              ) : (
+                <TraceRunTimeline history={runHistory} loading={snapshot.isFetching} runId={selected.id} />
+              )}
+              {selected.kind === 'run' && runBinding?.conflict ? (
+                <p aria-live="polite" className="trace-agent-inline-note" role="status">关联绑定存在冲突，未显示不可靠的 Session / Room 回跳。</p>
               ) : null}
-              <TraceEvidence desktop={desktop} evidence={evidence} loading={sourceSnapshot.isFetching || snapshot.isFetching} />
+              <TraceEvidence desktop={desktop} evidence={evidence} loading={sourceSnapshot.isFetching || snapshot.isFetching || runHistory.loading} />
               {selected.handoffOnly ? <p className="trace-agent-inline-note">这是 handoff-only 输入；没有 Session、Room 或 Run 标识，因此未请求 canonical snapshot。诊断 Agent 会以交接包和可回跳原位置为边界报告未知。</p> : null}
               {snapshot.error ? <p className="trace-agent-inline-note">最新 Trace 暂时无法读取；仍可以启动诊断，Agent 会在 Session 内按权限重新查询。</p> : null}
               {sourceSnapshot.error ? <p className="trace-agent-inline-note">原始对话快照暂时无法读取；诊断 Agent 仍会以可用的 Trace、Room 和运行证据标注未知边界。</p> : null}
@@ -593,6 +691,17 @@ export function TraceAgentFeature() {
               recheckState={{ error: recheck.error, isPending: recheck.isPending }}
               onRecheck={(handoff) => recheck.mutate({ diagnostic: report, repairSessionId: handoff.sessionId })}
               report={report}
+              onRefreshDiagnostic={() => {
+                setDiagnosticPollingExpired(false);
+                setDiagnosticPollingGeneration((current) => current + 1);
+                void diagnosticSession.refetch();
+              }}
+              diagnosticSession={{
+                error: diagnosticSession.error,
+                isFetching: diagnosticSession.isFetching,
+                source: diagnosticSession.data,
+                timedOut: diagnosticPollingExpired,
+              }}
             />
           ) : null}
         </section>
@@ -612,6 +721,8 @@ function TraceAgentReport({
   evalList,
   onRecheck,
   recheckState,
+  onRefreshDiagnostic,
+  diagnosticSession,
 }: {
   report: TraceAgentReport;
   desktop: ReturnType<typeof usePawOsDesktop>;
@@ -623,6 +734,8 @@ function TraceAgentReport({
   evalList?: ObservabilityEvalListV1;
   onRecheck: (handoff: TraceRepairHandoff) => void;
   recheckState: { isPending: boolean; error: unknown };
+  onRefreshDiagnostic: () => void;
+  diagnosticSession: { error: unknown; isFetching: boolean; source: unknown; timedOut: boolean };
 }) {
   const recheckLabelRevision = repairHandoff ? `repair:${repairHandoff.sessionId}` : '';
   const persistedEval = evalReceipt?.evalRun ?? evalList?.items.find((item) => (
@@ -631,17 +744,31 @@ function TraceAgentReport({
   )) ?? null;
   const sourceTraceId = evalReceipt?.sourceTraceId ?? report.traceId;
   const repairTraceId = evalReceipt?.repairTraceId ?? evalList?.traceId ?? '';
+  const diagnosticReady = diagnosticReportReady(diagnosticSession.source);
+  const diagnosticTimedOut = diagnosticSession.timedOut && !diagnosticReady && !diagnosticSession.error;
   return (
     <section aria-label="Trace 诊断报告" className="trace-agent-result trace-agent-result--success">
       <div className="trace-agent-result__icon" aria-hidden="true"><CheckCircle2 size={20} /></div>
       <div className="trace-agent-result__body">
         <div className="trace-agent-result__heading">
-          <div><span className="trace-agent-kicker">报告已创建</span><h2>诊断 Session 正在生成证据报告</h2></div>
-          <StatusBadge label="已提交" tone="success" />
+          <div><span className="trace-agent-kicker">报告已创建</span><h2>{diagnosticReady ? '诊断 Agent 已生成证据报告' : diagnosticTimedOut ? '诊断报告读取超时' : '诊断 Session 正在生成证据报告'}</h2></div>
+          <StatusBadge
+            label={diagnosticSession.error ? '读取失败' : diagnosticReady ? '已完成' : diagnosticTimedOut ? '读取超时' : '生成中'}
+            tone={diagnosticSession.error || diagnosticTimedOut ? 'danger' : diagnosticReady ? 'success' : 'info'}
+          />
         </div>
         <p>它会按 Tool、Runtime、Context、Room 分工、Memory 和 Knowledge/RAG 分段回看；未经重放或 Eval 支持的建议会标为候选/假设。</p>
         <div className="trace-agent-report-links">
           <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openDiagnosticSession(desktop, report.sessionId)} size="small">打开诊断 Agent 对话</Button>
+          <Button
+            disabled={diagnosticSession.isFetching}
+            leadingIcon={diagnosticSession.isFetching ? <LoaderCircle className="ui-spin" size={14} /> : <RefreshCw size={14} />}
+            onClick={onRefreshDiagnostic}
+            size="small"
+            variant="quiet"
+          >
+            {diagnosticSession.isFetching ? '正在读取诊断报告' : '重新读取诊断报告'}
+          </Button>
           <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openOriginal(desktop, report.target)} size="small" variant="quiet">回到原{report.target.kind === 'room' ? ' Room' : report.target.kind === 'run' ? '运行记录' : ' Session'}</Button>
           {report.traceId ? <Button leadingIcon={<Activity size={14} />} onClick={() => openTrace(desktop, report.traceId)} size="small" variant="quiet">查看关联 Trace</Button> : null}
           <Button
@@ -657,6 +784,26 @@ function TraceAgentReport({
             {report.traceId ? '回到 Trace 重跑诊断' : '回到原记录重跑诊断'}
           </Button>
         </div>
+        <TraceSourceTimeline
+          ariaLabel="诊断 Agent 对话与报告"
+          description="这里直接读取诊断 Session 的权威时间线；工具过程、报告正文与失败状态都留在同一 Trace 页面。"
+          heading="诊断 Agent 对话与报告"
+          kicker="实时报告"
+          kind="session"
+          loading={diagnosticSession.isFetching}
+          roomId=""
+          source={diagnosticSession.source}
+        />
+        {diagnosticSession.error ? (
+          <p aria-live="polite" className="trace-agent-inline-note" role="alert">
+            诊断 Agent 对话暂时无法读取：{publicErrorText(diagnosticSession.error, '请稍后重试或打开诊断 Agent 对话。')}
+          </p>
+        ) : null}
+        {diagnosticTimedOut ? (
+          <p aria-live="polite" className="trace-agent-inline-note" role="status">
+            诊断 Agent 在限定时间内没有产生已完成的助手报告；可以重新读取，或打开诊断 Agent 对话查看当前状态。
+          </p>
+        ) : null}
         {repairState.error ? (
           <div aria-live="polite" className="trace-agent-repair-state trace-agent-repair-state--error" role="alert">
             <TriangleAlert size={15} />
@@ -728,17 +875,26 @@ type TraceTimelineEntry = {
   label: string;
   summary: string;
   originalText?: string;
+  status?: string;
   sequence: number;
   createdAtMs: number;
 };
 
 function TraceSourceTimeline({
+  ariaLabel = '原始对话时间线',
+  description = '按 timelineSequence / sequence 保留原始顺序；摘要辅助浏览，长消息可展开全文。',
+  heading,
   kind,
+  kicker = '原始记录',
   loading,
   roomId,
   source,
 }: {
+  ariaLabel?: string;
+  description?: string;
+  heading?: string;
   kind: 'session' | 'room';
+  kicker?: string;
   loading: boolean;
   roomId: string;
   source: unknown;
@@ -746,29 +902,41 @@ function TraceSourceTimeline({
   const roomHistory = useRoomTraceHistory(kind === 'room' ? roomId : '', kind === 'room' ? source : undefined);
   const timelineSource = kind === 'room' ? roomHistory.source : source;
   const entries = useMemo(() => sourceTimeline(kind, timelineSource), [kind, timelineSource]);
+  const sourceIdentity = timelineSourceIdentity(kind, roomId, timelineSource);
   const [visibleCount, setVisibleCount] = useState(TRACE_TIMELINE_PAGE_SIZE);
+  const [visibleBoundaryId, setVisibleBoundaryId] = useState<string | null>(null);
   const [expandedEntries, setExpandedEntries] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     setVisibleCount(TRACE_TIMELINE_PAGE_SIZE);
+    setVisibleBoundaryId(null);
     setExpandedEntries(new Set());
-  }, [kind, roomId, source]);
+  }, [kind, sourceIdentity]);
+  useEffect(() => {
+    if (!visibleBoundaryId) return;
+    const boundaryIndex = entries.findIndex((entry) => entry.id === visibleBoundaryId);
+    if (boundaryIndex < 0) return;
+    setVisibleCount((current) => Math.max(current, entries.length - boundaryIndex));
+  }, [entries, visibleBoundaryId]);
   const visibleEntries = entries.slice(-visibleCount);
   const hiddenCount = entries.length - visibleEntries.length;
   const loadEarlierRoomHistory = async () => {
-    const loadedCount = await roomHistory.loadEarlier();
-    if (loadedCount > 0) setVisibleCount((current) => Math.min(entries.length + loadedCount, current + loadedCount));
+    const result = await roomHistory.loadEarlier();
+    if (result.count > 0) {
+      setVisibleBoundaryId(result.boundaryId || null);
+      setVisibleCount((current) => Math.min(entries.length + result.count, current + result.count));
+    }
   };
   return (
     <section
-      aria-label="原始对话时间线"
+      aria-label={ariaLabel}
       className="trace-agent-timeline"
       data-scrollable={entries.length ? 'true' : 'false'}
     >
       <div className="trace-agent-timeline__heading">
         <div>
-          <span className="trace-agent-kicker">原始记录</span>
-          <h3>{kind === 'room' ? 'Room 对话与行动' : 'Session 对话与行动'}</h3>
-          <p>按 timelineSequence / sequence 保留原始顺序；摘要辅助浏览，长消息可展开全文。</p>
+          <span className="trace-agent-kicker">{kicker}</span>
+          <h3>{heading ?? (kind === 'room' ? 'Room 对话与行动' : 'Session 对话与行动')}</h3>
+          <p>{description}</p>
         </div>
         <StatusBadge
           label={loading || roomHistory.loading ? '读取中' : `${visibleEntries.length} / ${entries.length} 条`}
@@ -818,7 +986,11 @@ function TraceSourceTimeline({
           <div className="trace-agent-timeline__controls">
             {hiddenCount > 0 ? (
               <Button
-                onClick={() => setVisibleCount((current) => Math.min(entries.length, current + TRACE_TIMELINE_PAGE_SIZE))}
+                onClick={() => {
+                  const next = Math.min(entries.length, visibleCount + TRACE_TIMELINE_PAGE_SIZE);
+                  setVisibleBoundaryId(entries[entries.length - next]?.id ?? null);
+                  setVisibleCount(next);
+                }}
                 size="small"
                 variant="quiet"
               >
@@ -850,12 +1022,279 @@ function TraceSourceTimeline({
   );
 }
 
+function diagnosticReportReady(source: unknown): boolean {
+  const payload = asRecord(source);
+  const rawMessages = Array.isArray(payload.items)
+    ? payload.items
+    : Array.isArray(payload.messages)
+      ? payload.messages
+      : [];
+  const assistantMessages = rawMessages
+    .map(asRecord)
+    .filter((message) => stringValue(message.role) === 'assistant')
+    .sort((left, right) => (
+      timelinePosition(right, 0) - timelinePosition(left, 0)
+    ) || (numberValue(right.createdAtMs) - numberValue(left.createdAtMs)));
+  const finalAssistant = assistantMessages[0];
+  if (!finalAssistant || stringValue(finalAssistant.status) !== 'completed') return false;
+  const blocks = Array.isArray(finalAssistant.blocks) ? finalAssistant.blocks : [];
+  return blocks.some((rawBlock) => {
+    const block = asRecord(rawBlock);
+    if (stringValue(block.status) !== 'completed') return false;
+    if (stringValue(block.type) !== 'text') return false;
+    return Boolean(firstText(asRecord(block.data), ['text', 'markdown', 'bodyMarkdown', 'content']))
+      || Boolean(firstText(block, ['text', 'markdown', 'bodyMarkdown', 'content']));
+  });
+}
+
+function timelineSourceIdentity(kind: 'session' | 'room', roomId: string, source: unknown): string {
+  if (kind === 'room') return `room:${roomId}`;
+  const payload = asRecord(source);
+  return `session:${stringValue(payload.sessionId)}`;
+}
+
+function TraceRunTimeline({ history, loading, runId }: {
+  history: RunObservationHistoryState;
+  loading: boolean;
+  runId: string;
+}) {
+  const entries = useMemo(() => runObservationEntries(history.source, runId), [history.source, runId]);
+  const historyLoading = loading || history.loading;
+  return (
+    <section aria-label="运行事件时间线" className="trace-agent-timeline" data-scrollable={entries.length ? 'true' : 'false'}>
+      <div className="trace-agent-timeline__heading">
+        <div>
+          <span className="trace-agent-kicker">权威运行记录</span>
+          <h3>运行事件与 Agent 行为</h3>
+          <p>按 Observation sequence 展示这个 run 的 Tool、Agent、Context、Memory、Room 与 Runtime 事件；可从上方回跳关联 Session 或 Room。</p>
+        </div>
+        <StatusBadge label={historyLoading ? '读取中' : `${entries.length} 条`} tone={historyLoading ? 'info' : entries.length ? 'neutral' : 'warning'} />
+      </div>
+      {entries.length ? (
+        <div aria-label="运行事件列表" className="trace-agent-timeline__list" tabIndex={0}>
+          {entries.map((entry) => (
+            <article
+              className={`trace-agent-timeline__entry trace-agent-timeline__entry--${entry.status}`}
+              data-sequence={entry.sequence}
+              data-testid="trace-agent-run-timeline-entry"
+              key={entry.eventId}
+            >
+              <span className="trace-agent-timeline__icon" aria-hidden="true"><Activity size={14} /></span>
+              <div className="trace-agent-timeline__copy">
+                <div className="trace-agent-timeline__title">
+                  <strong>{observationCategoryLabel(entry.category)} · {entry.name || entry.phase}</strong>
+                  <span> · {entry.summary || observationStatusLabel(entry.status)}</span>
+                  <small>#{entry.sequence} · {observationStatusLabel(entry.status)}</small>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p className="trace-agent-timeline__empty">当前运行没有可投影的 Observation；可以打开运行记录继续检查 Trace。</p>
+      )}
+      {history.hasMore ? (
+        <div className="trace-agent-timeline__controls">
+          <Button
+            disabled={history.loading}
+            loading={history.loading}
+            onClick={() => void history.loadEarlier()}
+            size="small"
+            variant="quiet"
+          >
+            从 Observation 加载更早
+          </Button>
+        </div>
+      ) : null}
+      {history.error ? (
+        <p aria-live="polite" className="trace-agent-inline-note" role="alert">
+          Observation history 暂时无法读取：{publicErrorText(history.error, '请稍后重试。')}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+type RunObservationHistoryState = {
+  source: ObservationSnapshotV1 | undefined;
+  hasMore: boolean;
+  loading: boolean;
+  error: unknown;
+  loadEarlier: () => Promise<number>;
+};
+
+function useRunObservationHistory(
+  runId: string,
+  source: ObservationSnapshotV1 | undefined,
+): RunObservationHistoryState {
+  const transport = useControlTransport();
+  const [pages, setPages] = useState<ObservationSnapshotV1[]>([]);
+  const [nextBeforeSequence, setNextBeforeSequence] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    setPages([]);
+    setNextBeforeSequence(observationHistoryCursor(source));
+    setLoading(false);
+    setError(null);
+  }, [runId]);
+
+  useEffect(() => {
+    if (!runId || pages.length || nextBeforeSequence) return;
+    const cursor = observationHistoryCursor(source);
+    if (cursor) setNextBeforeSequence(cursor);
+  }, [nextBeforeSequence, pages.length, runId, source]);
+
+  const loadEarlier = async (): Promise<number> => {
+    if (!runId || loading || !nextBeforeSequence) return 0;
+    const requestedBeforeSequence = nextBeforeSequence;
+    setLoading(true);
+    setError(null);
+    try {
+      const page = await transport.request<ObservationSnapshotV1>({
+        pathId: 'observability.snapshot',
+        query: { runId, beforeSequence: requestedBeforeSequence, limit: 100 },
+        responseContract: 'observation-snapshot.v1',
+      });
+      if (page.items.some((item) => item.runId && item.runId !== runId)) {
+        throw new Error('Observation history 返回了不属于当前 run 的事件。');
+      }
+      setPages((current) => [...current, page]);
+      const nextCursor = observationHistoryCursor(page);
+      setNextBeforeSequence(nextCursor > 0 && nextCursor < requestedBeforeSequence ? nextCursor : 0);
+      return page.items.length;
+    } catch (requestError) {
+      setError(requestError);
+      return 0;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return {
+    source: mergeObservationHistory(source, pages),
+    hasMore: Boolean(nextBeforeSequence),
+    loading,
+    error,
+    loadEarlier,
+  };
+}
+
+function observationHistoryCursor(source: ObservationSnapshotV1 | undefined): number {
+  if (!source?.truncated) return 0;
+  return source.items.reduce((lowest, item) => (
+    item.sequence > 0 && (lowest === 0 || item.sequence < lowest) ? item.sequence : lowest
+  ), 0);
+}
+
+function mergeObservationHistory(
+  source: ObservationSnapshotV1 | undefined,
+  pages: ObservationSnapshotV1[],
+): ObservationSnapshotV1 | undefined {
+  if (!source) return undefined;
+  const seen = new Set<string>();
+  const items = [...source.items, ...pages.flatMap((page) => page.items)].filter((item) => {
+    const key = item.eventId || `sequence:${item.sequence}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const lastPage = pages.at(-1);
+  return {
+    ...source,
+    items,
+    truncated: lastPage ? lastPage.truncated : source.truncated,
+  };
+}
+
+function runObservationEntries(source: ObservationSnapshotV1 | undefined, runId: string) {
+  return (source?.items ?? [])
+    .filter((entry) => entry.runId === runId)
+    .sort((left, right) => (left.sequence - right.sequence) || (left.createdAtMs - right.createdAtMs));
+}
+
+type RunSourceBinding = {
+  sessionId: string;
+  roomId: string;
+  conflict: boolean;
+  pending: boolean;
+  unavailable: boolean;
+};
+
+type RunSourceBindingState = 'pending' | 'ready' | 'error' | 'unavailable';
+
+function runSourceBinding(
+  source: ObservationSnapshotV1 | undefined,
+  runId: string,
+  detail?: ObservabilityTraceGetV1,
+  state: RunSourceBindingState = 'ready',
+): RunSourceBinding {
+  if (state === 'pending') {
+    return { sessionId: '', roomId: '', conflict: false, pending: true, unavailable: false };
+  }
+  if (state === 'error' || state === 'unavailable') {
+    return { sessionId: '', roomId: '', conflict: false, pending: false, unavailable: true };
+  }
+  const canonicalBinding = detail?.trace?.binding;
+  const hasCanonicalBinding = canonicalBinding && Object.values(canonicalBinding).some(Boolean);
+  if (hasCanonicalBinding) {
+    if (canonicalBinding.runId && canonicalBinding.runId !== runId) {
+      return { sessionId: '', roomId: '', conflict: true, pending: false, unavailable: false };
+    }
+    return {
+      sessionId: stringValue(canonicalBinding.sessionId),
+      roomId: stringValue(canonicalBinding.roomId),
+      conflict: false,
+      pending: false,
+      unavailable: false,
+    };
+  }
+  const entries = [...runObservationEntries(source, runId)].reverse();
+  const sessionIds = [...new Set(entries.map((entry) => entry.sessionId).filter(Boolean))];
+  const roomIds = [...new Set(entries.map((entry) => entry.roomId).filter(Boolean))];
+  return {
+    sessionId: sessionIds.length === 1 ? sessionIds[0] : '',
+    roomId: roomIds.length === 1 ? roomIds[0] : '',
+    conflict: sessionIds.length > 1 || roomIds.length > 1,
+    pending: false,
+    unavailable: false,
+  };
+}
+
+function observationCategoryLabel(category: ObservationSnapshotV1['items'][number]['category']): string {
+  return ({
+    context: 'Context',
+    retrieval: 'Retrieval',
+    memory: 'Memory',
+    tool: 'Tool',
+    agent: 'Agent',
+    room: 'Room',
+    intercom: 'Intercom',
+    approval: 'Approval',
+    runtime: 'Runtime',
+    system: 'System',
+  } as const)[category];
+}
+
+function observationStatusLabel(status: ObservationSnapshotV1['items'][number]['status']): string {
+  return ({
+    queued: '排队中',
+    running: '进行中',
+    waiting: '等待中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+    info: '记录',
+  } as const)[status];
+}
+
 type RoomTraceHistoryState = {
   source: unknown;
   hasMore: boolean;
   loading: boolean;
   error: unknown;
-  loadEarlier: () => Promise<number>;
+  loadEarlier: () => Promise<{ count: number; boundaryId: string }>;
 };
 
 function useRoomTraceHistory(roomId: string, source: unknown): RoomTraceHistoryState {
@@ -867,13 +1306,19 @@ function useRoomTraceHistory(roomId: string, source: unknown): RoomTraceHistoryS
 
   useEffect(() => {
     setPages([]);
-    setNextBeforeSequence(roomHistoryCursor(source));
+    setNextBeforeSequence(0);
     setLoading(false);
     setError(null);
-  }, [roomId, source]);
+  }, [roomId]);
 
-  const loadEarlier = async (): Promise<number> => {
-    if (!roomId || loading || !nextBeforeSequence) return 0;
+  useEffect(() => {
+    if (!roomId || pages.length || nextBeforeSequence) return;
+    const cursor = roomHistoryCursor(source);
+    if (cursor) setNextBeforeSequence(cursor);
+  }, [nextBeforeSequence, pages.length, roomId, source]);
+
+  const loadEarlier = async (): Promise<{ count: number; boundaryId: string }> => {
+    if (!roomId || loading || !nextBeforeSequence) return { count: 0, boundaryId: '' };
     const requestedBeforeSequence = nextBeforeSequence;
     setLoading(true);
     setError(null);
@@ -887,10 +1332,13 @@ function useRoomTraceHistory(roomId: string, source: unknown): RoomTraceHistoryS
       if (page.roomId !== roomId) throw new Error('Room history 返回了不属于当前 Room 的事件。');
       setPages((current) => [...current, page]);
       setNextBeforeSequence(page.hasMore ? page.nextBeforeSequence : 0);
-      return page.items.length;
+      return {
+        count: page.items.length,
+        boundaryId: page.items[0] ? `room-event:${page.items[0].eventId}` : '',
+      };
     } catch (requestError) {
       setError(requestError);
-      return 0;
+      return { count: 0, boundaryId: '' };
     } finally {
       setLoading(false);
     }
@@ -941,19 +1389,39 @@ function roomSourceEvents(source: Record<string, unknown>): unknown[] {
 }
 
 function sourceTimeline(kind: 'session' | 'room', source: unknown): TraceTimelineEntry[] {
-  const entries: TraceTimelineEntry[] = [];
-  const seen = new Set<string>();
+  const entries = new Map<string, TraceTimelineEntry>();
   const add = (entry: TraceTimelineEntry) => {
     const summary = entry.summary.trim();
     if (!summary) return;
-    const key = `${entry.kind}:${entry.sequence}:${summary}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    entries.push({ ...entry, summary });
+    const next = { ...entry, summary };
+    const previous = entries.get(entry.id);
+    if (!previous || timelineEntryIsNewer(next, previous)) entries.set(entry.id, next);
   };
   if (kind === 'session') sessionTimelineEntries(source, add);
   else roomTimelineEntries(source, add);
-  return entries.sort((left, right) => (left.sequence - right.sequence) || (left.createdAtMs - right.createdAtMs));
+  return [...entries.values()].sort((left, right) => (left.sequence - right.sequence) || (left.createdAtMs - right.createdAtMs));
+}
+
+function timelineEntryIsNewer(next: TraceTimelineEntry, previous: TraceTimelineEntry): boolean {
+  const statusDelta = timelineStatusRank(next.status) - timelineStatusRank(previous.status);
+  if (statusDelta !== 0) return statusDelta > 0;
+  const positionDelta = next.sequence - previous.sequence;
+  if (positionDelta !== 0) return positionDelta > 0;
+  const timestampDelta = next.createdAtMs - previous.createdAtMs;
+  return timestampDelta >= 0;
+}
+
+function timelineStatusRank(status: string | undefined): number {
+  return ({
+    queued: 1,
+    running: 2,
+    waiting: 2,
+    streaming: 2,
+    completed: 3,
+    failed: 3,
+    aborted: 3,
+    cancelled: 3,
+  } as Record<string, number>)[status ?? ''] ?? 0;
 }
 
 function sessionTimelineEntries(
@@ -981,6 +1449,7 @@ function sessionTimelineEntries(
         kind: role,
         label: role === 'user' ? '用户' : '助手',
         summary,
+        status: stringValue(message.status),
         sequence: messageSequence,
         createdAtMs: numberValue(message.createdAtMs),
       });
@@ -996,6 +1465,7 @@ function sessionTimelineEntries(
         label: timelineLabel(blockKind),
         summary: timelineSummary(blockData, block),
         originalText: timelineOriginalText(blockData),
+        status: stringValue(block.status),
         sequence: timelinePosition(block, messageSequence + (blockIndex + 1) / 100),
         createdAtMs: numberValue(blockData.createdAtMs, numberValue(message.createdAtMs)),
       });
@@ -1013,6 +1483,7 @@ function sessionTimelineEntries(
       label: timelineLabel(eventKind),
       summary: timelineSummary(eventPayload, event),
       originalText: timelineOriginalText(eventPayload),
+      status: stringValue(event.status),
       sequence: timelinePosition(event, index),
       createdAtMs: numberValue(event.createdAtMs),
     });
@@ -1048,6 +1519,7 @@ function roomTimelineEntries(
       label: kind === 'user' ? '用户' : kind === 'assistant' ? '助手' : timelineLabel(kind),
       summary: timelineSummary(eventPayload, event),
       originalText: timelineOriginalText(eventPayload),
+      status: stringValue(event.status),
       sequence: timelinePosition(event, index),
       createdAtMs: numberValue(event.createdAtMs),
     });

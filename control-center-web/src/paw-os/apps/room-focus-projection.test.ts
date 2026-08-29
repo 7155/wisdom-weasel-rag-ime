@@ -604,4 +604,84 @@ describe('buildRoomFocusProjection', () => {
       'message:message-current',
     ]);
   });
+
+  it.each([
+    { turnStatus: 'running' as const, expected: 'running' as const },
+    { turnStatus: 'completed' as const, expected: 'completed' as const },
+  ])('does not let a recoverable failed tool receipt override an authoritative $turnStatus turn', ({ turnStatus, expected }) => {
+    const projection = createRoomProjection('room-sol');
+    projection.turnOrder = ['turn-root'];
+    projection.turnsById = {
+      'turn-root': {
+        id: 'turn-root',
+        rootId: 'turn-root',
+        status: turnStatus,
+        messageIds: [],
+        activityIds: ['tool-failed'],
+        participantIds: ['p-mars'],
+        ...(turnStatus === 'completed' ? { terminalParticipantIds: ['p-mars'] } : {}),
+        createdAtMs: 10,
+        updatedAtMs: 20,
+      },
+    };
+    projection.activityOrder = ['tool-failed'];
+    projection.activitiesById = {
+      'tool-failed': {
+        id: 'tool-failed',
+        turnId: 'turn-root',
+        participantId: 'p-mars',
+        sourceSessionId: 'session-p-mars',
+        kind: 'tool',
+        status: 'failed',
+        summary: '工具调用失败，但 Pi 已继续本轮',
+        payload: { toolName: 'read_file', error: 'temporary failure' },
+        createdAtMs: 19,
+        updatedAtMs: 20,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+
+    expect(focus.partners.find((partner) => partner.participantId === 'p-mars')).toMatchObject({
+      state: expected,
+      currentAction: '工具调用失败，但 Pi 已继续本轮',
+    });
+  });
+
+  it('keeps an authoritative participant failure visible despite a recoverable activity receipt', () => {
+    const projection = createRoomProjection('room-sol');
+    projection.turnOrder = ['turn-root'];
+    projection.turnsById = {
+      'turn-root': {
+        id: 'turn-root',
+        rootId: 'turn-root',
+        status: 'running',
+        messageIds: [],
+        activityIds: ['tool-failed'],
+        participantIds: ['p-mars'],
+        failedParticipantIds: ['p-mars'],
+        createdAtMs: 10,
+        updatedAtMs: 20,
+      },
+    };
+    projection.activityOrder = ['tool-failed'];
+    projection.activitiesById = {
+      'tool-failed': {
+        id: 'tool-failed',
+        turnId: 'turn-root',
+        participantId: 'p-mars',
+        sourceSessionId: 'session-p-mars',
+        kind: 'tool',
+        status: 'failed',
+        summary: '子步骤失败',
+        payload: { toolName: 'read_file', error: 'permanent failure' },
+        createdAtMs: 19,
+        updatedAtMs: 20,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room(), projection);
+
+    expect(focus.partners.find((partner) => partner.participantId === 'p-mars')?.state).toBe('failed');
+  });
 });

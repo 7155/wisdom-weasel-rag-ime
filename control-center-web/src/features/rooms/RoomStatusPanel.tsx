@@ -33,7 +33,7 @@ import { roomActivityNeedsSessionAction } from './runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore } from './state/live-store';
 import { publicToolName } from '../agent/tool-presentation';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
-import { roomPlanetWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
+import { roomPlanetObserverWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
 import '../agent/agent.css';
 
 export const RoomStatusPanel = forwardRef<HTMLElement, {
@@ -354,7 +354,7 @@ function RoomParticipantTelemetry({ participant, roomId }: { participant: NonNul
   const pawOsDesktop = usePawOsDesktop();
   const telemetry = useAgentLiveStore((state) => state.projections[participant.sessionId]?.telemetry);
   if (!telemetry) {
-    return <article className="room-participant-telemetry room-participant-telemetry--quiet"><header><span><strong>{roomParticipantPlanetName(participant)}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {participant.status === 'active' ? '已加入' : '暂未参与'}</small></span>{pawOsDesktop ? <IconButton label={`打开 ${roomParticipantPlanetName(participant)} 伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetWindowRequest(participant, roomId))} tooltip /> : null}</header></article>;
+    return <article className="room-participant-telemetry room-participant-telemetry--quiet"><header><span><strong>{roomParticipantPlanetName(participant)}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {participant.status === 'active' ? '已加入' : '暂未参与'}</small></span>{pawOsDesktop ? <IconButton label={`打开 ${roomParticipantPlanetName(participant)} 伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetObserverWindowRequest(participant, roomId))} tooltip /> : null}</header></article>;
   }
   const context = telemetry.context;
   const cumulative = telemetry.cumulativeUsage;
@@ -366,7 +366,7 @@ function RoomParticipantTelemetry({ participant, roomId }: { participant: NonNul
       <header>
         <span><strong>{roomParticipantPlanetName(participant)}</strong><small>{telemetry.model.name || telemetry.model.id} · {roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
         <i data-state={participant.status}>{telemetry.isCompacting ? '整理上下文' : participant.status === 'active' ? '已加入' : '暂未参与'}</i>
-        {pawOsDesktop ? <IconButton label={`打开 ${roomParticipantPlanetName(participant)} 伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetWindowRequest(participant, roomId))} tooltip /> : null}
+        {pawOsDesktop ? <IconButton label={`打开 ${roomParticipantPlanetName(participant)} 伙伴窗口`} icon={<PanelsTopLeft size={14} />} onClick={() => pawOsDesktop.openWindow(roomPlanetObserverWindowRequest(participant, roomId))} tooltip /> : null}
       </header>
       <div className="room-participant-telemetry__numbers">
         <span title="累计提示 Token">{roomTokenCount(promptTokens)} 输入</span>

@@ -15,7 +15,7 @@ import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { openPawOsRoute, usePawOsDesktop } from './surface-context';
 import { routePath } from './model/app-registry';
 import type { PawOsWindowTarget } from './model/desktop';
-import { roomPlanetWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
+import { roomPlanetObserverWindowRequest } from '@/paw-os/apps/room-satellite-auto-open';
 import { PawRoomFocusOverview } from '@/paw-os/apps/PawRoomFocusOverview';
 import { PawRoomGovernance } from '@/paw-os/apps/PawRoomWorkspace';
 import { PawRoomConversation } from '@/paw-os/apps/PawRoomConversation';
@@ -365,7 +365,7 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
   const openParticipant = (participantId: string) => {
     const participant = room?.participants.find((candidate) => candidate.id === participantId);
     if (!participant) return;
-    desktop?.openWindow(roomPlanetWindowRequest(participant, target.id));
+    desktop?.openWindow(roomPlanetObserverWindowRequest(participant, target.id));
   };
   return (
     <section className="paw-os-satellite paw-os-satellite--room-panel" data-panel={target.panel}>
