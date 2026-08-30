@@ -713,10 +713,11 @@ describe('PAWOS desktop', () => {
   it('coalesces desktop persistence into one trailing write instead of one per mutation', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     renderDesktop();
+    const desktopViewport = document.querySelector<HTMLElement>('.paw-desktop-viewport')!;
 
     // A burst of desktop mutations: open two Apps back to back.
     fireEvent.keyDown(window, { key: ',', metaKey: true });
-    fireEvent.contextMenu(screen.getByRole('main'), { clientX: 120, clientY: 90 });
+    fireEvent.contextMenu(desktopViewport, { clientX: 120, clientY: 90 });
     fireEvent.click(screen.getByRole('menuitem', { name: '新建 Agent 工作' }));
 
     // Nothing serializes on the interaction path itself…
