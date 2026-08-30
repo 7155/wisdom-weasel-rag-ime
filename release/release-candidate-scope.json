@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-30T05:43:15Z",
+  "generatedAt": "2026-08-30T18:07:34Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -15,15 +15,15 @@
   "groups": {
     "project_harness": {
       "description": "Root self-hosting project context and bounded consistency checks.",
-      "pathCount": 37
+      "pathCount": 38
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 848
+      "pathCount": 894
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 504
+      "pathCount": 507
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 35
+      "pathCount": 38
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -47,16 +47,16 @@
     }
   },
   "summary": {
-    "pathCount": 1466,
+    "pathCount": 1519,
     "dispositionCounts": {
-      "keep_release": 1428,
+      "keep_release": 1481,
       "delete_old_implementation": 38
     },
     "groupCounts": {
-      "project_harness": 37,
-      "control_center_release_ui": 848,
-      "session_room_skill_flow": 504,
-      "memory_curation": 35,
+      "project_harness": 38,
+      "control_center_release_ui": 894,
+      "session_room_skill_flow": 507,
+      "memory_curation": 38,
       "desktop_semantic_accessibility": 19,
       "installation_reliability": 18,
       "release_scope": 3,
@@ -78,13 +78,13 @@
     }
   ],
   "verification": {
-    "projectHarness": "passed after exact 1398-path inventory refresh",
+    "projectHarness": "bounded docs and exact 1519-path inventory preflight pass; the base-to-HEAD check remains pending until the candidate files are committed",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
-    "frontendTypecheck": "passed on the canonical main worktree during final integration",
-    "frontendUnitTests": "262/262 focused changed-scope tests passed across 14 files on the canonical main worktree",
-    "frontendBuild": "passed on the canonical main worktree; Vite transformed 4458 modules",
+    "frontendTypecheck": "passed on the stable canonical main worktree during final integration",
+    "frontendUnitTests": "2508/2508 tests passed across 235 files on the stable canonical main worktree; the final Extension App strictness change then passed its 165/165 focused frontend regression",
+    "frontendBuild": "passed on the stable canonical main worktree; Vite transformed 4487 modules",
     "frontendBrowserAcceptance": "166 passed, 49 conditional skips, 0 failed",
     "agentToolMatrix": "29/29 Pi runtime Tools invoked successfully in a real Room Session",
     "installedPiPackageCanary": "active managed Pi Runtime created and prepared one isolated local Package with one Skill; no real package state was mutated",
@@ -92,13 +92,14 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1466/1466 base-to-HEAD paths classified; 1428 retained and 38 old implementations deleted",
-    "repositoryPublicAudit": "Current 2026-08-29 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
+    "releaseScopeCoverage": "1519/1519 candidate paths classified; 1481 retained and 38 old implementations deleted",
+    "repositoryPublicAudit": "Current 2026-08-31 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
-    "electronUnitTests": "14/14 passed on canonical implementation before clean integration",
+    "electronUnitTests": "16/16 passed on the stable canonical main worktree",
+    "extensionAppReleaseGate": "60/60 focused Python tests and 165/165 focused frontend tests passed; installed and catalog package bytes, complete Runtime capability set, Skill SHA, App binding, suite revision, content-addressed source, lifecycle gate, and public path redaction are fail-closed",
     "focusedMemoryMasterGate": "290/290 passed on canonical implementation before clean integration",
-    "focusedFinalBackendTests": "9/9 passed for interview metrics, knowledge provider identity, Pi idle admission, and managed Skill routing",
+    "focusedFinalBackendTests": "3846 tests ran in the stable full suite; the sole failure was the expected precommit base-to-HEAD scope gate, with no functional test failures; migration 22/22 and delegation terminal timing 1/1 also passed directly",
     "finalTraceIndependentReview": "CLEAR after structured handoff privacy and source-binding review; 19/19 focused Trace tests passed",
     "framelessPlanetFocusedTests": "106/106 passed across compositor and PAWOS style tests; TypeScript project build passed",
     "pluginLifecycleProposalFocusedTests": "2/2 focused Tool lifecycle tests passed; all five lifecycle operations stop at a bound preview and expose no apply operation"
@@ -6118,6 +6119,27 @@
       "reason": "Keep the Trace and Eval compatibility evidence map."
     },
     {
+      "path": "eval/interview-metrics/runs/pi-context-cache-20260830.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the privacy-safe Provider-reported context-cache canary used by the bounded interview-metrics ledger."
+    },
+    {
+      "path": "eval/interview-metrics/runs/workspace-search-1000-20260830.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the reproducible 1000-file workspace-search parity and performance receipt."
+    },
+    {
+      "path": "eval/interview-metrics/runs/workspace-search-5000-20260830.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the reproducible 5000-file workspace-search parity and performance receipt."
+    },
+    {
       "path": "examples/vertical_agents/README.md",
       "status": "added",
       "disposition": "keep_release",
@@ -10365,6 +10387,356 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_196_205.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend requirement ledger and acceptance boundary."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_206_206.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Room planet presentation contract and its acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/app/LegacyProductApp.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the lazy legacy compatibility entry while PAWOS remains the release shell."
+    },
+    {
+      "path": "control-center-web/src/components/feedback/GlobalFeedback.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep bounded desktop notification history and explicit clear actions."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/engineering-audit-report.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the structured Trace engineering report presentation."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/html-export.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep regression coverage for deterministic Trace report export."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/html-export.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep deterministic local Trace report export."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-document.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the structured Trace report document surface."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Trace report projection and scoring model."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/templates/engineering-audit-report.html",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the privacy-safe local Trace report template."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawAgentAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the lazy PAWOS Agent application entry."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawBrowserAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the canonical Electron and Ego-backed Browser application entry."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawNativeAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lazy native PAWOS application routing."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawResultWindowEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lazy standalone result-window routing."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawSatelliteEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lazy Room satellite-window routing."
+    },
+    {
+      "path": "control-center-web/src/paw-os/performance-boundaries.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep PAWOS bundle and import performance boundaries executable."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-context.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep desktop snapshot recovery and focus regression coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep truthful background activity notification coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep truthful Session, Room, and memory background activity projection."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawNotificationCenter.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep notification lifecycle and focus regression coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawNotificationCenter.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the PAWOS notification side panel."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lightweight work-directory and memory projection coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the shared lightweight PAWOS work-directory projection."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkIcons.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep project, Session, and Room icon regression coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/desktop-grid.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep deterministic desktop-grid migration coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-shell-status.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep PAWOS background status and notification styling."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/wayfinder-running-motion.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep bounded running-state motion and reduced-motion coverage."
+    },
+    {
+      "path": "rag_ime/agent_workspace_roots.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep canonical workspace-root validation shared by Session and Room runtime paths."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_207_207.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Extension App self-bootstrap, SGG sandbox, icon, install, and uninstall requirement contract."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the source-isolated 掌柜问数 conversation-mode and Session-binding regressions."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the source-isolated 掌柜问数 Extension App and ordinary Session surface."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/app.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the responsive, mode-specific 掌柜问数 App presentation."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pawos-app.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the validated Extension App identity, icon, Package, Skill, and SGG suite binding."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/index.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the co-versioned managed Pi Package entry for the Extension App."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/package.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the App-owned Pi Package manifest and lifecycle identity."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/skills/zhanggui-wenshu/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the App-specific source-backed问数、对账、解释 Skill."
+    },
+    {
+      "path": "control-center-web/src/design/motion.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep operating-system reduced-motion floor regression coverage."
+    },
+    {
+      "path": "control-center-web/src/design/motion.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the operating-system reduced-motion preference as the product safety floor."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/ExtensionAppHost.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generic lazy Extension App host and visible failure boundary."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/installation.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep installed, enabled, unavailable, uninstall, and immediate-refresh lifecycle regressions."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/installation.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep Package-owned Extension App visibility and uninstall projection."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/registry.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep strict source-isolated manifest discovery without business-specific core branches."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/types.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generic Extension App manifest and component contract."
+    },
+    {
+      "path": "control-center-web/src/contracts/validation-runtime.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep generated contract validation off the startup path until a validated transport request needs it."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawRoomProjectionKeeper.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep minimized Room projections live through a lazy background subscriber without loading the Room runtime on an ordinary desktop."
+    },
+    {
+      "path": "control-center-web/tsconfig.app.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep Extension App sources inside the strict frontend typecheck boundary."
+    },
+    {
+      "path": "control-center-web/vite.config.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep Extension App tests inside the canonical Vitest gate."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the bounded PAWOS Extension App self-bootstrap workflow Skill."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/references/extension-app-contract.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App, Package, Skill, sandbox, install, and foreground contract."
+    },
+    {
+      "path": "scripts/validate_extension_app.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep deterministic source validation for Extension manifests, Packages, Skills, and registered suites."
     }
   ]
 }

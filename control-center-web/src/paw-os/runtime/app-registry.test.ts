@@ -18,4 +18,14 @@ describe('PAWOS App registry', () => {
   it('does not silently turn an unknown hash into a project window', () => {
     expect(pawAppForPath('/not-a-paw-app')).toBeNull();
   });
+
+  it('discovers source-isolated Extension Apps without adding business ids to the core registry', () => {
+    const extension = pawApps.find((app) => app.id === 'extension:zhanggui-wenshu');
+    expect(extension).toMatchObject({
+      label: '掌柜问数',
+      route: '/extensions/zhanggui-wenshu',
+      kind: 'agent',
+    });
+    expect(pawAppForPath('/extensions/zhanggui-wenshu')?.id).toBe('extension:zhanggui-wenshu');
+  });
 });

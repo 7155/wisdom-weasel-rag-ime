@@ -4,6 +4,7 @@ import {
   ChevronRight,
   CircleArrowUp,
   Clock3,
+  ExternalLink,
   History,
   MessageCircle,
   PackageCheck,
@@ -63,7 +64,11 @@ import {
 } from './capability-policy';
 import { usePluginCatalog } from './api';
 import { useProductIdentity } from '@/features/identity/product-identity';
-import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { openPawOsRoute, usePawOsAppSurface, usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { extensionAppInstallationMatches } from '@/paw-os/extensions/installation';
+import { extensionAppForPackage } from '@/paw-os/extensions/registry';
+import type { PawExtensionAppManifest } from '@/paw-os/extensions/types';
+import { PawAppIcon } from '@/paw-os/shell/PawAppIcon';
 import './plugins.css';
 
 type ToolRecord = CapabilityCatalogItem;
@@ -107,6 +112,7 @@ export function PluginsFeature() {
   const navigate = useNavigate();
   const identity = useProductIdentity();
   const appSurface = usePawOsAppSurface();
+  const desktop = usePawOsDesktop();
   const [searchParams] = useSearchParams();
   const sessionContextId = searchParams.get('sessionId')?.trim() ?? '';
   const packageContextId = searchParams.get('packageId')?.trim() ?? '';
@@ -609,13 +615,25 @@ export function PluginsFeature() {
   const catalogRowsBlock = (
     <div className="plugin-catalog" aria-label="受管插件目录">
       {versionItems.map((item) => {
+        const id = stringValue(item.id);
+        const extensionApp = extensionAppForPackage(id);
         const security = asRecord(item.security);
         const source = asRecord(item.source);
+        const canOpenExtensionApp = Boolean(
+          extensionApp
+          && item.installed === true
+          && item.enabled === true
+          && extensionAppInstallationMatches(extensionApp, item),
+        );
         return (
-          <article className="plugin-catalog__row" key={stringValue(item.id)}>
+          <article className="plugin-catalog__row" key={id}>
             <span className="plugin-catalog__identity">
-              <strong>{publicPluginDisplayName(stringValue(item.displayName, stringValue(item.id)))}</strong>
-              <small>{publicPluginSourceLabel(stringValue(item.publisher))} · {publicPluginSourceLabel(stringValue(source.label))}</small>
+              {extensionApp ? <ExtensionAppIdentity app={extensionApp} /> : null}
+              <strong>{publicPluginDisplayName(stringValue(item.displayName, id))}</strong>
+              <small>
+                {publicPluginSourceLabel(stringValue(item.publisher))} · {publicPluginSourceLabel(stringValue(source.label))}
+                {extensionApp ? <ExtensionAppBadge /> : null}
+              </small>
               <span>{stringValue(item.description)}</span>
             </span>
             <span className="plugin-catalog__facts">
@@ -625,13 +643,33 @@ export function PluginsFeature() {
             </span>
             <span className="plugin-catalog__action">
               <StatusBadge {...catalogStateBadge(item)} />
-              <Button
-                disabled={item.actionable !== true || (item.installed === true && item.updateAvailable !== true) || lifecyclePending}
-                leadingIcon={<PackageCheck size={15} />}
-                loading={validate.isPending || preview.isPending}
-                onClick={() => void previewCatalogAction(item)}
-                size="small"
-              >{item.updateAvailable === true ? '查看更新内容' : item.installed === true ? '已安装' : item.actionable === true ? '查看安装内容' : '查看说明'}</Button>
+              {canOpenExtensionApp ? (
+                <>
+                  <Button
+                    leadingIcon={<ExternalLink size={15} />}
+                    onClick={() => openPawOsRoute(desktop, extensionApp!.route)}
+                    size="small"
+                  >打开 {extensionApp!.label}</Button>
+                  {item.updateAvailable === true ? (
+                    <Button
+                      disabled={lifecyclePending}
+                      leadingIcon={<PackageCheck size={15} />}
+                      loading={validate.isPending || preview.isPending}
+                      onClick={() => void previewCatalogAction(item)}
+                      size="small"
+                      variant="quiet"
+                    >查看更新内容</Button>
+                  ) : null}
+                </>
+              ) : (
+                <Button
+                  disabled={item.actionable !== true || (item.installed === true && item.updateAvailable !== true) || lifecyclePending}
+                  leadingIcon={<PackageCheck size={15} />}
+                  loading={validate.isPending || preview.isPending}
+                  onClick={() => void previewCatalogAction(item)}
+                  size="small"
+                >{item.updateAvailable === true ? '查看更新内容' : item.installed === true ? '已安装' : item.actionable === true ? '查看安装内容' : '查看说明'}</Button>
+              )}
             </span>
           </article>
         );
@@ -760,8 +798,14 @@ export function PluginsFeature() {
     <div className="plugin-lifecycle__installed">
       {installedItems.length ? installedItems.map((plugin) => {
         const pluginId = stringValue(plugin.id);
+        const extensionApp = extensionAppForPackage(pluginId);
         const displayName = publicPluginDisplayName(stringValue(plugin.displayName, pluginId));
         const enabled = plugin.enabled === true;
+        const canOpenExtensionApp = Boolean(
+          extensionApp
+          && enabled
+          && extensionAppInstallationMatches(extensionApp, plugin),
+        );
         const permissions = stringArray(plugin.permissions);
         const resourceCount = packageResourceCount(plugin.resources);
         const resourceSummary = packageResourceSummary(plugin.resources);
@@ -792,12 +836,14 @@ export function PluginsFeature() {
             key={pluginId}
           >
             <div className="installed-plugin__identity">
+              {extensionApp ? <ExtensionAppIdentity app={extensionApp} /> : null}
               <strong>{displayName}</strong>
               <small>
                 <span>v{stringValue(plugin.version)}</span>
                 {pluginId && pluginId !== displayName ? <span>{pluginId}</span> : null}
                 {sourceKind ? <span>{publicPluginSourceLabel(sourceKind)}</span> : null}
                 {sourceRequested ? <span>{sourceRequested}</span> : null}
+                {extensionApp ? <ExtensionAppBadge /> : null}
               </small>
             </div>
             <span className="installed-plugin__state">
@@ -820,6 +866,13 @@ export function PluginsFeature() {
               </dl>
             ) : null}
             <div className="installed-plugin__actions">
+              {canOpenExtensionApp ? (
+                <Button
+                  leadingIcon={<ExternalLink size={15} />}
+                  onClick={() => openPawOsRoute(desktop, extensionApp!.route)}
+                  size="small"
+                >打开 {extensionApp!.label}</Button>
+              ) : null}
               {update ? (
                 <Button
                   disabled={lifecyclePending}
@@ -1062,6 +1115,19 @@ export function PluginsFeature() {
       {nativeAppCenter ? nativeBody : webBody}
     </ManagementPage>
   );
+}
+
+function ExtensionAppIdentity({ app }: { app: PawExtensionAppManifest }) {
+  return (
+    <span aria-hidden="true" className="plugin-extension-app-identity">
+      <PawAppIcon appId={app.id} size={24} />
+      <span>{app.shortLabel}</span>
+    </span>
+  );
+}
+
+function ExtensionAppBadge() {
+  return <span className="plugin-extension-app-badge">PAWOS App</span>;
 }
 
 function NativeConsole({

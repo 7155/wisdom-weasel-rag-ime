@@ -21,11 +21,11 @@ const approvedAssets: ReadonlyArray<{ appId: PawIdentityIconId; symbol: string; 
 ];
 
 describe('PAWOS approved App identity icons', () => {
-  it('maps the eleven top-level Apps and the Room collaboration identity to the approved wall', () => {
+  it('keeps the eleven built-in Apps and the Room collaboration identity on the approved wall', () => {
     const { container } = render(<>{approvedAssets.map(({ appId }) => <PawAppIcon appId={appId} key={appId} />)}</>);
     const icons = [...container.querySelectorAll<SVGElement>('[data-paw-app-icon]')];
 
-    expect(pawApps).toHaveLength(11);
+    expect(pawApps).toHaveLength(12);
     expect(pawApps.map((app) => app.id)).not.toContain('room');
     expect(icons).toHaveLength(12);
     for (const asset of approvedAssets) {
@@ -33,6 +33,15 @@ describe('PAWOS approved App identity icons', () => {
       expect(icon).toHaveAttribute('data-paw-approved-symbol', asset.symbol);
       expect(icon).toHaveAttribute('data-paw-icon-color', asset.color);
     }
+  });
+
+  it('renders a manifest-owned Extension App icon without adding it to the built-in wall', () => {
+    const { container } = render(<PawAppIcon appId="extension:zhanggui-wenshu" />);
+    const icon = container.querySelector('[data-paw-app-icon="extension:zhanggui-wenshu"]');
+
+    expect(icon).toHaveAttribute('data-paw-approved-symbol', 'app-extension-analytics');
+    expect(icon).toHaveAttribute('data-paw-icon-color', '#087F68');
+    expect(icon?.querySelectorAll('[data-paw-icon-art] rect')).toHaveLength(3);
   });
 
   it('reuses the approved 48px colour tile and restrained sheen for every identity', () => {

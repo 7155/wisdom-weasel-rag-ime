@@ -1477,7 +1477,8 @@ class AgentDelegationTests(unittest.TestCase):
 
             _wait_until(
                 lambda: coordinator.store.get_run(run_id)["resultContextScheduledAtMs"]
-                is not None
+                is not None,
+                timeout=10.0,
             )
             _wait_until(lambda: len(terminal_parent_progress()) == 1)
             run = coordinator.store.get_run(run_id)

@@ -10,6 +10,7 @@ import {
   WAYFINDER_DRAG_MIME,
   placeWayfinderProjectPanel,
 } from './PawWayfinderWork';
+import { PawWorkDirectoryProvider } from './PawWorkDirectory';
 
 /* The desktop panel is a projection, not a manager: it must fold the raw
  * directory to desktop density, keep its own scroll, and hand every click to
@@ -51,6 +52,8 @@ describe('PawWayfinderWork', () => {
       },
     });
 
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     expect(await screen.findAllByRole('button', { name: /重构 Wayfinder 列表/ })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: /较早一段/ })).not.toBeInTheDocument();
 
@@ -58,7 +61,7 @@ describe('PawWayfinderWork', () => {
     expect(screen.getByRole('button', { name: /较早一段/ })).toBeInTheDocument();
   });
 
-  it('filters rows through the panel search without leaving the desktop', async () => {
+  it('keeps desktop files directly on the plane without a project-dashboard toolbar', async () => {
     renderPanel({
       routes: {
         'agent.sessions.list': { ok: true, items: [
@@ -69,11 +72,15 @@ describe('PawWayfinderWork', () => {
       },
     });
 
-    await screen.findByRole('button', { name: /整理知识库/ });
-    fireEvent.change(screen.getByRole('searchbox', { name: '搜索最近工作' }), { target: { value: '重构' } });
-
-    expect(screen.getByRole('button', { name: /重构列表/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /整理知识库/ })).not.toBeInTheDocument();
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await waitFor(() => expect(panel.querySelector('[data-project-folder]')).toBeInTheDocument());
+    expect(panel.querySelector('[data-project-folder][open]')).toBeNull();
+    await openProjectFolder(panel);
+    expect(within(panel).getByRole('button', { name: /重构列表/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /整理知识库/ })).toBeInTheDocument();
+    expect(within(panel).queryByRole('searchbox', { name: '搜索最近工作' })).not.toBeInTheDocument();
+    expect(within(panel).queryByText('项目桌面')).not.toBeInTheDocument();
+    expect(panel.querySelector('[data-wayfinder-archive]')).toBeNull();
   });
 
   it('rests the 更早 bucket collapsed so stale history never fills the first screen', async () => {
@@ -88,6 +95,8 @@ describe('PawWayfinderWork', () => {
       },
     });
 
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     await screen.findByRole('button', { name: /今天的工作/ });
     expect(screen.queryByRole('button', { name: /上个月的工作/ })).not.toBeInTheDocument();
 
@@ -105,6 +114,8 @@ describe('PawWayfinderWork', () => {
       },
     });
 
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     fireEvent.click(await screen.findByRole('button', { name: /继续修复投影/ }));
 
     // Desktop persistence is a trailing debounce, so the snapshot lands one
@@ -138,6 +149,7 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     expect(within(panel).getAllByText('paw').length).toBeGreaterThanOrEqual(1);
     expect(within(panel).getByText('当前公开内容：正在建立 Trace 关联')).toBeInTheDocument();
     expect(within(panel).getByText('阻塞：等待沙盒授权')).toBeInTheDocument();
@@ -166,14 +178,81 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
+    await waitFor(() => expect(panel.querySelectorAll('[data-project-folder]')).toHaveLength(2));
     const folders = panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder]');
     expect(folders).toHaveLength(2);
-    expect(panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder][open]')).toHaveLength(1);
+    expect(panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder][open]')).toHaveLength(0);
 
-    fireEvent.click(folders[1]!.querySelector('summary')!);
+    fireEvent.keyDown(folders[0]!.querySelector('summary')!, { key: ' ' });
+    expect(panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder][open]')).toHaveLength(1);
+    fireEvent.keyDown(folders[1]!.querySelector('summary')!, { key: 'Enter' });
     expect(panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder][open]')).toHaveLength(1);
     expect(folders[1]).toHaveAttribute('open');
     expect(folders[0]).not.toHaveAttribute('open');
+  });
+
+  it('walks the freely positioned desktop icons in all four spatial directions', async () => {
+    renderPanel({
+      routes: {
+        'agent.sessions.list': { ok: true, items: [
+          sessionRecord('s-a', '项目 A', { workspaceRoots: ['/work/a'] }),
+          sessionRecord('s-b', '项目 B', { workspaceRoots: ['/work/b'] }),
+          sessionRecord('s-c', '项目 C', { workspaceRoots: ['/work/c'] }),
+          sessionRecord('s-d', '项目 D', { workspaceRoots: ['/work/d'] }),
+        ] },
+        'agent.rooms.list': { ok: true, items: [] },
+      },
+    });
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await waitFor(() => expect(panel.querySelectorAll('[data-wayfinder-project]')).toHaveLength(4));
+    const canvas = panel.querySelector('[data-wayfinder-canvas]') as HTMLElement;
+    const icons = Array.from(panel.querySelectorAll<HTMLElement>('[data-wayfinder-project]'));
+    const rects = [
+      domRect(20, 20, 80, 80),
+      domRect(140, 20, 80, 80),
+      domRect(20, 140, 80, 80),
+      domRect(140, 140, 80, 80),
+    ];
+    icons.forEach((icon, index) => Object.defineProperty(icon, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rects[index],
+    }));
+
+    icons[0]!.focus();
+    fireEvent.keyDown(canvas, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(icons[1]);
+    fireEvent.keyDown(canvas, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(icons[3]);
+    fireEvent.keyDown(canvas, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(icons[2]);
+    fireEvent.keyDown(canvas, { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(icons[0]);
+  });
+
+  it('names simultaneous running and attention state without hiding either fact', async () => {
+    renderPanel({
+      routes: {
+        'agent.sessions.list': { ok: true, items: [sessionRecord('partner-1', '协作修复 · Agent 1', {
+          status: 'busy',
+          roomParticipant: { roomId: 'room-mixed' },
+          workspaceRoots: ['/work/paw'],
+        })] },
+        'agent.rooms.list': { ok: true, items: [{
+          id: 'room-mixed',
+          title: '协作修复',
+          status: 'active',
+          updatedAtMs: NOW,
+          workspaceRoots: ['/work/paw'],
+          participants: [],
+          workItems: [{ state: 'blocked', blocker: { reason: '等待确认' }, updatedAtMs: NOW }],
+        }] },
+      },
+    });
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    const state = await within(panel).findByText('运行 1 · 待处理 1');
+    expect(state).toHaveAccessibleName('1 个进行中 · 1 个需处理');
   });
 
   it('flips and clamps an expanded project panel inside the canvas at the right-bottom edge', () => {
@@ -205,6 +284,7 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     const canvas = panel.querySelector('[data-wayfinder-canvas]') as HTMLDivElement;
     const shell = panel.querySelector('[data-project-folder]')?.parentElement as HTMLDivElement;
     const projectWindow = within(panel).getByRole('dialog', { name: 'edge 项目窗口' });
@@ -248,9 +328,8 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
-    const contextTrigger = within(panel).getByRole('button', { name: '查看 paw 项目上下文' });
-    fireEvent.change(within(panel).getByRole('searchbox', { name: '搜索最近工作' }), { target: { value: 'Trace' } });
-    fireEvent.click(contextTrigger);
+    const contextTrigger = panel.querySelector<HTMLElement>('[data-wayfinder-project]')!;
+    fireEvent.contextMenu(contextTrigger);
 
     const sheet = within(panel).getByRole('dialog', { name: 'paw 项目上下文' });
     expect(sheet).toHaveAttribute('aria-modal', 'false');
@@ -300,7 +379,7 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
-    fireEvent.click(within(panel).getByRole('button', { name: '查看 paw 项目上下文' }));
+    fireEvent.contextMenu(panel.querySelector<HTMLElement>('[data-wayfinder-project]')!);
 
     const sheet = within(panel).getByRole('dialog', { name: 'paw 项目上下文' });
     fireEvent.click(within(sheet).getByRole('button', { name: '在 Files 中打开 /work/paw' }));
@@ -330,7 +409,7 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
-    fireEvent.click(within(panel).getByRole('button', { name: '查看 room 项目上下文' }));
+    fireEvent.contextMenu(panel.querySelector<HTMLElement>('[data-wayfinder-project]')!);
 
     const sheet = within(panel).getByRole('dialog', { name: 'room 项目上下文' });
     expect(within(sheet).getByText('/work/room')).toBeInTheDocument();
@@ -347,18 +426,18 @@ describe('PawWayfinderWork', () => {
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
     const folder = panel.querySelector('[data-project-folder]');
-    const contextTrigger = within(panel).getByRole('button', { name: '查看 paw 项目上下文' });
+    const contextTrigger = folder!.querySelector<HTMLElement>('summary')!;
     expect(folder).not.toBeNull();
 
     fireEvent.click(folder!.querySelector('summary')!);
     expect(folder).not.toHaveAttribute('open');
-    fireEvent.click(contextTrigger);
+    fireEvent.keyDown(contextTrigger, { key: 'F10', shiftKey: true });
 
     expect(within(panel).getByRole('dialog', { name: 'paw 项目上下文' })).toBeInTheDocument();
     expect(folder).not.toHaveAttribute('open');
   });
 
-  it('reveals matching dialogue files after a project folder was folded', async () => {
+  it('keeps a deliberately folded project closed on the direct desktop plane', async () => {
     renderPanel({
       routes: {
         'agent.sessions.list': { ok: true, items: [sessionRecord('s-1', 'Trace 地基', {
@@ -374,12 +453,11 @@ describe('PawWayfinderWork', () => {
     fireEvent.click(folder!.querySelector('summary')!);
     expect(folder).not.toHaveAttribute('open');
 
-    fireEvent.change(within(panel).getByRole('searchbox', { name: '搜索最近工作' }), { target: { value: 'Trace' } });
-    expect(folder).toHaveAttribute('open');
-    expect(within(panel).getByText('Trace 地基')).toBeVisible();
+    expect(folder).not.toHaveAttribute('open');
+    expect(within(panel).queryByText('Trace 地基')).not.toBeInTheDocument();
   });
 
-  it('moves a project folder and archives then restores its dialogue icon', async () => {
+  it('moves a project folder on the desktop coordinate plane', async () => {
     renderPanel({
       routes: {
         'agent.sessions.list': { ok: true, items: [sessionRecord('s-drag', '一个需要完整显示的长对话名称', { workspaceRoots: ['/work/paw'] })] },
@@ -388,6 +466,7 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     const folder = panel.querySelector('[data-project-folder]') as HTMLDetailsElement;
     const project = panel.querySelector('[data-wayfinder-project]') as HTMLElement;
     const row = panel.querySelector('[data-dialogue-file]') as HTMLButtonElement;
@@ -419,31 +498,10 @@ describe('PawWayfinderWork', () => {
       expect(snapshot.wayfinder?.iconPositions?.['project:/work/paw']).toEqual({ x: 162, y: 124 });
     });
 
-    const archive = within(panel).getByRole('button', { name: '归档 0 个图标' });
-    const rowTransfer = dragTransfer();
-    fireEvent.dragStart(row, { dataTransfer: rowTransfer });
-    fireDrop(archive, rowTransfer);
-
-    await waitFor(() => {
-      expect(panel.querySelector('[data-dialogue-file]')).toBeNull();
-      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
-        wayfinder?: { archived?: string[] };
-      };
-      expect(snapshot.wayfinder?.archived).toContain('session:s-drag');
-    });
-
-    const archived = within(panel).getByRole('button', { name: '恢复 一个需要完整显示的长对话名称' });
-    fireEvent.click(archived);
-    await waitFor(() => expect(panel.querySelector('[data-dialogue-file]')).toBeInTheDocument());
-    await waitFor(() => {
-      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
-        wayfinder?: { archived?: string[] };
-      };
-      expect(snapshot.wayfinder?.archived).not.toContain('session:s-drag');
-    });
+    expect(panel.querySelector('[data-dialogue-file]')).toBeInTheDocument();
   });
 
-  it('archives and restores a project folder as a PAWOS-only projection', async () => {
+  it('does not reintroduce an archive tray above project folders', async () => {
     const transport = new MockControlTransport({
       routes: {
         'agent.sessions.list': { ok: true, items: [sessionRecord('s-project-archive', '项目内对话', { workspaceRoots: ['/work/archive-project'] })] },
@@ -452,39 +510,19 @@ describe('PawWayfinderWork', () => {
     });
     render(
       <ControlTransportProvider transport={transport}>
-        <PawDesktopProvider><PawWayfinderWork /></PawDesktopProvider>
+        <PawDesktopProvider><PawWorkDirectoryProvider pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider></PawDesktopProvider>
       </ControlTransportProvider>,
     );
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
-    const project = panel.querySelector('[data-wayfinder-project]') as HTMLElement;
-    const archive = panel.querySelector('[data-wayfinder-archive]') as HTMLElement;
-    const projectTransfer = dragTransfer();
-
-    fireEvent.dragStart(project, { dataTransfer: projectTransfer });
-    fireDrop(archive, projectTransfer);
-
-    await waitFor(() => {
-      expect(panel.querySelector('[data-project-folder]')).toBeNull();
-      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
-        wayfinder?: { archived?: string[] };
-      };
-      expect(snapshot.wayfinder?.archived).toContain('project:/work/archive-project');
-    });
+    expect(panel.querySelector('[data-project-folder]')).toBeInTheDocument();
+    expect(panel.querySelector('[data-wayfinder-archive]')).toBeNull();
+    expect(panel.querySelector('[data-wayfinder-archive-tray]')).toBeNull();
     expect(transport.requests.map(({ request }) => request.pathId)).toEqual([
       'agent.sessions.list',
       'agent.rooms.list',
+      'agent.memoryMaintenance.run',
     ]);
-
-    const archived = within(panel).getByRole('button', { name: '恢复项目 archive-project' });
-    fireEvent.click(archived);
-    await waitFor(() => {
-      expect(panel.querySelector('[data-project-folder]')).toBeInTheDocument();
-      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
-        wayfinder?: { archived?: string[] };
-      };
-      expect(snapshot.wayfinder?.archived).not.toContain('project:/work/archive-project');
-    });
   });
 
   it('keeps a dialogue file visible after moving it into another project folder', async () => {
@@ -499,8 +537,10 @@ describe('PawWayfinderWork', () => {
     });
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
+    await waitFor(() => expect(panel.querySelectorAll('[data-project-folder]')).toHaveLength(2));
     const folders = panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder]');
     expect(folders).toHaveLength(2);
+    fireEvent.doubleClick(folders[0]!.querySelector('summary')!);
     const sourceFile = within(folders[0]!).getByRole('button', { name: /来源对话/ });
     const targetFolder = folders[1]!;
     const transfer = dragTransfer();
@@ -548,11 +588,12 @@ describe('PawWayfinderWork', () => {
           'agent.rooms.list': { ok: true, items: [] },
         },
       })}>
-        <PawDesktopProvider><SelectionHarness /></PawDesktopProvider>
+        <PawDesktopProvider><PawWorkDirectoryProvider pollIntervalMs={60_000}><SelectionHarness /></PawWorkDirectoryProvider></PawDesktopProvider>
       </ControlTransportProvider>,
     );
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
     await screen.findByRole('button', { name: /桌面上的散文件/ });
     const row = within(panel).getByRole('button', { name: /桌面上的散文件/ });
     const canvas = panel.querySelector('[data-wayfinder-canvas]') as HTMLDivElement;
@@ -586,7 +627,14 @@ describe('PawWayfinderWork', () => {
     });
 
     fireEvent.click(loose);
-    expect(loose).toHaveAttribute('aria-selected', 'true');
+    expect(loose).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(loose, { key: 'Enter' });
+    await waitFor(() => {
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        windows?: Record<string, unknown>;
+      };
+      expect(snapshot.windows?.['agent:s-loose']).toBeTruthy();
+    });
 
     const folder = panel.querySelector('[data-project-folder]') as HTMLDetailsElement;
     const backTransfer = dragTransfer();
@@ -606,7 +654,7 @@ describe('PawWayfinderWork', () => {
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
   });
 
-  it('loads dialogue files beyond the initial bounded Session and Room windows', async () => {
+  it('keeps the desktop directory read bounded without rendering a load-more panel', async () => {
     const sessions = Array.from({ length: 101 }, (_, index) => sessionRecord(
       `session-${index}`,
       index === 100 ? '最早 Session 对话' : `Session ${index}`,
@@ -633,21 +681,16 @@ describe('PawWayfinderWork', () => {
     } });
     render(
       <ControlTransportProvider transport={transport}>
-        <PawDesktopProvider><PawWayfinderWork /></PawDesktopProvider>
+        <PawDesktopProvider><PawWorkDirectoryProvider pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider></PawDesktopProvider>
       </ControlTransportProvider>,
     );
 
     const panel = await screen.findByRole('region', { name: '最近工作' });
     expect(within(panel).queryByText('最早 Session 对话')).not.toBeInTheDocument();
     expect(within(panel).queryByText('最早 Room 协作')).not.toBeInTheDocument();
-    fireEvent.click(within(panel).getByRole('button', { name: '加载更多工作记录' }));
-
-    await waitFor(() => expect(within(panel).getByText('1 个项目 · 202 个对话')).toBeInTheDocument());
-    fireEvent.change(within(panel).getByRole('searchbox', { name: '搜索最近工作' }), { target: { value: '最早' } });
-    expect(await within(panel).findByText('最早 Session 对话')).toBeInTheDocument();
-    expect(within(panel).getByText('最早 Room 协作')).toBeInTheDocument();
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.sessions.list' && request.query?.limit === 200)).toBe(true);
-    expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.list' && request.query?.limit === 200)).toBe(true);
+    expect(within(panel).queryByRole('button', { name: '加载更多工作记录' })).not.toBeInTheDocument();
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.sessions.list' && request.query?.limit === 100)).toBe(true);
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.list' && request.query?.limit === 100)).toBe(true);
   });
 });
 
@@ -655,10 +698,18 @@ function renderPanel(options: MockControlTransportOptions) {
   return render(
     <ControlTransportProvider transport={new MockControlTransport(options)}>
       <PawDesktopProvider>
-        <PawWayfinderWork />
+        <PawWorkDirectoryProvider pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider>
       </PawDesktopProvider>
     </ControlTransportProvider>,
   );
+}
+
+async function openProjectFolder(panel: HTMLElement, index = 0): Promise<HTMLDetailsElement> {
+  await waitFor(() => expect(panel.querySelectorAll('[data-project-folder]').length).toBeGreaterThan(index));
+  const folder = panel.querySelectorAll<HTMLDetailsElement>('[data-project-folder]')[index]!;
+  fireEvent.doubleClick(folder.querySelector('summary')!);
+  expect(folder).toHaveAttribute('open');
+  return folder;
 }
 
 function sessionRecord(id: string, title: string, overrides: Record<string, unknown> = {}) {

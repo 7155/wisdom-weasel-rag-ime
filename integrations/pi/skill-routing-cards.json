@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 17,
-    "projectedBundledCards": 5,
-    "canonicalCards": 40
+    "bundledSkillEntries": 18,
+    "projectedBundledCards": 6,
+    "canonicalCards": 41
   },
   "collisionPolicy": {
     "default": "reject",
@@ -20,6 +20,7 @@
         "memory-curation",
         "orchestrate-session",
         "organize-work-documents",
+        "pawos-app-builder",
         "pawos-system",
         "plugin-creator",
         "project-maintainer",
@@ -31,7 +32,7 @@
     }
   },
   "coverage": {
-    "representedSourceEntries": 49,
+    "representedSourceEntries": 50,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -120,6 +121,20 @@
       "does": "读取最小上下文并路由现有 owner。",
       "input": "目标、工作区、期望结果。",
       "output": "说明或变更、验证与边界。"
+    },
+    {
+      "name": "pawos-app-builder",
+      "when": [
+        "制作或安装 PAWOS 垂直 App",
+        "为垂直 App 创建专属 Skill"
+      ],
+      "notFor": [
+        "内建 App 小改",
+        "绕过安装确认"
+      ],
+      "does": "生成隔离 App、Skill 与 Trace/Eval。",
+      "input": "场景、模式、验收。",
+      "output": "候选、证据、安装回执。"
     },
     {
       "name": "review-agent",

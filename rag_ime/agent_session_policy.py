@@ -19,6 +19,7 @@ from .agent_tool_ids import (
     DANGEROUS_MODE_CONFIRMATION,
     READONLY_TOOL_PROFILE,
 )
+from .agent_workspace_roots import existing_workspace_roots
 from .contracts.json_schema import validate_contract
 
 
@@ -380,6 +381,10 @@ class AgentSessionPolicyService:
             if isinstance(roots, list)
             else [str(value) for value in session.get("workspaceRoots") or []]
         )
+        if isinstance(roots, list) and requested_mode == "coordinator":
+            effective_roots = list(
+                existing_workspace_roots(effective_roots)
+            )
         scope_changed = (
             workspace_scope_sha256(effective_roots)
             != str(session.get("workspaceScopeSha256") or "")
@@ -452,7 +457,7 @@ class AgentSessionPolicyService:
                 else None
             ),
             workspace_roots=(
-                [str(value) for value in roots]
+                effective_roots
                 if isinstance(roots, list)
                 else None
             ),

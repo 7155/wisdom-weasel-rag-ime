@@ -21,8 +21,9 @@ are not substitutes for the selected transcript/Trace evidence.
    `trace_diagnostics.inspect({op: "inspect", targets: [...]})` once. Do not
    silently replace a missing target with its latest neighbor.
 2. Treat the returned inspection, fingerprint, Trace bindings, coverage,
-   evidence IDs, hard gates, and deterministic metrics as frozen facts for this
-   report. Never cite an evidence ID outside that inspection.
+   evidence IDs, requirement candidates, environment snapshot, hard gates, and
+   deterministic metrics as frozen facts for this report. Never cite an
+   evidence ID or requirement ID outside that inspection.
 3. Resolve the selected object to stable `sessionId`, `roomId`, `runId`,
    `traceId`, WorkItem IDs and an explicit time or turn range. A Room case
    includes its Facilitator, planet Sessions, subagents, dispatches, public
@@ -68,16 +69,46 @@ Choose the smallest relevant diagnostic lane:
   repeated Tool calls, duplicated context, unnecessary delegation and rework.
   Report waste only with comparable traces or a clear counterfactual workflow.
 
+Before opening a lane, prove its applicability from the selected object and the
+frozen inspection. The object type supplies only a starting hypothesis:
+
+- a Memory maintenance run starts with source read, consolidation output,
+  conflict/deduplication, validation, persistence, and the Runtime failure
+  chain; it does not automatically activate Knowledge/RAG retrieval;
+- a Room target activates collaboration only when the inspection contains
+  Room, WorkItem, dispatch, Partner, or child-Agent bindings;
+- a standalone or background run without those bindings has collaboration
+  `not_applicable`; their absence is not a finding;
+- Context and efficiency activate only when the inspection exposes the
+  corresponding source, budget, token, byte, timing, retry, or comparison
+  evidence.
+
+After `inspect`, state the active primary lane, optional secondary lanes, and
+inactive lanes. A lane with no matching capability is `not_applicable`, not
+`unknown`. Do not emit a `judgeScore` or `finding` for an inactive lane. Keep
+one primary cause and at most three direct consequences or indispensable
+evidence gaps. Never manufacture one finding per score row.
+
 Keep observations, hypotheses and conclusions in distinct report fields. Run one
 discriminating experiment at a time. A plausible stack frame or repeated error
 message is not yet a root cause if an upstream owner first produced the bad
 state.
 
+Assess only requirement IDs already frozen by Runtime. A user message row is a
+source candidate, not proof that it was satisfied. Do not split, merge, or
+invent requirements inside the result envelope. Likewise, chronological
+adjacency is not causality: emit a `causalLink` only when the cited public
+evidence supports the direction, and keep its authority as
+`ai_judge_estimate`.
+
 ## Score Without Inventing Certainty
 
-Always render these eight rows, even when a row cannot be scored: task
-completion, evidence and diagnosis, Tool/Runtime reliability, Context, Room
-collaboration, Memory/RAG, efficiency, and repair quality.
+The deterministic web report always renders these eight rows: task completion,
+evidence and diagnosis, Tool/Runtime reliability, Context, Room collaboration,
+Memory/RAG, efficiency, and repair quality. The diagnostic Agent does not need
+to emit eight `judgeScores`; it emits semantic scores only for active lanes
+supported by evidence. Inactive rows remain `not_applicable` in the report
+projection instead of becoming speculative prose.
 
 - Runtime calculations are `deterministic`; frozen labelled EvalRuns are
   `ground_truth`; semantic 0–3 assessments are `ai_judge_estimate`. Never blend
@@ -104,13 +135,24 @@ Produce the smallest candidate change that addresses the confirmed owner: code, 
 prompt, routing, WorkItem assignment, retrieval profile or operational action.
 Label unsupported explanations as hypotheses.
 
+Trace verification requires a governed sandbox replay. For a registered
+vertical suite, use the installed `vertical-agent-sandbox` Connector and retain
+its SandboxRun, Trace and EvalRun identities. For a workspace repair, run the
+representative test through the Host-owned `workspace_shell` command harness
+with network blocked; an ordinary or model-claimed successful command is not
+sandbox evidence. If no representative replay exists, keep repair quality
+`unknown` or `blocked` and do not mark the candidate verified.
+
 The diagnostic Session is always read-only: it has no write roots and no
 mutation tools. “Repair” is a separate explicit user action that creates an
-ordinary Agent Session under its normal per-action approval and the exact
-authorized workspace roots. Creating a repair handoff does not mean that a
-repair was applied. Report candidate/unapplied when authorization is absent or
-denied. Only a new Trace/Eval receipt after the authorized Agent action may mark
-the repair verified; never infer install or foreground acceptance.
+ordinary full-automation Agent Session with the exact authorized workspace
+roots and the user's one-time `ENABLE_FULL_TRUST` confirmation. Concrete
+operations remain workspace-fenced and are arbitrated by the independent Luna
+Max approval Agent; the repair Agent does not ask the user again for every
+Tool. Creating a repair handoff does not mean that a repair was applied. Report
+candidate/unapplied when authorization is absent or denied. Only a new
+Trace/Eval receipt after the authorized Agent action may mark the repair
+verified; never infer install or foreground acceptance.
 
 The report must stop at a candidate repair. The UI asks the user whether to
 continue and which target owns the repair. Only the explicit confirmation may
@@ -130,7 +172,23 @@ End the diagnostic Session with exactly one machine-readable result envelope:
 
 The JSON must match the field contract in `references/report-contract.md`.
 Runtime re-parses it, rejects unknown evidence IDs, and persists an immutable
-report revision. Text outside the envelope is explanatory only and is not the
-web report authority. Prefer a short set of high-signal findings over a dump of
-events. Do not expose private transcript text, raw Tool arguments, Provider
-context, credentials, or machine paths.
+report revision. The result may assess frozen requirements and add explicit
+evidence-to-evidence causal links; it must not rewrite the frozen source text,
+environment, timeline, or evidence catalog. Text outside the envelope is
+explanatory only and is not the
+web report authority. The in-product engineering audit page and downloadable
+HTML are deterministic projections of that persisted revision; the Skill never
+emits executable HTML, CSS, or JavaScript. Prefer a short set of high-signal
+findings over a dump of events. Do not expose private transcript text, raw Tool
+arguments, Provider context, credentials, or machine paths.
+
+Keep explanatory text before the envelope to at most six lines: report identity,
+primary cause, impact, the most important unknown, and the next authorized
+action. Do not duplicate the full report in conversation prose; the Session UI
+projects the completed envelope as a compact receipt and the persisted web page
+owns the detailed presentation.
+
+Read the HTML projection boundary in
+[references/report-contract.md](references/report-contract.md) before changing
+the result envelope for presentation needs. A visual requirement must not add
+unverified prose or private evidence to the report contract.

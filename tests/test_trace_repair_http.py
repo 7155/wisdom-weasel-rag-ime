@@ -91,7 +91,16 @@ def _repair_snapshot(
 ) -> dict[str, object]:
     events: list[dict[str, object]] = []
     if include_test:
-        result: dict[str, object] = {"exitCode": test_exit_code}
+        result: dict[str, object] = {
+            "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+            "commandSha256": "b" * 64,
+            "exitCode": test_exit_code,
+            "networkAllowed": False,
+            "timedOut": False,
+            "outputLimited": False,
+            "sourceReadOnly": False,
+            "temporaryWritesDiscarded": False,
+        }
         if malicious_nested_change:
             result["debug"] = {
                 "eventType": "tool_finished",

@@ -135,6 +135,104 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
             ],
         }
 
+    def _create_report(self) -> tuple[str, str, dict[str, object]]:
+        source_id, diagnostic_id = self._sessions()
+        report = self.service.create_trace_diagnostic_report(
+            {
+                "diagnosticSessionId": diagnostic_id,
+                "title": "自动收束报告",
+                "targets": [
+                    {"kind": "session", "id": source_id, "title": "source"}
+                ],
+            }
+        )
+        return source_id, diagnostic_id, report
+
+    def test_repair_authorization_requires_a_confirmed_full_automation_session(self) -> None:
+        repair = self.service.create_session(
+            {
+                "title": "Trace full-auto repair",
+                "mode": "coordinator",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": [str(self.root)],
+            }
+        )["session"]
+        payload = {
+            "expectedRevision": 2,
+            "findingId": "finding:repair",
+            "sourceScope": "session:source",
+            "sourceTraceId": "trace:source",
+            "failureRef": "evidence:failure",
+            "repairSessionId": repair["id"],
+        }
+        with patch.object(
+            self.service.trace_diagnostic_reports,
+            "authorize_repair",
+            return_value={"ok": True},
+        ) as authorize:
+            self.assertEqual(
+                self.service.authorize_trace_diagnostic_repair("report:repair", payload),
+                {"ok": True},
+            )
+        authorize.assert_called_once_with(
+            "report:repair",
+            expected_revision=2,
+            finding_id="finding:repair",
+            source_scope="session:source",
+            source_trace_id="trace:source",
+            failure_ref="evidence:failure",
+            repair_session_id=repair["id"],
+        )
+
+        per_action = self.service.create_session(
+            {
+                "title": "Trace manual repair",
+                "mode": "coordinator",
+                "executionMode": "per_action",
+                "workspaceRoots": [str(self.root)],
+            }
+        )["session"]
+        with self.assertRaisesRegex(ValueError, "full_trust mode"):
+            self.service.authorize_trace_diagnostic_repair(
+                "report:repair",
+                {**payload, "repairSessionId": per_action["id"]},
+            )
+
+    def test_terminal_diagnostic_session_finalizes_report_without_trace_page_mounted(self) -> None:
+        _source_id, diagnostic_id, report = self._create_report()
+
+        with patch.object(
+            self.service,
+            "messages",
+            return_value=self._structured_snapshot(),
+        ):
+            self.service.events.publish(
+                diagnostic_id,
+                "turn_completed",
+                {"terminalEvent": "agent_settled"},
+                turn_id="turn:diagnostic",
+            )
+            self.assertTrue(self.service.events.flush())
+
+        persisted = self.service.trace_diagnostic_reports.get(str(report["reportId"]))
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted["status"], "completed")
+        self.assertEqual(persisted["result"]["summary"], "结构化诊断已保存。")
+
+    def test_get_reconciles_an_older_generating_report_when_result_is_already_terminal(self) -> None:
+        _source_id, _diagnostic_id, report = self._create_report()
+
+        with patch.object(
+            self.service,
+            "messages",
+            return_value=self._structured_snapshot(),
+        ):
+            reconciled = self.service.trace_diagnostic_report(str(report["reportId"]))
+
+        self.assertEqual(reconciled["status"], "completed")
+        self.assertEqual(reconciled["result"]["summary"], "结构化诊断已保存。")
+
     @requires_loopback_bind
     def test_http_create_finalize_list_get_persists_completed_report_in_sqlite(self) -> None:
         source_id, diagnostic_id = self._sessions()

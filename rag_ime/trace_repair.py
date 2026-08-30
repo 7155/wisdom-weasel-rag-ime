@@ -118,6 +118,7 @@ def _canonical_signal(
     command: object = "",
     operation: object = "",
     failed: bool,
+    sandboxed: bool = False,
 ) -> dict[str, object] | None:
     if not isinstance(identity, str) or _SAFE_CANONICAL_ID_RE.fullmatch(identity) is None:
         return None
@@ -136,6 +137,7 @@ def _canonical_signal(
         "isChange": is_change,
         "isTest": is_test,
         "failed": failed,
+        "sandboxed": sandboxed if is_test else False,
     }
 
 
@@ -152,11 +154,23 @@ def _session_tool_signal(event: Mapping[str, object]) -> dict[str, object] | Non
         and not isinstance(exit_code, bool)
         and exit_code != 0
     )
+    command_sha256 = result.get("commandSha256")
+    sandboxed = bool(
+        result.get("schemaVersion") == "rag-ime.workspace-command-receipt.v1"
+        and isinstance(command_sha256, str)
+        and re.fullmatch(r"[a-f0-9]{64}", command_sha256) is not None
+        and result.get("networkAllowed") is False
+        and result.get("timedOut") is False
+        and result.get("outputLimited") is False
+        and isinstance(result.get("sourceReadOnly"), bool)
+        and isinstance(result.get("temporaryWritesDiscarded"), bool)
+    )
     return _canonical_signal(
         identity=payload.get("toolCallId") or event.get("eventId"),
         tool_name=payload.get("toolName"),
         command=args.get("command"),
         failed=failed,
+        sandboxed=sandboxed,
     )
 
 
@@ -265,13 +279,17 @@ def derive_repair_evidence(
             current["failed"] = bool(current.get("failed")) or bool(signal.get("failed"))
             current["isChange"] = bool(current.get("isChange")) or bool(signal.get("isChange"))
             current["isTest"] = bool(current.get("isTest")) or bool(signal.get("isTest"))
+            current["sandboxed"] = bool(current.get("sandboxed")) or bool(
+                signal.get("sandboxed")
+            )
             if str(current.get("toolName") or "tool") == "tool":
                 current["toolName"] = signal.get("toolName")
     signals = list(by_identity.values())
 
     changes = [item for item in signals if item.get("isChange") and not item.get("failed")]
     tests = [item for item in signals if item.get("isTest")]
-    passed_tests = [item for item in tests if not item.get("failed")]
+    successful_tests = [item for item in tests if not item.get("failed")]
+    passed_tests = [item for item in successful_tests if item.get("sandboxed")]
     failed_tests = [item for item in tests if item.get("failed")]
     test_status = "failed" if failed_tests else ("passed" if passed_tests else "blocked")
 
@@ -297,6 +315,8 @@ def derive_repair_evidence(
                     "testCount": len(tests),
                     "passedCount": len(passed_tests),
                     "failedCount": len(failed_tests),
+                    "sandboxRequired": True,
+                    "sandboxedCount": len(passed_tests),
                     "status": test_status,
                 }
             )
@@ -496,6 +516,11 @@ class TraceRepairStore:
             test_status = str(test["test_status"])
             if test_status != "passed" or test_payload.get("status") != "passed":
                 raise TraceRepairValidationError("test evidence is not passed")
+            sandboxed_test_count = int(test_payload.get("sandboxedCount") or 0)
+            if test_payload.get("sandboxRequired") is not True or sandboxed_test_count < 1:
+                raise TraceRepairValidationError(
+                    "test evidence has no Host-owned sandbox execution"
+                )
             payload = {
                 "schemaVersion": TRACE_REPAIR_RECEIPT_SCHEMA_VERSION,
                 "repairReceiptId": identifier,
@@ -505,6 +530,8 @@ class TraceRepairStore:
                 "changeReceiptId": change_id,
                 "testEvidenceId": test_id,
                 "testStatus": test_status,
+                "sandboxStatus": "passed",
+                "sandboxedTestCount": sandboxed_test_count,
                 "repairTraceId": repair,
                 "repairSessionId": repair_session,
                 "createdAtMs": created,

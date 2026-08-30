@@ -62,6 +62,15 @@ describe('星空 lazy bundle boundary', () => {
 });
 
 describe('PAWOS 星空 v2 immersive visualization', () => {
+  it('unmounts the immersive Room portal while its owning window is inactive', () => {
+    const room = previewRoomSnapshot('room-inactive').room as unknown as RoomSummary;
+    const focus = buildRoomFocusProjection(room);
+
+    render(<PawRoomStarfield active={false} focus={focus} roomId={room.id} />);
+
+    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+  });
+
   it('renders the Session as an immersive fullscreen sky with honest per-run motion', async () => {
     renderSessionSky();
 

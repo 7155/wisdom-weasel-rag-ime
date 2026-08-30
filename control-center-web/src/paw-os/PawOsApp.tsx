@@ -6,18 +6,9 @@ import type { PawDesktopStore } from './runtime/desktop-store';
 import { PawDesktop } from './shell/PawDesktop';
 import './styles/paw-os.css';
 import './styles/paw-os-motion.css';
-import './styles/paw-os-agent-composition.css';
-import './styles/paw-os-agent-next.css';
 import './styles/paw-os-webmodel-v1.css';
 import './styles/paw-os-shell-migrated-v1.css';
 import './styles/paw-os-controls.css';
-import './styles/paw-os-agent-migrated-v1.css';
-import './styles/paw-os-agent-fx.css';
-import './styles/paw-os-room-migrated-v1.css';
-import './styles/paw-os-room-focus.css';
-import './styles/paw-os-starfield.css';
-import './styles/paw-os-sys-apps-migrated-v1.css';
-import './styles/paw-os-tools-files-migrated-v1.css';
 
 export function PawOsApp() {
   const { theme } = usePawOsAppearance();

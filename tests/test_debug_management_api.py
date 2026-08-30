@@ -1390,6 +1390,44 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(stale_status["pendingDraftCount"], 0)
         self.assertEqual(stale_status["runs"][0]["status"], "superseded")
 
+    def test_agent_memory_maintenance_projection_only_skips_full_database_status(self) -> None:
+        projection = {
+            "schemaVersion": "rag-ime.memory-projection-runtime.v1",
+            "ok": True,
+            "configured": True,
+            "running": True,
+            "lastRunAtMs": 42,
+        }
+        job = {
+            "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
+            "ok": True,
+            "jobId": "memory-maintenance:active",
+            "state": "running",
+        }
+        with (
+            patch.object(self.service, "memory_projection_status", return_value=projection) as project,
+            patch.object(self.service.memory_maintenance_jobs, "latest_status", return_value=job) as latest_job,
+            patch("rag_ime.debug_server.memory_compile_due") as compile_due,
+            patch("rag_ime.debug_server.owner_memory_curation_status") as owner_status,
+        ):
+            status = self.service.agent_memory_maintenance_status(
+                {"projectionOnly": True}
+            )
+
+        self.assertEqual(
+            status,
+            {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+                "ok": True,
+                "job": job,
+                "projection": projection,
+            },
+        )
+        project.assert_called_once_with()
+        latest_job.assert_called_once_with(project=self.service.config.project)
+        compile_due.assert_not_called()
+        owner_status.assert_not_called()
+
     def test_generic_memory_organizer_auto_applies_a_valid_reused_draft(self) -> None:
         event_ref = self.core.record_event(
             InputEvent(
@@ -2191,6 +2229,8 @@ class DebugManagementApiTests(unittest.TestCase):
                 roles = json.loads(response.read().decode("utf-8"))
             with urlopen(f"{base_url}/memory-maintenance?limit=5", timeout=5) as response:
                 maintenance = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/memory-maintenance?projectionOnly=1", timeout=5) as response:
+                maintenance_activity = json.loads(response.read().decode("utf-8"))
 
             pi_model = {
                 "provider": "openrouter",
@@ -2619,6 +2659,14 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(maintenance["policy"], "auto_governed")
         self.assertTrue(maintenance["autoApply"])
         self.assertFalse(maintenance["scheduledDraftOnly"])
+        self.assertEqual(
+            set(maintenance_activity),
+            {"schemaVersion", "ok", "job", "projection"},
+        )
+        self.assertEqual(
+            maintenance_activity["schemaVersion"],
+            "rag-ime.agent-memory-maintenance-status.v1",
+        )
         self.assertEqual(model_catalog["providers"][0]["displayName"], "OpenRouter")
         self.assertEqual(command_catalog["items"][0]["invocation"], "/review")
         self.assertTrue(command_invocation["handled"])
@@ -2718,6 +2766,50 @@ class DebugManagementApiTests(unittest.TestCase):
                 payload = json.loads(failure.read().decode("utf-8"))
                 failure.close()
 
+            with patch.object(
+                self.service.agent.message_snapshot,
+                "messages",
+                side_effect=AgentRuntimeError(
+                    "Workspace does not exist: /private/tmp/expired/workspace"
+                ),
+            ):
+                with self.assertRaises(HTTPError) as messages_raised:
+                    urlopen(
+                        f"{base_url}/sessions/agent%3Astale/messages",
+                        timeout=5,
+                    )
+                messages_failure = messages_raised.exception
+                messages_payload = json.loads(
+                    messages_failure.read().decode("utf-8")
+                )
+                messages_failure.close()
+
+            with patch.object(
+                self.service.agent,
+                "prompt",
+                side_effect=AgentRuntimeError(
+                    "Workspace does not exist: /private/tmp/expired/workspace"
+                ),
+            ):
+                prompt_request = Request(
+                    f"{base_url}/sessions/agent%3Astale/prompt",
+                    data=json.dumps(
+                        {
+                            "message": "继续",
+                            "clientMessageId": "workspace-recovery-test",
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as prompt_raised:
+                    urlopen(prompt_request, timeout=5)
+                prompt_failure = prompt_raised.exception
+                prompt_payload = json.loads(
+                    prompt_failure.read().decode("utf-8")
+                )
+                prompt_failure.close()
+
             # The failed request returned a typed response rather than dropping
             # the socket; the same server remains usable afterwards.
             with urlopen(f"{base_url}/sessions?limit=1", timeout=5) as response:
@@ -2730,9 +2822,14 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertEqual(failure.code, 409)
         self.assertEqual(payload["schemaVersion"], "rag-ime.local-api-error.v1")
-        self.assertEqual(payload["errorCode"], "session_runtime_unavailable")
-        self.assertTrue(payload["retryable"])
+        self.assertEqual(payload["errorCode"], "session_workspace_missing")
+        self.assertFalse(payload["retryable"])
+        self.assertEqual(payload["recovery"]["action"], "select_workspace")
         self.assertNotIn("/private/", json.dumps(payload))
+        self.assertEqual(messages_failure.code, 409)
+        self.assertEqual(messages_payload, payload)
+        self.assertEqual(prompt_failure.code, 409)
+        self.assertEqual(prompt_payload, payload)
         self.assertEqual(healthy_status, 200)
         self.assertTrue(healthy_payload["ok"])
 

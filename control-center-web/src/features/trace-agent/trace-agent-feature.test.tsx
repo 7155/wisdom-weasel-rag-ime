@@ -57,6 +57,10 @@ describe('TraceAgentFeature', () => {
     expect(prompt).toContain('memory-maintenance:job-1');
     expect(prompt).toContain('Unterminated string');
     expect(prompt).toContain('managed_memory_model');
+    expect(prompt).toContain('建议主诊断域：Memory 维护结果与 Runtime 失败链');
+    expect(prompt).toContain('没有命中条件的诊断域必须标记为 not_applicable');
+    expect(prompt).toContain('Room / WorkItem / 子 Agent 只在 inspect 返回真实协作绑定时启用');
+    expect(prompt).not.toContain('请使用现有 Observability/TraceStore/Eval 与对象本身的真实记录，覆盖：');
   });
 
   it('keeps a handoff-only input usable without inventing a runId or fetching a canonical snapshot', async () => {
@@ -502,7 +506,7 @@ describe('TraceAgentFeature', () => {
     expect(within(action).getByRole('button', { name: '打开诊断 Agent 对话' })).toBeInTheDocument();
   });
 
-  it('hands a completed diagnostic to an ordinary per-action Agent and can return to Trace', async () => {
+  it('hands a completed diagnostic to a full-automation repair Agent and can return to Trace', async () => {
     const user = userEvent.setup();
     const routes: string[] = [];
     const transport = traceAgentTransport();
@@ -522,18 +526,22 @@ describe('TraceAgentFeature', () => {
     expect(createRequests).toHaveLength(2);
     expect(createRequests[1]?.request.body).toMatchObject({
       mode: 'coordinator',
-      executionMode: 'per_action',
+      executionMode: 'full_trust',
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
       toolProfileVersion: 'control-center-v1',
       workspaceRoots: ['/workspace/paw'],
     });
     const modeRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.session.mode.update');
     expect(modeRequests[1]?.request.body).toMatchObject({
       mode: 'coordinator',
-      executionMode: 'per_action',
+      executionMode: 'full_trust',
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
       projectContextEnabled: true,
       piSkillsEnabled: true,
       codexSkillsEnabled: false,
     });
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('全自动修复 Agent');
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('Luna Max');
     const promptRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt');
     expect(promptRequests).toHaveLength(2);
     const repairPrompt = String((promptRequests[1]?.request.body as Record<string, unknown> | undefined)?.message);
@@ -575,6 +583,7 @@ describe('TraceAgentFeature', () => {
     expect(receipt).toHaveTextContent('eval:trace-agent:recheck:independent');
     expect(receipt).toHaveTextContent('诊断 Trace：trace:source');
     expect(receipt).toHaveTextContent('修复 Trace：trace:repair');
+    expect(receipt).toHaveTextContent('Host 沙盒：passed · 1 次');
     expect(receipt).toHaveTextContent('独立复验');
     const repairSnapshotRequest = transport.requests.find(({ request }) => (
       request.pathId === 'observability.snapshot'
@@ -918,15 +927,172 @@ describe('TraceAgentFeature', () => {
     expect(target).toHaveTextContent('已诊断 · 失败');
     expect(within(target).getByRole('button', { name: '打开报告' })).toBeInTheDocument();
     const reports = await screen.findByRole('region', { name: '已保存的 Trace 诊断报告' });
+    expect(reports).toHaveTextContent('已保存的工程审计报告');
     expect(reports).toHaveTextContent('失败原因：结构化结果缺失');
+    expect(within(reports).getByRole('button', { name: '打开审计报告' })).toBeInTheDocument();
+    expect(within(reports).getByRole('listitem')).toHaveAttribute('data-status', 'failed');
     await userEvent.setup().click(within(target).getByRole('button', { name: '打开报告' }));
     expect(routes).toContain(`/trace-agent?reportId=${encodeURIComponent(reportId)}`);
 
     view.unmount();
     renderFeature(transport, routes, [`/trace-agent?reportId=${encodeURIComponent(reportId)}`]);
     const page = await screen.findByRole('region', { name: 'Trace 诊断网页报告' });
+    expect(page).toHaveTextContent('诊断未完成');
     expect(page).toHaveTextContent('报告失败原因：结构化结果缺失');
+    expect(page).toHaveTextContent('系统确定性');
+    expect(page).toHaveTextContent('部分冻结');
+    expect(page).toHaveTextContent('尚未记录修复授权');
     expect(within(page).getByTestId('trace-diagnostic-scorecard').querySelectorAll('tbody tr')).toHaveLength(8);
+    const download = within(page).getByRole('link', { name: '下载 HTML 报告' });
+    expect(download).toHaveAttribute('download', 'trace-diagnostic-report.html');
+    expect(download.getAttribute('href')).toMatch(/^blob:/);
+  });
+
+  it('projects the complete audit closure and opens frozen Evidence in a dialog', async () => {
+    const reportId = `trace-report:${'c'.repeat(32)}`;
+    const report = persistedTraceReportFixture(reportId, 'completed');
+    Object.assign(report.inspection as Record<string, unknown>, {
+      timeline: [{
+        evidenceId: 'evidence:source',
+        targetKey: 'session:session-source',
+        kind: 'tool_result',
+        status: 'failed',
+        summary: 'workspace edit 返回 stale_snapshot。',
+        sequence: 2,
+        createdAtMs: 120,
+        sourceRef: 'trace:source:span:edit',
+        traceId: 'trace:source',
+      }],
+      evidence: [{
+        evidenceId: 'evidence:source',
+        targetKey: 'session:session-source',
+        sourceKind: 'trace_span',
+        sourceRef: 'trace:source:span:edit',
+        status: 'failed',
+        summary: 'workspace edit 返回 stale_snapshot。',
+        createdAtMs: 120,
+        traceId: 'trace:source',
+      }],
+      requirements: {
+        source: 'user_input',
+        items: [{
+          requirementId: 'requirement:write',
+          statement: '写入目标文件',
+          targetKey: 'session:session-source',
+          sourceRef: 'session:source:message:user',
+          evidenceIds: ['evidence:source'],
+        }],
+        truncated: false,
+      },
+      environment: {
+        capturedAtMs: 100,
+        rubricVersion: 'trace-score-v1',
+        targets: [{
+          targetKey: 'session:session-source',
+          sourceSha256: 'b'.repeat(64),
+          modelProfile: 'codex',
+          toolProfileVersion: 'control-center-v1',
+          executionMode: 'per_action',
+          policyRevision: 9,
+          workspaceScopeSha256: 'c'.repeat(64),
+          shellPolicyVersion: 'workspace-v2',
+          runtimeKind: 'pi',
+          runtimeGeneration: 3,
+          traceInputFingerprints: [`sha256:${'d'.repeat(64)}`],
+          traceStatuses: ['failed'],
+        }],
+        limitations: [],
+      },
+      truncated: { timeline: false, evidence: false, traceIds: false },
+    });
+    Object.assign(report.result as Record<string, unknown>, {
+      requirementAssessments: [{
+        requirementId: 'requirement:write',
+        status: 'unsatisfied',
+        owner: 'Workspace Writer',
+        authority: 'ai_judge_estimate',
+        evidenceIds: ['evidence:source'],
+        note: '没有通过写入回执。',
+      }],
+      causalLinks: [{
+        linkId: 'causal:write',
+        fromEvidenceId: 'evidence:source',
+        toEvidenceId: 'evidence:source',
+        relation: 'triggered',
+        authority: 'ai_judge_estimate',
+        confidence: 'high',
+        explanation: '写入尝试触发 stale_snapshot。',
+      }],
+    });
+    Object.assign(report as unknown as Record<string, unknown>, {
+      repairLifecycle: {
+        authorization: {
+          state: 'authorized',
+          authorizationKind: 'repair_handoff',
+          writeAuthority: 'per_action_required',
+          authorizationId: 'repair-authorization:1',
+          findingId: 'finding:stale-revision',
+          sourceScope: 'session:session-source',
+          sourceTraceId: 'trace:source',
+          failureRef: 'evidence:source',
+          repairSessionId: 'agent:repair',
+          authorizedAtMs: 220,
+        },
+        verification: {
+          state: 'pending',
+          repairReceiptId: '',
+          repairTraceId: '',
+          evalRunId: '',
+          testStatus: '',
+          sandboxStatus: '',
+          sandboxedTestCount: 0,
+          verifiedAtMs: 0,
+          comparison: {
+            status: 'pending',
+            reason: '等待新 Trace/Eval。',
+            sourceStatus: 'failed',
+            repairStatus: '',
+            sourceFingerprint: `sha256:${'d'.repeat(64)}`,
+            repairFingerprint: '',
+            beforeMetrics: {},
+            afterMetrics: {},
+            deltas: {},
+          },
+        },
+      },
+    });
+    const scorecard = (report.inspection as unknown as { scorecard: { dimensions: Array<Record<string, unknown>> } }).scorecard;
+    const roomDimension = scorecard.dimensions.find((dimension) => dimension.dimensionId === 'room_collaboration');
+    Object.assign(roomDimension ?? {}, {
+      applicability: 'not_applicable',
+      score: null,
+      note: '当前对象没有 Room 协作边界。',
+    });
+    const transport = traceAgentTransport({ diagnosticReport: report });
+    const routes: string[] = [];
+    renderFeature(transport, routes, [`/trace-agent?reportId=${encodeURIComponent(reportId)}`]);
+
+    const page = await screen.findByRole('region', { name: 'Trace 诊断网页报告' });
+    expect(page).toHaveTextContent('用户需求完成矩阵');
+    expect(page).toHaveTextContent('跨 Session / Agent 因果时间线');
+    expect(page).toHaveTextContent('可复现环境快照');
+    expect(page).toHaveTextContent('完整冻结');
+    expect(page).toHaveTextContent('修复授权状态');
+    expect(page).toHaveTextContent('修复前后 Trace / Eval 对照');
+    expect(page).toHaveTextContent('查看完整冻结时间线');
+    expect(within(page).getByTestId('trace-diagnostic-scorecard').querySelector('[aria-label="查看证据 evidence:source"]')).toBeInTheDocument();
+    const roomScoreRow = within(page).getByTestId('trace-diagnostic-scorecard').querySelector('[data-dimension-id="room_collaboration"]');
+    expect(roomScoreRow).toHaveTextContent('不适用');
+    expect(roomScoreRow).toHaveTextContent('不评分');
+
+    await userEvent.setup().click(within(page).getByRole('button', { name: 'trace:source' }));
+    expect(routes).toContain('/observability?traceId=trace%3Asource');
+
+    await userEvent.setup().click(within(page).getAllByRole('button', { name: '查看证据 evidence:source' })[0]);
+    const dialog = await screen.findByRole('dialog', { name: 'Evidence 详情' });
+    expect(dialog).toHaveTextContent('trace_span');
+    expect(dialog).toHaveTextContent('workspace edit 返回 stale_snapshot');
+    expect(dialog).toHaveTextContent('trace:source:span:edit');
   });
 
   it('loads canonical Session and Room targets beyond the initial selector windows', async () => {
@@ -1099,6 +1265,84 @@ function traceAgentTransport(options: {
           ?? persistedTraceReportFixture(activeDiagnosticReport.reportId, 'completed');
         return activeDiagnosticReport;
       },
+      'observability.traceDiagnosticReport.repairAuthorize': (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        activeDiagnosticReport = {
+          ...activeDiagnosticReport,
+          revision: Number(body.expectedRevision) + 1,
+          repairLifecycle: {
+            authorization: {
+              state: 'authorized',
+              authorizationKind: 'repair_handoff',
+              writeAuthority: 'model_arbitrated_full_trust',
+              authorizationId: 'repair-authorization:server-issued',
+              findingId: String(body.findingId),
+              sourceScope: String(body.sourceScope),
+              sourceTraceId: String(body.sourceTraceId),
+              failureRef: String(body.failureRef),
+              repairSessionId: String(body.repairSessionId),
+              authorizedAtMs: 250,
+            },
+            verification: {
+              state: 'pending',
+              repairReceiptId: '',
+              repairTraceId: '',
+              evalRunId: '',
+              testStatus: '',
+              sandboxStatus: '',
+              sandboxedTestCount: 0,
+              verifiedAtMs: 0,
+              comparison: {
+                status: 'pending',
+                reason: '等待新 Trace/Eval。',
+                sourceStatus: 'failed',
+                repairStatus: '',
+                sourceFingerprint: `sha256:${'d'.repeat(64)}`,
+                repairFingerprint: '',
+                beforeMetrics: {},
+                afterMetrics: {},
+                deltas: {},
+              },
+            },
+          },
+          updatedAtMs: 250,
+        };
+        return activeDiagnosticReport;
+      },
+      'observability.traceDiagnosticReport.repairVerify': (request: ControlRequest) => {
+        if (!repairReceipt || !activeDiagnosticReport.repairLifecycle) throw new Error('repair verification arrived before authorization or receipt');
+        const body = request.body as Record<string, unknown>;
+        activeDiagnosticReport = {
+          ...activeDiagnosticReport,
+          revision: Number(body.expectedRevision) + 1,
+          repairLifecycle: {
+            authorization: activeDiagnosticReport.repairLifecycle.authorization,
+            verification: {
+              state: 'verified',
+              repairReceiptId: String(body.repairReceiptId),
+              repairTraceId: String(repairReceipt.repairTraceId),
+              evalRunId: 'eval:trace-agent:recheck:repair',
+              testStatus: 'passed',
+              sandboxStatus: 'passed',
+              sandboxedTestCount: Number(repairReceipt.sandboxedTestCount),
+              verifiedAtMs: 320,
+              comparison: {
+                status: 'incomparable',
+                reason: '输入 fingerprint 不同，只能并列展示，不能声称效果提升。',
+                sourceStatus: 'failed',
+                repairStatus: 'completed',
+                sourceFingerprint: `sha256:${'d'.repeat(64)}`,
+                repairFingerprint: `sha256:${'e'.repeat(64)}`,
+                beforeMetrics: { task_completion: 0 },
+                afterMetrics: { task_success: 1 },
+                deltas: {},
+              },
+            },
+          },
+          updatedAtMs: 320,
+        };
+        return activeDiagnosticReport;
+      },
       'observability.traceRepair.changeEvidence': (request: ControlRequest) => {
         const body = request.body as Record<string, unknown>;
         if (options.serverRejectChange) throw new Error('修复运行没有已完成的修改工具证据');
@@ -1178,6 +1422,8 @@ function traceAgentTransport(options: {
           changeReceiptId: body.changeReceiptId,
           testEvidenceId: body.testEvidenceId,
           testStatus: 'passed',
+          sandboxStatus: 'passed',
+          sandboxedTestCount: 1,
           repairTraceId: body.repairTraceId,
           repairSessionId: body.repairSessionId,
           createdAtMs: 302,
@@ -1730,6 +1976,48 @@ function persistedTraceReportFixture(
     traceIds: ['trace:source'],
     inspectionSha256: 'a'.repeat(64),
     inspection: {
+      timeline: [{
+        evidenceId: 'trace:observation-source',
+        targetKey: 'session:session-source',
+        kind: 'tool_result',
+        status: 'failed',
+        summary: 'write/edit validation error: target file changed',
+        sequence: 2,
+        createdAtMs: 120,
+        sourceRef: 'observation:observation-source',
+        traceId: 'trace:source',
+      }],
+      evidence: [{
+        evidenceId: 'trace:observation-source',
+        targetKey: 'session:session-source',
+        sourceKind: 'observation',
+        sourceRef: 'observation:observation-source',
+        status: 'failed',
+        summary: 'write/edit validation error: target file changed',
+        createdAtMs: 120,
+        traceId: 'trace:source',
+      }],
+      requirements: { source: 'unknown', items: [], truncated: false },
+      environment: {
+        capturedAtMs: 100,
+        rubricVersion: 'trace-score-v1',
+        targets: [{
+          targetKey: 'session:session-source',
+          sourceSha256: 'b'.repeat(64),
+          modelProfile: 'codex',
+          toolProfileVersion: 'control-center-v1',
+          executionMode: 'per_action',
+          policyRevision: 1,
+          workspaceScopeSha256: 'c'.repeat(64),
+          shellPolicyVersion: 'workspace-v2',
+          runtimeKind: 'pi',
+          runtimeGeneration: 1,
+          traceInputFingerprints: [`sha256:${'d'.repeat(64)}`],
+          traceStatuses: ['failed'],
+        }],
+        limitations: ['fixture is partial'],
+      },
+      truncated: { timeline: false, evidence: false, traceIds: false },
       scorecard: {
         rubricVersion: 'trace-score-v1',
         dimensions,
@@ -1742,7 +2030,20 @@ function persistedTraceReportFixture(
       summary: 'fixture report',
       hardGates: [],
       judgeScores: [],
-      findings: [],
+      requirementAssessments: [],
+      causalLinks: [],
+      findings: [{
+        findingId: 'finding:source-failure',
+        dimensionId: 'tool_runtime',
+        severity: 'high',
+        observation: 'write/edit validation error: target file changed',
+        hypothesis: 'source revision changed',
+        conclusion: 'workspace write used stale source state',
+        confidence: 'high',
+        evidenceIds: ['trace:observation-source'],
+        candidateRepair: 're-read and prepare the write again',
+        verification: 'new Trace and tests must pass',
+      }],
     } : null,
     failureReason: status === 'failed' ? '结构化结果缺失' : '',
     createdAtMs: 100,

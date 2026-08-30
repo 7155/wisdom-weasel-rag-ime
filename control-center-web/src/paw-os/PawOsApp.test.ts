@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { pawExtensionApps } from './extensions/registry';
 import { createPawDesktopStore } from './runtime/desktop-store';
 import { syncPawOsRoute } from './PawOsApp';
 
@@ -34,5 +35,32 @@ describe('PAWOS route bridge', () => {
       title: 'Agent',
     });
     expect(store.getState().windows.agent?.target).toBeUndefined();
+  });
+
+  it('fails closed for an Extension App initial hash until its Package is enabled', () => {
+    const extension = pawExtensionApps[0]!;
+    window.location.hash = extension.route;
+    const store = createPawDesktopStore(extension.id, extension.route);
+
+    expect(store.getState().windows[extension.id]).toBeUndefined();
+
+    store.getState().setExtensionAppGate('ready', new Set([extension.id]));
+    syncPawOsRoute(store);
+
+    expect(store.getState().windows[extension.id]).toMatchObject({
+      appId: extension.id,
+      initialRoute: extension.route,
+    });
+  });
+
+  it('does not reopen an Extension App through the RouteBridge while Runtime is unavailable', () => {
+    const extension = pawExtensionApps[0]!;
+    window.location.hash = extension.route;
+    const store = createPawDesktopStore();
+
+    store.getState().setExtensionAppGate('unavailable', new Set([extension.id]));
+    syncPawOsRoute(store);
+
+    expect(store.getState().windows[extension.id]).toBeUndefined();
   });
 });

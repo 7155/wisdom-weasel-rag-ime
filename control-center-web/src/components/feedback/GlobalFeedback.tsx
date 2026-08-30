@@ -25,6 +25,7 @@ export type GlobalNotice = {
   message?: string;
   tone: GlobalNoticeTone;
   dismissible?: boolean;
+  createdAtMs?: number;
 };
 
 export const CONNECTION_EVENT = 'rag-ime-control:connection';
@@ -34,6 +35,7 @@ export const DISMISS_NOTICE_EVENT = 'rag-ime-control:dismiss-notice';
 type FeedbackContextValue = {
   connection: ConnectionSnapshot;
   notices: GlobalNotice[];
+  clearNotices: () => void;
   dismissNotice: (id: string) => void;
   updateConnection: (snapshot: ConnectionSnapshot) => void;
 };
@@ -68,6 +70,7 @@ export function GlobalFeedbackProvider({ children }: { children: ReactNode }) {
   const dismissNotice = useCallback((id: string) => {
     setNotices((current) => current.filter((notice) => notice.id !== id));
   }, []);
+  const clearNotices = useCallback(() => setNotices([]), []);
   const updateConnection = useCallback((snapshot: ConnectionSnapshot) => {
     previousOnlineState.current = snapshot;
     setConnection(snapshot);
@@ -80,7 +83,8 @@ export function GlobalFeedbackProvider({ children }: { children: ReactNode }) {
     };
     const onNotice = (event: Event) => {
       const notice = (event as CustomEvent<GlobalNotice>).detail;
-      setNotices((current) => [...current.filter((item) => item.id !== notice.id), notice].slice(-3));
+      const received = { ...notice, createdAtMs: notice.createdAtMs ?? Date.now() };
+      setNotices((current) => [...current.filter((item) => item.id !== notice.id), received].slice(-20));
     };
     const onDismiss = (event: Event) => dismissNotice((event as CustomEvent<string>).detail);
     const onOffline = () => setConnection({ state: 'offline', label: '网络不可用' });
@@ -101,8 +105,8 @@ export function GlobalFeedbackProvider({ children }: { children: ReactNode }) {
   }, [dismissNotice, updateConnection]);
 
   const value = useMemo(
-    () => ({ connection, notices, dismissNotice, updateConnection }),
-    [connection, notices, dismissNotice, updateConnection],
+    () => ({ clearNotices, connection, notices, dismissNotice, updateConnection }),
+    [clearNotices, connection, notices, dismissNotice, updateConnection],
   );
 
   return <FeedbackContext.Provider value={value}>{children}</FeedbackContext.Provider>;
@@ -158,7 +162,7 @@ export function GlobalNoticeRegion() {
 
   return (
     <section className="global-notices" aria-label="全局通知" aria-live="polite">
-      {notices.map((notice) => {
+      {notices.slice(-3).map((notice) => {
         const Icon = noticeIcons[notice.tone];
         return (
           <article className="global-notice" data-tone={notice.tone} key={notice.id}>

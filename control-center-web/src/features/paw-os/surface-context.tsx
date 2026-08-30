@@ -1,9 +1,10 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
-import type { PawOsAppId } from './model/app-registry';
+import type { PawOsDesktopAppId } from './model/app-registry';
 import type { PawOsWindowTarget } from './model/desktop';
 
 export type PawOsAppSurface = {
-  appId: PawOsAppId;
+  appId: PawOsDesktopAppId;
+  active: boolean;
   windowId?: string;
   width: number;
   height: number;
@@ -13,14 +14,14 @@ export type PawOsAppSurface = {
 const PawOsAppSurfaceContext = createContext<PawOsAppSurface | null>(null);
 
 export type PawOsWindowRequest = {
-  appId: PawOsAppId;
+  appId: PawOsDesktopAppId;
   target: PawOsWindowTarget;
   background?: boolean;
 };
 
 type PawOsDesktopControls = {
   openWindow: (request: PawOsWindowRequest) => void;
-  openApp?: (appId: PawOsAppId, initialRoute?: string) => void;
+  openApp?: (appId: PawOsDesktopAppId, initialRoute?: string) => void;
   openRoute?: (route: string) => void;
   bindAgentMain?: (
     windowId: string,
@@ -57,25 +58,28 @@ export function PawOsDesktopProvider({
 }
 
 export function PawOsAppSurfaceProvider({
+  active = true,
   appId,
   children,
   height,
   windowId,
   width,
 }: {
-  appId: PawOsAppId;
+  active?: boolean;
+  appId: PawOsDesktopAppId;
   children: ReactNode;
   height: number;
   windowId?: string;
   width: number;
 }) {
   const value = useMemo<PawOsAppSurface>(() => ({
+    active,
     appId,
     windowId,
     width,
     height,
     compact: width <= 760,
-  }), [appId, height, width, windowId]);
+  }), [active, appId, height, width, windowId]);
 
   return <PawOsAppSurfaceContext.Provider value={value}>{children}</PawOsAppSurfaceContext.Provider>;
 }

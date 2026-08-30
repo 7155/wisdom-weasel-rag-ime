@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -128,6 +128,15 @@ describe('AgentWorkflowPanel', () => {
 
     expect(await screen.findByText('立即显示最新任务')).toBeVisible();
     expect(screen.queryByText('完成前端状态同步')).not.toBeInTheDocument();
+  });
+
+  it('does not read or poll workflow state while its PAWOS window is inactive', async () => {
+    const transport = transportFor(workflowState());
+
+    renderWorkflow(transport, { active: false });
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.workflow.get')).toHaveLength(0);
   });
 
   it('keeps Goal cancellation auditable and requires an explicit reason', async () => {

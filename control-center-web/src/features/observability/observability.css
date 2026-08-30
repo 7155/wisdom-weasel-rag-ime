@@ -18,6 +18,12 @@ main[data-route-id='observability'] .observation-console {
   min-width: 0;
 }
 
+/* Grid items otherwise keep their min-content width. In a narrow PAW window
+   the pulse, filters and timeline then force the whole Monitor canvas to the
+   width of every chip in one row. Let each section own its local wrapping or
+   horizontal scroller instead of widening the App behind the window edge. */
+main[data-route-id='observability'] .observation-console > * { min-width: 0; }
+
 /* The pulse strip is ambient status, not a destination: one row of live
    counts that reads at a glance without claiming a whole card section. */
 main[data-route-id='observability'] .observation-pulse {
@@ -1177,6 +1183,7 @@ main[data-route-id='observability'] .observation-privacy p {
 
 main[data-route-id='observability'] .observation-sandbox-runs {
   display: grid;
+  min-width: 0;
   gap: 8px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--color-border);
@@ -1229,6 +1236,7 @@ main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__d
 
 main[data-route-id='observability'] .observation-sandbox-runs__list {
   display: grid;
+  min-width: 0;
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -1237,6 +1245,7 @@ main[data-route-id='observability'] .observation-sandbox-runs__list {
 
 main[data-route-id='observability'] .observation-sandbox-runs__row {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(130px, .48fr) minmax(0, 1.7fr) minmax(220px, .9fr);
   align-items: center;
   gap: 12px;
@@ -1345,6 +1354,7 @@ main[data-route-id='observability'] .observation-sandbox-runs__node a:focus-visi
 
 main[data-route-id='observability'] .observation-schedules {
   display: grid;
+  min-width: 0;
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--color-border);
@@ -1376,6 +1386,7 @@ main[data-route-id='observability'] .observation-schedules__hint { margin: 0; }
 
 main[data-route-id='observability'] .observation-schedules__workspace {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(240px, .8fr) minmax(280px, 1.2fr);
   gap: 10px;
 }
@@ -1572,6 +1583,13 @@ main[data-route-id='observability'] .observation-schedules__form > .observation-
     justify-self: start;
     margin-top: 0;
   }
+  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__workspace,
+  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__form { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__heading,
+  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__create-action { align-items: stretch; flex-direction: column; }
+  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr); }
+  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__chain,
+  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__policy { grid-column: 1; }
 }
 
 /* UR-102 monitor-observability semantic typography */

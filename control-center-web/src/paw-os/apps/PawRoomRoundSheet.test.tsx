@@ -17,6 +17,30 @@ import { PawRoomRoundSheet } from './PawRoomRoundSheet';
 afterEach(cleanup);
 
 describe('PawRoomRoundSheet (UR-170/172)', () => {
+  it('keeps one unassigned planet out of the task table and preserves its Session actions', () => {
+    const projection = projectionWithProgress('尚未分配');
+    projection.turnsById['turn-1'] = {
+      ...projection.turnsById['turn-1']!,
+      activityIds: [],
+      participantIds: [],
+    };
+    projection.activitiesById = {};
+    projection.activityOrder = [];
+
+    render(
+      <PawRoomRoundSheet
+        onOpenParticipant={vi.fn()}
+        projection={projection}
+        room={roomWith([participant('participant-earth', 'session-earth', 0)])}
+      />,
+    );
+
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    const starter = screen.getByRole('region', { name: 'Earth 未分配' });
+    expect(starter).toHaveTextContent('Grill Me');
+    expect(within(starter).getByRole('button', { name: '打开 Earth Session' })).toBeInTheDocument();
+  });
+
   it('keeps one row mounted while progress updates and opens the real planet identity explicitly', async () => {
     const user = userEvent.setup();
     const onOpenParticipant = vi.fn();
@@ -161,7 +185,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(screen.queryByRole('log')).not.toBeInTheDocument();
   });
 
-  it('opens an accepted result directly below the planet row when it arrives', async () => {
+  it('moves an accepted result into a standalone result planet instead of a table row', async () => {
     const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
     const running = projectionWithProgress('正在验收功能路径');
     const { rerender } = render(
@@ -196,12 +220,38 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       <PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={accepted} room={acceptedRoom} />,
     );
 
-    const result = await screen.findByRole('region', { name: 'Earth 公开进展与证据' });
+    const result = await screen.findByRole('region', { name: 'Earth 最终结果' });
     expect(result).toHaveAttribute('data-result-ready', 'true');
     expect(result).toHaveTextContent('验收完成');
     expect(within(result).getByRole('link', { name: '打开文件 final-result.md' })).toBeInTheDocument();
     expect(within(result).getByRole('button', { name: '打开文件 final-result.md' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '收起 Earth 详情' })).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '收起 Earth 详情' })).not.toBeInTheDocument();
+  });
+
+  it('keeps unfinished collaborators in the table while presenting a submitted planet result separately', () => {
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+    ]);
+    room.workItems = [workItem('work-earth-result', 'turn-1', 'Earth 已提交最终结果。', [], 5)];
+    const projection = projectionWithProgress('Earth 已完成');
+    projection.turnsById['turn-1'] = {
+      ...projection.turnsById['turn-1']!,
+      status: 'completed',
+      terminalParticipantIds: ['participant-earth'],
+      updatedAtMs: 5,
+    };
+
+    const { container } = render(
+      <PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />,
+    );
+
+    const result = screen.getByRole('region', { name: 'Earth 最终结果' });
+    expect(result.closest('table')).toBeNull();
+    expect(container.querySelector('[data-row-key="turn-1:participant-earth"]')).toBeNull();
+    expect(container.querySelector('[data-row-key="turn-1:participant-mars"]')).not.toBeNull();
+    expect(screen.getByRole('table')).toHaveTextContent('Mars');
   });
 
   it('keeps the round and planet DOM nodes across a retry-only snapshot, without merging a new user round', () => {
@@ -470,10 +520,8 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: '展开 Earth 详情' }));
-    expect(screen.getByRole('button', { name: '打开文件 final-result.md' })).toBeInTheDocument();
-    const result = screen.getByRole('region', { name: 'Earth 公开进展与证据' })
-      .querySelector<HTMLElement>('.paw-room-round__result')!;
+    const result = screen.getByRole('region', { name: 'Earth 最终结果' });
+    expect(within(result).getByRole('button', { name: '打开文件 final-result.md' })).toBeInTheDocument();
     const resultLink = within(result).getByRole('link', { name: '打开文件 final-result.md' });
     await user.click(resultLink);
     expect(openRoute).toHaveBeenCalledWith('/files?session=session-earth&path=docs%2Ffinal-result.md');
@@ -513,8 +561,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: '展开 Earth 详情' }));
-    const detail = screen.getByRole('region', { name: 'Earth 公开进展与证据' });
+    const detail = screen.getByRole('region', { name: 'Earth 最终结果' });
     expect(within(detail).getByRole('link', { name: '打开文件 report.md' })).toHaveTextContent('报告');
     expect(within(detail).getByText('docs/inline.md').tagName).toBe('CODE');
     expect(within(detail).getByText('docs/fenced.md')).toBeInTheDocument();

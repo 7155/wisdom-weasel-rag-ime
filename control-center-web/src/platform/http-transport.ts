@@ -3,11 +3,9 @@ import {
   normalizeComposerAttachmentMimeType,
 } from '@/contracts/attachment-policy';
 import {
-  parseAgentEvent,
-  parseContract,
-  parseObservationEvent,
-  parseRoomEvent,
-} from '@/contracts/validators';
+  loadContractValidationRuntime,
+  type ContractValidationRuntime,
+} from '@/contracts/validation-runtime';
 
 import {
   controlRoute,
@@ -121,7 +119,9 @@ export class HttpControlTransport implements ControlTransport {
       throw new ControlTransportHttpError(request.pathId, response.status, message, payload);
     }
     const contract = request.responseContract ?? route.responseContract;
-    return (contract ? parseContract(contract, payload) : payload) as Response;
+    if (!contract) return payload as Response;
+    const { parseContract } = await loadContractValidationRuntime();
+    return parseContract(contract, payload) as Response;
   }
 
   browserSnapshotImageUrl(snapshotId: string): string {
@@ -368,6 +368,8 @@ export class HttpControlTransport implements ControlTransport {
     const route = controlRoute(request.pathId);
     const streamKind = route.subscription;
     if (!streamKind) return;
+    const validationRuntime = await loadContractValidationRuntime();
+    if (controller.signal.aborted) return;
     let lastEventId = request.lastEventId;
     let attempt = 0;
 
@@ -403,7 +405,7 @@ export class HttpControlTransport implements ControlTransport {
         const decoder = new TextDecoder();
         const parser = new SseParser((item) => {
           try {
-            const event = parseStreamEvent(streamKind, item) as Event;
+            const event = parseStreamEvent(validationRuntime, streamKind, item) as Event;
             lastEventId = streamResumeToken(event, item.id, lastEventId);
             observer.next(event);
             if (isSnapshotRequired(event)) observer.snapshotRequired?.(event);
@@ -459,19 +461,23 @@ export class HttpControlTransport implements ControlTransport {
   }
 }
 
-function parseStreamEvent(streamKind: ControlStreamKind, item: ParsedSseEvent): unknown {
+function parseStreamEvent(
+  validationRuntime: ContractValidationRuntime,
+  streamKind: ControlStreamKind,
+  item: ParsedSseEvent,
+): unknown {
   const payload = JSON.parse(item.data) as unknown;
   switch (streamKind) {
     case 'agent':
-      return parseAgentEvent(payload);
+      return validationRuntime.parseAgentEvent(payload);
     case 'room':
-      return parseRoomEvent(payload);
+      return validationRuntime.parseRoomEvent(payload);
     case 'kernel':
       return payload;
     case 'control':
       return payload;
     case 'observation':
-      return parseObservationEvent(payload);
+      return validationRuntime.parseObservationEvent(payload);
   }
 }
 

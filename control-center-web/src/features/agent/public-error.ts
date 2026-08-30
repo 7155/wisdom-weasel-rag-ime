@@ -4,6 +4,12 @@ const unavailableModelPattern = /(?:model\s+["']?[^"']+["']?\s+is\s+not\s+suppor
 const providerRequestFailurePattern = /(?:error\s+from\s+provider|upstream\s+request\s+failed|provider[_\s-](?:request|response|error)|模型服务.*(?:失败|异常))/i;
 const networkInterruptionPattern = /(?:网络中断|fetch failed|websocket\s+(?:error|failure|closed)|network\s+(?:error|failure)|connection\s+(?:reset|closed|refused)|econn(?:reset|refused)|socket hang up|broken pipe|remote end closed)/i;
 const nativeRouteMismatchPattern = /(?:route[_\s-]policy[_\s-]rejected|unexpected\s+(?:request\s+)?body\s+field|body\s+field\s+is\s+not\s+allowlisted|unknown\s+pathid)/i;
+export const SESSION_WORKSPACE_MISSING_TEXT = (
+  '这个 Session 的工作目录已不存在。请选择新的工作目录后继续，或返回桌面新建工作。'
+);
+export const ROOM_WORKSPACE_MISSING_TEXT = (
+  '这个 Room 的工作目录已不存在。请选择新的工作目录后继续，或返回桌面新建协作。'
+);
 export type AgentCommandReceiptState =
   | 'pending'
   | 'accepted'
@@ -135,6 +141,9 @@ export function publicAgentErrorText(
   if (receiptFailure?.code === 'AGENT_COMMAND_CONFLICT') {
     return '发送标识与原请求不一致，请刷新对话后重新发送。';
   }
+  if (isAgentWorkspaceMissingError(value)) {
+    return SESSION_WORKSPACE_MISSING_TEXT;
+  }
   const message = (value instanceof Error ? value.message : String(value ?? '')).trim();
   if (unavailableModelPattern.test(message)) {
     return '当前模型不可用，请切换模型后重试。';
@@ -149,6 +158,10 @@ export function publicAgentErrorText(
     return '控制中心组件版本不一致，请更新并重新打开控制中心。';
   }
   return publicErrorText(value, fallback);
+}
+
+export function isAgentWorkspaceMissingError(value: unknown): boolean {
+  return errorPayload(value)?.errorCode === 'session_workspace_missing';
 }
 
 export function isAgentNetworkInterruption(value: unknown): boolean {

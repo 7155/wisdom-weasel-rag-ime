@@ -70,10 +70,14 @@ import {
 } from './paw-browser-model';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
+import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 
 export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, { kind: 'browser-target' }> } = {}) {
   const transport = useControlTransport();
   const electronHost = pawBrowserHost();
+  const surfaceActive = usePawOsAppSurface()?.active ?? true;
+  const pageVisible = usePageVisibility();
   const windowChromeTarget = usePawWindowChromeTarget();
   const [tabs, setTabs] = useState<BrowserRecord[]>([]);
   const [traces, setTraces] = useState<BrowserRecord[]>([]);
@@ -114,11 +118,12 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   const currentUrl = electronHost ? selectedHostTab?.url || 'about:blank' : cdpUrl;
   const omniboxTabKey = electronHost ? selectedHostTabId : String(selectedTabId);
 
-  const refreshShell = useCallback(async () => {
+  const refreshShell = useCallback(async (signal?: AbortSignal) => {
     const [tabsValue, tracesValue] = await Promise.all([
-      transport.request({ pathId: 'browser.tabs' }),
-      transport.request({ pathId: 'browser.traces', query: { limit: 30 } }),
+      transport.request({ pathId: 'browser.tabs', signal }),
+      transport.request({ pathId: 'browser.traces', query: { limit: 30 }, signal }),
     ]);
+    if (signal?.aborted) return;
     const nextTabs = rows(record(tabsValue).items);
     const nextTraces = rows(record(tracesValue).items);
     /* The shell polls every second while the window is open; keeping the
@@ -138,7 +143,9 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
       const liveSnapshot = record(await transport.request({
         pathId: 'browser.snapshot.latest',
         query: { deviceId: 'paw-browser', tabId: nextTabId, includeMarkdown: true },
+        signal,
       }));
+      if (signal?.aborted) return;
       if (liveSnapshot.snapshotId) {
         setSnapshot((current) => current.snapshotId === liveSnapshot.snapshotId ? current : liveSnapshot);
       }
@@ -167,23 +174,24 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   }, [transport]);
 
   useEffect(() => {
+    if (!surfaceActive || !pageVisible) return undefined;
     let active = true;
+    const controller = new AbortController();
     async function boot() {
       try {
         if (!started.current) {
           started.current = true;
           if (!electronHost) await transport.request({ pathId: 'browser.managed.start', body: {} });
         }
-        if (active) await refreshShell();
+        if (active) await refreshShell(controller.signal);
       } catch (requestError) {
         if (active) setError(errorText(requestError));
       }
     }
     void boot();
-    // A hidden document cannot show fresher tabs; skip the tick entirely.
-    const timer = window.setInterval(() => { if (active && !document.hidden) void refreshShell().catch(() => undefined); }, 1_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [electronHost, refreshShell, transport]);
+    const timer = window.setInterval(() => { if (active) void refreshShell(controller.signal).catch(() => undefined); }, 1_000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
+  }, [electronHost, pageVisible, refreshShell, surfaceActive, transport]);
 
   useEffect(() => {
     const url = target?.url?.trim() ?? '';
@@ -277,10 +285,10 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   }, [electronHost]);
 
   useEffect(() => {
-    if (!electronHost) return;
+    if (!electronHost || !surfaceActive || !pageVisible) return;
     void refreshBrowserSettings().then(() => undefined, (requestError) => setError(errorText(requestError)));
     void refreshBrowserHistory().then(() => undefined, (requestError) => setError(errorText(requestError)));
-  }, [electronHost, refreshBrowserHistory, refreshBrowserSettings]);
+  }, [electronHost, pageVisible, refreshBrowserHistory, refreshBrowserSettings, surfaceActive]);
 
   useEffect(() => {
     if (!electronHost || !browserSettings || browserSettings.startPage === 'about:blank') return;
@@ -291,7 +299,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   }, [browserSettings, electronHost, hostTabs]);
 
   useEffect(() => {
-    if (electronHost) return;
+    if (electronHost || !surfaceActive || !pageVisible) return;
     if (!selectedTabId) return;
     if (!selectedTabUrl || selectedTabUrl === 'about:blank') {
       setSnapshot({});
@@ -301,7 +309,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
     }
     setCdpUrl(selectedTabUrl);
     void captureSnapshot(selectedTabId);
-  }, [captureSnapshot, electronHost, selectedTabId, selectedTabUrl]);
+  }, [captureSnapshot, electronHost, pageVisible, selectedTabId, selectedTabUrl, surfaceActive]);
 
   const run = useCallback(async (action: string, extra: BrowserRecord = {}) => {
     setBusy(action);

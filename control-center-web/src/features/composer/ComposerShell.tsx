@@ -75,6 +75,7 @@ export function ComposerShell({
         onSurfacePress();
       }}
     >
+      {busy ? <span aria-hidden="true" className="agent-composer__busy-frame"><i /></span> : null}
       {banner}
       {attachments.length ? (
         <div className="agent-composer__attachments" aria-label={attachmentsLabel} role="list">

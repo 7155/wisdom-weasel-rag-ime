@@ -11,6 +11,8 @@
     "traceIds": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 240}},
     "timeline": {"type": "array", "maxItems": 240, "items": {"$ref": "#/$defs/timeline"}},
     "evidence": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/evidence"}},
+    "requirements": {"$ref": "#/$defs/requirements"},
+    "environment": {"$ref": "#/$defs/environment"},
     "scorecard": {"$ref": "#/$defs/scorecard"},
     "truncated": {
       "type": "object", "additionalProperties": false,
@@ -58,6 +60,54 @@
         "summary": {"type": "string", "maxLength": 1200},
         "createdAtMs": {"type": "integer", "minimum": 0},
         "traceId": {"type": "string", "maxLength": 240}
+      }
+    },
+    "requirement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requirementId", "statement", "targetKey", "sourceRef", "evidenceIds"],
+      "properties": {
+        "requirementId": {"type": "string", "minLength": 1, "maxLength": 640},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "targetKey": {"type": "string", "minLength": 1, "maxLength": 500},
+        "sourceRef": {"type": "string", "minLength": 1, "maxLength": 640},
+        "evidenceIds": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 640}}
+      }
+    },
+    "requirements": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "items", "truncated"],
+      "properties": {
+        "source": {"enum": ["user_input", "work_item", "eval", "unknown"]},
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/requirement"}},
+        "truncated": {"type": "boolean"}
+      }
+    },
+    "environmentTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetKey", "sourceSha256", "modelProfile", "toolProfileVersion", "executionMode", "policyRevision", "workspaceScopeSha256", "shellPolicyVersion", "runtimeKind", "runtimeGeneration", "traceInputFingerprints", "traceStatuses"],
+      "properties": {
+        "targetKey": {"type": "string", "minLength": 1, "maxLength": 500},
+        "sourceSha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+        "modelProfile": {"type": "string", "maxLength": 160},
+        "toolProfileVersion": {"type": "string", "maxLength": 160},
+        "executionMode": {"type": "string", "maxLength": 80},
+        "policyRevision": {"type": ["integer", "null"], "minimum": 0},
+        "workspaceScopeSha256": {"type": "string", "pattern": "^$|^[a-f0-9]{64}$"},
+        "shellPolicyVersion": {"type": "string", "maxLength": 160},
+        "runtimeKind": {"type": "string", "maxLength": 80},
+        "runtimeGeneration": {"type": ["integer", "null"], "minimum": 0},
+        "traceInputFingerprints": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}},
+        "traceStatuses": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 80}}
+      }
+    },
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["capturedAtMs", "rubricVersion", "targets", "limitations"],
+      "properties": {
+        "capturedAtMs": {"type": "integer", "minimum": 0},
+        "rubricVersion": {"type": "string", "minLength": 1, "maxLength": 160},
+        "targets": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"$ref": "#/$defs/environmentTarget"}},
+        "limitations": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 500}}
       }
     },
     "metric": {

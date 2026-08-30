@@ -813,6 +813,7 @@ class AgentRoomStore:
             "routingConfig",
             "moderatorParticipantId",
             "activeTopicId",
+            "workspaceRoots",
         }
         unknown = set(values) - allowed
         if unknown:
@@ -875,6 +876,15 @@ class AgentRoomStore:
             }:
                 raise ValueError("activeTopicId must identify an active room topic")
             updates["active_topic_id"] = topic_id
+        if "workspaceRoots" in values:
+            roots = values.get("workspaceRoots")
+            if not isinstance(roots, list):
+                raise ValueError("workspaceRoots must be an array")
+            updates["workspace_roots_json"] = json.dumps(
+                [str(value) for value in roots],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         if not updates:
             return current
         timestamp = _timestamp(updated_at_ms)

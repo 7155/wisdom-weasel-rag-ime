@@ -11,7 +11,7 @@ const motionChoices: ReadonlyArray<{
   icon: typeof Monitor;
 }> = [
   { value: 'system', label: '跟随系统', detail: '与系统的"减少动态效果"设置保持一致。', icon: Monitor },
-  { value: 'full', label: '完整动效', detail: '窗口与面板使用完整的过渡动画。', icon: Sparkles },
+  { value: 'full', label: '完整动效', detail: '系统允许时，窗口与面板使用完整的过渡动画。', icon: Sparkles },
   { value: 'reduce', label: '减少动效', detail: '减少晃动和过渡，界面更安静。', icon: Leaf },
 ];
 
@@ -89,7 +89,11 @@ export function PawOsAppearanceSettings() {
         </div>
         <p className="paw-os-appearance-motion__state" role="status">
           当前生效：{effectiveMotion}
-          {motion.preference === 'system' ? '（跟随系统设置）' : ''}
+          {motion.systemReduceMotion
+            ? '（系统设置优先）'
+            : motion.preference === 'system'
+              ? '（跟随系统设置）'
+              : ''}
         </p>
       </ManagementSection>
 

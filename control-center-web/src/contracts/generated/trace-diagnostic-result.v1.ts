@@ -75,6 +75,14 @@ export interface TraceDiagnosticResultV1 {
   /**
    * @maxItems 100
    */
+  requirementAssessments?: RequirementAssessment[];
+  /**
+   * @maxItems 120
+   */
+  causalLinks?: CausalLink[];
+  /**
+   * @maxItems 100
+   */
   findings: Finding[];
 }
 export interface Gate {
@@ -89,6 +97,24 @@ export interface Judge {
   authority: 'ai_judge_estimate';
   explanation: string;
   evidenceIds: EvidenceIds;
+}
+export interface RequirementAssessment {
+  requirementId: string;
+  status: 'satisfied' | 'partial' | 'unsatisfied' | 'unverified';
+  owner: string;
+  authority: 'ai_judge_estimate';
+  evidenceIds: EvidenceIds;
+  note: string;
+}
+export interface CausalLink {
+  linkId: string;
+  fromEvidenceId: string;
+  toEvidenceId: string;
+  relation:
+    'triggered' | 'delegated' | 'responded_to' | 'returned' | 'verified' | 'caused' | 'recovered';
+  authority: 'ai_judge_estimate';
+  confidence: 'high' | 'medium' | 'low' | 'unknown';
+  explanation: string;
 }
 export interface Finding {
   findingId: string;

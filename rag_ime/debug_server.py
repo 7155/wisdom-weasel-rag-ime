@@ -4177,6 +4177,15 @@ class DebugImeService:
         }
 
     def agent_memory_maintenance_status(self, payload: dict[str, Any]) -> dict[str, object]:
+        if _bool(payload.get("projectionOnly")):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
+                "ok": True,
+                "job": self.memory_maintenance_jobs.latest_status(
+                    project=_string(payload.get("project")) or self.config.project
+                ),
+                "projection": self.memory_projection_status(),
+            }
         if not isinstance(self.core, LocalSqliteCoreClient):
             return {
                 "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
@@ -6901,6 +6910,37 @@ def _knowledge_route_parts(path: str) -> tuple[str, ...] | None:
     return tuple(unquote(part) for part in normalized[len(prefix) :].split("/") if part)
 
 
+def _agent_session_runtime_error_payload(
+    error: AgentRuntimeError,
+) -> dict[str, object]:
+    message = " ".join(str(error).split()).casefold()
+    workspace_missing = (
+        "workspace does not exist" in message
+        or "workspace root does not exist" in message
+        or "workspace no longer exists" in message
+    )
+    if workspace_missing:
+        return {
+            "schemaVersion": "rag-ime.local-api-error.v1",
+            "ok": False,
+            "errorCode": "session_workspace_missing",
+            "retryable": False,
+            "error": (
+                "session workspace is no longer available; "
+                "select a different workspace"
+            ),
+            "recovery": {"action": "select_workspace"},
+        }
+    return {
+        "schemaVersion": "rag-ime.local-api-error.v1",
+        "ok": False,
+        "errorCode": "session_runtime_unavailable",
+        "retryable": True,
+        "error": "session runtime is temporarily unavailable",
+        "recovery": {"action": "retry"},
+    }
+
+
 class DebugRequestHandler(BaseHTTPRequestHandler):
     service: DebugImeService
     static_dir: Path
@@ -7942,6 +7982,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {
                         "project": _query_first(query, "project"),
                         "limit": _query_first(query, "limit"),
+                        "projectionOnly": _query_first(query, "projectionOnly"),
                     }
                 ),
             )
@@ -8016,14 +8057,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": "unsupported Session snapshot view"},
                 )
                 return
-            response = (
-                self.service.agent.message_snapshot.messages(
-                    agent_session_id,
-                    view="recent",
+            try:
+                response = (
+                    self.service.agent.message_snapshot.messages(
+                        agent_session_id,
+                        view="recent",
+                    )
+                    if view_values
+                    else self.service.agent.messages(agent_session_id)
                 )
-                if view_values
-                else self.service.agent.messages(agent_session_id)
-            )
+            except AgentRuntimeError as exc:
+                self._write_json(
+                    HTTPStatus.CONFLICT,
+                    _agent_session_runtime_error_payload(exc),
+                )
+                return
             self._write_json(HTTPStatus.OK, response)
             return
         if agent_session_id and agent_action == "forks":
@@ -8041,7 +8089,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.agent.model_catalog(agent_session_id),
                 )
-            except AgentRuntimeError:
+            except AgentRuntimeError as exc:
                 # Model discovery restores the Session runtime, which can
                 # legitimately fail after an ephemeral workspace disappears.
                 # Keep the transcript readable and project a stable public
@@ -8049,16 +8097,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 # uncaught runtime exception (and leaking the local path).
                 self._write_json(
                     HTTPStatus.CONFLICT,
-                    {
-                        "schemaVersion": "rag-ime.local-api-error.v1",
-                        "ok": False,
-                        "errorCode": "session_runtime_unavailable",
-                        "retryable": True,
-                        "error": (
-                            "session runtime is unavailable because its "
-                            "workspace no longer exists"
-                        ),
-                    },
+                    _agent_session_runtime_error_payload(exc),
                 )
             return
         if agent_session_id and agent_action == "intercom":
@@ -8487,16 +8526,40 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             diagnostic_report_id, diagnostic_report_action = (
                 observability_trace_diagnostic_report_route(path)
             )
-            if diagnostic_report_action in {"collection", "finalize"}:
+            if diagnostic_report_action in {
+                "collection",
+                "finalize",
+                "repair-authorize",
+                "repair-verify",
+            }:
+                if diagnostic_report_action.startswith("repair-") and not self._trace_repair_loopback_allowed():
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "ok": False,
+                            "errorCode": "trace_repair_loopback_only",
+                            "error": "Trace repair is available only from the local machine",
+                        },
+                    )
+                    return
                 try:
-                    response = (
-                        self.service.agent.create_trace_diagnostic_report(payload)
-                        if diagnostic_report_action == "collection"
-                        else self.service.agent.finalize_trace_diagnostic_report(
+                    if diagnostic_report_action == "collection":
+                        response = self.service.agent.create_trace_diagnostic_report(payload)
+                    elif diagnostic_report_action == "finalize":
+                        response = self.service.agent.finalize_trace_diagnostic_report(
                             diagnostic_report_id,
                             payload,
                         )
-                    )
+                    elif diagnostic_report_action == "repair-authorize":
+                        response = self.service.agent.authorize_trace_diagnostic_repair(
+                            diagnostic_report_id,
+                            payload,
+                        )
+                    else:
+                        response = self.service.agent.verify_trace_diagnostic_repair(
+                            diagnostic_report_id,
+                            payload,
+                        )
                     self._write_json(
                         HTTPStatus.CREATED if diagnostic_report_action == "collection" else HTTPStatus.OK,
                         response,
@@ -9054,6 +9117,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
+            if isinstance(exc, AgentRuntimeError):
+                self._write_json(
+                    HTTPStatus.CONFLICT,
+                    _agent_session_runtime_error_payload(exc),
+                )
+                return
             status = getattr(exc, "http_status", HTTPStatus.BAD_REQUEST)
             error_payload: dict[str, object] = {
                 "ok": False,

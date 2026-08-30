@@ -5,11 +5,12 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { createRoomProjection, type RoomActivityProjection } from '@/contracts/room-reducer';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
-import { fitReachablePawWindowBounds, pawWindowArea, type PawWindowBounds, type PawWindowNode } from '../runtime/desktop-store';
+import { createPawDesktopStore, fitReachablePawWindowBounds, pawWindowArea, type PawWindowBounds, type PawWindowNode } from '../runtime/desktop-store';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { usePawDesktopApi } from '../runtime/desktop-context';
 import { PawWindowChromePortal } from './PawWindowChrome';
-import { PAW_WINDOW_FLOW_GEOMETRY_EVENT, PawRoomFocusRail, PawWindowFrame, PawWindowLayer, resizeWindowBounds, roomWindowFlowGroups } from './PawWindowLayer';
+import { PawRoomFocusRail, PawWindowFrame, PawWindowLayer, openDesktopRoute, resizeWindowBounds, roomWindowFlowGroups } from './PawWindowLayer';
+import { pawExtensionApps } from '../extensions/registry';
 import windowLayerSource from './PawWindowLayer.tsx?raw';
 
 const appProcessRenders = vi.hoisted(() => new Map<string, number>());
@@ -35,6 +36,21 @@ describe('PAWOS compositor window frame', () => {
     };
 
     expect(roomWindowFlowGroups(windows, { 'room-a': projection })).toEqual([]);
+  });
+
+  it('does not bypass the Extension App gate through an internal desktop route', () => {
+    const extension = pawExtensionApps[0]!;
+    const store = createPawDesktopStore();
+
+    openDesktopRoute(store, extension.route);
+    expect(store.getState().windows[extension.id]).toBeUndefined();
+
+    store.getState().setExtensionAppGate('ready', new Set([extension.id]));
+    openDesktopRoute(store, extension.route);
+    expect(store.getState().windows[extension.id]).toMatchObject({
+      appId: extension.id,
+      initialRoute: extension.route,
+    });
   });
 
   it.each([
@@ -282,11 +298,10 @@ describe('PAWOS compositor window frame', () => {
     }
   });
 
-  it('routes flow state and tracking onto the frameless planet surface', () => {
+  it('routes the bounded arrival state without restoring cross-window path tracking', () => {
     render(
       <FrameHarness
         flowState="arrival"
-        flowTracked
         focusFrame={{ x: 120, y: 70, width: 420, height: 300 }}
         frameMode="planet"
         initial={{ x: 20, y: 30, width: 760, height: 560 }}
@@ -302,7 +317,8 @@ describe('PAWOS compositor window frame', () => {
     const surface = shell.querySelector('.paw-planet-surface');
     expect(surface).toBeInTheDocument();
     expect(surface).toHaveAttribute('data-flow-state', 'arrival');
-    expect(surface).toHaveAttribute('data-flow-tracked', 'true');
+    expect(surface).not.toHaveAttribute('data-flow-tracked');
+    expect(shell).not.toHaveAttribute('data-flow-tracked');
     expect(within(surface as HTMLElement).getByText('Mars')).toBeInTheDocument();
     expect(within(surface as HTMLElement).getByRole('button', { name: '关闭Mars行星窗口' })).toBeInTheDocument();
     expect(shell.querySelector('.paw-window')).toBeNull();
@@ -475,6 +491,54 @@ describe('PAWOS compositor window frame', () => {
     expect(screen.getByLabelText('Rooms窗口')).toHaveAttribute('data-placement', 'maximized');
   });
 
+  it('animates a placement change with transform-only FLIP keyframes', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    const calls: Array<{ target: HTMLElement; frames: Keyframe[]; options: KeyframeAnimationOptions }> = [];
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value(this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
+        calls.push({ target: this, frames, options });
+        return { cancel: vi.fn(), finished: Promise.resolve() } as unknown as Animation;
+      },
+    });
+    try {
+      const oldBounds = { x: 40, y: 50, width: 760, height: 560 };
+      const newBounds = { x: 0, y: 0, width: 1200, height: 800 };
+      const renderFrame = (bounds: PawWindowBounds, placement?: 'maximized') => (
+        <PawWindowFrame
+          active
+          appId="agent"
+          bounds={bounds}
+          onBoundsCommit={() => undefined}
+          onClose={() => undefined}
+          onFocus={() => undefined}
+          onMinimize={() => undefined}
+          onToggleMaximize={() => undefined}
+          placement={placement}
+          title="Agent"
+          windowId="agent-flip"
+          zIndex={10}
+        >
+          <div />
+        </PawWindowFrame>
+      );
+      const view = render(renderFrame(oldBounds));
+      calls.length = 0;
+
+      view.rerender(renderFrame(newBounds, 'maximized'));
+
+      const flip = calls.find((call) => call.target.classList.contains('paw-window-shell'));
+      expect(flip).toBeDefined();
+      expect(flip?.frames[0]?.transform).toMatch(/^translate3d\(40px, 50px, 0\) scale\(/);
+      expect(flip?.frames[1]?.transform).toBe('translate3d(0px, 0px, 0) scale(1, 1)');
+      expect(flip?.frames.every((frame) => frame.width === undefined && frame.height === undefined)).toBe(true);
+      expect(flip?.options).toMatchObject({ duration: 240, easing: 'cubic-bezier(.23, 1, .32, 1)' });
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'animate', descriptor);
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+    }
+  });
+
   it('renders exactly one traffic light cluster with the three window verbs', () => {
     render(<FrameHarness initial={{ x: 0, y: 0, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>);
 
@@ -588,63 +652,12 @@ describe('PAWOS compositor window frame', () => {
     expect(windowLayerSource).toMatch(/roomProjectionKeepaliveIds\(state\.windows, overviewOpen\)\.join/);
   });
 
-  it('coalesces live flow geometry into one React write per animation frame', () => {
-    expect(windowLayerSource).toContain('function useLiveWindowFlowPoints');
-    // Leading edge applies synchronously (the publisher already paces one
-    // event per frame), the trailing rAF slot folds same-frame bursts, and
-    // unchanged points bail before creating a new record.
-    expect(windowLayerSource).toMatch(/requestAnimationFrame\(flush\)/);
-    expect(windowLayerSource).toMatch(/prior\.x === point\.x && prior\.y === point\.y/);
-  });
-
-  it('keeps an untracked window drag free of live flow geometry work', () => {
-    const seenPoints: Array<{ x: number; y: number } | null> = [];
-    const listen = (event: Event) => seenPoints.push((event as CustomEvent<{ point: { x: number; y: number } | null }>).detail.point);
-    window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
-    try {
-      render(
-        <div className="paw-window-layer">
-          <FrameHarness initial={{ x: 20, y: 30, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>
-        </div>,
-      );
-      const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
-
-      fireEvent.pointerDown(titlebar, { button: 0, clientX: 100, clientY: 80, pointerId: 11 });
-      fireEvent.pointerMove(window, { clientX: 164, clientY: 122, pointerId: 11 });
-      fireEvent.pointerUp(window, { clientX: 164, clientY: 122, pointerId: 11 });
-
-      // An ordinary window publishes no live points while moving — only the
-      // final clear signal, which carries no geometry and forces no reads.
-      expect(seenPoints.length).toBeGreaterThanOrEqual(1);
-      expect(seenPoints.every((point) => point === null)).toBe(true);
-    } finally {
-      window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
-    }
-  });
-
-  it('publishes live flow geometry for windows that sit in a Room flow group', () => {
-    const seenPoints: Array<{ x: number; y: number } | null> = [];
-    const listen = (event: Event) => seenPoints.push((event as CustomEvent<{ point: { x: number; y: number } | null }>).detail.point);
-    window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
-    try {
-      render(
-        <div className="paw-window-layer">
-          <FrameHarness flowTracked initial={{ x: 20, y: 30, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>
-        </div>,
-      );
-      const shell = screen.getByLabelText('Rooms窗口');
-      expect(shell).toHaveAttribute('data-flow-tracked', 'true');
-      const titlebar = screen.getByText('Rooms').closest('.paw-window-titlebar')!;
-
-      fireEvent.pointerDown(titlebar, { button: 0, clientX: 100, clientY: 80, pointerId: 12 });
-      fireEvent.pointerMove(window, { clientX: 164, clientY: 122, pointerId: 12 });
-      fireEvent.pointerUp(window, { clientX: 164, clientY: 122, pointerId: 12 });
-
-      expect(seenPoints.some((point) => point !== null)).toBe(true);
-      expect(seenPoints.at(-1)).toBeNull();
-    } finally {
-      window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, listen);
-    }
+  it('keeps cross-window flow geometry out of drag and resize code', () => {
+    expect(windowLayerSource).not.toContain('PAW_WINDOW_FLOW_GEOMETRY_EVENT');
+    expect(windowLayerSource).not.toContain('publishLiveWindowFlowPoint');
+    expect(windowLayerSource).not.toContain('useLiveWindowFlowPoints');
+    expect(windowLayerSource).not.toContain('flowTracked');
+    expect(windowLayerSource).not.toContain('data-flow-tracked');
   });
 
   it('drags and resizes the temporary focus frame instead of the ordinary desktop bounds', () => {
@@ -723,6 +736,19 @@ describe('PAWOS compositor window frame', () => {
     expect(shell.querySelector('.paw-window-title [data-paw-app-icon="room"]')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '打开 Rooms' }).querySelector('[data-paw-app-icon="room"]')).toBeInTheDocument();
     expect(shell.querySelector('.paw-window-title [data-paw-app-icon="agent"]')).toBeNull();
+  });
+
+  it('isolates App controls from the tab and accessibility trees in Overview', () => {
+    render(
+      <FrameHarness initial={{ x: 0, y: 0, width: 760, height: 560 }} onCommit={() => undefined} overview>
+        <button type="button">App 内部操作</button>
+      </FrameHarness>,
+    );
+
+    expect(screen.queryByRole('button', { name: 'App 内部操作' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '打开 Rooms' })).toBeInTheDocument();
+    expect(document.querySelector('.paw-window')).toHaveAttribute('inert');
+    expect(document.querySelector('.paw-window')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it.each(pawApps)('uses the original $id identity in the titlebar and window overview', (app) => {
@@ -876,7 +902,7 @@ function LiveRoomChrome() {
   );
 }
 
-function FrameHarness({ appId = 'agent', children, collaborationRole, flowState, flowTracked, focusFrame, frameMode, initial, onCommit, overview, placement, targetKind, title = 'Rooms', windowChrome }: { appId?: PawAppId; children: React.ReactNode; collaborationRole?: 'primary' | 'satellite' | 'unrelated' | 'hidden'; flowState?: 'source' | 'arrival'; flowTracked?: boolean; focusFrame?: PawWindowBounds; frameMode?: 'window' | 'focus-card' | 'planet'; initial: PawWindowBounds; onCommit: (bounds: PawWindowBounds) => void; overview?: boolean; placement?: 'maximized' | 'left' | 'right'; targetKind?: 'room' | 'participant'; title?: string; windowChrome?: string }) {
+function FrameHarness({ appId = 'agent', children, collaborationRole, flowState, focusFrame, frameMode, initial, onCommit, overview, placement, targetKind, title = 'Rooms', windowChrome }: { appId?: PawAppId; children: React.ReactNode; collaborationRole?: 'primary' | 'satellite' | 'unrelated' | 'hidden'; flowState?: 'source' | 'arrival'; focusFrame?: PawWindowBounds; frameMode?: 'window' | 'focus-card' | 'planet'; initial: PawWindowBounds; onCommit: (bounds: PawWindowBounds) => void; overview?: boolean; placement?: 'maximized' | 'left' | 'right'; targetKind?: 'room' | 'participant'; title?: string; windowChrome?: string }) {
   const [bounds, setBounds] = useState(initial);
   return (
     <PawWindowFrame
@@ -885,7 +911,6 @@ function FrameHarness({ appId = 'agent', children, collaborationRole, flowState,
       bounds={bounds}
       collaborationRole={collaborationRole}
       flowState={flowState}
-      flowTracked={flowTracked}
       focusFrame={focusFrame}
       frameMode={frameMode}
       onBoundsCommit={(next) => { onCommit(next); setBounds(next); }}

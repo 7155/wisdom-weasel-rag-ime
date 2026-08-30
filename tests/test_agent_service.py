@@ -4587,6 +4587,25 @@ class AgentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot carry workspace roots"):
             self.service.create_session({"title": "bad", "workspaceRoots": [self.root.as_posix()]})
 
+        session_count = len(self.service.list_sessions()["items"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "workspaceRoots contains a directory that no longer exists",
+        ):
+            self.service.create_session(
+                {
+                    "title": "不能创建幽灵工作区对话",
+                    "mode": "coordinator",
+                    "workspaceRoots": [
+                        (self.root / "removed-workspace").as_posix()
+                    ],
+                }
+            )
+        self.assertEqual(
+            len(self.service.list_sessions()["items"]),
+            session_count,
+        )
+
         coordinator = self.service.create_session(
             {
                 "title": "运行协调",

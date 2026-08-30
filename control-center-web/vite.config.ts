@@ -176,6 +176,6 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     css: true,
     testTimeout: 15_000,
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'extension-apps/**/*.test.{ts,tsx}'],
   },
 });

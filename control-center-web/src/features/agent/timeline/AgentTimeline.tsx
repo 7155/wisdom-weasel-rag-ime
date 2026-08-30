@@ -1114,7 +1114,6 @@ export const AgentTurn = memo(function AgentTurn({
               <header><strong>Agent</strong><span>{showWorking ? (stopping ? '正在停止' : '正在处理') : turnStatusLabel(turn.status)}</span></header>
             )}
             {memoryRecallReceipt ? <MemoryRecallReceipt receipt={memoryRecallReceipt} /> : null}
-            {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             {presentation === 'fx' ? (
               <AgentTurnWorkDisclosure
                 createdAtMs={turn.createdAtMs}
@@ -1130,6 +1129,10 @@ export const AgentTurn = memo(function AgentTurn({
                 {timelineEntries.map(renderTimelineEntry)}
               </div>
             )}
+            {/* The live marker is the current cursor, so it follows the newest
+                visible work instead of staying pinned above completed steps.
+                New entries inserted above naturally carry it to the tail. */}
+            {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
             {turnSettled ? <AgentTurnUsage messages={assistantMessages} /> : null}
             {failure ? (
               <div className="agent-turn__failure" role="alert">

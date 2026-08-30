@@ -1,9 +1,16 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
-import { pawApp, type PawAppId } from './app-registry';
+import { pawApp, pawDockAppIds, type PawAppId } from './app-registry';
+import { isPawExtensionAppId } from '../extensions/registry';
+import type { PawExtensionAppId } from '../extensions/types';
 
 export type PawWindowBounds = { x: number; y: number; width: number; height: number };
 export type PawWindowPlacement = 'maximized' | 'left' | 'right';
+export type PawExtensionAppGateStatus = 'loading' | 'ready' | 'unavailable';
+export type PawExtensionAppGate = {
+  status: PawExtensionAppGateStatus;
+  enabledExtensionIds: ReadonlySet<PawExtensionAppId>;
+};
 
 /**
  * PAWOS-only Wayfinder decoration state. These coordinates and buckets are a
@@ -12,6 +19,7 @@ export type PawWindowPlacement = 'maximized' | 'left' | 'right';
  */
 export type PawWayfinderIconPosition = { x: number; y: number };
 export type PawWayfinderState = {
+  layoutVersion: 2;
   iconPositions: Record<string, PawWayfinderIconPosition>;
   archived: string[];
   projectAssignments: Record<string, string>;
@@ -31,6 +39,7 @@ const PAW_MENU_BAR_HEIGHT = 34;
 const PAW_WINDOW_AREA_INSET = 8;
 const PAW_WINDOW_REACHABLE_GRIP_WIDTH = 120;
 const PAW_WINDOW_TITLEBAR_HEIGHT = 40;
+const EMPTY_EXTENSION_IDS: ReadonlySet<PawExtensionAppId> = new Set<PawExtensionAppId>();
 
 /** Usable size of the window layer itself, in layer coordinates. */
 export function pawWindowLayerSize(): { width: number; height: number } {
@@ -121,12 +130,15 @@ export type PawDesktopState = {
   windows: Record<string, PawWindowNode>;
   stack: string[];
   activeWindowId: string | null;
+  dockAppIds: PawAppId[];
   wayfinder: PawWayfinderState;
   collaborationFocusGroup: string | null;
   collaborationFocusReturnWindowId: string | null;
   launchpadOpen: boolean;
   overviewOpen: boolean;
+  extensionAppGate: PawExtensionAppGate;
   openApp: (appId: PawAppId, options?: { background?: boolean; entityId?: string; initialRoute?: string; title?: string; target?: PawOsWindowTarget }) => string;
+  setExtensionAppGate: (status: PawExtensionAppGateStatus, enabledExtensionIds: ReadonlySet<PawExtensionAppId>) => void;
   bindAgentMain: (
     windowId: string,
     target?: Extract<PawOsWindowTarget, { kind: 'session' | 'room' }>,
@@ -138,6 +150,9 @@ export type PawDesktopState = {
   minimizeWindow: (windowId: string) => void;
   focusWindow: (windowId: string) => void;
   commitBounds: (windowId: string, bounds: PawWindowBounds) => void;
+  pinDockApp: (appId: PawAppId) => void;
+  unpinDockApp: (appId: PawAppId) => void;
+  arrangeWayfinderIcons: () => void;
   setWayfinderIconPosition: (iconId: string, position: PawWayfinderIconPosition) => void;
   setWayfinderArchived: (iconId: string, archived: boolean) => void;
   setWayfinderProjectAssignment: (iconId: string, projectId: string | null) => void;
@@ -151,17 +166,29 @@ export type PawDesktopState = {
 };
 
 export type PawDesktopStore = StoreApi<PawDesktopState>;
+export type PawPersistedWayfinderState = Omit<PawWayfinderState, 'layoutVersion'> & { layoutVersion?: 2 };
 export type PawDesktopSnapshot = Pick<PawDesktopState, 'windows' | 'stack' | 'activeWindowId'> & {
-  wayfinder?: PawWayfinderState;
+  dockAppIds?: PawAppId[];
+  wayfinder?: PawPersistedWayfinderState;
 };
 
 export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRoute?: string, snapshot?: PawDesktopSnapshot): PawDesktopStore {
+  const initialWindows = extensionGatedWindows(snapshot?.windows ?? {}, EMPTY_EXTENSION_IDS);
+  const initialStack = (snapshot?.stack ?? []).filter((windowId) => Boolean(initialWindows[windowId]));
+  const initialActiveWindowId = snapshot?.activeWindowId && initialWindows[snapshot.activeWindowId]
+    ? snapshot.activeWindowId
+    : null;
+  const initialDockAppIds = snapshot?.dockAppIds ? [...snapshot.dockAppIds] : [...pawDockAppIds];
   const store = createStore<PawDesktopState>((set, get) => ({
-    windows: snapshot?.windows ?? {},
-    stack: snapshot?.stack ?? [],
-    activeWindowId: snapshot?.activeWindowId ?? null,
+    windows: initialWindows,
+    stack: initialStack,
+    activeWindowId: initialActiveWindowId,
+    dockAppIds: initialDockAppIds,
     wayfinder: {
-      iconPositions: snapshot?.wayfinder?.iconPositions ?? {},
+      layoutVersion: 2,
+      iconPositions: snapshot?.wayfinder?.layoutVersion === 2
+        ? snapshot.wayfinder.iconPositions ?? {}
+        : {},
       archived: snapshot?.wayfinder?.archived ?? [],
       projectAssignments: snapshot?.wayfinder?.projectAssignments ?? {},
     },
@@ -169,7 +196,9 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
     collaborationFocusReturnWindowId: null,
     launchpadOpen: false,
     overviewOpen: false,
+    extensionAppGate: { status: 'unavailable', enabledExtensionIds: EMPTY_EXTENSION_IDS },
     openApp(appId, options = {}) {
+      if (!canOpenApp(appId, get().extensionAppGate)) return '';
       const windowId = options.entityId ? `${appId}:${options.entityId}` : appId;
       const current = get().windows[windowId];
       if (current) {
@@ -244,6 +273,32 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         };
       });
       return windowId;
+    },
+    setExtensionAppGate(status, enabledExtensionIds) {
+      const nextEnabledIds = status === 'ready'
+        ? new Set([...enabledExtensionIds].filter(isPawExtensionAppId))
+        : EMPTY_EXTENSION_IDS;
+      set((state) => {
+        const gateUnchanged = state.extensionAppGate.status === status
+          && sameExtensionIds(state.extensionAppGate.enabledExtensionIds, nextEnabledIds);
+        const windows = extensionGatedWindows(state.windows, nextEnabledIds);
+        const dockAppIds = status === 'loading'
+          ? state.dockAppIds
+          : state.dockAppIds.filter((appId) => (
+              !isPawExtensionAppId(appId) || nextEnabledIds.has(appId)
+            ));
+        const windowsUnchanged = Object.keys(windows).length === Object.keys(state.windows).length;
+        const dockUnchanged = dockAppIds.length === state.dockAppIds.length;
+        if (gateUnchanged && windowsUnchanged && dockUnchanged) return state;
+        const cleaned = windowsUnchanged ? state : closeWindowsWhere(state, (node) => (
+          isPawExtensionAppId(node.appId) && !nextEnabledIds.has(node.appId)
+        ));
+        return {
+          ...cleaned,
+          dockAppIds,
+          extensionAppGate: { status, enabledExtensionIds: nextEnabledIds },
+        };
+      });
     },
     bindAgentMain(windowId, target) {
       set((state) => {
@@ -366,6 +421,21 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         if (!node || sameBounds(node.bounds, bounds)) return state;
         return { windows: { ...state.windows, [windowId]: { ...node, bounds, restoreBounds: undefined, placement: undefined } } };
       });
+    },
+    pinDockApp(appId) {
+      set((state) => state.dockAppIds.includes(appId)
+        ? state
+        : { dockAppIds: [...state.dockAppIds, appId] });
+    },
+    unpinDockApp(appId) {
+      set((state) => state.dockAppIds.includes(appId)
+        ? { dockAppIds: state.dockAppIds.filter((id) => id !== appId) }
+        : state);
+    },
+    arrangeWayfinderIcons() {
+      set((state) => Object.keys(state.wayfinder.iconPositions).length
+        ? { wayfinder: { ...state.wayfinder, iconPositions: {} } }
+        : state);
     },
     setWayfinderIconPosition(iconId, position) {
       set((state) => {
@@ -504,6 +574,29 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
   if (initialAppId) store.getState().openApp(initialAppId, { initialRoute });
   store.getState().fitWindowsToViewport();
   return store;
+}
+
+function canOpenApp(appId: PawAppId, gate: PawExtensionAppGate): boolean {
+  if (!isPawExtensionAppId(appId)) return true;
+  return gate.status === 'ready' && gate.enabledExtensionIds.has(appId);
+}
+
+function extensionGatedWindows(
+  windows: Record<string, PawWindowNode>,
+  enabledExtensionIds: ReadonlySet<PawExtensionAppId>,
+): Record<string, PawWindowNode> {
+  return Object.fromEntries(Object.entries(windows).filter(([, node]) => (
+    !isPawExtensionAppId(node.appId) || enabledExtensionIds.has(node.appId)
+  )));
+}
+
+function sameExtensionIds(
+  left: ReadonlySet<PawExtensionAppId>,
+  right: ReadonlySet<PawExtensionAppId>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const id of right) if (!left.has(id)) return false;
+  return true;
 }
 
 function initialWindowBounds(offset: number): PawWindowBounds {

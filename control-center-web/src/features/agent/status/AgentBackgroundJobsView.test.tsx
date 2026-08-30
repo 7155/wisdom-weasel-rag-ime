@@ -101,6 +101,22 @@ describe('AgentBackgroundJobsView', () => {
     expect(await screen.findByRole('button', { name: /构建项目/ })).toBeVisible();
   });
 
+  it('keeps the live snapshot but does not list or poll while its PAWOS window is inactive', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.backgroundJobs.list': jobList([runningJob]),
+      },
+    });
+
+    renderJobs(transport, [runningJob], undefined, false);
+    expect(await screen.findByRole('button', { name: /构建项目/ })).toBeVisible();
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+
+    expect(transport.requests.filter((call) => (
+      call.request.pathId === 'agent.session.backgroundJobs.list'
+    ))).toHaveLength(0);
+  });
+
   it('requests only the bounded log tail and discloses Runtime truncation', async () => {
     const largeJob = backgroundJob('running', {
       label: '大型构建',
@@ -335,9 +351,11 @@ describe('AgentBackgroundJobsView', () => {
 });
 
 function LiveJobs({
+  active = true,
   fallbackJobs,
   onOpenJob,
 }: {
+  active?: boolean;
   fallbackJobs?: AgentBackgroundJobV1[];
   onOpenJob?: (job: AgentBackgroundJobV1) => void;
 }) {
@@ -347,19 +365,20 @@ function LiveJobs({
       .map((jobId) => projection.backgroundJobsById[jobId])
       .filter((job): job is AgentBackgroundJobV1 => Boolean(job))
     : []);
-  return <AgentBackgroundJobsView sessionId={sessionId} jobs={jobs} onOpenJob={onOpenJob} />;
+  return <AgentBackgroundJobsView active={active} sessionId={sessionId} jobs={jobs} onOpenJob={onOpenJob} />;
 }
 
 function renderJobs(
   transport: MockControlTransport,
   fallbackJobs?: AgentBackgroundJobV1[],
   onOpenJob?: (job: AgentBackgroundJobV1) => void,
+  active = true,
 ): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <ControlTransportProvider transport={transport}>
       <QueryClientProvider client={client}>
-        <LiveJobs fallbackJobs={fallbackJobs} onOpenJob={onOpenJob} />
+        <LiveJobs active={active} fallbackJobs={fallbackJobs} onOpenJob={onOpenJob} />
       </QueryClientProvider>
     </ControlTransportProvider>,
   );

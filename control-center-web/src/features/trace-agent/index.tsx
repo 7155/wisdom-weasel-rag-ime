@@ -62,6 +62,8 @@ import {
   toggleTraceTargetSelection,
   type TraceTargetKind,
 } from './trace-agent-model';
+import { TraceDiagnosticReportDocument } from './report-document';
+import './engineering-audit-report.css';
 import './trace-agent.css';
 
 const TRACE_AGENT_SKILL_REF = 'integrations/pi/skills/trace-agent-diagnostics/SKILL.md';
@@ -99,6 +101,8 @@ type TraceAgentReport = {
 type TraceRepairHandoff = {
   sessionId: string;
   promptAccepted: boolean;
+  findingId: string;
+  identity: TraceRepairIdentity;
 };
 
 type TraceRepairReceipt = TraceRepairReceiptV1;
@@ -122,17 +126,6 @@ export function TraceAgentFeature() {
   const reportId = searchParams.get('reportId')?.trim() ?? '';
   return reportId ? <TraceDiagnosticReportPage reportId={reportId} /> : <TraceAgentWorkbench />;
 }
-
-const TRACE_DIAGNOSTIC_DIMENSIONS = [
-  ['task_completion', '任务完成度'],
-  ['evidence_diagnosis', '证据与诊断质量'],
-  ['tool_runtime', 'Tool / Runtime 可靠性'],
-  ['context', 'Context 质量'],
-  ['room_collaboration', 'Room / 多 Agent 协作'],
-  ['memory_rag', 'Memory / RAG'],
-  ['efficiency', '效率'],
-  ['repair_quality', '修复质量'],
-] as const;
 
 type TraceDiagnosticReportSummary = TraceDiagnosticReportListV1['items'][number];
 
@@ -182,114 +175,20 @@ function TraceDiagnosticReportPage({ reportId }: { reportId: string }) {
         </Button>
       )}
       description="这是独立持久化的 Trace 诊断报告；原始 Agent 对话只作为可回溯的过程证据。"
-      eyebrow="Trace / Report"
       routeId="trace-agent"
       title="Trace 诊断报告"
     >
       <QueryState error={report.error} isPending={report.isPending} onRetry={() => void report.refetch()}>
-        {report.data ? <TraceDiagnosticReportDocument desktop={desktop} report={report.data} /> : null}
+        {report.data ? (
+          <TraceDiagnosticReportDocument
+            onOpenDiagnosticSession={() => openDiagnosticSession(desktop, report.data.diagnosticSessionId)}
+            onOpenTarget={(target) => openReportTarget(desktop, target)}
+            onOpenTrace={(traceId) => openTrace(desktop, traceId)}
+            report={report.data}
+          />
+        ) : null}
       </QueryState>
     </ManagementPage>
-  );
-}
-
-function TraceDiagnosticReportDocument({
-  desktop,
-  report,
-}: {
-  desktop: ReturnType<typeof usePawOsDesktop>;
-  report: TraceDiagnosticReportV1;
-}) {
-  const inspection = asRecord(report.inspection);
-  const scorecard = asRecord(inspection.scorecard);
-  const dimensions = arrayRecords(scorecard.dimensions);
-  const result = asRecord(report.result);
-  const findings = arrayRecords(result.findings);
-  const hardGates = arrayRecords(result.hardGates);
-  const judgeScores = arrayRecords(result.judgeScores);
-  const dimensionById = new Map(dimensions.map((dimension) => [stringValue(dimension.dimensionId), dimension]));
-  const judgeById = new Map(judgeScores.map((score) => [stringValue(score.dimensionId), score]));
-  return (
-    <section aria-label="Trace 诊断网页报告" className="trace-agent-web-report" data-testid="trace-agent-web-report">
-      <header className="trace-agent-web-report__header">
-        <div>
-          <span className="trace-agent-kicker">持久化报告 · revision {report.revision}</span>
-          <h2>{report.title}</h2>
-          <p>{report.reportId} · {reportStatusLabel(report.status)} · 更新于 {formatTime(report.updatedAtMs)}</p>
-        </div>
-        <StatusBadge label={reportStatusLabel(report.status)} tone={report.status === 'completed' ? 'success' : report.status === 'failed' ? 'danger' : 'info'} />
-      </header>
-      {report.failureReason || report.status === 'failed' ? (
-        <p aria-live="polite" className="trace-agent-report-failure" role="alert">
-          <TriangleAlert size={15} />
-          <span>报告失败原因：{report.failureReason || '未知'}</span>
-        </p>
-      ) : null}
-      <div className="trace-agent-web-report__targets" aria-label="报告诊断对象">
-        {report.targets.map((target) => (
-          <div className="trace-agent-web-report__target" key={target.targetKey} style={{ borderLeftColor: traceTargetColorToken(target.targetKey) }}>
-            <strong>{target.title || target.id}</strong>
-            <small>{target.kind} · {target.id} · {target.traceIds.length} 条 Trace</small>
-            <span>{target.sourceAvailable ? '源快照可用' : '源快照不可用'}</span>
-          </div>
-        ))}
-      </div>
-      <section aria-label="八维诊断评分" className="trace-agent-scorecard" data-testid="trace-diagnostic-scorecard">
-        <div className="trace-agent-web-report__section-heading">
-          <div><span className="trace-agent-kicker">deterministic / ground truth / AI judge 分开</span><h3>八维诊断评分</h3></div>
-          <small>分数缺失时显示未知，不用主观评分填空。</small>
-        </div>
-        <div className="trace-agent-scorecard__table-wrap">
-          <table>
-            <thead><tr><th>维度</th><th>分数</th><th>依据</th><th>指标 / 备注</th></tr></thead>
-            <tbody>
-              {TRACE_DIAGNOSTIC_DIMENSIONS.map(([dimensionId, title]) => {
-                const dimension = dimensionById.get(dimensionId) ?? {};
-                const judge = judgeById.get(dimensionId);
-                const score = dimension.score;
-                const scoreText = typeof score === 'number' ? `${Math.round(score)}/100` : '未知';
-                const metrics = arrayRecords(dimension.metrics).map((metric) => `${stringValue(metric.label, stringValue(metric.metricId))}: ${formatMetricValue(metric.value, metric.unit)}`).join('；');
-                return (
-                  <tr data-applicability={stringValue(dimension.applicability, 'unknown')} data-dimension-id={dimensionId} key={dimensionId}>
-                    <th scope="row">{title}</th>
-                    <td><strong>{scoreText}</strong>{judge && typeof judge.score === 'number' ? <small>Judge {judge.score}/3</small> : null}</td>
-                    <td>{stringValue(dimension.authority, judge ? 'ai_judge_estimate' : 'deterministic')}</td>
-                    <td>{metrics || stringValue(dimension.note, judge ? stringValue(judge.explanation) : '暂无可验证指标')}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      <section aria-label="诊断结论" className="trace-agent-web-report__findings">
-        <div className="trace-agent-web-report__section-heading"><div><span className="trace-agent-kicker">事实 → 假设 → 结论</span><h3>诊断结论</h3></div></div>
-        {stringValue(result.summary) ? <p className="trace-agent-web-report__summary">{stringValue(result.summary)}</p> : null}
-        {findings.length ? findings.map((finding) => (
-          <article className="trace-agent-web-report__finding" key={stringValue(finding.findingId)}>
-            <div className="trace-agent-web-report__finding-heading"><strong>{stringValue(finding.findingId)}</strong><StatusBadge label={`${stringValue(finding.severity)} · ${stringValue(finding.confidence)}`} tone={finding.severity === 'critical' || finding.severity === 'high' ? 'danger' : 'warning'} /></div>
-            <dl>
-              <div><dt>现象</dt><dd>{stringValue(finding.observation, '未知')}</dd></div>
-              <div><dt>假设</dt><dd>{stringValue(finding.hypothesis, '未知')}</dd></div>
-              <div><dt>结论</dt><dd>{stringValue(finding.conclusion, '未知')}</dd></div>
-              <div><dt>证据</dt><dd>{arrayStrings(finding.evidenceIds).join('、') || '未知'}</dd></div>
-              <div><dt>候选修复</dt><dd>{stringValue(finding.candidateRepair, '暂无')}</dd></div>
-              <div><dt>验证</dt><dd>{stringValue(finding.verification, '暂无')}</dd></div>
-            </dl>
-          </article>
-        )) : <p className="trace-agent-web-report__empty">尚未生成结构化结论；当前只保存了冻结检查范围。</p>}
-      </section>
-      {hardGates.length ? (
-        <section aria-label="硬门槛" className="trace-agent-web-report__gates">
-          <div className="trace-agent-web-report__section-heading"><div><span className="trace-agent-kicker">不能被平均分掩盖</span><h3>硬门槛</h3></div></div>
-          {hardGates.map((gate) => <div className="trace-agent-web-report__gate" data-status={stringValue(gate.status)} key={stringValue(gate.gateId)}><strong>{stringValue(gate.gateId)}</strong><span>{stringValue(gate.status)} · {stringValue(gate.reason, '无理由')}</span></div>)}
-        </section>
-      ) : null}
-      <div className="trace-agent-web-report__links">
-        <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openDiagnosticSession(desktop, report.diagnosticSessionId)} size="small">打开诊断 Agent 对话</Button>
-        {report.targets.slice(0, 3).map((target) => <Button key={target.targetKey} leadingIcon={<ArrowUpRight size={14} />} onClick={() => openReportTarget(desktop, target)} size="small" variant="quiet">打开{target.kind === 'room' ? ' Room' : target.kind === 'run' ? '运行记录' : ' Session'}</Button>)}
-      </div>
-    </section>
   );
 }
 
@@ -585,29 +484,56 @@ function TraceAgentWorkbench() {
       if (!diagnosticReportReady(diagnosticSession.data)) {
         throw new Error('结构化诊断报告尚未完成，暂不能交给 Agent 修复。');
       }
-      const executionMode = 'per_action' as const;
+      const reportAuthority = await transport.request<TraceDiagnosticReportV1>({
+        pathId: 'observability.traceDiagnosticReport.get',
+        params: { reportId: diagnostic.reportId },
+        responseContract: 'trace-diagnostic-report.v1',
+      });
+      if (reportAuthority.status !== 'completed') throw new Error('持久化诊断报告尚未完成，暂不能授权修复交接。');
+      const rawFindings = asRecord(reportAuthority.result).findings;
+      const structuredFindings = Array.isArray(rawFindings) ? rawFindings.map(asRecord) : [];
+      const finding = structuredFindings.find((item) => ['critical', 'high'].includes(stringValue(item.severity)))
+        ?? structuredFindings[0];
+      const findingId = stringValue(finding?.findingId);
+      const sourceTraceId = diagnostic.traceId || reportAuthority.traceIds[0] || '';
+      const sourceScope = diagnostic.primaryTarget.targetKey;
+      const rawFindingEvidenceIds = finding?.evidenceIds;
+      const failureRef = (Array.isArray(rawFindingEvidenceIds)
+        ? rawFindingEvidenceIds.map((item) => stringValue(item)).find(Boolean)
+        : '') || findingId;
+      if (!findingId || !sourceTraceId || !failureRef) {
+        throw new Error('诊断报告没有可绑定的 Finding、失败证据或 source Trace。');
+      }
+      const identity = { sourceScope, sourceTraceId, failureRef } satisfies TraceRepairIdentity;
+      const workspaceRoots = diagnostic.primaryTarget.workspaceRoots;
+      if (!workspaceRoots.length) {
+        throw new Error('修复 owner 没有可验证的工作目录，不能启动全自动修复 Agent。请先给原 Session 绑定工作目录后重新诊断。');
+      }
+      const executionMode = 'full_trust' as const;
       const created = await transport.request({
         pathId: 'agent.sessions.create',
         body: {
           title: `修复 Trace 诊断 · ${diagnostic.target.title}`,
-          mode: diagnostic.target.workspaceRoots.length ? 'coordinator' : 'assistant',
+          mode: 'coordinator',
           toolProfileVersion: 'control-center-v1',
           executionMode,
-          workspaceRoots: diagnostic.target.workspaceRoots,
+          dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+          workspaceRoots,
         },
       });
       const sessionId = createdSessionId(created);
       if (!sessionId) throw new Error('修复 Agent Session 创建失败。');
-      // A repair handoff is an ordinary per-action Session. The diagnostic
-      // Session never receives write capability; each real change remains in
-      // the existing Agent approval flow.
+      // The diagnostic Session never receives write capability. One explicit
+      // handoff creates a separate full-automation repair Session whose
+      // concrete operations remain workspace-fenced and Luna-Max-arbitrated.
       await transport.request({
         pathId: 'agent.session.mode.update',
         params: { sessionId },
         body: {
-          mode: diagnostic.target.workspaceRoots.length ? 'coordinator' : 'assistant',
+          mode: 'coordinator',
           executionMode,
-          workspaceRoots: diagnostic.target.workspaceRoots,
+          dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+          workspaceRoots,
           toolProfileVersion: 'control-center-v1',
           toolAllowlistMode: 'profile',
           projectContextEnabled: true,
@@ -619,18 +545,36 @@ function TraceAgentWorkbench() {
         pathId: 'agent.session.prompt',
         params: { sessionId },
         body: {
-          message: repairPrompt(diagnostic),
+          message: repairPrompt(diagnostic, identity),
           clientMessageId: `trace-agent-repair:${sessionId}:${Date.now()}`,
           delivery: 'prompt',
         },
       });
-      return { sessionId, promptAccepted: true } satisfies TraceRepairHandoff;
+      const linkedReport = await transport.request<TraceDiagnosticReportV1>({
+        pathId: 'observability.traceDiagnosticReport.repairAuthorize',
+        params: { reportId: diagnostic.reportId },
+        body: {
+          expectedRevision: reportAuthority.revision,
+          findingId,
+          sourceScope,
+          sourceTraceId,
+          failureRef,
+          repairSessionId: sessionId,
+        },
+        responseContract: 'trace-diagnostic-report.v1',
+      });
+      queryClient.setQueryData(['trace-agent', 'diagnostic-report', linkedReport.reportId], linkedReport);
+      return { sessionId, promptAccepted: true, findingId, identity } satisfies TraceRepairHandoff;
     },
-    onSuccess: (next) => setRepairHandoff(next),
+    onSuccess: (next) => {
+      setRepairHandoff(next);
+      void persistedReportsQuery.refetch();
+    },
   });
   const recheck = useMutation({
-    mutationFn: async ({ diagnostic, repairSessionId }: { diagnostic: TraceAgentReport; repairSessionId: string }) => {
+    mutationFn: async ({ diagnostic, handoff }: { diagnostic: TraceAgentReport; handoff: TraceRepairHandoff }) => {
       if (!diagnostic.traceId) throw new Error('当前诊断没有可复检的 Trace。');
+      const repairSessionId = handoff.sessionId;
       const repairSnapshot = await transport.request<ObservationSnapshotV1>({
         pathId: 'observability.snapshot',
         query: { limit: 100, sessionId: repairSessionId },
@@ -638,7 +582,7 @@ function TraceAgentWorkbench() {
       });
       const repairTraceId = latestCompletedTrace(repairSnapshot, repairSessionId);
       if (!repairTraceId) throw new Error('修复 Session 尚未产生已完成 Trace，请先完成修复后再复检。');
-      const identity = traceRepairIdentity(diagnostic);
+      const identity = handoff.identity;
       const repairRefs = { repairSessionId, repairTraceId };
       const changeResponse = await transport.request({
         pathId: 'observability.traceRepair.changeEvidence',
@@ -698,6 +642,21 @@ function TraceAgentWorkbench() {
         },
       });
       const recheckResult = parseTraceRepairRecheck(recheckResponse, identity, verifiedReceipt);
+      const currentReport = await transport.request<TraceDiagnosticReportV1>({
+        pathId: 'observability.traceDiagnosticReport.get',
+        params: { reportId: diagnostic.reportId },
+        responseContract: 'trace-diagnostic-report.v1',
+      });
+      const linkedReport = await transport.request<TraceDiagnosticReportV1>({
+        pathId: 'observability.traceDiagnosticReport.repairVerify',
+        params: { reportId: diagnostic.reportId },
+        body: {
+          expectedRevision: currentReport.revision,
+          repairReceiptId: verifiedReceipt.repairReceiptId,
+        },
+        responseContract: 'trace-diagnostic-report.v1',
+      });
+      queryClient.setQueryData(['trace-agent', 'diagnostic-report', linkedReport.reportId], linkedReport);
       return {
         sourceTraceId: diagnostic.traceId,
         repairTraceId,
@@ -707,6 +666,7 @@ function TraceAgentWorkbench() {
     },
     onSuccess: (next) => {
       setEvalReceipt(next);
+      void persistedReportsQuery.refetch();
     },
   });
 
@@ -833,15 +793,14 @@ function TraceAgentWorkbench() {
               <section aria-label="已保存的 Trace 诊断报告" className="trace-agent-persisted-reports">
                 <div className="trace-agent-persisted-reports__heading">
                   <div>
-                    <span className="trace-agent-kicker">持久化报告</span>
-                    <strong>已保存的 Trace 诊断</strong>
-                    <p>报告正文和八维评分独立保存为网页报告；诊断 Agent 对话只是原始过程。</p>
+                    <strong>已保存的工程审计报告</strong>
+                    <p>报告正文、八维评分和证据引用独立持久化；诊断 Agent 对话只保留生成过程。</p>
                   </div>
-                  <StatusBadge label={`${persistedReports.length} 份`} tone="success" />
+                  <StatusBadge label={`${persistedReports.length} 份`} tone="neutral" />
                 </div>
-                <div className="trace-agent-persisted-reports__list">
+                <div className="trace-agent-persisted-reports__list" role="list">
                   {persistedReports.map((item) => (
-                    <div className="trace-agent-persisted-report" key={item.reportId}>
+                    <div className="trace-agent-persisted-report" data-status={item.status} key={item.reportId} role="listitem">
                       <div
                         className="trace-agent-persisted-report__icon"
                         aria-hidden="true"
@@ -858,7 +817,7 @@ function TraceAgentWorkbench() {
                             </span>
                           ))}
                         </div>
-                        <small>{reportStatusLabel(item.status)} · {formatTime(item.updatedAtMs)}{item.failureReason || item.status === 'failed' ? ` · 失败原因：${item.failureReason || '未知'}` : ''}</small>
+                        <small>Revision {item.revision} · {reportStatusLabel(item.status)} · 修复：{reportRepairStateLabel(item.repairState)} · {formatTime(item.updatedAtMs)}{item.failureReason || item.status === 'failed' ? ` · 失败原因：${item.failureReason || '未知'}` : ''}</small>
                       </div>
                       <Button
                         leadingIcon={<ArrowUpRight size={14} />}
@@ -866,7 +825,7 @@ function TraceAgentWorkbench() {
                         size="small"
                         variant="quiet"
                       >
-                        打开网页报告
+                        打开审计报告
                       </Button>
                     </div>
                   ))}
@@ -1100,7 +1059,7 @@ function TraceAgentWorkbench() {
               evalReceipt={evalReceipt}
               evalList={evals.data}
               recheckState={{ error: recheck.error, isPending: recheck.isPending }}
-              onRecheck={(handoff) => recheck.mutate({ diagnostic: report, repairSessionId: handoff.sessionId })}
+              onRecheck={(handoff) => recheck.mutate({ diagnostic: report, handoff })}
               report={report}
               onRefreshDiagnostic={() => {
                 setDiagnosticPollingExpired(false);
@@ -1179,7 +1138,7 @@ function TraceAgentReport({
             tone={diagnosticSession.error || finalizeError || diagnosticFailed || diagnosticTimedOut ? 'danger' : diagnosticReady ? 'success' : 'info'}
           />
         </div>
-        <p>它会按 Tool、Runtime、Context、Room 分工、Memory 和 Knowledge/RAG 分段回看；未经重放或 Eval 支持的建议会标为候选/假设。</p>
+        <p>它会先按诊断对象和冻结证据选择主诊断域；无关维度标为不适用，未经重放或 Eval 支持的解释保留为候选/假设。</p>
         <div className="trace-agent-report-links">
           <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openDiagnosticSession(desktop, report.sessionId)} size="small">打开诊断 Agent 对话</Button>
           {persistedReport ? <Button leadingIcon={<ArrowUpRight size={14} />} onClick={() => openDiagnosticReport(desktop, persistedReport.reportId)} size="small" variant="primary">打开网页报告</Button> : null}
@@ -1213,8 +1172,8 @@ function TraceAgentReport({
               <strong>确认交给普通 Agent 修复？</strong>
               <p>
                 修复 owner：{report.primaryTarget.title || report.primaryTarget.id}（{report.primaryTarget.kind} · {report.primaryTarget.id}）。
-                只有这个 primary target 可以进入可写的 per_action Session；其余 {Math.max(0, report.targets.length - 1)} 个对象仅作为比较证据，不会获得写入权限。
-                不会自动修改文件；每个真实写入仍需逐操作授权。
+                只有这个 primary target 可以进入可写的全自动修复 Session；其余 {Math.max(0, report.targets.length - 1)} 个对象仅作为比较证据，不会获得写入权限。
+                确认后不再逐 Tool 询问；工作目录、停止/取消、哈希复验和硬安全边界继续有效，待审批操作由独立 Luna Max 判定。
               </p>
             </div>
             <div className="trace-agent-report-links">
@@ -1262,7 +1221,7 @@ function TraceAgentReport({
         {repairHandoff ? (
           <div aria-live="polite" className="trace-agent-repair-state trace-agent-repair-state--success" data-testid="trace-agent-repair-ready">
             <CheckCircle2 size={15} />
-            <span>已创建按操作确认的普通 Agent Session；它收到当前对象、诊断 Session、Trace 和失败证据。完成并授权修改后，再读取修复 Session 的新 Trace 运行 Eval 复检。</span>
+            <span>已创建全自动修复 Agent Session；它收到当前对象、诊断 Session、Trace 和失败证据，待审批操作由独立 Luna Max 判定。完成修改后，必须先由 Host 沙盒重放代表测试，再读取新 Trace 运行 Eval 复检。</span>
             <Button leadingIcon={<ArrowUpRight size={13} />} onClick={() => openDiagnosticSession(desktop, repairHandoff.sessionId)} size="small">
               打开修复 Session
             </Button>
@@ -1289,7 +1248,7 @@ function TraceAgentReport({
             <span>
               独立复验已持久化：{persistedEval.evalRunId} · {evalStatusLabel(persistedEval.status)}
             </span>
-            <small>诊断 Trace：{sourceTraceId || '未知'} · 修复 Trace：{repairTraceId || '未知'} · Luna Max AI Judge 仅为独立评审估计，不伪装成人工验收。</small>
+            <small>Host 沙盒：{evalReceipt?.repairReceipt.sandboxStatus || '未知'} · {evalReceipt?.repairReceipt.sandboxedTestCount ?? 0} 次 · 诊断 Trace：{sourceTraceId || '未知'} · 修复 Trace：{repairTraceId || '未知'} · Luna Max AI Judge 仅为独立评审估计，不伪装成人工验收。</small>
           </div>
         ) : null}
         <dl className="trace-agent-report-meta">
@@ -1297,29 +1256,24 @@ function TraceAgentReport({
           <div><dt>诊断输入</dt><dd>{report.target.kind} · {report.target.id}</dd></div>
           <div><dt>诊断范围</dt><dd>{report.targets.length} 个对象 · {report.traceIds.length} 条 Trace</dd></div>
           <div><dt>修复 owner</dt><dd>{report.primaryTarget.title || report.primaryTarget.id}（{report.primaryTarget.kind} · {report.primaryTarget.id}）；其余对象仅作比较证据</dd></div>
-          <div><dt>权限</dt><dd>只读；候选修复需普通 Agent 授权</dd></div>
+          <div><dt>权限</dt><dd>Trace 只读；确认候选修复后创建独立的全自动可写 Agent</dd></div>
         </dl>
       </div>
     </section>
   );
 }
 
-function arrayRecords(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.map(asRecord).filter((item) => Object.keys(item).length > 0) : [];
-}
-
-function arrayStrings(value: unknown): string[] {
-  return Array.isArray(value) ? value.map((item) => stringValue(item)).filter(Boolean) : [];
-}
-
-function formatMetricValue(value: unknown, unit: unknown): string {
-  if (value === null || value === undefined || value === '') return '未知';
-  const numeric = typeof value === 'number' ? (Number.isInteger(value) ? String(value) : value.toFixed(3)) : String(value);
-  return `${numeric}${stringValue(unit) ? ` ${stringValue(unit)}` : ''}`;
-}
-
 function reportStatusLabel(value: string): string {
   return ({ generating: '生成中', completed: '已完成', failed: '失败' } as Record<string, string>)[value] ?? value;
+}
+
+function reportRepairStateLabel(value: string | undefined): string {
+  return ({
+    not_recorded: '待授权',
+    authorized: '已授权交接',
+    verified: '证据已验证',
+    failed: '验证失败',
+  } as Record<string, string>)[value ?? 'not_recorded'] ?? '待授权';
 }
 
 function openDiagnosticReport(desktop: ReturnType<typeof usePawOsDesktop>, reportId: string): void {
@@ -2536,6 +2490,7 @@ function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''
   const safeTargetId = redactTraceAgentText(primaryTarget.id, 180);
   const safeTargetTitle = redactTraceAgentText(primaryTarget.title, 180);
   const safeTraceId = redactTraceAgentText(traceId, 180);
+  const focusHint = diagnosticFocusHint(primaryTarget, targets.length);
   return [
     `先调用 skill_load 加载 name=trace-agent-diagnostics；SkillRef=${TRACE_AGENT_SKILL_REF}。`,
     '',
@@ -2554,30 +2509,56 @@ function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''
       '--- END TRACE_AGENT_HANDOFF ---',
     ] : []),
     '',
-    '请使用现有 Observability/TraceStore/Eval 与对象本身的真实记录，覆盖：',
-    '1. Tool、Browser、Provider、Runtime 的失败、超时、重复调用和未闭合状态；',
-    '2. 每轮实际 Context 的遗漏、污染、重复和不必要加载；',
-    '3. Room 的任务分派、相互 @、等待、返工、重复确认、WorkItem 和子 Agent 关系；',
-    '4. Memory 召回质量与 Knowledge/RAG 的解析、检索、排序、参数和 Eval 证据；',
-    '5. 哪一步浪费了 Token/延迟，以及减少浪费的候选分工或流程。',
+    `建议主诊断域：${focusHint}。这只是对象类型给出的起点；调用 trace_diagnostics.inspect 后，必须按冻结证据修正。`,
+    '先确定本次 active lanes，再诊断。只分析与用户可见失败、目标产物和首个失败 owner 有直接关系的域。',
+    '没有命中条件的诊断域必须标记为 not_applicable：不要为它生成 judgeScore 或 finding；八行展示由确定性网页报告投影负责。',
+    'Room / WorkItem / 子 Agent 只在 inspect 返回真实协作绑定时启用；后台 run 没有协作绑定不是缺陷，也不生成“建议补绑定”的 finding。',
+    'Memory 维护只检查来源读取、整理产物、冲突/去重、验证和持久化链；不要因为维度名是 Memory/RAG 就自动扩展到 Knowledge 检索与排序。',
+    'Context、效率和成本只在存在对应来源清单、token、字节或阶段耗时证据时启用；缺证据只写一次证明边界，不得拆成多个泛化问题。',
+    'Findings 只保留 1 个首要根因和至多 3 个直接后果或必要证据缺口；禁止为了填满评分维度而制造 finding。',
     '',
     '报告必须按“现象 → 影响 → Trace/span/run 证据 → 可能根因 → 置信度/未知边界 → 候选修复 → 如何用沙盒或 Eval 验证 → 可回跳的 Trace/Session/Room/文件”输出。不要把模型推测写成事实。',
     '',
-    '在自然语言报告之后，必须追加下面的结构化结果。只允许引用本次 inspect 返回的 evidenceId；没有证据就留空或 unknown，不要编造 ID。',
+    reportId ? `对话中的可见说明最多 6 行，第一行写“网页报告：${redactTraceAgentText(reportId, 180)}”；完整细节只进入下面的结构化结果，由网页报告渲染。` : '对话中的可见说明最多 6 行；完整细节只进入下面的结构化结果，由网页报告渲染。',
+    '在简短说明之后，必须追加下面的结构化结果。只允许引用本次 inspect 返回的 evidenceId；没有证据就留空或 unknown，不要编造 ID。',
     '--- TRACE_DIAGNOSTIC_RESULT_V1 ---',
     JSON.stringify({
       schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
       summary: '<简短结论>',
       hardGates: [{ gateId: '<gate>', status: 'unknown', reason: '<依据>', evidenceIds: [] }],
       judgeScores: [{ dimensionId: 'task_completion', score: null, authority: 'ai_judge_estimate', explanation: '<只能是估计>', evidenceIds: [] }],
+      requirementAssessments: [{ requirementId: '<inspect 返回的 requirementId>', status: 'unverified', owner: '<owner 或空>', authority: 'ai_judge_estimate', evidenceIds: [], note: '<判断边界>' }],
+      causalLinks: [{ linkId: '<stable link id>', fromEvidenceId: '<frozen evidenceId>', toEvidenceId: '<frozen evidenceId>', relation: 'caused', authority: 'ai_judge_estimate', confidence: 'unknown', explanation: '<为什么存在因果而不只是时间相邻>' }],
       findings: [{ findingId: '<finding>', dimensionId: 'tool_runtime', severity: 'medium', observation: '<事实>', hypothesis: '<假设>', conclusion: '<结论或未知>', confidence: 'unknown', evidenceIds: [], candidateRepair: '<候选修复>', verification: '<验证方法>' }],
     }, null, 2),
     '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---',
   ].join('\n');
 }
 
-function repairPrompt(report: TraceAgentReport): string {
-  const identity = traceRepairIdentity(report);
+function diagnosticFocusHint(target: TraceTarget, targetCount: number): string {
+  const kind = target.handoff?.kind ?? target.kind;
+  const targetIdentity = `${target.id} ${target.title}`.toLowerCase();
+  const primary = kind === 'memory' || targetIdentity.includes('memory-maintenance')
+    ? 'Memory 维护结果与 Runtime 失败链'
+    : kind === 'knowledge'
+      ? 'Knowledge/RAG 检索链、引用与最终答案质量'
+      : ['room', 'planet', 'satellite'].includes(kind)
+        ? 'Room 协作、WorkItem owner 与终态传播'
+        : kind === 'context'
+          ? 'Context 组装、压缩与关键约束保真'
+          : ['tool', 'runtime', 'sandbox'].includes(kind)
+            ? 'Tool / Provider / Runtime 执行链'
+            : kind === 'review'
+              ? 'Review 依据、结论与回写终态'
+              : kind === 'file'
+                ? 'WorkDocument / Artifact 写入、注册与验收链'
+                : kind === 'task'
+                  ? '任务完成度、owner 与终态证据'
+                  : '用户需求完成度与首个失败 owner';
+  return targetCount > 1 ? `多对象可比性与 ${primary}` : primary;
+}
+
+function repairPrompt(report: TraceAgentReport, identity: TraceRepairIdentity = traceRepairIdentity(report)): string {
   const primaryTarget = report.primaryTarget;
   const handoff = {
     target: {
@@ -2617,10 +2598,11 @@ function repairPrompt(report: TraceAgentReport): string {
     })),
   };
   return [
-    '这是 Trace Agent 的候选修复交接。你是普通可写 Agent，请先复核证据和诊断 Session，再向用户说明准备修改什么。',
+    '这是 Trace Agent 的候选修复交接。你是独立的全自动可写 Agent，请先复核证据和诊断 Session，再开始最小修复。',
     `修复 owner 只有 primary target：${primaryTarget.kind}:${redactTraceAgentText(primaryTarget.id, 180)}。其余诊断对象只能作为比较证据，不得据此扩大写入范围。`,
     '不要静默修改：真实写入、命令或配置变更必须继续走当前 Session 的普通 per_action 授权；证据不足时报告未知并先询问，不要猜测。',
     '请优先定位根因，给出最小修复；完成后运行与问题直接相关的最小验证，并回报修改文件、授权动作、验证结果以及如何回到 Trace 重跑诊断。',
+    '用户已经在修复交接中确认全自动执行；不要再次逐 Tool 请求用户批准。待审批操作交给独立 Luna Max，工作目录、哈希、停止/取消和硬安全边界始终有效。',
     '',
     '--- TRACE_DIAGNOSTIC_HANDOFF ---',
     JSON.stringify(handoff, null, 2),

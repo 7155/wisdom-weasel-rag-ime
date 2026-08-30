@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { createPawDesktopStore, type PawDesktopSnapshot, type PawDesktopState, type PawDesktopStore } from './desktop-store';
-import type { PawAppId } from './app-registry';
+import { pawApps, type PawAppId } from './app-registry';
 
 const PawDesktopContext = createContext<PawDesktopStore | null>(null);
 const pawDesktopSnapshotKey = 'pawos.desktop.v1';
 const pawDesktopPersistDelayMs = 200;
+const pawAppIds = new Set<PawAppId>(pawApps.map((app) => app.id));
 
 export function PawDesktopProvider({ children, initialAppId, initialRoute }: { children: ReactNode; initialAppId?: PawAppId | null; initialRoute?: string }) {
   const storeRef = useRef<PawDesktopStore | null>(null);
@@ -27,9 +28,15 @@ export function PawDesktopProvider({ children, initialAppId, initialRoute }: { c
         windows: state.windows,
         stack: state.stack,
         activeWindowId: state.activeWindowId,
+        dockAppIds: state.dockAppIds,
         wayfinder: state.wayfinder,
       };
-      window.localStorage.setItem(pawDesktopSnapshotKey, JSON.stringify(snapshot));
+      try {
+        window.localStorage.setItem(pawDesktopSnapshotKey, JSON.stringify(snapshot));
+      } catch {
+        // Persistence is a convenience boundary, never an interaction gate.
+        // Quota/private-mode failures leave the live desktop untouched.
+      }
     };
     const unsubscribe = store.subscribe(() => {
       if (!timer) timer = window.setTimeout(write, pawDesktopPersistDelayMs);
@@ -56,8 +63,72 @@ export function PawDesktopProvider({ children, initialAppId, initialRoute }: { c
 
 function readPawDesktopSnapshot(): PawDesktopSnapshot | undefined {
   if (typeof window === 'undefined') return undefined;
-  const value = window.localStorage.getItem(pawDesktopSnapshotKey);
-  return value ? JSON.parse(value) as PawDesktopSnapshot : undefined;
+  try {
+    const value = window.localStorage.getItem(pawDesktopSnapshotKey);
+    if (!value) return undefined;
+    return sanitizePawDesktopSnapshot(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizePawDesktopSnapshot(value: unknown): PawDesktopSnapshot | undefined {
+  if (!isRecord(value)) return undefined;
+  const rawWindows = isRecord(value.windows) ? value.windows : {};
+  const windows = Object.fromEntries(Object.entries(rawWindows).filter(([, node]) => validWindowNode(node))) as PawDesktopSnapshot['windows'];
+  const stack = Array.isArray(value.stack)
+    ? value.stack.filter((id): id is string => typeof id === 'string' && Boolean(windows[id]))
+    : [];
+  const activeWindowId = typeof value.activeWindowId === 'string' && windows[value.activeWindowId]
+    ? value.activeWindowId
+    : null;
+  const dockAppIds = Array.isArray(value.dockAppIds)
+    ? [...new Set(value.dockAppIds.filter((id): id is PawAppId => typeof id === 'string' && pawAppIds.has(id as PawAppId)))]
+    : undefined;
+  const rawWayfinder = isRecord(value.wayfinder) ? value.wayfinder : {};
+  const rawPositions = isRecord(rawWayfinder.iconPositions) ? rawWayfinder.iconPositions : {};
+  const iconPositions = Object.fromEntries(Object.entries(rawPositions).flatMap(([id, position]) => {
+    if (!isRecord(position)
+      || typeof position.x !== 'number'
+      || !Number.isFinite(position.x)
+      || typeof position.y !== 'number'
+      || !Number.isFinite(position.y)) return [];
+    return [[id, { x: position.x, y: position.y }]];
+  }));
+  const rawAssignments = isRecord(rawWayfinder.projectAssignments) ? rawWayfinder.projectAssignments : {};
+  const projectAssignments = Object.fromEntries(Object.entries(rawAssignments).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  return {
+    windows,
+    stack,
+    activeWindowId,
+    ...(dockAppIds !== undefined ? { dockAppIds } : {}),
+    wayfinder: {
+      ...(rawWayfinder.layoutVersion === 2 ? { layoutVersion: 2 as const } : {}),
+      iconPositions,
+      archived: Array.isArray(rawWayfinder.archived) ? rawWayfinder.archived.filter((id): id is string => typeof id === 'string') : [],
+      projectAssignments,
+    },
+  };
+}
+
+function validWindowNode(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.bounds)) return false;
+  return typeof value.id === 'string'
+    && typeof value.appId === 'string'
+    && typeof value.title === 'string'
+    && typeof value.minimized === 'boolean'
+    && typeof value.bounds.x === 'number'
+    && Number.isFinite(value.bounds.x)
+    && typeof value.bounds.y === 'number'
+    && Number.isFinite(value.bounds.y)
+    && typeof value.bounds.width === 'number'
+    && Number.isFinite(value.bounds.width)
+    && typeof value.bounds.height === 'number'
+    && Number.isFinite(value.bounds.height);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function usePawDesktopStore<T>(selector: (state: PawDesktopState) => T): T {

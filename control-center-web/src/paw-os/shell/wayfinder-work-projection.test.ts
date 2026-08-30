@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  projectRunningWayfinderWork,
   projectWayfinderWork,
   wayfinderWorkTime,
   type WayfinderWorkRoomSource,
@@ -53,7 +54,7 @@ describe('projectWayfinderWork', () => {
     expect(view.projects).toEqual([]);
   });
 
-  it('keeps partner Sessions off the list entirely when their Room record exists', () => {
+  it('keeps partner Sessions off the list and does not treat an unarchived Room as running', () => {
     const view = projectWayfinderWork({
       nowMs: NOW,
       rooms: [room({
@@ -79,10 +80,67 @@ describe('projectWayfinderWork', () => {
     expect(titles).toEqual(['独立调查', '迁移作战室']);
     const roomItem = view.buckets[0]!.items.find((item) => item.kind === 'room');
     expect(roomItem?.agents).toEqual(['Mars', 'Venus']);
-    expect(roomItem?.activity).toBe('running');
+    expect(roomItem?.activity).toBe('idle');
   });
 
-  it('collapses records repeating the same goal copy into the newest with reachable repeats', () => {
+  it('projects a Room as running only while one of its real participant Sessions is busy', () => {
+    const sources = {
+      nowMs: NOW,
+      rooms: [room({ id: 'room-1', title: '迁移作战室', status: 'active' })],
+      sessions: [
+        session({ id: 'partner-1', title: '迁移作战室 · Agent 1', status: 'busy', roomParticipant: { roomId: 'room-1' } }),
+        session({ id: 'partner-2', title: '迁移作战室 · Agent 2', roomParticipant: { roomId: 'room-1' } }),
+      ],
+    };
+
+    expect(projectWayfinderWork(sources).projects[0]?.items[0]).toMatchObject({
+      id: 'room-1',
+      activity: 'running',
+      statusLabel: '进行中',
+    });
+    expect(projectRunningWayfinderWork(sources)).toEqual([
+      expect.objectContaining({ id: 'room-1', kind: 'room', activity: 'running' }),
+    ]);
+  });
+
+  it('keeps the running signal when a busy Room also has a blocked WorkItem', () => {
+    const sources = {
+      nowMs: NOW,
+      rooms: [room({
+        id: 'room-mixed',
+        title: '并行修复',
+        status: 'active',
+        workItems: [{ state: 'blocked' as const, updatedAtMs: NOW, blocker: { reason: '等待确认' } }],
+      })],
+      sessions: [session({
+        id: 'partner-mixed',
+        title: '并行修复 · Agent 1',
+        status: 'busy',
+        roomParticipant: { roomId: 'room-mixed' },
+      })],
+    };
+
+    expect(projectWayfinderWork(sources).projects[0]).toMatchObject({
+      attentionCount: 1,
+      runningCount: 1,
+      items: [expect.objectContaining({ activity: 'attention', runtimeRunning: true })],
+    });
+  });
+
+  it('keeps lossy recent-work folding out of the live activity projection', () => {
+    const running = projectRunningWayfinderWork({
+      nowMs: NOW,
+      rooms: [],
+      sessions: [
+        session({ id: 'busy-a', title: '同名任务', status: 'busy', updatedAtMs: TODAY_9AM + 2 }),
+        session({ id: 'busy-b', title: '同名任务', status: 'busy', updatedAtMs: TODAY_9AM + 1 }),
+      ],
+    });
+
+    expect(running.map((item) => item.id)).toEqual(['busy-a', 'busy-b']);
+  });
+
+  it('folds only quiet repeated goals and keeps a current fault visible as its own record', () => {
     const view = projectWayfinderWork({
       nowMs: NOW,
       rooms: [],
@@ -93,13 +151,50 @@ describe('projectWayfinderWork', () => {
       ],
     });
 
-    expect(view.rowCount).toBe(1);
-    expect(view.foldedCount).toBe(2);
-    const [row] = view.buckets[0]!.items;
-    expect(row!.id).toBe('s-new');
-    // The lead row inherits the loudest state so a faulted older run is not lost.
-    expect(row!.activity).toBe('attention');
-    expect(row!.repeats.map((repeat) => repeat.id)).toEqual(['s-mid', 's-old']);
+    expect(view.rowCount).toBe(2);
+    expect(view.foldedCount).toBe(1);
+    expect(view.buckets[0]!.items.map((row) => [row.id, row.activity])).toEqual([
+      ['s-new', 'idle'],
+      ['s-old', 'attention'],
+    ]);
+    expect(view.buckets[0]!.items[0]!.repeats.map((repeat) => repeat.id)).toEqual(['s-mid']);
+  });
+
+  it('does not promote historical terminal Room failures to current attention', () => {
+    const view = projectWayfinderWork({
+      nowMs: NOW,
+      rooms: [room({
+        id: 'room-history',
+        title: '历史失败 Room',
+        status: 'active',
+        workItems: [{ state: 'failed', resultSummary: '旧任务失败', updatedAtMs: NOW - 60_000 }],
+      })],
+      sessions: [],
+    });
+
+    expect(view.projects[0]?.items[0]).toMatchObject({ activity: 'idle', statusLabel: '就绪' });
+  });
+
+  it('renders unknown provenance instead of stale running or failure states', () => {
+    const view = projectWayfinderWork({
+      nowMs: NOW,
+      roomStatusFresh: false,
+      sessionStatusFresh: false,
+      rooms: [room({ id: 'room-stale', title: '状态过期 Room', status: 'active' })],
+      sessions: [session({ id: 'session-stale', title: '状态过期 Session', status: 'busy' })],
+    });
+
+    expect(view.projects.flatMap((project) => project.items).map((item) => item.statusLabel)).toEqual([
+      '状态未知',
+      '状态未知',
+    ]);
+    expect(projectRunningWayfinderWork({
+      nowMs: NOW,
+      roomStatusFresh: false,
+      sessionStatusFresh: false,
+      rooms: [room({ id: 'room-stale', title: '状态过期 Room', status: 'active' })],
+      sessions: [session({ id: 'session-stale', title: '状态过期 Session', status: 'busy' })],
+    })).toEqual([]);
   });
 
   it('groups rows into 今天 / 本周 / 更早 with a bounded preview per bucket', () => {

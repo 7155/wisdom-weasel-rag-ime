@@ -913,6 +913,41 @@ describe('Agent chat rendering', () => {
     expect(container.querySelectorAll('.agent-code-block')).toHaveLength(3);
   });
 
+  it('projects a completed Trace diagnostic envelope as a report receipt instead of raw protocol JSON', async () => {
+    const user = userEvent.setup();
+    const openRoute = vi.fn();
+    const reportId = `trace-report:${'7'.repeat(32)}`;
+    const source = [
+      '这段自然语言可能很长，不应和机器协议一起重复展示。',
+      `网页报告：${reportId}`,
+      '--- TRACE_DIAGNOSTIC_RESULT_V1 ---',
+      JSON.stringify({
+        schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
+        summary: '记忆整理在 Runtime JSONL 解析阶段失败。',
+        hardGates: [],
+        judgeScores: [],
+        findings: [{ findingId: 'raw-protocol-only' }],
+      }),
+      '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---',
+    ].join('\n');
+
+    render(
+      <PawOsDesktopProvider openRoute={openRoute} openWindow={() => undefined}>
+        <MarkdownBody text={source} />
+      </PawOsDesktopProvider>,
+    );
+
+    const receipt = screen.getByRole('status', { name: 'Trace 诊断结构化结果' });
+    expect(receipt).toHaveTextContent('记忆整理在 Runtime JSONL 解析阶段失败。');
+    expect(receipt).toHaveTextContent(reportId);
+    expect(screen.queryByText(/raw-protocol-only/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/TRACE_DIAGNOSTIC_RESULT_V1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/这段自然语言可能很长/)).not.toBeInTheDocument();
+
+    await user.click(within(receipt).getByRole('button', { name: '打开网页报告' }));
+    expect(openRoute).toHaveBeenCalledWith(`/trace-agent?reportId=${encodeURIComponent(reportId)}`);
+  });
+
   it('opens workspace file references from prose while keeping hashes, commands, and code spans plain', async () => {
     const user = userEvent.setup();
     const openRoute = vi.fn();

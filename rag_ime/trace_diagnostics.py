@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import time
@@ -42,6 +43,7 @@ _FAILED_STATUSES = frozenset({"failed", "cancelled"})
 _TIMEOUT_RE = re.compile(r"timeout|timed out|超时", re.IGNORECASE)
 _SCHEMA_ERROR_RE = re.compile(r"schema|validation|invalid arguments?|参数校验|验证失败", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"token", re.IGNORECASE)
+_TRACE_FINGERPRINT_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 _PATH_RE = re.compile(r"(?:/Users|/home|/Volumes)/[^\s'\"]+")
 _SECRET_RE = re.compile(r"(?i)(authorization|api[_-]?key|token|secret)\s*[:=]\s*[^\s,;]+")
 _RESULT_START = "--- TRACE_DIAGNOSTIC_RESULT_V1 ---"
@@ -51,6 +53,7 @@ _RESULT_END = "--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---"
 Reader = Callable[[str], Mapping[str, object] | None]
 ObservationReader = Callable[[Mapping[str, object]], Mapping[str, object]]
 EvalReader = Callable[[str], Sequence[Mapping[str, object]] | Mapping[str, object]]
+EnvironmentReader = Callable[[str, str], Mapping[str, object] | None]
 
 
 def extract_trace_diagnostic_result(session_snapshot: Mapping[str, object]) -> dict[str, object]:
@@ -101,6 +104,7 @@ def inspect_trace_targets(
     observation_reader: ObservationReader,
     trace_reader: Reader,
     eval_reader: EvalReader,
+    environment_reader: EnvironmentReader | None = None,
     now_ms: int | None = None,
 ) -> dict[str, object]:
     """Build one bounded multi-target diagnostic slice.
@@ -117,6 +121,8 @@ def inspect_trace_targets(
     trace_ids: list[str] = []
     target_rows: list[dict[str, object]] = []
     room_sources: list[Mapping[str, object]] = []
+    environment_inputs: dict[str, Mapping[str, object]] = {}
+    source_hashes: dict[str, str] = {}
 
     for target in normalized_targets:
         kind = str(target["kind"])
@@ -135,10 +141,18 @@ def inspect_trace_targets(
 
         source_available = isinstance(source, Mapping) and bool(source)
         if source_available:
+            source_hashes[target_key] = _sha256(_canonical_json(source))
             if kind == "session":
                 _extract_session_source(source or {}, target_key, timeline, evidence)
             elif kind == "room":
                 _extract_room_source(source or {}, target_key, timeline, evidence)
+        if environment_reader is not None:
+            try:
+                environment = environment_reader(kind, identifier)
+            except (KeyError, ValueError):
+                environment = None
+            if isinstance(environment, Mapping):
+                environment_inputs[target_key] = environment
 
         filters = {f"{kind}Id": identifier, "limit": 100}
         try:
@@ -173,6 +187,7 @@ def inspect_trace_targets(
     trace_ids_truncated = len(trace_ids) > 32
     trace_ids = trace_ids[:32]
     trace_payloads: list[Mapping[str, object]] = []
+    trace_payloads_by_id: dict[str, Mapping[str, object]] = {}
     eval_runs: list[Mapping[str, object]] = []
     for trace_id in trace_ids:
         try:
@@ -182,6 +197,9 @@ def inspect_trace_targets(
         trace = _unwrap_trace(raw_trace)
         if trace is not None:
             trace_payloads.append(trace)
+            persisted_trace_id = _bounded_id(trace.get("traceId"), 240)
+            if persisted_trace_id:
+                trace_payloads_by_id[persisted_trace_id] = trace
             _extract_trace(trace, evidence)
         try:
             raw_evals = eval_reader(trace_id)
@@ -200,21 +218,33 @@ def inspect_trace_targets(
     timeline = timeline[-240:]
     evidence = evidence[-512:]
     valid_evidence_ids = {str(item["evidenceId"]) for item in evidence}
+    requirements = _requirements_from_timeline(timeline, valid_evidence_ids)
+    captured_at_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    environment = _environment_snapshot(
+        captured_at_ms=captured_at_ms,
+        targets=target_rows,
+        source_hashes=source_hashes,
+        environment_inputs=environment_inputs,
+        traces=trace_payloads_by_id,
+    )
     scorecard = _scorecard(
         observation_events=observation_events,
         traces=trace_payloads,
         eval_runs=eval_runs,
         rooms=room_sources,
+        targets=target_rows,
         target_count=len(target_rows),
         valid_evidence_ids=valid_evidence_ids,
     )
     result = {
         "schemaVersion": TRACE_DIAGNOSTIC_INSPECTION_SCHEMA_VERSION,
-        "generatedAtMs": int(time.time() * 1000) if now_ms is None else int(now_ms),
+        "generatedAtMs": captured_at_ms,
         "targets": target_rows,
         "traceIds": trace_ids,
         "timeline": timeline,
         "evidence": evidence,
+        "requirements": requirements,
+        "environment": environment,
         "scorecard": scorecard,
         "truncated": {
             "timeline": timeline_truncated,
@@ -336,6 +366,16 @@ class TraceDiagnosticReportStore:
                 str(item["evidenceId"])
                 for item in _mapping_sequence(_mapping(current.get("inspection")).get("evidence"))
             }
+            requirement_ids = {
+                str(item["requirementId"])
+                for item in _mapping_sequence(
+                    _mapping(_mapping(current.get("inspection")).get("requirements")).get("items")
+                )
+            }
+            for assessment in _mapping_sequence(normalized_result.get("requirementAssessments")):
+                requirement_id = str(assessment.get("requirementId") or "")
+                if requirement_id not in requirement_ids:
+                    raise ValueError(f"unknown requirementId: {requirement_id}")
             for evidence_id in _result_evidence_ids(normalized_result):
                 if evidence_id not in evidence_ids:
                     raise ValueError(f"unknown evidenceId: {evidence_id}")
@@ -359,6 +399,186 @@ class TraceDiagnosticReportStore:
             )
             if conn.execute("SELECT changes()").fetchone()[0] != 1:
                 raise ValueError("report revision conflict")
+        return next_payload
+
+    def authorize_repair(
+        self,
+        report_id: str,
+        *,
+        expected_revision: int,
+        finding_id: str,
+        source_scope: str,
+        source_trace_id: str,
+        failure_ref: str,
+        repair_session_id: str,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Append a repair handoff to a separately fenced repair Session."""
+
+        identifier = _required_id(report_id, "reportId", 80)
+        finding = _required_id(finding_id, "findingId", 160)
+        scope = _required_id(source_scope, "sourceScope", 160)
+        source_trace = _required_id(source_trace_id, "sourceTraceId", 160)
+        failure = _required_id(failure_ref, "failureRef", 160)
+        repair_session = _required_id(repair_session_id, "repairSessionId", 160)
+        timestamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        self.initialize()
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row, foreign_keys=True) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = _load_report(conn, identifier)
+            revision = int(current["revision"])
+            if current.get("status") != "completed":
+                raise ValueError("repair handoff requires a completed diagnostic report")
+            existing_lifecycle = _mapping(current.get("repairLifecycle"))
+            existing_authorization = _mapping(existing_lifecycle.get("authorization"))
+            comparable = {
+                "findingId": finding,
+                "sourceScope": scope,
+                "sourceTraceId": source_trace,
+                "failureRef": failure,
+                "repairSessionId": repair_session,
+            }
+            if existing_authorization and all(existing_authorization.get(key) == value for key, value in comparable.items()):
+                return current
+            if existing_authorization:
+                raise ValueError("diagnostic report already has a different repair authorization")
+            if revision != int(expected_revision):
+                raise ValueError("report revision conflict")
+            result = _mapping(current.get("result"))
+            matching_finding = next(
+                (item for item in _mapping_sequence(result.get("findings")) if item.get("findingId") == finding),
+                None,
+            )
+            if matching_finding is None:
+                raise ValueError("repair authorization finding is not in the diagnostic result")
+            if source_trace not in _string_sequence(current.get("traceIds"), maximum=32, item_maximum=240):
+                raise ValueError("repair authorization source Trace is outside the report")
+            if scope not in {str(item.get("targetKey") or "") for item in _mapping_sequence(current.get("targets"))}:
+                raise ValueError("repair authorization scope is outside the report")
+            valid_failure_refs = {
+                finding,
+                *[str(value) for value in _string_sequence(matching_finding.get("evidenceIds"), maximum=128, item_maximum=640)],
+            }
+            if failure not in valid_failure_refs:
+                raise ValueError("repair authorization failureRef is not bound to the finding")
+            authorization_id = "repair-authorization:" + _sha256(
+                f"{identifier}|{finding}|{scope}|{source_trace}|{failure}|{repair_session}"
+            )[:32]
+            lifecycle = {
+                "authorization": {
+                    "state": "authorized",
+                    "authorizationKind": "repair_handoff",
+                    "writeAuthority": "model_arbitrated_full_trust",
+                    "authorizationId": authorization_id,
+                    **comparable,
+                    "authorizedAtMs": timestamp,
+                },
+                "verification": {
+                    "state": "pending",
+                    "repairReceiptId": "",
+                    "repairTraceId": "",
+                    "evalRunId": "",
+                    "testStatus": "",
+                    "sandboxStatus": "",
+                    "sandboxedTestCount": 0,
+                    "verifiedAtMs": 0,
+                    "comparison": {
+                        "status": "pending",
+                        "reason": "已授权修复交接；实际写入仍需逐次审批，并等待新 Trace/Eval。",
+                        "sourceStatus": "",
+                        "repairStatus": "",
+                        "sourceFingerprint": "",
+                        "repairFingerprint": "",
+                        "beforeMetrics": {},
+                        "afterMetrics": {},
+                        "deltas": {},
+                    },
+                },
+            }
+            next_payload = {
+                **current,
+                "revision": revision + 1,
+                "repairLifecycle": lifecycle,
+                "updatedAtMs": timestamp,
+            }
+            _persist_report_revision(conn, identifier, revision, next_payload, timestamp)
+        return next_payload
+
+    def verify_repair(
+        self,
+        report_id: str,
+        *,
+        expected_revision: int,
+        receipt: Mapping[str, object],
+        eval_run: Mapping[str, object],
+        comparison: Mapping[str, object],
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Append receipt/Eval linkage; comparison still controls effect claims."""
+
+        identifier = _required_id(report_id, "reportId", 80)
+        timestamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        receipt_id = _required_id(receipt.get("repairReceiptId"), "repairReceiptId", 160)
+        repair_trace = _required_id(receipt.get("repairTraceId"), "repairTraceId", 160)
+        repair_session = _required_id(receipt.get("repairSessionId"), "repairSessionId", 160)
+        eval_run_id = _required_id(eval_run.get("evalRunId"), "evalRunId", 160)
+        if receipt.get("testStatus") != "passed":
+            raise ValueError("repair verification requires passed test evidence")
+        if (
+            receipt.get("sandboxStatus") != "passed"
+            or int(receipt.get("sandboxedTestCount") or 0) < 1
+        ):
+            raise ValueError(
+                "repair verification requires Host-owned sandbox evidence"
+            )
+        if eval_run.get("status") != "completed" or eval_run.get("metricAuthority") != "ai_judge_estimate":
+            raise ValueError("repair verification requires a completed bounded EvalRun")
+        normalized_comparison = _normalize_repair_comparison(comparison)
+        self.initialize()
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row, foreign_keys=True) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = _load_report(conn, identifier)
+            revision = int(current["revision"])
+            lifecycle = _mapping(current.get("repairLifecycle"))
+            authorization = _mapping(lifecycle.get("authorization"))
+            if not authorization or authorization.get("state") != "authorized":
+                raise ValueError("repair verification requires an authorized repair handoff")
+            existing_verification = _mapping(lifecycle.get("verification"))
+            if existing_verification.get("state") == "verified":
+                if existing_verification.get("repairReceiptId") == receipt_id:
+                    return current
+                raise ValueError("diagnostic report already has a different repair verification")
+            if revision != int(expected_revision):
+                raise ValueError("report revision conflict")
+            for receipt_key, authorization_key in (
+                ("sourceScope", "sourceScope"),
+                ("sourceTraceId", "sourceTraceId"),
+                ("failureRef", "failureRef"),
+                ("repairSessionId", "repairSessionId"),
+            ):
+                if receipt.get(receipt_key) != authorization.get(authorization_key):
+                    raise ValueError("repair receipt does not match the report authorization")
+            verification = {
+                "state": "verified",
+                "repairReceiptId": receipt_id,
+                "repairTraceId": repair_trace,
+                "evalRunId": eval_run_id,
+                "testStatus": "passed",
+                "sandboxStatus": "passed",
+                "sandboxedTestCount": int(receipt["sandboxedTestCount"]),
+                "verifiedAtMs": timestamp,
+                "comparison": normalized_comparison,
+            }
+            next_payload = {
+                **current,
+                "revision": revision + 1,
+                "repairLifecycle": {
+                    "authorization": dict(authorization),
+                    "verification": verification,
+                },
+                "updatedAtMs": timestamp,
+            }
+            _persist_report_revision(conn, identifier, revision, next_payload, timestamp)
         return next_payload
 
     def fail(
@@ -416,6 +636,31 @@ class TraceDiagnosticReportStore:
                 (identifier,),
             ).fetchone()
             return _load_report(conn, identifier) if row is not None else None
+
+    def for_diagnostic_session(
+        self,
+        diagnostic_session_id: str,
+    ) -> dict[str, object] | None:
+        session_id = _required_id(
+            diagnostic_session_id,
+            "diagnosticSessionId",
+            240,
+        )
+        self.initialize()
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            row = conn.execute(
+                "SELECT report_id FROM trace_diagnostic_reports WHERE diagnostic_session_id=?",
+                (session_id,),
+            ).fetchone()
+            return (
+                _load_report(conn, str(row["report_id"]))
+                if row is not None
+                else None
+            )
 
     def list(self, *, limit: int = 100) -> dict[str, object]:
         safe_limit = _bounded_integer(limit, minimum=1, maximum=100, name="limit")
@@ -687,12 +932,122 @@ def _eval_evidence(run: Mapping[str, object], trace_id: str) -> dict[str, object
     }
 
 
+def _requirements_from_timeline(
+    timeline: Sequence[Mapping[str, object]],
+    valid_evidence_ids: set[str],
+) -> dict[str, object]:
+    """Freeze user-authored source rows without asking the model to invent them."""
+
+    candidates: list[dict[str, object]] = []
+    for item in timeline:
+        if str(item.get("kind") or "") not in {"user", "user_message"}:
+            continue
+        evidence_id = str(item.get("evidenceId") or "")
+        statement = _public_text(item.get("summary"), 2000)
+        target_key = _bounded_id(item.get("targetKey"), 500)
+        source_ref = _public_text(item.get("sourceRef"), 640)
+        if not evidence_id or evidence_id not in valid_evidence_ids or not statement or not target_key or not source_ref:
+            continue
+        candidates.append(
+            {
+                "requirementId": evidence_id,
+                "statement": statement,
+                "targetKey": target_key,
+                "sourceRef": source_ref,
+                "evidenceIds": [evidence_id],
+            }
+        )
+    candidates = _dedupe(candidates, "requirementId")
+    truncated = len(candidates) > 100
+    items = candidates[-100:]
+    return {
+        "source": "user_input" if items else "unknown",
+        "items": items,
+        "truncated": truncated,
+    }
+
+
+def _environment_snapshot(
+    *,
+    captured_at_ms: int,
+    targets: Sequence[Mapping[str, object]],
+    source_hashes: Mapping[str, str],
+    environment_inputs: Mapping[str, Mapping[str, object]],
+    traces: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    """Project reproducibility facts while excluding paths and credentials."""
+
+    rows: list[dict[str, object]] = []
+    limitations = {
+        "未冻结 Provider 服务端构建、系统镜像与依赖锁文件；不能据此声称字节级复现。"
+    }
+    for target in targets:
+        target_key = str(target.get("targetKey") or "")
+        config = _mapping(environment_inputs.get(target_key))
+        runtime = _mapping(config.get("runtimeBinding"))
+        fingerprints: list[str] = []
+        statuses: list[str] = []
+        for trace_id in _string_sequence(target.get("traceIds"), maximum=32, item_maximum=240):
+            trace = traces.get(trace_id)
+            if trace is None:
+                continue
+            fingerprint = str(_mapping(trace.get("input")).get("fingerprint") or "")
+            if _TRACE_FINGERPRINT_RE.fullmatch(fingerprint) and fingerprint not in fingerprints:
+                fingerprints.append(fingerprint)
+            status = _bounded_id(trace.get("status"), 80)
+            if status:
+                statuses.append(status)
+        if not config:
+            limitations.add(f"{target_key} 缺少 Session/Room 配置快照。")
+        if not fingerprints:
+            limitations.add(f"{target_key} 缺少 Trace input fingerprint。")
+        if not source_hashes.get(target_key):
+            limitations.add(f"{target_key} 缺少可冻结的公开源快照。")
+        policy_revision = config.get("policyRevision")
+        runtime_generation = runtime.get("generation")
+        rows.append(
+            {
+                "targetKey": target_key,
+                "sourceSha256": source_hashes.get(target_key, ""),
+                "modelProfile": _public_text(config.get("modelProfile"), 160),
+                "toolProfileVersion": _public_text(config.get("toolProfileVersion"), 160),
+                "executionMode": _public_text(config.get("executionMode"), 80),
+                "policyRevision": (
+                    int(policy_revision)
+                    if isinstance(policy_revision, int) and not isinstance(policy_revision, bool) and policy_revision >= 0
+                    else None
+                ),
+                "workspaceScopeSha256": (
+                    str(config.get("workspaceScopeSha256") or "")
+                    if re.fullmatch(r"[a-f0-9]{64}", str(config.get("workspaceScopeSha256") or ""))
+                    else ""
+                ),
+                "shellPolicyVersion": _public_text(config.get("shellPolicyVersion"), 160),
+                "runtimeKind": _public_text(runtime.get("runtimeKind"), 80),
+                "runtimeGeneration": (
+                    int(runtime_generation)
+                    if isinstance(runtime_generation, int) and not isinstance(runtime_generation, bool) and runtime_generation >= 0
+                    else None
+                ),
+                "traceInputFingerprints": fingerprints,
+                "traceStatuses": statuses,
+            }
+        )
+    return {
+        "capturedAtMs": captured_at_ms,
+        "rubricVersion": TRACE_DIAGNOSTIC_RUBRIC_VERSION,
+        "targets": rows,
+        "limitations": sorted(limitations),
+    }
+
+
 def _scorecard(
     *,
     observation_events: Sequence[Mapping[str, object]],
     traces: Sequence[Mapping[str, object]],
     eval_runs: Sequence[Mapping[str, object]],
     rooms: Sequence[Mapping[str, object]],
+    targets: Sequence[Mapping[str, object]],
     target_count: int,
     valid_evidence_ids: set[str],
 ) -> dict[str, object]:
@@ -700,6 +1055,28 @@ def _scorecard(
         identifier: _dimension(identifier, title)
         for identifier, title in _DIMENSIONS
     }
+    standalone_memory_maintenance = any(
+        str(target.get("kind") or "") == "run"
+        and "memory-maintenance" in str(target.get("id") or "").lower()
+        for target in targets
+    )
+    collaboration_observed = bool(rooms) or any(
+        any(
+            str(event.get(key) or "").strip()
+            for key in (
+                "roomId",
+                "workItemId",
+                "dispatchId",
+                "participantId",
+            )
+        )
+        for event in observation_events
+    )
+    if standalone_memory_maintenance and not collaboration_observed:
+        dimensions["room_collaboration"] = _not_applicable_dimension(
+            dimensions["room_collaboration"],
+            note="独立 Memory 维护 run 没有 Room 协作边界。",
+        )
     terminal_tools = [
         event
         for event in observation_events
@@ -882,6 +1259,18 @@ def _dimension(identifier: str, title: str) -> dict[str, object]:
     }
 
 
+def _not_applicable_dimension(
+    base: Mapping[str, object],
+    *,
+    note: str,
+) -> dict[str, object]:
+    return {
+        **base,
+        "applicability": "not_applicable",
+        "note": note,
+    }
+
+
 def _measured_dimension(
     base: Mapping[str, object],
     *,
@@ -992,6 +1381,65 @@ def _validate_result(result: Mapping[str, object]) -> dict[str, object]:
                 "evidenceIds": _string_sequence(score.get("evidenceIds"), maximum=128, item_maximum=640),
             }
         )
+    raw_requirement_assessments = normalized.get("requirementAssessments", [])
+    if not isinstance(raw_requirement_assessments, list):
+        raise ValueError("requirementAssessments must be an array")
+    if any(not isinstance(item, Mapping) for item in raw_requirement_assessments):
+        raise ValueError("requirementAssessments must contain only objects")
+    requirement_assessments: list[dict[str, object]] = []
+    seen_requirements: set[str] = set()
+    for assessment in raw_requirement_assessments[:100]:
+        requirement_id = _required_id(assessment.get("requirementId"), "requirementId", 640)
+        if requirement_id in seen_requirements:
+            raise ValueError(f"duplicate requirement assessment: {requirement_id}")
+        seen_requirements.add(requirement_id)
+        status = str(assessment.get("status") or "")
+        if status not in {"satisfied", "partial", "unsatisfied", "unverified"}:
+            raise ValueError("requirement assessment status is invalid")
+        if assessment.get("authority") != "ai_judge_estimate":
+            raise ValueError("requirement assessment authority must be ai_judge_estimate")
+        requirement_assessments.append(
+            {
+                "requirementId": requirement_id,
+                "status": status,
+                "owner": _public_text(assessment.get("owner"), 240),
+                "authority": "ai_judge_estimate",
+                "evidenceIds": _string_sequence(assessment.get("evidenceIds"), maximum=128, item_maximum=640),
+                "note": _public_text(assessment.get("note"), 1600),
+            }
+        )
+    raw_causal_links = normalized.get("causalLinks", [])
+    if not isinstance(raw_causal_links, list):
+        raise ValueError("causalLinks must be an array")
+    if any(not isinstance(item, Mapping) for item in raw_causal_links):
+        raise ValueError("causalLinks must contain only objects")
+    causal_links: list[dict[str, object]] = []
+    seen_links: set[str] = set()
+    valid_relations = {"triggered", "delegated", "responded_to", "returned", "verified", "caused", "recovered"}
+    for link in raw_causal_links[:120]:
+        link_id = _required_id(link.get("linkId"), "linkId", 160)
+        if link_id in seen_links:
+            raise ValueError(f"duplicate causal link: {link_id}")
+        seen_links.add(link_id)
+        relation = str(link.get("relation") or "")
+        confidence = str(link.get("confidence") or "")
+        if relation not in valid_relations:
+            raise ValueError("causal relation is invalid")
+        if confidence not in {"high", "medium", "low", "unknown"}:
+            raise ValueError("causal confidence is invalid")
+        if link.get("authority") != "ai_judge_estimate":
+            raise ValueError("causal link authority must be ai_judge_estimate")
+        causal_links.append(
+            {
+                "linkId": link_id,
+                "fromEvidenceId": _required_id(link.get("fromEvidenceId"), "fromEvidenceId", 640),
+                "toEvidenceId": _required_id(link.get("toEvidenceId"), "toEvidenceId", 640),
+                "relation": relation,
+                "authority": "ai_judge_estimate",
+                "confidence": confidence,
+                "explanation": _public_text(link.get("explanation"), 1600),
+            }
+        )
     findings: list[dict[str, object]] = []
     for finding in _mapping_sequence(normalized.get("findings"))[:100]:
         dimension_id = str(finding.get("dimensionId") or "")
@@ -1017,24 +1465,37 @@ def _validate_result(result: Mapping[str, object]) -> dict[str, object]:
                 "verification": _public_text(finding.get("verification"), 2000),
             }
         )
-    payload = {
+    payload: dict[str, object] = {
         "schemaVersion": TRACE_DIAGNOSTIC_RESULT_SCHEMA_VERSION,
         "summary": normalized["summary"],
         "hardGates": hard_gates,
         "judgeScores": judge_scores,
         "findings": findings,
     }
+    # These v1 additions are optional so reports produced before the richer
+    # audit contract remain byte-for-byte stable after validation.  Empty
+    # arrays are still preserved when the diagnosing Agent explicitly emitted
+    # them; absence must not be rewritten into an invented assessment.
+    if "requirementAssessments" in normalized:
+        payload["requirementAssessments"] = requirement_assessments
+    if "causalLinks" in normalized:
+        payload["causalLinks"] = causal_links
     validate_contract(payload, "trace-diagnostic-result.v1.json")
     return payload
 
 
 def _result_evidence_ids(result: Mapping[str, object]) -> list[str]:
     values: list[str] = []
-    for collection in ("hardGates", "judgeScores", "findings"):
+    for collection in ("hardGates", "judgeScores", "requirementAssessments", "findings"):
         for item in _mapping_sequence(result.get(collection)):
             for evidence_id in _string_sequence(item.get("evidenceIds"), maximum=128, item_maximum=640):
                 if evidence_id not in values:
                     values.append(evidence_id)
+    for link in _mapping_sequence(result.get("causalLinks")):
+        for key in ("fromEvidenceId", "toEvidenceId"):
+            evidence_id = str(link.get(key) or "")
+            if evidence_id and evidence_id not in values:
+                values.append(evidence_id)
     return values
 
 
@@ -1058,8 +1519,82 @@ def _load_report(conn: sqlite3.Connection, report_id: str) -> dict[str, object]:
     return payload
 
 
+def _persist_report_revision(
+    conn: sqlite3.Connection,
+    report_id: str,
+    previous_revision: int,
+    payload: Mapping[str, object],
+    timestamp: int,
+) -> None:
+    next_payload = dict(payload)
+    validate_contract(next_payload, "trace-diagnostic-report.v1.json")
+    encoded = _canonical_json(next_payload)
+    next_revision = int(next_payload["revision"])
+    conn.execute(
+        "INSERT INTO trace_diagnostic_report_revisions(report_id,revision,payload_hash,payload_json,created_at_ms) VALUES(?,?,?,?,?)",
+        (report_id, next_revision, _sha256(encoded), encoded, timestamp),
+    )
+    conn.execute(
+        "UPDATE trace_diagnostic_reports SET current_revision=?,status=?,updated_at_ms=? WHERE report_id=? AND current_revision=?",
+        (next_revision, str(next_payload["status"]), timestamp, report_id, previous_revision),
+    )
+    if conn.execute("SELECT changes()").fetchone()[0] != 1:
+        raise ValueError("report revision conflict")
+
+
+def _normalize_repair_comparison(value: Mapping[str, object]) -> dict[str, object]:
+    status = str(value.get("status") or "")
+    if status not in {"pending", "incomparable", "failed", "unknown"}:
+        raise ValueError("repair comparison status is invalid")
+    source_fingerprint = str(value.get("sourceFingerprint") or "")
+    repair_fingerprint = str(value.get("repairFingerprint") or "")
+    for fingerprint in (source_fingerprint, repair_fingerprint):
+        if fingerprint and _TRACE_FINGERPRINT_RE.fullmatch(fingerprint) is None:
+            raise ValueError("repair comparison fingerprint is invalid")
+
+    def numeric_map(raw: object, name: str) -> dict[str, float]:
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"{name} must be an object")
+        result: dict[str, float] = {}
+        for key, metric in list(raw.items())[:64]:
+            identifier = _required_id(key, f"{name} metric", 160)
+            if isinstance(metric, bool) or not isinstance(metric, (int, float)) or not math.isfinite(float(metric)):
+                raise ValueError(f"{name} metric must be finite")
+            result[identifier] = float(metric)
+        return result
+
+    before_metrics = numeric_map(value.get("beforeMetrics", {}), "beforeMetrics")
+    after_metrics = numeric_map(value.get("afterMetrics", {}), "afterMetrics")
+    deltas = numeric_map(value.get("deltas", {}), "deltas")
+    if deltas:
+        raise ValueError("non-comparable repair results cannot publish deltas")
+    return {
+        "status": status,
+        "reason": _public_text(value.get("reason"), 1000),
+        "sourceStatus": _public_text(value.get("sourceStatus"), 80),
+        "repairStatus": _public_text(value.get("repairStatus"), 80),
+        "sourceFingerprint": source_fingerprint,
+        "repairFingerprint": repair_fingerprint,
+        "beforeMetrics": before_metrics,
+        "afterMetrics": after_metrics,
+        "deltas": deltas,
+    }
+
+
 def _report_summary(report: Mapping[str, object]) -> dict[str, object]:
     targets = _mapping_sequence(report.get("targets"))
+    lifecycle = _mapping(report.get("repairLifecycle"))
+    authorization = _mapping(lifecycle.get("authorization"))
+    verification = _mapping(lifecycle.get("verification"))
+    repair_state = (
+        "verified"
+        if verification.get("state") == "verified"
+        else "failed"
+        if verification.get("state") == "failed"
+        else "authorized"
+        if authorization.get("state") == "authorized"
+        else "not_recorded"
+    )
     return {
         "reportId": str(report.get("reportId") or ""),
         "revision": int(report.get("revision") or 0),
@@ -1069,6 +1604,7 @@ def _report_summary(report: Mapping[str, object]) -> dict[str, object]:
         "targetKeys": [str(item.get("targetKey") or "") for item in targets],
         "targets": targets,
         "traceIds": list(report.get("traceIds") or []),
+        "repairState": repair_state,
         "failureReason": str(report.get("failureReason") or ""),
         "createdAtMs": int(report.get("createdAtMs") or 0),
         "updatedAtMs": int(report.get("updatedAtMs") or 0),

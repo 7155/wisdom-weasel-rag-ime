@@ -170,6 +170,140 @@
   background: #806d91;
 }
 
+.paw-room-round__content {
+  display: grid;
+}
+
+.paw-room-round__standalone {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 24px;
+  align-items: center;
+  padding: 18px 20px;
+  animation: paw-room-round-reveal var(--paw-room-motion-fast) var(--paw-room-motion-ease) both;
+}
+
+.paw-room-round__standalone[data-selected] {
+  background: color-mix(in srgb, #ddecff 36%, transparent);
+  box-shadow: inset 2px 0 #2878d0;
+}
+
+.paw-room-round__table-scroll + .paw-room-round__standalone,
+.paw-room-round__standalone + .paw-room-round__standalone {
+  border-top: 1px solid color-mix(in srgb, var(--paw-border, #ccd6e3) 60%, transparent);
+}
+
+.paw-room-round__standalone > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.paw-room-round__standalone > header > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.paw-room-round__standalone > header strong,
+.paw-room-round__standalone > header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-room-round__standalone > header strong {
+  color: var(--paw-text-primary, #162235);
+  font-size: 15px;
+}
+
+.paw-room-round__standalone > header small {
+  color: var(--paw-text-secondary, #6b798b);
+  font-size: 12px;
+}
+
+.paw-room-round__standalone > header .paw-room-round__row-state {
+  margin-left: 4px;
+}
+
+.paw-room-round__standalone-orbit {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  border-radius: 11px;
+  background: #eaf3ff;
+  color: #236eba;
+}
+
+.paw-room-round__standalone--result .paw-room-round__standalone-orbit {
+  background: color-mix(in srgb, #268263 12%, var(--paw-surface, #fff));
+  color: #207458;
+}
+
+.paw-room-round__standalone-body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  grid-column: 1;
+  padding-left: 43px;
+}
+
+.paw-room-round__standalone-body > strong {
+  color: var(--paw-text-primary, #26364a);
+  font-size: 13px;
+}
+
+.paw-room-round__standalone-body p,
+.paw-room-round__standalone-body .agent-markdown,
+.paw-room-round__standalone-body .agent-markdown p {
+  margin: 0;
+  color: var(--paw-text-secondary, #5c6b7f);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.paw-room-round__standalone-body ul {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paw-room-round__standalone-body li {
+  min-width: 0;
+  color: var(--paw-text-secondary, #5c6b7f);
+  font-size: 12px;
+}
+
+.paw-room-round__standalone > button {
+  display: inline-flex;
+  min-height: 32px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, #2878d0 9%, transparent);
+  color: #205f9f;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.paw-room-round__standalone > button:hover {
+  background: color-mix(in srgb, #2878d0 15%, transparent);
+}
+
 .paw-room-round__table-scroll {
   /* The round list is the only vertical reading surface. Keep this wrapper
      for a wide table's horizontal overflow, otherwise every round becomes a
@@ -235,18 +369,6 @@
 
 .paw-room-round tbody > tr[data-planet-row][data-state='running'] {
   background-color: color-mix(in srgb, #2878d0 3%, transparent);
-  background-image: linear-gradient(
-    106deg,
-    transparent 0%,
-    rgb(69 123 235 / .02) 32%,
-    rgb(124 96 221 / .11) 50%,
-    rgb(69 123 235 / .02) 68%,
-    transparent 100%
-  );
-  background-position: 140% 0;
-  background-repeat: no-repeat;
-  background-size: 240% 100%;
-  animation: paw-room-round-row-sheen 3.4s linear infinite;
 }
 
 .paw-room-round__blocker {
@@ -534,15 +656,6 @@
   }
 }
 
-@keyframes paw-room-round-row-sheen {
-  from {
-    background-position: 140% 0;
-  }
-  to {
-    background-position: -40% 0;
-  }
-}
-
 @media (max-width: 760px) {
   .paw-room-rounds {
     padding: 10px;
@@ -551,6 +664,23 @@
   .paw-room-round__detail {
     grid-template-columns: 1fr;
     padding-left: 16px;
+  }
+
+  .paw-room-round__standalone {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .paw-room-round__standalone-body {
+    padding-left: 43px;
+  }
+
+  .paw-room-round__standalone > button {
+    width: max-content;
+    grid-column: 1;
+    grid-row: auto;
+    margin-left: 43px;
   }
 }
 
@@ -641,6 +771,7 @@
 
   .paw-room-round__toggle-icon,
   .paw-room-round__table-scroll,
+  .paw-room-round__standalone,
   .paw-room-round__detail,
   .paw-room-round td > .paw-room-round__progress-text[data-live],
   .paw-room-round__state[data-state="running"] i,
@@ -659,6 +790,7 @@
 
 :root[data-reduce-motion='true'] .paw-room-round__toggle-icon,
 :root[data-reduce-motion='true'] .paw-room-round__table-scroll,
+:root[data-reduce-motion='true'] .paw-room-round__standalone,
 :root[data-reduce-motion='true'] .paw-room-round__detail,
 :root[data-reduce-motion='true'] .paw-room-round td > .paw-room-round__progress-text[data-live],
 :root[data-reduce-motion='true'] .paw-room-round__state[data-state='running'] i,

@@ -2,12 +2,106 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_extensions import AgentExtensionService
+from rag_ime.agent_extensions import (
+    AgentExtensionService,
+    extension_app_binding_capability,
+    extension_app_binding_sha256,
+)
 from rag_ime.agent_runtime_driver import AgentRuntimeError
+
+
+def _native_package_digest(package: Path) -> str:
+    files: list[Path] = []
+
+    def visit(directory: Path) -> None:
+        for item in sorted(directory.iterdir(), key=lambda path: path.name.casefold()):
+            if item.is_dir():
+                visit(item)
+            else:
+                files.append(item)
+
+    visit(package)
+    digest = hashlib.sha256()
+    for item in files:
+        digest.update(item.relative_to(package).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _write_bound_extension_package(root: Path) -> tuple[Path, str, str, str]:
+    package = root / "zhanggui-package-source"
+    if package.exists():
+        shutil.rmtree(package)
+    skill = package / "skills" / "zhanggui-wenshu" / "SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text(
+        "---\nname: zhanggui-wenshu\ndescription: test\n---\n",
+        encoding="utf-8",
+    )
+    skill_sha256 = hashlib.sha256(skill.read_bytes()).hexdigest()
+    app_manifest: dict[str, object] = {
+        "schemaVersion": "pawos.extension-app.v1",
+        "id": "extension:zhanggui-wenshu",
+        "version": "0.1.0",
+        "bindingSha256": "0" * 64,
+        "packageId": "@paw/zhanggui-wenshu",
+        "label": "掌柜问数",
+        "shortLabel": "问数",
+        "tagline": "test",
+        "route": "/extensions/zhanggui-wenshu",
+        "presentation": "conversation",
+        "accent": "green",
+        "icon": {"symbol": "analytics", "background": "#087F68"},
+        "skillRef": "zhanggui-wenshu",
+        "skillSha256": skill_sha256,
+        "verticalSuiteId": "sgg",
+        "verticalSuiteRevision": "fixture-v2",
+    }
+    binding_sha256 = extension_app_binding_sha256(
+        app_manifest,
+        skill_sha256=skill_sha256,
+        package_version="0.1.0",
+    )
+    app_manifest["bindingSha256"] = binding_sha256
+    binding_capability = extension_app_binding_capability(binding_sha256)
+    package_manifest = {
+        "name": "@paw/zhanggui-wenshu",
+        "version": "0.1.0",
+        "pi": {"extensions": ["./index.ts"], "skills": ["./skills"]},
+        "paw": {
+            "capabilities": [binding_capability],
+            "extensionApp": {
+                "id": app_manifest["id"],
+                "packageId": app_manifest["packageId"],
+                "version": app_manifest["version"],
+                "bindingSha256": binding_sha256,
+                "skillRef": app_manifest["skillRef"],
+                "skillSha256": skill_sha256,
+                "verticalSuiteId": app_manifest["verticalSuiteId"],
+                "verticalSuiteRevision": app_manifest["verticalSuiteRevision"],
+                "manifest": app_manifest,
+            },
+        },
+    }
+    (package / "package.json").write_text(
+        json.dumps(package_manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    (package / "index.ts").write_text("export {};\n", encoding="utf-8")
+    package_digest = _native_package_digest(package)
+    package_key = hashlib.sha256(b"@paw/zhanggui-wenshu").hexdigest()[:16]
+    managed = root / "packages" / package_key / package_digest
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    if managed.exists():
+        shutil.rmtree(managed)
+    shutil.copytree(package, managed)
+    return managed, package_digest, binding_sha256, binding_capability
 
 
 class _FakePluginRuntime:
@@ -262,6 +356,118 @@ class AgentExtensionServiceTests(unittest.TestCase):
         self.assertTrue(catalog["ok"])
         self.assertFalse(catalog["runtimeAvailable"])
 
+    def test_list_and_receipt_preserve_extension_app_binding_evidence(self) -> None:
+        package, package_digest, binding_sha256, binding_capability = (
+            _write_bound_extension_package(self.root)
+        )
+        self.runtime.installed = [
+            {
+                "id": "@paw/zhanggui-wenshu",
+                "name": "掌柜问数",
+                "version": "0.1.0",
+                "digest": package_digest,
+                "enabled": True,
+                "capabilities": [binding_capability],
+                "source": str(package),
+                "installedVersions": [{
+                    "version": "0.1.0",
+                    "digest": package_digest,
+                    "source": str(package),
+                }],
+            }
+        ]
+
+        item = self.service.list()["items"][0]
+        self.assertNotIn(str(package), json.dumps(item, ensure_ascii=False))
+        self.assertEqual(item["capabilities"], [binding_capability])
+        self.assertEqual(item["extensionApp"]["bindingSha256"], binding_sha256)
+        self.assertEqual(item["extensionApp"]["version"], "0.1.0")
+        self.assertEqual(item["extensionApp"]["skillRef"], "zhanggui-wenshu")
+        self.assertEqual(item["extensionApp"]["verticalSuiteId"], "sgg")
+
+        preview = self.service.preview(
+            {"action": "disable", "pluginId": "@paw/zhanggui-wenshu"}
+        )
+        receipt = self.service.apply(
+            {
+                "previewToken": preview["previewToken"],
+                "payloadSha256": preview["payloadSha256"],
+                "confirmText": "apply",
+            }
+        )
+        self.assertEqual(
+            receipt["receipt"]["extensionApp"]["bindingCapability"],
+            binding_capability,
+        )
+        self.assertNotIn(
+            str(package), json.dumps(receipt["receipt"], ensure_ascii=False)
+        )
+
+    def test_list_rechecks_installed_bytes_after_successful_verification(self) -> None:
+        package, package_digest, _binding_sha256, binding_capability = (
+            _write_bound_extension_package(self.root)
+        )
+        self.runtime.installed = [{
+            "id": "@paw/zhanggui-wenshu",
+            "name": "掌柜问数",
+            "version": "0.1.0",
+            "digest": package_digest,
+            "enabled": True,
+            "capabilities": [binding_capability],
+            "source": str(package),
+            "installedVersions": [],
+        }]
+        self.assertIn("extensionApp", self.service.list()["items"][0])
+
+        (package / "skills" / "zhanggui-wenshu" / "SKILL.md").write_text(
+            "---\nname: zhanggui-wenshu\ndescription: changed after verification\n---\n",
+            encoding="utf-8",
+        )
+        self.assertNotIn("extensionApp", self.service.list()["items"][0])
+
+    def test_list_rejects_partial_extension_evidence(self) -> None:
+        package, package_digest, binding_sha256, binding_capability = (
+            _write_bound_extension_package(self.root)
+        )
+        self.runtime.installed = [{
+            "id": "@paw/zhanggui-wenshu",
+            "name": "掌柜问数",
+            "version": "0.1.0",
+            "digest": package_digest,
+            "enabled": True,
+            "capabilities": [binding_capability],
+            "extensionApp": {
+                "version": "0.1.0",
+                "bindingSha256": binding_sha256,
+                "bindingCapability": binding_capability,
+            },
+            "installedVersions": [],
+        }]
+        self.assertNotIn("extensionApp", self.service.list()["items"][0])
+
+    def test_list_rejects_missing_digest_relative_and_unmanaged_sources(self) -> None:
+        package, package_digest, _binding_sha256, binding_capability = (
+            _write_bound_extension_package(self.root)
+        )
+        base = {
+            "id": "@paw/zhanggui-wenshu",
+            "name": "掌柜问数",
+            "version": "0.1.0",
+            "enabled": True,
+            "capabilities": [binding_capability],
+            "source": str(package),
+            "digest": package_digest,
+            "installedVersions": [],
+        }
+        for override in (
+            {"digest": ""},
+            {"source": "relative/package"},
+            {"source": str(self.root / "unmanaged" / package_digest)},
+            {"capabilities": [binding_capability, "runtime.extra"]},
+        ):
+            self.runtime.installed = [{**base, **override}]
+            self.assertNotIn("extensionApp", self.service.list()["items"][0])
+
     def test_install_requires_validation_preview_digest_and_explicit_apply(self) -> None:
         validation = self.service.validate(
             {"catalogId": "session-review", "catalogVersion": "1.1.0"}
@@ -323,6 +529,36 @@ class AgentExtensionServiceTests(unittest.TestCase):
             self.runtime.calls[-1],
             ("prepare_package", str(self.runtime.package_source)),
         )
+
+    def test_catalog_rebuilds_uninstalled_extension_candidate_evidence(self) -> None:
+        managed, package_digest, binding_sha256, binding_capability = (
+            _write_bound_extension_package(self.root)
+        )
+        bundled = self.root / "bundled" / "zhanggui-wenshu"
+        bundled.parent.mkdir(parents=True)
+        shutil.copytree(managed, bundled)
+        self.runtime.plugin_catalog = lambda: [{
+            "id": "@paw/zhanggui-wenshu",
+            "name": "@paw/zhanggui-wenshu",
+            "displayName": "掌柜问数",
+            "version": "0.1.0",
+            "capabilities": [binding_capability],
+            "source": str(bundled),
+            "distribution": "pi_package",
+            "bundled": True,
+            "installed": False,
+            "enabled": False,
+        }]
+
+        item = self.service.catalog()["items"][0]
+        self.assertEqual(item["extensionApp"]["bindingSha256"], binding_sha256)
+        self.assertEqual(item["extensionApp"]["packageDigest"], package_digest)
+
+        (bundled / "skills" / "zhanggui-wenshu" / "SKILL.md").write_text(
+            "---\nname: zhanggui-wenshu\ndescription: changed catalog bytes\n---\n",
+            encoding="utf-8",
+        )
+        self.assertNotIn("extensionApp", self.service.catalog()["items"][0])
 
     def test_enable_disable_and_rollback_also_use_preview(self) -> None:
         self.runtime.installed = [

@@ -30,6 +30,8 @@ export interface RoomRoundTaskRow {
   displayName: string;
   celestialName: string;
   role: string;
+  /** True only when this logical round contains authoritative work for the planet. */
+  assigned: boolean;
   state: RoomRoundRowState;
   task: string;
   latestProgress: string;
@@ -168,6 +170,11 @@ function roundRow({
   const task = latestTask(currentActivities)
     || currentWorkItems.find((work) => Boolean(work.objective.trim()))?.objective.trim()
     || `${roomCollaborationRoleLabel(participant.collaborationRole)} · 等待本轮分工`;
+  const assigned = turn.participantIds.includes(participant.id)
+    || lanes.length > 0
+    || currentActivities.length > 0
+    || currentMessages.length > 0
+    || currentWorkItems.length > 0;
   const state = rowState(turn, participant.id, lanes, currentActivities, currentMessages, currentWorkItems);
   return {
     key: `${sheetId}:${participant.id}`,
@@ -176,6 +183,7 @@ function roundRow({
     displayName: participant.displayName,
     celestialName: roomFocusCelestialName(participant.ordinal),
     role: roomCollaborationRoleLabel(participant.collaborationRole),
+    assigned,
     state,
     task: compactMarkdown(task),
     latestProgress: state === 'blocked' && blockerReason

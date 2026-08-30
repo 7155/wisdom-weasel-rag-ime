@@ -119,6 +119,27 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         release.set()
         self._wait_for_terminal(jobs, str(running["jobId"]))
 
+    def test_latest_status_exposes_the_real_background_job_without_a_job_id(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def execute(_payload: Mapping[str, object]) -> dict[str, object]:
+            started.set()
+            self.assertTrue(release.wait(timeout=2))
+            return {"ok": True}
+
+        jobs = GatewayMemoryMaintenanceJobs(execute)
+        created = jobs.trigger({"project": "project-a", "manual": False})
+        self.assertTrue(started.wait(timeout=2))
+
+        latest = jobs.latest_status(project="project-a")
+
+        self.assertEqual(latest["jobId"], created["jobId"])
+        self.assertEqual(latest["state"], "running")
+        self.assertNotIn("request", latest)
+        release.set()
+        self._wait_for_terminal(jobs, str(created["jobId"]))
+
     def test_failed_manual_catch_up_remains_visible_after_refresh(self) -> None:
         jobs = GatewayMemoryMaintenanceJobs(
             lambda _payload: {

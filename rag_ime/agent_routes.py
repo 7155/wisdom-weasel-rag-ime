@@ -160,7 +160,7 @@ def observability_trace_repair_route(path: str) -> tuple[str, str]:
 
 
 def observability_trace_diagnostic_report_route(path: str) -> tuple[str, str]:
-    """Parse Trace diagnostic report collection/detail/finalize routes."""
+    """Parse local Trace report and append-only follow-up routes."""
 
     # Diagnostic reports are deliberately local-only.  Do not add a
     # ``/control/v1`` alias: the Agent Gateway must not expose transcript-
@@ -179,6 +179,10 @@ def observability_trace_diagnostic_report_route(path: str) -> tuple[str, str]:
             return parts[0], "get"
         if len(parts) == 2 and parts[0] and parts[1] == "finalize":
             return parts[0], "finalize"
+        if len(parts) == 2 and parts[0] and parts[1] == "repair-authorize":
+            return parts[0], "repair-authorize"
+        if len(parts) == 2 and parts[0] and parts[1] == "repair-verify":
+            return parts[0], "repair-verify"
         return "", ""
     return "", ""
 

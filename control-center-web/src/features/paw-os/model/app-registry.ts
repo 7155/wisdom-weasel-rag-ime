@@ -13,6 +13,9 @@ export type PawOsAppId =
   | 'browser'
   | 'terminal';
 
+export type PawOsExtensionAppId = `extension:${string}`;
+export type PawOsDesktopAppId = PawOsAppId | PawOsExtensionAppId;
+
 export type PawOsAppPresentation =
   | 'workspace'
   | 'conversation'

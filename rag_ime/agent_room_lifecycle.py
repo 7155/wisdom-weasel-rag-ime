@@ -31,6 +31,7 @@ from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     DANGEROUS_MODE_CONFIRMATION,
 )
+from .agent_workspace_roots import existing_workspace_roots
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class RoomLifecycleService:
             [str],
             dict[str, object],
         ],
+        close_session: Callable[[str], None] | None = None,
     ) -> None:
         self.rooms = rooms
         self.sessions = sessions
@@ -77,6 +79,7 @@ class RoomLifecycleService:
         self.participants = participants
         self.create_session = create_session
         self.delete_session = delete_session
+        self.close_session = close_session
 
     def list_rooms(
         self,
@@ -154,9 +157,15 @@ class RoomLifecycleService:
             )
         execution_keys = {
             "executionMode",
+            "workspaceRoots",
             "workspaceScopeConfirmation",
             "dangerousModeConfirmation",
         }
+        if "workspaceRoots" in payload:
+            return self._update_workspace_roots(
+                room_id,
+                payload,
+            )
         if "executionMode" in payload:
             execution_payload = {
                 key: value
@@ -219,6 +228,117 @@ class RoomLifecycleService:
             "schemaVersion": "rag-ime.agent-room-update.v1",
             "ok": True,
             "room": self.rooms.get(room_id),
+            "event": event,
+        }
+
+    def _update_workspace_roots(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        room = self.rooms.get(room_id)
+        workspace_roots = _workspace_roots(
+            payload,
+            room_kind=str(room.get("roomKind") or "collaboration"),
+        )
+        execution_mode = normalize_execution_mode(
+            payload.get("executionMode"),
+            default=str(room.get("executionMode") or PER_ACTION_EXECUTION_MODE),
+        )
+        if execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
+            str(payload.get("workspaceScopeConfirmation") or "")
+            != WORKSPACE_SCOPE_CONFIRMATION
+        ):
+            raise ValueError(
+                "workspace-managed Room execution requires an explicit workspace scope confirmation"
+            )
+        if execution_mode == FULL_TRUST_EXECUTION_MODE and (
+            str(payload.get("dangerousModeConfirmation") or "")
+            != DANGEROUS_MODE_CONFIRMATION
+        ):
+            raise ValueError(
+                "full-trust Room execution requires an explicit native confirmation"
+            )
+        configuration = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "executionMode",
+                "workspaceRoots",
+                "workspaceScopeConfirmation",
+                "dangerousModeConfirmation",
+            }
+        }
+        with self.participants.turn_lock:
+            sessions = self.participants.participant_sessions(room)
+            active_session_ids = self.participants.active_runtime_session_ids()
+            if any(
+                self.participants.session_is_busy(
+                    str(session["id"]),
+                    session,
+                    active_session_ids=active_session_ids,
+                )
+                for session in sessions
+            ):
+                raise ValueError(
+                    "wait for all Room participant turns to finish before changing workspace"
+                )
+            with self.rooms.write_transaction() as conn:
+                for session in sessions:
+                    profile = canonical_tool_profile(
+                        session.get("toolProfileVersion"),
+                        execution_mode=execution_mode,
+                    )
+                    self.sessions.set_runtime_policy(
+                        str(session["id"]),
+                        mode=str(session.get("mode") or "coordinator"),
+                        tool_profile_version=profile,
+                        execution_mode=execution_mode,
+                        grant_workspace_scope=execution_mode
+                        in {
+                            WORKSPACE_MANAGED_EXECUTION_MODE,
+                            FULL_TRUST_EXECUTION_MODE,
+                        },
+                        allowed_tools=(
+                            list(session.get("allowedTools") or [])
+                            if session.get("toolAllowlistMode") == "explicit"
+                            else None
+                        ),
+                        project_context_enabled=True,
+                        workspace_roots=list(workspace_roots),
+                        connection=conn,
+                    )
+                self.rooms.update_config(
+                    room_id,
+                    {
+                        **configuration,
+                        "workspaceRoots": list(workspace_roots),
+                    },
+                    connection=conn,
+                )
+        if self.close_session is not None:
+            for session in sessions:
+                self.close_session(str(session["id"]))
+        room = self.rooms.get(room_id)
+        event = self.events.publish(
+            room_id=room_id,
+            event_type="room_config_changed",
+            payload={
+                "status": "room_workspace_updated",
+                "changedFields": sorted(
+                    {*configuration, "workspaceRoots", "executionMode"}
+                ),
+                "executionMode": execution_mode,
+                "workspaceRootCount": len(workspace_roots),
+                "configRevision": room["configRevision"],
+            },
+            topic_id=str(room.get("activeTopicId") or ""),
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-room-update.v1",
+            "ok": True,
+            "room": room,
             "event": event,
         }
 
@@ -652,20 +772,20 @@ def _workspace_roots(
     raw = payload.get("workspaceRoots")
     if not isinstance(raw, list):
         raise ValueError("workspaceRoots must be an array")
-    roots = tuple(
+    raw_roots = tuple(
         str(value or "").strip()
         for value in raw
         if str(value or "").strip()
     )
-    if room_kind == "collaboration" and not roots:
+    if room_kind == "collaboration" and not raw_roots:
         raise ValueError(
             "agent room requires an authorized workspace"
         )
-    if len(roots) > 4:
+    if len(raw_roots) > 4:
         raise ValueError(
             "agent room accepts at most four workspace roots"
         )
-    return roots
+    return existing_workspace_roots(raw_roots)
 
 
 def _moderator_ordinal(

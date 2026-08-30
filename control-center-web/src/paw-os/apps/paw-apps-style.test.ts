@@ -182,7 +182,8 @@ describe('PAWOS semantic type roles', () => {
     expect(pawOsCss).toMatch(/\.paw-window-titlebar\s*\{[^}]*grid-template-columns:\s*var\(--paw-titlebar-lead, 76px\) minmax\(0, 1fr\) minmax\(0, auto\);/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-titlebar\s*\{[^}]*background:\s*#fff;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-window-shell\[data-app\] \.paw-window-titlebar\s*\{[^}]*background:\s*var\(--paw-app-nav,/s);
-    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights > button\s*\{[^}]*border-radius:\s*50%;[^}]*background:\s*transparent;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights > button\s*\{[^}]*background:\s*transparent;/s);
+    expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-traffic-lights > button::before\s*\{[^}]*border-radius:\s*50%;/s);
     expect(shellMigratedCss).toMatch(/\.paw-desktop-root \.paw-dock button::before\s*\{\s*content:\s*none;/s);
   });
 
@@ -213,11 +214,19 @@ describe('PAWOS semantic type roles', () => {
       expect(css).not.toContain('#f3efe6');
       expect(css).not.toContain('--comp8-');
     }
-    // Live flow direction and arrival signals survived the polish retirement
-    // in the structural owner, including their reduced-motion story.
-    expect(pawOsCss).toMatch(/g\[data-live\] \.paw-room-window-flow__base\s*\{[^}]*animation:\s*paw-window-flow-march/s);
+    // Communication stays readable in the ledger and target window. No
+    // diagonal full-desktop path or looping sheen may cross task content.
+    expect(pawOsCss).not.toMatch(/\.paw-room-window-flow(?:__|\s|\{|:)/);
+    expect(pawOsCss).not.toContain('paw-planet-flow-sheen');
+    expect(roundSheetCss).not.toContain('paw-room-round-row-sheen');
+    expect(roundSheetCss).not.toMatch(/tr\[data-planet-row\]\[data-state='running'\][^{]*\{[^}]*background-image:/s);
     expect(pawOsCss).toMatch(/\[data-flow-state='arrival'\] \.paw-window-title > strong::after\s*\{[^}]*animation:\s*paw-window-flow-arrival-blink/s);
-    expect(pawOsCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*g\[data-live\] \.paw-room-window-flow__base/);
+    expect(pawOsCss).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*\.paw-window-shell\[data-flow-state='arrival'\]/);
+  });
+
+  it('lifts an open project window above desktop App shortcuts on narrow canvases', () => {
+    expect(pawOsCss).toMatch(/\.paw-desktop-shortcuts\s*\{[^}]*z-index:\s*4;/s);
+    expect(pawOsCss).toMatch(/\.paw-wayfinder-work:has\(\.paw-wayfinder-work__project\[open\]\)\s*\{[^}]*z-index:\s*6;/s);
   });
 
   it('keeps portalled controls above the PAWOS desktop stacking context', () => {
@@ -847,8 +856,8 @@ describe('PAWOS semantic type roles', () => {
     // red/yellow/green rules keep landing on close/minimize/maximize.
     expect(pawOsCss).toMatch(/\.paw-window-leading-slot\s*\{[^}]*margin-inline-start:/s);
     // Direct-child scoping, so docked App chrome never inherits a light's
-    // ring, fill or 12px circle.
-    expect(shellMigratedCss).toMatch(/\.paw-traffic-lights > button:nth-child\(1\)\s*\{[^}]*#f04438/s);
+    // ring, fill or 12px visual disc.
+    expect(shellMigratedCss).toMatch(/\.paw-traffic-lights > button:nth-child\(1\)::before\s*\{[^}]*#f04438/s);
     for (const css of [pawOsCss, shellMigratedCss, roomMigratedCss]) {
       expect(css).not.toMatch(/\.paw-traffic-lights(?::[a-z-]+)? button/);
     }
@@ -866,10 +875,10 @@ describe('PAWOS semantic type roles', () => {
     );
   });
 
-  it('keeps one 12px traffic-light hit target on every window that docks App chrome', () => {
+  it('keeps one 24px traffic-light target on every window that docks App chrome', () => {
     // A light never flex-shrinks, so the main Room's close target measures the
     // same as a satellite's even when the cluster outgrows its column.
-    expect(pawOsCss).toMatch(/\.paw-traffic-lights > button\s*\{[^}]*flex:\s*0 0 12px;/s);
+    expect(pawOsCss).toMatch(/\.paw-traffic-lights > button\s*\{[^}]*flex:\s*0 0 24px;/s);
     // Only the column gives ground, through one token every titlebar reads.
     expect(pawOsCss).toMatch(
       /\.paw-window-titlebar:has\(\.paw-window-leading-slot:not\(:empty\)\)\s*\{[^}]*--paw-titlebar-lead:\s*auto;/s,
@@ -914,8 +923,31 @@ describe('PAWOS semantic type roles', () => {
   it('keeps narrow Agent chrome on one row and the shared tool surface inside the window', () => {
     expect(agentMigratedCss).not.toContain('height: 72px');
     expect(agentMigratedCss).not.toContain('.paw-session-workspace__actions');
+    expect(agentMigratedCss).toMatch(
+      /@container paw-window \(max-width: 760px\)[\s\S]*?\.paw-window-titlebar\[data-window-chrome='agent-session'\] \.paw-session-workspace__view-switch button[\s\S]*?width:\s*28px;[\s\S]*?\.paw-session-workspace__view-switch button > span\s*\{[^}]*display:\s*none;/,
+    );
     expect(agentMigratedCss).toMatch(/@container paw-window \(max-width: 420px\)[\s\S]*?\.paw-session-workspace__runtime[\s\S]*?display:\s*none;/);
     expect(agentMigratedCss).toMatch(/@container paw-session-workspace \(max-width: 520px\)[\s\S]*?\.paw-session-workspace__side[\s\S]*?width:\s*100%;[\s\S]*?height:\s*min\(52%, 340px\);/);
+  });
+
+  it('keeps diagonal resize controls at a 24px keyboard and pointer target', () => {
+    expect(pawOsCss).toMatch(
+      /\.paw-window-resize\[data-handle='north-east'\],[\s\S]*?\.paw-window-resize\[data-handle='south-west'\]\s*\{[^}]*width:\s*24px;[^}]*height:\s*24px;/,
+    );
+  });
+
+  it('lets every Monitor console section shrink inside a narrow PAW window', () => {
+    expect(observabilityCss).toMatch(
+      /main\[data-route-id='observability'\] \.observation-console > \*\s*\{[^}]*min-width:\s*0;/,
+    );
+    expect(observabilityCss).toMatch(
+      /@container paw-window \(max-width: 620px\)[\s\S]*?\.observation-schedules__workspace,[\s\S]*?\.observation-schedules__form\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,
+    );
+  });
+
+  it('keeps Agent motion compositor-safe and free of overshoot', () => {
+    expect(agentMigratedCss).toContain('--paw-chat-spring: cubic-bezier(.22, 1, .36, 1);');
+    expect(agentMigratedCss).not.toMatch(/transition:\s*width/);
   });
 
   it('keeps migrated descriptions and metadata on deliberate direct roles', () => {

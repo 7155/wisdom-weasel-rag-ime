@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import time
@@ -15,8 +16,456 @@ from .agent_runtime_driver import AgentRuntimeDriver, AgentRuntimeError
 
 _MAX_PLUGIN_FILES = 256
 _MAX_PLUGIN_BYTES = 5 * 1024 * 1024
+_MAX_NATIVE_PACKAGE_FILES = 1024
+_MAX_NATIVE_PACKAGE_BYTES = 20 * 1024 * 1024
 _SAFE_SUFFIXES = {".ts", ".js", ".mjs", ".json", ".md"}
 _PREVIEW_TTL_MS = 10 * 60 * 1000
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_EXTENSION_BINDING_CAPABILITY = "pawos.extension.binding."
+_EXTENSION_BINDING_TOKEN = re.compile(
+    r"^pawos\.extension\.binding\.([0-9a-f]{40})$"
+)
+_EXTENSION_PACKAGE_SEGMENT = re.compile(
+    r"^(?:[a-z0-9][a-z0-9.-]*|SKILL\.md)$"
+)
+
+
+def extension_app_binding_sha256(
+    app_manifest: Mapping[str, object],
+    *,
+    skill_sha256: str,
+    package_version: str,
+) -> str:
+    """Derive the stable co-version binding for an Extension App package.
+
+    The manifest's own binding field is excluded so the value can be checked
+    after it is written.  The Skill bytes and package version are included
+    explicitly even though the version is also present in the manifest: this
+    makes the binding contract clear to package producers and reviewers.
+    """
+
+    normalized_skill_sha256 = str(skill_sha256).strip().lower()
+    normalized_package_version = str(package_version).strip()
+    if not _SHA256.fullmatch(normalized_skill_sha256):
+        raise ValueError("Extension App Skill digest must be a lowercase SHA-256")
+    if not normalized_package_version:
+        raise ValueError("Extension App package version is required")
+    canonical_manifest = {
+        str(key): value
+        for key, value in app_manifest.items()
+        if str(key) != "bindingSha256"
+    }
+    payload = json.dumps(
+        {
+            "manifest": canonical_manifest,
+            "packageVersion": normalized_package_version,
+            "skillSha256": normalized_skill_sha256,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def extension_app_binding_capability(binding_sha256: str) -> str:
+    """Encode one binding digest into NativePackageManager's safe capability ID."""
+
+    normalized = str(binding_sha256).strip().lower()
+    if not _SHA256.fullmatch(normalized):
+        raise ValueError("Extension App binding must be a lowercase SHA-256")
+    capability = f"{_EXTENSION_BINDING_CAPABILITY}{normalized[:40]}"
+    if len(capability) > 64:
+        raise ValueError("Extension App binding capability exceeds the Runtime limit")
+    return capability
+
+
+def extension_app_binding_capability_from_capabilities(
+    capabilities: object,
+) -> str | None:
+    """Return exactly one valid Extension App binding capability, if present."""
+
+    if not isinstance(capabilities, (list, tuple)):
+        return None
+    matches = [
+        value
+        for value in capabilities
+        if isinstance(value, str) and _EXTENSION_BINDING_TOKEN.fullmatch(value)
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _extension_app_evidence(
+    value: Mapping[str, object] | None,
+    *,
+    package_id: str = "",
+    version: str = "",
+) -> dict[str, object] | None:
+    """Project only a self-consistent binding proof for API consumers.
+
+    Native Pi currently guarantees the capability list and package version in
+    installed inventory/receipts.  A richer ``extensionApp`` catalog object
+    is retained when present, but never trusted without the same bounded
+    binding capability.
+    """
+
+    if value is None:
+        return None
+    raw_manifest = value.get("manifest")
+    manifest = dict(raw_manifest) if isinstance(raw_manifest, Mapping) else {}
+    raw_extension = value.get("extensionApp")
+    if raw_extension is None and isinstance(manifest.get("paw"), Mapping):
+        raw_extension = manifest["paw"].get("extensionApp")
+    extension = dict(raw_extension) if isinstance(raw_extension, Mapping) else {}
+    capabilities = value.get("capabilities")
+    if not isinstance(capabilities, (list, tuple)):
+        package_paw = manifest.get("paw")
+        capabilities = package_paw.get("capabilities") if isinstance(package_paw, Mapping) else None
+    binding_capability = extension.get("bindingCapability")
+    if not isinstance(binding_capability, str):
+        binding_capability = extension_app_binding_capability_from_capabilities(
+            capabilities
+        )
+    if not isinstance(binding_capability, str) or not _EXTENSION_BINDING_TOKEN.fullmatch(
+        binding_capability
+    ):
+        return None
+    binding_sha256 = extension.get("bindingSha256")
+    if binding_sha256 is not None:
+        if not isinstance(binding_sha256, str) or not _SHA256.fullmatch(binding_sha256):
+            return None
+        if extension_app_binding_capability(binding_sha256) != binding_capability:
+            return None
+    resolved_version = (
+        extension.get("version")
+        or version
+        or value.get("version")
+        or manifest.get("version")
+    )
+    if not isinstance(resolved_version, str) or not resolved_version.strip():
+        return None
+    evidence: dict[str, object] = {
+        key: item
+        for key, item in extension.items()
+        if key
+        in {
+            "id",
+            "packageId",
+            "version",
+            "bindingSha256",
+            "skillRef",
+            "skillSha256",
+            "verticalSuiteId",
+            "verticalSuiteRevision",
+        }
+    }
+    evidence["version"] = resolved_version.strip()
+    evidence["bindingCapability"] = binding_capability
+    if package_id and "packageId" not in evidence:
+        evidence["packageId"] = package_id
+    elif "packageId" not in evidence and isinstance(manifest.get("name"), str):
+        evidence["packageId"] = manifest["name"]
+    return evidence
+
+
+def _verified_extension_app_evidence(
+    value: Mapping[str, object],
+    *,
+    package_id: str = "",
+    version: str = "",
+    require_managed_source: bool = True,
+) -> dict[str, object] | None:
+    """Rebuild complete App evidence from the exact Runtime-owned package.
+
+    Pi deliberately exposes only generic Package state.  The Sidecar therefore
+    verifies the content-addressed managed source that Pi returned, then reads
+    the App contract stored inside that package.  A copied capability or a
+    partial API object is never enough to expose a PAWOS App.
+    """
+
+    raw_runtime_capabilities = value.get("capabilities")
+    if (
+        not isinstance(raw_runtime_capabilities, (list, tuple))
+        or any(not isinstance(item, str) for item in raw_runtime_capabilities)
+        or len(set(raw_runtime_capabilities)) != len(raw_runtime_capabilities)
+    ):
+        return None
+    runtime_capabilities = tuple(raw_runtime_capabilities)
+    runtime_binding = extension_app_binding_capability_from_capabilities(
+        runtime_capabilities
+    )
+    if runtime_binding is None:
+        return None
+    raw_source = value.get("source")
+    source = raw_source if isinstance(raw_source, str) else ""
+    if not source and isinstance(raw_source, Mapping):
+        for key in ("resolved", "requested"):
+            candidate = raw_source.get(key)
+            if isinstance(candidate, str) and candidate:
+                source = candidate
+                break
+    if not source:
+        return None
+    expected_digest = str(
+        value.get("digest") or value.get("installedDigest") or ""
+    ).strip()
+    resolved_package_id = str(package_id or value.get("id") or "").strip()
+    resolved_version = str(version or value.get("version") or "").strip()
+    requested = Path(source).expanduser()
+    if not requested.is_absolute():
+        return None
+    try:
+        canonical_source = requested.resolve(strict=True)
+    except OSError:
+        return None
+    if require_managed_source:
+        package_key = hashlib.sha256(resolved_package_id.encode("utf-8")).hexdigest()[:16]
+        if (
+            not _SHA256.fullmatch(expected_digest)
+            or canonical_source.name != expected_digest
+            or canonical_source.parent.name != package_key
+            or canonical_source.parent.parent.name != "packages"
+        ):
+            return None
+    evidence = _verified_extension_app_source(
+        str(canonical_source),
+        expected_digest,
+        resolved_package_id,
+        resolved_version,
+        runtime_capabilities,
+    )
+    if evidence is None or evidence.get("bindingCapability") != runtime_binding:
+        return None
+    return dict(evidence)
+
+
+def _verified_extension_app_source(
+    source: str,
+    expected_digest: str,
+    package_id: str,
+    version: str,
+    runtime_capabilities: tuple[str, ...],
+) -> dict[str, object] | None:
+    try:
+        requested = Path(source).expanduser()
+        if requested.is_symlink() or not requested.is_dir():
+            return None
+        package_root = requested.resolve(strict=True)
+        files: list[Path] = []
+        total_bytes = 0
+
+        def visit(directory: Path) -> bool:
+            nonlocal total_bytes
+            try:
+                visible = [
+                    item
+                    for item in directory.iterdir()
+                    if item.name not in {".git", "node_modules"}
+                ]
+                if len({item.name.casefold() for item in visible}) != len(visible):
+                    return False
+                entries = sorted(
+                    visible,
+                    key=lambda item: (item.name.casefold(), item.name),
+                )
+            except OSError:
+                return False
+            for item in entries:
+                if not _EXTENSION_PACKAGE_SEGMENT.fullmatch(item.name):
+                    return False
+                if item.is_symlink():
+                    return False
+                if item.is_dir():
+                    if not visit(item):
+                        return False
+                    continue
+                if not item.is_file():
+                    return False
+                files.append(item)
+                total_bytes += item.stat().st_size
+                if (
+                    len(files) > _MAX_NATIVE_PACKAGE_FILES
+                    or total_bytes > _MAX_NATIVE_PACKAGE_BYTES
+                ):
+                    return False
+            return True
+
+        if not visit(package_root):
+            return None
+        digest = hashlib.sha256()
+        for item in files:
+            digest.update(item.relative_to(package_root).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(item.read_bytes())
+            digest.update(b"\0")
+        package_digest = digest.hexdigest()
+        if expected_digest and (
+            not _SHA256.fullmatch(expected_digest)
+            or package_digest != expected_digest
+        ):
+            return None
+
+        package_path = package_root / "package.json"
+        if package_path.is_symlink() or not package_path.is_file():
+            return None
+        package_manifest = json.loads(package_path.read_text(encoding="utf-8"))
+        if not isinstance(package_manifest, Mapping):
+            return None
+        manifest_package_id = str(package_manifest.get("name") or "")
+        manifest_version = str(package_manifest.get("version") or "")
+        if package_id and manifest_package_id != package_id:
+            return None
+        if version and manifest_version != version:
+            return None
+        paw = package_manifest.get("paw")
+        if not isinstance(paw, Mapping):
+            return None
+        raw_package_capabilities = paw.get("capabilities")
+        if (
+            not isinstance(raw_package_capabilities, list)
+            or any(not isinstance(item, str) for item in raw_package_capabilities)
+            or len(set(raw_package_capabilities)) != len(raw_package_capabilities)
+            or tuple(sorted(raw_package_capabilities)) != runtime_capabilities
+        ):
+            return None
+        binding_capability = extension_app_binding_capability_from_capabilities(
+            raw_package_capabilities
+        )
+        extension = paw.get("extensionApp")
+        if not binding_capability or not isinstance(extension, Mapping):
+            return None
+        app_manifest = extension.get("manifest")
+        if not isinstance(app_manifest, Mapping):
+            return None
+        skill_ref = str(extension.get("skillRef") or "")
+        skill_path = package_root / "skills" / skill_ref / "SKILL.md"
+        if (
+            not skill_ref
+            or skill_path.is_symlink()
+            or not skill_path.is_file()
+            or not skill_path.resolve(strict=True).is_relative_to(package_root)
+        ):
+            return None
+        skill_sha256 = hashlib.sha256(skill_path.read_bytes()).hexdigest()
+        binding_sha256 = str(extension.get("bindingSha256") or "")
+        if (
+            not _SHA256.fullmatch(binding_sha256)
+            or extension_app_binding_capability(binding_sha256)
+            != binding_capability
+            or str(extension.get("skillSha256") or "") != skill_sha256
+            or str(app_manifest.get("bindingSha256") or "") != binding_sha256
+            or str(app_manifest.get("skillSha256") or "") != skill_sha256
+            or extension_app_binding_sha256(
+                app_manifest,
+                skill_sha256=skill_sha256,
+                package_version=manifest_version,
+            )
+            != binding_sha256
+        ):
+            return None
+        required = {
+            "id": str(app_manifest.get("id") or ""),
+            "packageId": str(app_manifest.get("packageId") or ""),
+            "version": str(app_manifest.get("version") or ""),
+            "bindingSha256": binding_sha256,
+            "skillRef": str(app_manifest.get("skillRef") or ""),
+            "skillSha256": skill_sha256,
+            "verticalSuiteId": str(app_manifest.get("verticalSuiteId") or ""),
+            "verticalSuiteRevision": str(
+                app_manifest.get("verticalSuiteRevision") or ""
+            ),
+        }
+        if (
+            not all(required.values())
+            or required["packageId"] != manifest_package_id
+            or required["version"] != manifest_version
+        ):
+            return None
+        for field, expected in required.items():
+            if field == "skillSha256":
+                continue
+            if str(extension.get(field) or "") != expected:
+                return None
+        return {
+            **required,
+            "bindingCapability": binding_capability,
+            "packageDigest": package_digest,
+        }
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _public_package_source(value: object) -> dict[str, str]:
+    kind = "managed"
+    if isinstance(value, Mapping):
+        candidate = value.get("kind")
+        if isinstance(candidate, str) and candidate in {"local", "npm", "git"}:
+            kind = candidate
+    labels = {
+        "managed": "Runtime-managed Pi Package",
+        "local": "Local package staged by Runtime",
+        "npm": "npm package resolved by Runtime",
+        "git": "Git package resolved by Runtime",
+    }
+    return {"kind": kind, "label": labels[kind]}
+
+
+def _public_version_record(value: object) -> dict[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    version = str(value.get("version") or "")
+    digest = str(value.get("digest") or "")
+    if not version or not digest:
+        return None
+    result = {"version": version, "digest": digest}
+    installed_at = str(value.get("installedAt") or "")
+    if installed_at:
+        result["installedAt"] = installed_at
+    return result
+
+
+def _public_plugin_payload(value: Mapping[str, object]) -> dict[str, object]:
+    result: dict[str, object] = {
+        "id": str(value.get("id") or ""),
+        "name": str(value.get("name") or value.get("id") or ""),
+        "version": str(value.get("version") or ""),
+        "description": str(value.get("description") or ""),
+        "digest": str(value.get("digest") or ""),
+        "enabled": value.get("enabled") is True,
+        "distribution": str(value.get("distribution") or ""),
+        "permissions": [
+            str(item) for item in value.get("permissions") or [] if isinstance(item, str)
+        ],
+        "capabilities": [
+            str(item) for item in value.get("capabilities") or [] if isinstance(item, str)
+        ],
+        "resources": {
+            kind: [
+                str(item)
+                for item in value.get("resources", {}).get(kind, [])
+                if isinstance(item, str)
+            ]
+            for kind in ("extensions", "skills", "prompts", "themes")
+        }
+        if isinstance(value.get("resources"), Mapping)
+        else {},
+        "source": _public_package_source(value.get("source")),
+    }
+    versions = [
+        record
+        for item in value.get("installedVersions") or []
+        if (record := _public_version_record(item)) is not None
+    ]
+    if versions:
+        result["installedVersions"] = versions
+    rollback = _public_version_record(value.get("rollbackTarget"))
+    if rollback is not None:
+        result["rollbackTarget"] = rollback
+    if value.get("removed") is True:
+        result["removed"] = True
+    return result
 
 
 class AgentExtensionService:
@@ -61,48 +510,57 @@ class AgentExtensionService:
             if not isinstance(value, Mapping):
                 continue
             raw_versions = value.get("installedVersions")
-            versions = raw_versions if isinstance(raw_versions, list) else []
-            items.append(
-                {
-                    "id": str(value.get("id") or ""),
-                    "displayName": str(value.get("name") or value.get("id") or "Plugin"),
-                    "version": str(value.get("version") or ""),
-                    "description": str(value.get("description") or ""),
-                    "digest": str(value.get("digest") or ""),
-                    "enabled": value.get("enabled") is True,
-                    "installed": True,
-                    "rollbackAvailable": isinstance(
-                        value.get("rollbackTarget"), Mapping
-                    ),
-                    "updateAvailable": False,
-                    "permissions": [
+            versions = [
+                record
+                for raw_version in raw_versions if (record := _public_version_record(raw_version)) is not None
+            ] if isinstance(raw_versions, list) else []
+            package_id = str(value.get("id") or "")
+            package_version = str(value.get("version") or "")
+            capabilities = [
+                str(item)
+                for item in value.get("capabilities") or []
+                if isinstance(item, str)
+            ]
+            item: dict[str, object] = {
+                "id": package_id,
+                "displayName": str(value.get("name") or package_id or "Plugin"),
+                "version": package_version,
+                "description": str(value.get("description") or ""),
+                "digest": str(value.get("digest") or ""),
+                "enabled": value.get("enabled") is True,
+                "installed": True,
+                "rollbackAvailable": isinstance(
+                    value.get("rollbackTarget"), Mapping
+                ),
+                "updateAvailable": False,
+                "permissions": [
+                    str(item)
+                    for item in value.get("permissions") or []
+                    if isinstance(item, str)
+                ],
+                "resources": {
+                    kind: [
                         str(item)
-                        for item in value.get("permissions") or []
+                        for item in value.get("resources", {}).get(kind, [])
                         if isinstance(item, str)
-                    ],
-                    "resources": {
-                        kind: [
-                            str(item)
-                            for item in value.get("resources", {}).get(kind, [])
-                            if isinstance(item, str)
-                        ]
-                        for kind in ("extensions", "skills", "prompts", "themes")
-                    }
-                    if isinstance(value.get("resources"), Mapping)
-                    else {},
-                    "source": (
-                        dict(value["source"])
-                        if isinstance(value.get("source"), Mapping)
-                        else {}
-                    ),
-                    "installedVersions": versions,
-                    "rollbackTarget": (
-                        dict(value["rollbackTarget"])
-                        if isinstance(value.get("rollbackTarget"), Mapping)
-                        else None
-                    ),
+                    ]
+                    for kind in ("extensions", "skills", "prompts", "themes")
                 }
+                if isinstance(value.get("resources"), Mapping)
+                else {},
+                "source": _public_package_source(value.get("source")),
+                "capabilities": capabilities,
+                "installedVersions": versions,
+                "rollbackTarget": _public_version_record(value.get("rollbackTarget")),
+            }
+            evidence = _verified_extension_app_evidence(
+                value,
+                package_id=package_id,
+                version=package_version,
             )
+            if evidence is not None:
+                item["extensionApp"] = evidence
+            items.append(item)
         return {
             "schemaVersion": "rag-ime.plugin-inventory.v1",
             "ok": True,
@@ -142,58 +600,76 @@ class AgentExtensionService:
                 continue
             version = str(package.get("version") or "")
             installed_version = str(package.get("installedVersion") or "")
-            entries.append(
-                {
-                    "id": package_id,
-                    "displayName": str(
-                        package.get("displayName") or package.get("name") or package_id
+            package_capabilities = [
+                str(value)
+                for value in package.get("capabilities") or []
+                if isinstance(value, str)
+            ]
+            entry: dict[str, object] = {
+                "id": package_id,
+                "displayName": str(
+                    package.get("displayName") or package.get("name") or package_id
+                ),
+                "description": str(package.get("description") or ""),
+                "publisher": "Personal Agent Workbench",
+                "source": {
+                    "kind": "bundled_pi_package",
+                    "label": "Bundled with the active Pi Runtime",
+                },
+                "permissions": [],
+                "capabilities": package_capabilities,
+                "compatibility": {"runtimeProtocol": "2", "pi": ">=0.84.2"},
+                "security": {
+                    "reviewed": True,
+                    "networkAccess": package_id.endswith("/subagent"),
+                    "enforcement": "content_addressed_pi_package",
+                    "notes": (
+                        "First-party Pi Package. Install, enable, disable, and uninstall "
+                        "are owned by the active Pi Runtime Host."
                     ),
-                    "description": str(package.get("description") or ""),
-                    "publisher": "Personal Agent Workbench",
-                    "source": {
-                        "kind": "bundled_pi_package",
-                        "label": "Bundled with the active Pi Runtime",
-                    },
-                    "permissions": [],
-                    "capabilities": [
-                        str(value)
-                        for value in package.get("capabilities") or []
-                        if isinstance(value, str)
-                    ],
-                    "compatibility": {"runtimeProtocol": "2", "pi": ">=0.84.2"},
-                    "security": {
-                        "reviewed": True,
-                        "networkAccess": package_id.endswith("/subagent"),
-                        "enforcement": "content_addressed_pi_package",
-                        "notes": (
-                            "First-party Pi Package. Install, enable, disable, and uninstall "
-                            "are owned by the active Pi Runtime Host."
-                        ),
-                    },
-                    "versions": ([{"version": version, "releasedAt": "", "notes": ""}] if version else []),
-                    "latestVersion": version,
-                    "installedVersion": installed_version,
-                    "installed": package.get("installed") is True,
-                    "enabled": package.get("enabled") is True,
-                    "updateAvailable": bool(
-                        installed_version
-                        and version
-                        and _version_key(version) > _version_key(installed_version)
-                    ),
-                    "installState": (
-                        "update_available"
-                        if installed_version
-                        and version
-                        and _version_key(version) > _version_key(installed_version)
-                        else "installed"
-                        if package.get("installed") is True
-                        else "available"
-                    ),
-                    "actionable": True,
-                    "distribution": "pi_package",
-                    "bundled": True,
-                }
-            )
+                },
+                "versions": ([{"version": version, "releasedAt": "", "notes": ""}] if version else []),
+                "latestVersion": version,
+                "installedVersion": installed_version,
+                "version": installed_version or version,
+                "installed": package.get("installed") is True,
+                "enabled": package.get("enabled") is True,
+                "updateAvailable": bool(
+                    installed_version
+                    and version
+                    and _version_key(version) > _version_key(installed_version)
+                ),
+                "installState": (
+                    "update_available"
+                    if installed_version
+                    and version
+                    and _version_key(version) > _version_key(installed_version)
+                    else "installed"
+                    if package.get("installed") is True
+                    else "available"
+                ),
+                "actionable": True,
+                "distribution": "pi_package",
+                "bundled": True,
+            }
+            current = installed.get(package_id)
+            current_evidence = current.get("extensionApp") if current else None
+            if (
+                isinstance(current_evidence, Mapping)
+                and installed_version == version
+            ):
+                entry["capabilities"] = list(current.get("capabilities") or [])
+                entry["extensionApp"] = dict(current_evidence)
+            elif not installed_version:
+                candidate_evidence = _verified_extension_app_evidence(
+                    package,
+                    package_id=package_id,
+                    version=version,
+                    require_managed_source=False,
+                )
+                if candidate_evidence is not None:
+                    entry["extensionApp"] = candidate_evidence
+            entries.append(entry)
         for raw_entry in document.get("entries") or []:
             if not isinstance(raw_entry, Mapping):
                 continue
@@ -315,7 +791,18 @@ class AgentExtensionService:
         )
         if not isinstance(result, Mapping):
             raise AgentRuntimeError("Pi Runtime Host returned an invalid Pi Package draft")
-        return {"ok": True, "draft": dict(result)}
+        raw_package = result.get("package")
+        package = dict(raw_package) if isinstance(raw_package, Mapping) else {}
+        return {
+            "ok": True,
+            "draft": {
+                "draftId": str(result.get("draftId") or draft_id),
+                "package": {
+                    "name": str(package.get("name") or ""),
+                    "version": str(package.get("version") or ""),
+                },
+            },
+        }
 
     def proposals(self) -> dict[str, object]:
         with self._lock:
@@ -612,18 +1099,27 @@ class AgentExtensionService:
             for proposal_id, proposal in tuple(self._proposals.items()):
                 if proposal.get("previewToken") == preview_token:
                     self._proposals.pop(proposal_id, None)
+        plugin_payload = dict(plugin) if isinstance(plugin, Mapping) else {}
+        receipt: dict[str, object] = {
+            "receiptId": f"plugin:{action}:{secrets.token_hex(8)}",
+            "action": action,
+            "appliedAtMs": _now_ms(),
+            "plugin": _public_plugin_payload(plugin_payload),
+            "rollbackAvailable": bool(
+                isinstance(plugin, Mapping)
+                and len(plugin.get("installedVersions") or []) > 1
+            ),
+        }
+        evidence = _verified_extension_app_evidence(
+            plugin_payload,
+            package_id=str(plugin_payload.get("id") or operation.get("pluginId") or ""),
+            version=str(plugin_payload.get("version") or operation.get("version") or ""),
+        )
+        if evidence is not None:
+            receipt["extensionApp"] = evidence
         return {
             "ok": True,
-            "receipt": {
-                "receiptId": f"plugin:{action}:{secrets.token_hex(8)}",
-                "action": action,
-                "appliedAtMs": _now_ms(),
-                "plugin": dict(plugin) if isinstance(plugin, Mapping) else {},
-                "rollbackAvailable": bool(
-                    isinstance(plugin, Mapping)
-                    and len(plugin.get("installedVersions") or []) > 1
-                ),
-            },
+            "receipt": receipt,
         }
 
     def _call(self, method: str, *args: object, **kwargs: object) -> object:
@@ -791,8 +1287,6 @@ class AgentExtensionService:
     @staticmethod
     def _public_validation(
         validation: Mapping[str, object],
-        *,
-        include_source: bool = False,
     ) -> dict[str, object]:
         raw_manifest = validation.get("manifest")
         manifest = dict(raw_manifest) if isinstance(raw_manifest, Mapping) else {}
@@ -806,6 +1300,11 @@ class AgentExtensionService:
                 str(item) for item in manifest.get("permissions") or [] if isinstance(item, str)
             ],
             "digest": str(validation.get("digest") or ""),
+            "capabilities": [
+                str(item)
+                for item in validation.get("capabilities") or []
+                if isinstance(item, str)
+            ],
             "files": [str(item) for item in validation.get("files") or [] if isinstance(item, str)],
             "totalBytes": int(validation.get("totalBytes") or 0),
             "installPreview": dict(validation.get("installPreview") or {}),
@@ -819,12 +1318,15 @@ class AgentExtensionService:
             }
             if isinstance(validation.get("resources"), Mapping)
             else {},
-            "source": dict(validation.get("source") or {})
-            if isinstance(validation.get("source"), Mapping)
-            else {},
+            "source": _public_package_source(validation.get("source")),
         }
-        if include_source:
-            result["sourcePath"] = str(validation.get("sourcePath") or "")
+        evidence = _extension_app_evidence(
+            validation,
+            package_id=str(manifest.get("name") or manifest.get("id") or ""),
+            version=str(manifest.get("version") or ""),
+        )
+        if evidence is not None:
+            result["extensionApp"] = evidence
         return result
 
     @staticmethod
@@ -835,7 +1337,7 @@ class AgentExtensionService:
         manifest = dict(raw_manifest) if isinstance(raw_manifest, Mapping) else {}
         resources = raw_validation.get("resources") if isinstance(raw_validation, Mapping) else None
         source = raw_validation.get("source") if isinstance(raw_validation, Mapping) else None
-        return {
+        summary = {
             "action": action,
             "pluginId": str(operation.get("pluginId") or manifest.get("id") or ""),
             "displayName": str(
@@ -850,13 +1352,21 @@ class AgentExtensionService:
                 manifest.get("permissions") or operation.get("permissions") or []
             ),
             "resources": dict(resources) if isinstance(resources, Mapping) else {},
-            "source": dict(source) if isinstance(source, Mapping) else {},
+            "source": _public_package_source(source),
             "enableAfterInstall": operation.get("enable") is True,
             "expectedEnabled": operation.get("expectedEnabled"),
             "expectedActiveDigest": str(
                 operation.get("expectedActiveDigest") or ""
             ),
         }
+        evidence = _extension_app_evidence(
+            operation.get("manifest") if isinstance(operation.get("manifest"), Mapping) else None,
+            package_id=str(operation.get("pluginId") or manifest.get("name") or ""),
+            version=str(manifest.get("version") or operation.get("version") or ""),
+        )
+        if evidence is not None:
+            summary["extensionApp"] = evidence
+        return summary
 
 
 def _payload_digest(value: Mapping[str, object]) -> str:

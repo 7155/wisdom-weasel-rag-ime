@@ -34,6 +34,7 @@ export type MotionPreference = 'system' | 'reduce' | 'full';
 type MotionContextValue = {
   preference: MotionPreference;
   reduceMotion: boolean;
+  systemReduceMotion: boolean;
   setPreference: (preference: MotionPreference) => void;
 };
 
@@ -51,10 +52,19 @@ function getSystemPreference(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+export function resolveReduceMotion(
+  preference: MotionPreference,
+  systemReduceMotion: boolean,
+): boolean {
+  // The operating-system preference is an accessibility floor. An in-app
+  // request for full motion only applies when the system permits it.
+  return systemReduceMotion || preference === 'reduce';
+}
+
 export function MotionProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<MotionPreference>(getStoredPreference);
   const [systemReduceMotion, setSystemReduceMotion] = useState(getSystemPreference);
-  const reduceMotion = preference === 'system' ? systemReduceMotion : preference === 'reduce';
+  const reduceMotion = resolveReduceMotion(preference, systemReduceMotion);
 
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return undefined;
@@ -67,7 +77,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.dataset.reduceMotion = String(reduceMotion);
-  }, [reduceMotion]);
+    document.documentElement.dataset.motionPreference = preference;
+  }, [preference, reduceMotion]);
 
   const setPreference = useCallback((next: MotionPreference) => {
     setPreferenceState(next);
@@ -75,8 +86,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ preference, reduceMotion, setPreference }),
-    [preference, reduceMotion, setPreference],
+    () => ({ preference, reduceMotion, setPreference, systemReduceMotion }),
+    [preference, reduceMotion, setPreference, systemReduceMotion],
   );
 
   return (

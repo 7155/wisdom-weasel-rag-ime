@@ -115,6 +115,22 @@ export const CONTROL_ROUTES = {
     requiredBody: ['expectedRevision'],
     responseContract: 'trace-diagnostic-report.v1',
   },
+  'observability.traceDiagnosticReport.repairAuthorize': {
+    method: 'POST',
+    path: '/api/observability/trace-diagnostic-reports/:reportId/repair-authorize',
+    params: { reportId: null },
+    body: ['expectedRevision', 'findingId', 'sourceScope', 'sourceTraceId', 'failureRef', 'repairSessionId'],
+    requiredBody: ['expectedRevision', 'findingId', 'sourceScope', 'sourceTraceId', 'failureRef', 'repairSessionId'],
+    responseContract: 'trace-diagnostic-report.v1',
+  },
+  'observability.traceDiagnosticReport.repairVerify': {
+    method: 'POST',
+    path: '/api/observability/trace-diagnostic-reports/:reportId/repair-verify',
+    params: { reportId: null },
+    body: ['expectedRevision', 'repairReceiptId'],
+    requiredBody: ['expectedRevision', 'repairReceiptId'],
+    responseContract: 'trace-diagnostic-report.v1',
+  },
   'observability.evalSuites.list': {
     method: 'GET',
     path: '/api/observability/eval-suites',
@@ -635,6 +651,7 @@ export const CONTROL_ROUTES = {
       'routingConfig',
       'moderatorParticipantId',
       'executionMode',
+      'workspaceRoots',
       'workspaceScopeConfirmation',
       'dangerousModeConfirmation',
     ],
@@ -951,7 +968,7 @@ export const CONTROL_ROUTES = {
   'agent.memoryMaintenance.run': {
     method: 'GET',
     path: '/api/agent/memory-maintenance',
-    query: ['runId', 'jobId', 'project', 'limit'],
+    query: ['runId', 'jobId', 'project', 'limit', 'projectionOnly'],
   },
   'agent.memoryMaintenance.trigger': {
     method: 'POST',

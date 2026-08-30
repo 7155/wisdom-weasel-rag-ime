@@ -13,6 +13,8 @@ export interface TraceRepairReceiptV1 {
   changeReceiptId: string;
   testEvidenceId: string;
   testStatus: 'passed';
+  sandboxStatus: 'passed';
+  sandboxedTestCount: number;
   repairTraceId: string;
   repairSessionId: string;
   createdAtMs: number;

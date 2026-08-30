@@ -18,6 +18,7 @@ from .agent_tool_ids import (
     DANGEROUS_MODE_CONFIRMATION,
     READONLY_TOOL_PROFILE,
 )
+from .agent_workspace_roots import existing_workspace_roots
 
 
 class AgentSessionApplicationService:
@@ -177,6 +178,10 @@ class AgentSessionApplicationService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
+        if mode == "coordinator" and workspace_roots:
+            workspace_roots = list(
+                existing_workspace_roots(workspace_roots)
+            )
         for boolean_key in (
             "projectContextEnabled",
             "piSkillsEnabled",

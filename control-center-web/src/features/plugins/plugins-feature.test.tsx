@@ -7,6 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
+import { pawExtensionApps } from '@/paw-os/extensions/registry';
 import type { ControlPathId } from '@/platform/routes';
 import type { ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
@@ -691,6 +692,57 @@ describe('PluginsFeature', () => {
     expect(screen.getByRole('button', { name: '收起维护选项' })).toBeInTheDocument();
   });
 
+  it('keeps an uninstalled Extension App on the existing guarded install action', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.extensions.catalog': {
+        ok: true,
+        items: [extensionCatalogItem({ installed: false, actionable: true })],
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    const row = document.querySelector('.plugin-catalog__row');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('[data-paw-app-icon="extension:zhanggui-wenshu"]')).toBeInTheDocument();
+    expect(row).toHaveTextContent('PAWOS App');
+    expect(within(row as HTMLElement).getByRole('button', { name: '查看安装内容' })).toBeEnabled();
+    expect(within(row as HTMLElement).queryByRole('button', { name: /打开\s*掌柜问数/ })).not.toBeInTheDocument();
+  });
+
+  it('opens an enabled Extension App from both its catalog row and installed Package card', async () => {
+    const user = userEvent.setup();
+    renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        items: [extensionInventoryItem()],
+      },
+      'agent.extensions.catalog': {
+        ok: true,
+        items: [extensionCatalogItem({ installed: true, enabled: true, actionable: true })],
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    const row = document.querySelector('.plugin-catalog__row');
+    expect(row).not.toBeNull();
+    expect(row?.querySelector('[data-paw-app-icon="extension:zhanggui-wenshu"]')).toBeInTheDocument();
+    expect(row).toHaveTextContent('PAWOS App');
+    await user.click(within(row as HTMLElement).getByRole('button', { name: /打开\s*掌柜问数/ }));
+    expect(window.location.hash).toBe('#/extensions/zhanggui-wenshu');
+
+    window.history.replaceState({}, '', '/');
+    const card = await screen.findByRole('article', { name: '掌柜问数 Package' });
+    expect(card.querySelector('[data-paw-app-icon="extension:zhanggui-wenshu"]')).toBeInTheDocument();
+    expect(card).toHaveTextContent('PAWOS App');
+    await user.click(within(card).getByRole('button', { name: /打开\s*掌柜问数/ }));
+    expect(window.location.hash).toBe('#/extensions/zhanggui-wenshu');
+    expect(within(card).getByRole('button', { name: '停用' })).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: '卸载' })).toBeInTheDocument();
+  });
+
   it('refreshes catalog, installed versions, proposals and lifecycle together', async () => {
     const user = userEvent.setup();
     const transport = renderPlugins();
@@ -893,6 +945,67 @@ function renderPluginsWithTransport(
 function LocationProbe() {
   const location = useLocation();
   return <span data-testid="test-location" hidden>{`${location.pathname}${location.search}`}</span>;
+}
+
+function extensionCatalogItem(overrides: Record<string, unknown> = {}) {
+  const extension = pawExtensionApps.find((app) => app.packageId === '@paw/zhanggui-wenshu')!;
+  return {
+    id: '@paw/zhanggui-wenshu',
+    displayName: '掌柜问数',
+    description: '受控的垂直问数工作台',
+    publisher: 'Personal Agent Workbench',
+    source: { kind: 'bundled', label: 'Product bundle' },
+    permissions: ['sandbox.run'],
+    capabilities: [`pawos.extension.binding.${extension.bindingSha256.slice(0, 40)}`],
+    security: { notes: 'Host 拥有沙盒边界，Package 不直接写入生产数据。' },
+    versions: [{ version: '0.1.0' }],
+    version: '0.1.0',
+    latestVersion: '0.1.0',
+    installed: false,
+    enabled: false,
+    extensionApp: {
+      id: extension.id,
+      packageId: extension.packageId,
+      version: extension.version,
+      bindingSha256: extension.bindingSha256,
+      bindingCapability: `pawos.extension.binding.${extension.bindingSha256.slice(0, 40)}`,
+      skillRef: extension.skillRef,
+      skillSha256: extension.skillSha256,
+      verticalSuiteId: extension.verticalSuiteId,
+      verticalSuiteRevision: extension.verticalSuiteRevision,
+    },
+    updateAvailable: false,
+    actionable: true,
+    ...overrides,
+  };
+}
+
+function extensionInventoryItem(overrides: Record<string, unknown> = {}) {
+  const extension = pawExtensionApps.find((app) => app.packageId === '@paw/zhanggui-wenshu')!;
+  return {
+    id: '@paw/zhanggui-wenshu',
+    displayName: '掌柜问数',
+    version: '0.1.0',
+    digest: 'c'.repeat(64),
+    enabled: true,
+    installed: true,
+    rollbackAvailable: false,
+    permissions: ['sandbox.run'],
+    capabilities: [`pawos.extension.binding.${extension.bindingSha256.slice(0, 40)}`],
+    resources: {},
+    extensionApp: {
+      id: extension.id,
+      packageId: extension.packageId,
+      version: extension.version,
+      bindingSha256: extension.bindingSha256,
+      bindingCapability: `pawos.extension.binding.${extension.bindingSha256.slice(0, 40)}`,
+      skillRef: extension.skillRef,
+      skillSha256: extension.skillSha256,
+      verticalSuiteId: extension.verticalSuiteId,
+      verticalSuiteRevision: extension.verticalSuiteRevision,
+    },
+    ...overrides,
+  };
 }
 
 function toolItems() {

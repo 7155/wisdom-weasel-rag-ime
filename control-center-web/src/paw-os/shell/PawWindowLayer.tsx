@@ -1,6 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
 import { ChevronRight, Maximize2, Minimize2, Minus, X } from 'lucide-react';
-import { useControlTransport } from '@/app/control-transport';
 import { Disclosure } from '@/components/primitives';
 import {
   PawOsAppSurfaceProvider,
@@ -24,11 +23,12 @@ import {
 import { PawAppProcess } from '../apps/PawApps';
 import { PawAppIcon } from './PawAppIcon';
 import { PawWindowChromeProvider } from './PawWindowChrome';
-import { pulsePawComposition, pulsePawCompositionForRuntimeEvents } from '../runtime/composition-pulse';
+import { pulsePawComposition } from '../runtime/composition-pulse';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
-import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-session';
 import { roomActivityFlowKind, roomWorkReviewFlow } from '@/features/rooms/room-flow-projection';
 import type { RoomProjectionState } from '@/contracts/room-reducer';
+
+const PawRoomProjectionKeeper = lazy(() => import('./PawRoomProjectionKeeper'));
 
 const noRoomProjections: Record<string, RoomProjectionState> = {};
 const selectRoomProjections = (state: { projections: Record<string, RoomProjectionState> }) => state.projections;
@@ -122,10 +122,6 @@ export function PawWindowLayer() {
     focusFrames.has(id) ? { ...node, bounds: focusFrames.get(id)! } : node,
   ])), [focusFrames, windows]);
   const flowGroups = useMemo(() => roomWindowFlowGroups(flowWindows, projections), [flowWindows, projections]);
-  const flowTrackedWindowIds = useMemo(
-    () => new Set(flowGroups.flatMap((group) => [...group.windowIds.values()])),
-    [flowGroups],
-  );
   const flowPulse = useWindowFlowPulse(flowGroups);
   const roomFocusRail = useMemo(
     () => roomFocusRailMetrics(
@@ -230,13 +226,16 @@ export function PawWindowLayer() {
             <span><i data-status={focusedRoomStatus.key} />{focusedRoomStatus.label}{focusedRoomPlanetCount ? ` · ${focusedRoomPlanetCount} 颗行星` : ''}</span>
           </header>
         </> : null}
-        {keptRoomIds.map((roomId) => <PawRoomProjectionKeeper key={roomId} roomId={roomId} />)}
-        {!overviewOpen ? <PawRoomWindowFlowLayer activePulseKeys={flowPulse.packetPulseKeys} focusGroup={collaborationFocusGroup} groups={flowGroups} ledgerOpen={flowLedgerOpen} onLedgerOpenChange={setFlowLedgerOpen} /> : null}
+        {keptRoomIds.length ? (
+          <Suspense fallback={null}>
+            {keptRoomIds.map((roomId) => <PawRoomProjectionKeeper key={roomId} roomId={roomId} />)}
+          </Suspense>
+        ) : null}
+        {!overviewOpen ? <PawRoomWindowFlowLayer focusGroup={collaborationFocusGroup} groups={flowGroups} ledgerOpen={flowLedgerOpen} onLedgerOpenChange={setFlowLedgerOpen} /> : null}
         {ids.filter((id) => !roomFocusRailIds.has(id)).map((id) => (
           <PawWindow
             collaborationFocusGroup={collaborationFocusGroup}
             flowState={flowPulse.targetWindowIds.has(id) ? 'arrival' : flowPulse.sourceWindowIds.has(id) ? 'source' : undefined}
-            flowTracked={flowTrackedWindowIds.has(id)}
             focusFrame={focusFrames.get(id)}
             key={id}
             onFocusFrameCommit={commitFocusFrame}
@@ -252,7 +251,6 @@ export function PawWindowLayer() {
               return <PawWindow
                 collaborationFocusGroup={collaborationFocusGroup}
                 flowState={flowPulse.targetWindowIds.has(id) ? 'arrival' : flowPulse.sourceWindowIds.has(id) ? 'source' : undefined}
-                flowTracked={flowTrackedWindowIds.has(id)}
                 focusFrame={frame ? roomFocusRailLocalFrame(frame, roomFocusRail.top) : undefined}
                 key={id}
                 onFocusFrameCommit={commitFocusRailFrame}
@@ -307,22 +305,6 @@ function clampRoomFocusRailBounds(bounds: PawWindowBounds, rail: RoomFocusRailMe
   };
 }
 
-function PawRoomProjectionKeeper({ roomId }: { roomId: string }) {
-  const transport = useControlTransport();
-  useRoomLiveSession({
-    roomId,
-    transport,
-    onLoadingChange: () => undefined,
-    onSnapshot: () => undefined,
-    onMetadata: () => undefined,
-    onConnectionRestored: () => undefined,
-    onConnectionError: () => undefined,
-    onRecoveryState: () => undefined,
-    onEvents: (_roomId, events) => pulsePawCompositionForRuntimeEvents('room', events.map((event) => event.eventType)),
-  });
-  return null;
-}
-
 function roomProjectionKeepaliveIds(windows: Record<string, PawWindowNode>, overviewOpen: boolean): string[] {
   const mainVisible = new Set<string>();
   const auxiliary = new Set<string>();
@@ -353,155 +335,17 @@ function roomFocusStatus(projection?: RoomProjectionState): { key: string; label
   return { key: 'synced', label: '已同步' };
 }
 
-/** UR-057：拖动/resize 期间路径跟随窗口 transform 的实时几何，
- *  不回写窗口布局，也不重放已见过的到达特效。 */
-export const PAW_WINDOW_FLOW_GEOMETRY_EVENT = 'paw-window-flow-geometry';
-
-type WindowFlowGeometryDetail = { windowId: string; point: WindowFlowPoint | null };
-
-/* Only windows that actually sit in a Room flow group carry data-flow-tracked.
- * Dragging any other window must stay a pure compositor transform: no rect
- * reads, no event dispatch and no per-frame React state in the flow layer. */
-function publishLiveWindowFlowPoint(shell: HTMLElement, clear = false): void {
-  const windowId = shell.dataset.pawWindowId;
-  if (!windowId) return;
-  let point: WindowFlowPoint | null = null;
-  if (!clear) {
-    if (!shell.dataset.flowTracked) return;
-    const layer = shell.closest('.paw-window-layer');
-    if (!layer) return;
-    const rect = shell.getBoundingClientRect();
-    const layerRect = layer.getBoundingClientRect();
-    point = {
-      x: rect.left - layerRect.left + rect.width / 2,
-      y: rect.top - layerRect.top + rect.height / 2,
-    };
-  }
-  window.dispatchEvent(new CustomEvent<WindowFlowGeometryDetail>(PAW_WINDOW_FLOW_GEOMETRY_EVENT, {
-    detail: { windowId, point },
-  }));
-}
-
-export function windowFlowGroupsWithLivePoints(
-  groups: WindowFlowGroup[],
-  livePointsByWindowId: Record<string, WindowFlowPoint>,
-): WindowFlowGroup[] {
-  if (!Object.keys(livePointsByWindowId).length) return groups;
-  return groups.map((group) => {
-    let changed = false;
-    const points = new Map(group.points);
-    for (const [actor, windowId] of group.windowIds) {
-      const livePoint = livePointsByWindowId[windowId];
-      if (!livePoint) continue;
-      points.set(actor, livePoint);
-      changed = true;
-    }
-    return changed ? { ...group, points } : group;
-  });
-}
-
-function useLiveWindowFlowPoints(): Record<string, WindowFlowPoint> {
-  const [livePoints, setLivePoints] = useState<Record<string, WindowFlowPoint>>({});
-  useEffect(() => {
-    let frame = 0;
-    const pending = new Map<string, WindowFlowPoint | null>();
-    const apply = (batch: ReadonlyArray<readonly [string, WindowFlowPoint | null]>) => {
-      setLivePoints((current) => {
-        let next: Record<string, WindowFlowPoint> | null = null;
-        for (const [windowId, point] of batch) {
-          const base: Record<string, WindowFlowPoint> = next ?? current;
-          if (point) {
-            const prior = base[windowId];
-            if (prior && prior.x === point.x && prior.y === point.y) continue;
-            next = { ...base, [windowId]: point };
-          } else if (windowId in base) {
-            const copy = { ...base };
-            delete copy[windowId];
-            next = copy;
-          }
-        }
-        return next ?? current;
-      });
-    };
-    const flush = () => {
-      frame = 0;
-      if (!pending.size) return;
-      const batch = [...pending];
-      pending.clear();
-      apply(batch);
-    };
-    /* Leading edge applies synchronously: the publisher already paces one
-     * geometry event per frame per window (it fires from the drag gesture's
-     * own rAF render), so the common path is one immediate React write per
-     * frame with zero added latency. The trailing rAF slot only exists to
-     * fold a same-frame burst — several windows repositioned at once — into
-     * one write. Clears flush through immediately so release never paints a
-     * stale path. */
-    const handle = (event: Event) => {
-      const detail = (event as CustomEvent<WindowFlowGeometryDetail>).detail;
-      if (!detail?.windowId) return;
-      pending.set(detail.windowId, detail.point);
-      if (!detail.point) {
-        if (frame) {
-          window.cancelAnimationFrame(frame);
-          frame = 0;
-        }
-        flush();
-        return;
-      }
-      if (!frame) {
-        flush();
-        frame = window.requestAnimationFrame(flush);
-      }
-    };
-    window.addEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
-    return () => {
-      window.removeEventListener(PAW_WINDOW_FLOW_GEOMETRY_EVENT, handle);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, []);
-  return livePoints;
-}
-
-export function PawRoomWindowFlowLayer({ activePulseKeys, focusGroup, groups: committedGroups, ledgerOpen = false, onLedgerOpenChange }: {
-  activePulseKeys: ReadonlySet<string>;
+export function PawRoomWindowFlowLayer({ focusGroup, groups, ledgerOpen = false, onLedgerOpenChange }: {
   focusGroup: string | null;
   groups: WindowFlowGroup[];
   ledgerOpen?: boolean;
   onLedgerOpenChange?: (open: boolean) => void;
 }) {
-  const livePoints = useLiveWindowFlowPoints();
-  const groups = useMemo(
-    () => windowFlowGroupsWithLivePoints(committedGroups, livePoints),
-    [committedGroups, livePoints],
-  );
   if (!groups.length) return null;
   const focusedRoomId = focusGroup?.startsWith('room:') ? focusGroup.slice('room:'.length) : '';
   const focusedGroup = groups.find((group) => group.roomId === focusedRoomId);
   return (
     <>
-      <svg aria-hidden="true" className="paw-room-window-flow" height="100%" width="100%">
-        {groups.flatMap((group) => group.packets.flatMap((packet, packetIndex) => packet.targetIds.flatMap((targetId, targetIndex) => {
-          const source = group.points.get(packet.sourceId);
-          const target = group.points.get(targetId);
-          if (!source || !target || packet.sourceId === targetId) return [];
-          const path = windowFlowPath(source, target, packetIndex + targetIndex);
-          const delay = targetIndex * 90;
-          const live = activePulseKeys.has(packet.pulseKey);
-          return <g data-kind={packet.kind} data-live={live || undefined} key={`${group.roomId}:${packet.id}:${targetId}`}>
-            <path className="paw-room-window-flow__base" d={path} />
-            {live ? <>
-              <path className="paw-room-window-flow__live" d={path} pathLength="1" style={{ animationDelay: `${delay}ms` }} />
-              <circle className="paw-room-window-flow__source" cx={source.x} cy={source.y} r="7" style={{ animationDelay: `${delay}ms` }} />
-              <circle className="paw-room-window-flow__packet" r="4.5">
-                <animateMotion begin={`${delay}ms`} dur="720ms" fill="freeze" path={path} />
-              </circle>
-              <text className="paw-room-window-flow__label" textAnchor="middle" x={(source.x + target.x) / 2} y={(source.y + target.y) / 2 - 8}>{windowFlowKindLabel(packet.kind)}</text>
-              <circle className="paw-room-window-flow__arrival" cx={target.x} cy={target.y} r="8" style={{ animationDelay: `${delay + 590}ms` }} />
-            </> : null}
-          </g>;
-        })))}
-      </svg>
       {focusedGroup?.packets.length ? (
         <Disclosure
           aria-label="Room 流转记录"
@@ -1157,16 +1001,6 @@ function windowCenter(bounds: PawWindowBounds): WindowFlowPoint {
   return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
 }
 
-function windowFlowPath(source: WindowFlowPoint, target: WindowFlowPoint, index: number): string {
-  const dx = target.x - source.x;
-  const dy = target.y - source.y;
-  const length = Math.max(1, Math.hypot(dx, dy));
-  const bend = (index % 2 ? -1 : 1) * Math.min(46, length * .11);
-  const controlX = (source.x + target.x) / 2 - dy / length * bend;
-  const controlY = (source.y + target.y) / 2 + dx / length * bend;
-  return `M ${source.x} ${source.y} Q ${controlX} ${controlY} ${target.x} ${target.y}`;
-}
-
 function windowFlowKindLabel(kind: WindowFlowPacket['kind']): string {
   return ({ request: '需求', intercom: '伙伴请求', question: '问题', answer: '答复', result: '结果', context: '上下文', dispatch: '分派', approval: '审批', review: '复核' } as const)[kind];
 }
@@ -1206,10 +1040,9 @@ function stringValue(value: unknown): string { return typeof value === 'string' 
  * tree. memo bails untouched windows out at the frame boundary; each window's
  * own store slice (its node, stack position, active flag) still re-renders
  * exactly the window that changed. */
-const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, flowTracked, focusFrame, onFocusFrameCommit, overview, overviewFrame, windowId }: {
+const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, focusFrame, onFocusFrameCommit, overview, overviewFrame, windowId }: {
   collaborationFocusGroup: string | null;
   flowState?: 'source' | 'arrival';
-  flowTracked?: boolean;
   focusFrame?: PawWindowBounds;
   onFocusFrameCommit: (windowId: string, bounds: PawWindowBounds) => void;
   overview: boolean;
@@ -1242,11 +1075,11 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
   const surfaceHeight = Math.max(0, focusFrame?.height ?? node?.bounds.height ?? 0);
   const appSurface = useMemo(() => (appId ? (
     <div className="paw-window-route-surface" onClick={openLinkedRoute}>
-      <PawOsAppSurfaceProvider appId={appId} height={surfaceHeight} width={surfaceWidth} windowId={windowId}>
+      <PawOsAppSurfaceProvider active={active && !overview} appId={appId} height={surfaceHeight} width={surfaceWidth} windowId={windowId}>
         <PawAppProcess appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />
       </PawOsAppSurfaceProvider>
     </div>
-  ) : null), [appId, entityId, initialRoute, openLinkedRoute, surfaceHeight, surfaceWidth, target, windowId]);
+  ) : null), [active, appId, entityId, initialRoute, openLinkedRoute, overview, surfaceHeight, surfaceWidth, target, windowId]);
   if (!node || (node.minimized && !overview)) return null;
   const app = pawApp(node.appId);
   const inFocus = collaborationFocusGroup ? windowBelongsToFocus(node, collaborationFocusGroup) : false;
@@ -1266,7 +1099,6 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
       collaborationRole={collaborationRole}
       deferPointerInteractionUntilFocused={!collaborationFocusGroup && Boolean(satelliteGroup(node.target))}
       flowState={flowState}
-      flowTracked={flowTracked}
       focusFrame={focusFrame}
       frameMode={focusFrame && target?.kind === 'participant'
         ? 'planet'
@@ -1318,7 +1150,7 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
   );
 });
 
-function openDesktopRoute(api: ReturnType<typeof usePawDesktopApi>, route: string): void {
+export function openDesktopRoute(api: ReturnType<typeof usePawDesktopApi>, route: string): void {
   const normalized = route.replace(/^#/, '');
   if (normalized.split(/[?#]/, 1)[0] === '/project-field') {
     api.getState().showWayfinder();
@@ -1353,7 +1185,7 @@ function openDesktopRoute(api: ReturnType<typeof usePawDesktopApi>, route: strin
   api.getState().openApp(app.id, { initialRoute: normalized, title: app.label });
 }
 
-export function PawWindowFrame({ active, appId, bounds, children, collaborationRole, deferPointerInteractionUntilFocused = false, flowState, flowTracked = false, focusFrame, frameMode = 'window', onBoundsCommit, onClose, onFocus, onMinimize, onOpenFromOverview, onSnap, onToggleMaximize, overview = false, overviewFrame, placement, subtitle, targetKind, title, windowChrome, windowId, zIndex }: {
+export function PawWindowFrame({ active, appId, bounds, children, collaborationRole, deferPointerInteractionUntilFocused = false, flowState, focusFrame, frameMode = 'window', onBoundsCommit, onClose, onFocus, onMinimize, onOpenFromOverview, onSnap, onToggleMaximize, overview = false, overviewFrame, placement, subtitle, targetKind, title, windowChrome, windowId, zIndex }: {
   active: boolean;
   appId: PawAppId;
   bounds: PawWindowBounds;
@@ -1361,7 +1193,6 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   collaborationRole?: 'primary' | 'satellite' | 'unrelated' | 'hidden';
   deferPointerInteractionUntilFocused?: boolean;
   flowState?: 'source' | 'arrival';
-  flowTracked?: boolean;
   focusFrame?: PawWindowBounds;
   frameMode?: 'window' | 'focus-card' | 'planet';
   onBoundsCommit: (bounds: PawWindowBounds) => void;
@@ -1418,6 +1249,11 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
     : overview && overviewFrame
     ? `translate3d(${overviewFrame.x}px, ${overviewFrame.y}px, 0) scale(${overviewFrame.scale})`
     : `translate3d(${bounds.x}px, ${bounds.y}px, 0)`;
+  useWindowPlacementFlip(shellRef, {
+    bounds,
+    enabled: !focusFrame && !overview && frameMode === 'window',
+    placement,
+  });
   const shellStyle = {
     width: focusFrame?.width ?? bounds.width,
     height: focusFrame?.height ?? bounds.height,
@@ -1431,9 +1267,9 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   } as CSSProperties;
   return (
     <PawWindowChromeProvider leading={windowLeadingChromeTarget} trailing={windowChromeTarget}>
-      <section aria-label={`${title}${subtitle ? ` · ${subtitle}` : ''}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-flow-tracked={flowTracked || undefined} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
+      <section aria-label={`${title}${subtitle ? ` · ${subtitle}` : ''}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
         {planetFrame ? (
-          <div className="paw-planet-surface" data-flow-state={flowState} data-flow-tracked={flowTracked || undefined}>
+          <div className="paw-planet-surface" data-flow-state={flowState}>
             <header className="paw-planet-identity" onPointerDown={drag}>
               <span aria-hidden="true" className="paw-planet-identity-mark" />
               <strong>{title}</strong>
@@ -1452,7 +1288,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
             <MemoizedWindowBody>{children}</MemoizedWindowBody>
           </div>
         ) : (
-          <div className="paw-window">
+          <div aria-hidden={overview || undefined} className="paw-window" inert={overview ? true : undefined}>
             <header className="paw-window-titlebar" data-window-chrome={windowChrome} onDoubleClick={overview || focusFrame ? undefined : onToggleMaximize} onPointerDown={overview ? undefined : drag}>
               {/* One chrome language: every window — main Room, collaboration
                 * focus primary and focus-card satellite alike — opens with the
@@ -1600,6 +1436,64 @@ function pawWindowReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+type PawWindowPlacementFrame = {
+  bounds: PawWindowBounds;
+  placement?: PawWindowPlacement;
+};
+
+/* Maximize, restore and snap are layout changes, but their visible trip does
+ * not have to be. React commits the destination width/height once; this FLIP
+ * animation paints the previous rectangle through an inverse transform and
+ * lets the compositor carry it to the destination. Live drag/resize never
+ * enters this path, and overview/focus layouts keep their own choreography. */
+function useWindowPlacementFlip(
+  ref: RefObject<HTMLElement | null>,
+  next: PawWindowPlacementFrame & { enabled: boolean },
+): void {
+  const previousRef = useRef<PawWindowPlacementFrame | undefined>(undefined);
+  useLayoutEffect(() => {
+    const previous = previousRef.current;
+    previousRef.current = { bounds: next.bounds, placement: next.placement };
+    const shell = ref.current;
+    if (
+      !previous
+      || !next.enabled
+      || previous.placement === next.placement
+      || !shell
+      || typeof shell.animate !== 'function'
+      || pawWindowReducedMotion()
+      || next.bounds.width <= 0
+      || next.bounds.height <= 0
+    ) return undefined;
+
+    const scaleX = previous.bounds.width / next.bounds.width;
+    const scaleY = previous.bounds.height / next.bounds.height;
+    shell.dataset.placementAnimation = 'true';
+    const animation = shell.animate([
+      {
+        transform: `translate3d(${previous.bounds.x}px, ${previous.bounds.y}px, 0) scale(${scaleX}, ${scaleY})`,
+      },
+      {
+        transform: `translate3d(${next.bounds.x}px, ${next.bounds.y}px, 0) scale(1, 1)`,
+      },
+    ], {
+      duration: 240,
+      easing: 'cubic-bezier(.23, 1, .32, 1)',
+    });
+    const clear = () => {
+      if (shell.dataset.placementAnimation) delete shell.dataset.placementAnimation;
+    };
+    const finished = (animation as unknown as { finished?: Promise<Animation> }).finished;
+    const fallbackTimer = finished ? 0 : window.setTimeout(clear, 240);
+    if (finished) void finished.then(clear, clear);
+    return () => {
+      if (fallbackTimer) window.clearTimeout(fallbackTimer);
+      animation.cancel();
+      clear();
+    };
+  }, [next.bounds.height, next.bounds.width, next.bounds.x, next.bounds.y, next.enabled, next.placement, ref]);
+}
+
 function useWindowExit(ref: RefObject<HTMLElement | null>, appId: PawAppId) {
   return useCallback((kind: 'close' | 'minimize', finish: () => void) => {
     const surface = ref.current?.querySelector<HTMLElement>('.paw-window');
@@ -1681,7 +1575,6 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
     const render = () => {
       frame = 0;
       shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
-      publishLiveWindowFlowPoint(shell);
     };
     const move = (moveEvent: PointerEvent) => {
       const travelled = { ...bounds, x: bounds.x + moveEvent.clientX - origin.x, y: bounds.y + moveEvent.clientY - origin.y };
@@ -1703,11 +1596,9 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       const placement = snapPlacement(finishEvent.clientX, finishEvent.clientY);
       if (placement && snap) {
         snap(placement);
-        publishLiveWindowFlowPoint(shell, true);
         return;
       }
       commit(next);
-      publishLiveWindowFlowPoint(shell, true);
     };
     const cancel = () => {
       if (frame) window.cancelAnimationFrame(frame);
@@ -1718,7 +1609,6 @@ function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBoun
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', cancel);
-      publishLiveWindowFlowPoint(shell, true);
     };
     // The move stream never calls preventDefault; passive keeps the
     // compositor thread free while the pointer drives the transform.
@@ -1778,7 +1668,6 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       shell.style.width = `${next.width}px`;
       shell.style.height = `${next.height}px`;
       shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
-      publishLiveWindowFlowPoint(shell);
     };
     const move = (moveEvent: PointerEvent) => {
       next = resizeWindowBounds(bounds, handle, moveEvent.clientX - origin.x, moveEvent.clientY - origin.y, area);
@@ -1793,7 +1682,6 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
       commit(next);
-      publishLiveWindowFlowPoint(shell, true);
     };
     window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);

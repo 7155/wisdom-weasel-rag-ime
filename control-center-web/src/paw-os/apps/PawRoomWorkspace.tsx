@@ -29,6 +29,11 @@ import { GenericUserInputCard } from '@/features/agent/review/AgentReviewDialogs
 import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { publicErrorText } from '@/features/overview/management-ui';
+import {
+  publicAgentErrorText,
+  ROOM_WORKSPACE_MISSING_TEXT,
+  SESSION_WORKSPACE_MISSING_TEXT,
+} from '@/features/agent/public-error';
 import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import { RoomComposer, roomMentionedParticipants } from '@/features/rooms/composer/RoomComposer';
 import { roomCollaborationRoleLabel, roomPlanetName } from '@/features/rooms/room-copy';
@@ -125,6 +130,7 @@ export function followRoomTimelineIfReaderAtEnd(
 }
 
 export function PawRoomWorkspace({
+  active = true,
   initialDraft,
   initialError,
   personas,
@@ -132,6 +138,7 @@ export function PawRoomWorkspace({
   recordId,
   onRoomUpdated,
 }: {
+  active?: boolean;
   initialDraft?: string;
   initialError?: string;
   personas: AgentPersonaV1[];
@@ -272,9 +279,11 @@ export function PawRoomWorkspace({
       const room = roomFromResponse(value);
       if (room) onRoomUpdated(room);
     },
-    onConnectionRestored: () => setError(''),
+    onConnectionRestored: () => setError((current) => (
+      current === ROOM_WORKSPACE_MISSING_TEXT ? current : ''
+    )),
     onRecoveryState: (_roomId, state) => setRecoveryState(state),
-    onConnectionError: (_roomId, reason, fallback) => setError(publicErrorText(reason, fallback)),
+    onConnectionError: (_roomId, reason, fallback) => setError(roomErrorText(reason, fallback)),
     onEvents: (_roomId, events) => {
       acknowledgeOptimisticSteer(events);
       pulsePawCompositionForRuntimeEvents('room', events.map((event) => event.eventType));
@@ -415,7 +424,7 @@ export function PawRoomWorkspace({
       if (steering) clearOptimisticSteer(clientMessageId);
       if (!options.preserveDraft) setDraft(rawValue);
       if (!answersQuestion) setAttachments(selectedAttachments);
-      setError(publicErrorText(reason, 'Room 消息没有发送，请重试。'));
+      setError(roomErrorText(reason, 'Room 消息没有发送，请重试。'));
       return false;
     } finally {
       setSending(false);
@@ -525,6 +534,46 @@ export function PawRoomWorkspace({
       receipts.forEach((item) => byId.set(item.mediaId, item));
       return [...byId.values()].slice(0, 8);
     });
+  }
+
+  async function manageWorkspaceRoots(): Promise<void> {
+    if (!record || !transport.pickFiles) {
+      setError('当前环境不能选择工作区。');
+      return;
+    }
+    try {
+      const picked = await transport.pickFiles({
+        purpose: 'workspace-root',
+        selection: 'directory',
+        multiple: true,
+        maxFiles: 4,
+      });
+      const workspaceRoots = picked
+        .map((item) => item.path)
+        .filter((path): path is string => Boolean(path));
+      if (!workspaceRoots.length) return;
+      const executionMode = record.executionMode ?? 'workspace_managed';
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.archive',
+        params: { roomId: recordId },
+        body: {
+          workspaceRoots,
+          executionMode,
+          ...(executionMode === 'workspace_managed'
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+            : {}),
+          ...(executionMode === 'full_trust'
+            ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+            : {}),
+        },
+      });
+      const updated = roomFromResponse(response);
+      if (updated) onRoomUpdated(updated);
+      setError('');
+      retrySnapshot();
+    } catch (reason) {
+      setError(roomErrorText(reason, 'Room 工作目录没有更新。'));
+    }
   }
 
   const title = record?.title || '未命名 Room';
@@ -759,6 +808,7 @@ export function PawRoomWorkspace({
         <main aria-label={`${title} 主 Room`} className="paw-room-workspace__main">
           {view === 'starfield' && focusProjection ? (
             <LazyPawRoomStarfield
+              active={active}
               focus={focusProjection}
               roomId={recordId}
               onExit={() => setView('conversation')}
@@ -847,7 +897,11 @@ export function PawRoomWorkspace({
                 <div className="paw-room-workspace__error" role="alert">
                   <CircleAlert size={14} />
                   <span>{error}</span>
-                  <button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button>
+                  {error === ROOM_WORKSPACE_MISSING_TEXT ? (
+                    <button onClick={() => void manageWorkspaceRoots()} type="button">选择工作目录</button>
+                  ) : (
+                    <button onClick={() => { setError(''); retrySnapshot(); }} type="button">重新同步</button>
+                  )}
                   <TraceAgentHandoffButton
                     handoff={{
                       kind: 'room',
@@ -1119,6 +1173,13 @@ function roomAttachment(file: PickedFile, roomId: string): RoomAttachmentReceipt
 function roomFromResponse(value: unknown): RoomSummary | undefined {
   const source = asRecord(value);
   return asRoom(source.room) ?? asRoom(value);
+}
+
+function roomErrorText(reason: unknown, fallback: string): string {
+  const message = publicAgentErrorText(reason, fallback);
+  return message === SESSION_WORKSPACE_MISSING_TEXT
+    ? ROOM_WORKSPACE_MISSING_TEXT
+    : message;
 }
 
 function asRoom(value: unknown): RoomSummary | undefined {

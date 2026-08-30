@@ -21,7 +21,7 @@
 
 import { roomPlanetName } from '@/features/rooms/room-participant-identity';
 export type WayfinderWorkKind = 'session' | 'room';
-export type WayfinderWorkActivity = 'running' | 'attention' | 'idle';
+export type WayfinderWorkActivity = 'running' | 'attention' | 'idle' | 'unknown';
 
 export type WayfinderWorkSessionSource = {
   id: string;
@@ -66,6 +66,8 @@ export type WayfinderWorkItem = {
   project: string;
   updatedAtMs: number;
   activity: WayfinderWorkActivity;
+  /** Independent live Runtime signal; may coexist with an attention state. */
+  runtimeRunning: boolean;
   statusLabel: string;
   detail: string;
   /** Room planet names in ordinal order — rendered side by side, never as rows. */
@@ -120,12 +122,16 @@ const BUCKET_PREVIEW: Record<WayfinderWorkBucketId, number> = {
 export function projectWayfinderWork({
   nowMs,
   query = '',
+  roomStatusFresh = true,
   rooms,
+  sessionStatusFresh = true,
   sessions,
 }: {
   nowMs: number;
   query?: string;
+  roomStatusFresh?: boolean;
   rooms: readonly WayfinderWorkRoomSource[];
+  sessionStatusFresh?: boolean;
   sessions: readonly WayfinderWorkSessionSource[];
 }): WayfinderWorkView {
   const liveRooms = rooms.filter((room) => room.status !== 'archived');
@@ -133,21 +139,30 @@ export function projectWayfinderWork({
   const partnerSessions = liveSessions.filter((session) => session.roomParticipant?.roomId);
   const plainSessions = liveSessions.filter((session) => !session.roomParticipant?.roomId);
 
-  const roomRows = liveRooms.map(roomRow);
-  const sessionRows = plainSessions.map(sessionRow);
+  const runningRoomIds = busyRoomIds(partnerSessions, sessionStatusFresh);
+  const roomRows = liveRooms.map((room) => roomRow(room, {
+    recordFresh: roomStatusFresh,
+    runtimeFresh: sessionStatusFresh,
+    running: runningRoomIds.has(room.id),
+  }));
+  const sessionRows = plainSessions.map((session) => sessionRow(session, sessionStatusFresh));
 
   let foldedCount = partnerSessions.length;
   const deduped = new Map<string, WayfinderWorkItem>();
   for (const row of [...sessionRows, ...roomRows]
     .sort((left, right) => right.updatedAtMs - left.updatedAtMs)) {
-    const foldKey = `${row.kind}\u0001${normalizedTitle(row.title)}\u0001${row.projectKey}`;
+    /* Live and attention rows remain separately reachable. Folding them into a
+       newer quiet row makes the visible title/click target disagree with the
+       Runtime object that is actually working or needs attention. */
+    const foldKey = row.activity === 'idle' || row.activity === 'unknown'
+      ? `${row.kind}\u0001${normalizedTitle(row.title)}\u0001${row.projectKey}`
+      : `${row.kind}\u0001${row.id}`;
     const leader = deduped.get(foldKey);
     if (!leader) {
       deduped.set(foldKey, row);
       continue;
     }
     leader.repeats.push({ id: row.id, kind: row.kind, updatedAtMs: row.updatedAtMs });
-    if (leader.activity === 'idle' && row.activity !== 'idle') leader.activity = row.activity;
     foldedCount += 1;
   }
 
@@ -178,7 +193,7 @@ export function projectWayfinderWork({
         buckets: bucketizeWayfinderWork(items, nowMs),
         sessionCount: items.filter((item) => item.kind === 'session').length,
         roomCount: items.filter((item) => item.kind === 'room').length,
-        runningCount: items.filter((item) => item.activity === 'running').length,
+        runningCount: items.filter((item) => item.runtimeRunning).length,
         attentionCount: items.filter((item) => item.activity === 'attention').length,
       };
     })
@@ -187,8 +202,48 @@ export function projectWayfinderWork({
   return { buckets, projects, rowCount: matched.length, foldedCount };
 }
 
-function sessionRow(session: WayfinderWorkSessionSource): WayfinderWorkItem {
+/**
+ * Runtime activity is intentionally not the desktop's lossy recent-work view.
+ * It keeps every busy standalone Session, folds busy Room participants into
+ * their canonical Room, and never treats Room `active` (which means merely
+ * "not archived") as execution evidence.
+ */
+export function projectRunningWayfinderWork({
+  roomStatusFresh = true,
+  rooms,
+  sessionStatusFresh = true,
+  sessions,
+}: {
+  nowMs: number;
+  roomStatusFresh?: boolean;
+  rooms: readonly WayfinderWorkRoomSource[];
+  sessionStatusFresh?: boolean;
+  sessions: readonly WayfinderWorkSessionSource[];
+}): WayfinderWorkItem[] {
+  if (!sessionStatusFresh) return [];
+  const liveSessions = sessions.filter((session) => session.status !== 'archived');
+  const partnerSessions = liveSessions.filter((session) => session.roomParticipant?.roomId);
+  const plainSessions = liveSessions.filter((session) => !session.roomParticipant?.roomId);
+  const runningSessions = plainSessions
+    .filter((session) => session.status === 'busy')
+    .map((session) => sessionRow(session, true));
+  if (!roomStatusFresh) return runningSessions.sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  const runningRoomIds = busyRoomIds(partnerSessions, true);
+  const runningRooms = rooms
+    .filter((room) => room.status !== 'archived' && runningRoomIds.has(room.id))
+    .map((room) => roomRow(room, { recordFresh: true, runtimeFresh: true, running: true }));
+  return [...runningSessions, ...runningRooms].sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+}
+
+function sessionRow(session: WayfinderWorkSessionSource, fresh: boolean): WayfinderWorkItem {
   const roots = normalizedWorkspaceRoots(session.workspaceRoots);
+  const activity: WayfinderWorkActivity = !fresh
+    ? 'unknown'
+    : session.status === 'busy'
+      ? 'running'
+      : session.status === 'faulted'
+        ? 'attention'
+        : 'idle';
   return {
     key: `session:${session.id}`,
     projectKey: projectKey(session.workspaceRoots),
@@ -198,9 +253,12 @@ function sessionRow(session: WayfinderWorkSessionSource): WayfinderWorkItem {
     title: session.title || '未命名工作',
     project: projectLeaf(session.workspaceRoots),
     updatedAtMs: session.updatedAtMs,
-    activity: session.status === 'busy' ? 'running' : session.status === 'faulted' ? 'attention' : 'idle',
-    statusLabel: session.status === 'busy' ? '进行中' : session.status === 'faulted' ? '需要处理' : '就绪',
-    detail: session.status === 'busy'
+    activity,
+    runtimeRunning: fresh && session.status === 'busy',
+    statusLabel: activity === 'unknown' ? '状态未知' : activity === 'running' ? '进行中' : activity === 'attention' ? '需要处理' : '就绪',
+    detail: activity === 'unknown'
+      ? '正在同步当前状态'
+      : session.status === 'busy'
       ? publicPreview(session.lastMessagePreview, '当前公开内容') || '当前进度不可用'
       : session.status === 'faulted'
         ? publicPreview(session.lastMessagePreview, '最近公开内容') || '故障原因不可用'
@@ -210,9 +268,22 @@ function sessionRow(session: WayfinderWorkSessionSource): WayfinderWorkItem {
   };
 }
 
-function roomRow(room: WayfinderWorkRoomSource): WayfinderWorkItem {
+function roomRow(room: WayfinderWorkRoomSource, status: {
+  recordFresh: boolean;
+  runtimeFresh: boolean;
+  running: boolean;
+}): WayfinderWorkItem {
   const roots = normalizedWorkspaceRoots(room.workspaceRoots);
-  const attention = room.workItems?.some((item) => item.state === 'blocked' || item.state === 'failed') ?? false;
+  const attention = status.recordFresh && (room.workItems?.some((item) => item.state === 'blocked') ?? false);
+  const activity: WayfinderWorkActivity = !status.recordFresh
+    ? 'unknown'
+    : attention
+      ? 'attention'
+      : !status.runtimeFresh
+        ? 'unknown'
+        : status.running
+          ? 'running'
+          : 'idle';
   return {
     key: `room:${room.id}`,
     projectKey: projectKey(room.workspaceRoots),
@@ -222,15 +293,25 @@ function roomRow(room: WayfinderWorkRoomSource): WayfinderWorkItem {
     title: room.title || '未命名工作',
     project: projectLeaf(room.workspaceRoots),
     updatedAtMs: room.updatedAtMs,
-    activity: attention ? 'attention' : room.status === 'active' ? 'running' : 'idle',
-    statusLabel: attention ? '需要处理' : room.status === 'active' ? '进行中' : room.status || '状态不可用',
-    detail: roomWorkDetail(room.workItems),
+    activity,
+    runtimeRunning: status.recordFresh && status.runtimeFresh && status.running,
+    statusLabel: activity === 'unknown' ? '状态未知' : activity === 'attention' ? '需要处理' : activity === 'running' ? '进行中' : '就绪',
+    detail: activity === 'unknown' ? '正在同步当前状态' : roomWorkDetail(room.workItems),
     agents: (room.participants ?? [])
       .filter((participant) => participant.status !== 'removed')
       .sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0))
       .map((participant) => roomPlanetName(participant.ordinal)),
     repeats: [],
   };
+}
+
+function busyRoomIds(sessions: readonly WayfinderWorkSessionSource[], fresh: boolean): Set<string> {
+  if (!fresh) return new Set();
+  return new Set(sessions.flatMap((session) => (
+    session.status === 'busy' && session.roomParticipant?.roomId
+      ? [session.roomParticipant.roomId]
+      : []
+  )));
 }
 
 /* Partner Sessions without a Room row remain folded out; a synthetic Room

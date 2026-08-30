@@ -2056,6 +2056,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
         sessionId={selectedId}
         session={session}
         open={statusOpen}
+        surfaceActive={appSurface?.active ?? true}
         capabilityCatalogError={capabilityCatalogError}
         modal={statusModal}
         commands={commands}

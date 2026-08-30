@@ -124,7 +124,7 @@
 .paw-context-menu {
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
-  transform-origin: top left;
+  transform-origin: var(--paw-menu-origin, top left);
   transition:
     opacity var(--paw-motion-feedback) ease,
     transform var(--paw-motion-chrome) var(--paw-ease-out);
@@ -138,7 +138,7 @@
   }
   .paw-context-menu {
     opacity: 0;
-    transform: translate3d(0, -4px, 0) scale(.975);
+    transform: translate3d(0, var(--paw-menu-rise, 4px), 0) scale(.975);
   }
 }
 
@@ -205,18 +205,6 @@
     background: var(--paw-panel-strong);
     transform: translateX(-50%) translateY(-1px);
   }
-}
-
-/* ContextRef/FlowPacket already travel only when a real Room event revision
- * changes. Keep that one-shot signal crisp and diagrammatic instead of neon. */
-.paw-room-window-flow__base { opacity: .58; }
-.paw-room-window-flow__live,
-.paw-room-window-flow__packet {
-  filter: none;
-}
-
-.paw-room-window-flow__packet {
-  animation-timing-function: var(--paw-ease-in-out);
 }
 
 /* App state choreography ---------------------------------------------------

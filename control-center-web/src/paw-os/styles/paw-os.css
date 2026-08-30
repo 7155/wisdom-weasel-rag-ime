@@ -463,24 +463,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   display: flex; flex-direction: column;
   border-radius: 14px;
 }
-.paw-wayfinder-work__head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-  padding: 13px 14px 8px;
-}
-.paw-wayfinder-work__head > span:first-child { min-width: 0; display: grid; gap: 2px; }
-.paw-wayfinder-work__head strong { font-size: 13px; font-weight: 680; letter-spacing: .02em; }
-.paw-wayfinder-work__head small { font-size: 10px; font-weight: 520; }
-.paw-wayfinder-work__count { flex: none; padding-top: 1px; font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.paw-wayfinder-work__search {
-  display: flex; align-items: center; gap: 7px;
-  flex: none; min-height: 28px; margin: 0 10px 8px; padding: 0 9px;
-  border-radius: 8px; cursor: text;
-}
-.paw-wayfinder-work__search svg { flex: none; }
-.paw-wayfinder-work__search input {
-  flex: 1; min-width: 0; padding: 0;
-  border: 0; background: none; font-size: 12px;
-}
 .paw-wayfinder-work__list {
   min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   padding: 0 8px 10px;
@@ -514,13 +496,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__project-copy strong { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 12.5px; font-weight: 680; }
 .paw-wayfinder-work__project-copy small { color: var(--paw-muted); font-size: 10px; }
 .paw-wayfinder-work__project-count { font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.paw-wayfinder-work__project-context {
-  position: absolute; top: 3px; right: 4px; z-index: 1;
-  width: 23px; height: 23px; display: grid; place-items: center;
-  padding: 0; border-radius: 6px; color: var(--paw-desktop-muted); cursor: pointer;
-}
-.paw-wayfinder-work__project-context:hover,
-.paw-wayfinder-work__project-context:focus-visible { color: var(--paw-accent-strong); background: var(--paw-identity-wash); outline: 0; }
 .paw-wayfinder-work__project-content {
   margin: 2px 2px 4px 18px; padding: 8px;
   border: 1px solid var(--paw-line); border-radius: 11px;
@@ -681,6 +656,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-wayfinder-work__context-shortcuts button:hover,
 .paw-wayfinder-work__context-shortcuts button:focus-visible { border-color: var(--paw-accent); color: var(--paw-accent-strong); background: var(--paw-accent-soft); outline: 0; }
+.paw-wayfinder-work__context-shortcuts button[data-danger] { color: var(--paw-danger); }
+.paw-wayfinder-work__context-shortcuts button[data-danger]:is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--paw-danger) 52%, var(--paw-line));
+  color: var(--paw-danger);
+  background: color-mix(in srgb, var(--paw-danger) 9%, transparent);
+}
 .paw-wayfinder-work__context-note { margin: 0; line-height: 1.4; }
 
 .paw-selection-lasso {
@@ -698,85 +679,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-context-menu {
   position: fixed; z-index: 220; width: 220px;
   transform-origin: var(--paw-menu-origin, 0 0);
-  animation: paw-context-menu-in 140ms var(--paw-ease-out) both;
-}
-@keyframes paw-context-menu-in {
-  from { opacity: 0; transform: translate3d(0, var(--paw-menu-rise, 4px), 0) scale(.98); }
-  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
 /* Windows fill the menu-below desktop plane. The resident Dock is an overlay,
    so it must not reserve a permanent gutter or make a maximized App visibly
    shorter than the screen. */
 .paw-window-layer { position: absolute; z-index: 10; inset: 0; pointer-events: none; }
-.paw-room-window-flow {
-  position: absolute; z-index: 20; inset: 0;
-  width: 100%; height: 100%; overflow: visible; pointer-events: none;
-}
-/* The overlay repaints per frame only while a window drag streams live path
-   geometry through it or a live packet pulse is animating. Promote it for
-   exactly those windows so its repaints rasterize into their own layer; at
-   rest the hint is released, so a Room desktop showing static relationship
-   hints no longer pins one full-viewport compositor layer forever. */
-.paw-desktop-root[data-window-interaction] .paw-room-window-flow,
-.paw-room-window-flow:has(g[data-live]) {
-  will-change: transform;
-}
-.paw-room-window-flow path { fill: none; vector-effect: non-scaling-stroke; }
-/* Idle relationships are a faint dashed hint; a live transfer lights the path
-   and marches the dashes toward the target, so direction is readable even
-   before the packet arrives. */
-.paw-room-window-flow__base {
-  stroke: rgb(15 23 42 / .12);
-  stroke-width: 1.25;
-  stroke-dasharray: 2 7;
-}
-.paw-room-window-flow g[data-live] .paw-room-window-flow__base {
-  stroke: color-mix(in srgb, var(--paw-accent) 55%, transparent);
-  stroke-width: 1.6;
-  stroke-dasharray: 4 6;
-  animation: paw-window-flow-march 620ms linear infinite;
-}
-.paw-room-window-flow__live {
-  stroke: color-mix(in srgb, var(--paw-accent) 78%, white);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: paw-window-flow-reveal 900ms var(--paw-ease-out) both;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--paw-accent) 56%, transparent));
-}
-.paw-room-window-flow__packet {
-  fill: var(--paw-accent);
-  stroke: color-mix(in srgb, var(--paw-accent) 36%, white);
-  stroke-width: 2;
-  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--paw-accent) 64%, transparent));
-  animation: paw-window-flow-packet 820ms linear both;
-}
-.paw-room-window-flow__source,
-.paw-room-window-flow__arrival {
-  fill: none;
-  stroke: var(--paw-accent);
-  stroke-width: 2;
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-}
-.paw-room-window-flow__source { animation: paw-window-flow-source 360ms var(--paw-ease-out) both; }
-.paw-room-window-flow__arrival { animation: paw-window-flow-arrival 420ms var(--paw-ease-out) both; }
-.paw-room-window-flow g[data-kind='question'] { --paw-accent: #a78bfa; }
-.paw-room-window-flow g[data-kind='answer'] { --paw-accent: #22c55e; }
-.paw-room-window-flow g[data-kind='result'] { --paw-accent: #38bdf8; }
-.paw-room-window-flow g[data-kind='context'] { --paw-accent: #f59e0b; }
-@keyframes paw-window-flow-march { to { stroke-dashoffset: -10; } }
-@keyframes paw-window-flow-reveal {
-  0% { opacity: 0; stroke-dashoffset: 1; }
-  68% { opacity: 1; stroke-dashoffset: 0; }
-  100% { opacity: 0; stroke-dashoffset: 0; }
-}
-@keyframes paw-window-flow-packet { 0%, 100% { opacity: 0; } 14%, 76% { opacity: 1; } }
-@keyframes paw-window-flow-source { 0% { opacity: 0; transform: scale(.25); } 55% { opacity: 1; } 100% { opacity: 0; transform: scale(1.8); } }
-@keyframes paw-window-flow-arrival { 0% { opacity: 0; transform: scale(.25); } 48% { opacity: 1; } 100% { opacity: 0; transform: scale(2); } }
 .paw-window-shell {
   position: absolute; min-width: 280px; min-height: 210px; pointer-events: auto; transform-origin: 0 0;
   /* One query container per window, declared on the frame the pointer
@@ -785,17 +693,15 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
      inline width changes and the App tree has not re-rendered yet — and no
      inner surface can quietly become a second `paw-window` owner. */
   container: paw-window / inline-size;
-  /* Placement is one gesture: snap, maximize, restore and viewport fit move
-     position and size on the same clock, so the frame can never tear — size
-     snapping while the transform still travels. Live drag/resize is direct
-     manipulation and opts out entirely below. */
+  /* Placement commits destination layout once; PawWindowLayer's FLIP path
+     carries the old rectangle to it through transform only. Overview still
+     uses this transition, while live drag/resize opts out below. */
   transition:
     opacity 220ms ease,
-    transform 240ms var(--paw-ease-out),
-    width 240ms var(--paw-ease-out),
-    height 240ms var(--paw-ease-out);
+    transform 240ms var(--paw-ease-out);
 }
 .paw-window-shell[data-interaction] { transition: none; }
+.paw-window-shell[data-placement-animation] { transition: opacity 220ms ease; }
 /* The pointer owns the frame: promote it once for the whole gesture, and
    release the hint at rest so idle windows never hold compositor layers. */
 .paw-window-shell[data-interaction='dragging'] { will-change: transform; }
@@ -895,26 +801,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-window-shell[data-frame-mode='planet'][data-flow-state='arrival'] > .paw-planet-surface {
   animation: paw-planet-flow-pulse 880ms var(--paw-ease-out) both;
 }
-/* A tracked Room relationship keeps a quiet moving sheen on the content
- * surface. It is intentionally not a border or a permanent frame shadow. */
-.paw-window-shell[data-frame-mode='planet'][data-flow-tracked='true'] > .paw-planet-surface::after {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(110deg, transparent 0%, transparent 38%, color-mix(in srgb, var(--paw-accent) 13%, transparent) 50%, transparent 62%, transparent 100%);
-  content: '';
-  opacity: 0;
-  animation: paw-planet-flow-sheen 2400ms ease-in-out infinite;
-}
 @keyframes paw-planet-flow-pulse {
   0%, 100% { box-shadow: none; }
   38% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-accent) 44%, transparent), 0 0 30px color-mix(in srgb, var(--paw-accent) 22%, transparent); }
-}
-@keyframes paw-planet-flow-sheen {
-  0%, 100% { opacity: 0; transform: translateX(-9%); }
-  35%, 65% { opacity: .72; }
-  50% { transform: translateX(9%); }
 }
 @keyframes paw-window-flow-arrival-blink {
   0%, 55%, 100% { opacity: 0; }
@@ -954,19 +843,19 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-window-shell[data-interaction='resizing'] .paw-window-title { visibility: hidden; opacity: 0; }
 .paw-window-titlebar:active { cursor: grabbing; }
 
-.paw-traffic-lights { display: flex; align-items: center; gap: 7px; }
+.paw-traffic-lights { display: flex; align-items: center; gap: 0; }
 /* Direct children only: the cluster also hosts an App leading-chrome slot,
    whose control keeps its own size and shape. */
 .paw-traffic-lights > button {
-  width: 12px; height: 12px;
-  /* 同一套命中区域：a light is a fixed 12px target on every window. Without
-     this it flex-shrinks whenever the cluster outgrows its titlebar column,
-     so the main window's lights end up smaller than a satellite's. */
-  flex: 0 0 12px;
-  display: grid; place-items: center; padding: 0;
+  position: relative;
+  width: 24px; height: 24px;
+  /* The native 12px light remains visually unchanged inside a 24px motor and
+     touch target. The fixed outer box also prevents flex shrink. */
+  flex: 0 0 24px;
+  display: grid; place-items: center; padding: 6px;
   cursor: pointer;
 }
-.paw-traffic-lights > button svg { width: 7px; height: 7px; }
+.paw-traffic-lights > button svg { position: relative; z-index: 1; width: 7px; height: 7px; }
 
 .paw-window-title { display: flex; align-items: center; justify-content: flex-start; gap: 6px; overflow: hidden; color: var(--paw-ink); text-overflow: ellipsis; white-space: nowrap; transition: opacity 120ms ease, visibility 120ms ease; }
 .paw-window-title > strong,
@@ -1056,12 +945,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-window-resize[data-handle='west'] { left: -12px; }
 .paw-window-resize[data-handle='north-east'], .paw-window-resize[data-handle='north-west'],
 .paw-window-resize[data-handle='south-east'], .paw-window-resize[data-handle='south-west'] {
-  width: 20px; height: 20px;
+  width: 24px; height: 24px;
 }
-.paw-window-resize[data-handle='north-east'] { top: -8px; right: -8px; cursor: nesw-resize; }
-.paw-window-resize[data-handle='north-west'] { top: -8px; left: -8px; cursor: nwse-resize; }
-.paw-window-resize[data-handle='south-east'] { right: -8px; bottom: -8px; cursor: nwse-resize; }
-.paw-window-resize[data-handle='south-west'] { bottom: -8px; left: -8px; cursor: nesw-resize; }
+.paw-window-resize[data-handle='north-east'] { top: -10px; right: -10px; cursor: nesw-resize; }
+.paw-window-resize[data-handle='north-west'] { top: -10px; left: -10px; cursor: nwse-resize; }
+.paw-window-resize[data-handle='south-east'] { right: -10px; bottom: -10px; cursor: nwse-resize; }
+.paw-window-resize[data-handle='south-west'] { bottom: -10px; left: -10px; cursor: nesw-resize; }
 .paw-overview-window-target {
   position: absolute; z-index: 8; inset: 0; display: flex; align-items: flex-end; justify-content: center;
   padding: 18px; border-radius: var(--paw-radius); cursor: pointer;
@@ -1081,6 +970,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   display: flex; align-items: center; gap: 5px; padding: 8px 11px;
   border-radius: 18px;
   transform: translateX(-50%);
+  transition: border-color 140ms ease, box-shadow 180ms ease;
+}
+.paw-desktop[data-collaboration-focus] .paw-dock {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translate3d(-50%, calc(100% + 24px), 0);
 }
 .paw-dock > i { width: 1px; height: 30px; margin: 0 3px; transform: translate3d(calc(var(--paw-dock-shift, 0) * 1px), 0, 0); }
 /* Magnetic magnification. dock-magnification.ts writes --paw-dock-mag (0..1
@@ -1099,6 +995,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   transform-origin: 50% 92%;
   transition: transform 280ms var(--paw-ease-out), background-color 120ms ease;
 }
+.paw-dock button[draggable='true'] { cursor: grab; }
+.paw-dock button[draggable='true']:active { cursor: grabbing; }
 .paw-dock button:active { --paw-dock-press: .94; }
 /* While the pointer conducts, follow it closely; the long ease only carries
    the shelf back to rest after pointerleave. */
@@ -1209,6 +1107,13 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.paw-launchpad-installation {
+  color: var(--paw-accent-strong) !important;
+  font-weight: 700;
+}
+.paw-launchpad section > div > button[data-extension-installation='uninstalled'] {
+  opacity: .78;
 }
 .paw-launchpad-group,
 .paw-launchpad-empty {
@@ -1440,8 +1345,18 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
      below it uses, so the stack reads as one column. */
   .paw-field-stage::before { inset: -16px; border-radius: 16px; }
   .paw-wayfinder-work { position: relative; z-index: auto; top: auto; right: auto; width: auto; max-height: 330px; margin: 18px 20px 108px; }
-  .paw-dock { max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; }
-  .paw-dock button { flex: 0 0 42px; }
+  .paw-dock {
+    max-width: calc(100% - 16px);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-color: color-mix(in srgb, var(--paw-chrome-ink) 34%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+  .paw-dock::-webkit-scrollbar { height: 4px; }
+  .paw-dock::-webkit-scrollbar-track { background: transparent; }
+  .paw-dock::-webkit-scrollbar-thumb { border-radius: 999px; background: color-mix(in srgb, var(--paw-chrome-ink) 34%, transparent); }
+  .paw-dock button { flex: 0 0 44px; scroll-snap-align: center; }
   /* The narrow Dock scrolls internally; a hover label would be clipped. */
   .paw-dock-tip { display: none; }
   .paw-launchpad { padding: 12px; }
@@ -1508,21 +1423,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
     transform: none !important;
   }
   .paw-dock-tip { scale: none; }
-  .paw-room-window-flow g[data-live] .paw-room-window-flow__base {
-    animation: none !important;
-  }
-  .paw-room-window-flow__live,
-  .paw-room-window-flow__source,
-  .paw-room-window-flow__arrival {
-    animation: paw-window-flow-reduced-fade 240ms ease both !important;
-    stroke-dashoffset: 0;
-    transform: none !important;
-  }
-  .paw-room-window-flow__packet { display: none; }
   .paw-window-shell[data-collaboration-role='satellite'] .paw-window,
   .paw-window-shell[data-flow-state] .paw-window,
   .paw-window-shell[data-frame-mode='planet'][data-flow-state] > .paw-planet-surface,
-  .paw-window-shell[data-frame-mode='planet'][data-flow-tracked='true'] > .paw-planet-surface::after,
   .paw-window-shell[data-flow-state='arrival'] .paw-window-title > strong::after {
     animation: paw-window-flow-reduced-fade 240ms ease both !important;
     transform: none !important;
@@ -1725,32 +1628,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work {
   pointer-events: none;
 }
-.paw-wayfinder-work > :is(.paw-wayfinder-work__masthead, .paw-wayfinder-work__archive-tray, .paw-wayfinder-work__list, .paw-wayfinder-work__context-sheet) {
+.paw-wayfinder-work > :is(.paw-wayfinder-work__list, .paw-wayfinder-work__context-sheet) {
   pointer-events: auto;
 }
-.paw-wayfinder-work__head { padding: 7px 8px 5px; }
-.paw-wayfinder-work__toolbar { display: flex; align-items: center; gap: 6px; padding: 0 8px 7px; }
-.paw-wayfinder-work__toolbar .paw-wayfinder-work__search { flex: 1; margin: 0; }
-.paw-wayfinder-work__archive-dropzone {
-  min-height: 28px; display: inline-flex; align-items: center; gap: 5px;
-  padding: 0 8px; border-radius: 8px; cursor: pointer;
-}
-.paw-wayfinder-work__archive-dropzone small { min-width: 10px; font-size: 10px; font-variant-numeric: tabular-nums; }
-.paw-wayfinder-work__load-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 30px;
-  padding: 0 8px;
-  border: 1px solid color-mix(in srgb, var(--paw-accent) 20%, var(--paw-line));
-  border-radius: 9px;
-  color: var(--paw-accent-strong);
-  background: var(--paw-accent-soft);
-  cursor: pointer;
-  font: inherit;
-  font-size: 10px;
-}
-.paw-wayfinder-work__load-more:disabled { cursor: wait; opacity: .62; }
 .paw-wayfinder-work__list {
   position: relative;
   min-height: 360px;
@@ -1826,7 +1706,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__project-copy strong { max-width: 92px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 12px; text-align: center; }
 .paw-wayfinder-work__project-copy small { max-width: 92px; overflow: hidden; font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .paw-wayfinder-work__project-count { display: none; }
-.paw-wayfinder-work__project-context { top: -4px; right: -8px; }
 .paw-wayfinder-work__project-content {
   position: absolute;
   top: calc(100% + 8px);
@@ -1886,40 +1765,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   border-radius: 999px;
   font-size: 10px;
 }
-.paw-wayfinder-work__archive-tray {
-  max-height: 174px;
-  margin: 0 8px 7px;
-  padding: 7px 8px 8px;
-  overflow: auto;
-  border-radius: 12px;
-}
-.paw-wayfinder-work__archive-tray > header {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px;
-}
-.paw-wayfinder-work__archive-tray > header span { display: inline-flex; align-items: center; gap: 5px; }
-.paw-wayfinder-work__archive-tray > header strong { font-size: 10px; }
-.paw-wayfinder-work__archive-tray > header small { font-size: 9px; }
-.paw-wayfinder-work__archive-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 2px; }
-.paw-wayfinder-work__archive-item {
-  min-width: 0; min-height: 74px; display: grid; justify-items: center; align-content: start; gap: 1px;
-  padding: 4px 2px; border-radius: 10px; cursor: grab;
-}
-.paw-wayfinder-work__archive-item:active { cursor: grabbing; }
-.paw-wayfinder-work__archive-icon { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 11px; }
-.paw-wayfinder-work__archive-item strong,
-.paw-wayfinder-work__archive-item small { max-width: 76px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
-.paw-wayfinder-work__archive-item strong {
-  display: block;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  overflow: visible;
-  text-overflow: clip;
-}
-.paw-wayfinder-work__archive-item strong { font-size: 9px; }
-.paw-wayfinder-work__archive-item small { font-size: 8px; }
-.paw-wayfinder-work__archive-restore { display: inline-flex; align-items: center; gap: 2px; font-size: 8px; }
-.paw-wayfinder-work__archive-tray > p { margin: 2px 0; font-size: 10px; text-align: center; }
-
 /* The PAW desktop is one coordinate plane. App shortcuts sit above the
    wallpaper and share the same x/y custom properties as project folders; the
    work canvas keeps its controls and drop targets, while empty space remains
@@ -1966,14 +1811,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   max-height: none;
   overflow: visible;
 }
-.paw-wayfinder-work__masthead,
-.paw-wayfinder-work__archive-tray {
-  position: relative;
-  z-index: 20;
-  width: min(420px, calc(100% - 24px));
-  margin-left: auto;
-  margin-right: 12px;
-}
+/* An open project is a window surface, not another desktop icon. Lift its
+   owning plane above App shortcuts so the panel remains readable at narrow
+   widths; closed folders stay on the shared icon plane. */
+.paw-wayfinder-work:has(.paw-wayfinder-work__project[open]) { z-index: 6; }
+.paw-wayfinder-work:has(.paw-wayfinder-work__context-sheet) { z-index: 7; }
 .paw-wayfinder-work__list {
   position: absolute;
   z-index: 5;
@@ -1990,8 +1832,8 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 /* Hovering or selecting a cell lifts it above its neighbours so a revealed
    full label never slides under the next row; an open folder window floats
    above every icon. */
-.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project > summary[aria-selected='true']),
-.paw-wayfinder-work__loose-shell:has(.paw-wayfinder-work__loose-file[aria-selected='true']) { z-index: 9; }
+.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project > summary[aria-pressed='true']),
+.paw-wayfinder-work__loose-shell:has(.paw-wayfinder-work__loose-file[aria-pressed='true']) { z-index: 9; }
 .paw-wayfinder-work__project-shell:hover,
 .paw-wayfinder-work__loose-shell:hover { z-index: 10; }
 .paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project[open]) { z-index: 12; }
@@ -2004,6 +1846,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   height: min(540px, calc(100% - 120px));
   margin: 0;
   pointer-events: auto;
+  background: var(--paw-panel-strong);
 }
 .paw-wayfinder-work__project-copy strong,
 .paw-wayfinder-work__copy strong {
@@ -2016,8 +1859,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 
 @media (max-width: 820px) {
   .paw-wayfinder-work { position: absolute; inset: 0; width: auto; max-height: none; margin: 0; }
-  .paw-wayfinder-work__masthead,
-  .paw-wayfinder-work__archive-tray { width: calc(100% - 24px); margin-inline: 12px; }
   .paw-wayfinder-work__list { padding-top: 94px; }
 }
 
@@ -2158,20 +1999,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 
 /* The desktop is a work surface, not a landing-page card: keep the wallpaper
-   quiet behind the draggable project identities. Project settings remain an
-   accessible action, but no longer hang off every icon as a second control. */
+   quiet behind the draggable project identities. Project settings use the
+   folder's native context gesture (right-click / Shift+F10), not a second
+   invisible or hanging control. */
 .paw-desktop-root .paw-field-stage { display: none; }
-.paw-wayfinder-work__project-shell > .paw-wayfinder-work__project-context {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 .paw-wayfinder-work__project-content-actions {
   display: flex;
   align-items: center;

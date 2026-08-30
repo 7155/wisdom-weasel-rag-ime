@@ -79,12 +79,60 @@ class TraceDiagnosticInspectionTests(unittest.TestCase):
         evidence_ids = {item["evidenceId"] for item in result["evidence"]}
         self.assertIn("session:session:a:message:message:user:a:block:block:user:a", evidence_ids)
         self.assertIn("observation:observation:session:a", evidence_ids)
+        self.assertEqual(result["requirements"]["source"], "user_input")
+        self.assertEqual(result["requirements"]["items"][0]["statement"], "检查当前实现")
+        self.assertEqual(
+            result["requirements"]["items"][0]["requirementId"],
+            "session:session:a:message:message:user:a:block:block:user:a",
+        )
         tool_dimension = next(item for item in result["scorecard"]["dimensions"] if item["dimensionId"] == "tool_runtime")
         metrics = {item["metricId"]: item for item in tool_dimension["metrics"]}
         self.assertEqual(metrics["terminal_tool_success_rate"]["value"], 0.5)
         self.assertEqual(metrics["timeout_rate"]["value"], 0.5)
         self.assertEqual(metrics["schema_error_rate"]["value"], 0.0)
         self.assertTrue(tool_dimension["evidenceIds"])
+
+    def test_freezes_reproducibility_environment_without_workspace_paths(self) -> None:
+        result = inspect_trace_targets(
+            targets=[{"kind": "session", "id": "session:a", "title": "A"}],
+            session_reader=lambda _session_id: {
+                "ok": True,
+                "sessionId": "session:a",
+                "status": "idle",
+                "items": [],
+                "liveEvents": [],
+            },
+            room_reader=lambda _room_id: {},
+            observation_reader=lambda _filters: _empty_observation_snapshot(),
+            trace_reader=lambda _trace_id: None,
+            eval_reader=lambda _trace_id: [],
+            environment_reader=lambda _kind, _identifier: {
+                "modelProfile": "codex",
+                "toolProfileVersion": "control-center-v1",
+                "executionMode": "per_action",
+                "policyRevision": 9,
+                "workspaceScopeSha256": "b" * 64,
+                "shellPolicyVersion": "workspace-v2",
+                "workspaceRoots": ["/Users/private/project"],
+                "runtimeBinding": {
+                    "runtimeKind": "pi",
+                    "generation": 3,
+                },
+            },
+            now_ms=100,
+        )
+
+        environment = result["environment"]
+        self.assertEqual(environment["capturedAtMs"], 100)
+        self.assertEqual(environment["rubricVersion"], "trace-score-v1")
+        target = environment["targets"][0]
+        self.assertEqual(target["targetKey"], "session:session:a")
+        self.assertEqual(target["modelProfile"], "codex")
+        self.assertEqual(target["runtimeKind"], "pi")
+        self.assertEqual(target["runtimeGeneration"], 3)
+        self.assertEqual(target["workspaceScopeSha256"], "b" * 64)
+        self.assertEqual(len(target["sourceSha256"]), 64)
+        self.assertNotIn("/Users/private/project", str(environment))
 
     def test_marks_unobservable_dimensions_not_available_instead_of_inventing_scores(self) -> None:
         result = inspect_trace_targets(
@@ -108,6 +156,36 @@ class TraceDiagnosticInspectionTests(unittest.TestCase):
         self.assertIsNone(dimensions["task_completion"]["score"])
         self.assertEqual(dimensions["memory_rag"]["applicability"], "unknown")
         self.assertFalse(result["scorecard"]["comparison"]["eligible"])
+
+    def test_marks_room_collaboration_not_applicable_for_standalone_memory_maintenance_run(self) -> None:
+        result = inspect_trace_targets(
+            targets=[
+                {
+                    "kind": "run",
+                    "id": "memory-maintenance:run-1",
+                    "title": "记忆整理失败",
+                }
+            ],
+            session_reader=lambda _session_id: {},
+            room_reader=lambda _room_id: {},
+            observation_reader=lambda _filters: _empty_observation_snapshot(),
+            trace_reader=lambda _trace_id: None,
+            eval_reader=lambda _trace_id: [],
+            now_ms=100,
+        )
+
+        dimensions = {
+            item["dimensionId"]: item
+            for item in result["scorecard"]["dimensions"]
+        }
+        self.assertEqual(
+            dimensions["room_collaboration"]["applicability"],
+            "not_applicable",
+        )
+        self.assertEqual(
+            dimensions["room_collaboration"]["note"],
+            "独立 Memory 维护 run 没有 Room 协作边界。",
+        )
 
     def test_public_session_projection_is_bounded_and_redacts_paths_and_secrets(self) -> None:
         result = inspect_trace_targets(
@@ -236,6 +314,192 @@ class TraceDiagnosticReportStoreTests(unittest.TestCase):
             self.assertEqual(listed[0]["status"], "completed")
             self.assertEqual(listed[0]["targetKeys"], ["session:session:a", "session:session:b"])
             self.assertNotIn("inspection", listed[0])
+
+    def test_preserves_requirement_assessments_and_explicit_causal_links(self) -> None:
+        evidence_id = "observation:observation:session:a"
+        requirement_id = "session:session:a:message:message:user:a:block:block:user:a"
+        payload = {
+            "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
+            "summary": "需求未全部完成。",
+            "hardGates": [],
+            "judgeScores": [],
+            "requirementAssessments": [
+                {
+                    "requirementId": requirement_id,
+                    "status": "unsatisfied",
+                    "owner": "Workspace Writer",
+                    "authority": "ai_judge_estimate",
+                    "evidenceIds": [evidence_id],
+                    "note": "写入失败。",
+                }
+            ],
+            "causalLinks": [
+                {
+                    "linkId": "causal:1",
+                    "fromEvidenceId": requirement_id,
+                    "toEvidenceId": evidence_id,
+                    "relation": "triggered",
+                    "authority": "ai_judge_estimate",
+                    "confidence": "high",
+                    "explanation": "用户要求触发了写入尝试。",
+                }
+            ],
+            "findings": [],
+        }
+
+        result = extract_trace_diagnostic_result(
+            {
+                "items": [
+                    {
+                        "role": "assistant",
+                        "status": "completed",
+                        "timelineSequence": 1,
+                        "blocks": [
+                            {
+                                "status": "completed",
+                                "data": {
+                                    "text": "--- TRACE_DIAGNOSTIC_RESULT_V1 ---\n"
+                                    + __import__("json").dumps(payload, ensure_ascii=False)
+                                    + "\n--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---"
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(result["requirementAssessments"], payload["requirementAssessments"])
+        self.assertEqual(result["causalLinks"], payload["causalLinks"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceDiagnosticReportStore(Path(directory) / "agent.sqlite3")
+            inspection = _inspection_fixture()
+            created = store.create(
+                diagnostic_session_id="agent:diagnostic:requirements",
+                title="需求与因果链",
+                targets=inspection["targets"],
+                inspection=inspection,
+                now_ms=100,
+            )
+            completed = store.complete(
+                created["reportId"],
+                expected_revision=1,
+                result=result,
+                now_ms=120,
+            )
+            self.assertEqual(completed["result"]["requirementAssessments"], payload["requirementAssessments"])
+            self.assertEqual(completed["result"]["causalLinks"], payload["causalLinks"])
+
+    def test_appends_authorized_and_verified_repair_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceDiagnosticReportStore(Path(directory) / "agent.sqlite3")
+            inspection = _inspection_fixture()
+            created = store.create(
+                diagnostic_session_id="agent:diagnostic:repair",
+                title="修复闭环",
+                targets=inspection["targets"],
+                inspection=inspection,
+                now_ms=100,
+            )
+            completed = store.complete(
+                created["reportId"],
+                expected_revision=1,
+                result={
+                    "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
+                    "summary": "写入失败。",
+                    "hardGates": [],
+                    "judgeScores": [],
+                    "requirementAssessments": [],
+                    "causalLinks": [],
+                    "findings": [
+                        {
+                            "findingId": "finding:stale-revision",
+                            "dimensionId": "tool_runtime",
+                            "severity": "high",
+                            "observation": "stale_snapshot",
+                            "hypothesis": "批准后版本变化",
+                            "conclusion": "旧 revision 被拒绝",
+                            "confidence": "high",
+                            "evidenceIds": ["observation:observation:session:a"],
+                            "candidateRepair": "重新 prepare",
+                            "verification": "新 Trace 与测试通过",
+                        }
+                    ],
+                },
+                now_ms=120,
+            )
+
+            authorized = store.authorize_repair(
+                completed["reportId"],
+                expected_revision=2,
+                finding_id="finding:stale-revision",
+                source_scope="session:session:a",
+                source_trace_id="trace:a",
+                failure_ref="observation:observation:session:a",
+                repair_session_id="agent:repair:1",
+                now_ms=130,
+            )
+            self.assertEqual(authorized["revision"], 3)
+            self.assertEqual(authorized["repairLifecycle"]["authorization"]["state"], "authorized")
+            self.assertEqual(
+                authorized["repairLifecycle"]["authorization"]["writeAuthority"],
+                "model_arbitrated_full_trust",
+            )
+            self.assertEqual(
+                authorized["repairLifecycle"]["authorization"]["repairSessionId"],
+                "agent:repair:1",
+            )
+
+            verified = store.verify_repair(
+                authorized["reportId"],
+                expected_revision=3,
+                receipt={
+                    "schemaVersion": "rag-ime.trace-repair-receipt.v1",
+                    "repairReceiptId": "repair-receipt:trace:repair",
+                    "sourceScope": "session:session:a",
+                    "sourceTraceId": "trace:a",
+                    "failureRef": "observation:observation:session:a",
+                    "changeReceiptId": "change-evidence:1",
+                    "testEvidenceId": "test-evidence:1",
+                    "testStatus": "passed",
+                    "sandboxStatus": "passed",
+                    "sandboxedTestCount": 1,
+                    "repairTraceId": "trace:repair",
+                    "repairSessionId": "agent:repair:1",
+                    "createdAtMs": 140,
+                },
+                eval_run={
+                    "evalRunId": "eval:repair:1",
+                    "status": "completed",
+                    "metricAuthority": "ai_judge_estimate",
+                    "metrics": {"task_success": 1.0},
+                },
+                comparison={
+                    "status": "incomparable",
+                    "reason": "输入 fingerprint 不同，不能声称效果提升。",
+                    "sourceStatus": "failed",
+                    "repairStatus": "completed",
+                    "sourceFingerprint": "sha256:" + "1" * 64,
+                    "repairFingerprint": "sha256:" + "2" * 64,
+                    "beforeMetrics": {"task_completion": 0.0},
+                    "afterMetrics": {"task_success": 1.0},
+                    "deltas": {},
+                },
+                now_ms=150,
+            )
+            self.assertEqual(verified["revision"], 4)
+            self.assertEqual(verified["repairLifecycle"]["verification"]["state"], "verified")
+            self.assertEqual(
+                verified["repairLifecycle"]["verification"]["repairReceiptId"],
+                "repair-receipt:trace:repair",
+            )
+            self.assertEqual(
+                verified["repairLifecycle"]["verification"]["comparison"]["status"],
+                "incomparable",
+            )
+            listed = store.list(limit=10)
+            self.assertEqual(listed["items"][0]["repairState"], "verified")
 
     def test_rejects_result_evidence_not_present_in_frozen_inspection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -556,7 +820,23 @@ def _inspection_fixture() -> dict[str, object]:
             "ok": True,
             "sessionId": session_id,
             "status": "idle",
-            "items": [],
+            "items": [
+                {
+                    "id": "message:user:a",
+                    "role": "user",
+                    "status": "completed",
+                    "timelineSequence": 1,
+                    "createdAtMs": 5,
+                    "blocks": [
+                        {
+                            "id": "block:user:a",
+                            "type": "text",
+                            "status": "completed",
+                            "data": {"text": "写入目标文件"},
+                        }
+                    ],
+                }
+            ] if session_id == "session:a" else [],
             "liveEvents": [],
         },
         room_reader=lambda _room_id: {},

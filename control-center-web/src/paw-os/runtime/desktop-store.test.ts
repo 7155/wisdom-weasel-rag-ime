@@ -1,7 +1,69 @@
 import { describe, expect, it } from 'vitest';
+import { pawDockAppIds } from './app-registry';
+import { pawExtensionApps } from '../extensions/registry';
 import { createPawDesktopStore, pawFocusWindowLayerSize, pawWindowLayerSize } from './desktop-store';
 
 describe('PAWOS desktop store', () => {
+  it('pins and unpins Dock Apps without changing their window lifecycle', () => {
+    const store = createPawDesktopStore('agent');
+
+    expect(store.getState().dockAppIds).toEqual(pawDockAppIds);
+    store.getState().pinDockApp('system-settings');
+    store.getState().pinDockApp('system-settings');
+    expect(store.getState().dockAppIds).toEqual([...pawDockAppIds, 'system-settings']);
+
+    store.getState().unpinDockApp('agent');
+    expect(store.getState().dockAppIds).not.toContain('agent');
+    expect(store.getState().windows.agent).toBeDefined();
+  });
+
+  it('gates Extension App openApp calls until enabled and closes them when the gate is lost', () => {
+    const extension = pawExtensionApps[0]!;
+    const store = createPawDesktopStore();
+
+    expect(store.getState().openApp(extension.id)).toBe('');
+    expect(store.getState().windows[extension.id]).toBeUndefined();
+
+    store.getState().setExtensionAppGate('ready', new Set([extension.id]));
+    expect(store.getState().openApp(extension.id)).toBe(extension.id);
+    expect(store.getState().windows[extension.id]).toBeDefined();
+
+    store.getState().setExtensionAppGate('unavailable', new Set([extension.id]));
+    expect(store.getState().windows[extension.id]).toBeUndefined();
+    expect(store.getState().openApp(extension.id)).toBe('');
+  });
+
+  it('migrates pre-grid scattered icon coordinates once while preserving filing choices', () => {
+    const store = createPawDesktopStore(undefined, undefined, {
+      windows: {},
+      stack: [],
+      activeWindowId: null,
+      wayfinder: {
+        iconPositions: { 'project:/work/paw': { x: 731, y: 418 } },
+        archived: ['session:old'],
+        projectAssignments: { 'session:moved': '/work/paw' },
+      },
+    });
+
+    expect(store.getState().wayfinder).toEqual({
+      layoutVersion: 2,
+      iconPositions: {},
+      archived: ['session:old'],
+      projectAssignments: { 'session:moved': '/work/paw' },
+    });
+  });
+
+  it('can arrange dragged icons again without changing project assignments', () => {
+    const store = createPawDesktopStore();
+    store.getState().setWayfinderIconPosition('project:/work/paw', { x: 731, y: 418 });
+    store.getState().setWayfinderProjectAssignment('session:moved', '/work/paw');
+
+    store.getState().arrangeWayfinderIcons();
+
+    expect(store.getState().wayfinder.iconPositions).toEqual({});
+    expect(store.getState().wayfinder.projectAssignments).toEqual({ 'session:moved': '/work/paw' });
+  });
+
   it('keeps one primary window per App and restores it without creating a second process', () => {
     const store = createPawDesktopStore();
 

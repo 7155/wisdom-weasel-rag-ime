@@ -1,23 +1,29 @@
-import { ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Settings, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Pin, PinOff, Settings, X } from 'lucide-react';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
-import { pawApp, pawApps, pawDockAppIds, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
+import { pawApp, pawAppForPath, pawApps, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { dockMagnetics } from './dock-magnification';
 import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
-import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
-import { pawDesktopGridPosition, usePawDesktopGridColumns } from './desktop-grid';
+import { PawContextMenu, type PawContextMenuCloseReason, type PawContextMenuItem } from './PawContextMenu';
+import { pawDesktopGridPosition, usePawDesktopGridLayout } from './desktop-grid';
 import { PawFieldLede } from './PawFieldLede';
 import { clampWayfinderIconPosition, PawWayfinderWork, WAYFINDER_DRAG_MIME } from './PawWayfinderWork';
 import { PawWindowLayer } from './PawWindowLayer';
 import { pawBrowserHost } from '../apps/paw-browser-host';
+import { PawBackgroundActivity } from './PawBackgroundActivity';
+import { PawNotificationCenter } from './PawNotificationCenter';
+import { PawWorkDirectoryProvider } from './PawWorkDirectory';
+import { isPawExtensionAppId, pawExtensionApp, pawExtensionApps } from '../extensions/registry';
+import { PawExtensionInstallationProvider, usePawExtensionInstallation } from '../extensions/installation';
 
 type PawMenuTarget =
   | { kind: 'desktop' }
   | { kind: 'menubar'; menu: 'app' | 'window' }
   | { kind: 'apps'; appIds: PawAppId[]; label: string }
+  | { kind: 'work'; iconIds: string[]; label: string }
   | { kind: 'window'; windowId: string; label: string };
 
 /* The archive is grouped the way the machine is actually laid out: where the
@@ -33,6 +39,11 @@ const LAUNCHPAD_GROUP_LABEL: Record<(typeof LAUNCHPAD_GROUP_ORDER)[number], stri
   tool: '工具',
   system: '系统',
 };
+const DESKTOP_APP_IDS: readonly PawAppId[] = LAUNCHPAD_GROUP_ORDER.flatMap((kind) => (
+  pawApps.filter((app) => !isPawExtensionAppId(app.id) && launchpadGroup(app) === kind).map((app) => app.id)
+));
+const PAW_APP_IDS = new Set<PawAppId>(pawApps.map((app) => app.id));
+const PAW_DOCK_APP_MIME = 'application/x-paw-dock-app';
 
 type PawMenuState = PawMenuTarget & { x: number; y: number };
 type PawSelectionRect = { x: number; y: number; width: number; height: number };
@@ -45,7 +56,18 @@ const selectMenuSignature = (state: { windows: Record<string, { id: string; appI
 const selectNoMenuSignature = () => '';
 
 export function PawDesktop() {
+  return (
+    <PawWorkDirectoryProvider>
+      <PawExtensionInstallationProvider>
+        <PawDesktopSurface />
+      </PawExtensionInstallationProvider>
+    </PawWorkDirectoryProvider>
+  );
+}
+
+function PawDesktopSurface() {
   const api = usePawDesktopApi();
+  const installation = usePawExtensionInstallation();
   const activeWindowId = usePawDesktopStore((state) => state.activeWindowId);
   const activeAppId = usePawDesktopStore((state) => (
     activeWindowId ? state.windows[activeWindowId]?.appId ?? null : null
@@ -65,6 +87,17 @@ export function PawDesktop() {
    * focus and live drag/resize keep their own suspension rules. */
   const documentHidden = useDocumentHidden();
   const ambientPaused = documentHidden || Boolean(activeWindowId) || launchpadOpen || overviewOpen;
+  useEffect(() => {
+    const state = api.getState();
+    state.setExtensionAppGate(installation.status, installation.enabledExtensionIds);
+  }, [api, installation.enabledExtensionIds, installation.status]);
+  useEffect(() => {
+    if (!installation.ready) return;
+    const route = window.location.hash.replace(/^#/, '');
+    const app = pawAppForPath(route);
+    if (!app || !isPawExtensionAppId(app.id) || !installation.enabledExtensionIds.has(app.id)) return;
+    api.getState().openApp(app.id, { initialRoute: route, title: app.label });
+  }, [api, installation.enabledExtensionIds, installation.ready]);
   /* Desktop selection is one set of icon ids across both families on the
    * plane: App shortcuts (`app:<id>`), project folders (`project:<id>`) and
    * loose conversation files (`session:<id>` / `room:<id>`). The lasso, icon
@@ -86,6 +119,7 @@ export function PawDesktop() {
   const viewportRef = useRef<HTMLElement>(null);
   const menuAppRef = useRef<HTMLButtonElement>(null);
   const menuWindowRef = useRef<HTMLButtonElement>(null);
+  const contextMenuOpenerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -157,7 +191,16 @@ export function PawDesktop() {
    * leaves: focus changes, lasso frames and context menus re-render this
    * component without re-rendering those subtrees. */
   const openApp = useCallback((appId: PawAppId) => {
+    const extension = isPawExtensionAppId(appId) ? pawExtensionApp(appId) : null;
     const state = api.getState();
+    if (extension && !installation.enabledExtensionIds.has(extension.id)) {
+      const route = `/plugins?packageId=${encodeURIComponent(extension.packageId)}`;
+      state.openApp('app-center', { initialRoute: route, title: pawApp('app-center').label });
+      state.setLaunchpadOpen(false);
+      pulsePawComposition('app', .72);
+      window.history.replaceState(null, '', `${window.location.search}#${route}`);
+      return;
+    }
     const existingWindowId = [...state.stack].reverse().find((windowId) => state.windows[windowId]?.appId === appId)
       ?? Object.values(state.windows).find((node) => node.appId === appId)?.id;
     if (existingWindowId) state.focusWindow(existingWindowId);
@@ -165,7 +208,7 @@ export function PawDesktop() {
     state.setLaunchpadOpen(false);
     pulsePawComposition('app', .72);
     window.history.replaceState(null, '', `${window.location.search}#${pawApp(appId).route}`);
-  }, [api]);
+  }, [api, installation.enabledExtensionIds]);
   const toggleLaunchpad = useCallback(() => {
     const state = api.getState();
     state.setLaunchpadOpen(!state.launchpadOpen);
@@ -190,6 +233,12 @@ export function PawDesktop() {
     event.preventDefault();
     event.stopPropagation();
     const target = event.target as HTMLElement;
+    const focused = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null;
+    contextMenuOpenerRef.current = target.closest<HTMLElement>('button, summary, a[href], input, [tabindex]')
+      ?? focused
+      ?? viewportRef.current;
     const appElement = target.closest<HTMLElement>('[data-desktop-app]');
     if (appElement) {
       const appId = appElement.dataset.desktopApp as PawAppId;
@@ -213,11 +262,18 @@ export function PawDesktop() {
     }
     const workElement = target.closest<HTMLElement>('[data-wayfinder-icon]');
     if (workElement) {
-      /* Folders and conversation files own no item menu yet; right-click
-       * selects the icon under the pointer and keeps the desktop menu. */
       const iconId = workElement.dataset.wayfinderIcon ?? '';
+      const acted = (iconId && selectedIcons.has(iconId) ? [...selectedIcons] : [iconId])
+        .filter((id) => id.startsWith('project:') || id.startsWith('session:') || id.startsWith('room:'));
       if (iconId && !selectedIcons.has(iconId)) setSelectedIcons(new Set([iconId]));
-      setContextMenu({ kind: 'desktop', x: event.clientX, y: event.clientY });
+      const title = workElement.getAttribute('title')?.split(' · ', 1)[0]?.trim() || '工作图标';
+      setContextMenu({
+        kind: 'work',
+        iconIds: acted.length ? acted : [iconId],
+        label: acted.length > 1 ? `${acted.length} 个工作图标` : title,
+        x: event.clientX,
+        y: event.clientY,
+      });
       return;
     }
     const windowElement = target.closest<HTMLElement>('[data-paw-window-id]');
@@ -340,10 +396,27 @@ export function PawDesktop() {
 
   const menuItems = useMemo<readonly PawContextMenuItem[]>(() => {
     if (!contextMenu || contextMenu.kind === 'desktop') {
+      const archivedCount = api.getState().wayfinder.archived.length;
       return [
         { id: 'new-agent', label: '新建 Agent 工作', icon: <Bot size={15} />, action: () => openApp('agent') },
         { id: 'browser', label: '打开 Browser', icon: <Earth size={15} />, action: () => openApp('browser') },
         { id: 'launchpad', label: '全部 App', icon: <LayoutGrid size={15} />, shortcut: '⌘K', separatorBefore: true, action: () => api.getState().setLaunchpadOpen(true) },
+        {
+          id: 'arrange-icons',
+          label: '整理图标',
+          icon: <Grid3X3 size={15} />,
+          action: () => {
+            api.getState().arrangeWayfinderIcons();
+            setSelectedIcons(new Set());
+          },
+        },
+        {
+          id: 'restore-archive',
+          label: archivedCount ? `恢复 ${archivedCount} 个归档图标` : '没有归档图标',
+          icon: <ArchiveRestore size={15} />,
+          disabled: archivedCount === 0,
+          action: () => api.getState().wayfinder.archived.forEach((iconId) => api.getState().setWayfinderArchived(iconId, false)),
+        },
         { id: 'settings', label: '系统设置', icon: <Settings size={15} />, shortcut: '⌘,', action: () => openApp('system-settings') },
         {
           id: 'close-all-windows',
@@ -355,6 +428,17 @@ export function PawDesktop() {
           action: () => api.getState().closeAllWindows(),
         },
       ];
+    }
+    if (contextMenu.kind === 'work') {
+      return [{
+        id: 'archive-work',
+        label: contextMenu.iconIds.length > 1 ? `归档 ${contextMenu.iconIds.length} 个工作图标` : `归档 ${contextMenu.label}`,
+        icon: <Archive size={15} />,
+        action: () => {
+          contextMenu.iconIds.forEach((iconId) => api.getState().setWayfinderArchived(iconId, true));
+          setSelectedIcons(new Set());
+        },
+      }];
     }
     if (contextMenu.kind === 'menubar') {
       if (contextMenu.menu === 'window') {
@@ -400,6 +484,12 @@ export function PawDesktop() {
     }
     if (contextMenu.kind === 'apps') {
       const openWindowCount = menuWindows.filter((node) => contextMenu.appIds.includes(node.appId)).length;
+      const pinned = new Set(api.getState().dockAppIds);
+      const eligibleDockAppIds = contextMenu.appIds.filter((appId) => (
+        !isPawExtensionAppId(appId) || installation.enabledExtensionIds.has(appId)
+      ));
+      const unpinnedAppIds = eligibleDockAppIds.filter((appId) => !pinned.has(appId));
+      const pinnedAppIds = eligibleDockAppIds.filter((appId) => pinned.has(appId));
       return [
         {
           id: 'open-apps',
@@ -407,6 +497,18 @@ export function PawDesktop() {
           icon: <ArrowUpRight size={15} />,
           action: () => contextMenu.appIds.forEach(openApp),
         },
+        ...(unpinnedAppIds.length ? [{
+          id: 'pin-dock-apps',
+          label: unpinnedAppIds.length === 1 ? `添加 ${pawApp(unpinnedAppIds[0]!).label} 到 Dock` : `添加 ${unpinnedAppIds.length} 个 App 到 Dock`,
+          icon: <Pin size={15} />,
+          action: () => unpinnedAppIds.forEach((appId) => api.getState().pinDockApp(appId)),
+        }] : []),
+        ...(pinnedAppIds.length ? [{
+          id: 'unpin-dock-apps',
+          label: pinnedAppIds.length === 1 ? `从 Dock 移除 ${pawApp(pinnedAppIds[0]!).label}` : `从 Dock 移除 ${pinnedAppIds.length} 个 App`,
+          icon: <PinOff size={15} />,
+          action: () => pinnedAppIds.forEach((appId) => api.getState().unpinDockApp(appId)),
+        }] : []),
         {
           id: 'close-app-windows',
           label: contextMenu.appIds.length === 1
@@ -448,7 +550,7 @@ export function PawDesktop() {
         },
       },
     ];
-  }, [activeAppId, activeWindowId, api, contextMenu, menuWindows]);
+  }, [activeAppId, activeWindowId, api, contextMenu, installation.enabledExtensionIds, menuWindows]);
   const menuBarLabel = activeAppId ? pawApp(activeAppId).label : '桌面';
   /* macOS menu-bar discipline: a menu opens on click, and while any menu-bar
    * menu is open, hovering the neighbouring title (or pressing ←/→ inside the
@@ -457,6 +559,7 @@ export function PawDesktop() {
   const openMenuBarMenu = (menu: 'app' | 'window') => {
     const anchor = menu === 'app' ? menuAppRef.current : menuWindowRef.current;
     if (!anchor) return;
+    contextMenuOpenerRef.current = anchor;
     const rect = anchor.getBoundingClientRect();
     setContextMenu({ kind: 'menubar', menu, x: rect.left, y: rect.bottom + 6 });
   };
@@ -478,7 +581,18 @@ export function PawDesktop() {
       if (contextMenu?.kind === 'menubar' && contextMenu.menu !== menu) openMenuBarMenu(menu);
     },
   });
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const closeContextMenu = useCallback((reason: PawContextMenuCloseReason) => {
+    setContextMenu(null);
+    if (reason !== 'keyboard' && reason !== 'action') return;
+    const opener = contextMenuOpenerRef.current;
+    /* Item actions may archive their opener. Wait until React and the external
+       desktop store have committed, then return to the exact opener when it
+       still exists; otherwise leave a stable keyboard landing on the desktop. */
+    window.setTimeout(() => {
+      if (opener?.isConnected) opener.focus();
+      else viewportRef.current?.focus();
+    }, 0);
+  }, []);
   return (
     <div
       className="paw-desktop"
@@ -516,10 +630,31 @@ export function PawDesktop() {
             <span>窗口</span>
           </button>
         </div>
-        <div className="paw-menu-status"><ConnectionIndicator /><PawMenuClock /></div>
+        <div className="paw-menu-status">
+          <ConnectionIndicator />
+          <PawBackgroundActivity />
+          <PawNotificationCenter />
+          <PawMenuClock />
+        </div>
       </header>
 
-      <main className="paw-desktop-viewport" onPointerDown={startLasso} ref={viewportRef}>
+      <main
+        className="paw-desktop-viewport"
+        onDragOver={(event) => {
+          if (![...event.dataTransfer.types].includes(PAW_DOCK_APP_MIME)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={(event) => {
+          const appId = readDraggedAppId(event.dataTransfer);
+          if (!appId || event.dataTransfer.getData(PAW_DOCK_APP_MIME) !== appId) return;
+          event.preventDefault();
+          api.getState().unpinDockApp(appId);
+        }}
+        onPointerDown={startLasso}
+        ref={viewportRef}
+        tabIndex={-1}
+      >
         <Wayfinder onOpen={openApp} onSelectIcon={selectIcon} selectedIcons={selectedIcons} />
         <PawWindowLayer />
         {lasso ? <div className="paw-selection-lasso" data-testid="paw-selection-lasso" style={{ left: lasso.x, top: lasso.y, width: lasso.width, height: lasso.height }} /> : null}
@@ -531,6 +666,7 @@ export function PawDesktop() {
       ><X size={14} />退出协作聚焦</button> : null}
       {activeWindowMaximized ? null : <PawDock
         activeAppId={activeAppId}
+        launchpadOpen={launchpadOpen}
         onLaunchpad={toggleLaunchpad}
         onOpen={openApp}
         onOverview={toggleOverview}
@@ -591,12 +727,18 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelectIcon, selectedIcons 
   onSelectIcon: (iconId: string, additive: boolean) => void;
   selectedIcons: ReadonlySet<string>;
 }) {
-  const desktopApps: PawAppId[] = ['project-workbench', 'agent', 'files', 'browser', 'terminal'];
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const api = usePawDesktopApi();
+  const installation = usePawExtensionInstallation();
   const wayfinder = usePawDesktopStore((state) => state.wayfinder);
   const running = usePawRunningApps();
-  const gridColumns = usePawDesktopGridColumns();
+  const gridLayout = usePawDesktopGridLayout();
+  const desktopAppIds = useMemo(() => [
+    ...DESKTOP_APP_IDS,
+    ...pawExtensionApps
+      .filter((app) => installation.enabledExtensionIds.has(app.id))
+      .map((app) => app.id),
+  ], [installation.enabledExtensionIds]);
   // Roving arrows walk the shortcut list like a real desktop: focus moves
   // between identities without tabbing out of the Wayfinder, and Enter on the
   // focused identity still opens it (owned by the per-button handler below).
@@ -608,19 +750,23 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelectIcon, selectedIcons 
     const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (current === -1) return;
     event.preventDefault();
-    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+    const delta = event.key === 'ArrowDown'
+      ? gridLayout.columns
+      : event.key === 'ArrowUp'
+      ? -gridLayout.columns
+      : event.key === 'ArrowRight'
+      ? 1
+      : -1;
     const next = event.key === 'Home'
       ? 0
       : event.key === 'End'
       ? buttons.length - 1
-      : Math.min(Math.max(current + (forward ? 1 : -1), 0), buttons.length - 1);
+      : Math.min(Math.max(current + delta, 0), buttons.length - 1);
     buttons[next]?.focus();
   };
   const startAppDrag = useCallback((event: DragEvent<HTMLElement>, appId: PawAppId) => {
     event.stopPropagation();
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData(WAYFINDER_DRAG_MIME, `app:${appId}`);
-    event.dataTransfer.setData('text/plain', `app:${appId}`);
+    writeAppDrag(event.dataTransfer, appId, false);
   }, []);
   const dropOnDesktop = useCallback((event: DragEvent<HTMLElement>) => {
     const iconId = event.dataTransfer.getData(WAYFINDER_DRAG_MIME) || event.dataTransfer.getData('text/plain');
@@ -633,6 +779,8 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelectIcon, selectedIcons 
       y: event.clientY - rect.top - 46,
     }, event.currentTarget);
     api.getState().setWayfinderIconPosition(iconId, position);
+    const appId = appIdFromDragValue(iconId);
+    if (appId && event.dataTransfer.getData(PAW_DOCK_APP_MIME) === appId) api.getState().unpinDockApp(appId);
     if (iconId.startsWith('session:') || iconId.startsWith('room:')) {
       api.getState().setWayfinderProjectAssignment(iconId, null);
       api.getState().setWayfinderArchived(iconId, false);
@@ -656,14 +804,16 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelectIcon, selectedIcons 
           are still App launchers, but their icon positions now live beside
           project/session icon positions in the same PAWOS snapshot. */}
       <div className="paw-desktop-shortcuts" aria-label="桌面 App" onKeyDown={walkShortcuts} ref={shortcutsRef}>
-        {desktopApps.map((id, index) => {
+        {desktopAppIds.map((id, index) => {
           const open = running.open.has(id);
           const minimizedOnly = open && !running.visible.has(id);
           const iconId = `app:${id}`;
-          const position = wayfinder.iconPositions[iconId] ?? pawDesktopGridPosition(index, gridColumns);
+          const position = wayfinder.iconPositions[iconId]
+            ?? pawDesktopGridPosition(index, gridLayout.columns, gridLayout.originY);
           return (
             <button
-              aria-selected={selectedIcons.has(iconId) || undefined}
+              aria-description={minimizedOnly ? '已最小化，按回车打开' : open ? '运行中' : undefined}
+              aria-pressed={selectedIcons.has(iconId) || undefined}
               data-app={id}
               data-desktop-app={id}
               data-minimized={minimizedOnly || undefined}
@@ -677,11 +827,11 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelectIcon, selectedIcons 
                 if (event.key === 'Enter') onOpen(id);
               }}
               style={{ '--wayfinder-x': `${position.x}px`, '--wayfinder-y': `${position.y}px` } as CSSProperties}
-              title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : pawApp(id).shortLabel}
+              title={minimizedOnly ? `${pawApp(id).label} · 已最小化` : open ? `${pawApp(id).label} · 运行中` : pawApp(id).label}
               type="button"
             >
-              <span><PawAppIcon appId={id} size={34} /></span>
-              <strong><span className="paw-desktop-shortcuts__label-ink">{pawApp(id).shortLabel}</span></strong>
+              <span><PawAppIcon appId={id} size={48} /></span>
+              <strong><span className="paw-desktop-shortcuts__label-ink">{pawApp(id).label}</span></strong>
               <i aria-hidden="true" />
             </button>
           );
@@ -717,49 +867,104 @@ function usePawRunningApps(): { open: ReadonlySet<PawAppId>; visible: ReadonlySe
  * writes, so React only owns its resting content: which App is current, which
  * are running, whether the overview is open. Everything else on the desktop
  * re-renders without touching it. */
-const PawDock = memo(function PawDock({ activeAppId, onLaunchpad, onOpen, onOverview, overviewOpen }: {
+const PawDock = memo(function PawDock({ activeAppId, launchpadOpen, onLaunchpad, onOpen, onOverview, overviewOpen }: {
   activeAppId: PawAppId | null;
+  launchpadOpen: boolean;
   onLaunchpad: () => void;
   onOpen: (id: PawAppId) => void;
   onOverview: () => void;
   overviewOpen: boolean;
 }) {
+  const api = usePawDesktopApi();
+  const installation = usePawExtensionInstallation();
   const dockRef = useRef<HTMLElement>(null);
+  const [dropTarget, setDropTarget] = useState(false);
   useDockMagnification(dockRef);
   const dockState = usePawRunningApps();
+  const dockAppIds = usePawDesktopStore((state) => state.dockAppIds);
+  const compact = useCompactDock();
+  const visibleDockAppIds = useMemo(() => dockAppIds.filter((appId) => (
+    !isPawExtensionAppId(appId) || installation.enabledExtensionIds.has(appId)
+  )), [dockAppIds, installation.enabledExtensionIds]);
+  const appButtons = visibleDockAppIds.map((appId) => {
+    const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
+    return (
+      <button
+        aria-current={activeAppId === appId ? 'page' : undefined}
+        aria-description={minimizedOnly ? '已最小化，按回车恢复' : dockState.open.has(appId) ? '运行中' : undefined}
+        aria-label={pawApp(appId).label}
+        data-app={appId}
+        data-desktop-app={appId}
+        data-minimized={minimizedOnly || undefined}
+        data-open={dockState.open.has(appId) || undefined}
+        draggable
+        key={appId}
+        onClick={(event) => {
+          // macOS launch feedback: a shelf identity that is not running
+          // answers the click with one hop before its window arrives.
+          if (!dockState.open.has(appId)) bounceDockIcon(event.currentTarget);
+          onOpen(appId);
+        }}
+        onDragStart={(event) => writeAppDrag(event.dataTransfer, appId, true)}
+        title={minimizedOnly ? `${pawApp(appId).label} 已最小化，点击恢复` : undefined}
+        type="button"
+      >
+        <PawAppIcon appId={appId} size={32} />
+        <span aria-hidden="true" className="paw-dock-tip">{minimizedOnly ? `${pawApp(appId).label} · 已最小化` : pawApp(appId).label}</span>
+      </button>
+    );
+  });
+  const systemControls = <>
+    <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /><span aria-hidden="true" className="paw-dock-tip">窗口总览</span></button>
+    <button aria-controls="paw-launchpad-dialog" aria-expanded={launchpadOpen} aria-haspopup="dialog" aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
+  </>;
   return (
-    <nav aria-label="PAWOS 工具架" className="paw-dock" ref={dockRef}>
-      {pawDockAppIds.map((appId) => {
-        const minimizedOnly = dockState.open.has(appId) && !dockState.visible.has(appId);
-        return (
-          <button
-            aria-current={activeAppId === appId ? 'page' : undefined}
-            aria-label={pawApp(appId).label}
-            data-app={appId}
-            data-desktop-app={appId}
-            data-minimized={minimizedOnly || undefined}
-            data-open={dockState.open.has(appId) || undefined}
-          key={appId}
-          onClick={(event) => {
-            // macOS launch feedback: a shelf identity that is not running
-            // answers the click with one hop before its window arrives.
-            if (!dockState.open.has(appId)) bounceDockIcon(event.currentTarget);
-            onOpen(appId);
-          }}
-          title={minimizedOnly ? `${pawApp(appId).label} 已最小化，点击恢复` : undefined}
-            type="button"
-          >
-            <PawAppIcon appId={appId} size={32} />
-            <span aria-hidden="true" className="paw-dock-tip">{minimizedOnly ? `${pawApp(appId).label} · 已最小化` : pawApp(appId).label}</span>
-          </button>
-        );
-      })}
-      <i aria-hidden="true" />
-      <button aria-label="窗口总览" aria-pressed={overviewOpen} className="paw-dock-overview" onClick={onOverview} type="button"><PanelsTopLeft size={19} /><span aria-hidden="true" className="paw-dock-tip">窗口总览</span></button>
-      <button aria-label="全部 App" className="paw-dock-launchpad" onClick={onLaunchpad} type="button"><Grid3X3 size={19} /><span aria-hidden="true" className="paw-dock-tip">全部 App</span></button>
+    <nav
+      aria-description="可将桌面或全部 App 中的应用拖入；将 Dock 应用拖回桌面可移除快捷方式。窄窗口时可横向滚动。"
+      aria-label="PAWOS 工具架"
+      className="paw-dock"
+      data-drop-target={dropTarget || undefined}
+      onDragLeave={(event) => {
+        if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+        setDropTarget(false);
+      }}
+      onDragOver={(event) => {
+        if (![...event.dataTransfer.types].some((type) => type === WAYFINDER_DRAG_MIME || type === PAW_DOCK_APP_MIME)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        setDropTarget(true);
+      }}
+      onDrop={(event) => {
+        const appId = readDraggedAppId(event.dataTransfer);
+        if (!appId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = 'copy';
+        if (!isPawExtensionAppId(appId) || installation.enabledExtensionIds.has(appId)) {
+          api.getState().pinDockApp(appId);
+        }
+        setDropTarget(false);
+      }}
+      ref={dockRef}
+    >
+      {compact ? <>{systemControls}<i aria-hidden="true" />{appButtons}</> : <>{appButtons}<i aria-hidden="true" />{systemControls}</>}
     </nav>
   );
 });
+
+function useCompactDock(): boolean {
+  const query = '(max-width: 820px)';
+  const [compact, setCompact] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia(query).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia(query);
+    const update = () => setCompact(media.matches);
+    update();
+    media.addEventListener?.('change', update);
+    return () => media.removeEventListener?.('change', update);
+  }, []);
+  return compact;
+}
 
 /* Magnetic Dock conduction. A rAF-throttled pointer stream feeds the pure
  * magnet geometry in dock-magnification.ts (cosine grow, neighbour push and
@@ -866,6 +1071,7 @@ function pawShellReducedMotion(): boolean {
 function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: PawAppId) => void }) {
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+  const installation = usePawExtensionInstallation();
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return pawApps.filter((app) => {
@@ -886,14 +1092,32 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
     });
   }, [filtered]);
   useEffect(() => {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     searchRef.current?.focus();
+    return () => returnFocus?.focus();
   }, []);
   return (
     <div
+      id="paw-launchpad-dialog"
       aria-label="全部 App"
       aria-modal="true"
       className="paw-launchpad"
       onKeyDown={(event) => {
+        if (event.key === 'Tab') {
+          const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+            'input:not(:disabled), button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+          ));
+          const first = focusable[0];
+          const last = focusable.at(-1);
+          if (event.shiftKey && document.activeElement === first && last) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last && first) {
+            event.preventDefault();
+            first.focus();
+          }
+          return;
+        }
         if (event.key === 'Escape' && query) {
           event.stopPropagation();
           setQuery('');
@@ -926,13 +1150,31 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
           ) : groups.map((group) => (
             <Fragment key={group.kind}>
               <h2 className="paw-launchpad-group" style={{ '--paw-tile-i': group.order } as CSSProperties}>{group.label}</h2>
-              {group.apps.map(({ app, order }) => (
-                <button data-app={app.id} key={app.id} onClick={() => onOpen(app.id)} style={{ '--paw-tile-i': order } as CSSProperties} type="button">
+              {group.apps.map(({ app, order }) => {
+                const extension = isPawExtensionAppId(app.id) ? pawExtensionApp(app.id) : null;
+                const installationLabel = extension
+                  ? installation.isInstalled(app.id)
+                    ? installation.isEnabled(app.id) ? '已安装' : '未启用'
+                    : '未安装'
+                  : '';
+                return (
+                <button
+                  data-app={app.id}
+                  data-extension-installation={extension ? installationLabel === '已安装' ? 'enabled' : installationLabel === '未启用' ? 'disabled' : 'uninstalled' : undefined}
+                  draggable
+                  key={app.id}
+                  onClick={() => onOpen(app.id)}
+                  onDragStart={(event) => writeAppDrag(event.dataTransfer, app.id, false)}
+                  style={{ '--paw-tile-i': order } as CSSProperties}
+                  type="button"
+                >
                   <span><PawAppIcon appId={app.id} size={48} /></span>
                   <strong>{app.label}</strong>
                   <small>{app.tagline}</small>
+                  {extension ? <small className="paw-launchpad-installation" data-extension-state={installationLabel}>{installationLabel}</small> : null}
                 </button>
-              ))}
+                );
+              })}
             </Fragment>
           ))}
         </div>
@@ -950,6 +1192,26 @@ function timeLabel(): string {
     minute: '2-digit',
     hour12: false,
   }).format(new Date());
+}
+
+function writeAppDrag(dataTransfer: DataTransfer, appId: PawAppId, fromDock: boolean): void {
+  dataTransfer.effectAllowed = fromDock ? 'move' : 'copyMove';
+  if (fromDock) dataTransfer.setData(PAW_DOCK_APP_MIME, appId);
+  dataTransfer.setData(WAYFINDER_DRAG_MIME, `app:${appId}`);
+  dataTransfer.setData('text/plain', `app:${appId}`);
+}
+
+function readDraggedAppId(dataTransfer: DataTransfer): PawAppId | null {
+  return appIdFromDragValue(
+    dataTransfer.getData(PAW_DOCK_APP_MIME)
+      || dataTransfer.getData(WAYFINDER_DRAG_MIME)
+      || dataTransfer.getData('text/plain'),
+  );
+}
+
+function appIdFromDragValue(value: string): PawAppId | null {
+  const candidate = value.startsWith('app:') ? value.slice(4) : value;
+  return PAW_APP_IDS.has(candidate as PawAppId) ? candidate as PawAppId : null;
 }
 
 function sameIconSelection(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -979,6 +1241,7 @@ function contextMenuAriaLabel(menu: PawMenuState, activeAppId: PawAppId | null):
 function contextMenuKey(menu: PawMenuState): string {
   if (menu.kind === 'menubar') return `menubar-${menu.menu}`;
   if (menu.kind === 'apps') return `apps-${menu.appIds.join(',')}`;
+  if (menu.kind === 'work') return `work-${menu.iconIds.join(',')}`;
   if (menu.kind === 'window') return `window-${menu.windowId}`;
   return 'desktop';
 }

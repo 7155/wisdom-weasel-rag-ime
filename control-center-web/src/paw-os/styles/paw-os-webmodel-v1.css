@@ -281,11 +281,6 @@
   box-shadow: 0 14px 34px -18px rgb(29 45 72 / .3), 0 2px 7px rgb(29 45 72 / .055);
 }
 
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer::before,
-.paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer::after {
-  display: none;
-}
-
 .paw-desktop-root .paw-session-workspace__conversation[data-message-flow='separated'] .agent-composer:focus-within {
   border-color: rgb(47 107 255 / .48);
   box-shadow: 0 18px 42px -20px rgb(34 68 125 / .38), 0 0 0 3px rgb(47 107 255 / .08);

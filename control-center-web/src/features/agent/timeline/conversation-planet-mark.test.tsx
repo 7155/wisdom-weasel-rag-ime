@@ -49,6 +49,8 @@ describe('ConversationPlanetMark', () => {
   });
 
   it('moves only the live status ring and makes reduced motion completely static', () => {
+    expect(agentCss).toMatch(/\.paw-conv-planet__body\s*\{[^}]*radial-gradient/s);
+    expect(agentCss).toMatch(/\.paw-conv-planet__orbit\s*\{[^}]*conic-gradient[^}]*mask-composite:\s*exclude;/s);
     expect(agentCss).toMatch(
       /\.paw-conv-planet\[data-live='true'\] \.paw-conv-planet__orbit \{[^}]*animation: paw-conv-planet-orbit/,
     );

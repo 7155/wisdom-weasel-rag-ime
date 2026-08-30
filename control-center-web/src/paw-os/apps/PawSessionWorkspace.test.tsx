@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
-import type { AgentProjectionState } from '@/contracts/agent-reducer';
+import { createAgentProjection, type AgentProjectionState } from '@/contracts/agent-reducer';
 import { parseAgentEvent } from '@/contracts/validators';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
@@ -19,7 +19,7 @@ import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
 import agentMigratedCss from '../styles/paw-os-agent-migrated-v1.css?raw';
 import appsCss from './paw-apps.css?raw';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
-import { PawSessionWorkspace } from './PawSessionWorkspace';
+import { PawSessionWorkspace, sessionWorkspaceProjectionSlice } from './PawSessionWorkspace';
 
 /* jsdom gives every row zero height, so the real virtualizer would keep the
    transcript empty and no timeline assertion here would mean anything. */
@@ -56,6 +56,26 @@ vi.mock('react-virtuoso', () => ({
 afterEach(cleanup);
 
 describe('PAWOS Agent Session structural migration', () => {
+  it('lets the newest terminal turn end composer busy state even when an older turn is stale-running', () => {
+    const sessionId = 'session-terminal-fence';
+    const projection = createAgentProjection(sessionId);
+    projection.turnOrder = ['turn-stale-running', 'turn-latest-completed'];
+    projection.turnsById = {
+      'turn-stale-running': {
+        id: 'turn-stale-running', status: 'running', messageIds: ['message-old'], activityIds: [], createdAtMs: 1, updatedAtMs: 2,
+      },
+      'turn-latest-completed': {
+        id: 'turn-latest-completed', status: 'completed', messageIds: ['message-final'], activityIds: [], createdAtMs: 3, updatedAtMs: 4,
+      },
+    };
+    const state = {
+      ...useAgentLiveStore.getState(),
+      projections: { [sessionId]: projection },
+    };
+
+    expect(sessionWorkspaceProjectionSlice(state, sessionId).activeTurnId).toBe('');
+  });
+
   it.each([375, 360])('projects one complete Session chrome into a %ipx production window', async (width) => {
     render(
       <ControlTransportProvider transport={createPreviewTransport()}>
@@ -241,6 +261,21 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(sidebar.querySelectorAll(':scope > .agent-files-panel, :scope > .session-subagent-panel, :scope > .agent-status-panel')).toHaveLength(1);
     expect(sidebar.querySelector('.agent-files-panel')).toBeNull();
     expect(sidebar.querySelector('.agent-status-panel')).not.toBeNull();
+    const criticalSteps = await within(sidebar).findByRole('button', { name: /关键步骤/ });
+    const messageQueue = within(sidebar).getByRole('button', { name: /消息队列/ });
+    expect(criticalSteps).toHaveAttribute('aria-expanded', 'false');
+    expect(messageQueue).toHaveAttribute('aria-expanded', 'false');
+
+    const statusPanel = sidebar.querySelector('.agent-status-panel');
+    await user.click(within(sidebar).getByRole('button', { name: '收起任务中心' }));
+    expect(screen.queryByRole('complementary', { name: 'Session 工具侧栏' })).not.toBeInTheDocument();
+    const residentSidebar = document.querySelector('.paw-session-workspace__side');
+    expect(residentSidebar).toHaveAttribute('hidden');
+    expect(residentSidebar?.querySelector('.agent-status-panel')).toBe(statusPanel);
+
+    await user.click(screen.getByRole('button', { name: 'Session 工具' }));
+    await user.click(screen.getByRole('menuitem', { name: '任务与状态' }));
+    expect(document.querySelector('.paw-session-workspace__side .agent-status-panel')).toBe(statusPanel);
   });
 
   it('uses roving keyboard focus for the Session tools menu and restores the trigger on Escape', async () => {
@@ -352,6 +387,7 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(agentMigratedCss).toMatch(
       /\.paw-desktop-root \.paw-session-workspace\[data-panel='status'\] \.paw-session-workspace__body,\s*\.paw-desktop-root \.paw-session-workspace\[data-panel='subagents'\] \.paw-session-workspace__body,\s*\.paw-desktop-root \.paw-session-workspace\[data-panel='files'\] \.paw-session-workspace__body\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/s,
     );
+    expect(appsCss).not.toMatch(/\.paw-session-workspace__body\s*\{[^}]*transition:[^;}]*grid-template-columns/s);
   });
 
   it('reserves the stop-button slot and status width so a turn starting never shifts the chrome row', () => {
@@ -1105,6 +1141,75 @@ describe('PAWOS Agent Session structural migration', () => {
       sessionId,
       sourceRoute: `/agent?session=${sessionId}`,
       refs: { surface: 'session-workspace' },
+    });
+  });
+
+  it('offers an explicit workspace replacement instead of resync for a removed Session directory', async () => {
+    const sessionId = 'session-removed-workspace';
+    const transport = new StubControlTransport('native', {
+      'agent.session.snapshot': () => {
+        throw new ControlTransportHttpError(
+          'agent.session.snapshot',
+          409,
+          'session workspace is no longer available',
+          {
+            ok: false,
+            errorCode: 'session_workspace_missing',
+            retryable: false,
+            recovery: { action: 'select_workspace' },
+          },
+        );
+      },
+      'agent.session.models': {},
+      'agent.session.commands': {},
+      'agent.tools.list': {},
+      'agent.runtime.get': {},
+      'agent.session.mode.update': {
+        ok: true,
+        session: {
+          ...liveSession(),
+          id: sessionId,
+          workspaceRoots: ['/work/rebound'],
+        },
+      },
+    });
+    Object.assign(transport, {
+      pickFiles: vi.fn().mockResolvedValue([{
+        id: 'workspace-rebound',
+        name: 'rebound',
+        path: '/work/rebound',
+        mimeType: 'application/x-directory',
+        byteSize: 0,
+      }]),
+    });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{
+              ...liveSession(),
+              id: sessionId,
+              mode: 'coordinator',
+              workspaceRoots: ['/work/removed'],
+            }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '这个 Session 的工作目录已不存在',
+    );
+    expect(screen.queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '选择工作目录' }));
+    expect(transport.requests.find((request) => (
+      request.pathId === 'agent.session.mode.update'
+    ))).toMatchObject({
+      body: { workspaceRoots: ['/work/rebound'] },
     });
   });
 

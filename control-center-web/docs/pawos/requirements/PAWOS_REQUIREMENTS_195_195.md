@@ -1,6 +1,6 @@
 # PAWOS 用户需求账本 · UR-195
 
-> 导航：[UR-192–UR-194](PAWOS_REQUIREMENTS_192_194.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[用户逐字证据](PAWOS_REQUIREMENT_EVIDENCE.md)
+> 导航：[UR-192–UR-194](PAWOS_REQUIREMENTS_192_194.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[UR-196–UR-205](PAWOS_REQUIREMENTS_196_205.md)
 >
 > `current` 只表示当前控制语义，不表示实现完成。实施状态与证据见
 > [PAWOS_REQUIREMENT_STATUS.md](../PAWOS_REQUIREMENT_STATUS.md)。稳定编号、来源、修正关系和原话不得因拆卷而改写或丢失。
@@ -24,6 +24,6 @@
 
 ## 继续阅读 / 编辑
 
-- 下一份：[用户逐字证据](PAWOS_REQUIREMENT_EVIDENCE.md)
+- 下一份：[UR-196–UR-205](PAWOS_REQUIREMENTS_196_205.md)
 - 实施状态：[PAWOS_REQUIREMENT_STATUS.md](../PAWOS_REQUIREMENT_STATUS.md)
 - 总入口：[PAWOS_REQUIREMENTS.md](../PAWOS_REQUIREMENTS.md)

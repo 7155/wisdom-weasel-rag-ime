@@ -83,8 +83,25 @@ def _repair_trace(*, session_id: str = SESSION_ID, status: str = "completed") ->
     ).to_dict()
 
 
-def _snapshot(*, exit_code: int = 0, nested_fake: bool = False) -> dict[str, object]:
+def _snapshot(
+    *,
+    exit_code: int = 0,
+    nested_fake: bool = False,
+    sandboxed: bool = True,
+) -> dict[str, object]:
     result: dict[str, object] = {"exitCode": exit_code, "ok": exit_code == 0}
+    if sandboxed:
+        result.update(
+            {
+                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                "commandSha256": "a" * 64,
+                "networkAllowed": False,
+                "timedOut": False,
+                "outputLimited": False,
+                "sourceReadOnly": False,
+                "temporaryWritesDiscarded": False,
+            }
+        )
     if nested_fake:
         result["debug"] = {
             "eventType": "tool_finished",
@@ -167,6 +184,26 @@ class TraceRepairAuthorityTests(unittest.TestCase):
                         "repairTraceId": REPAIR_TRACE_ID,
                     }
                 )
+
+    def test_successful_test_without_host_sandbox_receipt_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service, _runtime = _service(
+                tmp,
+                _snapshot(sandboxed=False),
+                _repair_trace(),
+            )
+
+            evidence = service.record_trace_repair_test_evidence(
+                {
+                    "schemaVersion": "rag-ime.trace-repair-test-evidence.v1",
+                    "repairSessionId": SESSION_ID,
+                    "repairTraceId": REPAIR_TRACE_ID,
+                }
+            )["evidence"]
+
+            self.assertEqual(evidence["testStatus"], "blocked")
+            self.assertEqual(evidence["evidence"]["sandboxedCount"], 0)
+            self.assertTrue(evidence["evidence"]["sandboxRequired"])
 
     def test_cross_session_and_non_terminal_trace_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,114 @@
+.zhanggui-app {
+  --zhanggui-accent: #087f68;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-surface-base) 95%, #d9f5eb);
+}
+
+.zhanggui-app__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 66px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+}
+
+.zhanggui-app__identity,
+.zhanggui-app__header-actions,
+.zhanggui-app__session-note,
+.zhanggui-app__error,
+.zhanggui-app__loading {
+  display: flex;
+  align-items: center;
+}
+
+.zhanggui-app__identity { min-width: 0; gap: 10px; }
+.zhanggui-app__identity > span:last-child { display: grid; min-width: 0; }
+.zhanggui-app__identity small { color: var(--color-text-secondary); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.zhanggui-app h1 { margin: 0; font-size: 19px; line-height: 1.15; }
+.zhanggui-app__header-actions { gap: 7px; }
+.zhanggui-app__header-actions button,
+.zhanggui-app__session-note button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-raised);
+}
+.zhanggui-app__suite { padding: 5px 8px; border-radius: 999px; color: var(--zhanggui-accent); background: color-mix(in srgb, var(--zhanggui-accent) 11%, transparent); font-size: 11px; font-weight: 650; }
+
+.zhanggui-app__modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+.zhanggui-app__modes button { display: grid; gap: 1px; min-width: 0; padding: 8px 11px; border: 0; border-radius: 10px; text-align: left; color: var(--color-text-secondary); background: transparent; }
+.zhanggui-app__modes button[aria-selected='true'] { color: var(--zhanggui-accent); background: color-mix(in srgb, var(--zhanggui-accent) 10%, var(--color-surface-raised)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--zhanggui-accent) 30%, transparent); }
+.zhanggui-app__modes span { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__modes small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+.zhanggui-app__start {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+  min-height: 0;
+  padding: 30px clamp(18px, 6vw, 80px);
+  overflow: auto;
+}
+.zhanggui-app__mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: white; background: var(--zhanggui-accent); box-shadow: 0 14px 28px color-mix(in srgb, var(--zhanggui-accent) 22%, transparent); }
+.zhanggui-app__start-copy { max-width: 580px; text-align: center; }
+.zhanggui-app__start-copy small { color: var(--zhanggui-accent); font-weight: 700; }
+.zhanggui-app__start-copy h2 { margin: 4px 0 7px; font-size: clamp(22px, 4vw, 34px); letter-spacing: -.035em; }
+.zhanggui-app__start-copy p,
+.zhanggui-app__start > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
+.zhanggui-app__start > p { max-width: 660px; font-size: 11px; text-align: center; }
+.zhanggui-app__suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; }
+.zhanggui-app__suggestions button { padding: 7px 10px; border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-text-secondary); background: var(--color-surface-raised); font-size: 11px; }
+.zhanggui-app__source { display: flex; width: min(680px, 100%); align-items: center; justify-content: center; gap: 9px; color: var(--color-text-secondary); font-size: 11px; }
+.zhanggui-app__source button { display: inline-flex; flex: 0 0 auto; min-height: 31px; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--color-border-soft); border-radius: 9px; color: var(--zhanggui-accent); background: var(--color-surface-raised); }
+.zhanggui-app__source span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__start form { position: relative; width: min(680px, 100%); }
+.zhanggui-app__start textarea { box-sizing: border-box; width: 100%; min-height: 104px; padding: 15px 54px 15px 16px; resize: none; border: 1px solid color-mix(in srgb, var(--zhanggui-accent) 38%, var(--color-border-soft)); border-radius: 18px; outline: 0; color: var(--color-text-primary); background: var(--color-surface-raised); box-shadow: 0 16px 40px color-mix(in srgb, var(--zhanggui-accent) 8%, transparent); font: inherit; line-height: 1.55; }
+.zhanggui-app__start textarea:focus { border-color: var(--zhanggui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--zhanggui-accent) 14%, transparent), 0 16px 40px color-mix(in srgb, var(--zhanggui-accent) 8%, transparent); }
+.zhanggui-app__start form > button { position: absolute; right: 12px; bottom: 12px; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; color: white; background: var(--zhanggui-accent); }
+.zhanggui-app__start form > button:disabled { opacity: .42; }
+
+.zhanggui-app__session { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.zhanggui-app__session-note { justify-content: space-between; gap: 12px; padding: 6px 14px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--zhanggui-accent) 5%, transparent); font-size: 11px; }
+.zhanggui-app__session-note span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__session-note strong { margin-right: 8px; color: var(--zhanggui-accent); }
+.zhanggui-app__session > .paw-session-workspace { min-height: 0; }
+.zhanggui-app__error { gap: 7px; margin: 8px 12px 0; padding: 8px 10px; border-radius: 9px; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 8%, transparent); font-size: 12px; }
+.zhanggui-app__loading { justify-content: center; gap: 8px; color: var(--color-text-secondary); }
+
+.paw-extension-app-state { display: grid; place-content: center; justify-items: center; gap: 9px; width: 100%; height: 100%; padding: 24px; color: var(--color-text-secondary); text-align: center; }
+.paw-extension-app-state[role='alert'] { color: var(--color-danger); }
+
+@media (max-width: 700px) {
+  .zhanggui-app__header { align-items: flex-start; padding: 9px 11px; }
+  .zhanggui-app__header-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .zhanggui-app__suite { display: none; }
+  .zhanggui-app__header-actions button { padding: 0 8px; font-size: 10px; }
+  .zhanggui-app__modes { padding-inline: 8px; }
+  .zhanggui-app__start { padding-inline: 14px; }
+  .zhanggui-app__source { align-items: stretch; flex-direction: column; text-align: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zhanggui-app *, .zhanggui-app *::before, .zhanggui-app *::after { scroll-behavior: auto !important; }
+}

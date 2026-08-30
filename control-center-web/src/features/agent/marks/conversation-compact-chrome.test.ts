@@ -4,7 +4,9 @@ import agentCss from '../agent.css?raw';
 import workspaceCss from '../../../design/workspace.css?raw';
 import agentFxCss from '../../../paw-os/styles/paw-os-agent-fx.css?raw';
 import agentMigratedCss from '../../../paw-os/styles/paw-os-agent-migrated-v1.css?raw';
+import webModelCss from '../../../paw-os/styles/paw-os-webmodel-v1.css?raw';
 import marksCss from './conversation-marks.css?raw';
+import composerShellSource from '../../composer/ComposerShell.tsx?raw';
 import modelPickerSource from '../composer/ModelPicker.tsx?raw';
 import permissionPickerSource from '../composer/PermissionPicker.tsx?raw';
 import toolPickerSource from '../composer/ToolPicker.tsx?raw';
@@ -89,13 +91,16 @@ describe('conversation logo-first compact chrome', () => {
     expect(modelPickerSource).toContain('<LoaderCircle className="ui-spin" size={15} />');
   });
 
-  it('keeps narrow controls scrollable without restoring the retired full composer glow', () => {
+  it('keeps narrow controls scrollable and carries the busy gradient around the whole composer frame', () => {
     const narrowStep = agentCss.slice(
       agentCss.indexOf('@container paw-composer-toolbar (max-width: 360px)'),
     );
     expect(narrowStep).toMatch(/\.agent-composer__controls\s*\{[^}]*overflow-x:\s*auto;/s);
-    expect(agentMigratedCss).not.toContain('conic-gradient');
-    expect(agentMigratedCss).not.toContain('paw-composer-glow');
-    expect(agentCss).toMatch(/\.agent-composer\[data-busy\]::before\s*\{[^}]*height:\s*2px;/s);
+    expect(composerShellSource).toContain('className="agent-composer__busy-frame"');
+    expect(agentCss).not.toContain('.agent-composer[data-busy]::before');
+    expect(agentCss).toMatch(/\.agent-composer__busy-frame\s*\{[^}]*inset:\s*-2px;[^}]*padding:\s*2px;[^}]*mask-composite:\s*exclude;/s);
+    expect(agentCss).toMatch(/\.agent-composer__busy-frame\s*>\s*i\s*\{[^}]*linear-gradient[^}]*animation:\s*agent-composer-busy-flow\s+2\.6s\s+linear\s+infinite;/s);
+    expect(agentCss).toMatch(/@keyframes agent-composer-busy-flow\s*\{[^}]*transform:\s*translate3d\([^}]*\}[^}]*transform:\s*translate3d\(/s);
+    expect(webModelCss).not.toMatch(/\.agent-composer::before[\s\S]{0,120}display:\s*none/);
   });
 });

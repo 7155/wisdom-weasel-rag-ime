@@ -96,13 +96,16 @@
 /* Direct children only: the Room titlebar also docks App chrome inside the
    cluster, and that control is not a traffic light. */
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button {
+  background: transparent;
+}
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button::before {
   border-color: rgb(42 28 0 / .12);
   box-shadow: 0 1px 1px rgb(42 28 0 / .08) inset;
 }
 
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(1) { background: #ff5f57; }
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(2) { background: #febc2e; }
-.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(3) { background: #28c840; }
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(1)::before { background: #ff5f57; }
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(2)::before { background: #febc2e; }
+.paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights > button:nth-child(3)::before { background: #28c840; }
 
 .paw-desktop-root .paw-window-titlebar[data-window-chrome='room-workspace'] .paw-traffic-lights:not(:hover) > button {
   color: transparent;
@@ -889,49 +892,7 @@
   line-height: 1.58;
 }
 
-/* Real source/path/arrival rhythm and a compact chronological focus ledger. */
-.paw-desktop-root .paw-room-window-flow {
-  z-index: 34;
-  filter: none;
-}
-
-.paw-desktop-root .paw-room-window-flow__base {
-  stroke: color-mix(in srgb, var(--paw-accent) 17%, transparent);
-  stroke-width: 1.2;
-  stroke-dasharray: 3 7;
-  opacity: .52;
-}
-
-.paw-desktop-root .paw-room-window-flow__live {
-  stroke-width: 2;
-  filter: none;
-}
-
-.paw-desktop-root .paw-room-window-flow__label {
-  fill: var(--paw-accent);
-  stroke: rgb(255 255 255 / .9);
-  stroke-width: 4px;
-  paint-order: stroke fill;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  opacity: 0;
-  animation: paw-room-flow-label 920ms cubic-bezier(.2, .8, .2, 1) both;
-}
-
-.paw-desktop-root .paw-room-window-flow g:is([data-kind='request'], [data-kind='intercom']) { --paw-accent: var(--room-flow-request); }
-.paw-desktop-root .paw-room-window-flow g[data-kind='question'] { --paw-accent: var(--room-flow-question); }
-.paw-desktop-root .paw-room-window-flow g[data-kind='answer'] { --paw-accent: var(--room-flow-answer); }
-.paw-desktop-root .paw-room-window-flow g[data-kind='result'] { --paw-accent: var(--room-flow-result); }
-.paw-desktop-root .paw-room-window-flow g[data-kind='context'] { --paw-accent: var(--room-flow-context); }
-.paw-desktop-root .paw-room-window-flow g[data-kind='dispatch'] { --paw-accent: var(--room-flow-dispatch); }
-.paw-desktop-root .paw-room-window-flow g[data-kind='approval'] { --paw-accent: var(--room-flow-approval); }
-
-@keyframes paw-room-flow-label {
-  0%, 12%, 100% { opacity: 0; transform: translateY(3px); }
-  28%, 76% { opacity: 1; transform: translateY(0); }
-}
-
+/* Communication stays in one compact chronological focus ledger. */
 .paw-desktop-root .paw-room-window-flow-ledger {
   position: absolute;
   z-index: 45;
@@ -1124,7 +1085,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .paw-desktop-root .paw-room-window-flow__label { display: none; }
   .paw-desktop-root .paw-room-focus-modebar i { animation: none; }
   .paw-desktop-root .paw-room-window-chrome .paw-room-workspace__runtime i { animation: none; }
   .paw-desktop-root .paw-room-workspace__focus { transition-duration: 1ms; }

@@ -49,6 +49,8 @@ export interface TraceDiagnosticInspectionV1 {
    * @maxItems 512
    */
   evidence: Evidence[];
+  requirements?: Requirements;
+  environment?: Environment;
   scorecard: Scorecard;
   truncated: {
     timeline: boolean;
@@ -87,6 +89,237 @@ export interface Evidence {
   summary: string;
   createdAtMs: number;
   traceId: string;
+}
+export interface Requirements {
+  source: 'user_input' | 'work_item' | 'eval' | 'unknown';
+  /**
+   * @maxItems 100
+   */
+  items: Requirement[];
+  truncated: boolean;
+}
+export interface Requirement {
+  requirementId: string;
+  statement: string;
+  targetKey: string;
+  sourceRef: string;
+  /**
+   * @minItems 1
+   * @maxItems 16
+   */
+  evidenceIds:
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+}
+export interface Environment {
+  capturedAtMs: number;
+  rubricVersion: string;
+  /**
+   * @minItems 1
+   * @maxItems 12
+   */
+  targets:
+    | [EnvironmentTarget]
+    | [EnvironmentTarget, EnvironmentTarget]
+    | [EnvironmentTarget, EnvironmentTarget, EnvironmentTarget]
+    | [EnvironmentTarget, EnvironmentTarget, EnvironmentTarget, EnvironmentTarget]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ]
+    | [
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+        EnvironmentTarget,
+      ];
+  /**
+   * @maxItems 32
+   */
+  limitations: string[];
+}
+export interface EnvironmentTarget {
+  targetKey: string;
+  sourceSha256: string;
+  modelProfile: string;
+  toolProfileVersion: string;
+  executionMode: string;
+  policyRevision: number | null;
+  workspaceScopeSha256: string;
+  shellPolicyVersion: string;
+  runtimeKind: string;
+  runtimeGeneration: number | null;
+  /**
+   * @maxItems 32
+   */
+  traceInputFingerprints: string[];
+  /**
+   * @maxItems 32
+   */
+  traceStatuses: string[];
 }
 export interface Scorecard {
   rubricVersion: 'trace-score-v1';

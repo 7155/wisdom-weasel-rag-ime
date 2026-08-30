@@ -345,6 +345,7 @@ export function PawAgentApp({
           />
         ) : selection.kind === 'session' ? (
           <PawSessionWorkspace
+            active={surface?.active ?? true}
             key={`session:${selection.id}`}
             initialDraft={selection.draft}
             persona={personas.find((item) => item.roleId === sessions.find((session) => session.id === selection.id)?.roleId)}
@@ -364,6 +365,7 @@ export function PawAgentApp({
           />
         ) : selection.kind === 'room' ? (
           <PawRoomWorkspace
+            active={surface?.active ?? true}
             initialDraft={selection.draft}
             initialError={selection.error}
             key={`room:${selection.id}`}

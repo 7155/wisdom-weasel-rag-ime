@@ -852,6 +852,80 @@ class AgentRoomServiceTests(unittest.TestCase):
             )
         self.assertEqual(self.service.list_sessions()["items"], [])
 
+    def test_room_rejects_a_removed_workspace_before_creating_participant_sessions(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "workspaceRoots contains a directory that no longer exists",
+        ):
+            self.service.create_room(
+                {
+                    "title": "不能创建幽灵工作区 Room",
+                    "workspaceRoots": [
+                        str(self.root / "removed-workspace")
+                    ],
+                    "participants": [
+                        {"roleId": "companion-present-v1", "roleVersion": "1"},
+                        {"roleId": "companion-future-v1", "roleVersion": "1"},
+                    ],
+                }
+            )
+        self.assertEqual(self.service.list_sessions()["items"], [])
+        self.assertEqual(self.service.list_rooms()["items"], [])
+
+    def test_idle_room_can_replace_a_removed_workspace_for_every_participant(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "可恢复工作目录 Room",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        missing = self.root / "removed-workspace"
+        with self.assertRaisesRegex(
+            ValueError,
+            "workspaceRoots contains a directory that no longer exists",
+        ):
+            self.service.update_room(
+                str(room["id"]),
+                {
+                    "workspaceRoots": [str(missing)],
+                    "workspaceScopeConfirmation": "APPROVE_WORKSPACE_SCOPE",
+                },
+            )
+
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        resolved_replacement = str(replacement.resolve())
+        updated = self.service.update_room(
+            str(room["id"]),
+            {
+                "workspaceRoots": [str(replacement)],
+                "workspaceScopeConfirmation": "APPROVE_WORKSPACE_SCOPE",
+            },
+        )["room"]
+        self.assertEqual(updated["workspaceRoots"], [resolved_replacement])
+        participant_sessions = [
+            self.service.sessions.get(str(participant["sessionId"]))
+            for participant in updated["participants"]
+            if participant["status"] == "active"
+        ]
+        self.assertTrue(participant_sessions)
+        self.assertTrue(
+            all(
+                session["workspaceRoots"] == [resolved_replacement]
+                for session in participant_sessions
+            )
+        )
+        self.assertTrue(
+            all(
+                session["workspaceScopeGranted"] is True
+                for session in participant_sessions
+            )
+        )
+
     def test_existing_room_can_add_future_without_replaying_old_history(self) -> None:
         room = self.service.create_room(
             {

@@ -12,7 +12,7 @@ pack; verify the actual merge commit before treating them as the current baselin
 | File | Role |
 | --- | --- |
 | `control-center-web/CLOUD_MODEL.md` | GitHub-only start file; read first |
-| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-195` in thirteen volumes, corrections, verbatim evidence |
+| `control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md` | Complete ledger `UR-001`–`UR-207` in sixteen volumes, corrections, verbatim evidence |
 | `control-center-web/docs/pawos/PAWOS_FRONTEND_HISTORY.md` | Historical Agent/Room `AUI-*`/`RUI-*` receipts and open boundaries |
 | `control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md` | This file: `PF-CM-*`, eleven-App spec, completion gate |
 | `control-center-web/PAWOS_FRONTEND_CONTINUATION.md` | 2026-08-24 checkpoint of what landed and what remains |

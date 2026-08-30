@@ -3,13 +3,25 @@ import { lazy, Suspense } from 'react';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import type { PawAppId } from '../runtime/app-registry';
 import { pawApp } from '../runtime/app-registry';
-import { PawAgentApp } from './PawAgentApp';
-import { PawBrowserApp } from './PawBrowserApp';
-import { PawNativeApp, type PawNativeAppId } from './PawNativeApps';
-import { PawOsSatelliteHost } from '@/features/paw-os/PawOsSatelliteHost';
-import { PawResultWindow } from '@/features/paw-os/PawResultWindow';
+import { isPawExtensionAppId } from '../extensions/registry';
+import { PawExtensionAppHost } from '../extensions/ExtensionAppHost';
 import { PawAppIcon } from '../shell/PawAppIcon';
 import './paw-apps.css';
+
+type PawNativeAppId = Extract<PawAppId,
+  | 'project-workbench'
+  | 'memory'
+  | 'knowledge'
+  | 'input-studio'
+  | 'app-center'
+  | 'system-monitor'
+  | 'system-settings'>;
+
+const PawAgentApp = lazy(() => import('./entries/PawAgentAppEntry'));
+const PawBrowserApp = lazy(() => import('./entries/PawBrowserAppEntry'));
+const PawNativeApp = lazy(() => import('./entries/PawNativeAppEntry'));
+const PawOsSatelliteHost = lazy(() => import('./entries/PawSatelliteEntry'));
+const PawResultWindow = lazy(() => import('./entries/PawResultWindowEntry'));
 
 const FilesApp = lazy(async () => ({
   default: (await import('@/features/files/PawOsFilesApp')).PawOsFilesApp,
@@ -52,6 +64,9 @@ function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, ta
     || target?.kind === 'task'
     || target?.kind === 'package'
   ) return <PawOsSatelliteHost target={target} />;
+  if (isPawExtensionAppId(appId)) {
+    return <PawExtensionAppHost appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />;
+  }
   switch (appId) {
     case 'agent':
       return <PawAgentApp initialRoute={initialRoute} target={target ?? (entityId ? { kind: 'session', id: entityId, title: entityId } : undefined)} />;

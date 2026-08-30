@@ -9,6 +9,8 @@
     "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
     "hardGates": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/gate"}},
     "judgeScores": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/judge"}},
+    "requirementAssessments": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/requirementAssessment"}},
+    "causalLinks": {"type": "array", "maxItems": 120, "items": {"$ref": "#/$defs/causalLink"}},
     "findings": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/finding"}}
   },
   "$defs": {
@@ -33,6 +35,31 @@
         "authority": {"const": "ai_judge_estimate"},
         "explanation": {"type": "string", "maxLength": 1600},
         "evidenceIds": {"$ref": "#/$defs/evidenceIds"}
+      }
+    },
+    "requirementAssessment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requirementId", "status", "owner", "authority", "evidenceIds", "note"],
+      "properties": {
+        "requirementId": {"type": "string", "minLength": 1, "maxLength": 640},
+        "status": {"enum": ["satisfied", "partial", "unsatisfied", "unverified"]},
+        "owner": {"type": "string", "maxLength": 240},
+        "authority": {"const": "ai_judge_estimate"},
+        "evidenceIds": {"$ref": "#/$defs/evidenceIds"},
+        "note": {"type": "string", "maxLength": 1600}
+      }
+    },
+    "causalLink": {
+      "type": "object", "additionalProperties": false,
+      "required": ["linkId", "fromEvidenceId", "toEvidenceId", "relation", "authority", "confidence", "explanation"],
+      "properties": {
+        "linkId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "fromEvidenceId": {"type": "string", "minLength": 1, "maxLength": 640},
+        "toEvidenceId": {"type": "string", "minLength": 1, "maxLength": 640},
+        "relation": {"enum": ["triggered", "delegated", "responded_to", "returned", "verified", "caused", "recovered"]},
+        "authority": {"const": "ai_judge_estimate"},
+        "confidence": {"enum": ["high", "medium", "low", "unknown"]},
+        "explanation": {"type": "string", "maxLength": 1600}
       }
     },
     "finding": {

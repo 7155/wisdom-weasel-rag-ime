@@ -51,6 +51,8 @@ simple coherent work needs no workflow Skill.
 - `bootstrap-project-context`: a project-bound Session has no root `AGENTS.md`,
   or the user explicitly requests project context initialization. It creates a
   stable docs entrypoint and never records live Session or WorkItem state.
+- `pawos-app-builder`: the user asks PAWOS to self-build, sandbox, install, or
+  evolve a source-isolated vertical Extension App and its App-specific Skill.
 
 Read a Skill body only after its trigger matches. A Partner or Tool Agent uses
 the same task Skills as a standalone Session; Room does not define a second

@@ -83,6 +83,7 @@ export interface Item {
    * @maxItems 32
    */
   traceIds: string[];
+  repairState?: 'not_recorded' | 'authorized' | 'verified' | 'failed';
   failureReason: string;
   createdAtMs: number;
   updatedAtMs: number;

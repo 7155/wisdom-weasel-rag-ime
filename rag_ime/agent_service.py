@@ -718,6 +718,13 @@ class AgentService:
                 self._recent_room_public_messages_for_session
             ),
         )
+        # Report persistence is a backend lifecycle responsibility. The Trace
+        # page may be unmounted while the read-only diagnostic Session
+        # finishes, so a terminal Runtime event must reconcile the bound
+        # report without relying on a browser poller.
+        self._remove_trace_diagnostic_observer = self.events.add_observer(
+            self._observe_trace_diagnostic_terminal_event
+        )
         self.room_management = RoomManagementService(
             rooms=self.rooms,
             sessions=self.sessions,
@@ -729,6 +736,7 @@ class AgentService:
             delete_session=lambda session_id: (
                 self.delete_session(session_id)
             ),
+            close_session=self._close_runtime_session,
             runtime_status=lambda: self.runtime_status(),
             release_room_work=lambda room_id, participant_id, replacement_id, reason: (
                 self.room_work.release_for_participant(
@@ -746,6 +754,11 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
+
+    def _close_runtime_session(self, session_id: str) -> None:
+        close_session = getattr(self.runtime, "close_session", None)
+        if callable(close_session):
+            close_session(session_id)
 
     def bind_approval_executor(
         self,
@@ -3867,6 +3880,17 @@ class AgentService:
                 raise ValueError("Trace diagnostic Eval items must be objects")
             return list(items)
 
+        def environment_reader(kind: str, identifier: str) -> Mapping[str, object] | None:
+            # Only the Session store owns these policy/runtime facts. Room and
+            # standalone run targets remain explicitly partial instead of
+            # inheriting the current machine's environment by accident.
+            if kind != "session":
+                return None
+            try:
+                return self.sessions.get(identifier)
+            except KeyError:
+                return None
+
         return inspect_trace_targets(
             targets=targets,
             session_reader=self.messages,
@@ -3874,6 +3898,7 @@ class AgentService:
             observation_reader=self.observation_snapshot,
             trace_reader=trace_reader,
             eval_reader=eval_reader,
+            environment_reader=environment_reader,
         )
 
     def create_trace_diagnostic_report(
@@ -3959,11 +3984,132 @@ class AgentService:
                 reason="结构化诊断报告引用了不属于冻结范围的证据。",
             )
 
+    def _observe_trace_diagnostic_terminal_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> None:
+        if event.event_type not in {"turn_completed", "turn_failed"}:
+            return
+        report = self.trace_diagnostic_reports.for_diagnostic_session(
+            event.session_id
+        )
+        if report is None or report.get("status") != "generating":
+            return
+        self.finalize_trace_diagnostic_report(
+            str(report["reportId"]),
+            {"expectedRevision": int(report["revision"])},
+        )
+
+    def _reconcile_trace_diagnostic_report(
+        self,
+        report: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Recover a terminal result left generating by an older frontend.
+
+        A plain idle Session is not enough: report creation briefly precedes
+        the first prompt. Lazy reconciliation therefore requires either a
+        terminal failure status or a complete structured envelope.
+        """
+
+        if report.get("status") != "generating":
+            return dict(report)
+        session_id = str(report.get("diagnosticSessionId") or "")
+        session = self.sessions.get(session_id)
+        failure_statuses = {
+            "faulted",
+            "failed",
+            "error",
+            "cancelled",
+            "canceled",
+        }
+        session_status = str(session.get("status") or "")
+        if session_status in failure_statuses:
+            return self.finalize_trace_diagnostic_report(
+                str(report["reportId"]),
+                {"expectedRevision": int(report["revision"])},
+            )
+        if session_status not in {"idle", "archived"}:
+            return dict(report)
+        snapshot = self.messages(session_id)
+        try:
+            extract_trace_diagnostic_result(snapshot)
+        except ValueError:
+            return dict(report)
+        return self.finalize_trace_diagnostic_report(
+            str(report["reportId"]),
+            {"expectedRevision": int(report["revision"])},
+        )
+
+    def authorize_trace_diagnostic_repair(
+        self,
+        report_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Persist a user-approved repair handoff, never write authority."""
+
+        expected_revision = _trace_diagnostic_expected_revision(payload)
+        repair_session_id = _required_text(payload, "repairSessionId")
+        repair_session = self.sessions.get(repair_session_id)
+        if str(repair_session.get("executionMode") or "") != "full_trust":
+            raise ValueError("Trace diagnostic repair handoff requires full_trust mode")
+        return self.trace_diagnostic_reports.authorize_repair(
+            report_id,
+            expected_revision=expected_revision,
+            finding_id=_required_text(payload, "findingId"),
+            source_scope=_required_text(payload, "sourceScope"),
+            source_trace_id=_required_text(payload, "sourceTraceId"),
+            failure_ref=_required_text(payload, "failureRef"),
+            repair_session_id=repair_session_id,
+        )
+
+    def verify_trace_diagnostic_repair(
+        self,
+        report_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Link an immutable repair receipt and Runtime-owned Eval to a report."""
+
+        expected_revision = _trace_diagnostic_expected_revision(payload)
+        receipt_id = _required_text(payload, "repairReceiptId")
+        receipt_result = self.get_trace_repair_receipt(receipt_id)
+        receipt = receipt_result.get("receipt")
+        if not isinstance(receipt, Mapping):
+            raise ValueError("Trace repair receipt projection is invalid")
+        recheck = self.recheck_trace_repair(
+            {
+                "schemaVersion": "rag-ime.trace-repair-recheck-request.v1",
+                "repairReceiptId": receipt_id,
+            }
+        )
+        eval_run = recheck.get("evalRun")
+        if not isinstance(eval_run, Mapping):
+            raise ValueError("Trace repair recheck did not return an EvalRun")
+        report = self.trace_diagnostic_reports.get(report_id)
+        if report is None:
+            raise KeyError(report_id)
+        source_trace = self.trace_store.get(str(receipt.get("sourceTraceId") or ""))
+        repair_trace = self.trace_store.get(str(receipt.get("repairTraceId") or ""))
+        if source_trace is None or repair_trace is None:
+            raise ValueError("Trace diagnostic comparison requires persisted source and repair Traces")
+        comparison = _trace_diagnostic_repair_comparison(
+            report=report,
+            source_trace=source_trace,
+            repair_trace=repair_trace,
+            eval_run=eval_run,
+        )
+        return self.trace_diagnostic_reports.verify_repair(
+            report_id,
+            expected_revision=expected_revision,
+            receipt=receipt,
+            eval_run=eval_run,
+            comparison=comparison,
+        )
+
     def trace_diagnostic_report(self, report_id: str) -> dict[str, object]:
         report = self.trace_diagnostic_reports.get(report_id)
         if report is None:
             raise KeyError(report_id)
-        return report
+        return self._reconcile_trace_diagnostic_report(report)
 
     def list_trace_diagnostic_reports(
         self,
@@ -4602,6 +4748,13 @@ class AgentService:
             raise TraceRepairValidationError("change evidence has no completed mutating Tool")
         if str(canonical_test.get("status") or "") != "passed":
             raise TraceRepairValidationError("test evidence is not passed")
+        if (
+            canonical_test.get("sandboxRequired") is not True
+            or int(canonical_test.get("sandboxedCount") or 0) < 1
+        ):
+            raise TraceRepairValidationError(
+                "test evidence has no Host-owned sandbox execution"
+            )
         receipt = store.persist_receipt(
             source_scope=source_scope,
             source_trace_id=source_trace_id,
@@ -5000,6 +5153,7 @@ class AgentService:
         self.delegation.close()
         self.runtime.stop()
         self.background_jobs.close()
+        self._remove_trace_diagnostic_observer()
         self.events.close()
         self._remove_observation_room_observer()
         self._remove_room_partner_observer()
@@ -5532,6 +5686,76 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
+
+
+def _trace_diagnostic_expected_revision(payload: Mapping[str, object]) -> int:
+    value = payload.get("expectedRevision")
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1_000_000:
+        raise ValueError("Trace diagnostic repair lifecycle requires expectedRevision")
+    return value
+
+
+def _trace_diagnostic_repair_comparison(
+    *,
+    report: Mapping[str, object],
+    source_trace: Mapping[str, object],
+    repair_trace: Mapping[str, object],
+    eval_run: Mapping[str, object],
+) -> dict[str, object]:
+    def fingerprint(trace: Mapping[str, object]) -> str:
+        raw_input = trace.get("input")
+        value = str(raw_input.get("fingerprint") or "") if isinstance(raw_input, Mapping) else ""
+        return value if re.fullmatch(r"sha256:[a-f0-9]{64}", value) else ""
+
+    def numeric_metrics(raw: object) -> dict[str, float]:
+        if not isinstance(raw, Mapping):
+            return {}
+        result: dict[str, float] = {}
+        for key, value in list(raw.items())[:64]:
+            if not isinstance(key, str) or not key or len(key) > 160:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            number = float(value)
+            if math.isfinite(number):
+                result[key] = number
+        return result
+
+    before: dict[str, float] = {}
+    inspection = report.get("inspection")
+    scorecard = inspection.get("scorecard") if isinstance(inspection, Mapping) else None
+    dimensions = scorecard.get("dimensions") if isinstance(scorecard, Mapping) else None
+    if isinstance(dimensions, list):
+        for item in dimensions:
+            if not isinstance(item, Mapping):
+                continue
+            identifier = str(item.get("dimensionId") or "")
+            score = item.get("score")
+            if identifier and isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(float(score)):
+                before[identifier] = float(score)
+    after = numeric_metrics(eval_run.get("metrics"))
+    source_fingerprint = fingerprint(source_trace)
+    repair_fingerprint = fingerprint(repair_trace)
+    if not source_fingerprint or not repair_fingerprint:
+        status = "unknown"
+        reason = "至少一条 Trace 缺少 input fingerprint，不能判断修复前后是否可比。"
+    elif source_fingerprint != repair_fingerprint:
+        status = "incomparable"
+        reason = "输入 fingerprint 不同，只能并列展示，不能声称效果提升。"
+    else:
+        status = "incomparable"
+        reason = "输入 fingerprint 一致，但缺少同一 Eval suite/rubric 与环境快照的修复前基线，不能计算差值。"
+    return {
+        "status": status,
+        "reason": reason,
+        "sourceStatus": str(source_trace.get("status") or "")[:80],
+        "repairStatus": str(repair_trace.get("status") or "")[:80],
+        "sourceFingerprint": source_fingerprint,
+        "repairFingerprint": repair_fingerprint,
+        "beforeMetrics": before,
+        "afterMetrics": after,
+        "deltas": {},
+    }
 
 
 _TRACE_DIAGNOSTIC_TARGET_FIELDS = frozenset(

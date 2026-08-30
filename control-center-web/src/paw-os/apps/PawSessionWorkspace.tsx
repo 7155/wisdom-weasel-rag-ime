@@ -39,6 +39,7 @@ import {
   isAmbiguousAgentPromptFailure,
   isUnresolvedAgentCommandPending,
   publicAgentErrorText,
+  SESSION_WORKSPACE_MISSING_TEXT,
 } from '@/features/agent/public-error';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { pulsePawCompositionForRuntimeEvent } from '../runtime/composition-pulse';
@@ -118,6 +119,7 @@ export function sessionWorkspaceProjectionSlice(
 }
 
 export function PawSessionWorkspace({
+  active = true,
   persona,
   record,
   recordId,
@@ -128,6 +130,7 @@ export function PawSessionWorkspace({
   onSessionUpdated,
   traceFocusNodeId = '',
 }: {
+  active?: boolean;
   persona?: AgentPersonaV1;
   record?: SessionSummary;
   recordId: string;
@@ -159,6 +162,7 @@ export function PawSessionWorkspace({
   const [stopping, setStopping] = useState(false);
   const [modelChanging, setModelChanging] = useState(false);
   const [panel, setPanel] = useState<WorkbenchPanel>('none');
+  const [statusPanelVisited, setStatusPanelVisited] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(traceFocusNodeId ? 'trace' : 'conversation');
   const [error, setError] = useState('');
@@ -192,6 +196,7 @@ export function PawSessionWorkspace({
   useEffect(() => {
     setWorkspaceView(traceFocusNodeId ? 'trace' : 'conversation');
     setPanel('none');
+    setStatusPanelVisited(false);
     setToolMenuOpen(false);
   }, [recordId, traceFocusNodeId]);
 
@@ -935,6 +940,8 @@ export function PawSessionWorkspace({
       const updated = asSession(response.session);
       if (updated) onSessionUpdated(updated);
       await loadControlCatalog();
+      await loadSnapshot(true);
+      setError('');
     } catch (reason) { setError(errorText(reason)); }
   }
 
@@ -1094,6 +1101,7 @@ export function PawSessionWorkspace({
   }
 
   function openToolPanel(next: Exclude<WorkbenchPanel, 'none'>): void {
+    if (next === 'status') setStatusPanelVisited(true);
     setPanel(next);
     closeToolMenu(true);
   }
@@ -1228,7 +1236,7 @@ export function PawSessionWorkspace({
                   component renders an immersive fullscreen overlay; Esc or
                   its exit control returns to the conversation. */}
               {workspaceView === 'starfield' ? <LazyPawSessionStarfield
-                active
+                active={active && workspaceView === 'starfield'}
                 busy={busy}
                 sessionId={recordId}
                 sessionTitle={title}
@@ -1253,7 +1261,11 @@ export function PawSessionWorkspace({
               <div className="paw-session-workspace__error" role="alert">
                 <CircleAlert size={14} />
                 <span>{error}</span>
-                <button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button>
+                {error === SESSION_WORKSPACE_MISSING_TEXT ? (
+                  <button onClick={() => void manageWorkspaceRoots()} type="button">选择工作目录</button>
+                ) : (
+                  <button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button>
+                )}
                 <TraceAgentHandoffButton
                   handoff={{
                     kind: 'session',
@@ -1326,10 +1338,13 @@ export function PawSessionWorkspace({
 
         {/* 工具侧栏是一层浮卡：只覆盖在消息流之上，绝不挤压对话列。
             在浮层内按 Esc 关闭并把焦点还给“Session 工具”触发钮。 */}
-        {panel !== 'none' ? <aside
+        {panel !== 'none' || statusPanelVisited ? <aside
+          aria-hidden={panel === 'none' || undefined}
           className="paw-session-workspace__side"
           aria-label="Session 工具侧栏"
           data-tool={panel}
+          hidden={panel === 'none'}
+          inert={panel === 'none' ? true : undefined}
           onKeyDown={(event) => {
             if (event.key !== 'Escape') return;
             event.stopPropagation();
@@ -1368,7 +1383,9 @@ export function PawSessionWorkspace({
             <AgentStatusPanel
               sessionId={recordId}
               session={record}
-              open
+              keepContentMounted
+              open={panel === 'status'}
+              surfaceActive={active && panel === 'status'}
               minimal
               commands={commands}
               tools={tools}
@@ -1476,9 +1493,16 @@ function timelineOwnsTurnFailure(
 
 function latestActiveTurnId(projection?: AgentProjectionState): string {
   if (!projection) return '';
+  /* The newest visible turn is a terminal fence. An older turn can retain a
+     stale running flag after recovery, but it must never revive the composer,
+     stop button or planet once a later turn has completed. Keep this aligned
+     with the canonical Agent surface instead of scanning backward for any
+     historical active status. */
   for (let index = projection.turnOrder.length - 1; index >= 0; index -= 1) {
     const turnId = projection.turnOrder[index] ?? '';
-    if (['queued', 'running', 'waiting'].includes(projection.turnsById[turnId]?.status)) return turnId;
+    const turn = projection.turnsById[turnId];
+    if (!turn || (turn.messageIds.length === 0 && turn.activityIds.length === 0)) continue;
+    return ['queued', 'running', 'waiting'].includes(turn.status) ? turnId : '';
   }
   return '';
 }

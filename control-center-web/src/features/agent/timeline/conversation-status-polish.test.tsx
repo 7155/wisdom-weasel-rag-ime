@@ -44,6 +44,37 @@ describe('conversation status polish', () => {
     expect(container.querySelector('.agent-assistant-pending')).not.toBeInTheDocument();
   });
 
+  it('keeps the live planet row after the newest visible work instead of pinning it above the steps', () => {
+    const sessionId = 'session-status-polish';
+    const turnId = 'turn-status-polish';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [{
+        ...agentEventFixture(1, 'tool_finished', {
+          toolCallId: 'call-latest',
+          toolName: 'shell',
+          result: { ok: true },
+        }),
+        eventId: `${sessionId}:1`,
+        sessionId,
+        turnId,
+      }],
+      lastSequence: 1,
+      resumeToken: `${sessionId}:1`,
+      status: 'busy',
+      partial: true,
+    });
+
+    const { container } = render(
+      <AgentTurn presentation="fx" sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+    const work = container.querySelector('.agent-turn-work')!;
+    const pending = container.querySelector('.agent-assistant-pending')!;
+    expect(work).toBeInTheDocument();
+    expect(pending).toBeInTheDocument();
+    expect(work.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('keeps ordinary and PAWOS thinking states content-sized without a card surface', () => {
     expect(agentCss).toMatch(/\.agent-assistant-pending \{[^}]*display: inline-flex;/);
     expect(agentCss).toMatch(/\.agent-assistant-pending \{[^}]*width: fit-content;/);
@@ -65,6 +96,14 @@ describe('conversation status polish', () => {
     expect(agentCss).toContain("@media (prefers-reduced-motion: reduce)");
     expect(agentCss).toMatch(/\.agent-compaction-notice\[data-state='running'\] \.agent-compaction-notice__fold > i \{ animation: none; \}/);
     expect(agentCss).not.toMatch(/\.agent-compaction-notice[^}]*transition:\s*all/);
+  });
+
+  it('keeps both streaming sweeps on compositor transforms instead of repainting backgrounds', () => {
+    expect(agentCss).toMatch(/\.agent-markdown__active-tail::after\s*\{[^}]*width:\s*calc\(200% \+ 14px\);[^}]*will-change:\s*transform;/s);
+    expect(agentCss).toMatch(/@keyframes agent-tail-shimmer\s*\{[^}]*transform:\s*translate3d\(0,[^}]*\}[^}]*transform:\s*translate3d\(-50%,/s);
+    expect(agentCss).toMatch(/\.agent-code-block\[data-streaming\] > figcaption::after\s*\{[^}]*width:\s*200%;[^}]*will-change:\s*transform;/s);
+    expect(agentCss).toMatch(/@keyframes agent-code-stream-sweep\s*\{[^}]*transform:\s*translate3d\(0,[^}]*\}[^}]*transform:\s*translate3d\(-50%,/s);
+    expect(agentCss).not.toMatch(/@keyframes (?:agent-tail-shimmer|agent-code-stream-sweep)[^@]*background-position/s);
   });
 
   it('keeps terminal failures as a compact recoverable inline notice', () => {

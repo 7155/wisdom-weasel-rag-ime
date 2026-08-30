@@ -14,6 +14,8 @@ export type PawContextMenuItem = {
   action: () => void;
 };
 
+export type PawContextMenuCloseReason = 'action' | 'keyboard' | 'pointer' | 'blur';
+
 /* Menus measure themselves after mount instead of trusting a size estimate:
  * the real box decides the clamp, and near the bottom edge the menu flips to
  * open upward from the anchor like a native menu. The entrance rises from the
@@ -31,7 +33,7 @@ export function PawContextMenu({
   anchor?: { readonly current: HTMLElement | null };
   ariaLabel: string;
   items: readonly PawContextMenuItem[];
-  onClose: () => void;
+  onClose: (reason: PawContextMenuCloseReason) => void;
   /* macOS menu-bar behaviour: ArrowLeft/ArrowRight walk to the neighbouring
    * menu while one is open. Only menu-bar menus pass this; context menus
    * keep the arrows for future submenu use. */
@@ -68,9 +70,9 @@ export function PawContextMenu({
     const dismiss = (event: PointerEvent) => {
       const target = event.target as Node;
       if (menu?.contains(target) || anchor?.current?.contains(target)) return;
-      onClose();
+      onClose('pointer');
     };
-    const blur = () => onClose();
+    const blur = () => onClose('blur');
     window.addEventListener('pointerdown', dismiss);
     window.addEventListener('blur', blur);
     return () => {
@@ -86,7 +88,8 @@ export function PawContextMenu({
     const current = enabled.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === 'Escape' || event.key === 'Tab') {
       event.preventDefault();
-      onClose();
+      event.stopPropagation();
+      onClose('keyboard');
       return;
     }
     if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && onHorizontalNavigate) {
@@ -132,7 +135,7 @@ export function PawContextMenu({
             disabled={item.disabled}
             onClick={() => {
               item.action();
-              onClose();
+              onClose('action');
             }}
             role="menuitem"
             type="button"

@@ -140,16 +140,16 @@ implementation choices or live status.
 - **Consequence:** source preparation and inspection never invoke Luna. The
   product asks for confirmation only before installation-state mutation. New
   Sessions receive the active Package resources; running Sessions keep their
-  stable snapshot. A future OS shell may project an installed Package
-  that declares an application surface as an app; its lifecycle stays
-  Pi-owned, and surface-less Packages remain background capabilities rather
-  than fake windowed apps.
+  stable snapshot. An Extension App frontend may compile with PAWOS, but only
+  its installed-and-enabled Pi Package exposes the App and Skill; disable or
+  uninstall removes both. Frontend rollback follows PAWOS, resources follow
+  Pi, and surface-less Packages stay background capabilities.
 
 ## D-012 — PAW OS Frontend Stays In The PAW Product Repository
 
 - **Status:** accepted
-- **Decision:** `7155/personal-agent-workbench` owns both the PAW Runtime and the
-  PAW OS frontend. `control-center-web` remains a selectable legacy fallback
+- **Decision:** `7155/personal-agent-workbench` owns PAW Runtime and PAW OS
+  frontend. `control-center-web` remains a selectable legacy fallback
   while the PAW OS shell is implemented in the same repository. `7155/tutti` and upstream Tutti are reference sources only, not
   PAW product or release repositories.
 - **Why:** one product repository keeps contracts, generated types, reducers,

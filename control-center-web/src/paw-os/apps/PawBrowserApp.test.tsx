@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
+import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
 import { PawBrowserApp } from './PawBrowserApp';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 
@@ -18,6 +19,54 @@ afterEach(() => {
 });
 
 describe('PAW Browser App', () => {
+  it('does not poll Browser tabs while its owning window is inactive', async () => {
+    const transport = browserTransport();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawOsAppSurfaceProvider active={false} appId="browser" height={720} width={1_080} windowId="browser">
+          <PawBrowserApp />
+        </PawOsAppSurfaceProvider>
+      </ControlTransportProvider>,
+    );
+
+    await act(async () => { await Promise.resolve(); });
+    expect(transport.requests.some(({ request }) => request.pathId === 'browser.tabs')).toBe(false);
+    expect(transport.requests.some(({ request }) => request.pathId === 'browser.traces')).toBe(false);
+  });
+
+  it('aborts Browser polling while the document is hidden and refreshes once when visible again', async () => {
+    let visibility: DocumentVisibilityState = 'visible';
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility });
+    try {
+      const transport = browserTransport();
+      render(
+        <ControlTransportProvider transport={transport}>
+          <PawBrowserApp />
+        </ControlTransportProvider>,
+      );
+
+      await waitFor(() => expect(
+        transport.requests.filter(({ request }) => request.pathId === 'browser.tabs').at(-1)?.request.signal?.aborted,
+      ).toBe(false));
+      const firstTabsRequest = transport.requests.filter(
+        ({ request }) => request.pathId === 'browser.tabs',
+      ).at(-1)?.request;
+
+      visibility = 'hidden';
+      fireEvent(document, new Event('visibilitychange'));
+      expect(firstTabsRequest?.signal?.aborted).toBe(true);
+      const hiddenCount = transport.requests.filter(({ request }) => request.pathId === 'browser.tabs').length;
+
+      visibility = 'visible';
+      fireEvent(document, new Event('visibilitychange'));
+      await waitFor(() => expect(
+        transport.requests.filter(({ request }) => request.pathId === 'browser.tabs').length,
+      ).toBe(hiddenCount + 1));
+    } finally {
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+
   it('starts and controls the isolated browser directly without pairing or permission UI', async () => {
     const user = userEvent.setup();
     const transport = browserTransport();

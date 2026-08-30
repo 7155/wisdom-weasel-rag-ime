@@ -1,4 +1,4 @@
-import type { PawOsAppId } from './app-registry';
+import type { PawOsDesktopAppId } from './app-registry';
 
 export type PawOsRect = {
   x: number;
@@ -62,7 +62,7 @@ export type PawOsWindowTarget =
 
 export type PawOsDesktopWindow = {
   id: string;
-  appId: PawOsAppId;
+  appId: PawOsDesktopAppId;
   title: string;
   rect: PawOsRect;
   restoreRect: PawOsRect | null;
@@ -218,7 +218,7 @@ export function pawOsDesktopReducer(
 }
 
 export function createPawOsWindow(input: {
-  appId: PawOsAppId;
+  appId: PawOsDesktopAppId;
   title: string;
   surface: PawOsDesktopState['surface'];
   sequence: number;

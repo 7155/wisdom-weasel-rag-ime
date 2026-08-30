@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from scripts.build_managed_pi_runtime_v2 import (
     SESSION_RUNTIME_CONTRACT,
     _SESSION_RUNTIME_SOURCE_KEYS,
     _copy_bundled_pi_packages,
+    _hash_extension_app_pi_packages,
     _copy_product_skills,
     _compact_card_length,
     _default_node,
@@ -37,6 +39,10 @@ from scripts.build_managed_pi_runtime_v2 import (
     _verified_session_runtime_contract,
 )
 from rag_ime.managed_pi_runtime import ManagedPiRuntimeError
+from rag_ime.agent_extensions import (
+    extension_app_binding_capability,
+    extension_app_binding_sha256,
+)
 from rag_ime.pi_runtime_protocols import normalize_protocol_version
 
 
@@ -50,6 +56,82 @@ SESSION_FLOW_SKILLS = {
     "systematic-debugging",
     "test-driven-implementation",
 }
+
+
+def _write_extension_app_fixture(
+    root: Path,
+    *,
+    slug: str = "zhanggui-wenshu",
+    app_version: str = "0.1.0",
+    package_version: str | None = None,
+    skill_ref: str = "zhanggui-wenshu",
+    suite_id: str = "sgg",
+    suite_revision: str = "fixture-v2",
+) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
+    package_version = package_version or app_version
+    app_root = root / "extension-apps" / slug
+    package = app_root / "pi-package"
+    skill = package / "skills" / skill_ref
+    skill.mkdir(parents=True)
+    skill_file = skill / "SKILL.md"
+    skill_file.write_text(
+        f"---\nname: {skill_ref}\ndescription: test\n---\n",
+        encoding="utf-8",
+    )
+    skill_sha256 = hashlib.sha256(skill_file.read_bytes()).hexdigest()
+    app_manifest: dict[str, object] = {
+        "schemaVersion": "pawos.extension-app.v1",
+        "id": f"extension:{slug}",
+        "version": app_version,
+        "packageId": f"@paw/{slug}",
+        "label": "掌柜问数",
+        "shortLabel": "问数",
+        "tagline": "test",
+        "route": f"/extensions/{slug}",
+        "presentation": "conversation",
+        "accent": "green",
+        "icon": {"symbol": "analytics", "background": "#087F68"},
+        "skillRef": skill_ref,
+        "skillSha256": skill_sha256,
+        "verticalSuiteId": suite_id,
+        "verticalSuiteRevision": suite_revision,
+        "bindingSha256": "0" * 64,
+    }
+    binding_sha256 = extension_app_binding_sha256(
+        app_manifest,
+        skill_sha256=skill_sha256,
+        package_version=package_version,
+    )
+    app_manifest["bindingSha256"] = binding_sha256
+    binding_capability = extension_app_binding_capability(binding_sha256)
+    package_manifest: dict[str, object] = {
+        "name": f"@paw/{slug}",
+        "version": package_version,
+        "displayName": "掌柜问数",
+        "pi": {"skills": ["./skills"]},
+        "paw": {
+            "capabilities": [f"pawos.extension.{slug}", binding_capability],
+            "extensionApp": {
+                "id": f"extension:{slug}",
+                "packageId": f"@paw/{slug}",
+                "version": package_version,
+                "bindingSha256": binding_sha256,
+                "skillRef": skill_ref,
+                "skillSha256": skill_sha256,
+                "verticalSuiteId": suite_id,
+                "verticalSuiteRevision": suite_revision,
+                "manifest": app_manifest,
+            },
+        },
+    }
+    (app_root / "pawos-app.json").write_text(
+        json.dumps(app_manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    (package / "package.json").write_text(
+        json.dumps(package_manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    (package / "index.ts").write_text("export {};\n", encoding="utf-8")
+    return app_root, package, app_manifest, package_manifest
 
 
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
@@ -545,7 +627,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             (package / "index.ts").write_text("export {};\n", encoding="utf-8")
             destination = root / "payload" / "pi-packages"
 
-            _copy_bundled_pi_packages(source, destination)
+            _copy_bundled_pi_packages(
+                source,
+                destination,
+                extension_apps_root=root / "no-extension-apps",
+            )
 
             self.assertEqual(
                 (destination / "catalog.json").read_text(encoding="utf-8"),
@@ -580,7 +666,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             )
             destination = root / "payload" / "pi-packages"
 
-            _copy_bundled_pi_packages(source, destination)
+            _copy_bundled_pi_packages(
+                source,
+                destination,
+                extension_apps_root=root / "no-extension-apps",
+            )
 
             catalog = json.loads((destination / "catalog.json").read_text(encoding="utf-8"))
             self.assertEqual(
@@ -589,6 +679,441 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             )
             self.assertTrue((destination / "session-workflow").is_dir())
             self.assertFalse((destination / "subagent").exists())
+
+    def test_extension_app_pi_packages_are_copied_and_added_to_catalog(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-pi-package-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root = root / "extension-apps"
+            package = app_root / "zhanggui-wenshu" / "pi-package"
+            (package / "skills" / "zhanggui-wenshu").mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/zhanggui-wenshu",
+                        "version": "0.1.0",
+                        "displayName": "掌柜问数",
+                        "pi": {"skills": ["./skills"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (package / "skills" / "zhanggui-wenshu" / "SKILL.md").write_text(
+                "---\nname: zhanggui-wenshu\ndescription: test\n---\n",
+                encoding="utf-8",
+            )
+            destination = root / "payload" / "pi-packages"
+
+            _copy_bundled_pi_packages(
+                source,
+                destination,
+                extension_apps_root=app_root,
+            )
+
+            catalog = json.loads(
+                (destination / "catalog.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                catalog["packages"],
+                [
+                    {
+                        "directory": "zhanggui-wenshu",
+                        "displayName": "掌柜问数",
+                    }
+                ],
+            )
+            self.assertEqual(
+                (destination / "zhanggui-wenshu" / "package.json").read_text(
+                    encoding="utf-8"
+                ),
+                (package / "package.json").read_text(encoding="utf-8"),
+            )
+            self.assertTrue(
+                (destination / "zhanggui-wenshu" / "skills" / "zhanggui-wenshu" / "SKILL.md").is_file()
+            )
+
+    def test_extension_app_binding_is_written_to_staged_package_and_catalog(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-copy-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            _app_root, _package, app_manifest, _package_manifest = _write_extension_app_fixture(root)
+            destination = root / "payload" / "pi-packages"
+
+            _copy_bundled_pi_packages(
+                source,
+                destination,
+                extension_apps_root=root / "extension-apps",
+            )
+
+            staged_package = json.loads(
+                (destination / "zhanggui-wenshu" / "package.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            expected_capability = (
+                "pawos.extension.binding."
+                + str(app_manifest["bindingSha256"])[:40]
+            )
+            self.assertIn(
+                expected_capability,
+                staged_package["paw"]["capabilities"],
+            )
+            catalog = json.loads(
+                (destination / "catalog.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                catalog["packages"][0]["extensionApp"]["bindingSha256"],
+                app_manifest["bindingSha256"],
+            )
+
+    def test_extension_app_pi_package_rejects_duplicate_directory_and_name(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-pi-collision-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            existing = source / "existing"
+            existing.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "packages": [{"directory": "existing", "displayName": "Existing"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (existing / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/existing",
+                        "version": "1.0.0",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (existing / "skills").mkdir()
+            app_root = root / "extension-apps"
+            duplicate_directory = app_root / "existing" / "pi-package"
+            (duplicate_directory / "skills").mkdir(parents=True)
+            (duplicate_directory / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/other",
+                        "version": "1.0.0",
+                        "pi": {"skills": ["./skills"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "directory"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "directory-payload" / "pi-packages",
+                    extension_apps_root=app_root,
+                )
+
+            name_app_root = root / "name-extension-apps"
+            first = name_app_root / "first" / "pi-package"
+            second = name_app_root / "second" / "pi-package"
+            for package in (first, second):
+                (package / "skills").mkdir(parents=True)
+                (package / "package.json").write_text(
+                    json.dumps(
+                        {
+                            "name": "@paw/duplicate",
+                            "version": "1.0.0",
+                            "pi": {"skills": ["./skills"]},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "name"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "name-payload" / "pi-packages",
+                    extension_apps_root=name_app_root,
+                )
+
+    def test_extension_app_pi_package_rejects_package_and_package_json_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-pi-symlink-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root = root / "extension-apps"
+            real_package = root / "real-package"
+            (real_package / "skills").mkdir(parents=True)
+            (real_package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/safe",
+                        "version": "1.0.0",
+                        "pi": {"skills": ["./skills"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            symlinked_directory = app_root / "directory-link" / "pi-package"
+            symlinked_directory.parent.mkdir(parents=True)
+            symlinked_directory.symlink_to(real_package, target_is_directory=True)
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "symlink"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "directory-payload" / "pi-packages",
+                    extension_apps_root=app_root,
+                )
+
+            app_root = root / "json-link-apps"
+            package = app_root / "json-link" / "pi-package"
+            package.mkdir(parents=True)
+            package_json_target = root / "package.json.target"
+            package_json_target.write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/json-link",
+                        "version": "1.0.0",
+                        "pi": {"skills": ["./skills"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (package / "package.json").symlink_to(package_json_target)
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "symlink"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "json-payload" / "pi-packages",
+                    extension_apps_root=app_root,
+                )
+
+    def test_extension_app_pi_package_rejects_invalid_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-pi-manifest-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            package = root / "extension-apps" / "invalid" / "pi-package"
+            package.mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/invalid",
+                        "version": "1.0.0",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "pi"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_pi_package_tree_changes_packager_digest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-pi-digest-") as temporary:
+            root = Path(temporary)
+            package = root / "extension-apps" / "digest" / "pi-package"
+            (package / "skills").mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/digest",
+                        "version": "1.0.0",
+                        "pi": {"skills": ["./skills"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            first = _hash_extension_app_pi_packages(root / "extension-apps")
+            (package / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "@paw/digest",
+                        "version": "1.0.1",
+                        "pi": {"skills": ["./skills"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            second = _hash_extension_app_pi_packages(root / "extension-apps")
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(first), 32)
+        self.assertEqual(len(second), 32)
+
+    def test_extension_app_pi_package_rejects_locale_dependent_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-path-order-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            _app_root, package, _app_manifest, _package_manifest = (
+                _write_extension_app_fixture(root)
+            )
+            (package / "Helper.ts").write_text("export {};\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "lowercase ASCII"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_binding_rejects_package_version_drift(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-version-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            _app_root, package, _app_manifest, package_manifest = _write_extension_app_fixture(root)
+            package_manifest["version"] = "0.1.1"
+            (package / "package.json").write_text(
+                json.dumps(package_manifest, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "version"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_binding_requires_declared_capability(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-capability-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            _app_root, package, _app_manifest, package_manifest = (
+                _write_extension_app_fixture(root)
+            )
+            package_manifest["paw"]["capabilities"] = []
+            (package / "package.json").write_text(
+                json.dumps(package_manifest, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "binding capability"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_binding_rejects_manifest_digest_drift(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-digest-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root, _package, app_manifest, _package_manifest = _write_extension_app_fixture(root)
+            app_manifest["bindingSha256"] = "f" * 64
+            (app_root / "pawos-app.json").write_text(
+                json.dumps(app_manifest, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "bindingSha256"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_builder_rejects_invalid_visual_contract(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-visual-contract-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root, _package, app_manifest, _package_manifest = (
+                _write_extension_app_fixture(root)
+            )
+            app_manifest["icon"] = {"symbol": "invalid", "background": "#087F68"}
+            (app_root / "pawos-app.json").write_text(
+                json.dumps(app_manifest, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "icon"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_binding_rejects_skill_drift(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-skill-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root, _package, app_manifest, _package_manifest = _write_extension_app_fixture(root)
+            app_manifest["skillRef"] = "other-skill"
+            (app_root / "pawos-app.json").write_text(
+                json.dumps(app_manifest, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "skillRef"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
+    def test_extension_app_binding_rejects_suite_drift(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-suite-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root, _package, app_manifest, _package_manifest = _write_extension_app_fixture(root)
+            app_manifest["verticalSuiteRevision"] = "fixture-v1"
+            (app_root / "pawos-app.json").write_text(
+                json.dumps(app_manifest, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "suite"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
 
     def test_staged_smoke_uses_session_lifecycle_contract(self) -> None:
         script = (ROOT / "scripts" / "smoke_pi_session_staged_runtime.py").read_text(
@@ -680,6 +1205,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "memory-curation",
                 "orchestrate-session",
                 "organize-work-documents",
+                "pawos-app-builder",
                 "pawos-system",
                 "plugin-creator",
                 "project-maintainer",
@@ -739,7 +1265,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             },
         )
         cards = routing_catalog["cards"]
-        self.assertEqual(len(cards), 40)
+        self.assertEqual(len(cards), 41)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
         self.assertNotIn("structured-result-presentation", {card["name"] for card in cards})
         for card in cards:

@@ -22162,6 +22162,12 @@ export const contractSchemas = {
           "$ref": "#/$defs/evidence"
         }
       },
+      "requirements": {
+        "$ref": "#/$defs/requirements"
+      },
+      "environment": {
+        "$ref": "#/$defs/environment"
+      },
       "scorecard": {
         "$ref": "#/$defs/scorecard"
       },
@@ -22339,6 +22345,202 @@ export const contractSchemas = {
           "traceId": {
             "type": "string",
             "maxLength": 240
+          }
+        }
+      },
+      "requirement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requirementId",
+          "statement",
+          "targetKey",
+          "sourceRef",
+          "evidenceIds"
+        ],
+        "properties": {
+          "requirementId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "targetKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "sourceRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          }
+        }
+      },
+      "requirements": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "items",
+          "truncated"
+        ],
+        "properties": {
+          "source": {
+            "enum": [
+              "user_input",
+              "work_item",
+              "eval",
+              "unknown"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/$defs/requirement"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "environmentTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKey",
+          "sourceSha256",
+          "modelProfile",
+          "toolProfileVersion",
+          "executionMode",
+          "policyRevision",
+          "workspaceScopeSha256",
+          "shellPolicyVersion",
+          "runtimeKind",
+          "runtimeGeneration",
+          "traceInputFingerprints",
+          "traceStatuses"
+        ],
+        "properties": {
+          "targetKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "sourceSha256": {
+            "type": "string",
+            "pattern": "^$|^[a-f0-9]{64}$"
+          },
+          "modelProfile": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "toolProfileVersion": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "executionMode": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "policyRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "workspaceScopeSha256": {
+            "type": "string",
+            "pattern": "^$|^[a-f0-9]{64}$"
+          },
+          "shellPolicyVersion": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "runtimeKind": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "runtimeGeneration": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "traceInputFingerprints": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          },
+          "traceStatuses": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          }
+        }
+      },
+      "environment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capturedAtMs",
+          "rubricVersion",
+          "targets",
+          "limitations"
+        ],
+        "properties": {
+          "capturedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rubricVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/$defs/environmentTarget"
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
           }
         }
       },
@@ -22678,6 +22880,14 @@ export const contractSchemas = {
               "maxLength": 240
             }
           },
+          "repairState": {
+            "enum": [
+              "not_recorded",
+              "authorized",
+              "verified",
+              "failed"
+            ]
+          },
           "failureReason": {
             "type": "string",
             "maxLength": 1000
@@ -22823,6 +23033,9 @@ export const contractSchemas = {
           "null"
         ]
       },
+      "repairLifecycle": {
+        "$ref": "#/$defs/repairLifecycle"
+      },
       "failureReason": {
         "type": "string",
         "maxLength": 1000
@@ -22884,6 +23097,216 @@ export const contractSchemas = {
             "type": "boolean"
           }
         }
+      },
+      "repairAuthorization": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state",
+          "authorizationKind",
+          "writeAuthority",
+          "authorizationId",
+          "findingId",
+          "sourceScope",
+          "sourceTraceId",
+          "failureRef",
+          "repairSessionId",
+          "authorizedAtMs"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "authorized",
+              "declined",
+              "blocked",
+              "expired"
+            ]
+          },
+          "authorizationKind": {
+            "const": "repair_handoff"
+          },
+          "writeAuthority": {
+            "enum": [
+              "per_action_required",
+              "model_arbitrated_full_trust"
+            ]
+          },
+          "authorizationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "findingId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "sourceScope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "sourceTraceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "failureRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "repairSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "authorizedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "comparison": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reason",
+          "sourceStatus",
+          "repairStatus",
+          "sourceFingerprint",
+          "repairFingerprint",
+          "beforeMetrics",
+          "afterMetrics",
+          "deltas"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "incomparable",
+              "failed",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "sourceStatus": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "repairStatus": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "sourceFingerprint": {
+            "type": "string",
+            "pattern": "^$|^sha256:[a-f0-9]{64}$"
+          },
+          "repairFingerprint": {
+            "type": "string",
+            "pattern": "^$|^sha256:[a-f0-9]{64}$"
+          },
+          "beforeMetrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "afterMetrics": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "deltas": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "repairVerification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state",
+          "repairReceiptId",
+          "repairTraceId",
+          "evalRunId",
+          "testStatus",
+          "sandboxStatus",
+          "sandboxedTestCount",
+          "verifiedAtMs",
+          "comparison"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "pending",
+              "verified",
+              "failed"
+            ]
+          },
+          "repairReceiptId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "repairTraceId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "evalRunId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "testStatus": {
+            "enum": [
+              "",
+              "passed",
+              "failed",
+              "blocked"
+            ]
+          },
+          "sandboxStatus": {
+            "enum": [
+              "",
+              "passed",
+              "blocked"
+            ]
+          },
+          "sandboxedTestCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verifiedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "comparison": {
+            "$ref": "#/$defs/comparison"
+          }
+        }
+      },
+      "repairLifecycle": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "authorization",
+          "verification"
+        ],
+        "properties": {
+          "authorization": {
+            "$ref": "#/$defs/repairAuthorization"
+          },
+          "verification": {
+            "$ref": "#/$defs/repairVerification"
+          }
+        }
       }
     }
   },
@@ -22920,6 +23343,20 @@ export const contractSchemas = {
         "maxItems": 8,
         "items": {
           "$ref": "#/$defs/judge"
+        }
+      },
+      "requirementAssessments": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "$ref": "#/$defs/requirementAssessment"
+        }
+      },
+      "causalLinks": {
+        "type": "array",
+        "maxItems": 120,
+        "items": {
+          "$ref": "#/$defs/causalLink"
         }
       },
       "findings": {
@@ -23015,6 +23452,103 @@ export const contractSchemas = {
           },
           "evidenceIds": {
             "$ref": "#/$defs/evidenceIds"
+          }
+        }
+      },
+      "requirementAssessment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requirementId",
+          "status",
+          "owner",
+          "authority",
+          "evidenceIds",
+          "note"
+        ],
+        "properties": {
+          "requirementId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "status": {
+            "enum": [
+              "satisfied",
+              "partial",
+              "unsatisfied",
+              "unverified"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "authority": {
+            "const": "ai_judge_estimate"
+          },
+          "evidenceIds": {
+            "$ref": "#/$defs/evidenceIds"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 1600
+          }
+        }
+      },
+      "causalLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "linkId",
+          "fromEvidenceId",
+          "toEvidenceId",
+          "relation",
+          "authority",
+          "confidence",
+          "explanation"
+        ],
+        "properties": {
+          "linkId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "fromEvidenceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "toEvidenceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "relation": {
+            "enum": [
+              "triggered",
+              "delegated",
+              "responded_to",
+              "returned",
+              "verified",
+              "caused",
+              "recovered"
+            ]
+          },
+          "authority": {
+            "const": "ai_judge_estimate"
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "unknown"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 1600
           }
         }
       },
@@ -23443,6 +23977,8 @@ export const contractSchemas = {
       "changeReceiptId",
       "testEvidenceId",
       "testStatus",
+      "sandboxStatus",
+      "sandboxedTestCount",
       "repairTraceId",
       "repairSessionId",
       "createdAtMs"
@@ -23483,6 +24019,13 @@ export const contractSchemas = {
       },
       "testStatus": {
         "const": "passed"
+      },
+      "sandboxStatus": {
+        "const": "passed"
+      },
+      "sandboxedTestCount": {
+        "type": "integer",
+        "minimum": 1
       },
       "repairTraceId": {
         "type": "string",

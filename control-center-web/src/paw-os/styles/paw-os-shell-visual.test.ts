@@ -125,11 +125,10 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#171a21'), launchpadVeil)).toBeGreaterThanOrEqual(7);
   });
 
-  it('keeps the PAW wordmark on the glacial cobalt–teal triad', () => {
+  it('keeps the PAW wordmark in one crisp glacial ink', () => {
     const wordmark = rule(shellCss, '.paw-brand-wordmark');
-    expect(wordmark).toContain('linear-gradient(105deg, #1e57e7, #0f7a9a 52%, #0c7568)');
-    // Purple mid-stops fight the cold Wayfinder aurora and were retired.
-    expect(wordmark).not.toMatch(/#6d3fd4|#7a5af8|#5e5ce6/i);
+    expect(wordmark).toContain('color: #145f84');
+    expect(wordmark).not.toMatch(/gradient|background-clip|color:\s*transparent/i);
     expect(appIconCss).toContain('.paw-brand-mark');
     expect(appIconCss).not.toMatch(/\.paw-brand-mark[^{]*\{[^}]*fill:\s*#/);
   });
@@ -156,19 +155,21 @@ describe('PAWOS shell visual language', () => {
     expect(contrast(hexToRgb('#171a21'), hexToRgb('#ffffff'))).toBeGreaterThanOrEqual(7);
   });
 
-  it('keeps the resident Dock available while Room collaboration focus is open', () => {
-    // Collaboration focus covers the desktop field with the Room plane, but
-    // the Dock remains the user's persistent App switcher. Hiding or disabling
-    // it makes an open planet/session impossible to recover from the focus
-    // composition and contradicts the macOS-style desktop contract.
-    expect(pawOsCss).not.toMatch(/\.paw-desktop\[data-collaboration-focus\][^{]*\.paw-dock/);
-    expect(shellCss).not.toMatch(/:has\(\.paw-window-layer\[data-room-focus\]\)[^{]*\.paw-dock/);
+  it('keeps the Dock resident normally and hides it only while Room collaboration focus owns the desktop', () => {
+    const resident = rule(pawOsCss, '.paw-dock');
+    expect(resident).toContain('display: flex');
+    expect(resident).not.toContain('visibility: hidden');
+    const focused = rule(pawOsCss, '.paw-desktop[data-collaboration-focus] .paw-dock');
+    expect(focused).toContain('opacity: 0');
+    expect(focused).toContain('visibility: hidden');
+    expect(focused).toContain('pointer-events: none');
+    expect(focused).toContain('translate3d(-50%, calc(100% + 24px), 0)');
   });
 
   it('binds every identity placement to the one size ladder and one paper token', () => {
     // Five steps, defined once; a placement may only resolve a ladder step,
     // so identical surfaces can never drift apart by a stray pixel value.
-    for (const step of ['xs', 'sm', 'md', 'lg', 'xl']) {
+    for (const step of ['xs', 'sm', 'md', 'lg', 'desktop', 'xl']) {
       expect(appIconCss, `ladder step --paw-icon-step-${step} is defined once`)
         .toContain(`--paw-icon-step-${step}:`);
     }
@@ -195,10 +196,10 @@ describe('PAWOS shell visual language', () => {
     expect(dockCurrent).not.toContain('#fff');
     // Desktop selection is the macOS treatment: the accent plate sits behind
     // the label text only and the icon dims — never a whole-cell wash or ring.
-    expect(pawOsCss).not.toContain(".paw-desktop-shortcuts button[aria-selected='true'] {");
+    expect(pawOsCss).not.toContain(".paw-desktop-shortcuts button[aria-pressed='true'] {");
     expect(pawOsCss).not.toContain('.paw-desktop-shortcuts button:hover {');
-    expect(shellCss).toMatch(/\[aria-selected='true'\][^{]*:is\(\.paw-desktop-shortcuts__label-ink, \.paw-wayfinder-work__label-ink\)\s*\{[^}]*background:\s*var\(--paw-selection-plate/s);
-    expect(shellCss).toMatch(/\[aria-selected='true'\][^{]*:is\(\.paw-app-icon, \.paw-wayfinder-work__folder-art, \.paw-wayfinder-work__file-art\)\s*\{[^}]*filter:\s*brightness\(/s);
+    expect(shellCss).toMatch(/\[aria-pressed='true'\][^{]*:is\(\.paw-desktop-shortcuts__label-ink, \.paw-wayfinder-work__label-ink\)\s*\{[^}]*background:\s*var\(--paw-selection-plate/s);
+    expect(shellCss).toMatch(/\[aria-pressed='true'\][^{]*:is\(\.paw-app-icon, \.paw-wayfinder-work__folder-art, \.paw-wayfinder-work__file-art\)\s*\{[^}]*filter:\s*brightness\(/s);
     // The running pill is the one notification dot, in the App's own colour.
     expect(rule(pawOsCss, '.paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
     expect(rule(shellCss, '.paw-desktop-root .paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
@@ -245,9 +246,29 @@ describe('PAWOS shell visual language', () => {
     expect(running).toContain('var(--paw-identity-dot)');
     expect(running).toContain('height: 3px');
     expect(rule(pawOsCss, '.paw-desktop-shortcuts button[data-minimized] > i')).toContain('width: 6px');
-    // Desktop icons share the Dock's step: on the open wallpaper they are
-    // primary objects, not dense list rows.
-    expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-lg)');
+    // Desktop icons get a larger wallpaper step while the denser Dock keeps
+    // its own size. Their 56px tile aligns with project folders and files.
+    expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-desktop)');
+    expect(rule(appIconCss, '.paw-desktop-shortcuts button > span')).toContain('width: 56px');
+  });
+
+  it('keeps the project context sheet opaque and above every desktop icon plane', () => {
+    const liftedPlane = rule(pawOsCss, '.paw-wayfinder-work:has(.paw-wayfinder-work__context-sheet)');
+    expect(liftedPlane).toContain('z-index: 7');
+    const sheet = lastRule(pawOsCss, '.paw-wayfinder-work__context-sheet');
+    expect(sheet).toContain('background: var(--paw-panel-strong)');
+  });
+
+  it('integrates project-folder depth and identity without a detached white badge', () => {
+    const back = rule(shellCss, '.paw-desktop-root .paw-work-glyph__back');
+    const front = rule(shellCss, '.paw-desktop-root .paw-work-glyph__front');
+    const mark = rule(shellCss, '.paw-desktop-root .paw-wayfinder-work__folder-mark');
+    expect(back).toContain('stroke-width: 1');
+    expect(front).toContain('stroke-width: 1');
+    expect(rule(shellCss, '.paw-desktop-root .paw-work-glyph__folder-sheen')).toContain('mix-blend-mode: screen');
+    expect(mark).toContain('background: transparent');
+    expect(mark).toContain('border: 0');
+    expect(mark).toContain('box-shadow: none');
   });
 
   it('clamps desktop project names to two quiet lines and reveals them in context', () => {
@@ -264,7 +285,7 @@ describe('PAWOS shell visual language', () => {
     expect(projectNameRule).toContain('-webkit-line-clamp: 2');
     expect(projectNameRule).toContain('text-overflow: ellipsis');
 
-    const reveal = shellCss.match(/:is\(:hover, \[aria-selected='true'\], :focus-visible\) \.paw-wayfinder-work__project-copy strong\s*\{([^}]*)\}/s);
+    const reveal = shellCss.match(/:is\(:hover, \[aria-pressed='true'\], :focus-visible\) \.paw-wayfinder-work__project-copy strong\s*\{([^}]*)\}/s);
     expect(reveal, 'hover/selected/focus reveal rule').toBeTruthy();
     expect(reveal?.[1]).toContain('-webkit-line-clamp: unset');
     expect(reveal?.[1]).toContain('overflow: visible');
@@ -280,7 +301,7 @@ describe('PAWOS shell visual language', () => {
     expect(labelInk).toContain('box-decoration-break: clone');
     // The one plate: selection (and keyboard focus) fills behind the label
     // text with the shared desktop accent, and the halo steps aside.
-    expect(shellCss).toMatch(/\[aria-selected='true'\][^{]*label-ink\)\s*\{[^}]*text-shadow:\s*none/s);
+    expect(shellCss).toMatch(/\[aria-pressed='true'\][^{]*label-ink\)\s*\{[^}]*text-shadow:\s*none/s);
     // Reduced motion snaps every desktop selection transition: label plates,
     // icon dims and cell feedback land instantly.
     const reduced = shellCss.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
@@ -345,23 +366,38 @@ describe('PAWOS shell visual language', () => {
     }
   });
 
-  it('moves placement changes as one gesture and promotes only the dragged frame', () => {
-    // Snap/maximize/restore animate transform and size on the same clock so
-    // the frame cannot tear; live drag/resize opts out entirely.
+  it('keeps context-menu entrance in the single interruptible motion owner', () => {
+    const baseMenu = rule(pawOsCss, '.paw-context-menu');
+    expect(baseMenu).not.toContain('animation:');
+    expect(pawOsCss).not.toContain('@keyframes paw-context-menu-in');
+    expect(rule(motionCss, '.paw-context-menu')).toMatch(/transition:[^;]*opacity[^;]*transform/s);
+    expect(motionCss).toMatch(/@starting-style\s*\{[\s\S]*?\.paw-context-menu\s*\{[^}]*opacity:\s*0;[^}]*transform:/s);
+  });
+
+  it('moves placement changes on the compositor and promotes only the dragged frame', () => {
+    // Snap/maximize/restore commit their final layout once and use a FLIP
+    // transform for the visible trip. Animating width/height here makes every
+    // container-query App re-layout on every animation frame.
     const shell = rule(pawOsCss, '.paw-window-shell');
     expect(shell).toMatch(/transition:[^;]*transform 240ms/s);
-    expect(shell).toMatch(/transition:[^;]*width 240ms/s);
-    expect(shell).toMatch(/transition:[^;]*height 240ms/s);
+    expect(shell).not.toMatch(/transition:[^;]*\bwidth\b/s);
+    expect(shell).not.toMatch(/transition:[^;]*\bheight\b/s);
     expect(rule(pawOsCss, '.paw-window-shell[data-interaction]')).toContain('transition: none');
     // will-change exists only for the duration of a drag gesture — the
     // resting shell must never hold a compositor layer.
     expect(rule(pawOsCss, ".paw-window-shell[data-interaction='dragging']")).toContain('will-change: transform');
     expect(shell).not.toContain('will-change');
-    // Same doctrine for the Room flow overlay: a resting flow SVG holds no
-    // full-viewport layer; promotion is scoped to a live drag stream or a
-    // live packet pulse, the only times its geometry mutates per frame.
-    expect(rule(pawOsCss, '.paw-room-window-flow')).not.toContain('will-change');
-    expect(pawOsCss).toMatch(/\.paw-desktop-root\[data-window-interaction\] \.paw-room-window-flow,\s*\.paw-room-window-flow:has\(g\[data-live\]\)\s*\{[^}]*will-change: transform/s);
+    // Room communication remains in the compact ledger. No full-desktop SVG
+    // or diagonal relationship line may sit over readable window content.
+    expect(pawOsCss).not.toMatch(/\.paw-room-window-flow(?:__|\s|\{|:)/);
+  });
+
+  it('keeps macOS traffic-light artwork small inside an accessible hit target', () => {
+    const lights = rule(pawOsCss, '.paw-traffic-lights > button');
+    expect(lights).toMatch(/width:\s*24px/);
+    expect(lights).toMatch(/height:\s*24px/);
+    expect(lights).toMatch(/flex:\s*0 0 24px/);
+    expect(lights).toContain('padding: 6px');
   });
 
   it('signs the focused window with a static aurora hairline in its own App key', () => {
@@ -374,6 +410,12 @@ describe('PAWOS shell visual language', () => {
     // A signature, not a show: the hairline never animates or blurs.
     expect(aurora).not.toContain('animation');
     expect(aurora).not.toContain('backdrop-filter');
+  });
+
+  it('lets the rounded composer own focus instead of drawing a square textarea outline', () => {
+    expect(shellCss).toMatch(
+      /\.paw-desktop-root \.paw-unified-composer > textarea:focus-visible\s*\{[^}]*outline:\s*0;/s,
+    );
   });
 
   it('lets Launchpad group headers lead their tiles in the same cascade', () => {

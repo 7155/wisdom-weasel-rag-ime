@@ -631,6 +631,7 @@ function StarfieldShell({
     </section>
   );
 
+  if (!active) return null;
   return immersive ? createPortal(content, document.body) : content;
 }
 
@@ -791,12 +792,14 @@ export function PawSessionStarfield({
 const ROOM_CARD_WORK_LIMIT = 4;
 
 export function PawRoomStarfield({
+  active = true,
   focus,
   roomId,
   immersive = true,
   onExit,
   onOpenParticipant,
 }: {
+  active?: boolean;
   focus: RoomFocusProjection;
   roomId: string;
   immersive?: boolean;
@@ -869,6 +872,7 @@ export function PawRoomStarfield({
 
   return (
     <StarfieldShell
+      active={active}
       ariaLabel="Room 星空"
       exitLabel="返回 Room"
       feed={feed}

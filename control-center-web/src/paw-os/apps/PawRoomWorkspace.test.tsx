@@ -8,6 +8,7 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { previewRoomSnapshot } from '@/app/preview-room-data';
 import { TooltipProvider } from '@/components/primitives';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { ROOM_WORKSPACE_MISSING_TEXT } from '@/features/agent/public-error';
 import type { ControlRequest } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
@@ -29,6 +30,52 @@ afterEach(() => {
 });
 
 describe('PAWOS Room collaboration tools', () => {
+  it('lets a stale Room replace its workspace instead of retrying an impossible sync', async () => {
+    const { controlTransport, room, transport } = renderRoom(
+      900,
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      undefined,
+      ROOM_WORKSPACE_MISSING_TEXT,
+    );
+    const pickFiles = vi.spyOn(controlTransport, 'pickFiles').mockResolvedValue([{
+      id: 'room-workspace-rebound',
+      name: 'rebound',
+      path: '/work/rebound',
+      mimeType: 'application/x-directory',
+      byteSize: 0,
+    }]);
+    const request = controlTransport.request.bind(controlTransport);
+    controlTransport.request = async <Response = unknown>(input: ControlRequest): Promise<Response> => {
+      if (input.pathId === 'agent.room.archive') {
+        transport.requests.push({ request: input });
+        return {
+          ok: true,
+          room: { ...room, workspaceRoots: ['/work/rebound'] },
+        } as Response;
+      }
+      return request<Response>(input);
+    };
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('这个 Room 的工作目录已不存在');
+    expect(within(alert).queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
+    await userEvent.setup().click(within(alert).getByRole('button', { name: '选择工作目录' }));
+    await waitFor(() => expect(pickFiles).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: 'workspace-root',
+      selection: 'directory',
+    })));
+    await waitFor(() => expect(transport.requests.find(({ request: item }) => (
+      item.pathId === 'agent.room.archive'
+    ))?.request).toMatchObject({
+      body: { workspaceRoots: ['/work/rebound'] },
+    }));
+  });
+
   it('hydrates a planet mention into the one shared Room composer', async () => {
     renderRoom(900, vi.fn(), undefined, undefined, '@Mars ');
 
@@ -122,7 +169,10 @@ describe('PAWOS Room collaboration tools', () => {
 
     const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
     expect(within(rounds).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。')).toBeInTheDocument();
-    expect(within(rounds).getAllByRole('row')).toHaveLength(4);
+    expect(within(rounds).getAllByRole('row')).toHaveLength(2);
+    expect(within(rounds).getByRole('region', { name: 'Earth 最终结果' })).toBeInTheDocument();
+    expect(within(rounds).getByRole('region', { name: 'Mars 最终结果' })).toBeInTheDocument();
+    expect(within(rounds).getByRole('table')).toHaveTextContent('Venus');
     expect(screen.queryByRole('log', { name: 'Room 公开对话' })).not.toBeInTheDocument();
     expect(openWindow).not.toHaveBeenCalled();
 
@@ -214,14 +264,14 @@ describe('PAWOS Room collaboration tools', () => {
     ]);
   });
 
-  it('opens the canonical full Session when a task-table planet is clicked in the ordinary Room', async () => {
+  it('opens the canonical full Session when a standalone result planet is clicked in the ordinary Room', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     renderRoom(900, openWindow);
     await screen.findByRole('textbox', { name: '协作消息' });
 
-    const marsRow = document.querySelector<HTMLElement>('[data-planet-row$=":participant-firstlight"]')!;
-    await user.click(marsRow.querySelector('td:nth-child(2)')!);
+    const marsResult = screen.getByRole('region', { name: 'Mars 最终结果' });
+    await user.click(within(marsResult).getByRole('button', { name: '打开 Mars Session' }));
 
     expect(openWindow).toHaveBeenCalledTimes(1);
     expect(openWindow).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -397,7 +447,7 @@ describe('PAWOS Room collaboration tools', () => {
     }
   });
 
-  it('links a selected task-table planet and its graph node while keeping collaboration open', async () => {
+  it('links a selected standalone result planet and its graph node while keeping collaboration open', async () => {
     const user = userEvent.setup();
     const openWindow = vi.fn();
     renderRoom(900, openWindow);
@@ -405,10 +455,10 @@ describe('PAWOS Room collaboration tools', () => {
 
     await user.click(screen.getByRole('button', { name: '协同模式' }));
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
-    const marsRow = document.querySelector<HTMLElement>('[data-planet-row$=":participant-firstlight"]')!;
-    await user.click(marsRow.querySelector('td:nth-child(2)')!);
+    const marsResult = screen.getByRole('region', { name: 'Mars 最终结果' });
+    await user.click(within(marsResult).getByRole('button', { name: '打开 Mars Session' }));
 
-    expect(marsRow).toHaveAttribute('aria-selected', 'true');
+    expect(marsResult).toHaveAttribute('data-selected', 'true');
     expect(within(tools).getByRole('button', { name: /^Mars，/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('complementary', { name: 'Room 协作态势' })).toBeInTheDocument();
     expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
@@ -418,8 +468,8 @@ describe('PAWOS Room collaboration tools', () => {
 
     const mesh = within(tools).getByRole('group', { name: '协作网状图' });
     await user.click(within(mesh).getByRole('button', { name: /^Earth，/ }));
-    const earthRow = document.querySelector<HTMLElement>('[data-planet-row$=":participant-present"]')!;
-    expect(earthRow).toHaveAttribute('aria-selected', 'true');
+    const earthResult = screen.getByRole('region', { name: 'Earth 最终结果' });
+    expect(earthResult).toHaveAttribute('data-selected', 'true');
     expect(within(mesh).getByRole('button', { name: /^Earth，/ })).toHaveAttribute('aria-pressed', 'true');
     expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
       background: false,
@@ -534,6 +584,7 @@ function renderRoom(
   resumeResponse?: Record<string, unknown>,
   setCollaborationFocusGroup = vi.fn(),
   messageResponse?: Record<string, unknown>,
+  initialError?: string,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
@@ -558,6 +609,7 @@ function renderRoom(
   };
   return {
     transport: { requests },
+    controlTransport: transport,
     ...render(
       <QueryClientProvider client={queryClient}>
         <ControlTransportProvider transport={transport}>
@@ -579,6 +631,7 @@ function renderRoom(
               >
                 <PawRoomWorkspace
                   initialDraft={initialDraft}
+                  initialError={initialError}
                   personas={[]}
                   record={room}
                   recordId={room.id}

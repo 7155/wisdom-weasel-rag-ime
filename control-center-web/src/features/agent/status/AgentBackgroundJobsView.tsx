@@ -88,10 +88,12 @@ const BACKGROUND_JOB_SORT_ORDER: Readonly<
 };
 
 export function AgentBackgroundJobsView({
+  active = true,
   sessionId,
   jobs: snapshotJobs,
   onOpenJob,
 }: {
+  active?: boolean;
   sessionId: string;
   jobs: AgentBackgroundJobV1[];
   onOpenJob?: (job: AgentBackgroundJobV1) => void;
@@ -117,8 +119,8 @@ export function AgentBackgroundJobsView({
       }
       return response;
     },
-    enabled: Boolean(sessionId),
-    refetchInterval: (query) => (
+    enabled: active && Boolean(sessionId),
+    refetchInterval: active ? (query) => (
       mergeBackgroundJobItems(
         backgroundJobItems(query.state.data, sessionId),
         snapshotJobs,
@@ -126,7 +128,7 @@ export function AgentBackgroundJobsView({
       ).some((job) => ACTIVE_BACKGROUND_JOB_STATUSES[job.status])
         ? 1_000
         : 5_000
-    ),
+    ) : false,
     retry: false,
   });
   const jobs = listing.data
@@ -196,6 +198,7 @@ export function AgentBackgroundJobsView({
         <div className="agent-background-jobs__list">
           {jobs.map((job) => (
             <BackgroundJobRow
+              surfaceActive={active}
               key={job.jobId}
               job={job}
               sessionId={sessionId}
@@ -213,10 +216,12 @@ export function AgentBackgroundJobsView({
 function BackgroundJobRow({
   job,
   sessionId,
+  surfaceActive,
   onOpenJob,
 }: {
   job: AgentBackgroundJobV1;
   sessionId: string;
+  surfaceActive: boolean;
   onOpenJob?: (job: AgentBackgroundJobV1) => void;
 }) {
   const transport = useControlTransport();
@@ -226,13 +231,13 @@ function BackgroundJobRow({
   const [cancelError, setCancelError] = useState('');
   const [cancelNotice, setCancelNotice] = useState('');
   const [cancelling, setCancelling] = useState(false);
-  const active = ACTIVE_BACKGROUND_JOB_STATUSES[job.status];
+  const jobActive = ACTIVE_BACKGROUND_JOB_STATUSES[job.status];
   const sessionCancellable = (
     (job.status === 'queued' || job.status === 'running')
     && !job.causalMetadata.roomBound
   );
-  const cancellationManagedByRoom = job.causalMetadata.roomBound && active;
-  const elapsed = useJobElapsed(job);
+  const cancellationManagedByRoom = job.causalMetadata.roomBound && jobActive;
+  const elapsed = useJobElapsed(job, surfaceActive);
   const logCursor = Math.max(
     job.logStartCursor,
     job.outputBytes - BACKGROUND_JOB_LOG_LIMIT_BYTES,
@@ -245,8 +250,8 @@ function BackgroundJobRow({
       query: { cursor: logCursor, limitBytes: BACKGROUND_JOB_LOG_LIMIT_BYTES },
       signal,
     }),
-    enabled: expanded,
-    refetchInterval: expanded && active ? 1_000 : false,
+    enabled: surfaceActive && expanded,
+    refetchInterval: surfaceActive && expanded && jobActive ? 1_000 : false,
     retry: false,
   });
   const log = backgroundJobLog(logs.data, sessionId, job.jobId);
@@ -426,8 +431,8 @@ function JobStateIcon({ status }: { status: AgentBackgroundJobV1['status'] }) {
   return <TriangleAlert aria-hidden="true" size={14} />;
 }
 
-function useJobElapsed(job: AgentBackgroundJobV1): string {
-  const active = ACTIVE_BACKGROUND_JOB_STATUSES[job.status];
+function useJobElapsed(job: AgentBackgroundJobV1, surfaceActive: boolean): string {
+  const active = surfaceActive && ACTIVE_BACKGROUND_JOB_STATUSES[job.status];
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return undefined;

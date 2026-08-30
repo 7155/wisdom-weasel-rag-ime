@@ -21,7 +21,7 @@ import { MemoryFeature } from '@/features/memory';
 import { useWorkDocumentWorkspace, type WorkDocumentScope } from '@/features/work-documents/api';
 import type { ControlPathId } from '@/platform/routes';
 import type { ControlRequest } from '@/platform/transport';
-import type { PawAppId } from '../runtime/app-registry';
+import type { PawOsAppId } from '@/features/paw-os/model/app-registry';
 import { pawApp } from '../runtime/app-registry';
 import { PawSystemAppsMigrated, isPawSystemAppId, type PawSystemAppId } from './PawSystemAppsMigrated';
 import { PawWorkbenchDocumentLifecycle } from './PawWorkbenchDocumentLifecycle';
@@ -29,7 +29,7 @@ import { PawWorkbenchMigrated, type PawWorkbenchPageId } from './PawWorkbenchMig
 import { PawWorkbenchDocumentRegisterDialog, PawWorkbenchGoalDialog, PawWorkbenchTaskDialog } from './PawWorkbenchOperations';
 import { PawWorkbenchPlanningTools } from './PawWorkbenchPlanningTools';
 
-export type PawNativeAppId = Exclude<PawAppId, 'agent' | 'browser' | 'files' | 'terminal'>;
+export type PawNativeAppId = Exclude<PawOsAppId, 'agent' | 'browser' | 'files' | 'terminal'>;
 type PawFeatureAppId = Exclude<PawNativeAppId, PawSystemAppId>;
 
 type NativePage = { id: string; label: string; icon: LucideIcon; route: string };

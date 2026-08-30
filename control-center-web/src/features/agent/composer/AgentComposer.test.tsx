@@ -334,6 +334,10 @@ describe('AgentComposer macOS input methods', () => {
 
     const view = within(container);
     const composer = view.getByRole('textbox', { name: '消息' });
+    const busyFrame = container.querySelector('.agent-composer__busy-frame');
+    expect(busyFrame).toBeInTheDocument();
+    expect(busyFrame).toHaveAttribute('aria-hidden', 'true');
+    expect(busyFrame?.querySelector(':scope > i')).toBeInTheDocument();
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
     expect(view.queryByRole('radiogroup', { name: '消息投递方式' })).not.toBeInTheDocument();

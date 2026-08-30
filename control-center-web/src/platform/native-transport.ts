@@ -3,11 +3,9 @@ import {
   isComposerAttachmentMimeType,
 } from '@/contracts/attachment-policy';
 import {
-  parseAgentEvent,
-  parseContract,
-  parseObservationEvent,
-  parseRoomEvent,
-} from '@/contracts/validators';
+  loadContractValidationRuntime,
+  type ContractValidationRuntime,
+} from '@/contracts/validation-runtime';
 
 import {
   controlRoute,
@@ -70,6 +68,7 @@ interface PendingRequest {
 interface NativeSubscription {
   request: ControlSubscription;
   observer: ControlEventObserver<unknown>;
+  validationRuntime: ContractValidationRuntime | null;
   lastEventId: string;
   reconnectAttempt: number;
   reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -143,7 +142,9 @@ export class NativeControlTransport implements ControlTransport {
       slowSessionRequestTimeoutMs,
     );
     const contract = request.responseContract ?? controlRoute(request.pathId).responseContract;
-    return (contract ? parseContract(contract, result) : result) as Response;
+    if (!contract) return result as Response;
+    const { parseContract } = await loadContractValidationRuntime();
+    return parseContract(contract, result) as Response;
   }
 
   browserSnapshotImageUrl(snapshotId: string): string {
@@ -164,19 +165,27 @@ export class NativeControlTransport implements ControlTransport {
     assertControlSubscription(request);
     this.assertActive();
     const subscriptionId = this.createId();
-    this.subscriptions.set(subscriptionId, {
+    const subscription: NativeSubscription = {
       request,
       observer: observer as ControlEventObserver<unknown>,
+      validationRuntime: null,
       lastEventId: request.lastEventId,
       reconnectAttempt: 0,
-    });
-    void this.call('subscribe', {
-      subscriptionId,
-      request: controlSubscriptionWirePayload(request),
-    })
-      .then(() => observer.open?.(request.lastEventId))
+    };
+    this.subscriptions.set(subscriptionId, subscription);
+    void loadContractValidationRuntime()
+      .then(async (validationRuntime) => {
+        if (this.disposed || this.subscriptions.get(subscriptionId) !== subscription) return false;
+        subscription.validationRuntime = validationRuntime;
+        await this.call('subscribe', {
+          subscriptionId,
+          request: controlSubscriptionWirePayload(request),
+        });
+        return true;
+      })
+      .then((opened) => { if (opened) observer.open?.(request.lastEventId); })
       .catch((error) => {
-        this.subscriptions.delete(subscriptionId);
+        if (this.subscriptions.get(subscriptionId) === subscription) this.subscriptions.delete(subscriptionId);
         observer.error?.(asError(error));
       });
 
@@ -409,7 +418,10 @@ export class NativeControlTransport implements ControlTransport {
     }
     try {
       const streamKind = controlRoute(subscription.request.pathId).subscription;
-      const event = parseNativeEvent(streamKind, envelope.event);
+      if (!subscription.validationRuntime) {
+        throw new NativeBridgeCallError('contract validation runtime is not ready');
+      }
+      const event = parseNativeEvent(subscription.validationRuntime, streamKind, envelope.event);
       subscription.lastEventId = envelope.lastEventId || eventResumeToken(event);
       subscription.reconnectAttempt = 0;
       subscription.observer.next(event);
@@ -466,18 +478,22 @@ export class NativeControlTransport implements ControlTransport {
   }
 }
 
-function parseNativeEvent(streamKind: ControlStreamKind | undefined, value: unknown): unknown {
+function parseNativeEvent(
+  validationRuntime: ContractValidationRuntime,
+  streamKind: ControlStreamKind | undefined,
+  value: unknown,
+): unknown {
   switch (streamKind) {
     case 'agent':
-      return parseAgentEvent(value);
+      return validationRuntime.parseAgentEvent(value);
     case 'room':
-      return parseRoomEvent(value);
+      return validationRuntime.parseRoomEvent(value);
     case 'kernel':
       return value;
     case 'control':
       return value;
     case 'observation':
-      return parseObservationEvent(value);
+      return validationRuntime.parseObservationEvent(value);
     default:
       throw new NativeBridgeCallError('event arrived for a non-subscription route');
   }

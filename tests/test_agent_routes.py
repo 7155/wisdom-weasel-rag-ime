@@ -42,6 +42,18 @@ class AgentRouteTests(unittest.TestCase):
             ),
             (report_id, "finalize"),
         )
+        self.assertEqual(
+            observability_trace_diagnostic_report_route(
+                f"/api/observability/trace-diagnostic-reports/{encoded}/repair-authorize"
+            ),
+            (report_id, "repair-authorize"),
+        )
+        self.assertEqual(
+            observability_trace_diagnostic_report_route(
+                f"/api/observability/trace-diagnostic-reports/{encoded}/repair-verify"
+            ),
+            (report_id, "repair-verify"),
+        )
         for path in (
             "/api/observability/trace-diagnostic-reports/",
             "/control/v1/observability/trace-diagnostic-reports",
@@ -76,11 +88,20 @@ class AgentRouteTests(unittest.TestCase):
                 calls.append(("finalize", (requested_report_id, payload)))
                 return {"reportId": requested_report_id, "status": "completed"}
 
+            def authorize_trace_diagnostic_repair(self, requested_report_id, payload):
+                calls.append(("repair-authorize", (requested_report_id, payload)))
+                return {"reportId": requested_report_id, "status": "completed"}
+
+            def verify_trace_diagnostic_repair(self, requested_report_id, payload):
+                calls.append(("repair-verify", (requested_report_id, payload)))
+                return {"reportId": requested_report_id, "status": "completed"}
+
         handler = DebugRequestHandler.__new__(DebugRequestHandler)
         handler.service = SimpleNamespace(agent=AgentRecorder())
         handler._authorize_gateway_request = lambda _method, _parsed: True
         handler._serve_gateway_static = lambda _path: False
         handler._management_post_security_error = lambda _path, require_json=True: None
+        handler._trace_repair_loopback_allowed = lambda: True
         written: list[tuple[HTTPStatus, dict[str, object]]] = []
         handler._write_json = lambda status, body: written.append((status, body))
 
@@ -99,8 +120,27 @@ class AgentRouteTests(unittest.TestCase):
         )
         handler.do_POST()
 
-        self.assertEqual([item[0] for item in calls], ["list", "get", "create", "finalize"])
-        self.assertEqual([int(item[0]) for item in written], [200, 200, 201, 200])
+        handler._read_json = lambda: {"expectedRevision": 2, "repairSessionId": "agent:repair"}
+        handler.path = (
+            "/api/observability/trace-diagnostic-reports/"
+            + report_id.replace(":", "%3A")
+            + "/repair-authorize"
+        )
+        handler.do_POST()
+
+        handler._read_json = lambda: {"expectedRevision": 3, "repairReceiptId": "repair-receipt:1"}
+        handler.path = (
+            "/api/observability/trace-diagnostic-reports/"
+            + report_id.replace(":", "%3A")
+            + "/repair-verify"
+        )
+        handler.do_POST()
+
+        self.assertEqual(
+            [item[0] for item in calls],
+            ["list", "get", "create", "finalize", "repair-authorize", "repair-verify"],
+        )
+        self.assertEqual([int(item[0]) for item in written], [200, 200, 201, 200, 200, 200])
 
     def test_session_routes_are_strict_and_url_decoded(self) -> None:
         self.assertEqual(

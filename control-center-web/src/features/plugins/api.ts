@@ -6,6 +6,7 @@ import {
   requireSessionCapabilityCatalog,
   type CapabilityPreference,
 } from './capability-policy';
+import { PAW_EXTENSION_INSTALLATION_CHANGED_EVENT } from '@/paw-os/extensions/installation';
 
 export const pluginQueryKeys = {
   root: ['plugins'] as const,
@@ -80,6 +81,7 @@ export function usePluginCatalog(sessionId = '') {
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog(sessionId) }),
       ]);
+      window.dispatchEvent(new Event(PAW_EXTENSION_INSTALLATION_CHANGED_EVENT));
     },
   });
   const updateDefaults = useMutation({

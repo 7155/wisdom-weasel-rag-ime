@@ -396,7 +396,7 @@ a {
     scroll-behavior: auto !important;
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
+    transition-duration: 120ms !important;
   }
 }
 
@@ -406,7 +406,7 @@ a {
   scroll-behavior: auto !important;
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
-  transition-duration: 1ms !important;
+  transition-duration: 120ms !important;
 }
 
 

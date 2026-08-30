@@ -90,12 +90,11 @@
 
 .trace-agent-persisted-reports {
   display: grid;
-  gap: 9px;
+  gap: 12px;
   margin-bottom: 12px;
-  padding: 11px 12px;
-  border: 1px solid var(--color-success-border);
-  border-radius: 12px;
-  background: var(--color-success-soft);
+  padding: 13px 0 0;
+  border-block: 1px solid var(--color-border-strong);
+  background: transparent;
 }
 
 .trace-agent-persisted-reports__heading,
@@ -108,6 +107,7 @@
 
 .trace-agent-persisted-reports__heading {
   justify-content: space-between;
+  padding: 0 2px;
 }
 
 .trace-agent-persisted-reports__heading > div {
@@ -117,25 +117,29 @@
 .trace-agent-persisted-reports__heading strong {
   display: block;
   color: var(--color-text, #182230);
-  font-size: 12px;
+  font-family: var(--font-editorial-serif, "New York", Georgia, "Songti SC", serif);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -.01em;
 }
 
 .trace-agent-persisted-reports__heading p {
-  margin: 3px 0 0;
+  margin: 4px 0 0;
   color: var(--color-text-muted, #667085);
-  font-size: 10px;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .trace-agent-persisted-reports__list {
   display: grid;
-  gap: 6px;
+  border-top: 1px solid var(--color-border, #d9e1ec);
 }
 
 .trace-agent-persisted-report {
-  padding: 8px 9px;
-  border: 1px solid var(--color-success-border);
-  border-radius: 9px;
-  background: var(--color-surface);
+  min-height: 58px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--color-border, #d9e1ec);
+  background: transparent;
 }
 
 .trace-agent-persisted-report__icon {
@@ -144,9 +148,22 @@
   place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  border: 1px solid var(--color-success-border);
+  border-radius: 9px;
   color: var(--color-success);
   background: var(--color-success-soft);
+}
+
+.trace-agent-persisted-report[data-status='failed'] .trace-agent-persisted-report__icon {
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.trace-agent-persisted-report[data-status='generating'] .trace-agent-persisted-report__icon {
+  border-color: var(--color-warning-border);
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
 }
 
 .trace-agent-persisted-report__copy {
@@ -165,12 +182,13 @@
 
 .trace-agent-persisted-report__copy strong {
   color: var(--color-text, #182230);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .trace-agent-persisted-report__copy small {
   color: var(--color-text-muted, #667085);
   font-size: 10px;
+  line-height: 1.45;
 }
 
 .trace-agent-persisted-report__targets {
@@ -190,24 +208,6 @@
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.trace-agent-report-failure {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 12px 0;
-  padding: 9px 11px;
-  border: 1px solid var(--color-danger-border, #efb6b6);
-  border-radius: 10px;
-  color: var(--color-danger, #b42318);
-  background: var(--color-danger-soft, #fff1f0);
-  font-size: 12px;
-}
-
-.trace-agent-report-failure svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
 }
 
 .trace-agent-diagnostic-action {

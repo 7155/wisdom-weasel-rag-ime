@@ -563,6 +563,8 @@ class ControlRoutePolicyTests(unittest.TestCase):
         for path_id in (
             ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST,
             ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET,
+            ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_AUTHORIZE,
+            ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_VERIFY,
         ):
             entry = entries[path_id.value]
             self.assertFalse(entry["remoteSafe"])
@@ -574,12 +576,29 @@ class ControlRoutePolicyTests(unittest.TestCase):
                         path_id=path_id.value,
                         params=(
                             {"reportId": "trace-report:1"}
-                            if path_id is ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET
+                            if path_id is not ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST
                             else {}
                         ),
                         query=(
                             {"limit": 10}
                             if path_id is ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST
+                            else {}
+                        ),
+                        body=(
+                            {
+                                "expectedRevision": 2,
+                                "findingId": "finding:1",
+                                "sourceScope": "session:1",
+                                "sourceTraceId": "trace:1",
+                                "failureRef": "evidence:1",
+                                "repairSessionId": "agent:repair",
+                            }
+                            if path_id is ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_AUTHORIZE
+                            else {
+                                "expectedRevision": 3,
+                                "repairReceiptId": "repair-receipt:1",
+                            }
+                            if path_id is ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_REPAIR_VERIFY
                             else {}
                         ),
                     ),
@@ -871,7 +890,10 @@ class ControlRoutePolicyTests(unittest.TestCase):
 
         self.assertEqual(status.method.value, "GET")
         self.assertEqual(status.required_query, set())
-        self.assertEqual(status.query, {"runId", "jobId", "project", "limit"})
+        self.assertEqual(
+            status.query,
+            {"runId", "jobId", "project", "limit", "projectionOnly"},
+        )
         self.assertEqual(trigger.method.value, "POST")
         self.assertEqual(
             trigger.body,

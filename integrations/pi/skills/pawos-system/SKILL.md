@@ -44,8 +44,10 @@ Classify the current request before reading broad project context or editing:
    nearest owner and consumers, then make the smallest coherent source change.
 4. **Maintain:** build, install, update, uninstall, repair, rollback, LaunchAgent,
    or managed Pi Runtime work belongs to `project-maintainer`.
-5. **Extend:** a missing reusable external Tool, Skill, prompt, theme, hook, or
-   package belongs to `plugin-creator`; search before creating a duplicate.
+5. **Extend:** a source-isolated vertical PAWOS App and its self-build/test/
+   install loop belongs to `pawos-app-builder`. A missing reusable external
+   Tool, Skill, prompt, theme, hook, or non-App package belongs to
+   `plugin-creator`; search before creating a duplicate.
 6. **Decide:** if an unresolved user-owned choice changes scope, compatibility,
    cost, authority, or observable behavior, use `alignment-and-decision` before
    implementation.

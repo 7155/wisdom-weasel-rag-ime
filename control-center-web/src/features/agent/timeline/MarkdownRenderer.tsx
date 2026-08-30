@@ -1,4 +1,4 @@
-import { ExternalLink, FileText } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, ExternalLink, FileText } from 'lucide-react';
 import { memo, useMemo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,7 +7,7 @@ import {
   openEvidenceEchoEntity,
   type EvidenceEchoEntity,
 } from '@/features/evidence-echo/evidence-echo';
-import { usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import { CodeContentBlock, StreamingCursor } from './CodeDiffRenderers';
 import {
@@ -53,7 +53,14 @@ export function MarkdownBody({
      parse never swaps render modes inside the urgent settle commit. */
   const progressiveMode = useDeferredStreaming(streamingTail);
   const standaloneHtml = useMemo(() => standaloneHtmlSource(source), [source]);
+  const traceDiagnostic = useMemo(
+    () => traceDiagnosticResultReceipt(source),
+    [source],
+  );
   if (!source) return null;
+  if (traceDiagnostic && !progressiveMode) {
+    return <TraceDiagnosticReceipt {...traceDiagnostic} />;
+  }
   if (standaloneHtml) {
     return streamingTail
       ? <HtmlOutputPlaceholder />
@@ -81,6 +88,71 @@ export function MarkdownBody({
       renderChunk={(context) => renderProgressiveChunk(context, sessionId)}
       text={source}
     />
+  );
+}
+
+const TRACE_DIAGNOSTIC_RESULT_START = '--- TRACE_DIAGNOSTIC_RESULT_V1 ---';
+const TRACE_DIAGNOSTIC_RESULT_END = '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---';
+const TRACE_DIAGNOSTIC_REPORT_ID = /\btrace-report:[a-f0-9]{32}\b/iu;
+
+type TraceDiagnosticReceiptData = {
+  reportId: string;
+  summary: string;
+};
+
+function traceDiagnosticResultReceipt(source: string): TraceDiagnosticReceiptData | null {
+  const start = source.lastIndexOf(TRACE_DIAGNOSTIC_RESULT_START);
+  if (start < 0) return null;
+  const payloadStart = start + TRACE_DIAGNOSTIC_RESULT_START.length;
+  const end = source.indexOf(TRACE_DIAGNOSTIC_RESULT_END, payloadStart);
+  if (end < 0) return null;
+  try {
+    const value = JSON.parse(source.slice(payloadStart, end).trim()) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const result = value as Record<string, unknown>;
+    if (result.schemaVersion !== 'rag-ime.trace-diagnostic-result.v1') return null;
+    const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
+    if (!summary) return null;
+    return {
+      reportId: source.match(TRACE_DIAGNOSTIC_REPORT_ID)?.[0] ?? '',
+      summary,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function TraceDiagnosticReceipt({
+  reportId,
+  summary,
+}: TraceDiagnosticReceiptData) {
+  const desktop = usePawOsDesktop();
+  const route = reportId
+    ? `/trace-agent?reportId=${encodeURIComponent(reportId)}`
+    : '/trace-agent';
+  return (
+    <div
+      aria-label="Trace 诊断结构化结果"
+      className="agent-trace-diagnostic-receipt"
+      role="status"
+    >
+      <span aria-hidden="true" className="agent-trace-diagnostic-receipt__mark">
+        <CheckCircle2 size={18} />
+      </span>
+      <div>
+        <strong>结构化诊断已提交</strong>
+        <p>{summary}</p>
+        <small>{reportId || '完整结果保存在 Trace Agent 报告列表中'}</small>
+      </div>
+      <button
+        className="agent-trace-diagnostic-receipt__action"
+        onClick={() => openPawOsRoute(desktop, route)}
+        type="button"
+      >
+        打开网页报告
+        <ArrowUpRight aria-hidden="true" size={14} />
+      </button>
+    </div>
   );
 }
 

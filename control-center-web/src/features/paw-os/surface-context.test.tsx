@@ -8,7 +8,7 @@ import {
 function Probe() {
   const surface = usePawOsAppSurface();
   return (
-    <output>
+    <output data-active={surface?.active === false ? 'false' : 'true'}>
       {surface
         ? `${surface.appId}:${surface.width}x${surface.height}:${surface.compact ? 'compact' : 'regular'}`
         : 'legacy'}
@@ -31,5 +31,15 @@ describe('PawOsAppSurfaceProvider', () => {
     render(<Probe />);
 
     expect(screen.getByText('legacy')).toBeInTheDocument();
+  });
+
+  it('projects whether the owning window is currently interactive', () => {
+    render(
+      <PawOsAppSurfaceProvider active={false} appId="agent" width={900} height={600}>
+        <Probe />
+      </PawOsAppSurfaceProvider>,
+    );
+
+    expect(screen.getByText('agent:900x600:regular')).toHaveAttribute('data-active', 'false');
   });
 });

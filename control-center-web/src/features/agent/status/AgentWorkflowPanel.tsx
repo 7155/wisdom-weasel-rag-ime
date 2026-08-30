@@ -28,6 +28,7 @@ type MutationInput = {
 };
 
 export function AgentWorkflowPanel({
+  active = true,
   sessionId,
   fallbackTodo,
   fallbackGoal,
@@ -35,6 +36,7 @@ export function AgentWorkflowPanel({
   compactEmpty = false,
   onWorkflowResolved,
 }: {
+  active?: boolean;
   sessionId: string;
   fallbackTodo?: AgentTodoProjection;
   fallbackGoal?: Goal;
@@ -54,11 +56,11 @@ export function AgentWorkflowPanel({
       });
       return assertWorkflowOwner(next, sessionId);
     },
-    enabled: Boolean(sessionId),
+    enabled: active && Boolean(sessionId),
     retry: false,
     staleTime: 500,
-    refetchInterval: 2_000,
-    refetchOnWindowFocus: true,
+    refetchInterval: active ? 2_000 : false,
+    refetchOnWindowFocus: active,
   });
   const hasLiveTodo = Boolean(fallbackTodo);
   const hasLiveGoal = Boolean(fallbackGoal);

@@ -72,6 +72,8 @@ def _test_evidence(
         "testCount": 1,
         "passedCount": 1,
         "failedCount": 0,
+        "sandboxRequired": True,
+        "sandboxedCount": 1,
         "status": "passed",
     }
 
@@ -118,9 +120,12 @@ class TraceRepairStoreTests(unittest.TestCase):
                 {
                     "schemaVersion", "repairReceiptId", "sourceScope", "sourceTraceId",
                     "failureRef", "changeReceiptId", "testEvidenceId", "testStatus",
-                    "repairTraceId", "repairSessionId", "createdAtMs",
+                    "sandboxStatus", "sandboxedTestCount", "repairTraceId",
+                    "repairSessionId", "createdAtMs",
                 },
             )
+            self.assertEqual(receipt["sandboxStatus"], "passed")
+            self.assertEqual(receipt["sandboxedTestCount"], 1)
             self.assertEqual(store.get_receipt(str(receipt["repairReceiptId"])), receipt)
             self.assertEqual(
                 store.get_evidence(str(change["evidenceId"]))["evidenceId"],

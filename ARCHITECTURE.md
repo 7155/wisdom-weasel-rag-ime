@@ -306,6 +306,33 @@ creates only a missing reusable capability, validates the resulting Package,
 and stops before confirmation. Pi remains the sole resource loader, and an
 already-running Session never has its prompt prefix silently rewritten.
 
+### Source-Isolated Extension Apps
+
+```text
+control-center-web/extension-apps/<slug>/
+  -> validated pawos-app.json + lazy React entry + App icon
+  -> co-versioned pi-package with App Skill
+  -> managed Pi Package prepare / confirm / install
+  -> installed+enabled inventory projects extension:<slug>
+  -> desktop / Launchpad / Dock / generic ExtensionAppHost
+  -> ordinary Pi Session + shared Agent timeline and Composer
+  -> registered sandbox suite -> Trace -> frozen Eval
+```
+
+Business-specific frontend code, prompts, Skill, and Package source stay in the
+Extension App owner directory. PAWOS core owns only manifest discovery,
+validation, generic hosting, icon rendering, lifecycle projection, and window
+cleanup. It never branches on one vertical App id. A compiled frontend is only
+a candidate: the Package inventory owns whether the App and its Skill are
+available. Disable or uninstall removes the visible identity and closes its
+windows; whole-product rollback owns the compiled frontend chunk.
+
+Conversation-mode Apps may select a mode, shape the first-turn contract, and
+format domain results. They reuse the ordinary Session, Tool loop, ordered
+timeline, Markdown, Stop, recovery, model and approval semantics. Registered
+vertical fixtures are offline test references only; they never become
+production data merely because a sandbox Eval passed.
+
 ### Rime Suggestion
 
 ```text

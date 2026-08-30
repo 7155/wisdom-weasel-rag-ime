@@ -25,6 +25,8 @@ const canonicalPathIds = [
   'observability.traceDiagnosticReports.create',
   'observability.traceDiagnosticReport.get',
   'observability.traceDiagnosticReport.finalize',
+  'observability.traceDiagnosticReport.repairAuthorize',
+  'observability.traceDiagnosticReport.repairVerify',
   'observability.evals.aiJudge.run',
   'observability.traceRepair.changeEvidence',
   'observability.traceRepair.testEvidence',

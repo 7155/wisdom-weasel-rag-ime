@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -21,6 +21,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
+from rag_ime.agent_extensions import (
+    extension_app_binding_capability,
+    extension_app_binding_capability_from_capabilities,
+    extension_app_binding_sha256,
+)
 from rag_ime.managed_pi_runtime import (
     MANIFEST_NAME,
     ManagedPiRuntimeError,
@@ -34,6 +39,32 @@ SESSION_RUNTIME_CONTRACT = (
     ROOT / "integrations" / "pi" / "session-runtime-host-contract.json"
 )
 SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
+EXTENSION_APPS_ROOT = ROOT / "control-center-web" / "extension-apps"
+_EXTENSION_APP_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_PI_PACKAGE_NAME = re.compile(
+    r"^(?:@[a-z0-9][a-z0-9._~-]{0,63}/)?[a-z0-9][a-z0-9._~-]{0,63}$"
+)
+_PI_PACKAGE_VERSION = re.compile(
+    r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+_PI_PACKAGE_RESOURCE_KEYS = ("extensions", "skills", "prompts", "themes")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_EXTENSION_PACKAGE_SEGMENT = re.compile(
+    r"^(?:[a-z0-9][a-z0-9.-]*|SKILL\.md)$"
+)
+_MAX_NATIVE_PACKAGE_FILES = 1024
+_MAX_NATIVE_PACKAGE_BYTES = 20 * 1024 * 1024
+_EXTENSION_APP_PRESENTATIONS = frozenset(
+    {"workspace", "conversation", "library", "studio", "utility"}
+)
+_EXTENSION_APP_ACCENTS = frozenset(
+    {"cyan", "blue", "violet", "amber", "green", "rose", "slate"}
+)
+_EXTENSION_APP_ICON_SYMBOLS = frozenset(
+    {"analytics", "assistant", "document", "commerce"}
+)
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
 # The legacy @paw/pi-subagent package runs child Sessions inline and blocks the
 # parent turn. Product Sessions use the native agents gateway instead, so this
@@ -43,6 +74,7 @@ PROJECT_ROUTING_SKILLS = frozenset(
     {
         "bootstrap-project-context",
         "memory-curation",
+        "pawos-app-builder",
         "pawos-system",
         "plugin-creator",
         "project-maintainer",
@@ -786,7 +818,465 @@ def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ..
     return tuple(copied)
 
 
-def _copy_bundled_pi_packages(source_root: Path, destination: Path) -> None:
+def _json_object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate object key {key!r}")
+        value[key] = item
+    return value
+
+
+def _extension_pi_resource_prefix(raw_path: str) -> PurePosixPath:
+    """Return the non-glob prefix of a Pi package resource path."""
+
+    if "\\" in raw_path:
+        raise ValueError("resource paths must use POSIX separators")
+    path = raw_path[1:] if raw_path.startswith("!") else raw_path
+    if not path or path.startswith("/"):
+        raise ValueError("resource paths must be relative")
+    relative = PurePosixPath(path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("resource paths must stay inside the package")
+    prefix: list[str] = []
+    for part in relative.parts:
+        if part in ("", "."):
+            continue
+        if any(character in part for character in "*?[{"):
+            break
+        prefix.append(part)
+    return PurePosixPath(*prefix)
+
+
+def _extension_pi_package_manifest(
+    package_root: Path,
+    *,
+    source: str,
+) -> dict[str, object]:
+    if package_root.is_symlink() or not package_root.is_dir():
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package directory is invalid or symlinked: {source}"
+        )
+    try:
+        package_items = tuple(package_root.rglob("*"))
+    except OSError as error:
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package cannot be inspected at {source}: {error}"
+        ) from error
+    for item in package_items:
+        if item.is_symlink():
+            raise ManagedPiRuntimeError(
+                f"Extension App Pi Package contains a symlink: {item}"
+            )
+    files = [item for item in package_items if item.is_file()]
+    if (
+        len(files) > _MAX_NATIVE_PACKAGE_FILES
+        or sum(item.stat().st_size for item in files) > _MAX_NATIVE_PACKAGE_BYTES
+    ):
+        raise ManagedPiRuntimeError(
+            "Extension App Pi Package exceeds Native Runtime file or size limits"
+        )
+    for directory, directories, file_names in os.walk(package_root, followlinks=False):
+        names = [*directories, *file_names]
+        if len({name.casefold() for name in names}) != len(names):
+            raise ManagedPiRuntimeError(
+                f"Extension App Pi Package has a case-colliding path in {directory}"
+            )
+        for name in names:
+            if not _EXTENSION_PACKAGE_SEGMENT.fullmatch(name):
+                raise ManagedPiRuntimeError(
+                    "Extension App Pi Package paths must use lowercase ASCII, "
+                    f"digits, dots, or hyphens (except SKILL.md): {name!r}"
+                )
+
+    manifest_path = package_root / "package.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest is missing or symlinked: {manifest_path}"
+        )
+    try:
+        manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_json_object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest is invalid at {manifest_path}: {error}"
+        ) from error
+    if not isinstance(manifest, dict):
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest must be an object: {manifest_path}"
+        )
+
+    package_name = manifest.get("name")
+    if not isinstance(package_name, str) or not _PI_PACKAGE_NAME.fullmatch(
+        package_name
+    ):
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest has an invalid name at {manifest_path}"
+        )
+    package_version = manifest.get("version")
+    if not isinstance(package_version, str) or not _PI_PACKAGE_VERSION.fullmatch(
+        package_version
+    ):
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest has an invalid version at {manifest_path}"
+        )
+
+    pi_manifest = manifest.get("pi")
+    if not isinstance(pi_manifest, dict):
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest requires a pi object at {manifest_path}"
+        )
+    resource_count = 0
+    for key in _PI_PACKAGE_RESOURCE_KEYS:
+        if key not in pi_manifest:
+            continue
+        paths = pi_manifest[key]
+        if not isinstance(paths, list) or not paths:
+            raise ManagedPiRuntimeError(
+                f"Extension App Pi Package pi.{key} must be a non-empty string array "
+                f"at {manifest_path}"
+            )
+        for raw_path in paths:
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                raise ManagedPiRuntimeError(
+                    f"Extension App Pi Package pi.{key} contains an invalid resource "
+                    f"path at {manifest_path}"
+                )
+            try:
+                prefix = _extension_pi_resource_prefix(raw_path.strip())
+            except ValueError as error:
+                raise ManagedPiRuntimeError(
+                    f"Extension App Pi Package pi.{key} contains an unsafe resource "
+                    f"path {raw_path!r} at {manifest_path}: {error}"
+                ) from error
+            if raw_path.strip().startswith("!"):
+                continue
+            prefix_path = package_root.joinpath(*prefix.parts)
+            if not prefix_path.exists():
+                raise ManagedPiRuntimeError(
+                    f"Extension App Pi Package pi.{key} references a missing path "
+                    f"{raw_path!r} at {manifest_path}"
+                )
+            resource_count += 1
+    if resource_count == 0:
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest declares no Pi resources at {manifest_path}"
+        )
+    display_name = manifest.get("displayName")
+    if display_name is not None and (
+        not isinstance(display_name, str) or not display_name.strip()
+    ):
+        raise ManagedPiRuntimeError(
+            f"Extension App Pi Package manifest has an invalid displayName at {manifest_path}"
+        )
+    return manifest
+
+
+def _extension_app_manifest(
+    app_directory: Path,
+    *,
+    slug: str,
+    package_root: Path,
+    package_manifest: dict[str, object],
+) -> dict[str, object] | None:
+    """Validate the optional App contract next to a Pi Package.
+
+    Package-only entries remain compatible with the generic bundled Package
+    importer.  A directory that provides ``pawos-app.json`` is an Extension
+    App and must carry the complete co-version binding before it can enter a
+    managed Runtime payload.
+    """
+
+    manifest_path = app_directory / "pawos-app.json"
+    if not manifest_path.exists() and not manifest_path.is_symlink():
+        return None
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ManagedPiRuntimeError(
+            f"Extension App manifest is missing or symlinked: {manifest_path}"
+        )
+    try:
+        app_manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_json_object_without_duplicate_keys,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise ManagedPiRuntimeError(
+            f"Extension App manifest is invalid at {manifest_path}: {error}"
+        ) from error
+    if not isinstance(app_manifest, dict):
+        raise ManagedPiRuntimeError(
+            f"Extension App manifest must be an object: {manifest_path}"
+        )
+
+    expected_id = f"extension:{slug}"
+    if app_manifest.get("schemaVersion") != "pawos.extension-app.v1":
+        raise ManagedPiRuntimeError(
+            f"Extension App manifest schemaVersion is unsupported: {manifest_path}"
+        )
+    if app_manifest.get("id") != expected_id:
+        raise ManagedPiRuntimeError(
+            f"Extension App manifest id must match its source directory: {slug}"
+        )
+    if app_manifest.get("route") != f"/extensions/{slug}":
+        raise ManagedPiRuntimeError(
+            f"Extension App manifest route must match its source directory: {slug}"
+        )
+    required_text = (
+        "packageId",
+        "version",
+        "label",
+        "shortLabel",
+        "tagline",
+        "skillRef",
+        "verticalSuiteId",
+        "verticalSuiteRevision",
+    )
+    for field in required_text:
+        value = app_manifest.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ManagedPiRuntimeError(
+                f"Extension App manifest requires non-empty {field}: {manifest_path}"
+            )
+    if app_manifest.get("presentation") not in _EXTENSION_APP_PRESENTATIONS:
+        raise ManagedPiRuntimeError("Extension App manifest presentation is invalid")
+    if app_manifest.get("accent") not in _EXTENSION_APP_ACCENTS:
+        raise ManagedPiRuntimeError("Extension App manifest accent is invalid")
+    icon = app_manifest.get("icon")
+    if (
+        not isinstance(icon, dict)
+        or icon.get("symbol") not in _EXTENSION_APP_ICON_SYMBOLS
+        or not isinstance(icon.get("background"), str)
+        or re.fullmatch(r"#[0-9A-Fa-f]{6}", str(icon.get("background") or "")) is None
+    ):
+        raise ManagedPiRuntimeError("Extension App manifest icon is invalid")
+    package_name = package_manifest.get("name")
+    package_version = package_manifest.get("version")
+    if app_manifest["packageId"] != package_name:
+        raise ManagedPiRuntimeError(
+            "Extension App packageId does not match Pi Package name: "
+            f"{app_manifest['packageId']!r} != {package_name!r}"
+        )
+    if app_manifest["version"] != package_version:
+        raise ManagedPiRuntimeError(
+            "Extension App version does not match Pi Package version: "
+            f"{app_manifest['version']!r} != {package_version!r}"
+        )
+    skill_ref = str(app_manifest["skillRef"])
+    if not _EXTENSION_APP_SLUG.fullmatch(skill_ref):
+        raise ManagedPiRuntimeError(
+            f"Extension App skillRef is invalid: {skill_ref!r}"
+        )
+    skill_file = package_root / "skills" / skill_ref / "SKILL.md"
+    if skill_file.is_symlink() or not skill_file.is_file():
+        raise ManagedPiRuntimeError(
+            "Extension App skillRef does not resolve to a regular package Skill: "
+            f"{skill_ref}"
+        )
+    try:
+        skill_sha256 = hashlib.sha256(skill_file.read_bytes()).hexdigest()
+    except OSError as error:
+        raise ManagedPiRuntimeError(
+            f"Extension App Skill cannot be hashed: {skill_file}: {error}"
+        ) from error
+    if app_manifest.get("skillSha256") != skill_sha256:
+        raise ManagedPiRuntimeError(
+            "Extension App manifest skillSha256 does not match its Package Skill"
+        )
+
+    try:
+        from rag_ime.vertical_agent_harness import resolve_builtin_vertical_suite
+
+        suite = resolve_builtin_vertical_suite(
+            app_manifest["verticalSuiteId"],
+            app_manifest["verticalSuiteRevision"],
+        )
+    except Exception as error:
+        raise ManagedPiRuntimeError(
+            "Extension App vertical suite binding is not registered: "
+            f"{app_manifest['verticalSuiteId']!r}/"
+            f"{app_manifest['verticalSuiteRevision']!r}: {error}"
+        ) from error
+    sandbox = suite.get("sandbox")
+    if (
+        not isinstance(sandbox, dict)
+        or sandbox.get("network") != "blocked"
+        or sandbox.get("productionWriteBlocked") is not True
+    ):
+        raise ManagedPiRuntimeError(
+            "Extension App vertical suite must block network and production writes"
+        )
+
+    binding_sha256 = app_manifest.get("bindingSha256")
+    if not isinstance(binding_sha256, str) or not _SHA256.fullmatch(binding_sha256):
+        raise ManagedPiRuntimeError(
+            "Extension App manifest bindingSha256 must be a lowercase SHA-256"
+        )
+    expected_binding = extension_app_binding_sha256(
+        app_manifest,
+        skill_sha256=skill_sha256,
+        package_version=str(package_version),
+    )
+    if binding_sha256 != expected_binding:
+        raise ManagedPiRuntimeError(
+            "Extension App bindingSha256 does not match canonical manifest, "
+            f"Skill, and package version: expected {expected_binding}"
+        )
+    binding_capability = extension_app_binding_capability(binding_sha256)
+
+    paw = package_manifest.get("paw")
+    if not isinstance(paw, dict):
+        raise ManagedPiRuntimeError(
+            "Extension App Pi Package manifest requires a paw object"
+        )
+    capabilities = paw.get("capabilities")
+    if (
+        not isinstance(capabilities, list)
+        or any(not isinstance(value, str) or not value.strip() for value in capabilities)
+        or len(capabilities) != len(set(capabilities))
+    ):
+        raise ManagedPiRuntimeError(
+            "Extension App Pi Package paw.capabilities must be a unique string array"
+        )
+    existing_binding = extension_app_binding_capability_from_capabilities(capabilities)
+    raw_binding_tokens = [
+        value
+        for value in capabilities
+        if isinstance(value, str) and value.startswith("pawos.extension.binding.")
+    ]
+    if raw_binding_tokens != [binding_capability] or existing_binding != binding_capability:
+        raise ManagedPiRuntimeError(
+            "Extension App Pi Package binding capability does not match bindingSha256"
+        )
+    package_extension = paw.get("extensionApp")
+    if not isinstance(package_extension, dict):
+        raise ManagedPiRuntimeError(
+            "Extension App Pi Package manifest requires paw.extensionApp"
+        )
+    expected_extension = {
+        "id": expected_id,
+        "packageId": str(package_name),
+        "version": str(package_version),
+        "bindingSha256": binding_sha256,
+        "skillRef": skill_ref,
+        "skillSha256": skill_sha256,
+        "verticalSuiteId": str(app_manifest["verticalSuiteId"]),
+        "verticalSuiteRevision": str(app_manifest["verticalSuiteRevision"]),
+        "manifest": app_manifest,
+    }
+    for field, expected in expected_extension.items():
+        if package_extension.get(field) != expected:
+            raise ManagedPiRuntimeError(
+                "Extension App Pi Package paw.extensionApp does not match "
+                f"the App manifest for {field}: expected {expected!r}"
+            )
+    return {
+        "id": expected_id,
+        "packageId": str(package_name),
+        "version": str(package_version),
+        "bindingSha256": binding_sha256,
+        "bindingCapability": binding_capability,
+        "skillRef": skill_ref,
+        "skillSha256": skill_sha256,
+        "verticalSuiteId": str(app_manifest["verticalSuiteId"]),
+        "verticalSuiteRevision": str(app_manifest["verticalSuiteRevision"]),
+        "manifest": app_manifest,
+    }
+
+
+def _discover_extension_app_pi_packages(
+    source_root: Path | None = None,
+) -> tuple[tuple[str, Path, dict[str, object], dict[str, object] | None], ...]:
+    root = EXTENSION_APPS_ROOT if source_root is None else source_root
+    if root.is_symlink():
+        raise ManagedPiRuntimeError(
+            f"Extension App source root must be a real directory: {root}"
+        )
+    if not root.exists():
+        return ()
+    if not root.is_dir():
+        raise ManagedPiRuntimeError(
+            f"Extension App source root is not a directory: {root}"
+        )
+
+    discovered: list[
+        tuple[str, Path, dict[str, object], dict[str, object] | None]
+    ] = []
+    for app_directory in sorted(root.iterdir(), key=lambda item: item.name):
+        if app_directory.is_symlink():
+            raise ManagedPiRuntimeError(
+                f"Extension App source directory contains a symlink: {app_directory}"
+            )
+        if not app_directory.is_dir():
+            continue
+        package_root = app_directory / "pi-package"
+        if not package_root.exists() and not package_root.is_symlink():
+            continue
+        if not _EXTENSION_APP_SLUG.fullmatch(app_directory.name):
+            raise ManagedPiRuntimeError(
+                f"Extension App source directory has an invalid slug: {app_directory.name}"
+            )
+        manifest = _extension_pi_package_manifest(
+            package_root,
+            source=f"{app_directory.name}/pi-package",
+        )
+        app_manifest = _extension_app_manifest(
+            app_directory,
+            slug=app_directory.name,
+            package_root=package_root,
+            package_manifest=manifest,
+        )
+        discovered.append((app_directory.name, package_root, manifest, app_manifest))
+    return tuple(discovered)
+
+
+def _bundled_pi_package_names(source_root: Path) -> set[str]:
+    names: set[str] = set()
+    for item in source_root.iterdir():
+        if (
+            item.name in DISABLED_BUNDLED_PI_PACKAGE_DIRS
+            or item.is_symlink()
+            or not item.is_dir()
+        ):
+            continue
+        package_json = item / "package.json"
+        if package_json.is_symlink() or not package_json.is_file():
+            continue
+        try:
+            manifest = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(manifest, dict) and isinstance(manifest.get("name"), str):
+            names.add(manifest["name"])
+    return names
+
+
+def _hash_extension_app_pi_packages(source_root: Path | None = None) -> bytes:
+    digest = hashlib.sha256()
+    for slug, package_root, _manifest, app_manifest in _discover_extension_app_pi_packages(source_root):
+        digest.update(slug.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_hash_tree(package_root))
+        if app_manifest is not None:
+            digest.update(
+                json.dumps(
+                    app_manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            digest.update(b"\0")
+    return digest.digest()
+
+
+def _copy_bundled_pi_packages(
+    source_root: Path,
+    destination: Path,
+    *,
+    extension_apps_root: Path | None = None,
+) -> None:
     """Keep Pi's built-in package catalog adjacent to the bundled Host.
 
     ``bundled-package-catalog.ts`` resolves ``../pi-packages`` relative to the
@@ -805,6 +1295,74 @@ def _copy_bundled_pi_packages(source_root: Path, destination: Path) -> None:
             raise ManagedPiRuntimeError(
                 f"bundled Pi Package source contains a symlink: {item}"
             )
+    extension_packages = _discover_extension_app_pi_packages(extension_apps_root)
+    try:
+        catalog_payload = json.loads(
+            catalog.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ManagedPiRuntimeError(
+            "bundled Pi Package catalog cannot be parsed before copying"
+        ) from error
+    if not isinstance(catalog_payload, dict):
+        raise ManagedPiRuntimeError("bundled Pi Package catalog must be an object")
+    packages = catalog_payload.get("packages")
+    if not isinstance(packages, list):
+        raise ManagedPiRuntimeError("bundled Pi Package catalog has no packages list")
+
+    catalog_directories: set[str] = set()
+    catalog_names: set[str] = set()
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        directory = package.get("directory")
+        if not isinstance(directory, str) or not directory:
+            continue
+        if directory in catalog_directories:
+            raise ManagedPiRuntimeError(
+                f"bundled Pi Package catalog has duplicate directory: {directory}"
+            )
+        catalog_directories.add(directory)
+        package_name = package.get("name")
+        if isinstance(package_name, str) and package_name:
+            if package_name in catalog_names:
+                raise ManagedPiRuntimeError(
+                    f"bundled Pi Package catalog has duplicate name: {package_name}"
+                )
+            catalog_names.add(package_name)
+    source_directories = {
+        item.name
+        for item in source_root.iterdir()
+        if item.is_dir() and not item.is_symlink()
+    }
+    existing_names = _bundled_pi_package_names(source_root) | catalog_names
+    extension_directories: set[str] = set()
+    extension_names: set[str] = set()
+    extension_entries: list[dict[str, object]] = []
+    for slug, _package_root, manifest, app_manifest in extension_packages:
+        if slug in extension_directories or slug in catalog_directories or slug in source_directories:
+            raise ManagedPiRuntimeError(
+                f"Extension App Pi Package has duplicate directory: {slug}"
+            )
+        package_name = manifest["name"]
+        if package_name in extension_names or package_name in existing_names:
+            raise ManagedPiRuntimeError(
+                f"Extension App Pi Package has duplicate name: {package_name}"
+            )
+        extension_directories.add(slug)
+        extension_names.add(package_name)
+        display_name = manifest.get("displayName") or package_name
+        entry: dict[str, object] = {
+            "directory": slug,
+            "displayName": str(display_name),
+        }
+        if app_manifest is not None:
+            entry["extensionApp"] = {
+                key: value
+                for key, value in app_manifest.items()
+                if key != "manifest"
+            }
+        extension_entries.append(entry)
     if destination.exists():
         raise ManagedPiRuntimeError(
             f"bundled Pi Package destination already exists: {destination}"
@@ -820,25 +1378,16 @@ def _copy_bundled_pi_packages(source_root: Path, destination: Path) -> None:
         else:
             shutil.copy2(item, target)
 
-    try:
-        catalog_payload = json.loads(
-            (destination / "catalog.json").read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError) as error:
-        raise ManagedPiRuntimeError(
-            "bundled Pi Package catalog cannot be parsed after filtering"
-        ) from error
-    packages = catalog_payload.get("packages")
-    if not isinstance(packages, list):
-        raise ManagedPiRuntimeError("bundled Pi Package catalog has no packages list")
     filtered_packages = [
         package
         for package in packages
         if not isinstance(package, dict)
         or package.get("directory") not in DISABLED_BUNDLED_PI_PACKAGE_DIRS
     ]
-    if len(filtered_packages) != len(packages):
-        catalog_payload["packages"] = filtered_packages
+    for slug, package_root, _manifest, _app_manifest in extension_packages:
+        shutil.copytree(package_root, destination / slug)
+    if len(filtered_packages) != len(packages) or extension_entries:
+        catalog_payload["packages"] = filtered_packages + extension_entries
         (destination / "catalog.json").write_text(
             json.dumps(catalog_payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -1122,6 +1671,7 @@ def main(argv: list[str] | None = None) -> int:
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
             + _hash_tree(product_skills)
+            + _hash_extension_app_pi_packages(EXTENSION_APPS_ROOT)
             + routing_catalog_bytes
             + SESSION_RUNTIME_CONTRACT.read_bytes()
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")

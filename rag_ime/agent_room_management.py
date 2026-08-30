@@ -31,6 +31,7 @@ class RoomManagementService:
             [str],
             dict[str, object],
         ],
+        close_session: Callable[[str], None] | None = None,
         runtime_status: Callable[
             [],
             Mapping[str, object],
@@ -69,6 +70,7 @@ class RoomManagementService:
             participants=self.participants,
             create_session=create_session,
             delete_session=delete_session,
+            close_session=close_session,
         )
 
     def list_rooms(

@@ -3,7 +3,7 @@
    icons stay monochrome. Placement may size the asset, but never redraw it,
    recolour it, or add a second plate around it. */
 
-/* One size ladder. Every shell placement resolves one of these five steps,
+/* One size ladder. Every shell placement resolves one of these six steps,
    so identical surfaces can never drift apart by a pixel or two. */
 :root {
   --paw-icon-paper: #fff;
@@ -11,6 +11,7 @@
   --paw-icon-step-sm: 20px; /* window titlebar */
   --paw-icon-step-md: 28px; /* overview targets, App runtime headers, Wayfinder list rows */
   --paw-icon-step-lg: 34px; /* Dock, native App nav header */
+  --paw-icon-step-desktop: 48px; /* wallpaper App shortcuts */
   --paw-icon-step-xl: 48px; /* launcher */
 }
 
@@ -52,15 +53,15 @@
   background: transparent;
   box-shadow: none;
 }
-.paw-desktop-shortcuts button > span { width: 40px; height: 40px; }
+.paw-desktop-shortcuts button > span { width: 56px; height: 56px; }
 .paw-menu-app .paw-app-icon { width: var(--paw-icon-step-xs); height: var(--paw-icon-step-xs); }
 .paw-window-title .paw-app-icon { width: var(--paw-icon-step-sm); height: var(--paw-icon-step-sm); }
 .paw-overview-window-target > .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
 .paw-dock .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
 .paw-native-nav > header .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
-/* Desktop icons take the Dock's step: on the open wallpaper they are primary
-   objects, not dense list rows, so they share the Dock's presence. */
-.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
+/* Desktop identities need more presence than dense Dock furniture. Their
+   48px drawing sits in the same 56px art box as project folders and files. */
+.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-desktop); height: var(--paw-icon-step-desktop); }
 .paw-launchpad .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
 
 /* One selected / running language. Hover, selection, the current-App plate
@@ -98,7 +99,7 @@
   transform: none;
 }
 .paw-desktop-shortcuts button:hover > span,
-.paw-desktop-shortcuts button[aria-selected='true'] > span { box-shadow: none; }
+.paw-desktop-shortcuts button[aria-pressed='true'] > span { box-shadow: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .paw-app-icon { transition: none; }

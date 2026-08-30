@@ -54,6 +54,7 @@ class GatewayMemoryMaintenanceJobs:
         self._lock = threading.RLock()
         self._jobs: dict[str, dict[str, object]] = {}
         self._active_job_id = ""
+        self._recent_jobs_loaded = False
         self._closed = False
         if self._db_path is not None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +111,36 @@ class GatewayMemoryMaintenanceJobs:
                 # retryable expiry projection.
                 return self._expired_payload(normalized)
             return self._payload(job, reused=False)
+
+    def latest_status(self, *, project: str = "") -> dict[str, object]:
+        """Return the newest real maintenance job without requiring its id.
+
+        The shell needs one lightweight background-activity projection, not the
+        much heavier maintenance report. Load durable receipts at most once per
+        process; every job admitted by this process is already in ``_jobs``.
+        """
+
+        normalized_project = str(project or "").strip()
+        with self._lock:
+            if not self._recent_jobs_loaded:
+                for durable in self._load_recent_jobs():
+                    job_id = str(durable.get("jobId") or "")
+                    if job_id and job_id not in self._jobs:
+                        self._jobs[job_id] = durable
+                self._recent_jobs_loaded = True
+            active = self._jobs.get(self._active_job_id)
+            if active is not None and self._matches_project(active, normalized_project):
+                return self._payload(active, reused=False)
+            candidates = sorted(
+                (
+                    job
+                    for job in self._jobs.values()
+                    if self._matches_project(job, normalized_project)
+                ),
+                key=lambda item: int(item.get("updatedAtMs") or 0),
+                reverse=True,
+            )
+            return self._payload(candidates[0], reused=False) if candidates else {}
 
     def activity_timeline_status(self, *, project: str = "") -> dict[str, object]:
         """Return one safe timeline-job projection for refresh recovery."""

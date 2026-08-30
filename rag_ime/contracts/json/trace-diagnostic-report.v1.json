@@ -16,6 +16,7 @@
     "inspectionSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "inspection": {"type": "object"},
     "result": {"type": ["object", "null"]},
+    "repairLifecycle": {"$ref": "#/$defs/repairLifecycle"},
     "failureReason": {"type": "string", "maxLength": 1000},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0}
@@ -31,6 +32,60 @@
         "title": {"type": "string", "maxLength": 240},
         "traceIds": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 240}},
         "sourceAvailable": {"type": "boolean"}
+      }
+    },
+    "repairAuthorization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "authorizationKind", "writeAuthority", "authorizationId", "findingId", "sourceScope", "sourceTraceId", "failureRef", "repairSessionId", "authorizedAtMs"],
+      "properties": {
+        "state": {"enum": ["authorized", "declined", "blocked", "expired"]},
+        "authorizationKind": {"const": "repair_handoff"},
+        "writeAuthority": {"enum": ["per_action_required", "model_arbitrated_full_trust"]},
+        "authorizationId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "findingId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "sourceScope": {"type": "string", "minLength": 1, "maxLength": 160},
+        "sourceTraceId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "failureRef": {"type": "string", "minLength": 1, "maxLength": 160},
+        "repairSessionId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "authorizedAtMs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "comparison": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reason", "sourceStatus", "repairStatus", "sourceFingerprint", "repairFingerprint", "beforeMetrics", "afterMetrics", "deltas"],
+      "properties": {
+        "status": {"enum": ["pending", "incomparable", "failed", "unknown"]},
+        "reason": {"type": "string", "maxLength": 1000},
+        "sourceStatus": {"type": "string", "maxLength": 80},
+        "repairStatus": {"type": "string", "maxLength": 80},
+        "sourceFingerprint": {"type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$"},
+        "repairFingerprint": {"type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$"},
+        "beforeMetrics": {"type": "object", "additionalProperties": {"type": "number"}},
+        "afterMetrics": {"type": "object", "additionalProperties": {"type": "number"}},
+        "deltas": {"type": "object", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "repairVerification": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "repairReceiptId", "repairTraceId", "evalRunId", "testStatus", "sandboxStatus", "sandboxedTestCount", "verifiedAtMs", "comparison"],
+      "properties": {
+        "state": {"enum": ["pending", "verified", "failed"]},
+        "repairReceiptId": {"type": "string", "maxLength": 160},
+        "repairTraceId": {"type": "string", "maxLength": 160},
+        "evalRunId": {"type": "string", "maxLength": 160},
+        "testStatus": {"enum": ["", "passed", "failed", "blocked"]},
+        "sandboxStatus": {"enum": ["", "passed", "blocked"]},
+        "sandboxedTestCount": {"type": "integer", "minimum": 0},
+        "verifiedAtMs": {"type": "integer", "minimum": 0},
+        "comparison": {"$ref": "#/$defs/comparison"}
+      }
+    },
+    "repairLifecycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authorization", "verification"],
+      "properties": {
+        "authorization": {"$ref": "#/$defs/repairAuthorization"},
+        "verification": {"$ref": "#/$defs/repairVerification"}
       }
     }
   }

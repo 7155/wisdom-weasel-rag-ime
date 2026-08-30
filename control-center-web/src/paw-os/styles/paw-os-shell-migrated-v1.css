@@ -84,6 +84,13 @@
   outline-offset: 2px;
 }
 
+/* The unified composer already exposes focus on its rounded parent shell.
+   Drawing the generic rule again on the square textarea produced the skewed
+   double frame seen around the input, so the child delegates that ring. */
+.paw-desktop-root .paw-unified-composer > textarea:focus-visible {
+  outline: 0;
+}
+
 /* ------------------------------------------------------------------ Menu bar
  * One quiet orientation row: brand wordmark, current App identity, real
  * status. Both interactive segments share the same pill hover so the whole
@@ -139,15 +146,11 @@
   box-shadow: none;
 }
 
-/* The wordmark carries the glacial Wayfinder triad as ink: cobalt → ice teal
-   → deep teal. Purple mid-stops were retired so the brand matches the cold
-   aurora shell instead of a generic violet flourish. Every stop stays dark
-   enough for AA on the bright veil, so the brand reads before it shimmers. */
+/* A solid glacial blue keeps the compact wordmark crisp on every veil. The
+   surrounding mark already carries the product's colour identity; text does
+   not need decorative clipping to repeat it. */
 .paw-brand-wordmark {
-  background: linear-gradient(105deg, #1e57e7, #0f7a9a 52%, #0c7568);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #145f84;
   font-size: 13px;
   font-weight: 800;
   letter-spacing: .07em;
@@ -493,9 +496,6 @@
   background: rgb(251 252 254 / .86);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / .85), 0 18px 44px -26px rgb(23 32 52 / .3);
 }
-.paw-desktop-root .paw-wayfinder-work__head strong { color: #273142; }
-.paw-desktop-root .paw-wayfinder-work__head small { color: #727c8c; }
-.paw-desktop-root .paw-wayfinder-work__count,
 .paw-desktop-root .paw-wayfinder-work__bucket-label,
 .paw-desktop-root .paw-wayfinder-work__bucket-toggle { color: var(--paw-desktop-muted); }
 .paw-desktop-root .paw-wayfinder-work__bucket-label small,
@@ -507,21 +507,6 @@
   color: var(--paw-ink);
   background: rgb(23 26 33 / .05);
 }
-.paw-desktop-root .paw-wayfinder-work__search {
-  border: 1px solid rgb(23 26 33 / .12);
-  color: var(--paw-desktop-muted);
-  background: rgb(255 255 255 / .72);
-  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
-}
-/* The label carries the focus ring so the input can drop its own outline
-   without losing a visible keyboard-focus state. */
-.paw-desktop-root .paw-wayfinder-work__search:focus-within {
-  border-color: rgb(47 107 255 / .62);
-  background: #fff;
-  box-shadow: 0 0 0 2px rgb(47 107 255 / .18);
-}
-.paw-desktop-root .paw-wayfinder-work__search input { color: var(--paw-ink); outline: none; }
-.paw-desktop-root .paw-wayfinder-work__search input::placeholder { color: #8a93a2; }
 .paw-desktop-root .paw-wayfinder-work__list { scrollbar-color: rgb(23 26 33 / .24) transparent; }
 .paw-desktop-root .paw-wayfinder-work__project > summary {
   transition: background-color 120ms ease, box-shadow 120ms ease;
@@ -609,6 +594,14 @@
     0 6px 16px rgb(23 26 33 / .08);
   -webkit-backdrop-filter: var(--paw-chrome-blur);
   backdrop-filter: var(--paw-chrome-blur);
+}
+.paw-desktop-root .paw-dock[data-drop-target] {
+  border-color: color-mix(in srgb, var(--paw-accent) 58%, var(--paw-chrome-hairline));
+  box-shadow:
+    var(--paw-chrome-highlight),
+    0 0 0 3px color-mix(in srgb, var(--paw-accent) 18%, transparent),
+    0 24px 48px -20px rgb(33 44 66 / .32),
+    0 6px 16px rgb(23 26 33 / .08);
 }
 .paw-desktop-root[data-window-interaction] .paw-dock {
   -webkit-backdrop-filter: none;
@@ -895,28 +888,37 @@
 /* Direct children only: App chrome docked beside the lights is a descendant
    of the cluster too, and must never inherit a light's ring, fill or shape. */
 .paw-desktop-root .paw-traffic-lights > button {
-  border: 1.5px solid rgb(23 26 33 / .28);
-  border-radius: 50%;
+  border: 0;
   background: transparent;
   color: transparent;
   /* The glyph reveal and the focus fill are named-property transitions, so
      hovering the cluster reads as a light coming up instead of a state pop —
      the reference cluster's 120ms glyph fade, extended to the ring fill. */
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, opacity 180ms ease;
+  transition: color 140ms ease, opacity 180ms ease;
 }
-.paw-desktop-root .paw-traffic-lights > button:nth-child(1) { border-color: #f04438; }
-.paw-desktop-root .paw-traffic-lights > button:nth-child(2) { border-color: #f5a623; }
-.paw-desktop-root .paw-traffic-lights > button:nth-child(3) { border-color: #2f9e55; }
+.paw-desktop-root .paw-traffic-lights > button::before {
+  position: absolute;
+  inset: 6px;
+  border: 1.5px solid rgb(23 26 33 / .28);
+  border-radius: 50%;
+  background: transparent;
+  content: '';
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.paw-desktop-root .paw-traffic-lights > button:nth-child(1)::before { border-color: #f04438; }
+.paw-desktop-root .paw-traffic-lights > button:nth-child(2)::before { border-color: #f5a623; }
+.paw-desktop-root .paw-traffic-lights > button:nth-child(3)::before { border-color: #2f9e55; }
 /* The lifted window's lights are lit; resting windows keep hollow rings, so
    focus reads across the desktop before any title is parsed. Glyphs still
    surface on group hover for the explicit affordance. */
-.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(1) { border-color: color-mix(in srgb, #f04438 74%, #8a1f16); background: #ff5f57; }
-.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(2) { border-color: color-mix(in srgb, #f5a623 74%, #8f5c07); background: #febc2e; }
-.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(3) { border-color: color-mix(in srgb, #2f9e55 74%, #175c2f); background: #28c840; }
-.paw-desktop-root .paw-traffic-lights:hover > button { border-color: transparent; color: rgb(23 26 33 / .7); }
-.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(1) { background: #ff5f57; }
-.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(2) { background: #febc2e; }
-.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(3) { background: #28c840; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(1)::before { border-color: color-mix(in srgb, #f04438 74%, #8a1f16); background: #ff5f57; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(2)::before { border-color: color-mix(in srgb, #f5a623 74%, #8f5c07); background: #febc2e; }
+.paw-desktop-root .paw-window-shell[data-active] .paw-traffic-lights > button:nth-child(3)::before { border-color: color-mix(in srgb, #2f9e55 74%, #175c2f); background: #28c840; }
+.paw-desktop-root .paw-traffic-lights:hover > button { color: rgb(23 26 33 / .7); }
+.paw-desktop-root .paw-traffic-lights:hover > button::before { border-color: transparent; }
+.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(1)::before { background: #ff5f57; }
+.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(2)::before { background: #febc2e; }
+.paw-desktop-root .paw-traffic-lights:hover > button:nth-child(3)::before { background: #28c840; }
 .paw-desktop-root .paw-window-shell:not([data-active]) .paw-traffic-lights > button { opacity: .62; }
 
 @media (max-width: 820px) {
@@ -1004,46 +1006,6 @@
   border: 0;
   box-shadow: none;
 }
-/* The head and its toolbar read as one bounded stone instrument on the
-   wallpaper. Near-opaque ground, no glass: the shell's blur budget stays on
-   the menu bar, Dock and Launchpad. */
-.paw-desktop-root .paw-wayfinder-work__masthead {
-  border: 1px solid rgb(47 48 43 / .14);
-  border-radius: 14px;
-  background: rgb(247 244 237 / .93);
-  box-shadow: 0 14px 30px -22px rgb(47 48 43 / .55), inset 0 1px 0 rgb(255 255 255 / .6);
-}
-.paw-desktop-root .paw-wayfinder-work__masthead .paw-wayfinder-work__head { padding: 10px 12px 6px; }
-.paw-desktop-root .paw-wayfinder-work__masthead .paw-wayfinder-work__toolbar {
-  padding: 6px 12px 10px;
-  border-top: 1px solid rgb(47 48 43 / .08);
-}
-.paw-desktop-root .paw-wayfinder-work__head strong { color: var(--wayfinder-ink); }
-.paw-desktop-root .paw-wayfinder-work__head small,
-.paw-desktop-root .paw-wayfinder-work__count { color: var(--wayfinder-muted); }
-.paw-desktop-root .paw-wayfinder-work__search {
-  border-color: rgb(47 48 43 / .12);
-  background: rgb(255 255 255 / .58);
-  color: var(--wayfinder-muted);
-}
-.paw-desktop-root .paw-wayfinder-work__search:focus-within {
-  border-color: color-mix(in srgb, var(--wayfinder-moss) 66%, white);
-  background: rgb(255 255 255 / .86);
-  box-shadow: 0 0 0 2px rgb(63 118 88 / .16);
-}
-.paw-desktop-root .paw-wayfinder-work__search input { color: var(--wayfinder-ink); }
-.paw-desktop-root .paw-wayfinder-work__search input::placeholder { color: var(--wayfinder-muted); }
-.paw-desktop-root .paw-wayfinder-work__archive-dropzone {
-  color: var(--wayfinder-muted);
-  background: transparent;
-  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
-}
-.paw-desktop-root .paw-wayfinder-work__archive-dropzone:hover,
-.paw-desktop-root .paw-wayfinder-work__archive-dropzone[aria-expanded='true'] {
-  color: var(--wayfinder-ink);
-  background: var(--wayfinder-stone-deep);
-  box-shadow: inset 0 -2px 0 var(--wayfinder-ochre);
-}
 .paw-desktop-root .paw-wayfinder-work__project > summary {
   transition: background-color 150ms ease, transform 150ms ease;
 }
@@ -1120,22 +1082,6 @@
   background: var(--wayfinder-stone);
   box-shadow: 0 8px 18px -13px rgb(47 48 43 / .7);
 }
-.paw-desktop-root .paw-wayfinder-work__archive-tray {
-  margin-top: 8px;
-  border: 1px solid rgb(47 48 43 / .14);
-  background: rgb(247 244 237 / .94);
-  box-shadow: 0 12px 24px -20px rgb(47 48 43 / .65);
-}
-.paw-desktop-root .paw-wayfinder-work__archive-tray > header { color: var(--wayfinder-muted); }
-.paw-desktop-root .paw-wayfinder-work__archive-item { color: var(--wayfinder-muted); transition: background-color 150ms ease; }
-.paw-desktop-root .paw-wayfinder-work__archive-item:hover,
-.paw-desktop-root .paw-wayfinder-work__archive-item:focus-visible { color: var(--wayfinder-ink); background: rgb(228 221 208 / .64); outline: 0; }
-.paw-desktop-root .paw-wayfinder-work__archive-icon {
-  color: color-mix(in srgb, var(--wayfinder-ochre) 84%, var(--wayfinder-ink));
-  background: color-mix(in srgb, var(--wayfinder-ochre) 12%, rgb(251 250 246 / .96));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wayfinder-ochre) 22%, transparent);
-}
-.paw-desktop-root .paw-wayfinder-work__archive-item small { color: var(--wayfinder-muted); }
 .paw-desktop-root .paw-wayfinder-work__state { color: var(--wayfinder-muted); }
 .paw-desktop-root .paw-wayfinder-work__state button:hover { color: var(--wayfinder-moss); border-color: rgb(63 118 88 / .5); background: var(--wayfinder-stone); }
 
@@ -1184,7 +1130,7 @@
   .paw-desktop-shortcuts button,
   .paw-wayfinder-work__project > summary,
   .paw-wayfinder-work__loose-file
-):is([aria-selected='true'], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+):is([aria-pressed='true'], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
   color: #fff;
   background: var(--paw-selection-plate, #1d4ed8);
   box-shadow: 0 1px 3px rgb(9 13 22 / .3);
@@ -1195,7 +1141,7 @@
 }
 /* An open folder keeps the quiet scrim on its label while its window floats
  * beside the icon — wayfinding, not a second selection. */
-.paw-desktop-root .paw-wayfinder-work__project[open] > summary:not([aria-selected='true']) .paw-wayfinder-work__label-ink {
+.paw-desktop-root .paw-wayfinder-work__project[open] > summary:not([aria-pressed='true']) .paw-wayfinder-work__label-ink {
   background: rgb(13 18 30 / .34);
 }
 /* The icon darkens when selected — the macOS desktop's second selection cue.
@@ -1208,7 +1154,7 @@
   .paw-desktop-shortcuts button,
   .paw-wayfinder-work__project > summary,
   .paw-wayfinder-work__loose-file
-)[aria-selected='true'] :is(.paw-app-icon, .paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
+)[aria-pressed='true'] :is(.paw-app-icon, .paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
   filter: brightness(.74) saturate(1.06);
 }
 .paw-desktop-root .paw-desktop-shortcuts button[data-open] > i { background: #3f7658; }
@@ -1227,21 +1173,6 @@
   border-width: 1.5px;
   box-shadow: none;
 }
-.paw-desktop-root .paw-wayfinder-work__folder-mark {
-  position: absolute;
-  z-index: 3;
-  top: -1px;
-  right: -3px;
-  width: 17px;
-  height: 17px;
-  display: grid;
-  place-items: center;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  color: var(--wayfinder-moss);
-  background: var(--wayfinder-stone);
-}
-.paw-desktop-root .paw-wayfinder-work__folder-mark svg { stroke-width: 2.2; }
 .paw-desktop-root .paw-wayfinder-work__project-content {
   border-color: rgb(47 48 43 / .2);
   background: rgb(250 248 243 / .98);
@@ -1290,42 +1221,114 @@
  * attention state simply re-points the variable to clay. The SVG carries the
  * drop shadow so selection can dim the whole art box with one filter. */
 .paw-desktop-root .paw-wayfinder-work__folder-art {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   color: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, var(--wayfinder-ink));
 }
 .paw-desktop-root .paw-wayfinder-work__folder-art > svg {
-  width: 52px;
-  height: 52px;
-  filter: drop-shadow(0 5px 9px rgb(9 13 22 / .26));
+  position: relative;
+  z-index: 1;
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 7px 10px rgb(9 13 22 / .25));
+}
+.paw-desktop-root .paw-wayfinder-work__file-art,
+.paw-desktop-root .paw-wayfinder-work__file-art > svg { width: 56px; height: 56px; }
+
+/* Running is the one desktop-file state that moves: a quiet perimeter breath
+ * says work is still happening without shifting the file, its label or the
+ * user's pointer target. The ring is paint-once geometry; only transform and
+ * opacity animate. Attention and idle remain static so motion keeps meaning. */
+.paw-desktop-root :is(
+  .paw-wayfinder-work__folder-art,
+  .paw-wayfinder-work__file-art
+)::after {
+  position: absolute;
+  z-index: 0;
+  inset: -5px;
+  border: 1px solid color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 58%, transparent);
+  border-radius: 14px;
+  content: '';
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(.96);
+}
+.paw-desktop-root .paw-wayfinder-work__folder-art[data-running]::after {
+  animation: paw-wayfinder-running-pulse 1.2s var(--paw-ease-in-out) infinite;
+}
+.paw-desktop-root .paw-wayfinder-work__loose-file[data-running] .paw-wayfinder-work__file-art::after {
+  animation: paw-wayfinder-running-pulse 1.2s var(--paw-ease-in-out) infinite;
+}
+.paw-desktop-root .paw-wayfinder-work__file-art > svg {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes paw-wayfinder-running-pulse {
+  0%, 100% { opacity: .18; transform: scale(.96); }
+  50% { opacity: .48; transform: scale(1.08); }
+}
+
+/* Window gestures own the frame budget. Preserve a static running ring while
+ * drag/resize is live, and remove travel entirely for reduced motion. */
+.paw-desktop-root[data-window-interaction] :is(
+  .paw-wayfinder-work__folder-art[data-running]::after,
+  .paw-wayfinder-work__loose-file[data-running] .paw-wayfinder-work__file-art::after
+),
+.paw-desktop-root .paw-desktop[data-ambient-paused] :is(
+  .paw-wayfinder-work__folder-art[data-running]::after,
+  .paw-wayfinder-work__loose-file[data-running] .paw-wayfinder-work__file-art::after
+) {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paw-desktop-root :is(
+    .paw-wayfinder-work__folder-art[data-running]::after,
+    .paw-wayfinder-work__loose-file[data-running] .paw-wayfinder-work__file-art::after
+  ) {
+    animation: none;
+    opacity: .36;
+    transform: none;
+  }
 }
 .paw-desktop-root .paw-work-glyph__back {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 26%, #fbfaf6);
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 60%, #232b26);
-  stroke-width: 2.6;
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 68%, #eef4fb);
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 68%, #243044);
+  stroke-width: 1.15;
   stroke-linejoin: round;
 }
 .paw-desktop-root .paw-work-glyph__front {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 13%, #f4f1e9);
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 60%, #232b26);
-  stroke-width: 2.6;
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 38%, #f7fbff);
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 64%, #243044);
+  stroke-width: 1.15;
   stroke-linejoin: round;
 }
 .paw-desktop-root .paw-work-glyph__paper {
-  fill: #fff;
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 42%, #232b26);
-  stroke-width: 2.2;
+  fill: #fdfefe;
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 34%, #9aa8ba);
+  stroke-width: 1;
   stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__folder-sheen {
+  fill: rgb(255 255 255 / .34);
+  mix-blend-mode: screen;
+}
+.paw-desktop-root .paw-work-glyph__folder-edge {
+  fill: none;
+  stroke: rgb(255 255 255 / .74);
+  stroke-linecap: round;
+  stroke-width: 1.25;
 }
 .paw-desktop-root .paw-work-glyph__page,
 .paw-desktop-root .paw-work-glyph__page-back {
   fill: #fdfcf8;
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 54%, #232b26);
-  stroke-width: 2.6;
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 72%, #232b26);
+  stroke-width: 2.3;
   stroke-linejoin: round;
 }
 .paw-desktop-root .paw-work-glyph__page-back {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 10%, #f4f1e9);
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 24%, #f4f1e9);
 }
 .paw-desktop-root .paw-work-glyph__fold {
   fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 16%, #f4f1e9);
@@ -1342,6 +1345,21 @@
 .paw-desktop-root .paw-work-glyph__cursor {
   fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, #232b26);
 }
+.paw-desktop-root .paw-work-glyph__highlight {
+  fill: none;
+  stroke: rgb(255 255 255 / .5);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.paw-desktop-root .paw-work-glyph__session-mark {
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 12%, #fff);
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 82%, #232b26);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__room-mark { color: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-ochre)) 84%, #232b26); }
+.paw-desktop-root .paw-work-glyph__room-mark circle { fill: currentColor; }
+.paw-desktop-root .paw-work-glyph__room-mark path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] {
   --paw-work-accent: var(--wayfinder-clay);
   color: color-mix(in srgb, var(--wayfinder-clay) 82%, var(--wayfinder-ink));
@@ -1360,17 +1378,19 @@
   background: var(--wayfinder-clay);
 }
 .paw-desktop-root .paw-wayfinder-work__folder-mark {
-  top: 6px;
-  right: 5px;
-  width: 12px;
-  height: 12px;
+  top: auto;
+  right: 9px;
+  bottom: 9px;
+  width: 14px;
+  height: 14px;
   border: 0;
-  border-radius: 3px;
-  color: currentColor;
+  border-radius: 0;
+  color: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 78%, #182334);
   background: transparent;
-  opacity: .58;
+  box-shadow: none;
+  opacity: .76;
 }
-.paw-desktop-root .paw-wayfinder-work__folder-mark svg { width: 10px; height: 10px; stroke-width: 2.1; }
+.paw-desktop-root .paw-wayfinder-work__folder-mark svg { width: 13px; height: 13px; stroke-width: 2.35; }
 .paw-desktop-root .paw-wayfinder-work__folder-art > i {
   right: -1px;
   bottom: -1px;
@@ -1379,19 +1399,6 @@
   border: 1.5px solid rgb(250 248 243 / .95);
 }
 .paw-desktop-root .paw-wayfinder-work__project > summary > svg { display: none; }
-/* The per-folder context affordance floats on the wallpaper, so it gets the
-   same quiet stone ground as the other desktop furniture. */
-.paw-desktop-root .paw-wayfinder-work__project-context {
-  color: var(--wayfinder-muted);
-  background: rgb(250 248 243 / .78);
-  box-shadow: 0 3px 8px -4px rgb(47 48 43 / .5);
-}
-.paw-desktop-root .paw-wayfinder-work__project-context:hover,
-.paw-desktop-root .paw-wayfinder-work__project-context:focus-visible {
-  color: var(--wayfinder-moss);
-  background: var(--wayfinder-stone);
-  outline: 0;
-}
 .paw-desktop-root .paw-wayfinder-work__project-copy {
   gap: 3px;
 }
@@ -1414,7 +1421,7 @@
   line-height: 1.25;
   text-align: center;
 }
-.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-selected='true'], :focus-visible) .paw-wayfinder-work__project-copy strong {
+.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-pressed='true'], :focus-visible) .paw-wayfinder-work__project-copy strong {
   display: block;
   overflow: visible;
   text-overflow: clip;
@@ -1441,6 +1448,23 @@
 }
 .paw-desktop-root .paw-wayfinder-work__project-copy small[data-state='running'] { color: #a8e2be; }
 .paw-desktop-root .paw-wayfinder-work__project-copy small[data-state='attention'] { color: #f4b7a8; }
+
+/* A tidy desktop keeps every label inside one fixed cell. The complete name
+ * remains in the native title and project window; hover never grows one icon
+ * through its neighbours. App and work labels share the same two-line cap. */
+.paw-desktop-root .paw-desktop-shortcuts button strong,
+.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-pressed='true'], :focus-visible) .paw-wayfinder-work__project-copy strong {
+  display: -webkit-box;
+  width: 96px;
+  max-width: 96px;
+  max-height: 30px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.25;
+}
 
 /* Keep the expanded folder anchored to its own icon. The content surface is
    a single bounded window; only its child scroll area owns overflow. */

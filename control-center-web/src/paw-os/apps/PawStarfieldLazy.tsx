@@ -14,6 +14,7 @@
 
 import { LoaderCircle } from 'lucide-react';
 import { lazy, Suspense, type ComponentProps } from 'react';
+import '../styles/paw-os-starfield.css';
 import type {
   PawRoomStarfield as PawRoomStarfieldComponent,
   PawSessionStarfield as PawSessionStarfieldComponent,

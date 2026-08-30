@@ -16,7 +16,7 @@ or request Tutti, CodingTo, local Downloads HTML, or ignored `/docs/` paths.
 
 1. This file.
 2. [docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md) — current product-entry, 11-App dispatch, leaf render owners, native build-selected surfaces, and explicit exclusions. Its [JSON manifest](docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json) is machine-checked by the tracked `scripts/check_pawos_frontend_source_map.py`; use the manifest before any filename or web search.
-3. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete, append-only user ledger (`UR-001`–`UR-195` in thirteen volumes). Do not trust a hard-coded terminal `UR-*` count in an older handoff; read the current file, and let the newest explicit user correction win.
+3. [docs/pawos/PAWOS_REQUIREMENTS.md](docs/pawos/PAWOS_REQUIREMENTS.md) — complete, append-only user ledger (`UR-001`–`UR-207` in sixteen volumes). Do not trust a hard-coded terminal `UR-*` count in an older handoff; read the current file, and let the newest explicit user correction win.
 4. [PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md](PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md) — `PF-CM-*`, eleven-App design, completion gate, receipt template. Reconcile it with the newer requirement ledger rather than treating its snapshot counts as current.
 5. [PAWOS_FRONTEND_CONTINUATION.md](PAWOS_FRONTEND_CONTINUATION.md) — what already landed on `main` and what is unfinished.
 6. [docs/references/pawos-conversation-baseline.html](docs/references/pawos-conversation-baseline.html) — Agent conversation craft baseline. Reference only; do not replace the App with this static page.
@@ -30,7 +30,7 @@ that merely looks relevant is not an owner.
 ## 外部模型接手边界
 
 接手顺序是：先确认本地最终提交已经合并到 `main`，再从本文件进入需求总索引、
-分卷、逐字证据、实施状态和 handoff。先按 `UR-192`–`UR-195` 检查插件市场、
+分卷、逐字证据、实施状态和 handoff。先按 `UR-196`–`UR-207` 检查本轮桌面、后台状态、通知、Room 行星分面、垂直 App 自举与优化验收，
 整理归档和交接入口，再对照其余最近需求做前端复核与优化。外部模型不得回到
 旧版前端或 ignored 的本机 `/docs/` 猜测当前状态，也不得把源代码/测试/构建
 证明升级成安装、Runtime 或前台证明。

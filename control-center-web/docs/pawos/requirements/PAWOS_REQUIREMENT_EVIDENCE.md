@@ -1,6 +1,6 @@
 # PAWOS 用户逐字证据
 
-> 导航：[UR-195](PAWOS_REQUIREMENTS_195_195.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
+> 导航：[UR-207](PAWOS_REQUIREMENTS_207_207.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
 >
 > 本文件保存需求账本引用的逐字来源与来源覆盖。不得用 Agent 转述替代用户原话。
 
@@ -668,17 +668,82 @@
 补充：原对话、实际动作/工具时间线和诊断 Agent 对话入口都必须在同一诊断链路
 中可发现；未有对应 Runtime/前台收据的状态仍保持未评估。
 
+### 2026-08-30 · react-ui-os 参考边界与本轮优化顺序
+
+> 参考源码为 MIT；若复制实质性代码，需要保留其 /tmp/paw-react-ui-os-audit.cl5Dsq/react-ui-os-main/LICENSE:1 声明。
+
+> 建议后续实施顺序是：$impeccable adapt 修 Dock/响应式 → $impeccable optimize 拆入口与 App/CSS chunk → $impeccable harden 做命令中心、Overview、存储容错 → $impeccable polish 完成前台视觉验收。
+
+> doker是应该和macos交互一致，最大化的时候隐藏
+
+> 完成
+
+以上消息映射到 `UR-196`–`UR-198`。其中 Dock 最新原话明确修正 `UR-191`
+可能包含的最大化常驻解释；MIT 许可要求只在实质复制发生时触发。
+
+### 2026-08-30 · 桌面文件、后台状态、通知与图标追加要求
+
+> 目前项目是桌面文件的形式，这个显示和交互需要操作和优化
+
+> 比如运行中的，就加运行中特效
+
+> 这一块就可以显示，背后有哪些对话运行，比如自动记忆整理，对话agent
+
+> 设置和moniter也放桌面
+
+> 这个notif也是侧边弹出
+
+> 这个去掉
+
+> 整齐化，图标重做
+
+以上消息依次映射到 `UR-199`–`UR-205`。四张随附截图只作为菜单栏位置、通知
+侧栏、待删除项目浮层和散乱桌面图标的视觉参考；不从图片文字或示例数量推导
+额外 Runtime 事实。
+
+### 2026-08-30 · Room 行星分面追加要求
+
+> 那个，行星是表格对吧。两种情况不能表格，就是单行星没分配的时候，这时候有grill me这些。第二，结束后提交结果，那个结果行星不能表格，得单独。
+
+该消息映射到 `UR-206`。它明确把任务表限定为已分配的协作执行面，并把单行星
+未分配状态与已提交最终结果状态分别提升为独立界面；不能通过折叠表格行来代替。
+
+### 2026-08-30 · Trace 修复 Agent 默认全自动
+
+> tarce agent 全自动改不了，他怎么才能修复呢，默认全自动把
+
+该消息修正 `UR-188` 的修复权限语义：Trace 诊断 Session 继续只读，避免裁判
+改写证据；用户确认候选修复后，独立普通修复 Agent 默认使用真实 `full_trust`
+与 `ENABLE_FULL_TRUST`，待审批操作交由独立 Luna Max，而不是继续逐 Tool 等待
+用户。唯一 owner 工作目录、停止/取消、哈希、Host 沙箱和硬安全边界不因全自动
+而失效。
+
+### 2026-08-30 · 垂直 App 自举、掌柜问数与安装生命周期
+
+> 垂直app还能os的agent自己修改app前端来制作app安装，自己设计垂直技能，自己trace沙盒测试进行优化，例如，根据对话模式修改app的agent对话界面
+
+> 你现在理解os内制作和安装app的流程了吗，这个需要配备自举的技能的
+
+> 掌柜问数用sgg的这个进行测试自举开发。自举开发不要进入项目，或者加入extenionapp文件夹啥的。这个app就能完成掌柜问数
+
+> 还有app的icon这些，安装还有，卸载这些。
+
+以上消息共同映射到 `UR-207`。业务前端、专属 Skill 与 Package 源由独立
+Extension App 目录持有；PAWOS 核心只能增加可复用宿主。SGG 是同版本离线
+Trace/Eval 自测，不是生产经营数据。安装、停用、卸载和回滚必须由受管 Package
+状态驱动可见 App 身份，不能把编译进 bundle 冒充已安装。
+
 以下各节覆盖本次继续工作中可直接检索到的新增实质性用户消息。进度查询、
 “好了吗”等消息是状态询问，不新增产品语义；附件图片是视觉证据，不从图片
 文字或布局推导额外要求。逐条用户消息 ID 在当前 Codex 环境不可用，因此统一
 使用当前任务、线程 `codex://threads/<redacted-current-thread>` 和
 日期作为来源边界，不伪造 turn ID。
 
-Updated: 2026-08-28
+Updated: 2026-08-30
 
 - **Document owner:** Project product direction
 - **Status:** accepted user requirements; not implementation or Runtime proof
-- **Revision:** `pawos-requirements.r8`
+- **Revision:** `pawos-requirements.r9`
 - **Historical execution record:** [PAWOS_FRONTEND_HISTORY.md](../PAWOS_FRONTEND_HISTORY.md)
 
 This is the canonical requirements record for the PAWOS product surface and

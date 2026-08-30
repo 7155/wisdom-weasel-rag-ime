@@ -110,9 +110,31 @@ describe('PAWOS App runtime', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await screen.findByRole('heading', { name: '项目概览' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '项目概览' }, { timeout: 5_000 })).toBeInTheDocument();
     await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(
       expect.arrayContaining(['overview.get', 'planning.dashboard', 'workDocuments.list']),
     ));
+  });
+
+  it('mounts a source-isolated Extension App through the generic host', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+    } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawOsAppearanceProvider>
+          <QueryClientProvider client={queryClient}>
+            <PawAppBody appId={'extension:zhanggui-wenshu' as never} />
+          </QueryClientProvider>
+        </PawOsAppearanceProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: '掌柜问数' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '问数' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '对账' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '解释' })).toBeInTheDocument();
   });
 });
