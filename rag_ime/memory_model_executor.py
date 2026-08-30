@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Protocol
 
-from .agent_events import AgentEventHub
 from .agent_sessions import AgentSessionStore
 from .agent_tool_ids import MEMORY_CURATION_TOOL_PROFILE
 
@@ -36,7 +35,6 @@ class MemoryModelTimeout(MemoryModelUnavailable):
 
 class MemorySessionRuntime(Protocol):
     sessions: AgentSessionStore
-    events: AgentEventHub
 
     def available_models(self) -> list[dict[str, object]]: ...
 
@@ -65,6 +63,15 @@ class MemorySessionRuntime(Protocol):
         delivery: str = "prompt",
     ) -> dict[str, object]: ...
 
+    def await_turn_settled(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        client_message_id: str,
+        timeout_seconds: float,
+    ) -> dict[str, object]: ...
+
     def abort(self, session_id: str) -> dict[str, object]: ...
 
     def close_session(self, session_id: str) -> bool: ...
@@ -85,7 +92,6 @@ class GovernedMemoryModelExecutor:
     thinking_level: str
     timeout_seconds: float = DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS
     sessions: AgentSessionStore | None = None
-    events: AgentEventHub | None = None
     db_path: str | Path | None = None
 
     def __post_init__(self) -> None:
@@ -103,14 +109,9 @@ class GovernedMemoryModelExecutor:
             )
         self.timeout_seconds = max(1.0, min(3_600.0, float(self.timeout_seconds)))
         self.sessions = self.sessions or getattr(self.runtime, "sessions", None)
-        self.events = self.events or getattr(self.runtime, "events", None)
         if not isinstance(self.sessions, AgentSessionStore):
             raise MemoryModelUnavailable(
                 "Gateway Memory executor requires the resident Agent Session store"
-            )
-        if not isinstance(self.events, AgentEventHub):
-            raise MemoryModelUnavailable(
-                "Gateway Memory executor requires the resident Agent event hub"
             )
         resolved_db_path = self.db_path or self.sessions.db_path
         self.db_path = Path(resolved_db_path)
@@ -295,8 +296,6 @@ class GovernedMemoryModelExecutor:
                     "memory curation packet exceeds the managed Session input limit"
                 )
 
-            waiter = _MemoryTurnWaiter(session_id)
-            remove_observer = self.events.add_observer(waiter.observe)
             model_receipt: dict[str, object] = {}
             thinking_receipt: dict[str, object] = {}
             started = time.monotonic()
@@ -339,9 +338,17 @@ class GovernedMemoryModelExecutor:
                     request_id=str(request["request_id"]),
                     turn_id=turn_id,
                 )
-                terminal = waiter.wait(
+                settlement = self.runtime.await_turn_settled(
+                    session_id,
                     turn_id,
+                    client_message_id=str(request["request_id"]),
                     timeout_seconds=self.timeout_seconds,
+                )
+                terminal = _memory_terminal_from_settlement(
+                    settlement,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    client_message_id=str(request["request_id"]),
                 )
                 if terminal["state"] == "failed":
                     raise MemoryModelUnavailable(
@@ -408,8 +415,6 @@ class GovernedMemoryModelExecutor:
                     f"selected memory model request failed ({self.reference}): "
                     f"{_public_error(exc)}"
                 ) from exc
-            finally:
-                remove_observer()
 
     def finish_run(self, *, state: str = "completed") -> dict[str, object]:
         normalized_state = str(state or "").strip().lower()
@@ -892,54 +897,6 @@ class GovernedMemoryModelExecutor:
             conn.close()
 
 
-class _MemoryTurnWaiter:
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self._condition = threading.Condition()
-        self._turns: dict[str, dict[str, object]] = {}
-
-    def observe(self, event: object) -> None:
-        if str(getattr(event, "session_id", "")) != self.session_id:
-            return
-        turn_id = str(getattr(event, "turn_id", "") or "")
-        if not turn_id:
-            return
-        event_type = str(getattr(event, "event_type", "") or "")
-        payload = getattr(event, "payload", {})
-        if not isinstance(payload, Mapping):
-            payload = {}
-        with self._condition:
-            turn = self._turns.setdefault(
-                turn_id,
-                {"state": "running", "text": "", "usage": {}, "error": ""},
-            )
-            if event_type == "message_completed":
-                message = payload.get("message")
-                if isinstance(message, Mapping) and str(message.get("role") or "") == "assistant":
-                    turn["text"] = _assistant_message_text(message)
-                usage = payload.get("usage")
-                if isinstance(usage, Mapping):
-                    turn["usage"] = dict(usage)
-            elif event_type == "turn_failed":
-                turn["state"] = "failed"
-                turn["error"] = str(payload.get("error") or "Memory Session turn failed")
-            elif event_type == "turn_completed":
-                turn["state"] = "completed"
-            self._condition.notify_all()
-
-    def wait(self, turn_id: str, *, timeout_seconds: float) -> dict[str, object]:
-        deadline = time.monotonic() + timeout_seconds
-        with self._condition:
-            while True:
-                turn = self._turns.get(turn_id)
-                if turn is not None and str(turn.get("state")) in {"completed", "failed"}:
-                    return dict(turn)
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Memory Session turn timed out")
-                self._condition.wait(min(remaining, 0.25))
-
-
 def split_memory_model_reference(value: object) -> tuple[str, str]:
     reference = " ".join(str(value or "").strip().split())
     if reference == "gpt/gpt-5.6-luna":
@@ -961,7 +918,6 @@ def build_governed_memory_model_executor(
     timeout_seconds: float = DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS,
     db_path: str | Path | None = None,
     sessions: AgentSessionStore | None = None,
-    events: AgentEventHub | None = None,
 ) -> GovernedMemoryModelExecutor:
     provider, model_id = split_memory_model_reference(model_reference)
     return GovernedMemoryModelExecutor(
@@ -971,7 +927,6 @@ def build_governed_memory_model_executor(
         str(thinking_level or "").strip().lower(),
         timeout_seconds=timeout_seconds,
         sessions=sessions,
-        events=events,
         db_path=db_path,
     )
 
@@ -1108,13 +1063,80 @@ def _verify_runtime_receipts(
         raise MemoryModelUnavailable("Pi selected a different Memory thinking level")
 
 
+def _memory_terminal_from_settlement(
+    settlement: Mapping[str, object],
+    *,
+    session_id: str,
+    turn_id: str,
+    client_message_id: str,
+) -> dict[str, object]:
+    if (
+        str(settlement.get("schemaVersion") or "")
+        != "rag-ime.pi-turn-settlement.v1"
+        or str(settlement.get("sessionId") or "") != session_id
+        or str(settlement.get("turnId") or "") != turn_id
+        or str(settlement.get("clientMessageId") or "") != client_message_id
+    ):
+        raise MemoryModelUnavailable(
+            "managed Pi returned a settlement for a different Memory turn"
+        )
+    runtime_session_id = str(settlement.get("runtimeSessionId") or "").strip()
+    receipt = settlement.get("receipt")
+    if (
+        not runtime_session_id
+        or not isinstance(receipt, Mapping)
+        or str(receipt.get("schemaVersion") or "") != "pi.agent-settled.v2"
+        or str(receipt.get("sessionId") or "") != runtime_session_id
+    ):
+        raise MemoryModelUnavailable("managed Pi settlement receipt is invalid")
+    disposition = str(receipt.get("disposition") or "").strip().lower()
+    if disposition != "completed":
+        if disposition == "suspended":
+            raise MemoryModelUnavailable(
+                "managed Pi returned a non-terminal Memory settlement"
+            )
+        return {
+            "state": "failed",
+            "text": "",
+            "usage": {},
+            "error": str(
+                receipt.get("stopReason")
+                or f"Memory Session turn {disposition or 'failed'}"
+            ),
+        }
+    if receipt.get("aborted") is True or int(receipt.get("pendingOperations") or 0) != 0:
+        raise MemoryModelUnavailable(
+            "managed Pi completed receipt still owns pending Memory work"
+        )
+    final_message = receipt.get("finalMessage")
+    if (
+        not isinstance(final_message, Mapping)
+        or str(final_message.get("role") or "").strip().lower() != "assistant"
+    ):
+        raise MemoryModelUnavailable(
+            "Memory Session completed without an authoritative assistant message"
+        )
+    usage = final_message.get("usage")
+    return {
+        "state": "completed",
+        "text": _assistant_message_text(final_message),
+        "usage": dict(usage) if isinstance(usage, Mapping) else {},
+        "error": "",
+    }
+
+
 def _assistant_message_text(message: Mapping[str, object]) -> str:
     blocks = message.get("blocks")
+    if not isinstance(blocks, list):
+        blocks = message.get("content")
     if not isinstance(blocks, list):
         return str(message.get("content") or message.get("text") or "").strip()
     chunks: list[str] = []
     for block in blocks:
         if not isinstance(block, Mapping):
+            continue
+        block_type = str(block.get("type") or "").strip().lower()
+        if block_type and block_type != "text":
             continue
         data = block.get("data")
         if isinstance(data, Mapping):

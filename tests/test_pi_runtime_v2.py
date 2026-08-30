@@ -3629,6 +3629,288 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertTrue(continued["accepted"])
 
+    def test_authoritative_settlement_reconciles_a_lost_terminal_event(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-memory-settlement"
+        client_message_id = "memory-request:exact"
+        runtime_session_id = f"pi-{session_id}"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.client_message_id = client_message_id
+        self.store.set_status(session_id, "busy")
+        client = self.runtime._require_client()
+        original_send = client.send
+        settlement_methods: list[str] = []
+
+        def settlement_send(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method in {"session.settlement.get", "session.await_settled"}:
+                settlement_methods.append(method)
+            if method == "session.settlement.get":
+                return {
+                    "settlement": {
+                        "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+                        "sessionId": session_id,
+                        "runtimeSessionId": runtime_session_id,
+                        "turnId": turn_id,
+                        "clientMessageId": client_message_id,
+                        "receipt": {
+                            "schemaVersion": "pi.agent-settled.v2",
+                            "receiptId": "pi-settled:memory-suspended",
+                            "sessionId": runtime_session_id,
+                            "runId": turn_id,
+                            "scopeId": f"{runtime_session_id}:{turn_id}",
+                            "generation": 1,
+                            "disposition": "suspended",
+                            "stopReason": "extension_work_pending",
+                            "settledAtMs": 199,
+                            "aborted": False,
+                            "pendingOperations": 1,
+                            "operations": {
+                                "pending": 1,
+                                "pendingByKind": {"extension": 1},
+                                "registeredByKind": {"extension": 1},
+                            },
+                            "operationCounts": {"extension": 1},
+                        },
+                    }
+                }
+            if method == "session.await_settled":
+                assert params is not None
+                self.assertEqual(params["sessionId"], session_id)
+                self.assertEqual(params["turnId"], turn_id)
+                self.assertEqual(params["clientMessageId"], client_message_id)
+                self.assertIs(params["allowSuspended"], False)
+                self.assertGreaterEqual(int(params["timeoutMs"]), 1_000)
+                self.assertLessEqual(int(params["timeoutMs"]), 2_000)
+                return {
+                    "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+                    "sessionId": session_id,
+                    "runtimeSessionId": runtime_session_id,
+                    "turnId": turn_id,
+                    "clientMessageId": client_message_id,
+                    "receipt": {
+                        "schemaVersion": "pi.agent-settled.v2",
+                        "receiptId": "pi-settled:memory-exact",
+                        "sessionId": runtime_session_id,
+                        "runId": turn_id,
+                        "scopeId": f"{runtime_session_id}:{turn_id}",
+                        "generation": 1,
+                        "disposition": "completed",
+                        "stopReason": "stop",
+                        "settledAtMs": 200,
+                        "aborted": False,
+                        "pendingOperations": 0,
+                        "operations": {
+                            "pending": 0,
+                            "pendingByKind": {},
+                            "registeredByKind": {},
+                        },
+                        "operationCounts": {},
+                        "finalMessage": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": '{"decisions":[]}'},
+                            ],
+                            "usage": {"input": 10, "output": 4},
+                        },
+                    },
+                }
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=settlement_send):
+            settlement = self.runtime.await_turn_settled(
+                session_id,
+                turn_id,
+                client_message_id=client_message_id,
+                timeout_seconds=2.0,
+            )
+
+        self.assertEqual(settlement["turnId"], turn_id)
+        self.assertEqual(
+            settlement_methods,
+            ["session.settlement.get", "session.await_settled"],
+        )
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        events = self.events.replay(session_id)[0]
+        self.assertTrue(
+            any(
+                event.event_type == "message_completed" and event.turn_id == turn_id
+                for event in events
+            )
+        )
+        completed = [
+            event
+            for event in events
+            if event.event_type == "turn_completed" and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].payload["terminalEvent"], "agent_settled")
+
+        final_message = dict(settlement["receipt"]["finalMessage"])
+        for payload in (
+            {"type": "message_end", "message": final_message},
+            {"type": "agent_end", "messages": [final_message]},
+            {"type": "agent_settled", "receipt": settlement["receipt"]},
+        ):
+            self.runtime._handle_host_event(
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "clientMessageId": client_message_id,
+                    "payload": payload,
+                }
+            )
+            self.assertEqual(self.runtime._states[session_id].turn_id, "")
+
+        replayed = self.events.replay(session_id)[0]
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in replayed
+                    if event.event_type == "message_completed"
+                    and event.turn_id == turn_id
+                ]
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in replayed
+                    if event.event_type == "turn_completed"
+                    and event.turn_id == turn_id
+                ]
+            ),
+            1,
+        )
+
+    def test_authoritative_aborted_settlement_projects_idle_abort_once(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-memory-aborted"
+        client_message_id = "memory-request:aborted"
+        runtime_session_id = f"pi-{session_id}"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.client_message_id = client_message_id
+        self.store.set_status(session_id, "busy")
+        settlement = {
+            "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+            "sessionId": session_id,
+            "runtimeSessionId": runtime_session_id,
+            "turnId": turn_id,
+            "clientMessageId": client_message_id,
+            "receipt": {
+                "schemaVersion": "pi.agent-settled.v2",
+                "receiptId": "pi-settled:memory-aborted",
+                "sessionId": runtime_session_id,
+                "runId": turn_id,
+                "scopeId": f"{runtime_session_id}:{turn_id}",
+                "generation": 1,
+                "disposition": "aborted",
+                "stopReason": "aborted",
+                "settledAtMs": 201,
+                "aborted": True,
+                "pendingOperations": 0,
+                "operations": {
+                    "pending": 0,
+                    "pendingByKind": {},
+                    "registeredByKind": {},
+                },
+                "operationCounts": {},
+                "finalMessage": {
+                    "role": "assistant",
+                    "stopReason": "aborted",
+                    "content": [],
+                },
+            },
+        }
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def settled_get(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method == "session.settlement.get":
+                return {"settlement": settlement}
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=settled_get):
+            result = self.runtime.await_turn_settled(
+                session_id,
+                turn_id,
+                client_message_id=client_message_id,
+                timeout_seconds=2.0,
+            )
+
+        self.assertEqual(result["receipt"]["disposition"], "aborted")
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        events = self.events.replay(session_id)[0]
+        self.assertFalse(any(event.event_type == "turn_failed" for event in events))
+        completed = [
+            event
+            for event in events
+            if event.event_type == "turn_completed" and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].payload["status"], "aborted")
+
+    def test_abort_during_authoritative_settlement_projection_is_idempotent(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-settlement-projecting"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            self.runtime._fence_retired_turn_locked(state, session_id, turn_id)
+        client = self.runtime._require_client()
+
+        with patch.object(
+            client,
+            "send",
+            side_effect=AssertionError("settled turn must not receive session.abort"),
+        ):
+            receipt = self.runtime.abort(session_id)
+
+        self.assertIs(receipt["alreadySettled"], True)
+        self.assertEqual(receipt["lifecycle"]["reason"], "already_settled")
+        self.assertEqual(self.runtime._states[session_id].turn_id, turn_id)
+        self.assertEqual(
+            self.runtime._states[session_id].abort_requested_turn_id,
+            "",
+        )
+
 
     def test_settled_extension_error_retires_stale_host_turn(self) -> None:
         session_id = str(self.first["id"])

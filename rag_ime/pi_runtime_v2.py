@@ -1445,6 +1445,275 @@ class PiRuntimeHostManager:
             result["clientMessageId"] = str(client_message_id).strip()
         return result
 
+    def await_turn_settled(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        client_message_id: str,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
+        """Await Pi's durable settlement and reconcile the product turn once.
+
+        Agent events remain the live projection lane. The settlement receipt is
+        the terminal authority for long-running internal consumers such as
+        Memory maintenance, so a lost event cannot leave their frozen request
+        running after Pi has already persisted completion.
+        """
+
+        normalized_session_id = str(session_id or "").strip()
+        normalized_turn_id = str(turn_id or "").strip()
+        normalized_client_message_id = str(client_message_id or "").strip()
+        if not normalized_session_id or not normalized_turn_id:
+            raise ValueError("session_id and turn_id are required")
+        if not normalized_client_message_id:
+            raise ValueError("client_message_id is required")
+        bounded_timeout = max(1.0, min(3_600.0, float(timeout_seconds)))
+        deadline = time.monotonic() + bounded_timeout
+        client = self._require_client()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Pi Session turn settlement timed out")
+            identity = {
+                "sessionId": normalized_session_id,
+                "turnId": normalized_turn_id,
+                "clientMessageId": normalized_client_message_id,
+            }
+            try:
+                current = client.send(
+                    "session.settlement.get",
+                    identity,
+                    timeout=max(
+                        0.05,
+                        min(self.config.command_timeout_seconds, remaining),
+                    ),
+                )
+            except PiRuntimeError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Pi Session turn settlement timed out"
+                    ) from exc
+                raise
+            persisted = current.get("settlement")
+            if isinstance(persisted, Mapping):
+                candidate = self._validate_turn_settlement(
+                    persisted,
+                    session_id=normalized_session_id,
+                    turn_id=normalized_turn_id,
+                    client_message_id=normalized_client_message_id,
+                    allow_suspended=True,
+                )
+                if (
+                    as_mapping(candidate.get("receipt")).get("disposition")
+                    != "suspended"
+                ):
+                    settlement = candidate
+                    break
+            elif persisted is not None:
+                raise PiRuntimeError("Pi settlement lookup returned invalid data")
+            remaining = deadline - time.monotonic()
+            if remaining < 1.0:
+                raise TimeoutError("Pi Session turn settlement timed out")
+            host_wait_seconds = min(295.0, max(1.0, remaining - 0.5))
+            host_timeout_ms = int(host_wait_seconds * 1_000)
+            try:
+                settlement = client.send(
+                    "session.await_settled",
+                    {
+                        **identity,
+                        "allowSuspended": False,
+                        "timeoutMs": host_timeout_ms,
+                    },
+                    timeout=min(
+                        remaining,
+                        host_wait_seconds + 0.5,
+                    ),
+                )
+                break
+            except PiRuntimeCommandRejected as exc:
+                if (
+                    exc.host_error_code == "SETTLED_TIMEOUT"
+                    and time.monotonic() < deadline
+                ):
+                    continue
+                if exc.host_error_code == "SETTLED_TIMEOUT":
+                    raise TimeoutError(
+                        "Pi Session turn settlement timed out"
+                    ) from exc
+                raise
+            except PiRuntimeError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Pi Session turn settlement timed out"
+                    ) from exc
+                raise
+
+        validated = self._validate_turn_settlement(
+            settlement,
+            session_id=normalized_session_id,
+            turn_id=normalized_turn_id,
+            client_message_id=normalized_client_message_id,
+        )
+        self._reconcile_turn_settlement(validated)
+        return validated
+
+    @staticmethod
+    def _validate_turn_settlement(
+        settlement: Mapping[str, object],
+        *,
+        session_id: str,
+        turn_id: str,
+        client_message_id: str,
+        allow_suspended: bool = False,
+    ) -> dict[str, object]:
+        value = dict(settlement)
+        if (
+            value.get("schemaVersion") != "rag-ime.pi-turn-settlement.v1"
+            or str(value.get("sessionId") or "") != session_id
+            or str(value.get("turnId") or "") != turn_id
+            or str(value.get("clientMessageId") or "") != client_message_id
+        ):
+            raise PiRuntimeError(
+                "Pi settlement does not match the requested product turn"
+            )
+        runtime_session_id = str(value.get("runtimeSessionId") or "").strip()
+        receipt = as_mapping(value.get("receipt"))
+        if (
+            not runtime_session_id
+            or receipt.get("schemaVersion") != "pi.agent-settled.v2"
+            or str(receipt.get("sessionId") or "") != runtime_session_id
+        ):
+            raise PiRuntimeError("Pi settlement receipt is invalid")
+        disposition = str(receipt.get("disposition") or "")
+        allowed_dispositions = {"completed", "failed", "aborted"}
+        if allow_suspended:
+            allowed_dispositions.add("suspended")
+        if disposition not in allowed_dispositions:
+            raise PiRuntimeError("Pi settlement receipt is not terminal")
+        if str(receipt.get("runId") or "") != turn_id:
+            raise PiRuntimeError("Pi settlement run does not match the requested turn")
+        if str(receipt.get("scopeId") or "") != f"{runtime_session_id}:{turn_id}":
+            raise PiRuntimeError("Pi settlement scope does not match the requested turn")
+        pending_operations = receipt.get("pendingOperations")
+        operations = as_mapping(receipt.get("operations"))
+        operation_pending = operations.get("pending")
+        if (
+            not isinstance(pending_operations, int)
+            or isinstance(pending_operations, bool)
+            or pending_operations < 0
+            or not isinstance(operation_pending, int)
+            or isinstance(operation_pending, bool)
+            or operation_pending < 0
+            or operation_pending != pending_operations
+            or (disposition != "suspended" and pending_operations != 0)
+        ):
+            raise PiRuntimeError("Pi settlement still owns pending operations")
+        aborted = receipt.get("aborted")
+        if not isinstance(aborted, bool) or aborted != (disposition == "aborted"):
+            raise PiRuntimeError("Pi settlement abort state is inconsistent")
+        final_message = as_mapping(receipt.get("finalMessage"))
+        if (
+            disposition == "completed"
+            and (
+                str(final_message.get("role") or "").lower() != "assistant"
+                or not isinstance(final_message.get("content"), list)
+            )
+        ):
+            raise PiRuntimeError(
+                "completed Pi settlement has no authoritative assistant message"
+            )
+        return value
+
+    def _reconcile_turn_settlement(
+        self,
+        settlement: Mapping[str, object],
+    ) -> None:
+        session_id = str(settlement.get("sessionId") or "")
+        turn_id = str(settlement.get("turnId") or "")
+        client_message_id = str(settlement.get("clientMessageId") or "")
+        receipt = dict(as_mapping(settlement.get("receipt")))
+        disposition = str(receipt.get("disposition") or "")
+        final_message = as_mapping(receipt.get("finalMessage"))
+        with self._lock:
+            state = self._states.get(session_id)
+            if (session_id, turn_id) in self._retired_host_turns or (
+                state is not None and turn_id in state.retired_turn_ids
+            ):
+                return
+            if state is None or state.turn_id != turn_id:
+                raise PiRuntimeError(
+                    "Pi settlement no longer matches the active product turn"
+                )
+            prior_messages = list(state.last_agent_messages)
+            messages = prior_messages or (
+                [dict(final_message)] if final_message else []
+            )
+            state.last_agent_messages = list(messages)
+            if disposition == "completed":
+                state.final_error = ""
+                state.final_failure_context.clear()
+            if disposition == "aborted":
+                state.abort_requested_turn_id = turn_id
+            self._fence_retired_turn_locked(state, session_id, turn_id)
+
+        if disposition == "failed":
+            self._turn_failed(
+                session_id,
+                turn_id,
+                PiRuntimeError(
+                    str(receipt.get("stopReason") or f"Pi turn {disposition}")
+                ),
+            )
+            return
+
+        projected_events = self.events.replay(session_id)[0]
+        has_completed_message = any(
+            event.turn_id == turn_id and event.event_type == "message_completed"
+            for event in projected_events
+        )
+        if disposition == "completed" and final_message and not has_completed_message:
+            try:
+                self._handle_host_event(
+                    {
+                        "protocolVersion": _PROTOCOL_VERSION,
+                        "event": "agent.event",
+                        "sessionId": session_id,
+                        "turnId": turn_id,
+                        "clientMessageId": client_message_id,
+                        "payload": {
+                            "type": "message_end",
+                            "message": dict(final_message),
+                        },
+                    },
+                    allow_retired_turn=True,
+                )
+            except Exception:
+                # The durable settlement remains the terminal authority. Live
+                # message projection is secondary and cannot reopen the turn.
+                pass
+        try:
+            self._handle_host_event(
+                {
+                    "protocolVersion": _PROTOCOL_VERSION,
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "clientMessageId": client_message_id,
+                    "payload": {
+                        "type": "agent_settled",
+                        "receipt": receipt,
+                    },
+                },
+                allow_retired_turn=True,
+            )
+        except Exception:
+            with self._lock:
+                current = self._states.get(session_id)
+                turn_was_retired = current is None or current.turn_id != turn_id
+            if not turn_was_retired:
+                raise
+
     def messages(self, session_id: str) -> list[dict[str, object]]:
         return list(self.session_snapshot(session_id).get("messages") or [])
 
@@ -2471,6 +2740,31 @@ class PiRuntimeHostManager:
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             turn_id = state.turn_id
+            if turn_id and (
+                (session_id, turn_id) in self._retired_host_turns
+                or turn_id in state.retired_turn_ids
+            ):
+                return {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "alreadySettled": True,
+                    "cancelledDecisionIds": [],
+                    "cancelledUIRequestIds": [],
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": f"{session_id}:{turn_id}",
+                        "generation": 0,
+                        "reason": "already_settled",
+                        "cancelledContinuationIds": [],
+                        "cancelledOperationIds": [],
+                        "failedOperationIds": [],
+                        "operations": [],
+                        "pendingOperations": [],
+                        "drained": True,
+                        "idle": True,
+                    },
+                }
             if not turn_id:
                 if state.prompt_admission_in_flight:
                     state.abort_pending_admission = True
@@ -3116,7 +3410,12 @@ class PiRuntimeHostManager:
             created_at_ms=completed_at_ms,
         )
 
-    def _handle_host_event(self, envelope: dict[str, object]) -> None:
+    def _handle_host_event(
+        self,
+        envelope: dict[str, object],
+        *,
+        allow_retired_turn: bool = False,
+    ) -> None:
         if envelope.get("protocolVersion") != _PROTOCOL_VERSION or envelope.get("event") not in {
             "agent.event",
             "runtime.notice",
@@ -3148,10 +3447,18 @@ class PiRuntimeHostManager:
         client_message_id = str(envelope.get("clientMessageId") or "")
         event_type = str(raw.get("type") or "")
         with self._lock:
-            if turn_id and (session_id, turn_id) in self._retired_host_turns:
+            if (
+                turn_id
+                and not allow_retired_turn
+                and (session_id, turn_id) in self._retired_host_turns
+            ):
                 return
             state = self._states.setdefault(session_id, _HostedSessionState())
-            if turn_id and turn_id in state.retired_turn_ids:
+            if (
+                turn_id
+                and not allow_retired_turn
+                and turn_id in state.retired_turn_ids
+            ):
                 return
             if turn_id:
                 state.turn_id = turn_id
@@ -3638,6 +3945,11 @@ class PiRuntimeHostManager:
             with self._lock:
                 if state.turn_id != turn_id:
                     return
+                self._fence_retired_turn_locked(
+                    state,
+                    session_id,
+                    turn_id,
+                )
                 messages = list(state.last_agent_messages)
                 final_error = state.final_error
                 aborted = state.abort_requested_turn_id == turn_id
@@ -3648,10 +3960,6 @@ class PiRuntimeHostManager:
                     state.settle_timer.cancel()
                     state.settle_timer = None
                 if aborted or not final_error:
-                    if aborted:
-                        if len(state.retired_turn_ids) >= 64:
-                            state.retired_turn_ids.pop()
-                        state.retired_turn_ids.add(turn_id)
                     state.turn_id = ""
                     state.client_message_id = ""
                     state.stream_pi_message_id = ""
@@ -4063,14 +4371,24 @@ class PiRuntimeHostManager:
                 or turn_id in state.retired_turn_ids
             ):
                 return False
-            if len(state.retired_turn_ids) >= 64:
-                state.retired_turn_ids.pop()
-            state.retired_turn_ids.add(turn_id)
-            if len(self._retired_host_turns) >= 256:
-                self._retired_host_turns.pop()
-            self._retired_host_turns.add((session_id, turn_id))
+            self._fence_retired_turn_locked(state, session_id, turn_id)
         self._turn_failed(session_id, turn_id, error)
         return True
+
+    def _fence_retired_turn_locked(
+        self,
+        state: _HostedSessionState,
+        session_id: str,
+        turn_id: str,
+    ) -> None:
+        """Fence one terminal turn while the caller owns ``self._lock``."""
+
+        if len(state.retired_turn_ids) >= 64:
+            state.retired_turn_ids.pop()
+        state.retired_turn_ids.add(turn_id)
+        if len(self._retired_host_turns) >= 256:
+            self._retired_host_turns.pop()
+        self._retired_host_turns.add((session_id, turn_id))
 
     def _turn_failed(self, session_id: str, turn_id: str, error: BaseException) -> None:
         message = redact_runtime_text(str(error))

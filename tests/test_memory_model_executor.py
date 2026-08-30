@@ -25,11 +25,13 @@ class FakeMemoryRuntime:
         events: AgentEventHub,
         *,
         settle: bool = True,
+        emit_terminal_events: bool = True,
         models: list[dict[str, object]] | None = None,
     ) -> None:
         self.sessions = sessions
         self.events = events
         self.settle = settle
+        self.emit_terminal_events = emit_terminal_events
         self.models = models or [
             {
                 "provider": "openai-codex",
@@ -45,6 +47,8 @@ class FakeMemoryRuntime:
         self.aborted: list[str] = []
         self.closed: list[str] = []
         self.close_error: Exception | None = None
+        self.settlement_calls: list[dict[str, object]] = []
+        self.settlements: dict[str, dict[str, object]] = {}
 
     def available_models(self) -> list[dict[str, object]]:
         return [dict(model) for model in self.models]
@@ -101,6 +105,41 @@ class FakeMemoryRuntime:
             }
         )
         if self.settle:
+            self.settlements[turn_id] = {
+                "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+                "sessionId": session_id,
+                "runtimeSessionId": f"pi-{session_id}",
+                "turnId": turn_id,
+                "clientMessageId": client_message_id,
+                "receipt": {
+                    "schemaVersion": "pi.agent-settled.v2",
+                    "receiptId": f"pi-settled:{turn_id}",
+                    "sessionId": f"pi-{session_id}",
+                    "runId": turn_id,
+                    "scopeId": f"pi-{session_id}:{turn_id}",
+                    "generation": 1,
+                    "disposition": "completed",
+                    "stopReason": "stop",
+                    "settledAtMs": 100,
+                    "aborted": False,
+                    "pendingOperations": 0,
+                    "operations": {
+                        "pending": 0,
+                        "pendingByKind": {},
+                        "registeredByKind": {},
+                    },
+                    "operationCounts": {},
+                    "finalMessage": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "private chain"},
+                            {"type": "text", "text": '{"decisions":[]}'},
+                        ],
+                        "usage": {"input": len(message), "output": 4},
+                    },
+                },
+            }
+        if self.settle and self.emit_terminal_events:
             self.events.publish(
                 session_id,
                 "message_completed",
@@ -125,6 +164,27 @@ class FakeMemoryRuntime:
                 turn_id=turn_id,
             )
         return {"accepted": True, "turnId": turn_id}
+
+    def await_turn_settled(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        client_message_id: str,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
+        self.settlement_calls.append(
+            {
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "clientMessageId": client_message_id,
+                "timeoutSeconds": timeout_seconds,
+            }
+        )
+        settlement = self.settlements.get(turn_id)
+        if settlement is None:
+            raise TimeoutError("Memory Session turn timed out")
+        return dict(settlement)
 
     def abort(self, session_id: str) -> dict[str, object]:
         self.aborted.append(session_id)
@@ -210,6 +270,34 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         )
         self.assertEqual(response["receipt"]["contextWindow"], 372_000)
         self.assertNotIn('"messages"', str(runtime.prompts[0]["message"])[:300])
+
+    def test_authoritative_settlement_completes_when_product_terminal_events_are_lost(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(
+            self.sessions,
+            self.events,
+            emit_terminal_events=False,
+        )
+        executor = self._executor(runtime)
+        run = executor.begin_run("memory_book_settlement_reconciliation")
+
+        response = executor.complete(
+            messages=[{"role": "user", "content": '{"v":2,"e":[]}'}]
+        )
+
+        self.assertEqual(response["choices"][0]["message"]["content"], '{"decisions":[]}')
+        self.assertEqual(
+            runtime.settlement_calls,
+            [
+                {
+                    "sessionId": run["sessionId"],
+                    "turnId": "turn-1",
+                    "clientMessageId": runtime.prompts[0]["clientMessageId"],
+                    "timeoutSeconds": 1.0,
+                }
+            ],
+        )
 
     def test_near_budget_packet_is_not_truncated_or_nested_as_json_messages(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)
