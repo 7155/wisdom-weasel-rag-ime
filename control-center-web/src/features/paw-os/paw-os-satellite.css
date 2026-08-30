@@ -43,23 +43,6 @@
 .paw-process-terminal__output pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .paw-process-terminal__output pre[data-stream='stderr'] { color: #fca5a5; }
 .paw-process-terminal__output > span { color: #71717a; }
-.paw-os-satellite__hero {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--color-border-soft);
-  background: color-mix(in srgb, var(--color-chrome) 88%, transparent);
-}
-.paw-os-satellite__hero > span:first-child { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; background: var(--color-accent-soft); color: var(--color-accent); }
-.paw-os-satellite__hero > div { display: grid; min-width: 0; gap: 2px; }
-.paw-os-satellite__hero small { color: var(--color-accent); font-family: var(--font-mono); font-size: 9px; font-weight: 750; letter-spacing: .1em; }
-.paw-os-satellite__hero h2 { margin: 0; overflow: hidden; font-size: 17px; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
-.paw-os-satellite__hero p { margin: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-os-satellite__empty { display: grid; place-content: center; justify-items: center; gap: 16px; padding: 30px; text-align: center; }
-.paw-os-satellite__empty p { max-width: 52ch; margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.55; }
 .paw-os-satellite__loading { display: grid; align-content: start; gap: 8px; padding: 18px; }
 .paw-os-satellite__loading .ui-skeleton { height: 44px; }
 .paw-os-satellite__document-body { display: grid; align-content: start; gap: 20px; padding: 18px; }
@@ -526,8 +509,6 @@
 :root[data-reduce-motion='true'] .paw-participant-chat__disclosure-reveal,
 :root[data-reduce-motion='true'] .paw-participant-chat__disclosure-chevron { transition-duration: 90ms; }
 @container paw-window (max-width: 520px) {
-  .paw-os-satellite__hero { grid-template-columns: 34px minmax(0, 1fr); padding: 12px; }
-  .paw-os-satellite__hero > .mgmt-status { grid-column: 2; }
   .paw-os-satellite__document-body { padding: 12px; }
   .paw-os-satellite__document-body dl { grid-template-columns: 1fr; }
   .paw-os-satellite__document-body dl > div[data-wide] { grid-column: auto; }

@@ -32,6 +32,7 @@ export interface AgentConfigurationV1 {
     };
     modelRouting: {
       primary: ModelRoute;
+      traceDiagnostic: ModelRoute;
       toolAgent: ModelRoute;
       subagent: ModelRoute;
       roomCoordinator: ModelRoute;

@@ -23,6 +23,7 @@ from typing import Any
 
 
 __all__ = [
+    "PiRuntimeProtocolError",
     "normalize_protocol_version",
     "resolve_protocol_manager",
 ]
@@ -35,20 +36,27 @@ PROTOCOL_MANAGERS: dict[str, tuple[str, str]] = {
     "2": ("rag_ime.pi_runtime_v2", "PiRuntimeHostManager"),
 }
 
-DEFAULT_PROTOCOL_VERSION = "1"
+class PiRuntimeProtocolError(ValueError):
+    """Raised when a runtime asks for a protocol without a registered owner."""
 
 
 def normalize_protocol_version(value: object) -> str:
-    """Unknown or empty versions fall back to v1, matching the prior branch.
+    """Return a registered protocol version, failing closed for unknown input.
 
-    The replaced code was `if protocol_version == "2": ... else: v1`, so every
-    value other than "2" already meant v1. Keeping that exact behaviour matters:
-    a stricter check here would turn a mis-set config into a hard failure at
-    runtime rather than the previous silent fallback.
+    The old inline branch treated every value other than ``"2"`` as v1. That
+    made a typo or stale manifest silently select the legacy runtime. Protocol
+    ownership is now explicit: only registered versions may construct a
+    manager, while callers that intentionally need the v1 compatibility path
+    pass ``"1"``.
     """
 
     version = str(value or "").strip()
-    return version if version in PROTOCOL_MANAGERS else DEFAULT_PROTOCOL_VERSION
+    if version not in PROTOCOL_MANAGERS:
+        raise PiRuntimeProtocolError(
+            "unsupported Pi runtime protocol version: "
+            f"{version or '<empty>'}"
+        )
+    return version
 
 
 def resolve_protocol_manager(value: object) -> Any:

@@ -173,6 +173,43 @@
   font-size: 10px;
 }
 
+.trace-agent-persisted-report__targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0;
+}
+
+.trace-agent-persisted-report__targets span {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border, #d9e1ec);
+  border-radius: 999px;
+  color: var(--color-text, #182230);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-agent-report-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 12px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--color-danger-border, #efb6b6);
+  border-radius: 10px;
+  color: var(--color-danger, #b42318);
+  background: var(--color-danger-soft, #fff1f0);
+  font-size: 12px;
+}
+
+.trace-agent-report-failure svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .trace-agent-diagnostic-action {
   position: sticky;
   top: 8px;
@@ -223,7 +260,7 @@
 
 .trace-agent-target {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 11px;
   width: 100%;
@@ -284,6 +321,20 @@
 
 .trace-agent-target__meta {
   justify-items: end;
+}
+
+.trace-agent-target__diagnostic-status {
+  color: var(--color-text-muted, #667085);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.trace-agent-target__diagnostic-status[data-status='completed'] {
+  color: var(--color-success, #067647);
+}
+
+.trace-agent-target__diagnostic-status[data-status='failed'] {
+  color: var(--color-danger, #b42318);
 }
 
 .trace-agent-target-list + .ui-button {
@@ -871,8 +922,8 @@
   .trace-agent-intro { grid-template-columns: auto minmax(0, 1fr); }
   .trace-agent-intro > .mgmt-status { grid-column: 2; justify-self: start; }
   .trace-agent-scope-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .trace-agent-target { grid-template-columns: auto minmax(0, 1fr); }
-  .trace-agent-target__meta { grid-column: 2; grid-auto-flow: column; justify-content: start; justify-items: start; }
+  .trace-agent-target { grid-template-columns: auto auto minmax(0, 1fr); }
+  .trace-agent-target__meta { grid-column: 3; grid-auto-flow: column; justify-content: start; justify-items: start; }
 }
 
 @media (max-width: 520px) {

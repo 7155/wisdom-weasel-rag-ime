@@ -46,6 +46,7 @@ from .agent_routes import (
     agent_context_trace_route,
     observability_trace_route,
     observability_trace_repair_route,
+    observability_trace_diagnostic_report_route,
     agent_media_route,
     agent_room_route,
     agent_room_work_route,
@@ -631,6 +632,7 @@ class DebugImeService:
             artifact_projector=AgentToolArtifactProjector(self.agent.media),
             work_documents=self.agent.work_documents,
             sandbox_connector=self.vertical_sandbox_connector,
+            trace_diagnostics=self.agent,
             workflow_publisher=lambda session_id, reason: self.agent.publish_workflow_state(
                 session_id,
                 reason=reason,
@@ -7295,6 +7297,32 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": "Invalid Eval request"},
                 )
             return
+        diagnostic_report_id, diagnostic_report_action = (
+            observability_trace_diagnostic_report_route(parsed.path)
+        )
+        if diagnostic_report_action in {"collection", "get"}:
+            try:
+                response = (
+                    self.service.agent.list_trace_diagnostic_reports(
+                        {"limit": _query_first(query, "limit")}
+                    )
+                    if diagnostic_report_action == "collection"
+                    else self.service.agent.trace_diagnostic_report(
+                        diagnostic_report_id
+                    )
+                )
+                self._write_json(HTTPStatus.OK, response)
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": "Trace diagnostic report not found"},
+                )
+            except (TypeError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "Invalid Trace diagnostic report request"},
+                )
+            return
         trace_repair_receipt_id, trace_repair_action = observability_trace_repair_route(
             parsed.path
         )
@@ -8456,6 +8484,34 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
+            diagnostic_report_id, diagnostic_report_action = (
+                observability_trace_diagnostic_report_route(path)
+            )
+            if diagnostic_report_action in {"collection", "finalize"}:
+                try:
+                    response = (
+                        self.service.agent.create_trace_diagnostic_report(payload)
+                        if diagnostic_report_action == "collection"
+                        else self.service.agent.finalize_trace_diagnostic_report(
+                            diagnostic_report_id,
+                            payload,
+                        )
+                    )
+                    self._write_json(
+                        HTTPStatus.CREATED if diagnostic_report_action == "collection" else HTTPStatus.OK,
+                        response,
+                    )
+                except KeyError:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"ok": False, "error": "Trace diagnostic source not found"},
+                    )
+                except (TypeError, ValueError):
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"ok": False, "error": "Invalid Trace diagnostic report request"},
+                    )
+                return
             if path == "/api/observability/eval-schedules":
                 try:
                     self._write_json(

@@ -1042,6 +1042,58 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("sessionFile", str(result))
         self.assertNotIn(str(Path(self.tmp.name)), str(result))
 
+    def test_trace_diagnostics_exposes_one_bounded_read_only_multi_target_inspector(self) -> None:
+        class _TraceDiagnostics:
+            def trace_diagnostic_inspection(self, payload):
+                return {
+                    "schemaVersion": "rag-ime.trace-diagnostic-inspection.v1",
+                    "targets": payload["targets"],
+                    "traceIds": ["trace:a", "trace:b"],
+                    "scorecard": {"rubricVersion": "trace-score-v1"},
+                }
+
+        self.gateway.trace_diagnostics = _TraceDiagnostics()
+        manifests = self.gateway.runtime_manifests(self.session)
+        manifest = next(item for item in manifests if item["name"] == "trace_diagnostics")
+        self.assertEqual(
+            {
+                branch["properties"]["op"]["const"]
+                for branch in manifest["parameters"]["oneOf"]
+            },
+            {"inspect"},
+        )
+
+        result = self.gateway.execute(
+            self._tool_call(
+                "trace_diagnostics",
+                "inspect",
+                targets=[
+                    {"kind": "session", "id": "session:a", "title": "A"},
+                    {"kind": "session", "id": "session:b", "title": "B"},
+                ],
+            )
+        )["result"]
+        self.assertEqual(result["traceIds"], ["trace:a", "trace:b"])
+        self.assertEqual(len(result["targets"]), 2)
+
+    def test_trace_diagnostics_rejects_invalid_nested_target_instead_of_filtering_it(self) -> None:
+        class _TraceDiagnostics:
+            def trace_diagnostic_inspection(self, payload):
+                return payload
+
+        self.gateway.trace_diagnostics = _TraceDiagnostics()
+        with self.assertRaisesRegex(ValueError, "targets.*objects"):
+            self.gateway.execute(
+                self._tool_call(
+                    "trace_diagnostics",
+                    "inspect",
+                    targets=[
+                        {"kind": "session", "id": "session:a", "title": "A"},
+                        "not-a-target",
+                    ],
+                )
+            )
+
     def test_dynamic_structured_output_manifest_terminates_the_child_turn(self) -> None:
         class _Delegation:
             submitted: tuple[str, dict[str, object], str] | None = None
@@ -2080,6 +2132,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "configuration",
                 "agents",
                 "session_search",
+                "trace_diagnostics",
                 "room_partner",
                 "browser",
                 "plugins",

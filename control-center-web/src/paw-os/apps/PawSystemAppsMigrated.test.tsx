@@ -582,7 +582,7 @@ function agentPreferenceSettings(executionMode: string) {
 
 function systemModelRoutingConfiguration(
   revision: number,
-  overrides: Partial<Record<'primary' | 'toolAgent' | 'subagent' | 'roomCoordinator', {
+  overrides: Partial<Record<'primary' | 'traceDiagnostic' | 'toolAgent' | 'subagent' | 'roomCoordinator', {
     modelProfile: string;
     thinkingLevel: string;
   }>> = {},
@@ -597,6 +597,7 @@ function systemModelRoutingConfiguration(
         capabilityDisclosure: { projectPreferences: {} },
         modelRouting: {
           primary: { ...inherited, ...overrides.primary },
+          traceDiagnostic: { ...inherited, ...overrides.traceDiagnostic },
           toolAgent: { ...inherited, ...overrides.toolAgent },
           subagent: { ...inherited, ...overrides.subagent },
           roomCoordinator: { ...inherited, ...overrides.roomCoordinator },

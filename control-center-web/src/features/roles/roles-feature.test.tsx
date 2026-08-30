@@ -29,10 +29,12 @@ describe('Roles experience', () => {
     expect(await screen.findByRole('heading', { name: '模型与扩展', level: 1 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '按职责选择默认模型', level: 2 })).toBeInTheDocument();
     expect(screen.getByText('默认主 Agent')).toBeInTheDocument();
+    expect(screen.getByText('Trace 主 Agent')).toBeInTheDocument();
     expect(screen.getByText('私有 Tool Agent')).toBeInTheDocument();
     expect(screen.getByText('私有调研卫星')).toBeInTheDocument();
     expect(screen.getByText('Room 行星伙伴')).toBeInTheDocument();
     expect(screen.getByLabelText('私有 Tool Agent默认模型')).toBeInTheDocument();
+    expect(screen.getByLabelText('Trace 主 Agent默认模型')).toBeInTheDocument();
     expect(screen.getByLabelText('Room 行星伙伴默认模型')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '插件管理' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '兼容伙伴资料', level: 2 })).toBeInTheDocument();
@@ -838,6 +840,7 @@ function modelRoutingConfiguration(
         },
         modelRouting: {
           primary: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+          traceDiagnostic: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
           toolAgent,
           subagent: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
           roomCoordinator: { modelProfile: 'inherit', thinkingLevel: 'inherit' },

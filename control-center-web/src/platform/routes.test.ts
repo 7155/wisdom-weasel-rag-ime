@@ -21,6 +21,10 @@ const canonicalPathIds = [
   'observability.snapshot',
   'observability.trace.get',
   'observability.evals.list',
+  'observability.traceDiagnosticReports.list',
+  'observability.traceDiagnosticReports.create',
+  'observability.traceDiagnosticReport.get',
+  'observability.traceDiagnosticReport.finalize',
   'observability.evals.aiJudge.run',
   'observability.traceRepair.changeEvidence',
   'observability.traceRepair.testEvidence',
@@ -774,6 +778,20 @@ describe('control route policy', () => {
       method: 'POST',
       path: '/api/agent/rooms/:roomId/steer',
     });
+  });
+
+  it('allows Trace diagnostic Session creation to select its dedicated model route', () => {
+    expect(() => assertControlRequest({
+      pathId: 'agent.sessions.create',
+      body: {
+        title: 'Trace diagnostic',
+        mode: 'assistant',
+        _modelRoute: 'traceDiagnostic',
+        executionMode: 'read_only',
+        toolProfileVersion: 'control-center-v1',
+        workspaceRoots: [],
+      },
+    })).not.toThrow();
   });
 
   it('rejects arbitrary URL/host fields and fields outside each route contract', () => {

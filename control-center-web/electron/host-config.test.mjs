@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
-import { browserPartition, defaultPawHostPort, isBrowserGuestUrl, resolveHostPaths } from './host-config.mjs';
+import {
+  browserPartition,
+  computeFrontendDistDigest,
+  defaultPawHostPort,
+  isBrowserGuestUrl,
+  resolveHostPaths,
+  validateProductionFrontend,
+} from './host-config.mjs';
 import { startPawHostServer } from './local-server.mjs';
 import {
   appendBrowserHistory,
@@ -17,6 +25,31 @@ import {
   removeBrowserHistoryEntry,
 } from './browser-session.mjs';
 import { browserWindowChrome } from './window-chrome.mjs';
+
+function computeTestDistDigest(root) {
+  const digest = crypto.createHash('sha256');
+  const visit = (directory, relativeDirectory) => {
+    const entries = fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const relative = relativeDirectory
+        ? `${relativeDirectory}/${entry.name}`
+        : entry.name;
+      if (relative === 'rag-ime-control-web-build.json') continue;
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(target, relative);
+      } else if (entry.isFile()) {
+        digest.update(relative);
+        digest.update('\0');
+        digest.update(fs.readFileSync(target));
+        digest.update('\0');
+      }
+    }
+  };
+  visit(root, '');
+  return digest.digest('hex');
+}
 
 test('uses one fixed persistent PAW Browser profile and the built PAWOS entry', () => {
   const paths = resolveHostPaths({
@@ -31,6 +64,56 @@ test('uses one fixed persistent PAW Browser profile and the built PAWOS entry', 
   assert.equal(paths.hostPidFile, path.join(paths.profilePath, 'PAWBrowserHost.pid'));
   assert.equal(paths.browserHistoryFile, path.join(paths.profilePath, 'PAWBrowserHost.history.json'));
   assert.equal(paths.browserExtensionsDir, path.join(paths.profilePath, 'Extensions'));
+});
+
+test('development host mode is explicit and permits a local frontend override', () => {
+  const paths = resolveHostPaths({
+    HOME: '/Users/example',
+    PAW_FRONTEND_ENTRY: '/tmp/paw-dev/index.html',
+    PAW_HOST_MODE: 'development',
+    RAG_IME_APP_SUPPORT_DIR: '/tmp/paw-app-support',
+  });
+
+  assert.equal(paths.hostMode, 'development');
+  assert.equal(paths.production, false);
+  assert.equal(paths.frontendEntry, path.resolve('/tmp/paw-dev/index.html'));
+});
+
+test('production host rejects overrides and missing, legacy, or stale frontend markers', () => {
+  assert.throws(
+    () => resolveHostPaths({ PAW_FRONTEND_ENTRY: '/tmp/override/index.html', PAW_HOST_MODE: 'production' }),
+    /PAW_FRONTEND_ENTRY is not allowed for production Electron hosts/,
+  );
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paw-production-marker-'));
+  const entry = path.join(root, 'index.html');
+  const assets = path.join(root, 'assets');
+  fs.mkdirSync(assets);
+  fs.writeFileSync(entry, '<!doctype html><title>PAWOS</title>', 'utf8');
+  fs.writeFileSync(path.join(assets, 'main.js'), 'console.log("paw-os");', 'utf8');
+  const markerPath = path.join(root, 'rag-ime-control-web-build.json');
+  const marker = {
+    buildChannel: 'production',
+    frontendProduct: 'paw-os',
+    schemaVersion: 'rag-ime.control-web-build.v1',
+    sourceCommit: 'a'.repeat(40),
+    transport: 'http',
+    distTreeDigest: computeTestDistDigest(root),
+  };
+  try {
+    assert.throws(
+      () => validateProductionFrontend(path.join(root, 'missing-index.html')),
+      /frontend entry is missing/,
+    );
+    fs.writeFileSync(markerPath, JSON.stringify({ ...marker, frontendProduct: 'legacy' }), 'utf8');
+    assert.throws(() => validateProductionFrontend(entry), /legacy frontend product/);
+    fs.writeFileSync(markerPath, JSON.stringify({ ...marker, distTreeDigest: '0'.repeat(64) }), 'utf8');
+    assert.throws(() => validateProductionFrontend(entry), /frontend marker is stale/);
+    fs.writeFileSync(markerPath, JSON.stringify(marker), 'utf8');
+    assert.equal(validateProductionFrontend(entry).frontendProduct, 'paw-os');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('same-window guests accept browser pages but not local host files', () => {

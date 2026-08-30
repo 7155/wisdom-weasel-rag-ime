@@ -62,6 +62,7 @@ export type AgentDefaultCompanion = {
 
 export const modelRouteIds = [
   'primary',
+  'traceDiagnostic',
   'toolAgent',
   'subagent',
   'roomCoordinator',

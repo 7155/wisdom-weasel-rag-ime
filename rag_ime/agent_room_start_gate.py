@@ -126,8 +126,7 @@ class AgentRoomStartGateStore:
             raise RuntimeError("Room start gate disappeared during confirmation")
         return _payload(row)
 
-    def reject(self, room_id: str, *, now_ms: int | None = None) -> dict[str, object]:
-        del now_ms
+    def reject(self, room_id: str) -> dict[str, object]:
         with self._connect(immediate=True) as conn:
             row = conn.execute(
                 "SELECT * FROM agent_room_start_gates WHERE room_id = ?",

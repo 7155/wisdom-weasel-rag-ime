@@ -49,6 +49,10 @@ class AgentConfigurationTests(unittest.TestCase):
                     "modelProfile": "openai-codex/gpt-5.6-luna",
                     "thinkingLevel": "max",
                 },
+                "traceDiagnostic": {
+                    "modelProfile": "openai-codex/gpt-5.6-sol",
+                    "thinkingLevel": "high",
+                },
                 "toolAgent": {
                     "modelProfile": "openai-codex/gpt-5.6-luna",
                     "thinkingLevel": "max",
@@ -89,6 +93,27 @@ class AgentConfigurationTests(unittest.TestCase):
             "deepseek/deepseek-chat",
         )
         self.assertFalse(update.runtime_sync_required)
+
+    def test_trace_diagnostic_route_is_revisioned_as_its_own_model_responsibility(self) -> None:
+        update = self.store.update(
+            {
+                "modelRouting.traceDiagnostic": {
+                    "modelProfile": "openai-codex/gpt-5.6-sol",
+                    "thinkingLevel": "high",
+                },
+            },
+            expected_revision=1,
+            updated_by="models-ui",
+        )
+
+        self.assertEqual(
+            update.snapshot["configuration"]["modelRouting"]["traceDiagnostic"],
+            {
+                "modelProfile": "openai-codex/gpt-5.6-sol",
+                "thinkingLevel": "high",
+            },
+        )
+        self.assertNotIn("roomCoordinator", update.changed_keys)
 
     def test_startup_rewrites_a_persisted_legacy_role_id_once(self) -> None:
         path = Path(self.tmp.name) / "legacy-agent.sqlite"
@@ -160,6 +185,10 @@ class AgentConfigurationTests(unittest.TestCase):
                     "modelProfile": "gpt/gpt-5.6-luna",
                     "thinkingLevel": "max",
                 },
+                "traceDiagnostic": {
+                    "modelProfile": "openai-codex/gpt-5.6-sol",
+                    "thinkingLevel": "high",
+                },
                 "toolAgent": {
                     "modelProfile": "openai-codex/gpt-5.4",
                     "thinkingLevel": "low",
@@ -179,6 +208,42 @@ class AgentConfigurationTests(unittest.TestCase):
         store_again = AgentConfigurationStore(path)
         store_again.initialize(default_agent_configuration())
         self.assertEqual(store_again.snapshot()["revision"], 5)
+
+    def test_startup_persists_the_new_trace_route_for_an_older_nested_configuration(self) -> None:
+        path = Path(self.tmp.name) / "legacy-nested-model-routing.sqlite"
+        legacy = default_agent_configuration()
+        legacy["modelRouting"].pop("traceDiagnostic")
+        with closing(sqlite3.connect(path)) as conn, conn:
+            apply_database_migrations(conn)
+            conn.execute(
+                """
+                INSERT INTO agent_configuration_state(
+                    singleton_id, revision, configuration_json, applied_revision,
+                    sync_state, sync_error, updated_at_ms, updated_by
+                ) VALUES (1, 9, ?, 9, 'synchronized', '', 1, 'legacy-model-ui')
+                """,
+                (json.dumps(legacy, ensure_ascii=False, sort_keys=True),),
+            )
+
+        store = AgentConfigurationStore(path)
+        store.initialize(default_agent_configuration())
+        snapshot = store.snapshot()
+
+        self.assertEqual(snapshot["revision"], 10)
+        self.assertEqual(
+            snapshot["configuration"]["modelRouting"]["traceDiagnostic"],
+            {
+                "modelProfile": "openai-codex/gpt-5.6-sol",
+                "thinkingLevel": "high",
+            },
+        )
+        with closing(sqlite3.connect(path)) as conn:
+            persisted = json.loads(
+                conn.execute(
+                    "SELECT configuration_json FROM agent_configuration_state WHERE singleton_id = 1"
+                ).fetchone()[0]
+            )
+        self.assertIn("traceDiagnostic", persisted["modelRouting"])
 
     def test_configuration_is_revisioned_and_rejects_stale_writers(self) -> None:
         initial = self.store.snapshot()

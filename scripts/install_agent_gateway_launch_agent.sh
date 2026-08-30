@@ -26,6 +26,7 @@ DEBUG_CONTEXT_MAX_BYTES="${RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES:-5368709120}"
 DEBUG_CONTEXT_MAX_CALLS="${RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS:-128}"
 WEB_SOURCE_BACKUP=""
 WEB_SOURCE_PRESENT=0
+WEB_INSTALL_TEMP=""
 
 restore_web_source_dist() {
   [[ -n "$WEB_SOURCE_BACKUP" ]] || return 0
@@ -35,6 +36,118 @@ restore_web_source_dist() {
   fi
   rm -rf "$WEB_SOURCE_BACKUP"
   WEB_SOURCE_BACKUP=""
+}
+
+cleanup_web_install_temp() {
+  if [[ -n "$WEB_INSTALL_TEMP" && -e "$WEB_INSTALL_TEMP" ]]; then
+    rm -rf -- "$WEB_INSTALL_TEMP"
+  fi
+  WEB_INSTALL_TEMP=""
+}
+
+cleanup_web_install_state() {
+  cleanup_web_install_temp
+  restore_web_source_dist
+}
+
+verify_copied_web_dist() {
+  python3 - "$1" "$2" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+source_root, installed_root = map(Path, sys.argv[1:])
+
+
+def tree_digest(root: Path) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError(f"invalid control-center dist tree: {root}")
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        relative = path.relative_to(root)
+        if relative.as_posix() == "rag-ime-control-web-build.json":
+            continue
+        if path.is_symlink():
+            raise ValueError(f"control-center dist contains a symlink: {relative}")
+        if not path.is_file():
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+source_marker = json.loads(
+    (source_root / "rag-ime-control-web-build.json").read_text(encoding="utf-8")
+)
+installed_marker = json.loads(
+    (installed_root / "rag-ime-control-web-build.json").read_text(encoding="utf-8")
+)
+if source_marker != installed_marker:
+    raise ValueError("copied control-center dist marker does not match the source")
+if source_marker.get("buildChannel") != "production":
+    raise ValueError("copied control-center dist is not a production build")
+if source_marker.get("frontendProduct") != "paw-os":
+    raise ValueError("copied control-center dist is not the PAWOS frontend")
+expected_digest = source_marker.get("distTreeDigest")
+if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+    raise ValueError("copied control-center dist marker has no tree digest")
+source_digest = tree_digest(source_root)
+installed_digest = tree_digest(installed_root)
+if source_digest != installed_digest or installed_digest != expected_digest:
+    raise ValueError("copied control-center dist tree digest does not match the marker")
+PY
+}
+
+atomically_install_web_dist() {
+  local install_parent
+  install_parent="$(dirname "$WEB_INSTALL_DIR")"
+  mkdir -p "$install_parent"
+  WEB_INSTALL_TEMP="$(mktemp -d "$install_parent/.control-center-web-dist.XXXXXX")"
+  if ! ditto "$WEB_SOURCE_DIR/." "$WEB_INSTALL_TEMP"; then
+    echo "could not copy control-center web dist to a staging directory" >&2
+    return 1
+  fi
+  verify_copied_web_dist "$WEB_SOURCE_DIR" "$WEB_INSTALL_TEMP"
+  WEB_INSTALL_TEMP_PATH="$WEB_INSTALL_TEMP" WEB_INSTALL_DEST="$WEB_INSTALL_DIR" \
+    python3 - <<'PY'
+import os
+import shutil
+import sys
+import uuid
+from pathlib import Path
+
+staged = Path(os.environ["WEB_INSTALL_TEMP_PATH"])
+destination = Path(os.environ["WEB_INSTALL_DEST"])
+backup = destination.parent / f".{destination.name}.previous-{uuid.uuid4().hex}"
+
+
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+moved_previous = False
+try:
+    if destination.is_symlink() or destination.exists():
+        os.replace(destination, backup)
+        moved_previous = True
+    # Both paths live under the same app-support directory, so this rename is
+    # the atomic cutover after the staged copy and digest verification.
+    os.replace(staged, destination)
+except Exception:
+    if moved_previous and not (destination.is_symlink() or destination.exists()) and backup.exists():
+        os.replace(backup, destination)
+    raise
+else:
+    if backup.exists() or backup.is_symlink():
+        remove_path(backup)
+PY
+  WEB_INSTALL_TEMP=""
 }
 
 if [[ ! -f "$WRAPPER" || ! -d "$APP_CODE_DIR/rag_ime" ]]; then
@@ -162,16 +275,15 @@ if [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]]; then
     WEB_SOURCE_PRESENT=1
     ditto "$WEB_SOURCE_DIR" "$WEB_SOURCE_BACKUP/dist"
   fi
-  trap restore_web_source_dist EXIT
+  trap cleanup_web_install_state EXIT
 
+  VITE_PAW_FRONTEND=paw-os \
   RAG_IME_CONTROL_TRANSPORT=http \
   RAG_IME_CONTROL_BUILD_CHANNEL=production \
     "$ROOT/scripts/build_control_center_web.sh" >/dev/null
   "$ROOT/scripts/check_control_center_web_dist.sh" \
     "$WEB_SOURCE_DIR" http production >/dev/null
-  rm -rf "$WEB_INSTALL_DIR"
-  mkdir -p "$(dirname "$WEB_INSTALL_DIR")"
-  ditto "$WEB_SOURCE_DIR" "$WEB_INSTALL_DIR"
+  atomically_install_web_dist
   restore_web_source_dist
   trap - EXIT
 fi

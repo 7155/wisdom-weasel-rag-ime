@@ -144,6 +144,7 @@ describe('preview control transport', () => {
     const initialSnapshot = record(initial.configuration);
     expect(record(record(initialSnapshot.configuration).modelRouting)).toMatchObject({
       primary: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
+      traceDiagnostic: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
       toolAgent: { modelProfile: 'inherit', thinkingLevel: 'inherit' },
     });
 

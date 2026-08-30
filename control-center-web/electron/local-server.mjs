@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { defaultPawHostPort } from './host-config.mjs';
+import {
+  defaultPawHostPort,
+  resolveHostMode,
+  validateProductionFrontend,
+} from './host-config.mjs';
 
 const contentTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -21,8 +25,13 @@ export async function startPawHostServer({
   browserBridge = null,
   frontendEntry,
   controlOrigin = 'http://127.0.0.1:8768',
+  hostMode = resolveHostMode(),
   port = defaultPawHostPort,
 }) {
+  if (hostMode !== 'development' && hostMode !== 'production') {
+    throw new Error(`Unsupported PAW host mode: ${hostMode}`);
+  }
+  if (hostMode === 'production') validateProductionFrontend(frontendEntry);
   const frontendRoot = path.dirname(frontendEntry);
   const controlUrl = new URL(controlOrigin);
   let hostOrigin = '';
@@ -52,7 +61,9 @@ export async function startPawHostServer({
   hostOrigin = `http://127.0.0.1:${address.port}`;
   return {
     close: () => new Promise((resolve) => server.close(resolve)),
+    hostMode,
     origin: hostOrigin,
+    production: hostMode === 'production',
   };
 }
 

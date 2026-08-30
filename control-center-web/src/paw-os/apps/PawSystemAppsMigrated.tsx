@@ -340,7 +340,7 @@ function PawAgentSettings() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={resource.loading || authority.isPending || modelRouting.isPending} onClick={() => { resource.reload(); authority.reload(); modelRouting.reload(); }} size="small">刷新</Button>}
-      description="决定新对话、Room 行星伙伴和私有卫星默认用哪个模型、想多深，以及动手之前要不要先问你。改动只影响之后开始的运行。"
+      description="决定新对话、Trace 诊断、Room 行星伙伴和私有卫星默认用哪个模型、想多深，以及动手之前要不要先问你。改动只影响之后开始的运行。"
       eyebrow="新对话的起点"
       routeId="agent-settings"
       title="Agent"

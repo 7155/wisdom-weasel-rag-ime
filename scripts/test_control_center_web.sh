@@ -9,8 +9,7 @@ RAG_IME_CONTROL_BUILD_CHANNEL=production \
   "$ROOT/scripts/build_control_center_web.sh" >/dev/null
 
 python3 -m unittest \
-  tests.test_control_api \
-  tests.test_control_center_web_host
+  tests.test_control_api
 
 if [[ "${RAG_IME_SKIP_WEB_E2E:-0}" != "1" ]]; then
   "$ROOT/scripts/run_control_center_web_qa.sh"

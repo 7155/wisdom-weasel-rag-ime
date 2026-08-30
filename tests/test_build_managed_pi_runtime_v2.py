@@ -25,17 +25,19 @@ from scripts.build_managed_pi_runtime_v2 import (
     _copy_bundled_pi_packages,
     _copy_product_skills,
     _compact_card_length,
-    _default_pi_worktree,
     _default_node,
     _product_skill_dirs,
     _resolve_skill_source_collisions,
     _runtime_host_banner,
+    _source_revision,
     _skill_routing_projection,
     _smoke_oauth_runtime_modules,
+    _verify_pi_worktree,
     _validated_skill_routing_catalog,
     _verified_session_runtime_contract,
 )
 from rag_ime.managed_pi_runtime import ManagedPiRuntimeError
+from rag_ime.pi_runtime_protocols import normalize_protocol_version
 
 
 SESSION_FLOW_SKILLS = {
@@ -257,19 +259,118 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             "59a71b235dadb4ad0d67557a8abb0aaa093e68b4",
         )
 
-    def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
-            workspace = Path(temporary)
-            canonical = workspace / "pi"
-            legacy = workspace / "pi-rag-ime-runtime"
-            (canonical / "integrations" / "rag-ime-runtime-host").mkdir(parents=True)
-            (legacy / "packages" / "rag-ime-runtime-host").mkdir(parents=True)
+    def test_builder_requires_an_explicit_pi_worktree(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "build_managed_pi_runtime_v2.py"),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
 
-            self.assertEqual(_default_pi_worktree(workspace), canonical)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--pi-worktree", result.stderr)
+        self.assertIn("required", result.stderr)
 
-            (canonical / "integrations" / "rag-ime-runtime-host").rmdir()
-            (canonical / "integrations").rmdir()
-            self.assertEqual(_default_pi_worktree(workspace), canonical)
+    def test_builder_rejects_dirty_pi_worktree(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-dirty-pi-") as temporary:
+            root = Path(temporary)
+            source = root / "integrations" / "rag-ime-runtime-host" / "src"
+            source.mkdir(parents=True)
+            source_file = source / "runtime-host.ts"
+            source_file.write_text("export const runtime = true;\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Pi Runtime Test"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "initial runtime host"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "checkout", "--detach", "-q"], cwd=root, check=True)
+            source_file.write_text("export const runtime = false;\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "clean"):
+                _source_revision(root)
+
+    def test_builder_requires_reviewed_runtime_ancestry(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-unrelated-pi-") as temporary:
+            root = Path(temporary)
+            source = root / "integrations" / "rag-ime-runtime-host"
+            source.mkdir(parents=True)
+            (source / "README.md").write_text("runtime host\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Pi Runtime Test"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "unrelated runtime host"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "checkout", "--detach", "-q"], cwd=root, check=True)
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "ancestry"):
+                _verify_pi_worktree(root)
+
+    def test_builder_rejects_an_attached_pi_worktree(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-attached-pi-") as temporary:
+            root = Path(temporary)
+            source = root / "integrations" / "rag-ime-runtime-host"
+            source.mkdir(parents=True)
+            (source / "README.md").write_text("runtime host\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Pi Runtime Test"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "attached runtime host"],
+                cwd=root,
+                check=True,
+            )
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+            ).strip()
+
+            with patch(
+                "scripts.build_managed_pi_runtime_v2.REQUIRED_PI_RUNTIME_BASE_COMMIT",
+                commit,
+            ):
+                with self.assertRaisesRegex(ManagedPiRuntimeError, "detached HEAD"):
+                    _verify_pi_worktree(root)
+
+    def test_unknown_protocol_does_not_silently_select_v1(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported Pi runtime protocol"):
+            normalize_protocol_version("3")
 
     def test_managed_runtime_rejects_a_legacy_only_pi_worktree(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-legacy-pi-") as temporary:

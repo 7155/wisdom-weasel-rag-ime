@@ -8,8 +8,9 @@ INCLUDE_DESKTOP=1
 INCLUDE_VOICE=1
 INCLUDE_MAINTENANCE=1
 INCLUDE_MLX="auto"
-INCLUDE_PI="auto"
-PI_WORKTREE="${RAG_IME_PI_WORKTREE:-}"
+INCLUDE_PI=0
+PI_WORKTREE=""
+PI_WORKTREE_ARG_SET=0
 SQUIRREL_WORKDIR_OVERRIDE_SET=0
 SQUIRREL_WORKDIR_OVERRIDE=""
 SQUIRREL_DERIVED_DATA_OVERRIDE_SET=0
@@ -39,7 +40,7 @@ Options:
   --skip-maintenance    Do not install the Memory Book maintenance job.
   --skip-pi             Do not rebuild Pi; reuse an existing verified Runtime if present.
   --include-pi          Require rebuilding and installing the managed Pi Runtime.
-  --pi-worktree PATH    Build Pi from this verified worktree instead of auto-discovery.
+  --pi-worktree PATH    Explicit clean Pi worktree used for a managed Runtime build.
   --skip-mlx            Do not reinstall the MLX predictor.
   --include-mlx         Require and reinstall the MLX predictor.
   -h, --help            Show this help.
@@ -139,6 +140,7 @@ while (($#)); do
       shift
       [[ $# -gt 0 ]] || { echo "--pi-worktree requires a path" >&2; exit 2; }
       PI_WORKTREE="$1"
+      PI_WORKTREE_ARG_SET=1
       INCLUDE_PI=1
       ;;
     --skip-mlx) INCLUDE_MLX=0 ;;
@@ -163,6 +165,23 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] \
   exit 1
 fi
 
+if [[ "$INCLUDE_PI" == "1" && "$PI_WORKTREE_ARG_SET" != "1" ]]; then
+  echo "formal --include-pi requires explicit --pi-worktree" >&2
+  echo "the installer never selects a neighbouring Pi checkout by presence alone" >&2
+  exit 1
+fi
+
+if [[ "$INCLUDE_PI" == "1" ]]; then
+  PI_PYTHON="${RAG_IME_PYTHON:-$(command -v python3)}"
+  if [[ -z "$PI_PYTHON" || ! -x "$PI_PYTHON" ]]; then
+    echo "python executable not found for managed Pi Runtime packaging" >&2
+    exit 1
+  fi
+  "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" \
+    --pi-worktree "$PI_WORKTREE" \
+    --preflight >/dev/null
+fi
+
 if [[ "$INCLUDE_SQUIRREL" == "1" ]]; then
   prepare_stack_squirrel_workspace
 fi
@@ -181,26 +200,10 @@ echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 
 required=(--require control --require sidecar)
 
-if [[ "$INCLUDE_PI" == "auto" ]]; then
-  if [[ -n "$PI_WORKTREE" ]] \
-    || [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
-    || [[ -d "$ROOT/../pi/integrations/rag-ime-runtime-host" ]]; then
-    INCLUDE_PI=1
-  else
-    INCLUDE_PI=0
-  fi
-fi
 if [[ "$INCLUDE_PI" == "1" ]]; then
   PI_BUILD_DIR="$ROOT/build/managed-pi-runtime/install-stack-current"
-  PI_PYTHON="${RAG_IME_PYTHON:-$(command -v python3)}"
-  if [[ -z "$PI_PYTHON" || ! -x "$PI_PYTHON" ]]; then
-    echo "python executable not found for managed Pi Runtime packaging" >&2
-    exit 1
-  fi
   pi_build_args=(--output "$PI_BUILD_DIR" --force)
-  if [[ -n "$PI_WORKTREE" ]]; then
-    pi_build_args+=(--pi-worktree "$PI_WORKTREE")
-  fi
+  pi_build_args+=(--pi-worktree "$PI_WORKTREE")
   "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" "${pi_build_args[@]}"
   PI_STAGE_REPORT="$PI_BUILD_DIR.install-stage.json"
   PI_ACCEPTANCE_REPORT="$PI_BUILD_DIR.acceptance.json"

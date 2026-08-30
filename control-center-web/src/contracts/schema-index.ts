@@ -1545,12 +1545,16 @@ export const contractSchemas = {
             "type": "object",
             "required": [
               "primary",
+              "traceDiagnostic",
               "toolAgent",
               "subagent",
               "roomCoordinator"
             ],
             "properties": {
               "primary": {
+                "$ref": "#/$defs/modelRoute"
+              },
+              "traceDiagnostic": {
                 "$ref": "#/$defs/modelRoute"
               },
               "toolAgent": {
@@ -7912,6 +7916,7 @@ export const contractSchemas = {
           "configuration",
           "agents",
           "session_search",
+          "trace_diagnostics",
           "room_partner",
           "structured_output",
           "browser",
@@ -8052,6 +8057,7 @@ export const contractSchemas = {
           "configuration",
           "agents",
           "session_search",
+          "trace_diagnostics",
           "browser",
           "todo",
           "agent_goal",
@@ -22096,6 +22102,984 @@ export const contractSchemas = {
           "reason": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "trace-diagnostic-inspection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-diagnostic-inspection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "generatedAtMs",
+      "targets",
+      "traceIds",
+      "timeline",
+      "evidence",
+      "scorecard",
+      "truncated"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-diagnostic-inspection.v1"
+      },
+      "generatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "targets": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "items": {
+          "$ref": "#/$defs/target"
+        }
+      },
+      "traceIds": {
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "timeline": {
+        "type": "array",
+        "maxItems": 240,
+        "items": {
+          "$ref": "#/$defs/timeline"
+        }
+      },
+      "evidence": {
+        "type": "array",
+        "maxItems": 512,
+        "items": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "scorecard": {
+        "$ref": "#/$defs/scorecard"
+      },
+      "truncated": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "timeline",
+          "evidence",
+          "traceIds"
+        ],
+        "properties": {
+          "timeline": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "boolean"
+          },
+          "traceIds": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "$defs": {
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKey",
+          "kind",
+          "id",
+          "title",
+          "traceIds",
+          "sourceAvailable"
+        ],
+        "properties": {
+          "targetKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "kind": {
+            "enum": [
+              "session",
+              "room",
+              "run"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "traceIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "sourceAvailable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "timeline": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidenceId",
+          "targetKey",
+          "kind",
+          "status",
+          "summary",
+          "sequence",
+          "createdAtMs",
+          "sourceRef",
+          "traceId"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "targetKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 1200
+          },
+          "sequence": {
+            "type": "number"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sourceRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "traceId": {
+            "type": "string",
+            "maxLength": 240
+          }
+        }
+      },
+      "evidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidenceId",
+          "targetKey",
+          "sourceKind",
+          "sourceRef",
+          "status",
+          "summary",
+          "createdAtMs",
+          "traceId"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "targetKey": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "sourceKind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 640
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 1200
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "traceId": {
+            "type": "string",
+            "maxLength": 240
+          }
+        }
+      },
+      "metric": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metricId",
+          "label",
+          "value",
+          "unit",
+          "authority",
+          "evidenceIds",
+          "note"
+        ],
+        "properties": {
+          "metricId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "authority": {
+            "enum": [
+              "deterministic",
+              "ground_truth",
+              "ai_judge_estimate"
+            ]
+          },
+          "evidenceIds": {
+            "type": "array",
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "dimension": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimensionId",
+          "title",
+          "applicability",
+          "authority",
+          "score",
+          "scoreMax",
+          "metrics",
+          "evidenceIds",
+          "note"
+        ],
+        "properties": {
+          "dimensionId": {
+            "enum": [
+              "task_completion",
+              "evidence_diagnosis",
+              "tool_runtime",
+              "context",
+              "room_collaboration",
+              "memory_rag",
+              "efficiency",
+              "repair_quality"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "applicability": {
+            "enum": [
+              "measured",
+              "partial",
+              "not_applicable",
+              "unavailable",
+              "unknown"
+            ]
+          },
+          "authority": {
+            "enum": [
+              "deterministic",
+              "ground_truth",
+              "mixed"
+            ]
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "scoreMax": {
+            "const": 100
+          },
+          "metrics": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/$defs/metric"
+            }
+          },
+          "evidenceIds": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 800
+          }
+        }
+      },
+      "gate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gateId",
+          "status",
+          "evidenceIds",
+          "reason"
+        ],
+        "properties": {
+          "gateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "unknown"
+            ]
+          },
+          "evidenceIds": {
+            "type": "array",
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "scorecard": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rubricVersion",
+          "hardGates",
+          "dimensions",
+          "comparison"
+        ],
+        "properties": {
+          "rubricVersion": {
+            "const": "trace-score-v1"
+          },
+          "hardGates": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/$defs/gate"
+            }
+          },
+          "dimensions": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/dimension"
+            }
+          },
+          "comparison": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "eligible",
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "eligible": {
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "comparable",
+                  "conditionally_comparable",
+                  "incomparable",
+                  "unknown"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 800
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "trace-diagnostic-report-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-diagnostic-report-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "total",
+      "truncated",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-diagnostic-report-list.v1"
+      },
+      "total": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "$ref": "#/$defs/item"
+        }
+      }
+    },
+    "$defs": {
+      "item": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reportId",
+          "revision",
+          "status",
+          "title",
+          "diagnosticSessionId",
+          "targetKeys",
+          "targets",
+          "traceIds",
+          "failureReason",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "reportId": {
+            "type": "string",
+            "pattern": "^trace-report:[a-f0-9]{32}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "enum": [
+              "generating",
+              "completed",
+              "failed"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "diagnosticSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "targetKeys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/$defs/target"
+            }
+          },
+          "traceIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "failureReason": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKey",
+          "kind",
+          "id",
+          "title",
+          "traceIds",
+          "sourceAvailable"
+        ],
+        "properties": {
+          "targetKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "kind": {
+            "enum": [
+              "session",
+              "room",
+              "run"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "traceIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "sourceAvailable": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "trace-diagnostic-report.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-diagnostic-report.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "reportId",
+      "revision",
+      "status",
+      "title",
+      "diagnosticSessionId",
+      "targets",
+      "traceIds",
+      "inspectionSha256",
+      "inspection",
+      "result",
+      "failureReason",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-diagnostic-report.v1"
+      },
+      "reportId": {
+        "type": "string",
+        "pattern": "^trace-report:[a-f0-9]{32}$"
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "status": {
+        "enum": [
+          "generating",
+          "completed",
+          "failed"
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "diagnosticSessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "targets": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "items": {
+          "$ref": "#/$defs/target"
+        }
+      },
+      "traceIds": {
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      },
+      "inspectionSha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "inspection": {
+        "type": "object"
+      },
+      "result": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "failureReason": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "targetKey",
+          "kind",
+          "id",
+          "title",
+          "traceIds",
+          "sourceAvailable"
+        ],
+        "properties": {
+          "targetKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "kind": {
+            "enum": [
+              "session",
+              "room",
+              "run"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "traceIds": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "sourceAvailable": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "trace-diagnostic-result.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-diagnostic-result.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "summary",
+      "hardGates",
+      "judgeScores",
+      "findings"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-diagnostic-result.v1"
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000
+      },
+      "hardGates": {
+        "type": "array",
+        "maxItems": 16,
+        "items": {
+          "$ref": "#/$defs/gate"
+        }
+      },
+      "judgeScores": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "$ref": "#/$defs/judge"
+        }
+      },
+      "findings": {
+        "type": "array",
+        "maxItems": 100,
+        "items": {
+          "$ref": "#/$defs/finding"
+        }
+      }
+    },
+    "$defs": {
+      "evidenceIds": {
+        "type": "array",
+        "maxItems": 128,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 640
+        }
+      },
+      "dimensionId": {
+        "enum": [
+          "task_completion",
+          "evidence_diagnosis",
+          "tool_runtime",
+          "context",
+          "room_collaboration",
+          "memory_rag",
+          "efficiency",
+          "repair_quality"
+        ]
+      },
+      "gate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gateId",
+          "status",
+          "reason",
+          "evidenceIds"
+        ],
+        "properties": {
+          "gateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "evidenceIds": {
+            "$ref": "#/$defs/evidenceIds"
+          }
+        }
+      },
+      "judge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimensionId",
+          "score",
+          "authority",
+          "explanation",
+          "evidenceIds"
+        ],
+        "properties": {
+          "dimensionId": {
+            "$ref": "#/$defs/dimensionId"
+          },
+          "score": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 3
+          },
+          "authority": {
+            "const": "ai_judge_estimate"
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 1600
+          },
+          "evidenceIds": {
+            "$ref": "#/$defs/evidenceIds"
+          }
+        }
+      },
+      "finding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "findingId",
+          "dimensionId",
+          "severity",
+          "observation",
+          "hypothesis",
+          "conclusion",
+          "confidence",
+          "evidenceIds",
+          "candidateRepair",
+          "verification"
+        ],
+        "properties": {
+          "findingId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "dimensionId": {
+            "$ref": "#/$defs/dimensionId"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "observation": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "hypothesis": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "conclusion": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "unknown"
+            ]
+          },
+          "evidenceIds": {
+            "$ref": "#/$defs/evidenceIds"
+          },
+          "candidateRepair": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "verification": {
+            "type": "string",
+            "maxLength": 2000
           }
         }
       }

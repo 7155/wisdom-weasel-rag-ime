@@ -996,6 +996,10 @@ def _activate_managed_pi_runtime_locked(
     *,
     acceptance: Mapping[str, object] | None,
 ) -> None:
+    if installation.protocol_version == "2" and acceptance is None:
+        raise ManagedPiRuntimeError(
+            "managed Pi protocol v2 activation requires a passed acceptance receipt"
+        )
     if acceptance is not None:
         accepted_entry = _accepted_generation_entry(installation, acceptance)
         _activate_preaccepted_managed_pi_runtime_locked(

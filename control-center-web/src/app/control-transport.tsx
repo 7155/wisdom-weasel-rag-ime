@@ -83,7 +83,7 @@ function developmentTransportOverride(): 'http' | 'mock' | null {
   return null;
 }
 
-function detectTransport(): 'native' | 'http' | 'mock' {
+function detectTransport(): 'native' | 'http' {
   if (window.webkit?.messageHandlers?.ragImeNativeBridge) return 'native';
-  return import.meta.env.DEV ? 'mock' : 'http';
+  return 'http';
 }

@@ -21,6 +21,7 @@ export interface AgentToolCallV1 {
     | 'configuration'
     | 'agents'
     | 'session_search'
+    | 'trace_diagnostics'
     | 'room_partner'
     | 'structured_output'
     | 'browser'

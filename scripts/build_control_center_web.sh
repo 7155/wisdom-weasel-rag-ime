@@ -5,6 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/control-center-web"
 CONTROL_TRANSPORT="${RAG_IME_CONTROL_TRANSPORT:-mock}"
 BUILD_CHANNEL="${RAG_IME_CONTROL_BUILD_CHANNEL:-preview}"
+if [[ "$BUILD_CHANNEL" == "production" ]]; then
+  VITE_PAW_FRONTEND=paw-os
+else
+  VITE_PAW_FRONTEND="${VITE_PAW_FRONTEND:-paw-os}"
+fi
+FRONTEND_PRODUCT="$VITE_PAW_FRONTEND"
 
 [[ "$CONTROL_TRANSPORT" == "mock" || "$CONTROL_TRANSPORT" == "http" || "$CONTROL_TRANSPORT" == "native" ]] || {
   echo "RAG_IME_CONTROL_TRANSPORT must be mock, http, or native" >&2
@@ -12,6 +18,10 @@ BUILD_CHANNEL="${RAG_IME_CONTROL_BUILD_CHANNEL:-preview}"
 }
 [[ "$BUILD_CHANNEL" == "preview" || "$BUILD_CHANNEL" == "production" ]] || {
   echo "RAG_IME_CONTROL_BUILD_CHANNEL must be preview or production" >&2
+  exit 2
+}
+[[ "$FRONTEND_PRODUCT" == "legacy" || "$FRONTEND_PRODUCT" == "paw-os" ]] || {
+  echo "VITE_PAW_FRONTEND must be legacy or paw-os" >&2
   exit 2
 }
 if [[ "$BUILD_CHANNEL" == "production" \
@@ -40,6 +50,7 @@ node "$ROOT/scripts/generate_control_center_contracts.mjs" --check
   fi
   VITE_CONTROL_TRANSPORT="$CONTROL_TRANSPORT" \
   VITE_BUILD_CHANNEL="$BUILD_CHANNEL" \
+  VITE_PAW_FRONTEND="$FRONTEND_PRODUCT" \
     pnpm --config.manage-package-manager-versions=true build
 )
 
@@ -55,6 +66,54 @@ if grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB/dist"; then
   echo "control-center bundle contains runtime code generation or unresolved CommonJS" >&2
   exit 1
 fi
+python3 - "$WEB/dist/rag-ime-control-web-build.json" "$WEB/dist" "$FRONTEND_PRODUCT" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+marker_path = Path(sys.argv[1])
+dist_path = Path(sys.argv[2])
+frontend_product = sys.argv[3]
+
+
+def tree_digest(root: Path) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise SystemExit(f"invalid control-center dist tree: {root}")
+    digest = hashlib.sha256()
+    paths = sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix())
+    for path in paths:
+        relative = path.relative_to(root)
+        if relative.as_posix() == "rag-ime-control-web-build.json":
+            continue
+        if path.is_symlink():
+            raise SystemExit(f"control-center dist contains a symlink: {relative}")
+        if not path.is_file():
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+try:
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"control-center web build marker is unreadable: {error}") from error
+
+if marker.get("schemaVersion") != "rag-ime.control-web-build.v1":
+    raise SystemExit("control-center web build marker has the wrong schema")
+marker["frontendProduct"] = frontend_product
+marker["distTreeDigest"] = tree_digest(dist_path)
+temporary = marker_path.with_name(f".{marker_path.name}.tmp")
+temporary.write_text(
+    json.dumps(marker, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+os.replace(temporary, marker_path)
+PY
 "$ROOT/scripts/check_control_center_web_dist.sh" \
   "$WEB/dist" "$CONTROL_TRANSPORT" "$BUILD_CHANNEL" >/dev/null
 

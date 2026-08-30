@@ -748,7 +748,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
 
     def test_protocol_v2_manifest_is_discovered_by_the_product_runtime(self) -> None:
         payload, _ = self._payload("runtime-v2", protocol_version="2")
-        install_managed_pi_runtime(payload, self.app_support)
+        self._install_accepted(payload)
 
         discovered = discover_managed_pi_runtime(self.app_support, expected_pi_version="0.80.7")
         with patch.dict(
@@ -767,6 +767,12 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             managed_runtime.REQUIRED_SESSION_RUNTIME_METHODS,
         )
         self.assertEqual(config.protocol_version, "2")
+
+    def test_protocol_v2_activation_requires_an_acceptance_receipt(self) -> None:
+        payload, _ = self._payload("runtime-v2-receipt-required", protocol_version="2")
+
+        with self.assertRaisesRegex(ManagedPiRuntimeError, "acceptance receipt"):
+            install_managed_pi_runtime(payload, self.app_support)
 
     def test_protocol_v2_manifest_without_complete_session_methods_fails_closed(self) -> None:
         payload, manifest = self._payload("runtime-v2-incomplete", protocol_version="2")

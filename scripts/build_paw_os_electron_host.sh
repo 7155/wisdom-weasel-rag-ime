@@ -42,6 +42,10 @@ SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
   SOURCE_DIRTY="true"
 fi
+if [[ "$CHANNEL" == "release" && "$SOURCE_DIRTY" == "true" ]]; then
+  echo "refusing formal Electron release build from dirty source" >&2
+  exit 1
+fi
 
 if [[ "$ACTION" == "install-release" ]]; then
   if [[ "$SOURCE_BRANCH" != "main" ]]; then
@@ -65,8 +69,19 @@ fi
 RAG_IME_CONTROL_TRANSPORT=http \
 RAG_IME_CONTROL_BUILD_CHANNEL="$FRONTEND_CHANNEL" \
   "$ROOT/scripts/build_control_center_web.sh" >/dev/null
+DIST_TREE_DIGEST="$(python3 - "$ROOT" "$WEB/dist" <<'PY'
+import sys
+from pathlib import Path
+
+root, dist = sys.argv[1:]
+sys.path.insert(0, root)
+from rag_ime.release_staging import content_tree_digest
+
+print(content_tree_digest(Path(dist), excluded_paths=("rag-ime-control-web-build.json",)))
+PY
+)"
 "$ROOT/scripts/check_control_center_web_dist.sh" \
-  "$WEB/dist" http "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" >/dev/null
+  "$WEB/dist" http "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" "$DIST_TREE_DIGEST" >/dev/null
 
 rm -rf "$APP"
 ditto "$ELECTRON_APP" "$APP"
@@ -97,18 +112,33 @@ Path(sys.argv[1]).write_text(json.dumps({
 }, indent=2) + "\n", encoding="utf-8")
 PY
 
-python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" "$SOURCE_DIRTY" <<'PY'
+python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$DIST_TREE_DIGEST" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-target, bundle_id, channel, frontend_channel, commit, dirty = sys.argv[1:]
+target, bundle_id, channel, frontend_channel, commit, dirty, dist_digest = sys.argv[1:]
+provenance = {
+    "sourceCommit": commit,
+    "sourceDirty": dirty == "true",
+    "frontendProduct": "paw-os",
+    "bundleId": bundle_id,
+    "frontendTransport": "http",
+    "browserHost": "electron-webview",
+    "browserControl": "ego-browser",
+    "browserTransport": "cdp",
+    "browserPartition": "persist:paw-browser",
+    "sameOriginControlProxy": True,
+    "distTreeDigest": dist_digest,
+}
 Path(target).write_text(json.dumps({
     "schemaVersion": "rag-ime.control-build-marker.v1",
     "bundleId": bundle_id,
     "gitCommit": commit,
     "gitDirty": dirty == "true",
+    "sourceCommit": commit,
+    "sourceDirty": dirty == "true",
     "builtAt": datetime.now(timezone.utc).isoformat(),
     "ui": "control-center-web",
     "channel": channel,
@@ -120,6 +150,9 @@ Path(target).write_text(json.dumps({
     "browserTransport": "cdp",
     "browserPartition": "persist:paw-browser",
     "sameOriginControlProxy": True,
+    "frontendProduct": "paw-os",
+    "distTreeDigest": dist_digest,
+    "provenance": provenance,
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
@@ -135,6 +168,18 @@ PY
 }
 codesign --force --deep --sign - "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
+
+verify_release_provenance() {
+  local candidate="$1"
+  RAG_IME_CONTROL_APP="$candidate" \
+  RAG_IME_CONTROL_EXPECTED_COMMIT="$SOURCE_COMMIT" \
+  RAG_IME_CONTROL_SKIP_LIVE=1 \
+    "$ROOT/scripts/check_control_center_footprint.sh" >/dev/null
+}
+
+if [[ "$CHANNEL" == "release" ]]; then
+  verify_release_provenance "$APP"
+fi
 
 if [[ "$ACTION" == install-* ]]; then
   LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
@@ -154,6 +199,9 @@ if [[ "$ACTION" == install-* ]]; then
   rm -rf "$INSTALL_DEST"
   ditto "$APP" "$INSTALL_DEST"
   codesign --verify --deep --strict "$INSTALL_DEST"
+  if [[ "$CHANNEL" == "release" ]]; then
+    verify_release_provenance "$INSTALL_DEST"
+  fi
   "$LSREGISTER" -f "$INSTALL_DEST" >/dev/null
   echo "$INSTALL_DEST"
 else

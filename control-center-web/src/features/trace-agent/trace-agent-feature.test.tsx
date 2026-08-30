@@ -8,6 +8,8 @@ import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
+import type { TraceDiagnosticReportV1 } from '@/contracts/generated/trace-diagnostic-report.v1';
+import type { TraceDiagnosticReportListV1 } from '@/contracts/generated/trace-diagnostic-report-list.v1';
 import {
   TRACE_AGENT_DIAGNOSTIC_MAX_POLL_DURATION_MS,
   TRACE_AGENT_SKILL_REF,
@@ -103,7 +105,7 @@ describe('TraceAgentFeature', () => {
     });
     renderFeature(transport, [], [route]);
 
-    await user.click(await screen.findByRole('option', { name: /失败的对话/ }));
+    await user.click(await screen.findByRole('listitem', { name: /失败的对话/ }));
     await user.click(screen.getByRole('button', { name: '开始诊断' }));
 
     const promptRequest = await waitFor(() => {
@@ -122,7 +124,7 @@ describe('TraceAgentFeature', () => {
     const transport = traceAgentTransport();
     renderFeature(transport, routes);
 
-    const target = await screen.findByRole('option', { name: /失败的对话/ });
+    const target = await screen.findByRole('listitem', { name: /失败的对话/ });
     expect(within(target).getByText(/write\/edit validation error/)).toBeInTheDocument();
     const evidence = await screen.findByRole('region', { name: '已读取的失败证据' });
     await waitFor(() => expect(evidence).toHaveTextContent('write/edit validation error'));
@@ -147,6 +149,7 @@ describe('TraceAgentFeature', () => {
     const createRequest = transport.requests.find(({ request }) => request.pathId === 'agent.sessions.create')?.request;
     expect(createRequest?.body).toMatchObject({
       mode: 'assistant',
+      _modelRoute: 'traceDiagnostic',
       executionMode: 'read_only',
       toolProfileVersion: 'control-center-v1',
       workspaceRoots: [],
@@ -197,6 +200,42 @@ describe('TraceAgentFeature', () => {
       request.pathId === 'agent.session.snapshot'
       && request.params?.sessionId === 'agent:trace-diagnostic'
     )).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('finalizes a faulted diagnostic Session into a persisted failed report', async () => {
+    const user = userEvent.setup();
+    const reportId = `trace-report:${'f'.repeat(32)}`;
+    const generating = {
+      ...persistedTraceReportFixture(reportId),
+      revision: 1,
+      status: 'generating' as const,
+      result: null,
+      failureReason: '',
+    };
+    const failed = {
+      ...generating,
+      revision: 2,
+      status: 'failed' as const,
+      failureReason: '诊断 Session 未生成可校验的结构化报告。',
+    };
+    const transport = traceAgentTransport({
+      diagnosticReport: generating,
+      diagnosticFinalizeReport: failed,
+      diagnosticSnapshots: [{
+        ...emptyDiagnosticSessionSnapshot(),
+        status: 'faulted',
+      }],
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'observability.traceDiagnosticReport.finalize'
+    ))).toBe(true));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await waitFor(() => expect(report).toHaveTextContent('诊断失败，已保存失败报告'));
+    expect(report).toHaveTextContent('诊断 Session 未生成可校验的结构化报告');
+    expect(within(report).getByRole('button', { name: '交给 Agent 修复' })).toBeDisabled();
   });
 
   it('keeps repair locked when the diagnostic Session has text but no structured evidence report', async () => {
@@ -334,7 +373,7 @@ describe('TraceAgentFeature', () => {
     renderFeature(transport, routes);
 
     await user.click(await screen.findByRole('tab', { name: 'Room 协作' }));
-    const room = await screen.findByRole('option', { name: /失败的协作/ });
+    const room = await screen.findByRole('listitem', { name: /失败的协作/ });
     await user.click(room);
     const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
     const timeline = within(selected).getByRole('region', { name: '原始对话时间线' });
@@ -348,7 +387,7 @@ describe('TraceAgentFeature', () => {
     expect(routes).toContain('/rooms?room=room-source');
 
     await user.click(screen.getByRole('tab', { name: '运行记录' }));
-    const run = await screen.findByRole('option', { name: /运行失败/ });
+    const run = await screen.findByRole('listitem', { name: /运行失败/ });
     await user.click(run);
     const runSelected = await screen.findByRole('region', { name: '已选择诊断对象' });
     const runTimeline = within(runSelected).getByRole('region', { name: '运行事件时间线' });
@@ -383,7 +422,7 @@ describe('TraceAgentFeature', () => {
     renderFeature(transport, routes);
 
     await user.click(await screen.findByRole('tab', { name: '运行记录' }));
-    await user.click(await screen.findByRole('option', { name: /运行失败/ }));
+    await user.click(await screen.findByRole('listitem', { name: /运行失败/ }));
     const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
     const timeline = within(selected).getByRole('region', { name: '运行事件时间线' });
     expect(timeline).toHaveTextContent('#3');
@@ -472,6 +511,9 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    expect(screen.getByTestId('trace-agent-repair-confirmation')).toHaveTextContent('修复 owner');
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
 
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
     expect(within(report).getByRole('button', { name: '修复 Agent 已就绪' })).toBeDisabled();
@@ -523,6 +565,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
 
     await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
@@ -576,6 +619,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
     await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
 
@@ -593,6 +637,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
     await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
 
@@ -611,6 +656,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
     await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
 
@@ -628,6 +674,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
     await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
 
@@ -643,6 +690,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
 
     await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
@@ -793,8 +841,7 @@ describe('TraceAgentFeature', () => {
     expect(entries.map((entry) => entry.getAttribute('data-sequence'))).toEqual(['1', '2', '3', '4', '5', '6', '7']);
   });
 
-  it('keeps persisted Trace diagnostic Sessions available as report handles after a fresh mount', async () => {
-    const routes: string[] = [];
+  it('does not reinterpret legacy diagnostic Sessions as persisted reports', async () => {
     const transport = traceAgentTransport({
       sessions: [
         {
@@ -808,16 +855,78 @@ describe('TraceAgentFeature', () => {
         },
       ],
     });
+    renderFeature(transport, []);
+
+    expect(await screen.findByText('没有诊断对象')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '已保存的 Trace 诊断报告' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Trace 诊断 · 已归档的失败对话')).not.toBeInTheDocument();
+  });
+
+  it('keeps a Session selection when adding a Room from another tab and submits the ordered target set', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    renderFeature(transport, []);
+
+    const session = await screen.findByRole('listitem', { name: /失败的对话/ });
+    expect(within(session).getByRole('checkbox')).toBeChecked();
+    await user.click(screen.getByRole('tab', { name: 'Room 协作' }));
+    const room = await screen.findByRole('listitem', { name: /失败的协作/ });
+    await user.click(within(room).getByRole('checkbox'));
+    expect(within(room).getByRole('checkbox')).toBeChecked();
+    await user.click(screen.getByRole('tab', { name: 'Session 对话' }));
+    expect(within(await screen.findByRole('listitem', { name: /失败的对话/ })).getByRole('checkbox')).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const promptRequest = await waitFor(() => {
+      const request = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
+      expect(request).toBeTruthy();
+      return request!;
+    });
+    const prompt = String((promptRequest.body as Record<string, unknown> | undefined)?.message);
+    expect(prompt).toContain('本次冻结范围共 2 个对象：session:session-source、room:room-source');
+    expect(prompt.indexOf('session:session-source')).toBeLessThan(prompt.indexOf('room:room-source'));
+  });
+
+  it('shows diagnosed target status and opens the persisted eight-dimension report with failure reason', async () => {
+    const routes: string[] = [];
+    const reportId = `trace-report:${'a'.repeat(32)}`;
+    const report = persistedTraceReportFixture(reportId, 'failed');
+    const transport = traceAgentTransport({
+      diagnosticReports: {
+        schemaVersion: 'rag-ime.trace-diagnostic-report-list.v1',
+        total: 1,
+        truncated: false,
+        items: [{
+          reportId,
+          revision: report.revision,
+          status: report.status,
+          title: report.title,
+          diagnosticSessionId: report.diagnosticSessionId,
+          targetKeys: ['session:session-source'],
+          targets: report.targets,
+          traceIds: report.traceIds,
+          failureReason: report.failureReason,
+          createdAtMs: report.createdAtMs,
+          updatedAtMs: report.updatedAtMs,
+        }],
+      },
+      diagnosticReport: report,
+    });
     const view = renderFeature(transport, routes);
 
+    const target = await screen.findByRole('listitem', { name: /失败的对话/ });
+    expect(target).toHaveTextContent('已诊断 · 失败');
+    expect(within(target).getByRole('button', { name: '打开报告' })).toBeInTheDocument();
     const reports = await screen.findByRole('region', { name: '已保存的 Trace 诊断报告' });
-    expect(reports).toHaveTextContent('报告正文保存在这个 Agent Session');
-    await userEvent.setup().click(within(reports).getByRole('button', { name: '打开诊断报告' }));
-    expect(routes).toContain('/agent?session=agent%3Atrace-diagnostic-existing');
+    expect(reports).toHaveTextContent('失败原因：结构化结果缺失');
+    await userEvent.setup().click(within(target).getByRole('button', { name: '打开报告' }));
+    expect(routes).toContain(`/trace-agent?reportId=${encodeURIComponent(reportId)}`);
 
     view.unmount();
-    renderFeature(transport, routes);
-    expect(await screen.findByRole('region', { name: '已保存的 Trace 诊断报告' })).toBeInTheDocument();
+    renderFeature(transport, routes, [`/trace-agent?reportId=${encodeURIComponent(reportId)}`]);
+    const page = await screen.findByRole('region', { name: 'Trace 诊断网页报告' });
+    expect(page).toHaveTextContent('报告失败原因：结构化结果缺失');
+    expect(within(page).getByTestId('trace-diagnostic-scorecard').querySelectorAll('tbody tr')).toHaveLength(8);
   });
 
   it('loads canonical Session and Room targets beyond the initial selector windows', async () => {
@@ -839,19 +948,19 @@ describe('TraceAgentFeature', () => {
     const transport = traceAgentTransport({ rooms, sessions });
     renderFeature(transport, []);
 
-    expect(await screen.findAllByRole('option')).toHaveLength(200);
-    expect(screen.queryByRole('option', { name: /最早的 Session/ })).not.toBeInTheDocument();
+    expect(await screen.findAllByRole('listitem')).toHaveLength(200);
+    expect(screen.queryByRole('listitem', { name: /最早的 Session/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '加载更多 Session' }));
-    expect(await screen.findByRole('option', { name: /最早的 Session/ })).toBeInTheDocument();
+    expect(await screen.findByRole('listitem', { name: /最早的 Session/ })).toBeInTheDocument();
     expect(transport.requests.some(({ request }) => request.pathId === 'agent.sessions.list'
       && request.query?.limit === 200
       && request.query?.beforeUpdatedAtMs === 801
       && request.query?.beforeId === 'session-199')).toBe(true);
 
     await user.click(screen.getByRole('tab', { name: 'Room 协作' }));
-    expect(screen.queryByRole('option', { name: /最早的 Room/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('listitem', { name: /最早的 Room/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '加载更多 Room' }));
-    expect(await screen.findByRole('option', { name: /最早的 Room/ })).toBeInTheDocument();
+    expect(await screen.findByRole('listitem', { name: /最早的 Room/ })).toBeInTheDocument();
     expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.list'
       && request.query?.limit === 100
       && request.query?.beforeUpdatedAtMs === 901
@@ -889,6 +998,9 @@ function traceAgentTransport(options: {
   sourceSnapshots?: unknown[];
   repairSessionSnapshot?: unknown;
   diagnosticSnapshots?: unknown[];
+  diagnosticReports?: TraceDiagnosticReportListV1;
+  diagnosticReport?: TraceDiagnosticReportV1;
+  diagnosticFinalizeReport?: TraceDiagnosticReportV1;
   runObservationSnapshots?: Array<{ beforeSequence: number; snapshot: unknown }>;
   traceDetails?: Record<string, unknown | null | Promise<unknown>>;
   roomSourceSnapshot?: unknown;
@@ -901,6 +1013,9 @@ function traceAgentTransport(options: {
   let changeEvidence: Record<string, unknown> | null = null;
   let testEvidence: Record<string, unknown> | null = null;
   let repairReceipt: Record<string, unknown> | null = null;
+  const defaultReportId = `trace-report:${'d'.repeat(32)}`;
+  let activeDiagnosticReport = options.diagnosticReport
+    ?? persistedTraceReportFixture(defaultReportId, 'generating');
   const diagnosticSnapshots = options.diagnosticSnapshots ?? [diagnosticSessionSnapshot()];
   const sourceSnapshots = options.sourceSnapshots ?? [options.sourceSnapshot ?? sessionSourceSnapshot()];
   const roomSourceSnapshots = options.roomSourceSnapshots ?? [options.roomSourceSnapshot ?? roomSnapshot()];
@@ -968,6 +1083,22 @@ function traceAgentTransport(options: {
       }),
       'agent.session.mode.update': { ok: true },
       'agent.session.prompt': { ok: true },
+      'observability.traceDiagnosticReports.list': options.diagnosticReports ?? {
+        schemaVersion: 'rag-ime.trace-diagnostic-report-list.v1',
+        total: 0,
+        truncated: false,
+        items: [],
+      },
+      'observability.traceDiagnosticReport.get': () => {
+        if (!activeDiagnosticReport) throw new Error('No diagnostic report fixture registered');
+        return activeDiagnosticReport;
+      },
+      'observability.traceDiagnosticReports.create': () => activeDiagnosticReport,
+      'observability.traceDiagnosticReport.finalize': () => {
+        activeDiagnosticReport = options.diagnosticFinalizeReport
+          ?? persistedTraceReportFixture(activeDiagnosticReport.reportId, 'completed');
+        return activeDiagnosticReport;
+      },
       'observability.traceRepair.changeEvidence': (request: ControlRequest) => {
         const body = request.body as Record<string, unknown>;
         if (options.serverRejectChange) throw new Error('修复运行没有已完成的修改工具证据');
@@ -1257,6 +1388,15 @@ function diagnosticSessionSnapshot() {
           '候选修复：重新读取后再编辑。',
           '如何用沙盒或 Eval 验证：运行最小回归测试。',
           '可回跳的 Trace/Session/Room/文件：trace:source。',
+          '--- TRACE_DIAGNOSTIC_RESULT_V1 ---',
+          JSON.stringify({
+            schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
+            summary: '根因是资源版本回执不合法；建议重新读取后再编辑。',
+            hardGates: [],
+            judgeScores: [],
+            findings: [],
+          }),
+          '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---',
         ].join('\n') } }],
       },
     ],
@@ -1545,6 +1685,68 @@ function aiJudgeRunResponse(receipt?: Record<string, unknown> | null) {
     } : {}),
     createdAtMs: 120,
     updatedAtMs: 120,
+  };
+}
+
+function persistedTraceReportFixture(
+  reportId: string,
+  status: TraceDiagnosticReportV1['status'] = 'completed',
+): TraceDiagnosticReportV1 {
+  const dimensions = [
+    'task_completion',
+    'evidence_diagnosis',
+    'tool_runtime',
+    'context',
+    'room_collaboration',
+    'memory_rag',
+    'efficiency',
+    'repair_quality',
+  ].map((dimensionId) => ({
+    dimensionId,
+    title: dimensionId,
+    applicability: 'measured',
+    authority: 'deterministic',
+    score: 72,
+    scoreMax: 100,
+    metrics: [],
+    evidenceIds: ['evidence:source'],
+    note: 'fixture',
+  }));
+  return {
+    schemaVersion: 'rag-ime.trace-diagnostic-report.v1',
+    reportId,
+    revision: 2,
+    status,
+    title: 'Trace 诊断 · 失败的对话',
+    diagnosticSessionId: 'agent:trace-diagnostic',
+    targets: [{
+      targetKey: 'session:session-source',
+      kind: 'session',
+      id: 'session-source',
+      title: '失败的对话',
+      traceIds: ['trace:source'],
+      sourceAvailable: true,
+    }],
+    traceIds: ['trace:source'],
+    inspectionSha256: 'a'.repeat(64),
+    inspection: {
+      scorecard: {
+        rubricVersion: 'trace-score-v1',
+        dimensions,
+        hardGates: [],
+        comparison: { eligible: false, status: 'unknown', reason: 'fixture' },
+      },
+    },
+    result: status === 'completed' ? {
+      schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
+      summary: 'fixture report',
+      hardGates: [],
+      judgeScores: [],
+      findings: [],
+    } : null,
+    failureReason: status === 'failed' ? '结构化结果缺失' : '',
+    createdAtMs: 100,
+    updatedAtMs: 200,
   };
 }
 

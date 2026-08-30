@@ -3855,6 +3855,7 @@ function previewCompanionConfiguration(
 function previewDefaultModelRouting(): Record<string, { modelProfile: string; thinkingLevel: string }> {
   return Object.fromEntries([
     'primary',
+    'traceDiagnostic',
     'toolAgent',
     'subagent',
     'roomCoordinator',

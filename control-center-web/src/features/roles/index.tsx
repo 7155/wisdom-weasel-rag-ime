@@ -473,6 +473,12 @@ const modelRouteDefinitions: ReadonlyArray<{
     inheritLabel: '沿用默认伙伴模型',
   },
   {
+    id: 'traceDiagnostic',
+    label: 'Trace 主 Agent',
+    caption: '用于 Trace 诊断的只读主 Agent；回看证据、解释失败并给出候选修复。',
+    inheritLabel: '沿用默认主 Agent模型',
+  },
+  {
     id: 'toolAgent',
     label: '私有 Tool Agent',
     caption: '作为当前 Session 的私有执行卫星，承担可写工具循环；结果交回上级继续决策。',

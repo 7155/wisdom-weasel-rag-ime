@@ -7,6 +7,11 @@ BINARY="$APP/Contents/MacOS/RagImeControl"
 FOOTPRINT_LIMIT_MB="${RAG_IME_CONTROL_FOOTPRINT_LIMIT_MB:-250}"
 RSS_LIMIT_MB="${RAG_IME_CONTROL_RSS_LIMIT_MB:-350}"
 IDLE_CPU_LIMIT="${RAG_IME_CONTROL_IDLE_CPU_LIMIT:-0.5}"
+if [[ -n "${RAG_IME_CONTROL_EXPECTED_COMMIT:-}" ]]; then
+  EXPECTED_COMMIT="$RAG_IME_CONTROL_EXPECTED_COMMIT"
+else
+  EXPECTED_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+fi
 pid=""
 
 cleanup() {
@@ -36,17 +41,28 @@ otool -L "$BINARY" | grep -q 'Electron Framework.framework'
 grep -q 'Content-Security-Policy' "$WEB_RESOURCES/index.html"
 ! grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB_RESOURCES"
 "$ROOT/scripts/check_control_center_web_dist.sh" \
-  "$WEB_RESOURCES" http production >/dev/null
-python3 - "$MARKER" <<'PY'
+  "$WEB_RESOURCES" http production "$EXPECTED_COMMIT" >/dev/null
+python3 - "$ROOT" "$WEB_RESOURCES" "$MARKER" "$EXPECTED_COMMIT" <<'PY'
 import json
 import sys
+from pathlib import Path
 
-with open(sys.argv[1], encoding="utf-8") as handle:
+root, dist_path, marker_path, expected_commit = sys.argv[1:]
+sys.path.insert(0, root)
+from rag_ime.release_staging import content_tree_digest
+
+with open(marker_path, encoding="utf-8") as handle:
     marker = json.load(handle)
 if marker.get("bundleId") != "com.rag-ime.control":
     raise SystemExit("web control bundle marker has the wrong bundle id")
+if marker.get("sourceCommit") != expected_commit:
+    raise SystemExit("web control bundle marker has the wrong source commit")
+if marker.get("sourceDirty") is not False or marker.get("gitDirty") is not False:
+    raise SystemExit("web control bundle marker is not a clean release build")
 if marker.get("ui") != "control-center-web" or marker.get("channel") != "release":
     raise SystemExit("web control bundle marker is not a release build")
+if marker.get("frontendProduct") != "paw-os":
+    raise SystemExit("web control bundle marker is not the PAW OS frontend")
 if marker.get("frontendTransport") != "http":
     raise SystemExit("web control bundle marker is not the Electron HTTP frontend")
 if marker.get("browserHost") != "electron-webview":
@@ -59,6 +75,30 @@ if marker.get("frontendBuildChannel") != "production":
     raise SystemExit("web control bundle marker is not a production frontend build")
 if marker.get("forbiddenTransportModulesExcluded") is not True:
     raise SystemExit("web control bundle marker did not exclude native/mock transport modules")
+if marker.get("browserPartition") != "persist:paw-browser" or marker.get("sameOriginControlProxy") is not True:
+    raise SystemExit("web control bundle marker has an invalid Browser session boundary")
+if marker.get("provenance") != {
+    "sourceCommit": expected_commit,
+    "sourceDirty": False,
+    "frontendProduct": "paw-os",
+    "bundleId": "com.rag-ime.control",
+    "frontendTransport": "http",
+    "browserHost": "electron-webview",
+    "browserControl": "ego-browser",
+    "browserTransport": "cdp",
+    "browserPartition": "persist:paw-browser",
+    "sameOriginControlProxy": True,
+    "distTreeDigest": marker.get("distTreeDigest"),
+}:
+    raise SystemExit("web control bundle marker provenance is incomplete or inconsistent")
+expected_digest = marker.get("distTreeDigest")
+actual_digest = content_tree_digest(
+    Path(dist_path),
+    excluded_paths=("rag-ime-control-web-build.json",),
+)
+if not isinstance(expected_digest, str) or expected_digest != actual_digest:
+    raise SystemExit("web control bundle marker dist tree digest does not match its content")
+print(f"distTreeDigest={actual_digest}")
 PY
 
 if [[ "${RAG_IME_CONTROL_SKIP_LIVE:-0}" == "1" ]]; then

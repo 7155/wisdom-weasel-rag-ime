@@ -20,7 +20,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", default=str(ROOT / "output" / "release-candidate"))
     parser.add_argument("--squirrel-source", default="/tmp/rag-ime-squirrel")
     parser.add_argument("--squirrel-app", default="/tmp/rag-ime-squirrel-derived-data/Build/Products/Release/Squirrel.app")
-    parser.add_argument("--control-app", default=str(ROOT / "build" / "RagImeControl.app"))
+    parser.add_argument(
+        "--control-app",
+        default=str(ROOT / "build" / "RagImeControlElectron.app"),
+        help="canonical Electron Control Center bundle to stage",
+    )
     parser.add_argument(
         "--desktop-bridge-app",
         default=str(ROOT / "build" / "RagImeDesktopBridge.app"),

@@ -1,25 +1,36 @@
 ---
 name: trace-agent-diagnostics
-description: Diagnose a selected PAW Session, Room, subagent, Tool run, Memory recall, or Knowledge/RAG run from canonical Trace and Eval evidence; use when the Trace Agent App must explain failures, context defects, collaboration waste, repeated rework, or token inefficiency and propose or verify a repair. Do not use for a known one-line UI change or generic log summarization.
+description: Diagnose one or several selected PAW Sessions, Rooms, or runs from canonical public Trace and Eval evidence; use when the Trace Agent App must score execution quality, explain failures or waste, persist an evidence-linked report, and propose a repair that still requires explicit user authorization. Do not use for generic log summarization or direct mutation.
 ---
 
 # Diagnose Agent Traces
 
-Turn one user-selected Session, Room, subagent run, or vertical application run
-into an evidence-linked diagnosis and, when authorized, a measured repair. The
-Trace Agent consumes PAW's existing Runtime, TraceStore, EvalRun, WorkItem and
-artifact authorities; it does not invent a second event history.
+Turn a bounded selection of PAW execution objects into a persisted,
+evidence-linked diagnostic report. The diagnostic Session is read-only. It
+produces a candidate repair but never treats the candidate, a generated handoff,
+or an Agent claim as an applied fix.
+
+Use `trace_diagnostics.inspect` before diagnosing. It is the model-visible
+public projection owned by Runtime; `session_search` summaries and prompt text
+are not substitutes for the selected transcript/Trace evidence.
 
 ## Select And Bound The Case
 
-1. Resolve the selected object to stable `sessionId`, `roomId`, `runId`,
+1. Preserve the submitted target order and object boundary. Accept 1 to 12
+   `session`, `room`, or `run` targets and call
+   `trace_diagnostics.inspect({op: "inspect", targets: [...]})` once. Do not
+   silently replace a missing target with its latest neighbor.
+2. Treat the returned inspection, fingerprint, Trace bindings, coverage,
+   evidence IDs, hard gates, and deterministic metrics as frozen facts for this
+   report. Never cite an evidence ID outside that inspection.
+3. Resolve the selected object to stable `sessionId`, `roomId`, `runId`,
    `traceId`, WorkItem IDs and an explicit time or turn range. A Room case
    includes its Facilitator, planet Sessions, subagents, dispatches, public
-   events and Tool runs for that range.
-2. State the observed symptom and expected behavior. Preserve the user's
+   events and Tool runs for that range when those public projections exist.
+4. State the observed symptom and expected behavior. Preserve the user's
    visible failure separately from Runtime status, WorkItem state and Eval
    quality; one recoverable Tool error does not make an entire planet failed.
-3. Set a bounded investigation budget for queries, replay attempts and model
+5. Set a bounded investigation budget for queries, replay attempts and model
    calls. Stop when the leading cause is supported, the next discriminating
    experiment requires new authority, or the budget cannot distinguish the
    remaining hypotheses.
@@ -57,14 +68,39 @@ Choose the smallest relevant diagnostic lane:
   repeated Tool calls, duplicated context, unnecessary delegation and rework.
   Report waste only with comparable traces or a clear counterfactual workflow.
 
-Keep observations, hypotheses and conclusions distinct. Run one
+Keep observations, hypotheses and conclusions in distinct report fields. Run one
 discriminating experiment at a time. A plausible stack frame or repeated error
 message is not yet a root cause if an upstream owner first produced the bad
 state.
 
+## Score Without Inventing Certainty
+
+Always render these eight rows, even when a row cannot be scored: task
+completion, evidence and diagnosis, Tool/Runtime reliability, Context, Room
+collaboration, Memory/RAG, efficiency, and repair quality.
+
+- Runtime calculations are `deterministic`; frozen labelled EvalRuns are
+  `ground_truth`; semantic 0–3 assessments are `ai_judge_estimate`. Never blend
+  those authorities into one unexplained number.
+- Use `not_applicable` only when the capability is outside the case,
+  `unavailable` when the expected authority could not be read, and `unknown`
+  when evidence is incomplete or contradictory. None means zero.
+- A completion hard gate cannot be averaged away by low Token cost. Do not call
+  a task complete from assistant prose without artifact, test, install, Runtime,
+  or explicit acceptance evidence appropriate to the requirement.
+- Compare cost, time, repair effect, or before/after quality only when the
+  workload, success criteria, fixture/data revision, model/config/tool profile,
+  and measurement authority are comparable. Otherwise show separate absolute
+  values and the reason comparison is blocked.
+
+For anchors and metric rules, read
+[references/scoring-rubric.md](references/scoring-rubric.md). For multi-target
+extraction, evidence boundaries, and the exact result envelope, read
+[references/report-contract.md](references/report-contract.md).
+
 ## Recommend, Repair, And Verify
 
-Produce the smallest change that addresses the confirmed owner: code, config,
+Produce the smallest candidate change that addresses the confirmed owner: code, config,
 prompt, routing, WorkItem assignment, retrieval profile or operational action.
 Label unsupported explanations as hypotheses.
 
@@ -76,30 +112,25 @@ repair was applied. Report candidate/unapplied when authorization is absent or
 denied. Only a new Trace/Eval receipt after the authorized Agent action may mark
 the repair verified; never infer install or foreground acceptance.
 
-The Trace Agent may modify a target only when the user has authorized that
-mutation. Apply the change as an ordinary scoped Agent task with a visible diff
-and receipts. Replay representative cases in the managed sandbox, persist the
-new Trace and EvalRun, and compare the same metrics and evidence contract before
-and after. A sandbox win is a candidate result, not installed or foreground
-acceptance. Preserve the previous configuration or revision as the rollback
-target and observe the repaired path after application.
+The report must stop at a candidate repair. The UI asks the user whether to
+continue and which target owns the repair. Only the explicit confirmation may
+create an ordinary writable Agent Session. Read
+[references/repair-verification.md](references/repair-verification.md) when the
+user authorizes that second phase.
 
 ## Report Contract
 
-Create a desktop report that contains:
+End the diagnostic Session with exactly one machine-readable result envelope:
 
-```text
-selected object and range | user-visible symptom | impact
-timeline/topology summary | finding IDs with severity
-evidence links to run/span/WorkItem/file/EvalRun
-confirmed cause vs hypotheses | eliminated alternatives
-redundant steps, assignment defects and measured token/time waste
-recommended change and expected effect
-before/after sandbox or Eval evidence | applied/unapplied state
-residual risk | rollback target | next action
+```markdown
+--- TRACE_DIAGNOSTIC_RESULT_V1 ---
+{ "schemaVersion": "rag-ime.trace-diagnostic-result.v1", ... }
+--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---
 ```
 
-Every finding must jump back to the exact evidence. Prefer a short set of
-high-signal findings over a dump of events. Do not silently repair, repeatedly
-self-tune against the same cases, expose private transcript text in reports, or
-claim that lower token use is better when requirement satisfaction regressed.
+The JSON must match the field contract in `references/report-contract.md`.
+Runtime re-parses it, rejects unknown evidence IDs, and persists an immutable
+report revision. Text outside the envelope is explanatory only and is not the
+web report authority. Prefer a short set of high-signal findings over a dump of
+events. Do not expose private transcript text, raw Tool arguments, Provider
+context, credentials, or machine paths.

@@ -15,11 +15,93 @@ from rag_ime.agent_routes import (
     agent_room_work_route,
     agent_session_route,
     agent_wake_schedule_route,
+    observability_trace_diagnostic_report_route,
 )
 from rag_ime.debug_server import DebugRequestHandler
 
 
 class AgentRouteTests(unittest.TestCase):
+    def test_trace_diagnostic_report_routes_are_strict_and_url_decoded(self) -> None:
+        report_id = "trace-report:" + "a" * 32
+        encoded = report_id.replace(":", "%3A")
+        self.assertEqual(
+            observability_trace_diagnostic_report_route(
+                "/api/observability/trace-diagnostic-reports"
+            ),
+            ("", "collection"),
+        )
+        self.assertEqual(
+            observability_trace_diagnostic_report_route(
+                f"/api/observability/trace-diagnostic-reports/{encoded}"
+            ),
+            (report_id, "get"),
+        )
+        self.assertEqual(
+            observability_trace_diagnostic_report_route(
+                f"/api/observability/trace-diagnostic-reports/{encoded}/finalize"
+            ),
+            (report_id, "finalize"),
+        )
+        for path in (
+            "/api/observability/trace-diagnostic-reports/",
+            "/control/v1/observability/trace-diagnostic-reports",
+            "/control/v1/observability/trace-diagnostic-reports/trace-report%3A" + "a" * 32,
+            "/api/observability/trace-diagnostic-reports/a/b/c",
+            "/api/observability/trace-diagnostic-reports//finalize",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    observability_trace_diagnostic_report_route(path),
+                    ("", ""),
+                )
+
+    def test_trace_diagnostic_report_http_handlers_use_persisted_report_authority(self) -> None:
+        report_id = "trace-report:" + "b" * 32
+        calls: list[tuple[str, object]] = []
+
+        class AgentRecorder:
+            def list_trace_diagnostic_reports(self, payload):
+                calls.append(("list", payload))
+                return {"items": []}
+
+            def trace_diagnostic_report(self, requested_report_id):
+                calls.append(("get", requested_report_id))
+                return {"reportId": requested_report_id}
+
+            def create_trace_diagnostic_report(self, payload):
+                calls.append(("create", payload))
+                return {"reportId": report_id, "status": "generating"}
+
+            def finalize_trace_diagnostic_report(self, requested_report_id, payload):
+                calls.append(("finalize", (requested_report_id, payload)))
+                return {"reportId": requested_report_id, "status": "completed"}
+
+        handler = DebugRequestHandler.__new__(DebugRequestHandler)
+        handler.service = SimpleNamespace(agent=AgentRecorder())
+        handler._authorize_gateway_request = lambda _method, _parsed: True
+        handler._serve_gateway_static = lambda _path: False
+        handler._management_post_security_error = lambda _path, require_json=True: None
+        written: list[tuple[HTTPStatus, dict[str, object]]] = []
+        handler._write_json = lambda status, body: written.append((status, body))
+
+        handler.path = "/api/observability/trace-diagnostic-reports?limit=10"
+        handler.do_GET()
+        handler.path = "/api/observability/trace-diagnostic-reports/" + report_id.replace(":", "%3A")
+        handler.do_GET()
+        handler._read_json = lambda: {"diagnosticSessionId": "agent:1", "title": "报告", "targets": []}
+        handler.path = "/api/observability/trace-diagnostic-reports"
+        handler.do_POST()
+        handler._read_json = lambda: {"expectedRevision": 1}
+        handler.path = (
+            "/api/observability/trace-diagnostic-reports/"
+            + report_id.replace(":", "%3A")
+            + "/finalize"
+        )
+        handler.do_POST()
+
+        self.assertEqual([item[0] for item in calls], ["list", "get", "create", "finalize"])
+        self.assertEqual([int(item[0]) for item in written], [200, 200, 201, 200])
+
     def test_session_routes_are_strict_and_url_decoded(self) -> None:
         self.assertEqual(
             agent_session_route("/api/agent/sessions/agent%3A123/messages"),

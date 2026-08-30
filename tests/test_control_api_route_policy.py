@@ -553,6 +553,61 @@ class ControlRoutePolicyTests(unittest.TestCase):
         tools = entries[ControlPathId.AGENT_TOOLS_LIST.value]
         self.assertFalse(tools["remoteSafe"])
 
+    def test_trace_diagnostic_reports_are_local_only_and_not_gateway_exposed(self) -> None:
+        entries = {item["pathId"]: item for item in self.policy.manifest(include_targets=True)}
+        remote_context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.AGENT_READ.value, "*"},
+        )
+
+        for path_id in (
+            ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST,
+            ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET,
+        ):
+            entry = entries[path_id.value]
+            self.assertFalse(entry["remoteSafe"])
+            self.assertIsNone(entry["target"]["8768"])
+            with self.assertRaises(ControlApiError) as raised:
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id=f"remote-{path_id.value}",
+                        path_id=path_id.value,
+                        params=(
+                            {"reportId": "trace-report:1"}
+                            if path_id is ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET
+                            else {}
+                        ),
+                        query=(
+                            {"limit": 10}
+                            if path_id is ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST
+                            else {}
+                        ),
+                    ),
+                    remote_context,
+                )
+            self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_ALLOWED)
+
+        local_list = self.policy.authorize(
+            ControlRequest(
+                request_id="local-trace-report-list",
+                path_id=ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST.value,
+                query={"limit": 10},
+            ),
+            ControlAccessContext.native(),
+        )
+        self.assertEqual(local_list.local_8766_path, "/api/observability/trace-diagnostic-reports")
+        self.assertIsNone(local_list.gateway_8768_path)
+
+        with self.assertRaises(ControlApiError) as raised:
+            self.policy.authorize_http(
+                method="GET",
+                path="/control/v1/observability/trace-diagnostic-reports",
+                query={"limit": "10"},
+                body={},
+                context=remote_context,
+            )
+        self.assertEqual(raised.exception.code, ControlErrorCode.ROUTE_NOT_FOUND)
+
     def test_remote_prompt_accepts_only_explicit_pi_delivery_modes(self) -> None:
         context = ControlAccessContext.remote(
             device_id="phone-1",
@@ -1227,6 +1282,20 @@ class ControlRoutePolicyTests(unittest.TestCase):
             body={"title": "remote", "mode": "assistant"},
         )
         self.policy.authorize(assistant_request, context)
+
+        trace_request = ControlRequest(
+            request_id="request-trace",
+            path_id=ControlPathId.AGENT_SESSIONS_CREATE.value,
+            body={
+                "title": "Trace diagnostic",
+                "mode": "assistant",
+                "_modelRoute": "traceDiagnostic",
+                "executionMode": "read_only",
+            },
+        )
+        self.policy.authorize(trace_request, ControlAccessContext.native())
+        with self.assertRaises(ControlApiError):
+            self.policy.authorize(trace_request, context)
 
     def test_remote_session_list_cannot_request_internal_sessions(self) -> None:
         context = ControlAccessContext.remote(

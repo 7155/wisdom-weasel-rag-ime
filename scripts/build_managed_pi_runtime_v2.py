@@ -178,22 +178,22 @@ def _runtime_host_root(pi_root: Path) -> Path:
     return pi_root / "integrations" / "rag-ime-runtime-host"
 
 
-def _default_pi_worktree(parent: Path | None = None) -> Path:
-    workspace_root = parent or ROOT.parent
-    return workspace_root / "pi"
-
-
 def _pi_worktree_error(pi_root: Path) -> str:
     canonical = _runtime_host_root(pi_root)
-    if canonical.is_dir():
-        return ""
+    if canonical.is_symlink():
+        return (
+            "canonical Pi Runtime Host source must be a real directory: "
+            f"{canonical}"
+        )
     legacy = pi_root / "packages" / "rag-ime-runtime-host"
-    if legacy.is_dir():
+    if legacy.is_dir() or legacy.is_symlink():
         return (
             "unsupported legacy Pi Runtime Host source at "
             f"{legacy}; use a canonical Pi worktree containing "
             "integrations/rag-ime-runtime-host"
         )
+    if canonical.is_dir():
+        return ""
     return (
         "Pi worktree is incomplete; expected canonical source at "
         f"{canonical}"
@@ -218,55 +218,96 @@ def _node_relocation_error(node: Path) -> str:
     return ""
 
 
+def _verify_pi_worktree(pi_root: Path) -> str:
+    """Verify the explicit Pi source checkout before any build work begins.
+
+    The managed payload is a production artifact, so source identity must be a
+    real Git worktree with the canonical Runtime Host, no local changes, and a
+    descendant of the reviewed Runtime Host baseline.  In particular, a
+    neighbouring checkout that merely happens to contain a Pi package is not a
+    valid source.
+    """
+
+    pi_root = pi_root.expanduser().resolve()
+    worktree_error = _pi_worktree_error(pi_root)
+    if worktree_error:
+        raise ManagedPiRuntimeError(worktree_error)
+    try:
+        repository_root = Path(
+            _run(["git", "rev-parse", "--show-toplevel"], cwd=pi_root)
+        ).resolve(strict=True)
+        commit = _run(["git", "rev-parse", "HEAD"], cwd=pi_root)
+        status = _run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=pi_root,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ManagedPiRuntimeError(
+            f"Pi worktree Git provenance is unavailable: {exc}"
+        ) from exc
+    if repository_root != pi_root:
+        raise ManagedPiRuntimeError(
+            "Pi worktree path is not the Git worktree root: "
+            f"{pi_root} != {repository_root}"
+        )
+    try:
+        branch = subprocess.run(
+            ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+            cwd=pi_root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        raise ManagedPiRuntimeError(
+            f"Pi worktree Git provenance is unavailable: {exc}"
+        ) from exc
+    if branch.returncode == 0:
+        raise ManagedPiRuntimeError(
+            "Pi worktree must use a detached HEAD; found branch "
+            f"{branch.stdout.strip() or '<unknown>'}"
+        )
+    if branch.returncode != 1:
+        detail = branch.stderr.strip() or f"git symbolic-ref exited {branch.returncode}"
+        raise ManagedPiRuntimeError(
+            f"Pi worktree detached-HEAD verification failed: {detail}"
+        )
+    if status.strip():
+        raise ManagedPiRuntimeError(
+            "Pi worktree must be clean; uncommitted source changes were found"
+        )
+    try:
+        subprocess.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                REQUIRED_PI_RUNTIME_BASE_COMMIT,
+                "HEAD",
+            ],
+            cwd=pi_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ManagedPiRuntimeError(
+            "Pi worktree does not contain the required reviewed Runtime Host "
+            f"ancestry {REQUIRED_PI_RUNTIME_BASE_COMMIT}: {exc}"
+        ) from exc
+    return commit
+
+
 def _source_revision(pi_root: Path) -> tuple[str, str]:
-    commit = _run(["git", "rev-parse", "HEAD"], cwd=pi_root)
-    tracked_diff = subprocess.run(
-        [
-            "git",
-            "diff",
-            "--binary",
-            "HEAD",
-            "--",
-            "packages",
-            "integrations/rag-ime-runtime-host",
-            "package.json",
-            "package-lock.json",
-            "tsconfig.json",
-        ],
-        cwd=pi_root,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    ).stdout
-    untracked_output = _run(
-        [
-            "git",
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "packages",
-            "integrations/rag-ime-runtime-host",
-            "package.json",
-            "package-lock.json",
-            "tsconfig.json",
-        ],
-        cwd=pi_root,
-    )
-    untracked = [line for line in untracked_output.splitlines() if line.strip()]
-    if not tracked_diff and not untracked:
-        return commit, ""
-    digest = hashlib.sha256()
-    digest.update(tracked_diff)
-    for relative in sorted(untracked):
-        path = pi_root / relative
-        if not path.is_file() or path.is_symlink():
-            continue
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-    dirty_digest = digest.hexdigest()[:12]
-    return f"{commit}+dirty.{dirty_digest}", dirty_digest
+    """Return a clean, ancestry-verified source revision.
+
+    ``dirty_digest`` remains in the tuple for callers that consume the old
+    shape, but production builds never encode or accept a dirty source.
+    """
+
+    return _verify_pi_worktree(pi_root), ""
 
 
 def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object], str]:
@@ -982,27 +1023,63 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--pi-worktree",
-        default=str(_default_pi_worktree()),
+        required=True,
+        help=(
+            "Explicit clean Pi worktree containing "
+            "integrations/rag-ime-runtime-host"
+        ),
     )
     parser.add_argument("--output", default="")
     parser.add_argument(
         "--node",
-        default=_default_node(),
+        default=None,
         help="Relocatable Node 22+ binary copied into the managed payload",
+    )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Verify the explicit Pi worktree without building or touching App Support",
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--skip-smoke", action="store_true")
     args = parser.parse_args(argv)
 
     pi_root = Path(args.pi_worktree).expanduser().resolve()
-    node = Path(args.node).expanduser().resolve() if args.node else Path()
     package_root = _runtime_host_root(pi_root)
     package_json = pi_root / "packages" / "coding-agent" / "package.json"
     esbuild = pi_root / "node_modules" / ".bin" / "esbuild"
-    worktree_error = _pi_worktree_error(pi_root)
-    if worktree_error:
-        print(f"managed Pi runtime build failed: {worktree_error}", file=sys.stderr)
+    try:
+        source_commit, dirty_digest = _source_revision(pi_root)
+        if args.preflight:
+            if not package_json.is_file() or not esbuild.is_file():
+                raise ManagedPiRuntimeError(
+                    "canonical Pi worktree is incomplete "
+                    "(missing coding-agent package or esbuild)"
+                )
+            _verified_session_runtime_contract(pi_root)
+    except (OSError, subprocess.SubprocessError, ManagedPiRuntimeError) as exc:
+        action = "preflight" if args.preflight else "build"
+        print(f"managed Pi runtime {action} failed: {exc}", file=sys.stderr)
         return 1
+    if args.preflight:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "piWorktree": str(pi_root),
+                    "sourceCommit": source_commit,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    node = (
+        Path(args.node).expanduser().resolve()
+        if args.node
+        else Path(_default_node()).expanduser().resolve()
+    )
     if not package_json.is_file() or not esbuild.is_file():
         print(
             "managed Pi runtime build failed: canonical Pi worktree is incomplete "
@@ -1027,7 +1104,6 @@ def main(argv: list[str] | None = None) -> int:
         session_runtime_contract, session_runtime_contract_sha256 = _verified_session_runtime_contract(
             pi_root
         )
-        source_commit, dirty_digest = _source_revision(pi_root)
         product_commit = _run(["git", "rev-parse", "HEAD"], cwd=ROOT)
         product_commit_ms = int(
             _run(["git", "show", "-s", "--format=%ct", product_commit], cwd=ROOT)

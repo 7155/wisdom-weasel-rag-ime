@@ -127,6 +127,7 @@ class AgentSessionApplicationService:
         model_routes = configuration.get("modelRouting")
         if not isinstance(model_routes, Mapping) or model_route_id not in {
             "primary",
+            "traceDiagnostic",
             "toolAgent",
             "subagent",
             "roomCoordinator",

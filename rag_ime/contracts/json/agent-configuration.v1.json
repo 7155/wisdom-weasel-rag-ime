@@ -63,9 +63,10 @@
         },
         "modelRouting": {
           "type": "object",
-          "required": ["primary", "toolAgent", "subagent", "roomCoordinator"],
+          "required": ["primary", "traceDiagnostic", "toolAgent", "subagent", "roomCoordinator"],
           "properties": {
             "primary": {"$ref": "#/$defs/modelRoute"},
+            "traceDiagnostic": {"$ref": "#/$defs/modelRoute"},
             "toolAgent": {"$ref": "#/$defs/modelRoute"},
             "subagent": {"$ref": "#/$defs/modelRoute"},
             "roomCoordinator": {"$ref": "#/$defs/modelRoute"}

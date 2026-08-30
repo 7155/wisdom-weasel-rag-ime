@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.trace-diagnostic-result.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "summary", "hardGates", "judgeScores", "findings"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.trace-diagnostic-result.v1"},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "hardGates": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/gate"}},
+    "judgeScores": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/judge"}},
+    "findings": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/finding"}}
+  },
+  "$defs": {
+    "evidenceIds": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 640}},
+    "dimensionId": {"enum": ["task_completion", "evidence_diagnosis", "tool_runtime", "context", "room_collaboration", "memory_rag", "efficiency", "repair_quality"]},
+    "gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gateId", "status", "reason", "evidenceIds"],
+      "properties": {
+        "gateId": {"type": "string", "minLength": 1, "maxLength": 120},
+        "status": {"enum": ["passed", "failed", "unknown"]},
+        "reason": {"type": "string", "maxLength": 1000},
+        "evidenceIds": {"$ref": "#/$defs/evidenceIds"}
+      }
+    },
+    "judge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["dimensionId", "score", "authority", "explanation", "evidenceIds"],
+      "properties": {
+        "dimensionId": {"$ref": "#/$defs/dimensionId"},
+        "score": {"type": ["integer", "null"], "minimum": 0, "maximum": 3},
+        "authority": {"const": "ai_judge_estimate"},
+        "explanation": {"type": "string", "maxLength": 1600},
+        "evidenceIds": {"$ref": "#/$defs/evidenceIds"}
+      }
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["findingId", "dimensionId", "severity", "observation", "hypothesis", "conclusion", "confidence", "evidenceIds", "candidateRepair", "verification"],
+      "properties": {
+        "findingId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "dimensionId": {"$ref": "#/$defs/dimensionId"},
+        "severity": {"enum": ["critical", "high", "medium", "low"]},
+        "observation": {"type": "string", "maxLength": 2000},
+        "hypothesis": {"type": "string", "maxLength": 2000},
+        "conclusion": {"type": "string", "maxLength": 2000},
+        "confidence": {"enum": ["high", "medium", "low", "unknown"]},
+        "evidenceIds": {"$ref": "#/$defs/evidenceIds"},
+        "candidateRepair": {"type": "string", "maxLength": 2000},
+        "verification": {"type": "string", "maxLength": 2000}
+      }
+    }
+  }
+}

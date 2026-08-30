@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import plistlib
@@ -400,21 +401,21 @@ class BrowserControlServiceTests(unittest.TestCase):
             return SimpleNamespace(pid=os.getpid())
 
         service.command_runner = launch
-        host_app = root / "PAW.app"
-        host_executable = host_app / "Contents" / "MacOS" / "PAW"
-        host_executable.parent.mkdir(parents=True)
-        host_executable.write_text("", encoding="utf-8")
-        with (host_app / "Contents" / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleExecutable": "PAW"}, handle)
-        marker = host_app / "Contents" / "Resources" / "rag-ime-control-web-build-marker.json"
-        marker.parent.mkdir(parents=True)
-        marker.write_text(
-            '{"ui":"control-center-web","frontendTransport":"native"}\n',
-            encoding="utf-8",
+        commit = "a" * 40
+        host_app = root / "Applications" / "RagImeControl.app"
+        host_executable = self._write_canonical_electron_host(host_app, commit=commit)
+        env_override = root / "untrusted" / "RagImeControl.app"
+        self._write_canonical_electron_host(
+            env_override,
+            commit=commit,
+            marker_overrides={"frontendTransport": "native"},
         )
 
-        with mock.patch.dict(os.environ, {"RAG_IME_PAW_BROWSER_HOST_APP": str(host_app)}):
-            response = service.start_managed()
+        with (
+            mock.patch.object(Path, "home", return_value=root),
+            mock.patch.dict(os.environ, {"RAG_IME_PAW_BROWSER_HOST_APP": str(env_override)}),
+        ):
+            response = service.start_managed(current_commit=commit, expected_commit=commit)
 
         self.assertTrue(response["running"])
         self.assertEqual(captured, [str(host_executable)])
@@ -424,6 +425,201 @@ class BrowserControlServiceTests(unittest.TestCase):
         self.assertEqual(response["browserTransport"], "cdp")
         self.assertEqual(response["hostKind"], "electron-webview")
         self.assertFalse(response["egoBrowser"]["secondBrowserProcess"])
+
+    def test_managed_browser_rejects_legacy_native_or_webkit_marker(self) -> None:
+        root = Path(self.temp.name)
+        runtime = FakePawBrowserRuntime(root / "legacy-profile")
+        service = BrowserControlService(
+            root / "legacy.sqlite",
+            app_support_root=root / "legacy-support",
+            browser_runtime=runtime,
+        )
+        service.command_runner = mock.Mock()
+        legacy_app = root / "Applications" / "RagImeControl.app"
+        self._write_canonical_electron_host(
+            legacy_app,
+            commit="a" * 40,
+            marker_overrides={
+                "frontendTransport": "native",
+                "browserHost": "webkit",
+            },
+        )
+
+        with (
+            mock.patch.object(Path, "home", return_value=root),
+            mock.patch.dict(os.environ, {"RAG_IME_PAW_BROWSER_HOST_APP": str(legacy_app)}),
+            self.assertRaisesRegex(BrowserControlError, "同窗 Browser"),
+        ):
+            service.start_managed(current_commit="a" * 40, expected_commit="a" * 40)
+
+        service.command_runner.assert_not_called()
+
+    def test_managed_browser_requires_matching_current_and_expected_source_commits(self) -> None:
+        root = Path(self.temp.name)
+        runtime = FakePawBrowserRuntime(root / "commit-profile")
+        service = BrowserControlService(
+            root / "commit.sqlite",
+            app_support_root=root / "commit-support",
+            browser_runtime=runtime,
+        )
+        service.command_runner = mock.Mock()
+        self._write_canonical_electron_host(
+            root / "Applications" / "RagImeControl.app",
+            commit="a" * 40,
+        )
+
+        with (
+            mock.patch.object(Path, "home", return_value=root),
+            self.assertRaisesRegex(BrowserControlError, "commit"),
+        ):
+            service.start_managed(current_commit="a" * 40, expected_commit="b" * 40)
+
+        service.command_runner.assert_not_called()
+
+    def test_managed_browser_rejects_stale_or_missing_dist_digest(self) -> None:
+        root = Path(self.temp.name)
+        runtime = FakePawBrowserRuntime(root / "digest-profile")
+        service = BrowserControlService(
+            root / "digest.sqlite",
+            app_support_root=root / "digest-support",
+            browser_runtime=runtime,
+        )
+        service.command_runner = mock.Mock()
+        app = root / "Applications" / "RagImeControl.app"
+        self._write_canonical_electron_host(app, commit="a" * 40)
+        (app / "Contents" / "Resources" / "app" / "dist" / "assets" / "main.js").write_text(
+            "tampered\n",
+            encoding="utf-8",
+        )
+
+        with (
+            mock.patch.object(Path, "home", return_value=root),
+            self.assertRaisesRegex(BrowserControlError, "同窗 Browser"),
+        ):
+            service.start_managed(current_commit="a" * 40, expected_commit="a" * 40)
+
+        service.command_runner.assert_not_called()
+
+        missing_digest_service = BrowserControlService(
+            root / "missing-digest.sqlite",
+            app_support_root=root / "missing-digest-support",
+            browser_runtime=FakePawBrowserRuntime(root / "missing-digest-profile"),
+        )
+        missing_digest_service.command_runner = mock.Mock()
+        missing_digest_app = root / "Applications" / "RagImeControl.app"
+        self._write_canonical_electron_host(
+            missing_digest_app,
+            commit="a" * 40,
+            marker_overrides={"distTreeDigest": None},
+        )
+        with (
+            mock.patch.object(Path, "home", return_value=root),
+            self.assertRaisesRegex(BrowserControlError, "同窗 Browser"),
+        ):
+            missing_digest_service.start_managed(
+                current_commit="a" * 40,
+                expected_commit="a" * 40,
+            )
+        missing_digest_service.command_runner.assert_not_called()
+
+    def _write_canonical_electron_host(
+        self,
+        application: Path,
+        *,
+        commit: str,
+        marker_overrides: dict[str, object] | None = None,
+    ) -> Path:
+        contents = application / "Contents"
+        executable = contents / "MacOS" / "RagImeControl"
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_text("", encoding="utf-8")
+        with (contents / "Info.plist").open("wb") as handle:
+            plistlib.dump(
+                {
+                    "CFBundleExecutable": "RagImeControl",
+                    "CFBundleIdentifier": "com.rag-ime.control",
+                },
+                handle,
+            )
+
+        dist = contents / "Resources" / "app" / "dist"
+        (dist / "assets").mkdir(parents=True, exist_ok=True)
+        (dist / "index.html").write_text(
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'\"><main>paw-os</main>\n",
+            encoding="utf-8",
+        )
+        (dist / "manifest.webmanifest").write_text("{}\n", encoding="utf-8")
+        (dist / "assets" / "main.js").write_text("console.log('paw-os');\n", encoding="utf-8")
+        (dist / "rag-ime-control-web-build.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.control-web-build.v1",
+                    "buildChannel": "production",
+                    "transport": "http",
+                    "httpOnly": True,
+                    "nativeOnly": False,
+                    "frontendProduct": "paw-os",
+                    "sourceCommit": commit,
+                }
+            ),
+            encoding="utf-8",
+        )
+        dist_digest_hash = hashlib.sha256()
+        for path in sorted(dist.rglob("*"), key=lambda item: item.relative_to(dist).as_posix()):
+            if path.is_file() and path.name != "rag-ime-control-web-build.json":
+                dist_digest_hash.update(path.relative_to(dist).as_posix().encode("utf-8"))
+                dist_digest_hash.update(b"\0")
+                dist_digest_hash.update(path.read_bytes())
+                dist_digest_hash.update(b"\0")
+        dist_digest = dist_digest_hash.hexdigest()
+        inner_marker_path = dist / "rag-ime-control-web-build.json"
+        inner_marker = json.loads(inner_marker_path.read_text(encoding="utf-8"))
+        inner_marker.update(
+            {
+                "forbiddenTransportModulesExcluded": True,
+                "previewFixturesExcluded": True,
+                "distTreeDigest": dist_digest,
+            }
+        )
+        inner_marker_path.write_text(json.dumps(inner_marker), encoding="utf-8")
+        marker = {
+            "schemaVersion": "rag-ime.control-build-marker.v1",
+            "bundleId": "com.rag-ime.control",
+            "gitCommit": commit,
+            "sourceCommit": commit,
+            "gitDirty": False,
+            "sourceDirty": False,
+            "ui": "control-center-web",
+            "channel": "release",
+            "frontendTransport": "http",
+            "frontendBuildChannel": "production",
+            "frontendProduct": "paw-os",
+            "forbiddenTransportModulesExcluded": True,
+            "browserHost": "electron-webview",
+            "browserControl": "ego-browser",
+            "browserTransport": "cdp",
+            "browserPartition": "persist:paw-browser",
+            "sameOriginControlProxy": True,
+            "distTreeDigest": dist_digest,
+            "provenance": {
+                "sourceCommit": commit,
+                "sourceDirty": False,
+                "frontendProduct": "paw-os",
+                "bundleId": "com.rag-ime.control",
+                "frontendTransport": "http",
+                "browserHost": "electron-webview",
+                "browserControl": "ego-browser",
+                "browserTransport": "cdp",
+                "browserPartition": "persist:paw-browser",
+                "sameOriginControlProxy": True,
+                "distTreeDigest": dist_digest,
+            },
+        }
+        marker.update(marker_overrides or {})
+        marker_path = contents / "Resources" / "rag-ime-control-web-build-marker.json"
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        return executable
 
     def test_managed_browser_never_falls_back_to_external_chrome(self) -> None:
         root = Path(self.temp.name)

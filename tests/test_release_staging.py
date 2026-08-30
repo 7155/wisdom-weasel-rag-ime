@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import plistlib
 import subprocess
 import tarfile
@@ -36,14 +37,14 @@ class ReleaseStagingTests(unittest.TestCase):
         subprocess.run(["git", "commit", "-qm", "fixture"], cwd=self.squirrel, check=True)
         self.apps = {
             "squirrel": self._app("Squirrel.app", "im.rime.inputmethod.Squirrel"),
-            "control": self._app("RagImeControl.app", "com.rag-ime.control"),
+            "control": self._app("RagImeControlElectron.app", "com.rag-ime.control"),
             "desktopBridge": self._app(
                 "RagImeDesktopBridge.app",
                 "com.rag-ime.desktop-bridge",
             ),
             "voice": self._app("RagImeVoice.app", "com.rag-ime.voice"),
         }
-        self._mark_web_control(self.apps["control"])
+        self._mark_electron_web_control(self.apps["control"])
         self._mark_desktop_bridge(self.apps["desktopBridge"])
 
     def tearDown(self) -> None:
@@ -127,13 +128,51 @@ class ReleaseStagingTests(unittest.TestCase):
         marker = self.apps["control"] / "Contents/Resources/rag-ime-control-web-build-marker.json"
         marker.unlink()
 
-        with self.assertRaisesRegex(ValueError, "verified Web Control Center release"):
+        with self.assertRaisesRegex(ValueError, "canonical Electron|verified Web Control Center release"):
             prepare_release_candidate(
                 self.root,
                 release_id="legacy-control",
                 output_root=self.root / "out-legacy-control",
                 squirrel_source=self.squirrel,
                 apps=self.apps,
+                project_files=("README.md",),
+            )
+
+    def test_accepts_only_canonical_electron_control_layout_and_records_provenance(self) -> None:
+        electron_control = self.apps["control"]
+        electron_apps = self.apps
+
+        report = prepare_release_candidate(
+            self.root,
+            release_id="electron-control",
+            output_root=self.root / "out-electron-control",
+            squirrel_source=self.squirrel,
+            apps=electron_apps,
+            project_files=("README.md",),
+        )
+
+        manifest = json.loads(Path(report["manifest"]).read_text(encoding="utf-8"))
+        control_record = next(item for item in manifest["apps"] if item["label"] == "control")
+        self.assertEqual(control_record["bundle"], "RagImeControlElectron.app")
+        self.assertEqual(
+            control_record["provenance"]["frontendProduct"],
+            "paw-os",
+        )
+        self.assertRegex(
+            control_record["provenance"]["distTreeDigest"],
+            r"^[0-9a-f]{64}$",
+        )
+
+        legacy_control = self._app("RagImeControl.app", "com.rag-ime.control")
+        self._mark_web_control(legacy_control)
+        legacy_apps = {**self.apps, "control": legacy_control}
+        with self.assertRaisesRegex(ValueError, "canonical Electron"):
+            prepare_release_candidate(
+                self.root,
+                release_id="legacy-native-layout",
+                output_root=self.root / "out-legacy-native-layout",
+                squirrel_source=self.squirrel,
+                apps=legacy_apps,
                 project_files=("README.md",),
             )
 
@@ -189,6 +228,101 @@ class ReleaseStagingTests(unittest.TestCase):
                 "nativeOnly": True,
                 "previewFixturesExcluded": True,
             }),
+            encoding="utf-8",
+        )
+
+    def _mark_electron_web_control(self, app: Path) -> None:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root,
+            text=True,
+        ).strip()
+        resources = app / "Contents" / "Resources"
+        dist = resources / "app" / "dist"
+        (dist / "assets").mkdir(parents=True)
+        (dist / "index.html").write_text(
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'\"><main>paw-os</main>\n",
+            encoding="utf-8",
+        )
+        (dist / "manifest.webmanifest").write_text("{}\n", encoding="utf-8")
+        (dist / "assets" / "main.js").write_text("console.log('paw-os');\n", encoding="utf-8")
+        (dist / "rag-ime-control-web-build.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.control-web-build.v1",
+                    "buildChannel": "production",
+                    "transport": "http",
+                    "nativeOnly": False,
+                    "httpOnly": True,
+                    "forbiddenTransportModulesExcluded": True,
+                    "previewFixturesExcluded": True,
+                    "frontendProduct": "paw-os",
+                    "sourceCommit": commit,
+                }
+            ),
+            encoding="utf-8",
+        )
+        digest_records = []
+        for path in sorted(dist.rglob("*"), key=lambda item: item.relative_to(dist).as_posix()):
+            if path.is_file() and path.name != "rag-ime-control-web-build.json":
+                digest_records.append(
+                    {
+                        "path": path.relative_to(dist).as_posix(),
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
+        dist_digest_hash = hashlib.sha256()
+        for record in digest_records:
+            dist_digest_hash.update(record["path"].encode("utf-8"))
+            dist_digest_hash.update(b"\0")
+            dist_digest_hash.update((dist / record["path"]).read_bytes())
+            dist_digest_hash.update(b"\0")
+        dist_digest = dist_digest_hash.hexdigest()
+        frontend_marker = json.loads(
+            (dist / "rag-ime-control-web-build.json").read_text(encoding="utf-8")
+        )
+        frontend_marker["distTreeDigest"] = dist_digest
+        (dist / "rag-ime-control-web-build.json").write_text(
+            json.dumps(frontend_marker),
+            encoding="utf-8",
+        )
+        provenance = {
+            "sourceCommit": commit,
+            "sourceDirty": False,
+            "frontendProduct": "paw-os",
+            "bundleId": "com.rag-ime.control",
+            "frontendTransport": "http",
+            "browserHost": "electron-webview",
+            "browserControl": "ego-browser",
+            "browserTransport": "cdp",
+            "browserPartition": "persist:paw-browser",
+            "sameOriginControlProxy": True,
+            "distTreeDigest": dist_digest,
+        }
+        (resources / "rag-ime-control-web-build-marker.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.control-build-marker.v1",
+                    "bundleId": "com.rag-ime.control",
+                    "gitCommit": commit,
+                    "gitDirty": False,
+                    "sourceCommit": commit,
+                    "sourceDirty": False,
+                    "ui": "control-center-web",
+                    "channel": "release",
+                    "frontendTransport": "http",
+                    "frontendBuildChannel": "production",
+                    "forbiddenTransportModulesExcluded": True,
+                    "browserHost": "electron-webview",
+                    "browserControl": "ego-browser",
+                    "browserTransport": "cdp",
+                    "browserPartition": "persist:paw-browser",
+                    "sameOriginControlProxy": True,
+                    "frontendProduct": "paw-os",
+                    "distTreeDigest": dist_digest,
+                    "provenance": provenance,
+                }
+            ),
             encoding="utf-8",
         )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,6 +70,58 @@ class ControlCenterCutoverTests(unittest.TestCase):
             self.assertEqual(caller_marker.read_text(encoding="utf-8"), "caller owned\n")
             self.assertFalse((tmp_path / "app-support").exists())
 
+    def test_full_stack_installer_preflights_invalid_pi_before_app_support_mutation(self) -> None:
+        for case in ("missing", "legacy"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory(
+                prefix="rag-ime-product-stack-pi-preflight-"
+            ) as tmp:
+                tmp_path = Path(tmp)
+                app_support = tmp_path / "app-support"
+                app_support.mkdir()
+                sentinel = app_support / "keep-me"
+                sentinel.write_text("caller owned\n", encoding="utf-8")
+                pi_worktree = tmp_path / "pi"
+                if case == "legacy":
+                    (pi_worktree / "packages" / "rag-ime-runtime-host").mkdir(
+                        parents=True
+                    )
+
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(ROOT / "scripts" / "install_product_stack.sh"),
+                        "--include-pi",
+                        "--pi-worktree",
+                        str(pi_worktree),
+                        "--skip-desktop",
+                        "--skip-voice",
+                        "--skip-maintenance",
+                        "--skip-mlx",
+                    ],
+                    cwd=ROOT,
+                    env={
+                        **os.environ,
+                        "HOME": str(tmp_path),
+                        "RAG_IME_ALLOW_DIRTY_INSTALL": "1",
+                        "RAG_IME_APP_SUPPORT_DIR": str(app_support),
+                        "RAG_IME_PYTHON": sys.executable,
+                    },
+                    text=True,
+                    capture_output=True,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("managed Pi runtime preflight failed", result.stderr)
+                if case == "legacy":
+                    self.assertIn("unsupported legacy Pi Runtime Host source", result.stderr)
+                else:
+                    self.assertIn("expected canonical source", result.stderr)
+                self.assertEqual(
+                    sorted(path.relative_to(app_support).as_posix() for path in app_support.rglob("*")),
+                    ["keep-me"],
+                )
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "caller owned\n")
+
     def test_legacy_swift_control_center_is_removed(self) -> None:
         self.assertFalse((ROOT / "macos" / "RagImeControl").exists())
 
@@ -106,6 +159,33 @@ class ControlCenterCutoverTests(unittest.TestCase):
 
         self.assertIn("build_paw_os_electron_host.sh", script)
         self.assertNotIn("build_control_center_web_host.sh", script)
+
+    def test_production_web_build_is_pawos_and_records_a_digest_bound_marker(self) -> None:
+        build = (ROOT / "scripts" / "build_control_center_web.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("VITE_PAW_FRONTEND=paw-os", build)
+        self.assertIn("frontendProduct", build)
+        self.assertIn("distTreeDigest", build)
+        self.assertIn("rag-ime-control-web-build.json", build)
+
+    def test_gateway_installs_web_dist_through_a_verified_atomic_cutover(self) -> None:
+        installer = (
+            ROOT / "scripts" / "install_agent_gateway_launch_agent.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("VITE_PAW_FRONTEND=paw-os", installer)
+        self.assertIn("mktemp", installer)
+        self.assertIn("distTreeDigest", installer)
+        self.assertIn("os.replace", installer)
+        self.assertIn("copy", installer)
+
+    def test_web_gates_do_not_invoke_removed_test_modules(self) -> None:
+        for script_name in ("test_control_center_web.sh", "run_control_center_web_qa.sh"):
+            script = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+            self.assertNotIn("tests.test_native_control_bridge_contract", script)
+            self.assertNotIn("tests.test_control_center_web_host", script)
 
     def test_pi_model_bundle_only_collects_the_canonical_runtime_host(self) -> None:
         script = (
@@ -164,8 +244,10 @@ class ControlCenterCutoverTests(unittest.TestCase):
         )
         self.assertIn("build_managed_pi_runtime_v2.py", installer)
         self.assertIn("--pi-worktree", installer)
-        self.assertIn("RAG_IME_PI_WORKTREE", installer)
-        self.assertIn("../pi/integrations/rag-ime-runtime-host", installer)
+        self.assertIn("PI_WORKTREE_ARG_SET=0", installer)
+        self.assertIn("formal --include-pi requires explicit --pi-worktree", installer)
+        self.assertNotIn("../pi", installer)
+        self.assertNotIn("../pi/integrations/rag-ime-runtime-host", installer)
         self.assertNotIn("../pi/packages/rag-ime-runtime-host", installer)
         self.assertNotIn("../pi-rag-ime-runtime", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
@@ -267,8 +349,8 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("wait_for_gateway_port_release", gateway_installer)
         self.assertIn("bootstrap_launch_agent", gateway_installer)
         self.assertIn("restore_web_source_dist", gateway_installer)
-        self.assertIn("trap restore_web_source_dist EXIT", gateway_installer)
-        self.assertIn('ditto "$WEB_SOURCE_DIR" "$WEB_INSTALL_DIR"', gateway_installer)
+        self.assertIn("trap cleanup_web_install_state EXIT", gateway_installer)
+        self.assertIn('ditto "$WEB_SOURCE_DIR/." "$WEB_INSTALL_TEMP"', gateway_installer)
 
         desktop_installer = (
             ROOT / "scripts" / "install_desktop_bridge_launch_agent.sh"
@@ -337,6 +419,41 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("lsregister", build)
         self.assertNotIn("WebKit.framework", build)
         self.assertNotIn("RagImeControlWebHost", build)
+
+    def test_formal_electron_build_emits_content_addressed_provenance(self) -> None:
+        build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
+            encoding="utf-8"
+        )
+        footprint = (ROOT / "scripts" / "check_control_center_footprint.sh").read_text(
+            encoding="utf-8"
+        )
+        dist_check = (ROOT / "scripts" / "check_control_center_web_dist.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for field in (
+            '"sourceCommit"',
+            '"sourceDirty"',
+            '"frontendProduct": "paw-os"',
+            '"bundleId"',
+            '"frontendTransport": "http"',
+            '"browserHost": "electron-webview"',
+            '"browserControl": "ego-browser"',
+            '"browserTransport": "cdp"',
+            '"distTreeDigest"',
+        ):
+            self.assertIn(field, build)
+        self.assertIn('git -C "$ROOT" rev-parse HEAD', footprint)
+        self.assertIn("distTreeDigest", footprint)
+        self.assertIn("distTreeDigest", dist_check)
+        self.assertIn("check_control_center_footprint.sh", build)
+        self.assertIn("RAG_IME_CONTROL_APP=", build)
+
+    def test_formal_release_rejects_dirty_source_before_building(self) -> None:
+        build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('if [[ "$CHANNEL" == "release" && "$SOURCE_DIRTY" == "true" ]]', build)
 
 
 if __name__ == "__main__":

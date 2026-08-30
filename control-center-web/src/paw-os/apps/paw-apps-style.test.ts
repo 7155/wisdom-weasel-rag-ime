@@ -682,6 +682,49 @@ describe('PAWOS semantic type roles', () => {
     expect(agentMigratedCss).toContain(".paw-window-shell[data-app='agent'] .paw-agent-rail");
   });
 
+  it('removes dead PAWOS compatibility selectors without dropping live satellite owners', () => {
+    for (const selector of [
+      '.paw-desktop-root .agent-user-message {',
+      '.paw-desktop-root .agent-user-message::before',
+      '.paw-desktop-root .agent-user-message[data-status=',
+      '.paw-desktop-root .agent-user-message__delivery',
+      '.paw-desktop-root .agent-user-message a',
+      '.paw-desktop-root .agent-approval-block',
+      '.paw-desktop-root .paw-os-satellite__hero',
+      ".paw-desktop-root .paw-participant-chat__timeline article[data-from='user']",
+      'paw-comp8-satellite-arrival',
+      '.paw-desktop-root .paw-session-workspace__composer',
+      '.paw-desktop-root .agent-composer',
+    ]) expect(agentCompositionCss).not.toContain(selector);
+
+    expect(satelliteCss).not.toContain('.paw-os-satellite__hero');
+    expect(satelliteCss).not.toContain('.paw-os-satellite__empty');
+    expect(pawOsCss).not.toContain('.paw-os-satellite__hero');
+    expect(pawOsCss).not.toContain('.paw-os-satellite__empty');
+
+    // These are the only satellite-specific visual signals retained from the
+    // retired compatibility layer: the partner band and graphite process view.
+    expect(agentCompositionCss).toMatch(
+      /\.paw-window-shell\[data-collaboration-role='satellite'\] \.paw-window-body > \*:first-child\s*\{[^}]*border-top:\s*3px solid var\(--paw-satellite-color,/s,
+    );
+    expect(agentCompositionCss).toMatch(
+      /\.paw-desktop-root \.paw-os-satellite--process\s*\{[^}]*background:\s*var\(--color-code-bg\);[^}]*color:\s*var\(--color-code-text\);/s,
+    );
+    expect(satelliteCss).toMatch(/\.paw-os-satellite--process\s*\{[^}]*background:\s*#111214;[^}]*color:\s*#e6e7ea;/s);
+  });
+
+  it('keeps Composer frame/focus and busy pseudo-elements owned by migrated CSS', () => {
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root :is\(\.paw-session-workspace__composer, \.paw-room-workspace__composer\) \.agent-composer\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*18px;[^}]*background:\s*#fff;[^}]*-webkit-backdrop-filter:\s*none;[^}]*backdrop-filter:\s*none;[^}]*box-shadow:/s,
+    );
+    expect(agentMigratedCss).toMatch(
+      /\.paw-desktop-root :is\(\.paw-session-workspace__composer, \.paw-room-workspace__composer\) \.agent-composer:focus-within\s*\{[^}]*box-shadow:/s,
+    );
+    expect(appCss).not.toMatch(/\.paw-(?:session|room)-workspace__composer \.agent-composer(?::focus-within)?\s*\{[^}]*\b(?:border|border-radius|background|box-shadow)\s*:/s);
+    expect(appCss).not.toContain('.paw-session-workspace__actions');
+    expect(appCss).not.toMatch(/\.agent-composer::(?:before|after)[^{}]*\{[^{}]*(?:display:\s*none|opacity:\s*0\s*!important)/s);
+  });
+
   it('keeps the retired approval-block renderer out of the Agent rich owner', () => {
     expect(agentFeatureCss).not.toMatch(/\.agent-approval-block(?:__actions)?/);
     expect(agentFxCss).toContain('.fx-approval');

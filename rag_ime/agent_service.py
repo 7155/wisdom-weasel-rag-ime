@@ -143,6 +143,11 @@ from .trace_runtime import (
     validate_trace_envelope,
 )
 from .trace_store import TraceStore
+from .trace_diagnostics import (
+    TraceDiagnosticReportStore,
+    extract_trace_diagnostic_result,
+    inspect_trace_targets,
+)
 from .trace_repair import (
     TraceRepairStore,
     TraceRepairValidationError,
@@ -307,6 +312,8 @@ class AgentService:
             initialize_trace_store()
         self.eval_runs = EvalRunStore(db_path)
         self.eval_runs.initialize()
+        self.trace_diagnostic_reports = TraceDiagnosticReportStore(db_path)
+        self.trace_diagnostic_reports.initialize()
         # Trace repair evidence and receipts are a Runtime-owned authority,
         # separate from the bounded Observation journal.  The HTTP surface
         # below only accepts opaque IDs returned by this store and derives
@@ -3836,6 +3843,137 @@ class AgentService:
     ) -> dict[str, object]:
         return self.observations.snapshot(payload)
 
+    def trace_diagnostic_inspection(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        raw_targets = payload.get("targets")
+        if not isinstance(raw_targets, Sequence) or isinstance(raw_targets, (str, bytes, bytearray)):
+            raise ValueError("Trace diagnostic targets must be an array")
+        targets = _strict_trace_diagnostic_targets(raw_targets)
+
+        def trace_reader(trace_id: str) -> Mapping[str, object] | None:
+            try:
+                return self.observation_trace({"traceId": trace_id})
+            except KeyError:
+                return None
+
+        def eval_reader(trace_id: str) -> Sequence[Mapping[str, object]]:
+            result = self.observation_evals({"traceId": trace_id, "limit": 100})
+            items = result.get("items")
+            if not isinstance(items, Sequence) or isinstance(items, (str, bytes, bytearray)):
+                raise ValueError("Trace diagnostic Eval projection must contain an items array")
+            if any(not isinstance(item, Mapping) for item in items):
+                raise ValueError("Trace diagnostic Eval items must be objects")
+            return list(items)
+
+        return inspect_trace_targets(
+            targets=targets,
+            session_reader=self.messages,
+            room_reader=self.room_snapshot,
+            observation_reader=self.observation_snapshot,
+            trace_reader=trace_reader,
+            eval_reader=eval_reader,
+        )
+
+    def create_trace_diagnostic_report(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        diagnostic_session_id = _required_text(payload, "diagnosticSessionId")
+        session = self.sessions.get(diagnostic_session_id)
+        if str(session.get("executionMode") or "") != "read_only":
+            raise ValueError("Trace diagnostic report requires a read-only diagnostic Session")
+        inspection = self.trace_diagnostic_inspection(payload)
+        title = str(payload.get("title") or "Trace 诊断报告")
+        return self.trace_diagnostic_reports.create(
+            diagnostic_session_id=diagnostic_session_id,
+            title=title,
+            targets=inspection["targets"],
+            inspection=inspection,
+        )
+
+    def finalize_trace_diagnostic_report(
+        self,
+        report_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        report = self.trace_diagnostic_reports.get(report_id)
+        if report is None:
+            raise KeyError(report_id)
+        session_id = str(report["diagnosticSessionId"])
+        expected_revision = payload.get("expectedRevision")
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or not 1 <= expected_revision <= 1_000_000
+        ):
+            raise ValueError("Trace diagnostic finalize requires expectedRevision")
+        # A Session's public lifecycle is idle/active/busy/faulted/archived;
+        # ``completed`` is a Trace/message status, not a Session status. A
+        # faulted diagnostic must become a durable failed report even when the
+        # Runtime can no longer produce a readable transcript snapshot.
+        session = self.sessions.get(session_id)
+        failure_statuses = {"faulted", "failed", "error", "cancelled", "canceled"}
+        session_status = str(session.get("status") or "idle")
+        if session_status in failure_statuses:
+            return self.trace_diagnostic_reports.fail(
+                report_id,
+                expected_revision=expected_revision,
+                reason=_diagnostic_failure_reason(session, status=session_status),
+            )
+        snapshot = self.messages(session_id)
+        snapshot_status = str(snapshot.get("status") or session_status)
+        if snapshot_status in failure_statuses:
+            return self.trace_diagnostic_reports.fail(
+                report_id,
+                expected_revision=expected_revision,
+                reason=_diagnostic_failure_reason(
+                    snapshot,
+                    session=session,
+                    status=snapshot_status,
+                ),
+            )
+        if snapshot_status not in {"idle", "archived"}:
+            raise ValueError("diagnostic Session is not complete")
+        try:
+            result = extract_trace_diagnostic_result(snapshot)
+        except ValueError:
+            return self.trace_diagnostic_reports.fail(
+                report_id,
+                expected_revision=expected_revision,
+                reason="诊断 Session 未生成可校验的结构化报告。",
+            )
+        try:
+            return self.trace_diagnostic_reports.complete(
+                report_id,
+                expected_revision=expected_revision,
+                result=result,
+            )
+        except ValueError as exc:
+            if not str(exc).startswith("unknown evidenceId:"):
+                raise
+            return self.trace_diagnostic_reports.fail(
+                report_id,
+                expected_revision=expected_revision,
+                reason="结构化诊断报告引用了不属于冻结范围的证据。",
+            )
+
+    def trace_diagnostic_report(self, report_id: str) -> dict[str, object]:
+        report = self.trace_diagnostic_reports.get(report_id)
+        if report is None:
+            raise KeyError(report_id)
+        return report
+
+    def list_trace_diagnostic_reports(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        values = dict(payload or {})
+        return self.trace_diagnostic_reports.list(
+            limit=_integer(values.get("limit"), default=100, minimum=1, maximum=100)
+        )
+
     def list_eval_suites(
         self,
         payload: Mapping[str, object] | None = None,
@@ -5394,6 +5532,128 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
+
+
+_TRACE_DIAGNOSTIC_TARGET_FIELDS = frozenset(
+    {"kind", "id", "title", "traceIds"}
+)
+
+
+def _strict_trace_diagnostic_targets(
+    value: Sequence[object],
+) -> list[Mapping[str, object]]:
+    """Validate the nested target array before the extractor sees it.
+
+    The tool argument schema is a disclosure contract, not an execution-time
+    validator. Keep the service boundary strict too: dropping a malformed
+    target would make a requested multi-target diagnosis silently incomplete.
+    """
+
+    if not 1 <= len(value) <= 12:
+        raise ValueError("Trace diagnostic targets must contain between 1 and 12 objects")
+    targets: list[Mapping[str, object]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping):
+            raise ValueError(
+                f"Trace diagnostic targets must contain only objects (index {index})"
+            )
+        unknown = sorted(
+            str(key) for key in raw if key not in _TRACE_DIAGNOSTIC_TARGET_FIELDS
+        )
+        if unknown:
+            raise ValueError(
+                "Trace diagnostic target contains unsupported fields: "
+                + ", ".join(str(item) for item in unknown)
+            )
+        for field in ("kind", "id", "title"):
+            if field not in raw or not isinstance(raw[field], str):
+                raise ValueError(
+                    f"Trace diagnostic target {field} must be a string (index {index})"
+                )
+        if raw["kind"] not in {"session", "room", "run"}:
+            raise ValueError(
+                f"Trace diagnostic target kind is invalid (index {index})"
+            )
+        if not raw["id"].strip() or len(raw["id"]) > 240:
+            raise ValueError(
+                f"Trace diagnostic target id is invalid (index {index})"
+            )
+        if len(raw["title"]) > 240:
+            raise ValueError(
+                f"Trace diagnostic target title is too long (index {index})"
+            )
+        trace_ids = raw.get("traceIds")
+        if trace_ids is not None:
+            if not isinstance(trace_ids, Sequence) or isinstance(
+                trace_ids, (str, bytes, bytearray)
+            ):
+                raise ValueError(
+                    f"Trace diagnostic target traceIds must be an array (index {index})"
+                )
+            if len(trace_ids) > 32:
+                raise ValueError(
+                    f"Trace diagnostic target traceIds has too many items (index {index})"
+                )
+            if any(
+                not isinstance(trace_id, str)
+                or not trace_id.strip()
+                or len(trace_id) > 240
+                for trace_id in trace_ids
+            ):
+                raise ValueError(
+                    "Trace diagnostic target traceIds must contain only non-empty strings "
+                    f"(index {index})"
+                )
+            if len(set(trace_ids)) != len(trace_ids):
+                raise ValueError(
+                    f"Trace diagnostic target traceIds must be unique (index {index})"
+                )
+        targets.append(raw)
+    return targets
+
+
+def _diagnostic_failure_reason(
+    snapshot: Mapping[str, object],
+    *,
+    session: Mapping[str, object] | None = None,
+    status: str = "faulted",
+) -> str:
+    """Choose a public terminal-failure reason; the report store redacts it."""
+
+    candidates: list[object] = []
+    for source in (snapshot, session or {}):
+        for key in (
+            "failureReason",
+            "error",
+            "lastError",
+            "reason",
+            "lastMessagePreview",
+        ):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value)
+    raw_live_events = snapshot.get("liveEvents")
+    live_events = (
+        [item for item in raw_live_events if isinstance(item, Mapping)]
+        if isinstance(raw_live_events, Sequence)
+        and not isinstance(raw_live_events, (str, bytes, bytearray))
+        else []
+    )
+    for event in reversed(live_events):
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        for key in ("error", "failureReason", "reason", "message"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.append(value)
+    detail = " ".join(str(candidates[0]).split())[:800] if candidates else ""
+    public_status = status if status in {"faulted", "failed", "error", "cancelled", "canceled"} else "failed"
+    return (
+        f"诊断 Session 以 {public_status} 终态结束：{detail}"
+        if detail
+        else f"诊断 Session 以 {public_status} 终态结束，未生成诊断报告。"
+    )
 
 
 def _trace_repair_payload(

@@ -21,6 +21,7 @@ export interface AgentToolResultV1 {
     | 'configuration'
     | 'agents'
     | 'session_search'
+    | 'trace_diagnostics'
     | 'browser'
     | 'todo'
     | 'agent_goal'

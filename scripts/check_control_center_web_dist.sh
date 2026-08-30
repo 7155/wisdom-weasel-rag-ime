@@ -6,6 +6,7 @@ DIST="${1:-$ROOT/control-center-web/dist}"
 EXPECTED_TRANSPORT="${2:-native}"
 EXPECTED_CHANNEL="${3:-production}"
 EXPECTED_COMMIT="${4:-}"
+EXPECTED_DIST_DIGEST="${5:-${RAG_IME_CONTROL_EXPECTED_DIST_DIGEST:-}}"
 MARKER="$DIST/rag-ime-control-web-build.json"
 
 [[ -f "$DIST/index.html" ]] || {
@@ -25,11 +26,15 @@ MARKER="$DIST/rag-ime-control-web-build.json"
   exit 1
 }
 
-python3 - "$MARKER" "$EXPECTED_TRANSPORT" "$EXPECTED_CHANNEL" "$EXPECTED_COMMIT" <<'PY'
+python3 - "$ROOT" "$DIST" "$MARKER" "$EXPECTED_TRANSPORT" "$EXPECTED_CHANNEL" "$EXPECTED_COMMIT" "$EXPECTED_DIST_DIGEST" <<'PY'
 import json
 import sys
+from pathlib import Path
 
-marker_path, expected_transport, expected_channel, expected_commit = sys.argv[1:]
+root, dist_path, marker_path, expected_transport, expected_channel, expected_commit, expected_dist_digest = sys.argv[1:]
+sys.path.insert(0, root)
+from rag_ime.release_staging import content_tree_digest
+
 with open(marker_path, encoding="utf-8") as handle:
     marker = json.load(handle)
 
@@ -61,6 +66,19 @@ if expected_commit and marker.get("sourceCommit") != expected_commit:
     raise SystemExit(
         f"control-center source commit is {marker.get('sourceCommit')!r}, expected {expected_commit!r}"
     )
+dist_digest = content_tree_digest(
+    Path(dist_path),
+    excluded_paths=("rag-ime-control-web-build.json",),
+)
+if expected_transport == "http" and marker.get("frontendProduct") != "paw-os":
+    raise SystemExit("http control-center build is not the PAWOS frontend")
+if marker.get("distTreeDigest") != dist_digest:
+    raise SystemExit("control-center dist tree digest does not match the marker")
+if expected_dist_digest and dist_digest != expected_dist_digest:
+    raise SystemExit(
+        f"control-center dist tree digest is {dist_digest!r}, expected {expected_dist_digest!r}"
+    )
+print(f"distTreeDigest={dist_digest}")
 PY
 
 if [[ "$EXPECTED_TRANSPORT" == "native" ]]; then

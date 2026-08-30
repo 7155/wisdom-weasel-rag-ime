@@ -14,6 +14,9 @@ from typing import Iterable, Mapping
 
 
 SCHEMA_VERSION = "rag-ime.release-candidate-staging.v1"
+CONTROL_APP_NAME = "RagImeControlElectron.app"
+CONTROL_BUNDLE_ID = "com.rag-ime.control"
+CONTROL_DIST_MARKER = "rag-ime-control-web-build.json"
 SOURCE_EXCLUDED_PARTS = {".git", "__pycache__", "build", "download", "Frameworks", "lib", "node_modules"}
 PROJECT_EXCLUDED_PREFIXES = (
     "docs/",
@@ -50,9 +53,17 @@ def prepare_release_candidate(
     if len(upstream_commit) != 40:
         raise ValueError("squirrel_source must have a readable Git HEAD")
 
+    project_commit = _git_value(repo_root, "rev-parse", "HEAD")
+    if len(project_commit) != 40:
+        raise ValueError("project root must have a readable Git HEAD")
+
     normalized_apps = _validate_apps(apps)
+    control_provenance: dict[str, object] | None = None
     if control_app := normalized_apps.get("control"):
-        _validate_web_control_app(control_app)
+        control_provenance = _validate_web_control_app(
+            control_app,
+            expected_commit=project_commit,
+        )
     if desktop_bridge_app := normalized_apps.get("desktopBridge"):
         _validate_desktop_bridge_app(desktop_bridge_app)
     files = sorted(set(project_files if project_files is not None else _candidate_files(repo_root)))
@@ -76,7 +87,7 @@ def prepare_release_candidate(
     source_metadata = {
         "schemaVersion": SCHEMA_VERSION,
         "releaseId": release_id,
-        "projectCommit": _git_value(repo_root, "rev-parse", "HEAD"),
+        "projectCommit": project_commit,
         "projectDirty": bool(_git_value(repo_root, "status", "--porcelain")),
         "projectSnapshotSha256": _snapshot_digest(project_snapshot),
         "projectFileCount": len(project_snapshot),
@@ -115,14 +126,15 @@ def prepare_release_candidate(
         )
         for label, app_path in normalized_apps.items():
             _add_path(archive, app_path, PurePosixPath("apps") / app_path.name)
-            app_records.append(
-                {
-                    "label": label,
-                    "bundle": app_path.name,
-                    "bundleIdentifier": _bundle_identifier(app_path),
-                    "treeSha256": _snapshot_digest(app_snapshots[label]),
-                }
-            )
+            record = {
+                "label": label,
+                "bundle": app_path.name,
+                "bundleIdentifier": _bundle_identifier(app_path),
+                "treeSha256": _snapshot_digest(app_snapshots[label]),
+            }
+            if label == "control" and control_provenance is not None:
+                record["provenance"] = control_provenance
+            app_records.append(record)
     for label, app_path in normalized_apps.items():
         if _tree_snapshot(app_path) != app_snapshots[label]:
             app_archive.unlink(missing_ok=True)
@@ -182,27 +194,78 @@ def _validate_apps(apps: Mapping[str, str | Path]) -> dict[str, Path]:
     return result
 
 
-def _validate_web_control_app(app: Path) -> None:
+def _validate_web_control_app(
+    app: Path,
+    *,
+    expected_commit: str,
+) -> dict[str, object]:
+    if app.name != CONTROL_APP_NAME:
+        raise ValueError(
+            f"control app must use the canonical Electron bundle {CONTROL_APP_NAME}"
+        )
     marker_path = app / "Contents" / "Resources" / "rag-ime-control-web-build-marker.json"
-    frontend_marker_path = app / "Contents" / "Resources" / "control-center-web" / "rag-ime-control-web-build.json"
+    resources = app / "Contents" / "Resources"
+    dist = resources / "app" / "dist"
+    frontend_marker_path = dist / CONTROL_DIST_MARKER
+    legacy_frontend = resources / "control-center-web"
+    if legacy_frontend.exists():
+        raise ValueError("control app contains the removed native/WebKit layout")
+    if not dist.is_dir():
+        raise ValueError("control app must contain the canonical Electron app/dist layout")
+    if not (dist / "index.html").is_file() or not (dist / "manifest.webmanifest").is_file() or not (dist / "assets").is_dir():
+        raise ValueError("canonical Electron app/dist layout is incomplete")
     try:
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
         frontend_marker = json.loads(frontend_marker_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         raise ValueError("control app must be a verified Web Control Center release") from exc
+    provenance = marker.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("control app is missing content-addressed provenance")
+    required_provenance = {
+        "sourceCommit": expected_commit,
+        "sourceDirty": False,
+        "frontendProduct": "paw-os",
+        "bundleId": CONTROL_BUNDLE_ID,
+        "frontendTransport": "http",
+        "browserHost": "electron-webview",
+        "browserControl": "ego-browser",
+        "browserTransport": "cdp",
+        "browserPartition": "persist:paw-browser",
+        "sameOriginControlProxy": True,
+    }
+    if any(provenance.get(key) != value for key, value in required_provenance.items()):
+        raise ValueError("control app provenance does not describe the Electron PAW OS host")
+    if any(marker.get(key) != value for key, value in required_provenance.items()):
+        raise ValueError("control app marker does not match its Electron PAW OS provenance")
+    dist_digest = content_tree_digest(dist, excluded_paths=(CONTROL_DIST_MARKER,))
     if (
-        marker.get("bundleId") != "com.rag-ime.control"
+        not isinstance(provenance.get("distTreeDigest"), str)
+        or provenance.get("distTreeDigest") != dist_digest
+        or marker.get("distTreeDigest") != dist_digest
+    ):
+        raise ValueError("control app dist tree digest does not match its content")
+    if (
+        marker.get("schemaVersion") != "rag-ime.control-build-marker.v1"
         or marker.get("ui") != "control-center-web"
         or marker.get("channel") != "release"
-        or marker.get("frontendTransport") != "native"
         or marker.get("frontendBuildChannel") != "production"
         or marker.get("forbiddenTransportModulesExcluded") is not True
+        or "swiftFallback" in marker
+        or frontend_marker.get("schemaVersion") != "rag-ime.control-web-build.v1"
         or frontend_marker.get("buildChannel") != "production"
-        or frontend_marker.get("transport") != "native"
-        or frontend_marker.get("nativeOnly") is not True
+        or frontend_marker.get("transport") != "http"
+        or frontend_marker.get("httpOnly") is not True
+        or frontend_marker.get("frontendProduct") != "paw-os"
+        or frontend_marker.get("forbiddenTransportModulesExcluded") is not True
         or frontend_marker.get("previewFixturesExcluded") is not True
+        or frontend_marker.get("sourceCommit") != expected_commit
+        or frontend_marker.get("distTreeDigest") != dist_digest
     ):
         raise ValueError("control app is not a verified Web Control Center release")
+    if _bundle_identifier(app) != CONTROL_BUNDLE_ID:
+        raise ValueError("control app has the wrong bundle identifier")
+    return dict(provenance)
 
 
 def _validate_desktop_bridge_app(app: Path) -> None:
@@ -329,6 +392,33 @@ def _snapshot_files(root: Path, files: Iterable[str]) -> list[dict[str, object]]
 def _snapshot_digest(records: list[dict[str, object]]) -> str:
     payload = json.dumps(records, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def content_tree_digest(
+    root: str | Path,
+    *,
+    excluded_paths: Iterable[str] = (),
+) -> str:
+    """Return the stable bare-hex digest used by the frontend dist marker."""
+
+    tree_root = Path(root).resolve()
+    excluded = {PurePosixPath(path).as_posix() for path in excluded_paths}
+    if not tree_root.is_dir() or tree_root.is_symlink():
+        raise ValueError(f"invalid content tree: {root}")
+    digest = hashlib.sha256()
+    for path in sorted(tree_root.rglob("*"), key=lambda item: item.relative_to(tree_root).as_posix()):
+        relative = path.relative_to(tree_root).as_posix()
+        if relative in excluded:
+            continue
+        if path.is_symlink():
+            raise ValueError(f"content tree contains a symlink: {relative}")
+        if not path.is_file():
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _tree_snapshot(root: Path, *, excluded_parts: set[str] | None = None) -> list[dict[str, object]]:

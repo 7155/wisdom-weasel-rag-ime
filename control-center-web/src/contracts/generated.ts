@@ -147,6 +147,10 @@ import type { RunnerVerificationReceiptV2 } from './generated/runner-verificatio
 import type { SandboxRunV1 } from './generated/sandbox-run.v1';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
+import type { TraceDiagnosticInspectionV1 } from './generated/trace-diagnostic-inspection.v1';
+import type { TraceDiagnosticReportListV1 } from './generated/trace-diagnostic-report-list.v1';
+import type { TraceDiagnosticReportV1 } from './generated/trace-diagnostic-report.v1';
+import type { TraceDiagnosticResultV1 } from './generated/trace-diagnostic-result.v1';
 import type { TraceEnvelopeV1 } from './generated/trace-envelope.v1';
 import type { TraceRepairReceiptV1 } from './generated/trace-repair-receipt.v1';
 import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
@@ -304,6 +308,10 @@ export type {
   SandboxRunV1,
   SessionMemoryRecallV1,
   SessionRecallEffectReceiptV1,
+  TraceDiagnosticInspectionV1,
+  TraceDiagnosticReportListV1,
+  TraceDiagnosticReportV1,
+  TraceDiagnosticResultV1,
   TraceEnvelopeV1,
   TraceRepairReceiptV1,
   TypedVerificationReceiptV1,
@@ -462,6 +470,10 @@ export interface ContractTypeMap {
   'sandbox-run.v1': SandboxRunV1;
   'session-memory-recall.v1': SessionMemoryRecallV1;
   'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;
+  'trace-diagnostic-inspection.v1': TraceDiagnosticInspectionV1;
+  'trace-diagnostic-report-list.v1': TraceDiagnosticReportListV1;
+  'trace-diagnostic-report.v1': TraceDiagnosticReportV1;
+  'trace-diagnostic-result.v1': TraceDiagnosticResultV1;
   'trace-envelope.v1': TraceEnvelopeV1;
   'trace-repair-receipt.v1': TraceRepairReceiptV1;
   'typed-verification-receipt.v1': TypedVerificationReceiptV1;

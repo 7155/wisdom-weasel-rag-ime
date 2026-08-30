@@ -108,42 +108,6 @@
 .paw-desktop-root .agent-turn__failure::before { background: var(--comp8-fail); }
 
 /* ============================================================================
- * 用户消息兜底（分离式对话流由 migrated/fx owner 重写为右侧气泡）
- * ========================================================================== */
-
-.paw-desktop-root .agent-user-message {
-  position: relative;
-  max-width: min(56ch, 92%);
-  padding: 10px 14px;
-  border: 1px solid var(--comp8-ink);
-  border-radius: 3px 10px 10px 10px;
-  color: var(--comp8-paper-hi);
-  background: var(--comp8-ink);
-  box-shadow: 3px 3px 0 rgb(23 26 33 / .12);
-  font-size: var(--paw-type-body, 15px);
-  line-height: 1.62;
-}
-/* 左上角信号角标 */
-.paw-desktop-root .agent-user-message::before {
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  width: 8px;
-  height: 8px;
-  background: var(--comp8-red);
-  content: '';
-}
-.paw-desktop-root .agent-user-message[data-status='failed'],
-.paw-desktop-root .agent-user-message[data-status='error'] {
-  border-color: var(--comp8-red);
-}
-.paw-desktop-root .agent-user-message__delivery {
-  color: rgb(255 255 255 / .72);
-  font-size: 12px;
-}
-.paw-desktop-root .agent-user-message a { color: #9db4ff; }
-
-/* ============================================================================
  * Agent 回复 = 紫罗兰信号条 + 无重卡片排版；流式光标是闪烁红方块
  * ========================================================================== */
 
@@ -307,20 +271,6 @@
   font-family: var(--font-mono);
 }
 
-/* 审批：明黄信号带 + 墨边框，动作按钮墨底 */
-.paw-desktop-root .agent-approval-block {
-  border: 1px solid var(--comp8-ink);
-  border-left: 4px solid var(--comp8-yellow);
-  border-radius: 10px;
-  background: rgb(255 255 255 / .8);
-}
-.paw-desktop-root .agent-approval-block__actions :is(button, .ui-button)[data-tone='primary'],
-.paw-desktop-root .agent-approval-block__actions :is(button, .ui-button):first-child {
-  border-radius: 7px;
-  background: var(--comp8-ink);
-  color: var(--comp8-paper-hi);
-}
-
 /* 失败：红信号条 */
 .paw-desktop-root .agent-turn__failure {
   border: 1px solid color-mix(in srgb, var(--comp8-red) 55%, transparent);
@@ -346,72 +296,6 @@
 }
 
 /* ============================================================================
- * Composer：冷白磨砂条 + 聚焦紫罗兰信号条；发送=墨方，停止=红方
- * ========================================================================== */
-
-.paw-desktop-root .paw-session-workspace__composer {
-  border-top: 1px solid var(--paw-line);
-  background: rgb(255 255 255 / .66);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  backdrop-filter: blur(20px) saturate(150%);
-}
-.paw-desktop-root .agent-composer {
-  position: relative;
-  border: 1px solid var(--comp8-ink-soft);
-  border-radius: 12px;
-  background: rgb(255 255 255 / .9);
-  box-shadow: 0 2px 10px rgb(23 26 33 / .06);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
-}
-.paw-desktop-root .agent-composer::before {
-  position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: -1px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--comp8-violet);
-  content: '';
-  opacity: 0;
-  transform: scaleY(.4);
-  transition: opacity 150ms ease, transform 180ms var(--comp8-spring);
-}
-.paw-desktop-root .agent-composer:focus-within {
-  border-color: var(--comp8-ink);
-  box-shadow: 0 4px 18px rgba(48, 30, 90, .14), 3px 3px 0 color-mix(in srgb, var(--comp8-violet) 55%, transparent);
-}
-.paw-desktop-root .agent-composer:focus-within::before {
-  opacity: 1;
-  transform: scaleY(1);
-}
-.paw-desktop-root .agent-composer textarea {
-  color: var(--comp8-ink);
-  caret-color: var(--comp8-red);
-}
-.paw-desktop-root .agent-composer__actions :is(button[type='submit'], [data-action='send']) {
-  border-radius: 8px;
-  background: var(--comp8-ink);
-  color: var(--comp8-paper-hi);
-  transition: transform 140ms var(--comp8-spring), background-color 120ms ease;
-}
-.paw-desktop-root .agent-composer__actions :is(button[type='submit'], [data-action='send']):hover {
-  transform: translateY(-1px);
-  background: color-mix(in srgb, var(--comp8-ink) 86%, #fff);
-}
-.paw-desktop-root .agent-composer__stop {
-  border-radius: 8px;
-  border: 1px solid var(--comp8-red);
-  color: var(--comp8-red);
-}
-.paw-desktop-root .agent-composer__stop:hover {
-  background: var(--comp8-red);
-  color: var(--comp8-paper-hi);
-}
-.paw-desktop-root .agent-composer--pending .agent-composer__actions :is(button[type='submit'], [data-action='send']) {
-  opacity: .55;
-}
-
-/* ============================================================================
  * 卫星窗口（UR-056）：只有对话内容；3px 伙伴色信号带；新消息边缘发光
  * ========================================================================== */
 
@@ -429,30 +313,6 @@
   font-size: 13px;
   line-height: 1.5;
 }
-.paw-desktop-root .paw-os-satellite__hero {
-  grid-template-columns: 26px minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--paw-line-soft);
-  background: transparent;
-}
-.paw-desktop-root .paw-os-satellite__hero > span:first-child {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid var(--paw-satellite-color, var(--comp8-violet));
-  background: transparent;
-  color: var(--paw-satellite-color, var(--comp8-violet));
-}
-.paw-desktop-root .paw-os-satellite__hero h2 {
-  font-size: 13px;
-  letter-spacing: 0;
-}
-.paw-desktop-root .paw-os-satellite__hero small {
-  color: var(--paw-satellite-color, var(--comp8-violet));
-  letter-spacing: .08em;
-}
-
 /* 卫星窗消息时间线：超紧凑，伙伴消息带小色环标记 */
 .paw-desktop-root .paw-participant-chat__timeline {
   padding: 10px 12px;
@@ -479,14 +339,6 @@
   background: var(--paw-satellite-color, var(--comp8-violet));
   content: '';
 }
-.paw-desktop-root .paw-participant-chat__timeline article[data-from='user'] {
-  border-color: var(--comp8-ink);
-  background: var(--comp8-ink);
-  color: var(--comp8-paper-hi);
-}
-.paw-desktop-root .paw-participant-chat__timeline article[data-from='user']::before {
-  background: var(--comp8-red);
-}
 .paw-desktop-root .paw-participant-chat__timeline article > header {
   color: var(--paw-muted);
   font-size: 12px;
@@ -503,19 +355,6 @@
 .paw-desktop-root .paw-participant-chat__activity-group > summary {
   color: var(--paw-muted);
   font-size: 12px;
-}
-
-/* 新消息到达：伙伴色边缘发光脉冲（替换默认 accent 脉冲） */
-.paw-window-shell[data-collaboration-role='satellite'][data-flow-state='arrival'] .paw-window {
-  animation: paw-comp8-satellite-arrival 880ms var(--paw-ease-out) both;
-}
-@keyframes paw-comp8-satellite-arrival {
-  0% {
-    box-shadow:
-      0 0 0 3px color-mix(in srgb, var(--paw-satellite-color, var(--comp8-violet)) 55%, transparent),
-      0 26px 70px -10px rgba(48, 30, 90, .5);
-  }
-  100% { box-shadow: var(--paw-shadow); }
 }
 
 /* 进程终端卫星窗：统一走共享 code 色对（同一石墨终端，不另造深色面） */
@@ -543,8 +382,5 @@
   .paw-desktop-root .agent-activity-row[data-status='active'],
   .paw-desktop-root .agent-activity-row[data-status='running'] .agent-activity-row__icon {
     animation: none !important;
-  }
-  .paw-window-shell[data-collaboration-role='satellite'][data-flow-state='arrival'] .paw-window {
-    animation: paw-window-flow-reduced-fade 240ms ease both !important;
   }
 }

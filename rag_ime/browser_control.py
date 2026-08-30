@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import plistlib
@@ -633,7 +634,21 @@ class BrowserControlService:
             },
         }
 
-    def start_managed(self) -> dict[str, object]:
+    def start_managed(
+        self,
+        *,
+        current_commit: str = "",
+        expected_commit: str = "",
+    ) -> dict[str, object]:
+        commit_pair = self._caller_commit_pair(
+            current_commit=current_commit,
+            expected_commit=expected_commit,
+        )
+        if commit_pair is None:
+            raise BrowserControlError(
+                "Browser host source commit does not match the caller current/expected commit"
+            )
+        current_source_commit, expected_source_commit = commit_pair
         current = self.managed_status()
         if current["running"]:
             self._sync_direct_browser()
@@ -643,7 +658,10 @@ class BrowserControlService:
                 **self.managed_status(),
                 "summary": "PAW Browser 已在运行",
             }
-        host_executable = self._paw_browser_host_executable()
+        host_executable = self._paw_browser_host_executable(
+            current_commit=current_source_commit,
+            expected_commit=expected_source_commit,
+        )
         if host_executable is None:
             raise BrowserControlError(
                 "PAW 同窗 Browser 宿主未安装；不会启动外部 Chrome"
@@ -1545,16 +1563,28 @@ class BrowserControlService:
             raise BrowserControlError("browser screenshot exceeds the 8 MiB limit")
         return mime, data
 
-    def _paw_browser_host_executable(self) -> Path | None:
-        candidates = [
-            os.environ.get("RAG_IME_PAW_BROWSER_HOST_APP"),
-            str(Path.home() / "Applications" / "RagImeControl.app"),
-            "/Applications/RagImeControl.app",
-        ]
-        for candidate in candidates:
-            if not candidate:
-                continue
-            application = Path(candidate).expanduser()
+    def _paw_browser_host_executable(
+        self,
+        *,
+        current_commit: str = "",
+        expected_commit: str = "",
+    ) -> Path | None:
+        commit_pair = self._caller_commit_pair(
+            current_commit=current_commit,
+            expected_commit=expected_commit,
+        )
+        if commit_pair is None:
+            return None
+        _current_source_commit, expected_source_commit = commit_pair
+
+        # The production selector intentionally ignores RAG_IME_PAW_BROWSER_HOST_APP.
+        # A caller-controlled app path can otherwise make an old WebKit/native
+        # bundle win over the canonical installed Electron host.
+        candidates = (
+            Path.home() / "Applications" / "RagImeControl.app",
+            Path("/Applications/RagImeControl.app"),
+        )
+        for application in candidates:
             marker_path = (
                 application
                 / "Contents"
@@ -1568,9 +1598,13 @@ class BrowserControlService:
                     info = plistlib.load(handle)
             except (OSError, ValueError, plistlib.InvalidFileException):
                 continue
-            if not (
-                marker.get("ui") == "control-center-web"
-                and marker.get("frontendTransport") == "native"
+            if not isinstance(marker, Mapping) or not isinstance(info, Mapping):
+                continue
+            if not self._canonical_browser_marker(
+                application,
+                marker,
+                info,
+                expected_commit=expected_source_commit,
             ):
                 continue
             executable_name = str(info.get("CFBundleExecutable") or "").strip()
@@ -1578,6 +1612,177 @@ class BrowserControlService:
             if executable_name and executable.is_file():
                 return executable
         return None
+
+    def _canonical_browser_marker(
+        self,
+        application: Path,
+        marker: Mapping[str, object],
+        info: Mapping[str, object],
+        *,
+        expected_commit: str,
+    ) -> bool:
+        required_marker = {
+            "schemaVersion": "rag-ime.control-build-marker.v1",
+            "bundleId": "com.rag-ime.control",
+            "ui": "control-center-web",
+            "channel": "release",
+            "frontendTransport": "http",
+            "frontendBuildChannel": "production",
+            "frontendProduct": "paw-os",
+            "forbiddenTransportModulesExcluded": True,
+            "browserHost": "electron-webview",
+            "browserControl": "ego-browser",
+            "browserTransport": "cdp",
+            "browserPartition": "persist:paw-browser",
+            "sameOriginControlProxy": True,
+        }
+        if any(marker.get(key) != value for key, value in required_marker.items()):
+            return False
+        if info.get("CFBundleIdentifier") != "com.rag-ime.control":
+            return False
+        if "swiftFallback" in marker:
+            return False
+        if marker.get("gitDirty") is not False:
+            return False
+        if marker.get("sourceDirty") is not False:
+            return False
+
+        if any(
+            str(marker.get(key) or "").strip().lower() != expected_commit
+            for key in ("gitCommit", "sourceCommit")
+        ):
+            return False
+
+        provenance = marker.get("provenance")
+        if not isinstance(provenance, Mapping):
+            return False
+        required_provenance = {
+            "sourceCommit": expected_commit,
+            "sourceDirty": False,
+            "frontendProduct": "paw-os",
+            "bundleId": "com.rag-ime.control",
+            "frontendTransport": "http",
+            "browserHost": "electron-webview",
+            "browserControl": "ego-browser",
+            "browserTransport": "cdp",
+            "browserPartition": "persist:paw-browser",
+            "sameOriginControlProxy": True,
+        }
+        if any(provenance.get(key) != value for key, value in required_provenance.items()):
+            return False
+
+        dist = application / "Contents" / "Resources" / "app" / "dist"
+        if not self._valid_browser_dist(dist, expected_commit=expected_commit):
+            return False
+        computed_digest = self._dist_tree_sha256(dist)
+        declared_digest = self._normalize_sha256(marker.get("distTreeDigest"))
+        provenance_digest = self._normalize_sha256(provenance.get("distTreeDigest"))
+        return bool(declared_digest) and declared_digest == computed_digest == provenance_digest
+
+    def _valid_browser_dist(self, dist: Path, *, expected_commit: str) -> bool:
+        if not dist.is_dir() or dist.is_symlink():
+            return False
+        if not (dist / "index.html").is_file():
+            return False
+        if not (dist / "manifest.webmanifest").is_file():
+            return False
+        if not (dist / "assets").is_dir():
+            return False
+        marker_path = dist / "rag-ime-control-web-build.json"
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if not isinstance(marker, Mapping):
+            return False
+        if marker.get("schemaVersion") != "rag-ime.control-web-build.v1":
+            return False
+        if marker.get("buildChannel") != "production":
+            return False
+        if marker.get("transport") != "http":
+            return False
+        if marker.get("frontendProduct") != "paw-os":
+            return False
+        if marker.get("nativeOnly") is not False:
+            return False
+        if marker.get("httpOnly") is not True:
+            return False
+        if marker.get("forbiddenTransportModulesExcluded") is not True:
+            return False
+        if marker.get("previewFixturesExcluded") is not True:
+            return False
+        inner_commit = str(marker.get("sourceCommit") or "").strip().lower()
+        inner_digest = self._normalize_sha256(marker.get("distTreeDigest"))
+        return (
+            bool(inner_commit)
+            and inner_commit == expected_commit
+            and bool(inner_digest)
+            and inner_digest == self._dist_tree_sha256(dist)
+        )
+
+    @staticmethod
+    def _normalize_sha256(value: object) -> str:
+        digest = str(value or "").strip().lower()
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            return ""
+        return digest
+
+    @classmethod
+    def _dist_tree_sha256(cls, dist: Path) -> str:
+        digest = hashlib.sha256()
+        try:
+            paths = sorted(
+                dist.rglob("*"),
+                key=lambda path: path.relative_to(dist).as_posix(),
+            )
+            for path in paths:
+                if path.is_symlink():
+                    return ""
+                if path.is_file() and path.name != "rag-ime-control-web-build.json":
+                    digest.update(path.relative_to(dist).as_posix().encode("utf-8"))
+                    digest.update(b"\0")
+                    digest.update(path.read_bytes())
+                    digest.update(b"\0")
+        except OSError:
+            return ""
+        return digest.hexdigest()
+
+    @classmethod
+    def _caller_commit_pair(
+        cls,
+        *,
+        current_commit: str,
+        expected_commit: str,
+    ) -> tuple[str, str] | None:
+        current = str(current_commit or "").strip().lower() or cls._repository_commit()
+        expected = str(expected_commit or "").strip().lower() or current
+        if not cls._is_commit(current) or not cls._is_commit(expected) or current != expected:
+            return None
+        return current, expected
+
+    @staticmethod
+    def _is_commit(value: str) -> bool:
+        return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
+
+    @staticmethod
+    def _repository_commit() -> str:
+        source_root = Path(
+            os.environ.get("RAG_IME_SOURCE_ROOT")
+            or Path(__file__).resolve().parents[1]
+        ).expanduser()
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source_root,
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        commit = str(result.stdout or "").strip().lower()
+        return commit if result.returncode == 0 and BrowserControlService._is_commit(commit) else ""
 
     @staticmethod
     def _pid_running(pid: int) -> bool:

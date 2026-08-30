@@ -29,6 +29,7 @@ _RUNTIME_KEYS = frozenset(
 )
 _MODEL_ROUTE_IDS = (
     "primary",
+    "traceDiagnostic",
     "toolAgent",
     "subagent",
     "roomCoordinator",
@@ -242,7 +243,12 @@ class AgentConfigurationStore:
             "capabilityDisclosure",
             {"projectPreferences": {}},
         )
+        had_trace_diagnostic_route = isinstance(
+            configuration.get("modelRouting"), Mapping
+        ) and "traceDiagnostic" in configuration["modelRouting"]
         _ensure_model_routing(configuration)
+        if not had_trace_diagnostic_route:
+            changed_keys.append("modelRouting.traceDiagnostic")
         previous = str(defaults.get("roleId") or "")
         canonical = canonical_agent_role_id(previous)
         if canonical != previous:
@@ -798,6 +804,10 @@ def _default_model_routing() -> dict[str, dict[str, str]]:
         "primary": {
             "modelProfile": "openai-codex/gpt-5.6-luna",
             "thinkingLevel": "max",
+        },
+        "traceDiagnostic": {
+            "modelProfile": "openai-codex/gpt-5.6-sol",
+            "thinkingLevel": "high",
         },
         "toolAgent": {
             "modelProfile": "openai-codex/gpt-5.6-luna",

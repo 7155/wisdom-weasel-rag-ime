@@ -154,6 +154,256 @@ class AgentServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_trace_diagnostic_report_freezes_read_only_session_and_finalizes_structured_result(self) -> None:
+        session = self.service.create_session(
+            {
+                "title": "Trace diagnostic",
+                "mode": "coordinator",
+                "executionMode": "read_only",
+            }
+        )["session"]
+        result = {
+            "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
+            "summary": "没有权威完成回执，结论保持未知。",
+            "hardGates": [
+                {
+                    "gateId": "task_completion",
+                    "status": "unknown",
+                    "reason": "缺少回执。",
+                    "evidenceIds": [],
+                }
+            ],
+            "judgeScores": [],
+            "findings": [],
+        }
+        public_snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "idle",
+            "items": [
+                {
+                    "role": "assistant",
+                    "status": "completed",
+                    "timelineSequence": 1,
+                    "blocks": [
+                        {
+                            "status": "completed",
+                            "data": {
+                                "text": "--- TRACE_DIAGNOSTIC_RESULT_V1 ---\n"
+                                + json.dumps(result, ensure_ascii=False)
+                                + "\n--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---"
+                            },
+                        }
+                    ],
+                }
+            ],
+            "liveEvents": [],
+        }
+
+        with patch.object(self.service, "messages", return_value=public_snapshot):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": session["id"],
+                    "title": "持久化网页报告",
+                    "targets": [
+                        {"kind": "session", "id": session["id"], "title": "Trace diagnostic"}
+                    ],
+                }
+            )
+            completed = self.service.finalize_trace_diagnostic_report(
+                report["reportId"],
+                {"expectedRevision": report["revision"]},
+            )
+
+        self.assertEqual(report["status"], "generating")
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["result"], result)
+        self.assertEqual(
+            self.service.list_trace_diagnostic_reports()["items"][0]["reportId"],
+            report["reportId"],
+        )
+
+    def test_trace_diagnostic_finalize_requires_exact_revision(self) -> None:
+        session = self.service.create_session(
+            {
+                "title": "Strict Trace diagnostic",
+                "mode": "coordinator",
+                "executionMode": "read_only",
+            }
+        )["session"]
+        snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "idle",
+            "items": [],
+            "liveEvents": [],
+        }
+        with patch.object(self.service, "messages", return_value=snapshot):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": session["id"],
+                    "title": "Strict report",
+                    "targets": [{"kind": "session", "id": session["id"], "title": "Strict"}],
+                }
+            )
+        for payload in ({}, {"expectedRevision": 0}, {"expectedRevision": "1"}):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, "requires expectedRevision"):
+                    self.service.finalize_trace_diagnostic_report(report["reportId"], payload)
+
+    def test_trace_diagnostic_inspection_rejects_malformed_eval_projection(self) -> None:
+        def consume_eval_reader(**kwargs):
+            kwargs["eval_reader"]("trace:malformed")
+            raise AssertionError("malformed Eval projection should have failed")
+
+        with (
+            patch.object(self.service, "observation_evals", return_value={"items": [{}, "bad"]}),
+            patch("rag_ime.agent_service.inspect_trace_targets", side_effect=consume_eval_reader),
+        ):
+            with self.assertRaisesRegex(ValueError, "Eval items must be objects"):
+                self.service.trace_diagnostic_inspection(
+                    {"targets": [{"kind": "run", "id": "run:1", "title": "Run"}]}
+                )
+
+    def test_faulted_diagnostic_session_persists_failed_report_with_redacted_reason(self) -> None:
+        session = self.service.create_session(
+            {
+                "title": "Faulted trace diagnostic",
+                "mode": "coordinator",
+                "executionMode": "read_only",
+            }
+        )["session"]
+        idle_snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "idle",
+            "items": [],
+            "liveEvents": [],
+        }
+        faulted_snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "faulted",
+            "items": [],
+            "liveEvents": [
+                {
+                    "eventType": "turn_failed",
+                    "payload": {
+                        "error": (
+                            "Pi exited while reading /Users/undo/private/session.json "
+                            "Authorization: sk-faulted-secret"
+                        )
+                    },
+                }
+            ],
+        }
+
+        with patch.object(self.service, "messages", side_effect=[idle_snapshot, faulted_snapshot]):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": session["id"],
+                    "title": "故障报告",
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": session["id"],
+                            "title": "Faulted trace diagnostic",
+                        }
+                    ],
+                }
+            )
+            failed = self.service.finalize_trace_diagnostic_report(
+                report["reportId"],
+                {"expectedRevision": report["revision"]},
+            )
+
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("faulted", failed["failureReason"])
+        self.assertNotIn("/Users/undo", failed["failureReason"])
+        self.assertNotIn("sk-faulted-secret", failed["failureReason"])
+        self.assertIsNone(failed["result"])
+
+    def test_diagnostic_terminal_failure_aliases_persist_failed_reports(self) -> None:
+        for terminal_status in ("failed", "error", "cancelled", "canceled"):
+            with self.subTest(terminal_status=terminal_status):
+                session = self.service.create_session(
+                    {
+                        "title": f"{terminal_status} trace diagnostic",
+                        "mode": "coordinator",
+                        "executionMode": "read_only",
+                    }
+                )["session"]
+                idle_snapshot = {
+                    "ok": True,
+                    "sessionId": session["id"],
+                    "status": "idle",
+                    "items": [],
+                    "liveEvents": [],
+                }
+                terminal_snapshot = {
+                    "ok": True,
+                    "sessionId": session["id"],
+                    "status": terminal_status,
+                    "items": [],
+                    "liveEvents": [],
+                }
+                with patch.object(
+                    self.service,
+                    "messages",
+                    side_effect=[idle_snapshot, terminal_snapshot],
+                ):
+                    report = self.service.create_trace_diagnostic_report(
+                        {
+                            "diagnosticSessionId": session["id"],
+                            "title": f"{terminal_status} report",
+                            "targets": [
+                                {
+                                    "kind": "session",
+                                    "id": session["id"],
+                                    "title": f"{terminal_status} trace diagnostic",
+                                }
+                            ],
+                        }
+                    )
+                    failed = self.service.finalize_trace_diagnostic_report(
+                        report["reportId"],
+                        {"expectedRevision": report["revision"]},
+                    )
+
+                self.assertEqual(failed["status"], "failed")
+                self.assertIn(terminal_status, failed["failureReason"])
+                self.assertIsNone(failed["result"])
+
+    def test_trace_diagnostic_inspection_rejects_non_object_nested_target(self) -> None:
+        with patch("rag_ime.agent_service.inspect_trace_targets") as inspector:
+            with self.assertRaisesRegex(ValueError, "targets.*objects"):
+                self.service.trace_diagnostic_inspection(
+                    {
+                        "targets": [
+                            {"kind": "session", "id": "session:a", "title": "A"},
+                            "not-a-target",
+                        ]
+                    }
+                )
+        inspector.assert_not_called()
+
+    def test_trace_diagnostic_inspection_rejects_malformed_nested_trace_ids(self) -> None:
+        with patch("rag_ime.agent_service.inspect_trace_targets") as inspector:
+            with self.assertRaisesRegex(ValueError, "traceIds.*strings"):
+                self.service.trace_diagnostic_inspection(
+                    {
+                        "targets": [
+                            {
+                                "kind": "session",
+                                "id": "session:a",
+                                "title": "A",
+                                "traceIds": [{"not": "a string"}],
+                            }
+                        ]
+                    }
+                )
+        inspector.assert_not_called()
+
     def test_background_job_recovery_publishes_after_event_projection_is_ready(self) -> None:
         recovered_db = self.root / "background-recovery.sqlite"
         session_store = AgentSessionStore(recovered_db)
@@ -2490,6 +2740,54 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(explicit["modelProfile"], "openai-codex/gpt-5.4")
         self.assertEqual(explicit["toolProfileVersion"], "subagent-readonly-v1")
         self.assertEqual(explicit["roleBookRevisionId"], "")
+
+    def test_trace_diagnostic_sessions_read_the_dedicated_route_at_creation_only(self) -> None:
+        initial = self.service.configuration()["configuration"]
+        configured = self.service.update_configuration(
+            {
+                "expectedRevision": initial["revision"],
+                "changes": {
+                    "modelRouting.traceDiagnostic": {
+                        "modelProfile": "openai-codex/gpt-5.6-terra",
+                        "thinkingLevel": "medium",
+                    },
+                },
+                "updatedBy": "models-ui",
+            }
+        )
+
+        existing = self.service.create_session(
+            {
+                "title": "Trace diagnostic existing",
+                "executionMode": "read_only",
+                "_modelRoute": "traceDiagnostic",
+            }
+        )["session"]
+
+        self.service.update_configuration(
+            {
+                "expectedRevision": configured["configuration"]["revision"],
+                "changes": {
+                    "modelRouting.traceDiagnostic": {
+                        "modelProfile": "openai-codex/gpt-5.6-sol",
+                        "thinkingLevel": "high",
+                    },
+                },
+                "updatedBy": "models-ui",
+            }
+        )
+        new_session = self.service.create_session(
+            {
+                "title": "Trace diagnostic new",
+                "executionMode": "read_only",
+                "_modelRoute": "traceDiagnostic",
+            }
+        )["session"]
+
+        self.assertEqual(existing["modelProfile"], "openai-codex/gpt-5.6-terra")
+        self.assertEqual(existing["thinkingLevel"], "medium")
+        self.assertEqual(new_session["modelProfile"], "openai-codex/gpt-5.6-sol")
+        self.assertEqual(new_session["thinkingLevel"], "high")
 
     def test_service_depends_on_runtime_driver_contract_not_pi_manager(self) -> None:
         factory = _GatewayRuntimeFactory(self.root)

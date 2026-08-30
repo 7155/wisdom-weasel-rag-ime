@@ -34,18 +34,21 @@ context archives are intentionally not included.
 
 ## Checkout And Dependencies
 
-The managed runtime is built from a separate, source-pinned Pi checkout. Keep
-the two repositories next to each other:
+The managed runtime is built from a separate, source-pinned Pi worktree. The
+accepted reference is Pi `0.84.2` at commit
+`06af63eb41e9df4145d2c202d9f26e4756f89adb`; it must be detached, clean, and
+contain the canonical `integrations/rag-ime-runtime-host` tree. Keep the path
+caller-supplied (a common layout is `../.worktrees/pi-084-plugin-runtime-e7c11266`):
+the installer never guesses a neighbouring `../pi` checkout.
 
 ```bash
-git clone https://github.com/7155/personal-agent-workbench.git
-git clone https://github.com/7155/pi.git
+# Run these commands from the PAW checkout root.
+PI_REPO=../pi-source
+PI_WORKTREE=../.worktrees/pi-084-plugin-runtime-e7c11266
+git clone https://github.com/7155/pi.git "$PI_REPO"
+git -C "$PI_REPO" worktree add --detach "$PI_WORKTREE" 06af63eb41e9df4145d2c202d9f26e4756f89adb
+npm --prefix "$PI_WORKTREE" ci
 
-cd pi
-git checkout 4ddb155fefc7b262c0cc1aec5c6931b2a9a5fa5e
-npm ci
-
-cd ../personal-agent-workbench
 uv sync --frozen
 pnpm --dir control-center-web install --frozen-lockfile
 ```
@@ -68,7 +71,7 @@ scripts/build_voice_input.sh build
 scripts/build_desktop_bridge.sh build
 
 python3 scripts/build_managed_pi_runtime_v2.py \
-  --pi-worktree ../pi \
+  --pi-worktree "$PI_WORKTREE" \
   --output build/managed-pi-runtime/release-check \
   --force
 
@@ -118,7 +121,7 @@ scripts/build_patched_squirrel.sh build
 scripts/install_product_stack.sh \
   --include-squirrel \
   --include-pi \
-  --pi-worktree ../pi
+  --pi-worktree "$PI_WORKTREE"
 ```
 
 For an existing installation that should keep its current Squirrel and skip an
@@ -127,7 +130,7 @@ optional local MLX predictor:
 ```bash
 scripts/install_product_stack.sh \
   --include-pi \
-  --pi-worktree ../pi \
+  --pi-worktree "$PI_WORKTREE" \
   --skip-mlx
 ```
 
@@ -193,7 +196,7 @@ managed Pi generations:
 ```bash
 scripts/install_product_stack.sh \
   --include-pi \
-  --pi-worktree ../pi \
+  --pi-worktree "$PI_WORKTREE" \
   --skip-mlx
 
 python3 scripts/check_installed_product_components.py --require-current

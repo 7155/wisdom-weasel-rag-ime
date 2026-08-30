@@ -1568,7 +1568,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 
 .paw-desktop-root :is(
-  .paw-os-satellite__hero h2,
   .paw-files-preview > header h2,
   .paw-library-detail > header strong,
   .paw-agent-settings__section > header h2,
@@ -1588,8 +1587,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-app-toolbar h1,
   .paw-page-frame > header h1,
   .paw-suite-hero h2,
-  .paw-workflow > header h2,
-  .paw-os-satellite__hero h2
+  .paw-workflow > header h2
 ) {
   display: -webkit-box;
   overflow: hidden;
@@ -1637,7 +1635,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-room-governance small,
   .paw-files-tree small,
   .paw-files-preview > header small,
-  .paw-os-satellite__hero small,
   .paw-participant-chat__timeline article > header,
   .paw-participant-chat__activity-group > summary
 ) {
@@ -1653,7 +1650,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-suite-hero p,
   .paw-library-detail__description,
   .paw-memory-detail > p,
-  .paw-os-satellite__empty p,
   .paw-os-satellite__document-body p,
   .paw-os-satellite__task-body p,
   .paw-os-satellite__entity-body p,
@@ -1681,7 +1677,6 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-suite-hero p,
   .paw-library-detail__description,
   .paw-memory-detail > p,
-  .paw-os-satellite__empty p,
   .paw-os-satellite__document-body p,
   .paw-os-satellite__task-body p,
   .paw-os-satellite__entity-body p,

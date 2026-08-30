@@ -26,6 +26,10 @@ class ControlPathId(str, Enum):
     OBSERVABILITY_SNAPSHOT = "observability.snapshot"
     OBSERVABILITY_EVENTS = "observability.events"
     OBSERVABILITY_TRACE_GET = "observability.trace.get"
+    OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST = "observability.traceDiagnosticReports.list"
+    OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET = "observability.traceDiagnosticReport.get"
+    OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_CREATE = "observability.traceDiagnosticReports.create"
+    OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_FINALIZE = "observability.traceDiagnosticReport.finalize"
     OBSERVABILITY_EVALS_LIST = "observability.evals.list"
     OBSERVABILITY_EVAL_SUITES_LIST = "observability.evalSuites.list"
     OBSERVABILITY_SANDBOX_RUNS_LIST = "observability.sandboxRuns.list"
@@ -700,6 +704,7 @@ _OBSERVATION_FILTER_QUERY = {
     "status",
 }
 _OBSERVABILITY_TRACE = {"traceId"}
+_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT = {"reportId"}
 _OBSERVABILITY_SANDBOX_RUN = {"sandboxRunId"}
 _OBSERVABILITY_TRACE_REPAIR_RECEIPT = {"repairReceiptId"}
 _EVAL_SCHEDULE = {"scheduleId"}
@@ -741,6 +746,14 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.OBSERVABILITY_SNAPSHOT, ControlMethod.GET, "/api/observability/snapshot", "/control/v1/observability/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit", "beforeSequence", *_OBSERVATION_FILTER_QUERY}),
         _route(ControlPathId.OBSERVABILITY_EVENTS, ControlMethod.GET, "/api/observability/events", "/control/v1/observability/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, query={*_LAST_EVENT_QUERY, *_OBSERVATION_FILTER_QUERY}, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.OBSERVABILITY_TRACE_GET, ControlMethod.GET, "/api/observability/traces/{traceId}", "/control/v1/observability/traces/{traceId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_OBSERVABILITY_TRACE, query={"limit", "beforeSequence"}),
+        # Diagnostic reports contain frozen transcript-derived evidence and
+        # remain a local Control Center projection.  They intentionally have
+        # no Gateway target: a remote Agent Gateway may inspect ordinary
+        # observability, but must not enumerate or retrieve these reports.
+        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORTS_LIST, ControlMethod.GET, "/api/observability/trace-diagnostic-reports", None, query={"limit"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_GET, ControlMethod.GET, "/api/observability/trace-diagnostic-reports/{reportId}", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT),
+        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_CREATE, ControlMethod.POST, "/api/observability/trace-diagnostic-reports", None, body={"diagnosticSessionId", "title", "targets"}, required_body={"diagnosticSessionId", "targets"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT_FINALIZE, ControlMethod.POST, "/api/observability/trace-diagnostic-reports/{reportId}/finalize", None, params=_OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT, body={"expectedRevision"}, required_body={"expectedRevision"}),
         _route(ControlPathId.OBSERVABILITY_EVALS_LIST, ControlMethod.GET, "/api/observability/evals", "/control/v1/observability/evals", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"traceId", "limit"}, required_query={"traceId"}),
         _route(ControlPathId.OBSERVABILITY_EVAL_SUITES_LIST, ControlMethod.GET, "/api/observability/eval-suites", "/control/v1/observability/eval-suites", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit"}),
         _route(ControlPathId.OBSERVABILITY_SANDBOX_RUNS_LIST, ControlMethod.GET, "/api/observability/sandbox-runs", "/control/v1/observability/sandbox-runs", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit"}),
@@ -771,7 +784,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_CONFIGURATION_GET, ControlMethod.GET, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_CONFIGURATION_UPDATE, ControlMethod.POST, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"expectedRevision", "changes", "updatedBy"}, required_body={"expectedRevision", "changes"}, remote_body={"expectedRevision", "changes"}),
         _route(ControlPathId.AGENT_SESSIONS_LIST, ControlMethod.GET, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "includeInternal", "limit", "beforeUpdatedAtMs", "beforeId"}, remote_query={"includeArchived", "limit", "beforeUpdatedAtMs", "beforeId"}),
-        _route(ControlPathId.AGENT_SESSIONS_CREATE, ControlMethod.POST, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "dangerousModeConfirmation"}, remote_body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion"}, remote_body_values={"mode": {"assistant"}}),
+        _route(ControlPathId.AGENT_SESSIONS_CREATE, ControlMethod.POST, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "_modelRoute", "toolProfileVersion", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "dangerousModeConfirmation"}, remote_body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion"}, remote_body_values={"mode": {"assistant"}}),
         _route(ControlPathId.AGENT_SESSION_SNAPSHOT, ControlMethod.GET, "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"view"}),
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workspace", None, params=_SESSION, query={"path", "depth", "limit"}),
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_READ, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workspace-file", None, params=_SESSION, query={"path", "offset", "limit"}, required_query={"path"}),

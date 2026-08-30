@@ -7,8 +7,9 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import unquote, urlsplit
 
 from .agent_capability_catalog import build_capability_catalog
@@ -362,6 +363,26 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "output": "Session/turn 的受控摘要、证据引用与控制中心跳转锚点",
         "does": "在持久化 Session 索引中做只读检索，不创建 Todo 或过程文档。",
         "operations": ("search",),
+        "alwaysAvailable": True,
+        "resultPresentation": "citation",
+    },
+    {
+        "id": "trace_diagnostics",
+        "domain": "agents",
+        "displayName": "Trace 诊断取证",
+        "description": "按最多 12 个 Session、Room 或运行读取公开 Runtime 记录，返回稳定证据 ID、关联 Trace 与八维客观评分输入",
+        "when": (
+            "任务需要诊断一个或多个 Agent 运行，比较失败、上下文、协作、Memory/RAG 或效率证据",
+            "Trace Agent Skill 需要读取原对话，而不是只依赖 Session 搜索摘要",
+        ),
+        "notFor": (
+            "修改代码、配置、Prompt、评测标签或生产数据",
+            "读取私密思维、原始 Provider context、密钥、完整 Tool 参数或机器 transcript 路径",
+        ),
+        "input": "1 到 12 个有 kind、id、title 与可选 traceIds 的诊断对象",
+        "output": "有界时间线、canonical evidence ID、Trace/Eval 引用、硬门禁和八维确定性指标；缺失项明确为不可评分",
+        "does": "从 Runtime owner 读取并冻结多对象诊断切片；AI Judge 不能覆盖确定性指标。",
+        "operations": ("inspect",),
         "alwaysAvailable": True,
         "resultPresentation": "citation",
     },
@@ -1791,6 +1812,27 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "suiteRevision": {"type": "string", "minLength": 1, "maxLength": 120},
     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
     "includeArchived": {"type": "boolean"},
+    "targets": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 12,
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "id", "title"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["session", "room", "run"]},
+                "id": {"type": "string", "minLength": 1, "maxLength": 240},
+                "title": {"type": "string", "maxLength": 240},
+                "traceIds": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 240},
+                },
+            },
+        },
+    },
     "workDocument": {
         "type": "object",
         "additionalProperties": False,
@@ -2287,6 +2329,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "runId", "batchId", "targetRunId", "message", "artifactId", "limit",
     ),
     "session_search": ("query", "limit", "includeArchived"),
+    "trace_diagnostics": ("targets",),
     "plugins": (
         "draftId", "manifest", "files", "sourcePath", "validationToken", "pluginId", "enable"
     ),
@@ -2358,6 +2401,7 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("memory", "explain"): ("targetId",),
     ("memory", "review"): ("draftId",),
     ("agent_role_book", "propose_revision"): ("updates",),
+    ("trace_diagnostics", "inspect"): ("targets",),
     ("models", "profile_preview"): ("slot",),
     ("models", "profile_apply"): ("slot",),
     ("models", "profile_rollback"): ("sourceApprovalId",),
@@ -2777,6 +2821,13 @@ def _normalize_runtime_tool_call(
     }
 
 
+class TraceDiagnosticsService(Protocol):
+    def trace_diagnostic_inspection(
+        self,
+        payload: Mapping[str, object],
+    ) -> Mapping[str, object]: ...
+
+
 class ControlToolGateway:
     """Capability-scoped gateway over the existing control-plane services.
 
@@ -2811,6 +2862,7 @@ class ControlToolGateway:
         artifact_projector: AgentToolArtifactProjector | None = None,
         work_documents: object | None = None,
         sandbox_connector: object | None = None,
+        trace_diagnostics: TraceDiagnosticsService | None = None,
         workflow_publisher: Callable[[str, str], object] | None = None,
         memory_enabled_provider: Callable[[], bool] | None = None,
     ) -> None:
@@ -2835,6 +2887,7 @@ class ControlToolGateway:
         self.artifact_projector = artifact_projector
         self.work_documents = work_documents
         self.sandbox_connector = sandbox_connector
+        self.trace_diagnostics = trace_diagnostics
         self.workflow_publisher = workflow_publisher
         sessions_db_path = getattr(sessions, "db_path", "")
         self._memory_enabled_provider = memory_enabled_provider or (
@@ -3356,6 +3409,7 @@ class ControlToolGateway:
             "configuration": self._configuration,
             "agents": self._agents,
             "session_search": self._session_search,
+            "trace_diagnostics": self._trace_diagnostics,
             "browser": self._browser,
             "todo": self._todo,
             "agent_goal": self._agent_goal,
@@ -3829,6 +3883,22 @@ class ControlToolGateway:
                 "工具输出、绝对路径或私密思维。"
             ),
         }
+
+    def _trace_diagnostics(
+        self,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        service = self.trace_diagnostics
+        if service is None:
+            raise ValueError("Trace diagnostics service is unavailable")
+        if operation != "inspect":
+            raise ValueError("unsupported trace_diagnostics operation")
+        targets = _strict_trace_diagnostic_targets(args.get("targets"))
+        payload = service.trace_diagnostic_inspection({"targets": targets})
+        if not isinstance(payload, Mapping):
+            raise ValueError("Trace diagnostics inspector returned an invalid payload")
+        return dict(payload)
 
     def _todo(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
@@ -9631,6 +9701,79 @@ def _bounded_text(value: object, *, maximum: int) -> str:
     return " ".join(text.split())[:maximum]
 
 
+_TRACE_DIAGNOSTIC_TARGET_FIELDS = frozenset(
+    {"kind", "id", "title", "traceIds"}
+)
+
+
+def _strict_trace_diagnostic_targets(value: object) -> list[Mapping[str, object]]:
+    """Validate nested diagnostic targets before dispatching to the service."""
+
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("Trace diagnostic targets must be an array")
+    if not 1 <= len(value) <= 12:
+        raise ValueError("Trace diagnostic targets must contain between 1 and 12 objects")
+    targets: list[Mapping[str, object]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping):
+            raise ValueError(
+                f"Trace diagnostic targets must contain only objects (index {index})"
+            )
+        unknown = sorted(
+            str(key) for key in raw if key not in _TRACE_DIAGNOSTIC_TARGET_FIELDS
+        )
+        if unknown:
+            raise ValueError(
+                "Trace diagnostic target contains unsupported fields: "
+                + ", ".join(str(item) for item in unknown)
+            )
+        for field in ("kind", "id", "title"):
+            if field not in raw or not isinstance(raw[field], str):
+                raise ValueError(
+                    f"Trace diagnostic target {field} must be a string (index {index})"
+                )
+        if raw["kind"] not in {"session", "room", "run"}:
+            raise ValueError(
+                f"Trace diagnostic target kind is invalid (index {index})"
+            )
+        if not raw["id"].strip() or len(raw["id"]) > 240:
+            raise ValueError(
+                f"Trace diagnostic target id is invalid (index {index})"
+            )
+        if len(raw["title"]) > 240:
+            raise ValueError(
+                f"Trace diagnostic target title is too long (index {index})"
+            )
+        trace_ids = raw.get("traceIds")
+        if trace_ids is not None:
+            if not isinstance(trace_ids, Sequence) or isinstance(
+                trace_ids, (str, bytes, bytearray)
+            ):
+                raise ValueError(
+                    f"Trace diagnostic target traceIds must be an array (index {index})"
+                )
+            if len(trace_ids) > 32:
+                raise ValueError(
+                    f"Trace diagnostic target traceIds has too many items (index {index})"
+                )
+            if any(
+                not isinstance(trace_id, str)
+                or not trace_id.strip()
+                or len(trace_id) > 240
+                for trace_id in trace_ids
+            ):
+                raise ValueError(
+                    "Trace diagnostic target traceIds must contain only non-empty strings "
+                    f"(index {index})"
+                )
+            if len(set(trace_ids)) != len(trace_ids):
+                raise ValueError(
+                    f"Trace diagnostic target traceIds must be unique (index {index})"
+                )
+        targets.append(raw)
+    return targets
+
+
 def _normalize_input_setting_changes(value: object) -> list[dict[str, object]]:
     if isinstance(value, Mapping):
         raw_items = [{"key": key, "value": child} for key, child in value.items()]
@@ -9993,6 +10136,7 @@ def _tool_profile_allows(
             }
         ),
         "session_search": frozenset({"search"}),
+        "trace_diagnostics": frozenset({"inspect"}),
         # Formal Room operations do not widen the workspace policy. Delegation,
         # stopping-point reads, evidence-backed review transitions, public
         # receipts, and direct intercom mutate Room collaboration state rather
