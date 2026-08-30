@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { GlobalFeedbackProvider } from '@/components/feedback';
+import { MotionProvider } from '@/design/motion';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawDesktopProvider } from '../runtime/desktop-context';
 import { pawApps, type PawAppId } from '../runtime/app-registry';
@@ -837,11 +838,13 @@ function renderDesktop(initialAppId?: PawAppId, transport = new MockControlTrans
   return render(
     <QueryClientProvider client={queryClient}>
       <ControlTransportProvider transport={transport}>
-        <GlobalFeedbackProvider>
-          <PawDesktopProvider initialAppId={initialAppId}>
-            <PawDesktop />
-          </PawDesktopProvider>
-        </GlobalFeedbackProvider>
+        <MotionProvider>
+          <GlobalFeedbackProvider>
+            <PawDesktopProvider initialAppId={initialAppId}>
+              <PawDesktop />
+            </PawDesktopProvider>
+          </GlobalFeedbackProvider>
+        </MotionProvider>
       </ControlTransportProvider>
     </QueryClientProvider>,
   );
