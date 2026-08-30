@@ -1515,7 +1515,11 @@ class PiRuntimeHostManager:
             remaining = deadline - time.monotonic()
             if remaining < 1.0:
                 raise TimeoutError("Pi Session turn settlement timed out")
-            host_wait_seconds = min(295.0, max(1.0, remaining - 0.5))
+            response_margin = min(5.0, max(0.1, remaining - 1.0))
+            host_wait_seconds = min(
+                290.0,
+                max(1.0, remaining - response_margin),
+            )
             host_timeout_ms = int(host_wait_seconds * 1_000)
             try:
                 settlement = client.send(
@@ -1527,7 +1531,7 @@ class PiRuntimeHostManager:
                     },
                     timeout=min(
                         remaining,
-                        host_wait_seconds + 0.5,
+                        host_wait_seconds + response_margin,
                     ),
                 )
                 break
@@ -1547,6 +1551,11 @@ class PiRuntimeHostManager:
                     raise TimeoutError(
                         "Pi Session turn settlement timed out"
                     ) from exc
+                if str(exc) == (
+                    "Pi Runtime Host command timed out: "
+                    "session.await_settled"
+                ):
+                    continue
                 raise
 
         validated = self._validate_turn_settlement(

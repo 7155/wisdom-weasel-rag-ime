@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from rag_ime.memory_model_executor import (
     MemoryModelUnavailable,
     build_governed_memory_model_executor,
     memory_curation_model_status,
+    reconcile_stale_memory_runtime_sessions,
 )
 
 
@@ -544,6 +546,9 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         )
 
         self.assertNotEqual(completed["receipt"]["sessionId"], failed_session_id)
+        self.assertEqual(first_runtime.aborted, [failed_session_id])
+        self.assertEqual(second_runtime.closed, [failed_session_id])
+        self.assertEqual(self.sessions.get(failed_session_id)["status"], "archived")
         self.assertEqual(len(second_runtime.prompts), 1)
         retried = second.run_status(
             "memory_book_isolated_active_turn"
@@ -585,10 +590,239 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         )
 
         self.assertNotEqual(completed["receipt"]["sessionId"], original_session_id)
+        self.assertEqual(first_runtime.aborted, [original_session_id])
+        self.assertEqual(second_runtime.closed, [original_session_id])
+        self.assertEqual(self.sessions.get(original_session_id)["status"], "archived")
         self.assertEqual(len(second_runtime.prompts), 1)
         retried = second.run_status("memory_book_primary_active_turn")["requests"][0]
         self.assertEqual(retried["state"], "completed")
         self.assertEqual(retried["attemptCount"], 2)
+
+    def test_gateway_restart_retires_only_memory_sessions_and_is_idempotent(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        run = executor.begin_run("memory_book_gateway_restart")
+        memory_session_id = str(run["sessionId"])
+        ordinary = self.sessions.create(
+            title="ordinary conversation",
+            session_kind="conversation",
+        )
+        ordinary_session_id = str(ordinary["id"])
+        orphaned_messages = [
+            {"role": "user", "content": '{"v":2,"activity":[]}'},
+        ]
+        orphaned_messages_json = json.dumps(
+            orphaned_messages,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        orphaned_input_sha256 = hashlib.sha256(
+            orphaned_messages_json.encode("utf-8")
+        ).hexdigest()
+        self.sessions.set_status(memory_session_id, "busy")
+        self.sessions.bind_runtime_session(
+            memory_session_id,
+            driver_id="pi-runtime-v2",
+            runtime_kind="pi",
+            external_session_id="pi-memory-stale",
+        )
+        self.sessions.bind_runtime_session(
+            ordinary_session_id,
+            driver_id="pi-runtime-v2",
+            runtime_kind="pi",
+            external_session_id="pi-ordinary-live",
+        )
+        self.sessions.set_status(ordinary_session_id, "busy")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_runs
+                SET state = 'running'
+                WHERE run_id = ?
+                """,
+                (run["runId"],),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_curation_model_requests(
+                    request_id, run_id, phase, ordinal, input_sha256,
+                    messages_json, input_chars, session_id, state,
+                    created_at_ms, updated_at_ms
+                ) VALUES (?, ?, 'activity-organizer', 1, ?, '[]', 2, ?,
+                          'running', 1, 1)
+                """,
+                (
+                    "memory-request:gateway-restart",
+                    run["runId"],
+                    "0" * 64,
+                    memory_session_id,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_curation_model_runs(
+                    run_id, session_id, profile, provider, model_id,
+                    thinking_level, frozen_input_sha256, state,
+                    created_at_ms, updated_at_ms
+                ) VALUES ('memory_book_orphaned_run', NULL, 'MEMORY_CURATION',
+                          'openai-codex', 'gpt-5.6-luna', 'max', '', 'running',
+                          1, 1)
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_curation_model_requests(
+                    request_id, run_id, phase, ordinal, input_sha256,
+                    messages_json, input_chars, session_id, state,
+                    created_at_ms, updated_at_ms
+                ) VALUES ('memory-request:orphaned', 'memory_book_orphaned_run',
+                          'activity-organizer', 1, ?, '[]', 2,
+                          'agent:missing-memory-session', 'running', 1, 1)
+                """,
+                (orphaned_input_sha256,),
+            )
+            conn.execute(
+                """
+                UPDATE memory_curation_model_requests
+                SET messages_json = ?, input_chars = ?
+                WHERE request_id = 'memory-request:orphaned'
+                """,
+                (orphaned_messages_json, len(orphaned_messages_json)),
+            )
+
+        receipt = reconcile_stale_memory_runtime_sessions(
+            self.sessions,
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(receipt["recoveredSessionCount"], 1)
+        self.assertEqual(receipt["resumableRequestCount"], 2)
+        self.assertEqual(receipt["resumableRunCount"], 2)
+        status = executor.run_status(str(run["runId"]))
+        self.assertEqual(status["state"], "resumable")
+        self.assertEqual(status["lastError"], "memory_gateway_restart")
+        self.assertEqual(status["requests"][0]["state"], "resumable")
+        self.assertEqual(
+            status["requests"][0]["lastError"],
+            "memory_gateway_restart",
+        )
+        self.assertEqual(
+            self.sessions.get(memory_session_id)["status"],
+            "archived",
+        )
+        self.assertIsNone(self.sessions.runtime_binding(memory_session_id))
+        self.assertEqual(self.sessions.get(ordinary_session_id)["status"], "busy")
+        self.assertEqual(
+            self.sessions.runtime_binding(ordinary_session_id)["externalSessionId"],
+            "pi-ordinary-live",
+        )
+        orphaned = executor.run_status("memory_book_orphaned_run")
+        self.assertEqual(orphaned["state"], "resumable")
+        self.assertEqual(orphaned["lastError"], "memory_gateway_restart")
+        self.assertEqual(orphaned["requests"][0]["state"], "resumable")
+
+        repeated = reconcile_stale_memory_runtime_sessions(
+            self.sessions,
+            db_path=self.db_path,
+        )
+        self.assertEqual(repeated["recoveredSessionCount"], 0)
+        self.assertEqual(repeated["resumableRequestCount"], 0)
+        self.assertEqual(repeated["resumableRunCount"], 0)
+
+        recovery_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        recovery = self._executor(recovery_runtime)
+        recovered_run = recovery.begin_run("memory_book_orphaned_run")
+        recovered_response = recovery.complete(
+            phase="activity-organizer",
+            messages=orphaned_messages,
+        )
+        self.assertTrue(str(recovered_run["sessionId"]).startswith("agent:"))
+        self.assertNotEqual(
+            recovered_response["receipt"]["sessionId"],
+            "agent:missing-memory-session",
+        )
+        self.assertEqual(
+            recovery.run_status("memory_book_orphaned_run")["requests"][0]["state"],
+            "completed",
+        )
+
+    def test_gateway_restart_reopens_terminal_run_with_unfinished_request(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        run = executor.begin_run("memory_book_split_terminal")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_runs
+                SET state = 'completed', completed_at_ms = 2
+                WHERE run_id = ?
+                """,
+                (run["runId"],),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_curation_model_requests(
+                    request_id, run_id, phase, ordinal, input_sha256,
+                    messages_json, input_chars, session_id, state,
+                    created_at_ms, updated_at_ms
+                ) VALUES ('memory-request:split-terminal', ?, 'model-call', 1,
+                          ?, '[]', 2, ?, 'running', 1, 1)
+                """,
+                (run["runId"], "2" * 64, run["sessionId"]),
+            )
+
+        receipt = reconcile_stale_memory_runtime_sessions(
+            self.sessions,
+            db_path=self.db_path,
+        )
+
+        self.assertEqual(receipt["resumableRunCount"], 1)
+        self.assertEqual(receipt["resumableRequestCount"], 1)
+        status = executor.run_status(str(run["runId"]))
+        self.assertEqual(status["state"], "resumable")
+        self.assertEqual(status["completedAtMs"], 0)
+        self.assertEqual(status["requests"][0]["state"], "resumable")
+
+    def test_gateway_restart_replaces_archived_run_session_before_new_phase(
+        self,
+    ) -> None:
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        run = first.begin_run("memory_book_gateway_restart_before_request")
+        stale_session_id = str(run["sessionId"])
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_runs
+                SET state = 'running'
+                WHERE run_id = ?
+                """,
+                (run["runId"],),
+            )
+        reconcile_stale_memory_runtime_sessions(
+            self.sessions,
+            db_path=self.db_path,
+        )
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime)
+        resumed = second.begin_run(str(run["runId"]))
+        response = second.complete(
+            phase="activity-organizer",
+            messages=[{"role": "user", "content": '{"v":2,"activity":[]}'}],
+        )
+
+        self.assertEqual(resumed["state"], "resumable")
+        self.assertNotEqual(response["receipt"]["sessionId"], stale_session_id)
+        self.assertEqual(
+            second_runtime.prompts[0]["sessionId"],
+            response["receipt"]["sessionId"],
+        )
+        self.assertEqual(self.sessions.get(stale_session_id)["status"], "archived")
 
     def test_terminal_run_closes_only_its_session_and_retires_projection(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)

@@ -3643,6 +3643,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         client = self.runtime._require_client()
         original_send = client.send
         settlement_methods: list[str] = []
+        await_attempts = 0
 
         def settlement_send(
             method: str,
@@ -3651,6 +3652,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             timeout: float | None = None,
             before_write=None,
         ) -> dict[str, object]:
+            nonlocal await_attempts
             if method in {"session.settlement.get", "session.await_settled"}:
                 settlement_methods.append(method)
             if method == "session.settlement.get":
@@ -3683,6 +3685,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     }
                 }
             if method == "session.await_settled":
+                await_attempts += 1
+                if await_attempts == 1:
+                    raise PiRuntimeError(
+                        "Pi Runtime Host command timed out: session.await_settled"
+                    )
                 assert params is not None
                 self.assertEqual(params["sessionId"], session_id)
                 self.assertEqual(params["turnId"], turn_id)
@@ -3741,7 +3748,12 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(settlement["turnId"], turn_id)
         self.assertEqual(
             settlement_methods,
-            ["session.settlement.get", "session.await_settled"],
+            [
+                "session.settlement.get",
+                "session.await_settled",
+                "session.settlement.get",
+                "session.await_settled",
+            ],
         )
         self.assertEqual(self.runtime._states[session_id].turn_id, "")
         self.assertEqual(self.store.get(session_id)["status"], "idle")

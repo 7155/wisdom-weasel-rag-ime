@@ -100,6 +100,7 @@ from .memory_model_executor import (
     MINIMUM_MEMORY_CONTEXT_TOKENS,
     build_governed_memory_model_executor,
     memory_curation_model_status,
+    reconcile_stale_memory_runtime_sessions,
 )
 from .deployment_status import audit_installed_product
 from .embeddings import embed_query, embedding_provider_from_env
@@ -482,6 +483,21 @@ class DebugImeService:
             # second Host in the 8766 Sidecar and faults the Gateway.
             wake_scheduler_enabled=config.server_name == "agent gateway",
             runtime_execution_owner=self._agent_runtime_execution_owner,
+        )
+        self._memory_runtime_restart_recovery = (
+            reconcile_stale_memory_runtime_sessions(
+                self.agent.sessions,
+                db_path=config.db_path,
+            )
+            if config.server_name == "agent gateway"
+            and self._agent_runtime_execution_owner
+            else {
+                "schemaVersion": "rag-ime.memory-runtime-restart-recovery.v1",
+                "recoveredSessionCount": 0,
+                "resumableRequestCount": 0,
+                "resumableRunCount": 0,
+                "recoveredAtMs": 0,
+            }
         )
         self.personal_context_observability = PersonalContextObservability(
             config.db_path,

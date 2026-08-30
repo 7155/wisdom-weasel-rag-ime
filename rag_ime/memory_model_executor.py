@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Protocol
 
-from .agent_sessions import AgentSessionStore
+from .agent_sessions import AgentSessionNotFound, AgentSessionStore
 from .agent_tool_ids import MEMORY_CURATION_TOOL_PROFILE
 
 
@@ -144,6 +144,8 @@ class GovernedMemoryModelExecutor:
                 and self._active_run_id != normalized_run_id
             ):
                 row = self._recover_interrupted_run(row)
+            if str(row["state"]) == "resumable":
+                row = self._ensure_resumable_run_session(row)
             self._active_run_id = normalized_run_id
             self._active_session_id = str(row["session_id"] or "")
             if not self._active_session_id:
@@ -247,6 +249,34 @@ class GovernedMemoryModelExecutor:
             ).fetchone()
         if recovered is None:
             raise MemoryModelUnavailable("interrupted Memory run disappeared")
+        return recovered
+
+    def _ensure_resumable_run_session(self, row: sqlite3.Row) -> sqlite3.Row:
+        session_id = str(row["session_id"] or "")
+        try:
+            session = self.sessions.get(session_id) if session_id else None
+        except AgentSessionNotFound:
+            session = None
+        if session is not None and str(session["status"]) != "archived":
+            return row
+        replacement = self._create_internal_session(
+            title=f"Memory curation recovery · {_short_run_label(str(row['run_id']))}",
+        )
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_runs
+                SET session_id = ?, updated_at_ms = ?
+                WHERE run_id = ? AND state = 'resumable'
+                """,
+                (str(replacement["id"]), _now_ms(), str(row["run_id"])),
+            )
+            recovered = conn.execute(
+                "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
+                (str(row["run_id"]),),
+            ).fetchone()
+        if recovered is None:
+            raise MemoryModelUnavailable("resumable Memory run disappeared")
         return recovered
 
     def complete(
@@ -387,11 +417,7 @@ class GovernedMemoryModelExecutor:
                 )
                 return self._response_from_request(completed)
             except TimeoutError as exc:
-                cancellation: dict[str, object] = {}
-                try:
-                    cancellation = dict(self.runtime.abort(session_id))
-                except Exception as cancel_exc:
-                    cancellation = {"error": _public_error(cancel_exc)}
+                cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
                     request_id=str(request["request_id"]),
                     error="memory_curation_timeout",
@@ -401,20 +427,30 @@ class GovernedMemoryModelExecutor:
                     "Memory Session timed out; the frozen request remains resumable"
                 ) from exc
             except MemoryModelUnavailable:
+                cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
                     request_id=str(request["request_id"]),
                     error="memory_model_request_failed",
+                    receipt={"cancellation": cancellation},
                 )
                 raise
             except Exception as exc:
+                cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
                     request_id=str(request["request_id"]),
                     error=_public_error(exc),
+                    receipt={"cancellation": cancellation},
                 )
                 raise MemoryModelUnavailable(
                     f"selected memory model request failed ({self.reference}): "
                     f"{_public_error(exc)}"
                 ) from exc
+
+    def _cancel_request_session(self, session_id: str) -> dict[str, object]:
+        try:
+            return dict(self.runtime.abort(session_id))
+        except Exception as exc:
+            return {"error": _public_error(exc)}
 
     def finish_run(self, *, state: str = "completed") -> dict[str, object]:
         normalized_state = str(state or "").strip().lower()
@@ -609,19 +645,22 @@ class GovernedMemoryModelExecutor:
                 """,
                 (run_id, phase, input_sha256),
             ).fetchone()
-            if row is not None:
-                if str(row["state"]) == "resumable":
+        if row is not None:
+            if str(row["state"]) == "resumable":
+                previous_session_id = str(row["session_id"] or "")
+                self._retire_existing_internal_session(previous_session_id)
+                replacement_session_id = self._active_session_id
+                if isolated or replacement_session_id == previous_session_id:
                     replacement = self._create_internal_session(
                         title=(
                             "Memory verification recovery · "
                             if isolated
                             else "Memory curation recovery · "
                         )
-                        + (
-                            f"{_short_run_label(run_id)} · {phase[:32]}"
-                        ),
+                        + f"{_short_run_label(run_id)} · {phase[:32]}",
                     )
                     replacement_session_id = str(replacement["id"])
+                with self._connect() as conn:
                     conn.execute(
                         """
                         UPDATE memory_curation_model_requests
@@ -649,7 +688,7 @@ class GovernedMemoryModelExecutor:
                         "SELECT * FROM memory_curation_model_requests WHERE request_id = ?",
                         (str(row["request_id"]),),
                     ).fetchone()
-                return row
+            return row
         request_session_id = self._active_session_id
         if isolated:
             isolated_session = self._create_internal_session(
@@ -659,6 +698,27 @@ class GovernedMemoryModelExecutor:
                 ),
             )
             request_session_id = str(isolated_session["id"])
+        elif (
+            request_session_id
+            and str(self.sessions.get(request_session_id)["status"]) == "archived"
+        ):
+            replacement = self._create_internal_session(
+                title=(
+                    "Memory curation recovery · "
+                    f"{_short_run_label(run_id)} · {phase[:32]}"
+                ),
+            )
+            request_session_id = str(replacement["id"])
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE memory_curation_model_runs
+                    SET session_id = ?, updated_at_ms = ?
+                    WHERE run_id = ? AND state = 'resumable'
+                    """,
+                    (request_session_id, _now_ms(), run_id),
+                )
+            self._active_session_id = request_session_id
         with self._connect() as conn:
             ordinal = int(
                 conn.execute(
@@ -736,6 +796,25 @@ class GovernedMemoryModelExecutor:
             codex_skills_enabled=False,
             workspace_roots=[],
         )
+
+    def _retire_internal_session(self, session_id: str) -> None:
+        self.runtime.close_session(session_id)
+        self.sessions.retire_system_internal(
+            session_id,
+            tool_profile_version=MEMORY_CURATION_TOOL_PROFILE,
+            updated_at_ms=_now_ms(),
+        )
+
+    def _retire_existing_internal_session(self, session_id: str) -> None:
+        if not session_id:
+            return
+        try:
+            session = self.sessions.get(session_id)
+        except AgentSessionNotFound:
+            return
+        if str(session["status"]) == "archived":
+            return
+        self._retire_internal_session(session_id)
 
     def _mark_request_running(self, *, request_id: str) -> None:
         timestamp = _now_ms()
@@ -895,6 +974,82 @@ class GovernedMemoryModelExecutor:
             raise
         finally:
             conn.close()
+
+
+def reconcile_stale_memory_runtime_sessions(
+    sessions: AgentSessionStore,
+    *,
+    db_path: str | Path | None = None,
+) -> dict[str, object]:
+    """Retire Memory-only Sessions left resident by a previous Gateway.
+
+    A new Gateway starts with an empty Pi Host. Therefore every unarchived
+    ``memory-curation-v1`` internal Session belongs to the previous process;
+    every unfinished Memory request remains resumable (including orphaned
+    rows whose Session was already lost), while old Runtime bindings and busy
+    UI projections must not survive the process boundary.
+    """
+
+    resolved_db_path = Path(db_path or sessions.db_path)
+    timestamp = _now_ms()
+    with sqlite3.connect(resolved_db_path, timeout=30.0) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        stale_session_ids = [
+            str(row["id"])
+            for row in conn.execute(
+                """
+                SELECT id
+                FROM agent_sessions
+                WHERE session_kind = 'subagent_runtime'
+                  AND tool_profile_version = ?
+                  AND archived_at_ms IS NULL
+                ORDER BY created_at_ms, id
+                """,
+                (MEMORY_CURATION_TOOL_PROFILE,),
+            ).fetchall()
+        ]
+        run_cursor = conn.execute(
+            """
+            UPDATE memory_curation_model_runs
+            SET state = 'resumable', last_error = 'memory_gateway_restart',
+                updated_at_ms = ?, completed_at_ms = NULL
+            WHERE state IN ('prepared', 'running')
+               OR run_id IN (
+                    SELECT DISTINCT run_id
+                    FROM memory_curation_model_requests
+                    WHERE state IN ('prepared', 'running')
+               )
+            """,
+            (timestamp,),
+        )
+        run_count = max(0, int(run_cursor.rowcount))
+        request_cursor = conn.execute(
+            """
+            UPDATE memory_curation_model_requests
+            SET state = 'resumable', last_error = 'memory_gateway_restart',
+                updated_at_ms = ?, completed_at_ms = NULL
+            WHERE state IN ('prepared', 'running')
+            """,
+            (timestamp,),
+        )
+        request_count = max(0, int(request_cursor.rowcount))
+        conn.commit()
+
+    for session_id in stale_session_ids:
+        sessions.retire_system_internal(
+            session_id,
+            tool_profile_version=MEMORY_CURATION_TOOL_PROFILE,
+            updated_at_ms=timestamp,
+        )
+    return {
+        "schemaVersion": "rag-ime.memory-runtime-restart-recovery.v1",
+        "recoveredSessionCount": len(stale_session_ids),
+        "resumableRequestCount": request_count,
+        "resumableRunCount": run_count,
+        "recoveredAtMs": timestamp,
+    }
 
 
 def split_memory_model_reference(value: object) -> tuple[str, str]:
