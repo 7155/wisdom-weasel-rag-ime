@@ -104,6 +104,8 @@ describe('merged model and reasoning control', () => {
 
     await user.click(trigger);
     const picker = screen.getByRole('dialog', { name: '选择模型与推理强度' });
+    await waitFor(() => expect(within(picker).getByRole('searchbox', { name: '搜索模型' }))
+      .toHaveFocus());
     within(picker).getByRole('radio', { name: '高' }).focus();
     await user.keyboard('{ArrowRight}{Enter}');
     expect(onChange).toHaveBeenCalledWith('gpt', 'gpt-5.6-luna', 'max');
