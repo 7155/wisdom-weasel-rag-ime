@@ -49,7 +49,8 @@ def _wait_for(
         time.sleep(0.025)
     raise RuntimeError(
         "Room composition did not reach its expected terminal state; "
-        f"events={[item.get('eventType') for item in latest]}"
+        "events="
+        f"{[(item.get('eventType'), _room_event_status(item), item.get('participantId')) for item in latest]}"
     )
 
 
@@ -63,6 +64,24 @@ def _turn_events(
         for event in service.rooms.list_events(room_id, after_sequence=0, limit=2000)
         if str(event.get("turnId") or "") == room_turn_id
     ]
+
+
+def _room_event_status(event: Mapping[str, object]) -> str:
+    """Read status from either canonical Room terminal projection.
+
+    Room-authored synthetic terminals carry ``payload.status``. A terminal
+    mirrored from the owning Pi Session keeps the typed Agent payload under
+    ``payload.data.status``. Both prove the same public Room outcome.
+    """
+
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        return ""
+    status = str(payload.get("status") or "")
+    if status:
+        return status
+    data = payload.get("data")
+    return str(data.get("status") or "") if isinstance(data, Mapping) else ""
 
 
 def main() -> int:
@@ -473,8 +492,7 @@ def main() -> int:
                     lambda: _turn_events(service, room_id, partner_root_id),
                     lambda events: any(
                         event.get("eventType") == "turn_completed"
-                        and isinstance(event.get("payload"), Mapping)
-                        and event["payload"].get("status") == "aborted"
+                        and _room_event_status(event) == "aborted"
                         for event in events
                     ),
                 )
