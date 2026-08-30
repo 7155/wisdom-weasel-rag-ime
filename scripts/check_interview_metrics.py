@@ -5,7 +5,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 
 SCHEMA_VERSION = "paw.interview-metrics-ledger.v1"
@@ -33,6 +33,237 @@ def _repo_ref_path(ref: str, repo_root: Path) -> Path | None:
     if not raw_path:
         return None
     return repo_root / raw_path
+
+
+def _receipt_refs(
+    metric_id: str, calculation: Mapping[str, object]
+) -> tuple[list[str], list[str]]:
+    raw_refs = calculation.get("refs")
+    if not isinstance(raw_refs, list) or not raw_refs:
+        return [], [f"{metric_id}: receiptCalculation.refs must be non-empty"]
+    refs: list[str] = []
+    errors: list[str] = []
+    for raw_ref in raw_refs:
+        if not _non_empty_text(raw_ref):
+            errors.append(f"{metric_id}: receiptCalculation.refs contains an empty value")
+            continue
+        refs.append(str(raw_ref))
+    return refs, errors
+
+
+def _load_receipts(
+    metric_id: str, refs: Sequence[str], repo_root: Path
+) -> tuple[list[tuple[str, Mapping[str, object]]], list[str]]:
+    receipts: list[tuple[str, Mapping[str, object]]] = []
+    errors: list[str] = []
+    for ref in refs:
+        path = _repo_ref_path(ref, repo_root)
+        if path is None:
+            errors.append(f"{metric_id}: receipt must be a repository path: {ref}")
+            continue
+        if not path.is_file():
+            errors.append(f"{metric_id}: receipt does not exist: {ref}")
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{metric_id}: receipt is not readable JSON: {ref}: {exc}")
+            continue
+        if not isinstance(payload, Mapping):
+            errors.append(f"{metric_id}: receipt must contain a JSON object: {ref}")
+            continue
+        receipts.append((ref, payload))
+    return receipts, errors
+
+
+def _compare_receipt_value(
+    *,
+    metric_id: str,
+    field: str,
+    expected: object,
+    actual: object,
+) -> list[str]:
+    if isinstance(expected, float) and isinstance(actual, (int, float)):
+        matches = abs(float(expected) - float(actual)) < 0.000001
+    else:
+        matches = expected == actual
+    if matches:
+        return []
+    return [
+        f"{metric_id}: {field} must equal receipt-derived {expected}, got {actual}"
+    ]
+
+
+def _validate_workspace_speedup_range(
+    metric_id: str,
+    values: Mapping[str, object],
+    receipts: Sequence[tuple[str, Mapping[str, object]]],
+) -> list[str]:
+    errors: list[str] = []
+    grouped: dict[int, list[float]] = {1_000: [], 5_000: []}
+    parity_by_size: dict[int, bool] = {1_000: True, 5_000: True}
+    corpus_by_size: dict[int, str] = {}
+    for ref, receipt in receipts:
+        if receipt.get("schemaVersion") != "paw.workspace-tool-benchmark.v1":
+            errors.append(f"{metric_id}: unexpected workspace receipt schema: {ref}")
+            continue
+        case = _mapping(receipt.get("case"))
+        files = case.get("files")
+        if files not in grouped:
+            errors.append(f"{metric_id}: unsupported workspace receipt size in {ref}: {files}")
+            continue
+        speedup = receipt.get("p95Speedup")
+        if not isinstance(speedup, (int, float)) or isinstance(speedup, bool):
+            errors.append(f"{metric_id}: p95Speedup must be numeric in {ref}")
+            continue
+        grouped[int(files)].append(float(speedup))
+
+        corpus = case.get("corpusSha256")
+        if not _non_empty_text(corpus):
+            errors.append(f"{metric_id}: corpusSha256 is required in {ref}")
+            parity_by_size[int(files)] = False
+        elif int(files) in corpus_by_size and corpus_by_size[int(files)] != corpus:
+            errors.append(
+                f"{metric_id}: corpus checksum drift for files{files}: "
+                f"{corpus_by_size[int(files)]} != {corpus}"
+            )
+            parity_by_size[int(files)] = False
+        else:
+            corpus_by_size[int(files)] = str(corpus)
+
+        backends = receipt.get("backends")
+        checksums: list[str] = []
+        if isinstance(backends, list):
+            for raw_backend in backends:
+                checksum = _mapping(_mapping(raw_backend).get("result")).get(
+                    "checksumSha256"
+                )
+                if _non_empty_text(checksum):
+                    checksums.append(str(checksum))
+        checksum_parity = len(checksums) >= 2 and len(set(checksums)) == 1
+        receipt_parity = receipt.get("parity") is True
+        if not receipt_parity or not checksum_parity:
+            errors.append(f"{metric_id}: backend result parity failed in {ref}")
+            parity_by_size[int(files)] = False
+
+    for files in (1_000, 5_000):
+        field = f"files{files}"
+        observed = grouped[files]
+        claimed = _mapping(values.get(field))
+        if not observed:
+            errors.append(f"{metric_id}: no valid receipts for {field}")
+            continue
+        derived = {
+            "runCount": len(observed),
+            "p95SpeedupMin": round(min(observed), 3),
+            "p95SpeedupMax": round(max(observed), 3),
+            "checksumParity": parity_by_size[files],
+        }
+        for key, expected in derived.items():
+            errors.extend(
+                _compare_receipt_value(
+                    metric_id=metric_id,
+                    field=f"{field}.{key}",
+                    expected=expected,
+                    actual=claimed.get(key),
+                )
+            )
+    return errors
+
+
+def _validate_pi_context_cache(
+    metric_id: str,
+    values: Mapping[str, object],
+    receipts: Sequence[tuple[str, Mapping[str, object]]],
+) -> list[str]:
+    errors: list[str] = []
+    if len(receipts) != 1:
+        return [f"{metric_id}: pi_context_cache requires exactly one valid receipt"]
+    ref, receipt = receipts[0]
+    if receipt.get("schemaVersion") != "rag-ime.pi-context-cache-canary.v1":
+        return [f"{metric_id}: unexpected Pi cache receipt schema: {ref}"]
+    if receipt.get("status") != "passed_not_installed":
+        errors.append(f"{metric_id}: Pi cache receipt did not pass in {ref}")
+
+    raw_turns = receipt.get("stableTurns")
+    if not isinstance(raw_turns, list) or len(raw_turns) < 2:
+        return errors + [f"{metric_id}: stableTurns must contain cold and warm turns"]
+    turns = [_mapping(raw_turn) for raw_turn in raw_turns]
+    cold_input = turns[0].get("inputTokens")
+    if not isinstance(cold_input, int) or isinstance(cold_input, bool) or cold_input <= 0:
+        return errors + [f"{metric_id}: cold inputTokens must be a positive integer"]
+    warm_turns = [
+        turn
+        for turn in turns[1:]
+        if isinstance(turn.get("cacheReadTokens"), int)
+        and not isinstance(turn.get("cacheReadTokens"), bool)
+        and int(turn["cacheReadTokens"]) > 0
+    ]
+    if len(warm_turns) != len(turns) - 1:
+        errors.append(f"{metric_id}: every warm stable turn must report a cache hit")
+    warm_inputs = [
+        int(turn["inputTokens"])
+        for turn in warm_turns
+        if isinstance(turn.get("inputTokens"), int)
+        and not isinstance(turn.get("inputTokens"), bool)
+        and int(turn["inputTokens"]) >= 0
+    ]
+    cache_reads = [int(turn["cacheReadTokens"]) for turn in warm_turns]
+    if len(warm_inputs) != len(warm_turns) or not warm_inputs:
+        return errors + [f"{metric_id}: warm inputTokens must be non-negative integers"]
+    if len(set(cache_reads)) != 1:
+        errors.append(f"{metric_id}: warm stable cacheReadTokens must be identical")
+
+    control = _mapping(receipt.get("changedPrefixControl"))
+    control_cache_read = control.get("cacheReadTokens")
+    reductions = [((cold_input - value) / cold_input) * 100 for value in warm_inputs]
+    derived = {
+        "stableTurns": len(turns),
+        "warmHitTurns": len(warm_turns),
+        "coldInputTokens": cold_input,
+        "warmInputTokensMin": min(warm_inputs),
+        "warmInputTokensMax": max(warm_inputs),
+        "stableCacheReadTokens": cache_reads[0],
+        "uncachedInputReductionPercentMin": round(min(reductions), 2),
+        "uncachedInputReductionPercentMax": round(max(reductions), 2),
+        "changedPrefixControlCacheReadTokens": control_cache_read,
+    }
+    for field, expected in derived.items():
+        errors.extend(
+            _compare_receipt_value(
+                metric_id=metric_id,
+                field=field,
+                expected=expected,
+                actual=values.get(field),
+            )
+        )
+    return errors
+
+
+def validate_metric_receipt_calculation(
+    metric: Mapping[str, object], *, repo_root: Path
+) -> list[str]:
+    """Recompute claim values from privacy-safe receipts; never trust copied totals."""
+
+    raw_calculation = metric.get("receiptCalculation")
+    if raw_calculation is None:
+        return []
+    metric_id = str(metric.get("id") or "").strip() or "<missing-metric-id>"
+    if not isinstance(raw_calculation, Mapping) or not raw_calculation:
+        return [f"{metric_id}: receiptCalculation must be a non-empty object"]
+    calculation = raw_calculation
+    refs, errors = _receipt_refs(metric_id, calculation)
+    receipts, load_errors = _load_receipts(metric_id, refs, repo_root)
+    errors.extend(load_errors)
+    if errors:
+        return errors
+    values = _mapping(metric.get("values"))
+    kind = calculation.get("kind")
+    if kind == "workspace_speedup_range":
+        return _validate_workspace_speedup_range(metric_id, values, receipts)
+    if kind == "pi_context_cache":
+        return _validate_pi_context_cache(metric_id, values, receipts)
+    return [f"{metric_id}: unsupported receiptCalculation kind: {kind}"]
 
 
 def validate_interview_metrics(
@@ -85,6 +316,11 @@ def validate_interview_metrics(
         if measurement_kind == "ai_estimate" and metric.get("reportedAs") == "deterministic":
             errors.append(
                 f"{metric_id}: ai_estimate must not be reportedAs deterministic"
+            )
+
+        if repo_root is not None and metric.get("receiptCalculation") is not None:
+            errors.extend(
+                validate_metric_receipt_calculation(metric, repo_root=repo_root)
             )
 
         if status not in CLAIMABLE_STATUSES:

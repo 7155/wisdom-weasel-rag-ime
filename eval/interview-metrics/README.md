@@ -12,22 +12,29 @@
 | IM-002 | “当前已经有很多指标了” | 先复用已有 scorecard、receipt、canary 和 benchmark，不重复造数。 | 已盘点 |
 | IM-003 | “做了都要记录的” | 绿、红、被中断、环境差异和不可宣传结果都写入 `runs`，不只保留最好结果。 | 已落实为校验规则 |
 | IM-004 | “还有完成记忆的全部整理，找找rag数据集之类的” | Memory 按写入治理、维护、投影、召回、注入、反馈、Trace、Eval 和前台分层；Knowledge 独立；公开数据集分级。 | 见 `MEMORY_AND_RAG_EVAL.md` |
-| IM-005 | “trace得做通，因为后续我开发垂直类的agent的应用需要tarce基础，所以现在就得打好地基，例如开发sgg文件夹的示例，掌柜问数之类的。还有rag，记忆这些的检测。还有我之后是准备agent能自己开发垂直应用，自己评测检查trace，准备沙盒之类的，就像rag的agent自己测试和自己构建。” | 指标账本必须能被统一 Trace/Eval、垂直 Agent 沙盒、自测与自评复用；确定性事实和 AI Judge 分开。 | 已给出交接契约，平台实现仍属另一条工作线 |
+| IM-005 | “trace得做通，因为后续我开发垂直类的agent的应用需要tarce基础，所以现在就得打好地基，例如开发sgg文件夹的示例，掌柜问数之类的。还有rag，记忆这些的检测。还有我之后是准备agent能自己开发垂直应用，自己评测检查trace，准备沙盒之类的，就像rag的agent自己测试和自己构建。” | 指标账本必须能被统一 Trace/Eval、垂直 Agent 沙盒、自测与自评复用；确定性事实和 AI Judge 分开。 | 当前 Trace 修复闭环已有 121 项聚焦回归；安装态与前台证据仍单列 |
 | IM-006 | “你可以辅助他” | 本轮可辅助另一条 Room/Trace Session，但避免共享文件写冲突；这里新增独立评测目录和校验器。 | 已隔离实施 |
 
 ## 结论
 
-目前最适合面试陈述的不是“指标很多”，而是下面四条带限定条件的事实：
+目前最适合面试陈述的不是“指标很多”，而是下面六条带限定条件的事实：
 
 1. 在冻结的 60 题中文 Knowledge held-out 诊断切片上，混合检索加重排把
    MRR 从 `0.250` 提到 `0.922`，Recall@10 从 `0.244` 提到 `0.989`。
-2. 在结果 checksum 一致的 1k/5k 合成工作区中，`rg` 后端相对 Python
-   扫描取得 `2.14x`/`4.40x` 的 p95 加速。
+2. 两次有原始收据的复跑中，在结果 checksum 一致的 1k/5k 合成工作区中，
+   `rg` 后端相对 Python 扫描取得 `2.20–3.01x` / `4.10–7.19x` 的 p95
+   加速；范围同时保留较慢与较快观察，不挑最好一次。
 3. 2026-08-16 的安装开发版 Room 自举验收包含 3 个参与者、2 个受委派
    Partner、19 个 Tool step、1/1 任务、唯一 final 和刷新恢复。
 4. 16 个 Memory optimizer case 重复三轮共 48 次全部通过并保存 48 条
    Trace；本机端到端 p95 `37 ms`。这里必须说“16 个独立 case”，不能把重复轮次
    说成 48 个独立样本。
+5. 隔离的 Pi 稳定前缀 canary 中，两次热轮都从 Provider cache 读取 `9,728`
+   token，未缓存输入相对冷轮减少 `90.96%–91.16%`；改变前缀的对照组缓存命中为
+   `0`。这不是账单或所有真实任务的节省率。
+6. Trace 修复链路的当前源码回归为后端 `41/41`、前端 `80/80`：诊断报告经用户
+   确认后交给普通可写 Agent，最后由新 Trace 权威复检；`121` 是测试数，不是
+   修复的 bug 数。
 
 完整数值、命令、来源和限制在
 [`evidence-ledger.v1.json`](evidence-ledger.v1.json)。账本是当前唯一的机器可读
@@ -40,14 +47,20 @@
 - 设计并落地中文 Knowledge 混合检索与重排，在冻结的 60 题 held-out
   诊断集上将 MRR 从 0.250 提升到 0.922、Recall@10 从 0.244 提升到 0.989；
   同时固定语料、split、配置和报告 hash，防止调参污染 held-out。
-- 将 Agent 工作区字面搜索从 Python 文件扫描迁移到受治理的 `rg` 后端；在
-  checksum 等价的 1k/5k 合成语料上，p95 分别加速 2.14x/4.40x。
+- 将 Agent 工作区字面搜索从 Python 文件扫描迁移到受治理的 `rg` 后端；两次
+  checksum 等价复跑中，1k/5k 合成语料的 p95 加速范围分别为
+  2.20–3.01x / 4.10–7.19x，并用收据重算校验阻止手抄指标漂移。
 - 构建可恢复的多 Agent Room 开发版闭环；一次安装态自举验收中，3 个参与者、
   2 个受委派 Partner 完成 19 个 Tool step 与 1/1 任务，输出唯一 final，并在
   浏览器刷新后恢复任务与时间线投影。
 - 为 Personal Memory 建立 admission、Evidence/Atom/Book、投影、混合召回、
   反回声、墓碑、反馈、治理审批/回滚与 Trace；16 个确定性 case 重复三轮
   48/48 通过，端到端 p95 37 ms。
+- 为 Pi Agent 验证稳定前缀缓存：隔离 canary 的两次热轮各命中 9,728 个
+  Provider cache token，未缓存输入由 10,647 降至 941/963（减少
+  90.96%–91.16%），且改变前缀的对照组命中为 0。
+- 建立 Trace“诊断报告 → 用户确认 → 普通可写 Agent 修复 → 新 Trace 权威复检”
+  闭环；当前聚焦回归后端 41/41、前端 80/80，并明确测试数不冒充 bug 数。
 
 ### 面试展开时应主动补充
 
@@ -58,6 +71,10 @@
 - Memory 37 ms 来自本地确定性 case gate，不是 LongMemEval 泛化质量，也不是
   macOS 前台首屏延迟。
 - 检索优化必须同时说绝对值和相对值，不能只写“提升 304%”。
+- Prompt cache 的 `90.96%–91.16%` 是两次热轮“未缓存输入 token”降幅，不是
+  账单节省、总 token 节省或所有真实 Session 的平均值。
+- Trace 的 `41 + 80` 是聚焦回归测试，不是 121 个线上故障，也不替代安装态和
+  前台真实修复验收。
 
 ## 禁止当正向 headline 的数字
 
@@ -67,7 +84,7 @@
 | MiniMind 语义基线 | 后端 p50/p95 `117/251 ms`，但人工 Top-1/Top-3 都是 `0` | 返回三个候选和低延迟不等于候选有效 |
 | Memory cache 临时探针 | 热缓存约 `0.02 ms`，但 projection backlog `941`、retrieval docs `0` | 走的是不新鲜的合成/legacy 路径，不能声称生产 Memory 亚毫秒召回 |
 | Agent 四档消融 | `pending_formal_run` | 没有正式 Luna 四档报告，不能拿旧回放或失败报告补分 |
-| 产品发行 | `backend_only`、`releaseStatus=blocked` | 单测、build、历史安装态 canary 都不等于签名、公证、干净机或完整前台验收 |
+| 产品发行 | 当前安装开发版与公开发行是两条证据；`releaseStatus` 仍为 `blocked` | 单测、build 或安装开发版都不等于签名、公证、干净机或完整前台验收 |
 
 ## 证据等级
 
@@ -114,6 +131,41 @@ python3 scripts/benchmark_workspace_tools.py \
   --files 5000 --repeat 5 --warmup 1
 ```
 
+Pi 稳定前缀缓存 canary（隔离运行，不改前台 Session）：
+
+```bash
+payload=$(jq -r '.version' \
+  "$HOME/Library/Application Support/RagIme/PiRuntime/current.json")
+python3 scripts/canary_pi_context_cache.py \
+  --payload "$HOME/Library/Application Support/RagIme/PiRuntime/$payload" \
+  --workspace-root . \
+  --provider openai-codex \
+  --model gpt-5.6-luna \
+  --thinking-level off \
+  --source-agent-config \
+    "$HOME/Library/Application Support/RagIme/Agent/config" \
+  --evidence-output \
+    eval/interview-metrics/runs/pi-context-cache-20260830.v1.json
+```
+
+Trace 修复链路的聚焦回归：
+
+```bash
+python3 -m unittest \
+  tests.test_trace_diagnostics \
+  tests.test_trace_diagnostic_http \
+  tests.test_agent_configuration \
+  tests.test_agent_routes
+
+cd control-center-web
+pnpm exec vitest run \
+  src/features/trace-agent/trace-agent-feature.test.tsx \
+  src/features/trace-agent/failure-reasons.test.tsx \
+  src/features/roles/roles-feature.test.tsx \
+  src/platform/routes.test.ts \
+  --maxWorkers=1 --testTimeout=60000
+```
+
 历史 Knowledge/Memory scorecard 的生成命令已经记录，但当前 checkout 缺少
 `.rag-ime-data/results/rag-interview/` 下的两个私有源报告；在找回 hash 对应输入前，
 不要覆盖现有 scorecard，也不要写“已重新复现”。
@@ -132,7 +184,9 @@ python3 scripts/benchmark_workspace_tools.py \
 - 失败、中断、超时、环境降级和 ResourceWarning，不得只保留最好一次。
 
 `scripts/check_interview_metrics.py` 会阻止缺样本、缺命令、缺证据、缺表述边界或把
-AI 估计冒充确定性指标的条目进入可陈述区。
+AI 估计冒充确定性指标的条目进入可陈述区。对工作区搜索和 Prompt cache，它还会
+直接读取原始 JSON 收据重算区间、token 和 checksum parity；手抄数字漂移会令检查
+失败。
 
 ## 与统一 Trace/Eval 的交接
 

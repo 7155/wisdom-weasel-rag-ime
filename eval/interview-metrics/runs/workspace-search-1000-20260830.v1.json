@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "paw.workspace-tool-benchmark.v1",
+  "environment": {
+    "os": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "arch": "arm64",
+    "python": "3.14.6",
+    "cpuCount": 10
+  },
+  "case": {
+    "id": "search.literal.sparse.1000",
+    "seed": 20260730,
+    "files": 1000,
+    "corpusSha256": "7072c972cea7e7763a25cc49a8f9976b0d251457145ea25f56aaf5adc5d87724",
+    "warmup": 2,
+    "repeat": 7
+  },
+  "parity": true,
+  "backends": [
+    {
+      "backend": "python",
+      "samplesMs": [
+        47.462,
+        44.376,
+        45.522,
+        46.809,
+        41.375,
+        50.328,
+        51.598
+      ],
+      "cpuMs": [
+        44.807,
+        42.725,
+        43.052,
+        43.839,
+        40.266,
+        44.902,
+        46.615
+      ],
+      "p50Ms": 46.809,
+      "p95Ms": 51.598,
+      "maxRssBytes": 30179328,
+      "result": {
+        "checksumSha256": "77ea926b7a2431d05b4367f59f66e37f9331629370fb82ad077c700f3e70d0fa",
+        "matches": 11
+      }
+    },
+    {
+      "backend": "rg-subprocess",
+      "samplesMs": [
+        15.805,
+        15.925,
+        16.28,
+        16.064,
+        16.908,
+        17.171,
+        16.425
+      ],
+      "cpuMs": [
+        57.922,
+        56.976,
+        62.917,
+        60.134,
+        54.039,
+        59.535,
+        60.437
+      ],
+      "p50Ms": 16.28,
+      "p95Ms": 17.171,
+      "maxRssBytes": 6733824,
+      "result": {
+        "checksumSha256": "77ea926b7a2431d05b4367f59f66e37f9331629370fb82ad077c700f3e70d0fa",
+        "matches": 11
+      }
+    }
+  ],
+  "p95Speedup": 3.005
+}

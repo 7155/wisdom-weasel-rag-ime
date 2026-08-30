@@ -1,18 +1,18 @@
 {
   "schemaVersion": "paw.interview-metrics-ledger.v1",
-  "generatedAt": "2026-08-28",
-  "sourceRevision": "b8ee1753b0dd9f0d0900be820ebe7d34bc45841c",
+  "generatedAt": "2026-08-30",
+  "sourceRevision": "3bc250f01fb27af0f7aa5e459ab9e9382a6d12e3",
   "workingTreeSnapshot": {
     "dirty": true,
-    "scope": "This ledger covers tracked evidence at sourceRevision plus the fresh commands recorded below. Concurrent PAWOS Room, Trace/Eval, plugin, and Runtime changes are excluded.",
+    "scope": "The product source was clean at sourceRevision; only this metrics lane and its privacy-safe receipts were dirty while the 2026-08-30 measurements ran.",
     "releaseStatus": "blocked",
-    "productStatus": "backend_only"
+    "productStatus": "installed_development"
   },
   "validation": {
-    "lastValidatedAt": "2026-08-28",
+    "lastValidatedAt": "2026-08-30",
     "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
     "ledgerValid": true,
-    "testsPassed": 17
+    "testsPassed": 64
   },
   "evidenceLevels": [
     "E1",
@@ -323,51 +323,98 @@
       "status": "headline",
       "evidenceLevel": "E2",
       "measurementKind": "deterministic",
-      "measuredAt": "2026-08-28",
+      "measuredAt": "2026-08-28 and 2026-08-30",
       "values": {
         "files1000": {
-          "pythonP50Ms": 33.041,
-          "pythonP95Ms": 33.576,
-          "rgP50Ms": 14.527,
-          "rgP95Ms": 15.687,
-          "p95Speedup": 2.14,
-          "matches": 11,
+          "runCount": 2,
+          "p95SpeedupMin": 2.204,
+          "p95SpeedupMax": 3.005,
           "checksumParity": true
         },
         "files5000": {
-          "pythonP50Ms": 152.983,
-          "pythonP95Ms": 192.087,
-          "rgP50Ms": 43.194,
-          "rgP95Ms": 43.663,
-          "p95Speedup": 4.399,
-          "matches": 52,
+          "runCount": 2,
+          "p95SpeedupMin": 4.098,
+          "p95SpeedupMax": 7.185,
           "checksumParity": true
         }
       },
       "sample": {
-        "count": 2,
-        "unit": "synthetic corpus sizes",
-        "timedRepeats": [
-          7,
-          5
-        ]
+        "count": 4,
+        "unit": "benchmark receipts across two synthetic corpus sizes"
       },
       "reproduction": {
         "command": "python3 scripts/benchmark_workspace_tools.py --files 1000 --repeat 7 --warmup 2 && python3 scripts/benchmark_workspace_tools.py --files 5000 --repeat 5 --warmup 1"
       },
+      "receiptCalculation": {
+        "kind": "workspace_speedup_range",
+        "refs": [
+          "eval/workspace-tool-benchmark-baseline.v1.json",
+          "eval/interview-metrics/runs/workspace-search-1000-20260830.v1.json",
+          "eval/workspace-tool-benchmark-5000.v1.json",
+          "eval/interview-metrics/runs/workspace-search-5000-20260830.v1.json"
+        ]
+      },
       "evidenceRefs": [
         "scripts/benchmark_workspace_tools.py",
         "eval/workspace-tool-benchmark-baseline.v1.json",
-        "eval/workspace-tool-benchmark-5000.v1.json"
+        "eval/workspace-tool-benchmark-5000.v1.json",
+        "eval/interview-metrics/runs/workspace-search-1000-20260830.v1.json",
+        "eval/interview-metrics/runs/workspace-search-5000-20260830.v1.json"
       ],
       "claim": {
-        "allowed": "在结果 checksum 完全一致的 1k/5k 合成工作区上，受治理的 rg 搜索相对 Python 扫描取得 2.14x/4.40x 的 p95 加速。",
-        "forbidden": "所有仓库搜索都快 4.40 倍、真实生产吞吐提升 4.40 倍、或该结果没有环境依赖。"
+        "allowed": "两次有原始收据的复跑中，在结果 checksum 一致的 1k/5k 合成工作区上，受治理的 rg 搜索相对 Python 扫描取得 2.20–3.01x / 4.10–7.19x 的 p95 加速。",
+        "forbidden": "所有仓库搜索都至少快 4 倍、真实生产吞吐提升 7.19 倍、或该结果没有环境依赖。"
       },
       "limitations": [
         "synthetic sparse literal search corpus",
         "single macOS arm64 host with Python 3.14.6 and 10 logical CPUs",
-        "fresh summary is recorded here; historical raw sample arrays remain in the two referenced receipts"
+        "the four raw receipts show run-to-run variance, so the claim uses ranges rather than the fastest observation"
+      ]
+    },
+    {
+      "id": "agent.prompt_cache.stable_prefix.20260830",
+      "domain": "agent",
+      "title": "Pi stable-prefix Provider cache canary",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-30",
+      "values": {
+        "stableTurns": 3,
+        "warmHitTurns": 2,
+        "coldInputTokens": 10647,
+        "warmInputTokensMin": 941,
+        "warmInputTokensMax": 963,
+        "stableCacheReadTokens": 9728,
+        "uncachedInputReductionPercentMin": 90.96,
+        "uncachedInputReductionPercentMax": 91.16,
+        "changedPrefixControlCacheReadTokens": 0
+      },
+      "sample": {
+        "count": 2,
+        "unit": "warm stable-prefix Provider turns"
+      },
+      "reproduction": {
+        "command": "payload=$(jq -r '.version' \"$HOME/Library/Application Support/RagIme/PiRuntime/current.json\"); python3 scripts/canary_pi_context_cache.py --payload \"$HOME/Library/Application Support/RagIme/PiRuntime/$payload\" --workspace-root . --provider openai-codex --model gpt-5.6-luna --thinking-level off --source-agent-config \"$HOME/Library/Application Support/RagIme/Agent/config\" --evidence-output eval/interview-metrics/runs/pi-context-cache-20260830.v1.json"
+      },
+      "receiptCalculation": {
+        "kind": "pi_context_cache",
+        "refs": [
+          "eval/interview-metrics/runs/pi-context-cache-20260830.v1.json"
+        ]
+      },
+      "evidenceRefs": [
+        "scripts/canary_pi_context_cache.py",
+        "eval/interview-metrics/runs/pi-context-cache-20260830.v1.json"
+      ],
+      "claim": {
+        "allowed": "在隔离的三轮稳定前缀 canary 中，两次热轮均由 Provider cache 读取 9,728 token，未缓存输入从冷轮 10,647 降到 941/963，降幅 90.96%–91.16%；改变前缀的对照组 cacheRead 为 0。",
+        "forbidden": "所有真实 Agent 任务都节省 91% token、账单成本下降 91%、或该隔离 canary 已证明生产 Session 的端到端加速。"
+      },
+      "limitations": [
+        "two warm observations from one isolated Luna Session canary",
+        "Provider-reported token accounting, not a billing or wall-clock benchmark",
+        "the canary deliberately did not mutate the installed foreground Session"
       ]
     },
     {
@@ -687,13 +734,47 @@
       "id": "trace_eval.unified_platform",
       "domain": "trace-eval",
       "title": "Unified Session/Room/Tool/Browser/Memory/Knowledge/Input Trace and Eval",
-      "status": "target",
-      "evidenceLevel": "E1",
-      "measurementKind": "status",
-      "values": {},
-      "blocker": "The contract is being developed on a separate active PAWOS lane. This ledger does not promote source drafts to a working platform, scheduled Eval, sandbox, Runtime, or foreground claim.",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-30",
+      "values": {
+        "focusedBackendTests": 41,
+        "focusedFrontendTests": 80,
+        "totalFocusedTests": 121,
+        "failureReasonCategories": 9,
+        "multiTargetLimit": 12,
+        "persistedSuccessAndFailureReports": true,
+        "confirmedRepairThenAuthoritativeRecheck": true,
+        "remoteReportReadDenied": true,
+        "defaultModelProfile": "openai-codex/gpt-5.6-sol",
+        "defaultThinkingLevel": "high"
+      },
+      "sample": {
+        "count": 121,
+        "unit": "focused backend and frontend tests"
+      },
+      "reproduction": {
+        "command": "python3 -m unittest tests.test_trace_diagnostics tests.test_trace_diagnostic_http tests.test_agent_configuration tests.test_agent_routes && cd control-center-web && pnpm exec vitest run src/features/trace-agent/trace-agent-feature.test.tsx src/features/trace-agent/failure-reasons.test.tsx src/features/roles/roles-feature.test.tsx src/platform/routes.test.ts --maxWorkers=1 --testTimeout=60000"
+      },
       "evidenceRefs": [
-        "control-center-web/docs/pawos/PAWOS_TRACE_EVAL.md"
+        "rag_ime/trace_diagnostics.py",
+        "rag_ime/agent_service.py",
+        "rag_ime/agent_configuration.py",
+        "control-center-web/src/features/trace-agent/index.tsx",
+        "control-center-web/src/features/trace-agent/failure-reasons.tsx",
+        "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
+        "tests/test_trace_diagnostic_http.py",
+        "control-center-web/src/features/trace-agent/trace-agent-feature.test.tsx"
+      ],
+      "claim": {
+        "allowed": "统一 Trace 诊断已形成诊断报告、用户确认、普通可写 Agent 修复和新 Trace 权威复检闭环；本轮聚焦回归为后端 41/41、前端 80/80，并覆盖成功/失败报告持久化、本机读取边界、9 类失败原因、最多 12 个跨页目标及 Sol/high 默认路由。",
+        "forbidden": "Trace 修复了 121 个 bug、全项目所有链路已前台验收、远程多用户 ACL 已完成、或 121 个聚焦测试等于 121 个真实故障。"
+      },
+      "limitations": [
+        "E2 source/test evidence; the new metric does not claim a fresh installed foreground Trace run",
+        "same-machine multi-user ACL remains outside this focused test claim",
+        "test counts measure regression coverage, not bug count or production reliability"
       ]
     },
     {
@@ -893,6 +974,62 @@
       "command": "python3 -m unittest tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
       "outcome": "passed",
       "summary": "Read-only compatibility check of the concurrent Trace/Eval lane passed 10/10 focused contract, adapter, and vertical-harness tests in 0.002 seconds; remaining provenance gaps are recorded separately."
+    },
+    {
+      "id": "RUN-20260830-001",
+      "measuredAt": "2026-08-30",
+      "command": "python3 scripts/benchmark_workspace_tools.py --files 1000 --repeat 7 --warmup 2 --output eval/interview-metrics/runs/workspace-search-1000-20260830.v1.json",
+      "outcome": "passed",
+      "summary": "Fresh 1k receipt preserved checksum parity and 11 matches; p95 speedup was 3.005x. Together with the tracked 2.204x receipt, the claim is reported as a 2.204–3.005x range."
+    },
+    {
+      "id": "RUN-20260830-002",
+      "measuredAt": "2026-08-30",
+      "command": "python3 scripts/benchmark_workspace_tools.py --files 5000 --repeat 5 --warmup 1 --output eval/interview-metrics/runs/workspace-search-5000-20260830.v1.json",
+      "outcome": "passed",
+      "summary": "Fresh 5k receipt preserved checksum parity and 52 matches; p95 speedup was 7.185x. Together with the tracked 4.098x receipt, the claim is reported as a 4.098–7.185x range."
+    },
+    {
+      "id": "RUN-20260830-003",
+      "measuredAt": "2026-08-30",
+      "command": "payload=$(jq -r '.version' \"$HOME/Library/Application Support/RagIme/PiRuntime/current.json\"); python3 scripts/canary_pi_context_cache.py --payload \"$HOME/Library/Application Support/RagIme/PiRuntime/$payload\" --workspace-root . --provider openai-codex --model gpt-5.6-luna --thinking-level off --source-agent-config \"$HOME/Library/Application Support/RagIme/Agent/config\" --evidence-output eval/interview-metrics/runs/pi-context-cache-20260830.v1.json",
+      "outcome": "passed",
+      "summary": "Privacy-safe isolated canary: cold input 10,647 tokens; two warm stable-prefix turns used 941/963 uncached input and each reported 9,728 cache-read tokens; changed-prefix control reported zero cache-read tokens."
+    },
+    {
+      "id": "RUN-20260830-004",
+      "measuredAt": "2026-08-30",
+      "command": "python3 -m unittest tests.test_trace_diagnostics tests.test_trace_diagnostic_http tests.test_agent_configuration tests.test_agent_routes",
+      "outcome": "passed",
+      "summary": "Trace diagnostics, local HTTP persistence/access policy, model routing, and Agent route coverage passed 41/41 in 27.258 seconds; SQLite ResourceWarnings remain recorded hygiene work."
+    },
+    {
+      "id": "RUN-20260830-005",
+      "measuredAt": "2026-08-30",
+      "command": "cd control-center-web && pnpm exec vitest run src/features/trace-agent/trace-agent-feature.test.tsx src/features/trace-agent/failure-reasons.test.tsx src/features/roles/roles-feature.test.tsx src/platform/routes.test.ts --maxWorkers=1 --testTimeout=60000",
+      "outcome": "passed",
+      "summary": "Trace UI, structured failure reasons, role/model routing, and platform route coverage passed 80/80 in 17.43 seconds."
+    },
+    {
+      "id": "RUN-20260830-006",
+      "measuredAt": "2026-08-30",
+      "command": "python3 -m unittest tests.test_interview_metrics",
+      "outcome": "failed",
+      "summary": "Expected red phase: the new tests could not import validate_metric_receipt_calculation before it was implemented."
+    },
+    {
+      "id": "RUN-20260830-007",
+      "measuredAt": "2026-08-30",
+      "command": "python3 -m unittest tests.test_interview_metrics",
+      "outcome": "passed",
+      "summary": "Green phase: 5/5 ledger tests passed after adding receipt-derived workspace and Provider-cache calculations."
+    },
+    {
+      "id": "RUN-20260830-008",
+      "measuredAt": "2026-08-30",
+      "command": "python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
+      "outcome": "passed",
+      "summary": "The final ledger, RAG scorecard, Session recall, Trace contracts/adapters, and vertical harness selection passed 64/64 in 0.076 seconds; this rerun after strict empty-calculation rejection is the authoritative count."
     }
   ],
   "datasets": [
