@@ -35,6 +35,16 @@ export interface EvalScheduleCreateInput {
   nextDueAtMs: number;
 }
 
+export interface AiJudgeEvalRequest {
+  traceId: string;
+  evaluator?: {
+    provider: string;
+    model: string;
+    thinking: string;
+    displayName: string;
+  };
+}
+
 export type SandboxRunList = ObservabilitySandboxRunListV1;
 
 export const observabilityQueryKeys = {
@@ -254,6 +264,18 @@ export function useObservationEvidenceEval() {
     mutationKey: ['observability', 'evals', 'evidence'],
     mutationFn: (body: ObservabilityEvidenceEvalRequestV1) => transport.request<EvalRunV1>({
       pathId: 'observability.evals.evidence.run',
+      body: body as unknown as JsonValue,
+      responseContract: 'eval-run.v1',
+    }),
+  });
+}
+
+export function useObservationAiJudge() {
+  const transport = useControlTransport();
+  return useMutation({
+    mutationKey: ['observability', 'evals', 'ai-judge'],
+    mutationFn: (body: AiJudgeEvalRequest) => transport.request<EvalRunV1>({
+      pathId: 'observability.evals.aiJudge.run',
       body: body as unknown as JsonValue,
       responseContract: 'eval-run.v1',
     }),

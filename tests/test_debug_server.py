@@ -360,6 +360,49 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
 
+    def test_memory_job_terminal_event_links_every_owner_curation_run(self) -> None:
+        emitted: list[dict[str, object]] = []
+
+        def capture(**values: object) -> dict[str, object]:
+            emitted.append(dict(values))
+            return dict(values)
+
+        with patch.object(
+            self.service.agent.observations,
+            "emit_memory_event",
+            side_effect=capture,
+        ):
+            self.service._publish_memory_maintenance_event(
+                {
+                    "jobId": "memory-maintenance:job-links",
+                    "runId": "memory-maintenance:job-links",
+                    "phase": "completed",
+                    "status": "completed",
+                    "summary": "Memory maintenance completed",
+                    "result": {
+                        "ok": True,
+                        "results": [
+                            {"runId": "owner-run:a"},
+                            {"runId": "owner-run:b"},
+                            {"runId": "owner-run:a"},
+                        ],
+                    },
+                }
+            )
+
+        self.assertEqual(len(emitted), 1)
+        owner_refs = [
+            ref
+            for ref in emitted[0]["refs"]
+            if ref["kind"] == "owner_memory_run"
+        ]
+        self.assertEqual(
+            owner_refs,
+            [
+                {"kind": "owner_memory_run", "id": "owner-run:a", "label": "Owner memory run"},
+                {"kind": "owner_memory_run", "id": "owner-run:b", "label": "Owner memory run"},
+            ],
+        )
     def test_only_agent_gateway_owns_pi_runtime_execution(self) -> None:
         sidecar_db = Path(self.tmp.name) / "passive-sidecar.sqlite"
         gateway_db = Path(self.tmp.name) / "active-gateway.sqlite"

@@ -18,6 +18,7 @@ from .agent_role_identity import (
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
     PER_ACTION_EXECUTION_MODE,
+    ROOM_UNRESTRICTED_EXECUTION_MODE,
     WORKSPACE_MANAGED_EXECUTION_MODE,
     canonical_tool_profile,
     normalize_execution_mode,
@@ -89,6 +90,7 @@ class AgentSessionStore:
         thinking_level: str = "max",
         tool_profile_version: str = "control-center-v1",
         execution_mode: str | None = None,
+        room_execution_mode: str | None = None,
         project_context_enabled: bool = False,
         pi_skills_enabled: bool = False,
         codex_skills_enabled: bool = False,
@@ -124,6 +126,9 @@ class AgentSessionStore:
         normalized_execution_mode = normalize_execution_mode(
             execution_mode,
             tool_profile_version=tool_profile_version,
+        )
+        normalized_room_execution_mode = _normalize_room_execution_mode(
+            room_execution_mode
         )
         normalized_tool_profile = canonical_tool_profile(
             tool_profile_version,
@@ -172,13 +177,13 @@ class AgentSessionStore:
                 INSERT INTO agent_sessions(
                     id, title, session_mode, role_id, role_version, role_book_revision_id,
                     model_profile, thinking_level,
-                    tool_profile_version, execution_mode,
+                    tool_profile_version, execution_mode, room_execution_mode,
                     workspace_scope_sha256, workspace_scope_granted_at_ms,
                     project_context_enabled,
                     pi_skills_enabled, codex_skills_enabled, workspace_roots_json,
                     shell_policy_version, session_kind, created_at_ms, updated_at_ms,
                     last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -191,6 +196,7 @@ class AgentSessionStore:
                     normalized_thinking,
                     normalized_tool_profile,
                     normalized_execution_mode,
+                    normalized_room_execution_mode,
                     scope_sha256,
                     scope_granted_at_ms,
                     1 if project_context_enabled else 0,
@@ -745,6 +751,7 @@ class AgentSessionStore:
         mode: str,
         tool_profile_version: str,
         execution_mode: str | None = None,
+        room_execution_mode: str | None = None,
         grant_workspace_scope: bool = False,
         allowed_tools: Iterable[str] | None,
         project_context_enabled: bool | None = None,
@@ -761,6 +768,7 @@ class AgentSessionStore:
                 mode=mode,
                 tool_profile_version=tool_profile_version,
                 execution_mode=execution_mode,
+                room_execution_mode=room_execution_mode,
                 grant_workspace_scope=grant_workspace_scope,
                 allowed_tools=allowed_tools,
                 project_context_enabled=project_context_enabled,
@@ -776,6 +784,7 @@ class AgentSessionStore:
                 mode=mode,
                 tool_profile_version=tool_profile_version,
                 execution_mode=execution_mode,
+                room_execution_mode=room_execution_mode,
                 grant_workspace_scope=grant_workspace_scope,
                 allowed_tools=allowed_tools,
                 project_context_enabled=project_context_enabled,
@@ -784,6 +793,36 @@ class AgentSessionStore:
                 workspace_roots=workspace_roots,
                 updated_at_ms=updated_at_ms,
             )
+        return self.get(session_id)
+
+    def set_room_execution_mode(
+        self,
+        session_id: str,
+        room_execution_mode: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Persist the confirmed Room approval overlay.
+
+        This is separate from ``execution_mode`` on purpose. A Room's
+        unrestricted setting may remove repeated per-Tool prompts only after
+        its start confirmation; the Session's ordinary mode and workspace
+        grant remain independently auditable.
+        """
+
+        normalized = _normalize_room_execution_mode(room_execution_mode)
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_sessions
+                SET room_execution_mode = ?, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (normalized, timestamp, session_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionNotFound(session_id)
         return self.get(session_id)
     def set_disclosure_preferences(
         self,
@@ -837,6 +876,7 @@ class AgentSessionStore:
         mode: str,
         tool_profile_version: str,
         execution_mode: str | None,
+        room_execution_mode: str | None,
         grant_workspace_scope: bool,
         allowed_tools: Iterable[str] | None,
         project_context_enabled: bool | None,
@@ -849,6 +889,11 @@ class AgentSessionStore:
         if normalized_mode not in {"assistant", "coordinator"}:
             raise ValueError("agent session mode must be assistant or coordinator")
         current = self._get(conn, session_id)
+        normalized_room_execution_mode = (
+            str(current.get("roomExecutionMode") or "")
+            if room_execution_mode is None
+            else _normalize_room_execution_mode(room_execution_mode)
+        )
         execution_value: object = execution_mode
         if execution_value is None:
             execution_value = (
@@ -939,6 +984,7 @@ class AgentSessionStore:
             """
             UPDATE agent_sessions
             SET session_mode = ?, tool_profile_version = ?, execution_mode = ?,
+                room_execution_mode = ?,
                 workspace_scope_sha256 = ?, workspace_scope_granted_at_ms = ?,
                 workspace_roots_json = ?,
                 shell_policy_version = ?, project_context_enabled = ?,
@@ -949,6 +995,7 @@ class AgentSessionStore:
                 normalized_mode,
                 profile,
                 normalized_execution_mode,
+                normalized_room_execution_mode,
                 scope_sha256,
                 scope_granted_at_ms,
                 json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
@@ -2901,6 +2948,9 @@ def _session_payload(
             row["execution_mode"],
             tool_profile_version=row["tool_profile_version"],
         ),
+        "roomExecutionMode": _normalize_room_execution_mode(
+            row["room_execution_mode"]
+        ),
         # The durable grant is only valid for the exact roots it authorized.
         # Older rows can retain a grant hash after their roots were cleared;
         # never project that stale metadata as an active capability.
@@ -4147,6 +4197,13 @@ def _workspace_roots(values: Iterable[str]) -> list[str]:
         if normalized not in roots:
             roots.append(normalized)
     return roots
+
+
+def _normalize_room_execution_mode(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in {"", ROOM_UNRESTRICTED_EXECUTION_MODE}:
+        raise ValueError("unsupported Room execution mode")
+    return normalized
 
 
 def _allowed_tools(values: Iterable[str] | None) -> list[str] | None:

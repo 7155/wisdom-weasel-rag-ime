@@ -707,7 +707,11 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   return (
     <>
       {windowChromeTarget ? <PawWindowChromePortal>{browserTabs}</PawWindowChromePortal> : null}
-      <main className="paw-direct-browser" data-tabs-in-window-chrome={windowChromeTarget ? true : undefined}>
+      <main
+        className="paw-direct-browser"
+        data-route-id="browser"
+        data-tabs-in-window-chrome={windowChromeTarget ? true : undefined}
+      >
         {windowChromeTarget ? null : browserTabs}
 
       <section className="paw-browser-toolbar">

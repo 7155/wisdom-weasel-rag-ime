@@ -339,16 +339,19 @@ test('Session and Room headers float over full-height timelines without hiding t
   const roomSpacer = page.locator('.room-timeline__header-space');
   const firstRoomTurn = page.locator('.room-turn').first();
   const roomComposer = page.locator('.room-composer');
+  const roomComposerBanner = roomComposer.locator('.room-composer__task-lock');
   await expect(firstRoomTurn).toBeVisible();
+  await expect(roomComposerBanner).toBeVisible();
   await roomScroller.evaluate((element) => { element.scrollTop = 0; });
 
-  const [roomHeaderBox, roomContextBox, roomTimelineBox, roomSpacerBox, firstRoomTurnBox, roomComposerBox, roomHeaderStyle, roomComposerStyle] = await Promise.all([
+  const [roomHeaderBox, roomContextBox, roomTimelineBox, roomSpacerBox, firstRoomTurnBox, roomComposerBox, roomComposerBannerBox, roomHeaderStyle, roomComposerStyle] = await Promise.all([
     roomHeader.boundingBox(),
     roomContext.boundingBox(),
     roomTimeline.boundingBox(),
     roomSpacer.boundingBox(),
     firstRoomTurn.boundingBox(),
     roomComposer.boundingBox(),
+    roomComposerBanner.boundingBox(),
     roomHeader.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
@@ -369,7 +372,14 @@ test('Session and Room headers float over full-height timelines without hiding t
   expect(roomHeaderStyle.backgroundColor).toBe(sessionHeaderStyle.backgroundColor);
   expect(roomHeaderStyle.backdropFilter).toBe(sessionHeaderStyle.backdropFilter);
   expect(roomComposerStyle).toEqual(sessionComposerStyle);
-  expect(Math.abs((roomComposerBox?.height ?? 0) - (sessionComposerBox?.height ?? 0))).toBeLessThanOrEqual(1);
+  // Room exposes one explicit live-task status row above the same canonical
+  // composer shell. Compare the base composer height after subtracting that
+  // intentional row instead of treating the status as accidental stretching.
+  expect(Math.abs(
+    (roomComposerBox?.height ?? 0)
+      - (roomComposerBannerBox?.height ?? 0)
+      - (sessionComposerBox?.height ?? 0),
+  )).toBeLessThanOrEqual(1);
   expect(Math.abs((roomTimelineBox?.y ?? 0) - (roomHeaderBox?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(roomSpacerBox?.height).toBeGreaterThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) - (roomHeaderBox?.y ?? 0));
   expect(firstRoomTurnBox?.y).toBeGreaterThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) - 1);

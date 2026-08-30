@@ -940,6 +940,9 @@ class ActiveRagService:
             reserved_output_tokens=int(context_preferences.get("reservedOutputTokens") or 1024),
             recent_input_baseline=int(context_preferences.get("recentInputBaseline") or 4),
             recent_input_maximum=int(context_preferences.get("recentInputMaximum") or 4),
+            recent_input_char_maximum=int(context_preferences.get("recentInputCharMaximum") or 12000),
+            ax_node_maximum=int(context_preferences.get("axNodeMaximum") or 160),
+            ax_char_maximum=int(context_preferences.get("axCharMaximum") or 12000),
             window_context=request.window_context,
         )
         packet_current_input = context_packet.get("currentInput") if isinstance(context_packet.get("currentInput"), dict) else {}
@@ -1964,7 +1967,11 @@ def _recent_input_history_evidence(
             continue
         seen.add(key)
         result.append(item)
-    return tuple(result[-4:])
+    # The timeline/context packet owns the configured count and character
+    # budget.  Keeping a second historical four-item cap here made the
+    # settings consumer silently discard newer records before that packet
+    # could report requested/effective/actual receipt fields.
+    return tuple(result[-200:])
 
 
 def _recent_context_overlap(recent: str, foreground: str) -> int:

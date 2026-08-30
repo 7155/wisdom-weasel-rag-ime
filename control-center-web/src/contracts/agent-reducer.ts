@@ -1348,7 +1348,7 @@ function upsertCompactionActivity(
     });
   const id = runningId ?? `compaction:${event.eventId}`;
   const previous = state.activitiesById[id];
-  const reason = text(payload.reason) || 'threshold';
+  const reason = text(payload.reason);
   const activity: AgentActivityProjection = {
     id,
     turnId: previous?.turnId || event.turnId || `maintenance:${event.sequence}`,
@@ -1374,7 +1374,8 @@ function upsertCompactionActivity(
 function compactionReasonLabel(reason: string): string {
   if (reason === 'manual') return '手动触发';
   if (reason === 'overflow') return '溢出恢复';
-  return '达到自动阈值';
+  if (reason === 'threshold' || reason === 'automatic') return '达到上下文阈值';
+  return 'Runtime 触发';
 }
 
 function parseTelemetry(value: unknown): AgentSessionTelemetryV1 | undefined {

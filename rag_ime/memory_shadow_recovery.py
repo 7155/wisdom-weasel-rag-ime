@@ -8,7 +8,7 @@ import sqlite3
 import stat
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Iterable, Iterator, Mapping, Sequence
 from urllib.parse import quote
@@ -1207,7 +1207,7 @@ def _online_backup(source: Path, output: Path) -> None:
     _reserve_empty_file(output)
     try:
         with _read_only_connection(source) as source_conn:
-            with sqlite3.connect(output) as target_conn:
+            with closing(sqlite3.connect(output)) as target_conn, target_conn:
                 target_conn.execute("PRAGMA journal_mode=DELETE")
                 source_conn.backup(target_conn)
                 # SQLite backup copies the source header, including WAL mode,
@@ -1282,26 +1282,34 @@ def _exercise_rollback(*, candidate: Path, rollback: Path) -> dict[str, object]:
         replacement.unlink(missing_ok=True)
 
 
-def _read_only_connection(path: Path) -> sqlite3.Connection:
+@contextmanager
+def _read_only_connection(path: Path) -> Iterator[sqlite3.Connection]:
     wal = Path(str(path) + "-wal")
     immutable = not wal.exists() or wal.stat().st_size == 0
     immutable_query = "&immutable=1" if immutable else ""
     uri = f"file:{quote(str(path))}?mode=ro{immutable_query}"
     conn = sqlite3.connect(uri, uri=True, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    if int(conn.execute("PRAGMA query_only").fetchone()[0]) != 1:
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+        if int(conn.execute("PRAGMA query_only").fetchone()[0]) != 1:
+            raise MemoryShadowRecoveryError("could not enable SQLite query_only")
+        yield conn
+    finally:
         conn.close()
-        raise MemoryShadowRecoveryError("could not enable SQLite query_only")
-    return conn
 
 
-def _writable_connection(path: Path) -> sqlite3.Connection:
+@contextmanager
+def _writable_connection(path: Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(path, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=30000")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _new_private_path(path: str | Path, *, label: str) -> Path:

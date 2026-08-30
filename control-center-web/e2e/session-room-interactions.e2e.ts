@@ -5,16 +5,17 @@ test('model changes close immediately and the composer publishes an optimistic t
   const feature = page.locator('main[data-route-id="agent"]');
   await expect(feature.locator('.agent-turn').first()).toBeVisible();
 
-  const modelButton = page.getByRole('button', { name: /^模型：/ });
+  const modelButton = page.getByRole('button', { name: /^模型与推理：/ });
   await modelButton.click();
   const picker = page.getByRole('dialog');
-  await expect(picker).toContainText('模型与推理强度');
-  await picker.getByRole('button', { name: /推理/ }).click();
+  await expect(picker).toHaveAccessibleName('选择模型与推理强度');
+  const reasoning = picker.getByRole('radiogroup', { name: '推理强度' });
+  await expect(reasoning).toBeVisible();
   const modelSelectionStartedAt = Date.now();
-  await picker.getByRole('radio', { name: '高', exact: true }).click();
+  await reasoning.getByRole('radio', { name: '高', exact: true }).click();
   await expect(picker).toBeHidden();
   expect(Date.now() - modelSelectionStartedAt).toBeLessThan(500);
-  await expect(modelButton).toHaveAccessibleName(/思考强度：高/);
+  await expect(modelButton).toHaveAccessibleName(/模型与推理：.*· 高$/);
 
   const probe = `Session optimistic ${Date.now()}`;
   const composer = page.getByRole('textbox', { name: '消息' });

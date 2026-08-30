@@ -819,7 +819,7 @@
     flex-direction: column;
     gap: 3px;
     border-radius: var(--radius-2);
-    color: var(--color-text-tertiary);
+    color: var(--color-text-secondary);
     font-size: 13px;
     font-weight: 620;
     text-decoration: none;

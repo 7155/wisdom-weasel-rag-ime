@@ -89,11 +89,14 @@ def recent_complete_input_context(
     query_text: str = "",
     baseline_records: int = 20,
     max_records: int = 80,
+    char_budget: int = 12000,
     token_budget: int = 4096,
     reserved_tokens: int = 1024,
     raw_row_limit: int = 500,
 ) -> dict[str, object]:
     available_tokens = max(256, int(token_budget) - max(0, int(reserved_tokens)))
+    requested_count = max(1, min(200, int(max_records)))
+    requested_chars = max(1, min(100_000, int(char_budget)))
     temporal = resolve_temporal_window(query_text)
     where = ["COALESCE(s.deleted, 0) = 0"]
     params: list[object] = []
@@ -124,23 +127,54 @@ def recent_complete_input_context(
     eligible = [item for item in assembled if bool(item.get("injectable"))]
     selected: list[dict[str, object]] = []
     used_tokens = 0
-    limit = max(max(1, int(baseline_records)), min(200, int(max_records)))
+    limit = max(max(1, int(baseline_records)), requested_count)
+    actual_count = len(eligible)
+    actual_chars = sum(
+        len(compact_whitespace(str(record.get("text") or "")))
+        for record in eligible
+    )
     for record in reversed(eligible):
         text = compact_whitespace(str(record.get("text") or ""))
         if not text:
             continue
+        remaining_chars = requested_chars - sum(
+            len(compact_whitespace(str(item.get("text") or "")))
+            for item in selected
+        )
+        if remaining_chars <= 0:
+            break
+        char_truncated = len(text) > remaining_chars
+        if char_truncated and selected:
+            break
+        if char_truncated:
+            text = text[:remaining_chars].rstrip()
+            if not text:
+                break
         item_tokens = estimate_tokens(text) + 8
         if selected and used_tokens + item_tokens > available_tokens:
             break
         if not selected and item_tokens > available_tokens:
             text = tail_for_token_budget(text, available_tokens - 8)
+            text = text[:remaining_chars].rstrip()
             item_tokens = estimate_tokens(text) + 8
+            char_truncated = True
+        if char_truncated:
             record = {**record, "text": text, "truncated": True}
         selected.append(record)
         used_tokens += item_tokens
         if len(selected) >= limit:
             break
     selected.reverse()
+    effective_chars = sum(
+        len(compact_whitespace(str(item.get("text") or "")))
+        for item in selected
+    )
+    effective_count = len(selected)
+    truncated = bool(
+        actual_count > effective_count
+        or actual_chars > effective_chars
+        or any(bool(item.get("truncated")) for item in selected)
+    )
     rendered = "\n".join(
         f"[{_date_label(int(item.get('createdAtMs') or 0))}]"
         f"[App: {_app_label(str(item.get('app') or ''))}] {item.get('text', '')}"
@@ -159,6 +193,22 @@ def recent_complete_input_context(
             "selectedRecordCount": len(selected),
             "baselineRecordCount": max(1, int(baseline_records)),
             "maxRecordCount": limit,
+            "recentInputPolicy": {
+                "requestedCount": requested_count,
+                "requestedChars": requested_chars,
+                "effectiveCount": effective_count,
+                "effectiveChars": effective_chars,
+                "actualCount": actual_count,
+                "actualChars": actual_chars,
+                "truncated": truncated,
+                "unavailableReason": (
+                    "no_eligible_inputs"
+                    if actual_count == 0
+                    else "budget_exhausted"
+                    if actual_count > 0 and not selected
+                    else ""
+                ),
+            },
             "tokenBudget": int(token_budget),
             "reservedTokens": int(reserved_tokens),
             "availableTokens": available_tokens,

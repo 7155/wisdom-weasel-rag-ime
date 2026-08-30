@@ -691,6 +691,33 @@ class TraceAdapterTests(unittest.TestCase):
         self.assertFalse(trace["spans"][1]["recorded"])
         self.assertEqual(trace["spans"][1]["unavailableReason"], "duration_not_recorded")
 
+    def test_memory_restart_expiry_is_projected_as_failed_trace(self) -> None:
+        trace = envelope_from_observations(
+            [
+                {
+                    "traceId": "trace:memory:memory-maintenance:restart",
+                    "spanId": "span:memory:memory-maintenance:restart:expired",
+                    "runId": "memory-maintenance:restart",
+                    "category": "memory",
+                    "phase": "expired",
+                    "name": "memory_curation",
+                    "status": "expired",
+                    "summary": "Memory maintenance job expired after restart",
+                    "createdAtMs": 100,
+                    "startedAtMs": 100,
+                    "endedAtMs": None,
+                    "durationMs": None,
+                }
+            ]
+        ).to_dict()
+
+        self.assertEqual(trace["status"], "failed")
+        self.assertEqual(trace["spans"][0]["status"], "failed")
+        self.assertEqual(
+            trace["spans"][0]["attributes"]["terminalPhaseStatus"],
+            "expired",
+        )
+
     def test_room_root_fails_only_after_every_known_dispatch_is_terminal(self) -> None:
         def observation(
             span_id: str,

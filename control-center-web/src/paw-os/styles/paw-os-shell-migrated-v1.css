@@ -45,6 +45,10 @@
   --paw-desktop-ink: #171a21;
   --paw-desktop-muted: #5d6675;
   --paw-desktop-surface: rgb(255 255 255 / .72);
+  /* The one desktop selection plate, shared by App shortcuts, project folders
+   * and conversation files so a mixed lasso selection reads as one state.
+   * Deep enough for white label text (AA). */
+  --paw-selection-plate: #1d4ed8;
   --paw-success: #159a66;
   --paw-warning: #d98806;
   --paw-danger: #d92d20;
@@ -53,7 +57,8 @@
      and shadow travel, never through transparency. */
   --paw-shadow-rest: 0 16px 40px -22px rgb(23 32 52 / .24), 0 2px 8px rgb(23 26 33 / .05);
   --paw-shadow: 0 28px 72px -24px rgb(23 32 52 / .3), 0 5px 18px rgb(23 26 33 / .07);
-  --paw-ease-out: cubic-bezier(.16, 1, .3, 1);
+  /* Easing tokens come from the single motion authority (paw-os-motion.css);
+     this visual owner consumes them but never re-declares them. */
   color: var(--paw-ink);
   background: #eef1f6;
   -webkit-font-smoothing: antialiased;
@@ -90,6 +95,14 @@
   box-shadow: var(--paw-chrome-highlight);
   -webkit-backdrop-filter: var(--paw-chrome-blur);
   backdrop-filter: var(--paw-chrome-blur);
+}
+/* Legibility scrim: one static gradient layered over the shared veil, densest
+ * at the top edge where the wallpaper's bright sky sits, easing to nothing
+ * before the hairline. The bar keeps its material translucency — no solid
+ * strip — but brand, menus and status read on a calmer ground on any
+ * terrain. It costs no blur: the budget stays at menu bar, Dock, Launchpad. */
+.paw-desktop-root .paw-menu-bar {
+  background-image: linear-gradient(180deg, rgb(251 252 254 / .38), rgb(251 252 254 / .12) 58%, rgb(251 252 254 / 0));
 }
 /* Pointer-owned freeze: opaque chrome, no glass sample of the moving frame. */
 .paw-desktop-root[data-window-interaction] .paw-menu-bar {
@@ -512,9 +525,6 @@
 .paw-desktop-root .paw-wayfinder-work__list { scrollbar-color: rgb(23 26 33 / .24) transparent; }
 .paw-desktop-root .paw-wayfinder-work__project > summary {
   transition: background-color 120ms ease, box-shadow 120ms ease;
-}
-.paw-desktop-root .paw-wayfinder-work__project[open] > summary {
-  background: rgb(255 255 255 / .5);
 }
 .paw-desktop-root .paw-wayfinder-work__row {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / .8);
@@ -956,7 +966,11 @@
   .paw-desktop-root .paw-dock button,
   .paw-desktop-root .paw-dock-tip,
   .paw-desktop-root .paw-app-icon,
-  .paw-desktop-root .paw-wayfinder-work__spin {
+  .paw-desktop-root .paw-wayfinder-work__spin,
+  /* Desktop selection stays instant: label plates and icon dims snap. */
+  .paw-desktop-root :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink),
+  .paw-desktop-root :is(.paw-desktop-shortcuts button, .paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file),
+  .paw-desktop-root :is(.paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
     animation: none !important;
     transition-duration: .01ms !important;
     transform: none !important;
@@ -1033,13 +1047,11 @@
 .paw-desktop-root .paw-wayfinder-work__project > summary {
   transition: background-color 150ms ease, transform 150ms ease;
 }
+/* The cell never plates: hover and keyboard focus speak through the label
+   treatment and the icon dim, exactly like selection. */
 .paw-desktop-root .paw-wayfinder-work__project > summary:hover,
 .paw-desktop-root .paw-wayfinder-work__project > summary:focus-visible {
-  background: rgb(241 237 228 / .56);
   outline: 0;
-}
-.paw-desktop-root .paw-wayfinder-work__project > summary:focus-visible {
-  box-shadow: 0 0 0 2px rgb(63 118 88 / .22);
 }
 .paw-desktop-root .paw-wayfinder-work__folder-art { color: var(--wayfinder-moss); }
 .paw-desktop-root .paw-wayfinder-work__folder-art::before { background: rgb(63 118 88 / .16); }
@@ -1127,20 +1139,12 @@
 .paw-desktop-root .paw-wayfinder-work__state { color: var(--wayfinder-muted); }
 .paw-desktop-root .paw-wayfinder-work__state button:hover { color: var(--wayfinder-moss); border-color: rgb(63 118 88 / .5); background: var(--wayfinder-stone); }
 
-/* App shortcuts occupy the same desktop plane as project folders. Keep their
-   identity colours in the glyph, while the hit surface follows the neutral
-   Stone/Moss desktop language and labels remain fully readable. */
+/* App shortcuts occupy the same desktop plane as project folders. Their
+   identity colours stay in the glyph; the cell itself never plates — hover
+   and selection speak through the label and the icon dim only. */
 .paw-desktop-root .paw-desktop-shortcuts button {
-  color: var(--wayfinder-ink, #2e332f);
+  color: #fff;
   transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
-}
-.paw-desktop-root .paw-desktop-shortcuts button:hover,
-.paw-desktop-root .paw-desktop-shortcuts button[aria-selected='true'],
-.paw-desktop-root .paw-desktop-shortcuts button:focus-visible {
-  color: var(--wayfinder-ink, #2e332f);
-  background: rgb(241 237 228 / .82);
-  box-shadow: 0 0 0 2px rgb(63 118 88 / .2);
-  outline: 0;
 }
 .paw-desktop-root .paw-desktop-shortcuts button strong {
   max-width: 92px;
@@ -1151,34 +1155,76 @@
   text-align: center;
   text-overflow: clip;
 }
-/* The same wallpaper-aware label ground the project names carry, cloned per
-   line so short App names keep a tight pill. */
-.paw-desktop-root .paw-desktop-shortcuts__label-ink {
+/* Desktop labels sit directly on the wallpaper, macOS-style: white ink with a
+ * layered soft dark halo, cloned per line so wrapped names stay legible on any
+ * terrain. No permanent pill. Hover lays a quiet dark scrim behind the text
+ * only; selection is the one accent plate, again behind the text only, with
+ * the icon dimming beside it. All feedback lands in 140ms ease-out. */
+.paw-desktop-root :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
   padding: 1px 5px;
   border-radius: 5px;
-  background: rgb(250 248 243 / .72);
+  color: #fff;
+  background: transparent;
+  text-shadow:
+    0 1px 2px rgb(9 13 22 / .62),
+    0 0 7px rgb(9 13 22 / .42),
+    0 0 1px rgb(9 13 22 / .7);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+  transition: background-color 140ms ease-out, box-shadow 140ms ease-out, text-shadow 140ms ease-out;
+}
+.paw-desktop-root :is(
+  .paw-desktop-shortcuts button:hover,
+  .paw-wayfinder-work__project > summary:hover,
+  .paw-wayfinder-work__loose-file:hover
+) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  background: rgb(13 18 30 / .34);
+}
+.paw-desktop-root :is(
+  .paw-desktop-shortcuts button,
+  .paw-wayfinder-work__project > summary,
+  .paw-wayfinder-work__loose-file
+):is([aria-selected='true'], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+  color: #fff;
+  background: var(--paw-selection-plate, #1d4ed8);
+  box-shadow: 0 1px 3px rgb(9 13 22 / .3);
+  text-shadow: none;
+}
+.paw-desktop-root :is(.paw-desktop-shortcuts button, .paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):focus-visible {
+  outline: 0;
+}
+/* An open folder keeps the quiet scrim on its label while its window floats
+ * beside the icon — wayfinding, not a second selection. */
+.paw-desktop-root .paw-wayfinder-work__project[open] > summary:not([aria-selected='true']) .paw-wayfinder-work__label-ink {
+  background: rgb(13 18 30 / .34);
+}
+/* The icon darkens when selected — the macOS desktop's second selection cue.
+ * Filter lives on the art box; the glyph's own drop-shadow stays on the SVG
+ * so the two never fight over one filter list. */
+.paw-desktop-root :is(.paw-desktop-shortcuts button, .paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file) :is(.paw-app-icon, .paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
+  transition: filter 140ms ease-out;
+}
+.paw-desktop-root :is(
+  .paw-desktop-shortcuts button,
+  .paw-wayfinder-work__project > summary,
+  .paw-wayfinder-work__loose-file
+)[aria-selected='true'] :is(.paw-app-icon, .paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
+  filter: brightness(.74) saturate(1.06);
 }
 .paw-desktop-root .paw-desktop-shortcuts button[data-open] > i { background: #3f7658; }
 
-/* The folder is an outline identity, not a coloured tile. Status remains a
-   small dot and the little Agent/Room mark carries the semantic distinction;
-   this keeps the desktop readable when many projects are visible. */
-.paw-desktop-root .paw-wayfinder-work__folder-art::before {
-  border: 1px solid currentColor;
-  background: transparent;
-}
+/* The folder is a drawn identity, not a coloured tile and not clip-art: one
+ * back plate with a left tab, one lighter front sheet, both tinted by the
+ * project's own `--paw-work-accent`. The small Agent/Room mark stays as the
+ * semantic badge and exactly one status dot sits on the corner. */
+.paw-desktop-root .paw-wayfinder-work__folder-art::before { content: none; }
 .paw-desktop-root .paw-wayfinder-work__folder-art > svg { fill: none; }
-.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] { color: var(--wayfinder-ink); }
-.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention]::before { background: transparent; }
-.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] > svg { fill: none; }
 .paw-desktop-root .paw-wayfinder-work__folder-art > i {
-  right: -3px;
-  bottom: -3px;
-  width: 6px;
-  height: 6px;
-  border-width: 1px;
+  right: -1px;
+  bottom: 1px;
+  width: 7px;
+  height: 7px;
+  border-width: 1.5px;
   box-shadow: none;
 }
 .paw-desktop-root .paw-wayfinder-work__folder-mark {
@@ -1238,42 +1284,80 @@
   background: rgb(166 125 61 / .1);
 }
 
-/* Desktop project identities speak the Files App's root-glyph grammar: one
-   soft family-tinted chip, one unfilled folder glyph, the Agent mark kept as
-   a low-key embedding and exactly one small status dot. The chip is
-   near-opaque so it reads on any wallpaper without spending the shell's blur
-   budget; state arrives only through the moss/clay family shift. */
+/* The drawn work-glyph family. One accent variable per art box drives every
+ * part: folders mix it into a light back plate and a paler front sheet,
+ * conversation files keep a paper page with accent transcript lines, and the
+ * attention state simply re-points the variable to clay. The SVG carries the
+ * drop shadow so selection can dim the whole art box with one filter. */
 .paw-desktop-root .paw-wayfinder-work__folder-art {
   width: 52px;
-  height: 44px;
-  color: color-mix(in srgb, var(--wayfinder-moss) 80%, var(--wayfinder-ink));
-  filter: drop-shadow(0 5px 9px rgb(47 48 43 / .2));
-}
-.paw-desktop-root .paw-wayfinder-work__folder-art::before {
-  inset: 3px 1px 1px;
-  border: 0;
-  border-radius: 12px;
-  background: linear-gradient(165deg, rgb(253 252 249 / .97), color-mix(in srgb, var(--wayfinder-moss) 13%, rgb(243 240 231 / .97)));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wayfinder-moss) 26%, transparent), inset 0 1px 0 rgb(255 255 255 / .85);
+  height: 52px;
+  color: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, var(--wayfinder-ink));
 }
 .paw-desktop-root .paw-wayfinder-work__folder-art > svg {
-  width: 21px;
-  height: 21px;
-  translate: -1px 1px;
-  stroke: color-mix(in srgb, var(--wayfinder-moss) 82%, var(--wayfinder-ink));
-  stroke-width: 1.8;
+  width: 52px;
+  height: 52px;
+  filter: drop-shadow(0 5px 9px rgb(9 13 22 / .26));
+}
+.paw-desktop-root .paw-work-glyph__back {
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 26%, #fbfaf6);
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 60%, #232b26);
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__front {
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 13%, #f4f1e9);
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 60%, #232b26);
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__paper {
+  fill: #fff;
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 42%, #232b26);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__page,
+.paw-desktop-root .paw-work-glyph__page-back {
+  fill: #fdfcf8;
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 54%, #232b26);
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__page-back {
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 10%, #f4f1e9);
+}
+.paw-desktop-root .paw-work-glyph__fold {
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 16%, #f4f1e9);
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 54%, #232b26);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+.paw-desktop-root .paw-work-glyph__lines {
   fill: none;
+  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, #232b26);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+.paw-desktop-root .paw-work-glyph__cursor {
+  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, #232b26);
 }
 .paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] {
+  --paw-work-accent: var(--wayfinder-clay);
   color: color-mix(in srgb, var(--wayfinder-clay) 82%, var(--wayfinder-ink));
 }
-.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention]::before {
-  border: 0;
-  background: linear-gradient(165deg, rgb(253 252 249 / .97), color-mix(in srgb, var(--wayfinder-clay) 14%, rgb(243 240 231 / .97)));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wayfinder-clay) 28%, transparent), inset 0 1px 0 rgb(255 255 255 / .85);
+.paw-desktop-root .paw-wayfinder-work__file-art > svg {
+  filter: drop-shadow(0 5px 9px rgb(9 13 22 / .24));
 }
-.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] > svg {
-  stroke: color-mix(in srgb, var(--wayfinder-clay) 84%, var(--wayfinder-ink));
+.paw-desktop-root .paw-wayfinder-work__file-art > i {
+  border: 1.5px solid rgb(250 248 243 / .95);
+  background: transparent;
+}
+.paw-desktop-root .paw-wayfinder-work__loose-file[data-activity='running'] .paw-wayfinder-work__file-art > i {
+  background: var(--wayfinder-moss);
+}
+.paw-desktop-root .paw-wayfinder-work__loose-file[data-activity='attention'] .paw-wayfinder-work__file-art > i {
+  background: var(--wayfinder-clay);
 }
 .paw-desktop-root .paw-wayfinder-work__folder-mark {
   top: 6px;
@@ -1312,50 +1396,51 @@
   gap: 3px;
 }
 .paw-desktop-root .paw-wayfinder-work__project-copy strong {
-  /* The icon cell is 96px wide and the next cell starts 112px away. Keep the
-    name inside its own cell, but let the complete project identity wrap to
-    as many lines as it needs instead of inheriting the global two-line
-    ellipsis used by compact conversation rows. */
-  display: block;
+  /* macOS desktop label rhythm: the name keeps its 96px cell and clamps to
+     two lines at rest; hover, selection and keyboard focus reveal the full
+     identity. The cell lifts above its neighbours (paw-os.css) so the
+     revealed lines never slide under the next row. */
+  display: -webkit-box;
   width: 96px;
   max-width: 96px;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
   overflow-wrap: anywhere;
-  text-overflow: clip;
-  white-space: normal;
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-size: 12px;
   line-height: 1.25;
   text-align: center;
 }
-/* Wallpaper-aware label ground: one soft stone wash cloned per line, so the
-   full wrapped name stays legible on any terrain without drawing a banner
-   behind short names. */
-.paw-desktop-root .paw-wayfinder-work__label-ink {
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: rgb(250 248 243 / .72);
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
+.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-selected='true'], :focus-visible) .paw-wayfinder-work__project-copy strong {
+  display: block;
+  overflow: visible;
+  text-overflow: clip;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
 }
-/* The status line is a quiet pill that only appears when there is state:
-   tabular numerals, muted ink, and the running/attention hue carried by the
-   text alone so it never competes with the folder identity. */
+/* The status line is the macOS subtitle: smaller, quieter, same halo as the
+   name, no pill. State arrives as a light-tinted ink that the halo keeps
+   legible on any terrain; the corner dot on the glyph mirrors the hue. */
 .paw-desktop-root .paw-wayfinder-work__project-copy small {
-  max-width: 92px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: rgb(250 248 243 / .6);
-  color: var(--wayfinder-muted);
-  font-size: 10px;
-  line-height: 1.35;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgb(255 255 255 / .84);
+  text-shadow:
+    0 1px 2px rgb(9 13 22 / .58),
+    0 0 6px rgb(9 13 22 / .4),
+    0 0 1px rgb(9 13 22 / .66);
+  font-size: 12px;
+  line-height: 1.3;
   font-variant-numeric: tabular-nums;
   letter-spacing: .01em;
 }
-.paw-desktop-root .paw-wayfinder-work__project-copy small[data-state='running'] { color: var(--wayfinder-moss); }
-.paw-desktop-root .paw-wayfinder-work__project-copy small[data-state='attention'] { color: var(--wayfinder-clay); }
+.paw-desktop-root .paw-wayfinder-work__project-copy small[data-state='running'] { color: #a8e2be; }
+.paw-desktop-root .paw-wayfinder-work__project-copy small[data-state='attention'] { color: #f4b7a8; }
 
 /* Keep the expanded folder anchored to its own icon. The content surface is
    a single bounded window; only its child scroll area owns overflow. */

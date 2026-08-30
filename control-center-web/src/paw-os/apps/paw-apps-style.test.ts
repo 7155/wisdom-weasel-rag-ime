@@ -573,13 +573,40 @@ describe('PAWOS semantic type roles', () => {
       /\.paw-activity__detail\s*\{[^}]*height 220ms var\(--paw-chat-spring/s,
     );
     expect(agentFxCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.paw-activity\[data-state='running'\] \.paw-activity__label\s*\{[^}]*animation:\s*none/s,
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.paw-activity\[data-state='running'\] \.paw-activity__label,[\s\S]*?\{[^}]*animation:\s*none/s,
     );
     // Session ↔ Room 消息流视觉统一：Room chronology reveals ride the exact
     // shared .agent-smooth-reveal spring — the Room stylesheet must not
     // declare a second reveal timing of its own.
     expect(roomMigratedCss).not.toMatch(/chronology__(?:detail-)?reveal[^{}]*\{[^}]*transition/s);
     expect(roomMigratedCss).toContain('--paw-chat-spring: cubic-bezier(.34, 1.4, .64, 1);');
+  });
+
+  it('runs the running-state shimmer through the status glyphs, never a band over the row', () => {
+    // 流光是字在跑：行/卡背景保持干净，不存在覆盖整行的扫光伪元素。
+    expect(agentFxCss).not.toContain('agent-running-sweep');
+    expect(agentFeatureCss).not.toContain('agent-running-sweep');
+    expect(agentFxCss).not.toMatch(/\.paw-activity\[data-state='running'\][^{]*::before/);
+    expect(agentFxCss).not.toMatch(/\.fx-progress-card\[data-state='running'\][^{]*::before/);
+    expect(agentFxCss).not.toMatch(/\.agent-assistant-pending[^{]*::before/);
+    expect(agentFeatureCss).not.toMatch(/details\.agent-activity--inline\[data-state='running'\][^{]*::before/);
+    expect(agentFeatureCss).not.toMatch(/\.agent-status-tool\[data-state='running'\][^{]*::before/);
+    expect(agentFeatureCss).not.toMatch(/\.agent-assistant-pending[^{]*::before/);
+
+    // The sheen travels through the glyphs themselves: one background-clip:text
+    // gradient shared by the running Tool label/hint, the progress card, and
+    // the pending-reply strip on each surface.
+    expect(agentFxCss).toMatch(/\.paw-activity\[data-state='running'\] \.paw-activity__hint[\s\S]*?background-clip:\s*text/s);
+    expect(agentFxCss).toMatch(/animation:\s*paw-agent-fx-text-sweep 1\.85s/);
+    expect(agentFxCss).toMatch(/\.fx-progress-card\[data-state='running'\] \.fx-progress-head strong/);
+    expect(agentFxCss).toMatch(/\.agent-assistant-pending small/);
+    expect(agentFeatureCss).toMatch(/animation:\s*agent-running-text-sweep 1\.85s/);
+    expect(agentFeatureCss).toMatch(/\.agent-status-tool\[data-state='running'\] > summary small[\s\S]*?background-clip:\s*text/s);
+
+    // Reduced motion turns the sweep off and hands each node its static ink
+    // back — no transparent-color trap.
+    expect(agentFxCss).toMatch(/\[data-reduce-motion='true'\][\s\S]*\.agent-assistant-pending small[\s\S]*?color:\s*var\(--paw-running-ink\)/s);
+    expect(agentFeatureCss).toMatch(/\[data-reduce-motion='true'\][\s\S]*\.agent-assistant-pending small[\s\S]*?color:\s*var\(--agent-running-ink\)/s);
   });
 
   it('scopes the virtualized turn entrance to the newest item and keeps streaming bands un-blurred', () => {

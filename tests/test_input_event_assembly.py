@@ -147,6 +147,31 @@ class InputEventAssemblyTests(unittest.TestCase):
         self.assertIn("第 1 条", result["rendered"])
         self.assertIn("第 30 条", result["rendered"])
 
+    def test_char_budget_records_requested_effective_actual_and_truncation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-recent-char-budget-") as temporary:
+            core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")
+            core.initialize()
+            _record(core, "第一条完整输入。", created_at_ms=10_000)
+            _record(core, "第二条完整输入，字符预算会保留这一条。", created_at_ms=11_000)
+            _record(core, "第三条完整输入，应该因为字符预算被截断。", created_at_ms=12_000)
+            with core._connect() as conn:
+                result = recent_complete_input_context(
+                    conn,
+                    baseline_records=1,
+                    max_records=10,
+                    char_budget=24,
+                    token_budget=16_384,
+                    reserved_tokens=512,
+                )
+
+        receipt = result["observability"]["recentInputPolicy"]
+        self.assertEqual(receipt["requestedCount"], 10)
+        self.assertEqual(receipt["requestedChars"], 24)
+        self.assertEqual(receipt["effectiveCount"], 1)
+        self.assertLessEqual(receipt["effectiveChars"], 24)
+        self.assertEqual(receipt["actualCount"], 3)
+        self.assertTrue(receipt["truncated"])
+
     def test_explicit_yesterday_query_uses_yesterday_window(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-yesterday-context-") as temporary:
             core = LocalSqliteCoreClient(Path(temporary) / "rag-ime.sqlite")

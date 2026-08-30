@@ -1830,6 +1830,34 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
         else []
     )
     rag_evidence_hints = packet.get("ragEvidenceHints") if isinstance(packet.get("ragEvidenceHints"), list) else None
+    recent_source = current_input.get("recentCompleteInputs")
+    if not isinstance(recent_source, list):
+        recent_source = one_ring.get("events", [])
+    recent_policy = current_input.get("recentInputPolicy")
+    if not isinstance(recent_policy, dict):
+        recent_policy = packet.get("recentInputPolicy") if isinstance(packet.get("recentInputPolicy"), dict) else {}
+    try:
+        recent_effective_count = max(0, int(recent_policy.get("effectiveCount") or len(recent_source)))
+    except (TypeError, ValueError):
+        recent_effective_count = len(recent_source)
+    recent_items = recent_source[-min(80, recent_effective_count):] if recent_effective_count else []
+    compact_recent_policy = {
+        "role": one_ring.get("role") or "continuity_context",
+        "maySupportIntent": bool(one_ring.get("maySupportIntent", True)),
+        "maySupportFacts": bool(one_ring.get("maySupportFacts", False)),
+    }
+    for key in (
+        "requestedCount",
+        "requestedChars",
+        "effectiveCount",
+        "effectiveChars",
+        "actualCount",
+        "actualChars",
+        "truncated",
+        "unavailableReason",
+    ):
+        if recent_policy.get(key) is not None:
+            compact_recent_policy[key] = recent_policy[key]
     return _redact_json_value(
         {
             "schemaVersion": packet.get("schemaVersion"),
@@ -1857,14 +1885,8 @@ def _compact_active_rag_context_packet(packet: dict[str, object] | None) -> dict
                 )
                 if output_contract.get(key) not in (None, "")
             },
-            "recentCompleteInputs": one_ring.get("events", [])[-4:]
-            if isinstance(one_ring.get("events"), list)
-            else [],
-            "recentInputPolicy": {
-                "role": one_ring.get("role") or "continuity_context",
-                "maySupportIntent": bool(one_ring.get("maySupportIntent", True)),
-                "maySupportFacts": bool(one_ring.get("maySupportFacts", False)),
-            },
+            "recentCompleteInputs": recent_items,
+            "recentInputPolicy": compact_recent_policy,
             "planning": {
                 "role": planning.get("role") or "work_intent_context",
                 "maySupportIntent": bool(planning.get("maySupportIntent", True)),

@@ -52,13 +52,15 @@
   background: transparent;
   box-shadow: none;
 }
-.paw-desktop-shortcuts button > span { width: 32px; height: 32px; }
+.paw-desktop-shortcuts button > span { width: 40px; height: 40px; }
 .paw-menu-app .paw-app-icon { width: var(--paw-icon-step-xs); height: var(--paw-icon-step-xs); }
 .paw-window-title .paw-app-icon { width: var(--paw-icon-step-sm); height: var(--paw-icon-step-sm); }
 .paw-overview-window-target > .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
 .paw-dock .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
 .paw-native-nav > header .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
-.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-md); height: var(--paw-icon-step-md); }
+/* Desktop icons take the Dock's step: on the open wallpaper they are primary
+   objects, not dense list rows, so they share the Dock's presence. */
+.paw-desktop-shortcuts .paw-app-icon { width: var(--paw-icon-step-lg); height: var(--paw-icon-step-lg); }
 .paw-launchpad .paw-app-icon { width: var(--paw-icon-step-xl); height: var(--paw-icon-step-xl); }
 
 /* One selected / running language. Hover, selection, the current-App plate

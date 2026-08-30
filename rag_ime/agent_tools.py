@@ -20,6 +20,7 @@ from .agent_execution_policy import (
     APPROVAL_AUTO,
     APPROVAL_MODEL,
     APPROVAL_DENY,
+    ROOM_UNRESTRICTED_EXECUTION_MODE,
     approval_strategy,
     read_only_blocks_effect,
     read_only_policy_active,
@@ -3295,6 +3296,22 @@ class ControlToolGateway:
         # Dispatch cannot apply a mutation after its workspace lease becomes
         # read-only.
         session = self.sessions.get(session_id)
+        # A live Room dispatch is the runtime confirmation boundary for the
+        # Room-only unrestricted overlay. Keep it in-memory for this Tool
+        # call as well, so a legacy/old row created before migration 0164 does
+        # not silently fall back to per-action approval after confirmation.
+        # The overlay never changes the persisted Session mode or workspace
+        # lease; ``approval_strategy`` still enforces both and hard fences.
+        if (
+            not read_only_policy_active(session)
+            and self._room_dispatch_authorized(session_id)
+            and str(session.get("roomExecutionMode") or "").strip().lower()
+            != ROOM_UNRESTRICTED_EXECUTION_MODE
+        ):
+            session = {
+                **session,
+                "roomExecutionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
+            }
         if read_only_policy_active(session) and read_only_blocks_effect(
             tool,
             operation,

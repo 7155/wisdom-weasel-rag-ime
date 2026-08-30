@@ -213,6 +213,7 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
         "schemaVersion": WINDOW_CONTEXT_SCHEMA_VERSION,
         "captureMode": capture_mode,
         "projection": GENERATION_WINDOW_CONTEXT_PROJECTION,
+        "capturedAtMs": _integer(value.get("capturedAtMs"), default=0, minimum=0, maximum=10**16),
         "nodes": candidates,
         "nodeCount": len(candidates),
         "sourceNodeCount": len(raw_nodes),

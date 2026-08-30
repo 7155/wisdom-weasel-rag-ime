@@ -55,7 +55,7 @@ test('macOS merges native traffic lights into the one draggable PAW topbar', () 
   assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar/);
   assert.match(css, /grid-template-columns: 68px max-content minmax\(0, 1fr\) auto/);
   assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar\s*\{[^}]*-webkit-app-region:\s*drag;/s);
-  assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar > :is\(button, \.paw-menu-status\)\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
+  assert.match(css, /html\[data-paw-native-host='macos'\] \.paw-menu-bar > :is\(button, \.paw-menu-menus, \.paw-menu-status\)\s*\{[^}]*-webkit-app-region:\s*no-drag;/s);
 });
 
 test('preload marks only a macOS Electron document for the PAWOS native-host seam', () => {

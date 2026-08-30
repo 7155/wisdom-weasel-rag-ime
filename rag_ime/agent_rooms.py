@@ -43,6 +43,9 @@ ROOM_EVENT_TYPES = frozenset(
         "turn_completed",
         "turn_failed",
         "snapshot_required",
+        "room_start_confirmation_required",
+        "room_start_confirmation_confirmed",
+        "room_start_confirmation_rejected",
     }
 )
 
@@ -255,12 +258,17 @@ class AgentRoomStore:
             """,
             (room_id,),
         ).fetchall()
+        start_gate_row = conn.execute(
+            "SELECT room_id, status, objective_text, work_item_id, client_message_id, root_id, confirmed_at_ms FROM agent_room_start_gates WHERE room_id = ?",
+            (room_id,),
+        ).fetchone()
         return _room_payload(
             row,
             participants,
             topics,
             artifacts,
             work_items,
+            start_gate=_room_start_gate_payload(start_gate_row),
         )
 
     def list(
@@ -1891,6 +1899,10 @@ class AgentRoomStore:
                             """,
                             (room_id, turn_first_sequence),
                         ).fetchall()
+            start_gate_row = conn.execute(
+                "SELECT room_id, status, objective_text, work_item_id, client_message_id, root_id, confirmed_at_ms FROM agent_room_start_gates WHERE room_id = ?",
+                (room_id,),
+            ).fetchone()
 
         room = _room_payload(
             room_row,
@@ -1898,6 +1910,7 @@ class AgentRoomStore:
             topic_rows,
             artifact_rows,
             work_rows,
+            start_gate=_room_start_gate_payload(start_gate_row),
         )
         events = [_room_event_payload(row) for row in event_rows]
         retained_count = int(bounds_row["event_count"]) if bounds_row is not None else 0
@@ -2109,6 +2122,7 @@ def _room_payload(
     topics: Sequence[sqlite3.Row],
     artifacts: Sequence[sqlite3.Row],
     work_items: Sequence[sqlite3.Row],
+    start_gate: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     routing_policy = str(row["routing_mode"] or row["routing_policy"])
     payload: dict[str, object] = {
@@ -2141,9 +2155,24 @@ def _room_payload(
         "topics": [_topic_payload(item) for item in topics],
         "artifacts": [_artifact_payload(item) for item in artifacts],
         "workItems": [work_item_payload(item) for item in work_items],
+        "startGate": start_gate,
     }
     validate_contract(payload, "agent-room.v1.json")
     return payload
+
+
+def _room_start_gate_payload(row: sqlite3.Row | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    return {
+        "status": str(row["status"]),
+        "objective": str(row["objective_text"] or ""),
+        "workItemId": str(row["work_item_id"] or ""),
+        "clientMessageId": str(row["client_message_id"] or ""),
+        "gateId": f"room-start:{row['room_id']}" if "room_id" in row.keys() else "",
+        "rootId": str(row["root_id"] or ""),
+        "confirmedAtMs": int(row["confirmed_at_ms"] or 0),
+    }
 
 
 def _room_execution_mode(participants: Sequence[sqlite3.Row]) -> str:

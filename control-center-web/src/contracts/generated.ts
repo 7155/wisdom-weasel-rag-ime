@@ -148,6 +148,7 @@ import type { SandboxRunV1 } from './generated/sandbox-run.v1';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
 import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
 import type { TraceEnvelopeV1 } from './generated/trace-envelope.v1';
+import type { TraceRepairReceiptV1 } from './generated/trace-repair-receipt.v1';
 import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 import type { VerticalAgentSelfTestSuiteV1 } from './generated/vertical-agent-self-test-suite.v1';
@@ -304,6 +305,7 @@ export type {
   SessionMemoryRecallV1,
   SessionRecallEffectReceiptV1,
   TraceEnvelopeV1,
+  TraceRepairReceiptV1,
   TypedVerificationReceiptV1,
   UserMemoryDraftV1,
   VerticalAgentSelfTestSuiteV1,
@@ -461,6 +463,7 @@ export interface ContractTypeMap {
   'session-memory-recall.v1': SessionMemoryRecallV1;
   'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;
   'trace-envelope.v1': TraceEnvelopeV1;
+  'trace-repair-receipt.v1': TraceRepairReceiptV1;
   'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
   'vertical-agent-self-test-suite.v1': VerticalAgentSelfTestSuiteV1;

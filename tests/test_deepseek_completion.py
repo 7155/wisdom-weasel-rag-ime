@@ -720,6 +720,48 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertFalse(user_payload["contextPacket"]["recentInputPolicy"]["maySupportFacts"])
         self.assertIn("当前输入优先且历史不能充当事实证据", user_payload["task"])
 
+    def test_active_rag_prompt_preserves_configured_recent_input_budget(self) -> None:
+        recent = [{"textPreview": f"历史输入 {index}"} for index in range(1, 7)]
+        packet = {
+            "schemaVersion": "rag-ime.smart-context-packet.v1",
+            "currentInput": {
+                "committedTail": "当前输入",
+                "recentCompleteInputs": recent,
+                "recentInputPolicy": {
+                    "requestedCount": 6,
+                    "requestedChars": 12000,
+                    "effectiveCount": 6,
+                    "effectiveChars": 36,
+                    "actualCount": 6,
+                    "actualChars": 36,
+                    "truncated": False,
+                    "unavailableReason": "",
+                },
+            },
+            "oneRing": {
+                "role": "continuity_context",
+                "maySupportIntent": True,
+                "maySupportFacts": False,
+                "events": recent,
+            },
+        }
+
+        messages = build_deepseek_completion_messages(
+            DeepSeekCompletionRequest(
+                scene="active_rag",
+                current_context="当前输入",
+                context_packet=packet,
+            )
+        )
+        user_payload = json.loads(messages[1]["content"])
+
+        self.assertEqual(
+            [item["textPreview"] for item in user_payload["contextPacket"]["recentCompleteInputs"]],
+            [f"历史输入 {index}" for index in range(1, 7)],
+        )
+        self.assertEqual(user_payload["contextPacket"]["recentInputPolicy"]["effectiveCount"], 6)
+        self.assertEqual(user_payload["contextPacket"]["recentInputPolicy"]["requestedChars"], 12000)
+
     def test_active_rag_keeps_explanatory_technical_paragraph(self) -> None:
         payload = {
             "choices": [

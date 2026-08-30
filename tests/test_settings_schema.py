@@ -76,6 +76,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["privacy"]["debugContextMaxCallsPerTurn"], 128)
         self.assertEqual(defaults["context"]["tokenBudget"], 4096)
         self.assertEqual(defaults["context"]["reservedOutputTokens"], 1024)
+        self.assertEqual(defaults["context"]["recentInputCharMaximum"], 12000)
+        self.assertEqual(defaults["context"]["axNodeMaximum"], 160)
+        self.assertEqual(defaults["context"]["axCharMaximum"], 12000)
         self.assertFalse(defaults["agent"]["pi"]["enabled"])
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
         self.assertTrue(defaults["agent"]["pi"]["systemProxy"])
@@ -149,6 +152,10 @@ class SettingsSchemaTests(unittest.TestCase):
             1024,
         )
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
+        self.assertEqual(fields["context.recentInputMaximum"]["label"], "最近完整输入条数上限")
+        self.assertEqual(fields["context.recentInputCharMaximum"]["label"], "最近输入字符预算")
+        self.assertEqual(fields["context.axNodeMaximum"]["label"], "AX 节点数预算")
+        self.assertEqual(fields["context.axCharMaximum"]["label"], "AX 字符预算")
         # Persona selection belongs to the Agent partner flow, not the generic
         # runtime settings form. Keep the internal default without exposing a
         # raw role id as a second, conflicting UI owner.

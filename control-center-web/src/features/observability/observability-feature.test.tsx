@@ -12,6 +12,7 @@ import type { SandboxRunV1 } from '@/contracts/generated/sandbox-run.v1';
 import type { ControlRequest } from '@/platform/transport';
 import type { ControlPathId } from '@/platform/routes';
 import { MockControlTransport } from '@/test/mock-transport';
+import observabilityStylesheet from './observability.css?raw';
 import { ObservabilityFeature } from '.';
 
 const SANDBOX_RUNS_PATH_ID = 'observability.sandboxRuns.list' as ControlPathId;
@@ -193,6 +194,15 @@ describe('ObservabilityFeature', () => {
     });
   });
 
+  it('keeps SandboxRun chain identifiers inside their grid cells with ellipsis', () => {
+    expect(observabilityStylesheet).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);",
+    );
+    expect(observabilityStylesheet).toContain(
+      "main[data-route-id='observability'] .observation-sandbox-runs__node code,\nmain[data-route-id='observability'] .observation-sandbox-runs__node a {\n  display: block;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;",
+    );
+  });
+
   it('explains plugin enablement when no SandboxRun exists and keeps direct run absent', async () => {
     const transport = observationTransport({ sandboxRuns: sandboxRunListResponse([]) });
     renderFeature(transport);
@@ -270,6 +280,30 @@ describe('ObservabilityFeature', () => {
     });
     await waitFor(() => expect(transport.requests.filter(({ request }) => request.pathId === 'observability.evals.list')).toHaveLength(2));
     expect(screen.getByText('人工 Eval 已提交')).toBeInTheDocument();
+  });
+
+  it('runs the default Luna Max AI Judge and labels the receipt as an estimate', async () => {
+    const user = userEvent.setup();
+    const transport = observationTransport({
+      aiJudge: (request: ControlRequest) => {
+        expect(request.body).toEqual({ traceId: 'trace:turn:test' });
+        return aiJudgeRunResponse();
+      },
+    });
+    renderFeature(transport);
+
+    await user.click(await screen.findByRole('button', { name: '运行 Luna Max Eval' }));
+
+    await waitFor(() => expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'observability.evals.aiJudge.run'
+    ))).toHaveLength(1));
+    expect(transport.requests.find(({ request }) => request.pathId === 'observability.evals.aiJudge.run')?.request).toMatchObject({
+      pathId: 'observability.evals.aiJudge.run',
+      body: { traceId: 'trace:turn:test' },
+      responseContract: 'eval-run.v1',
+    });
+    expect(await screen.findByText('Luna Max AI Judge 已提交')).toBeInTheDocument();
+    expect(screen.getByText(/AI 评审估计：ai_judge_estimate/)).toBeInTheDocument();
   });
 
   it('refreshes a building Trace and its Eval list when a matching observation arrives', async () => {
@@ -814,6 +848,7 @@ function observationTransport(options: {
   evals?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
   suites?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
   evidenceEval?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
+  aiJudge?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
   schedules?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
   scheduleCreate?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
   scheduleRuns?: unknown | ((request: ControlRequest) => unknown | Promise<unknown>);
@@ -858,6 +893,7 @@ function observationTransport(options: {
       'observability.evals.list': options.evals ?? evalListResponse(),
       'observability.evalSuites.list': options.suites ?? evalSuiteListResponse(),
       'observability.evals.evidence.run': options.evidenceEval ?? evalRunResponse(),
+      'observability.evals.aiJudge.run': options.aiJudge ?? aiJudgeRunResponse(),
       'observability.evalSchedules.list': options.schedules ?? evalScheduleListResponse([]),
       'observability.evalSchedules.create': options.scheduleCreate ?? {
         schemaVersion: 'rag-ime.eval-schedule-create.v1',
@@ -1014,6 +1050,22 @@ function evalRunResponse() {
     truth: { status: 'human' as const, datasetId: 'dataset:human', labelRevision: 'labels:1' },
     evaluator: { provider: 'human', model: 'manual', thinking: 'manual', displayName: '人工标注' },
     metrics: {},
+    status: 'completed' as const,
+    createdAtMs: 5,
+    updatedAtMs: 5,
+  };
+}
+
+function aiJudgeRunResponse() {
+  return {
+    schemaVersion: 'rag-ime.eval-run.v1' as const,
+    evalRunId: 'eval:ai-judge:new',
+    traceIds: ['trace:turn:test'] as [string, ...string[]],
+    mode: 'ai_judge' as const,
+    metricAuthority: 'ai_judge_estimate' as const,
+    truth: { status: 'none' as const, datasetId: 'trace-eval-ai-judge', labelRevision: 'trace-eval-ai-judge-v1' },
+    evaluator: { provider: 'openai-codex', model: 'gpt-5.6-luna', thinking: 'max', displayName: 'Luna Max' },
+    metrics: { relevance: 0.9, coverage: 0.8, groundedness: 1, contradiction: 0, confidence: 0.7 },
     status: 'completed' as const,
     createdAtMs: 5,
     updatedAtMs: 5,

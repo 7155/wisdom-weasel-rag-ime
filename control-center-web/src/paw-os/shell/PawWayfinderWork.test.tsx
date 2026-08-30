@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { MockControlTransport, type MockControlTransportOptions } from '@/test/mock-transport';
@@ -516,6 +517,85 @@ describe('PawWayfinderWork', () => {
         wayfinder?: { projectAssignments?: Record<string, string> };
       };
       expect(snapshot.wayfinder?.projectAssignments?.['session:s-source']).toBe('/work/target');
+    });
+  });
+
+  it('drops a dialogue file onto the canvas as a loose desktop file and files it back', async () => {
+    /* The desktop owns the selection set; this harness wires it the way
+     * PawDesktop does so the loose file's click-to-select is exercised. */
+    function SelectionHarness() {
+      const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+      return (
+        <PawWayfinderWork
+          onSelectIcon={(iconId, additive) => setSelected((current) => {
+            if (!additive) return new Set([iconId]);
+            const next = new Set(current);
+            if (next.has(iconId)) next.delete(iconId);
+            else next.add(iconId);
+            return next;
+          })}
+          selectedIcons={selected}
+        />
+      );
+    }
+    render(
+      <ControlTransportProvider transport={new MockControlTransport({
+        routes: {
+          'agent.sessions.list': { ok: true, items: [
+            sessionRecord('s-loose', '桌面上的散文件', { workspaceRoots: ['/work/paw'] }),
+            sessionRecord('s-stays', '留在文件夹里的对话', { workspaceRoots: ['/work/paw'] }),
+          ] },
+          'agent.rooms.list': { ok: true, items: [] },
+        },
+      })}>
+        <PawDesktopProvider><SelectionHarness /></PawDesktopProvider>
+      </ControlTransportProvider>,
+    );
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await screen.findByRole('button', { name: /桌面上的散文件/ });
+    const row = within(panel).getByRole('button', { name: /桌面上的散文件/ });
+    const canvas = panel.querySelector('[data-wayfinder-canvas]') as HTMLDivElement;
+    Object.defineProperty(canvas, 'clientWidth', { configurable: true, value: 800 });
+    Object.defineProperty(canvas, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(canvas, 'scrollWidth', { configurable: true, value: 800 });
+    Object.defineProperty(canvas, 'scrollHeight', { configurable: true, value: 600 });
+    Object.defineProperty(canvas, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => domRect(10, 20, 800, 600),
+    });
+
+    const transfer = dragTransfer();
+    fireEvent.dragStart(row, { dataTransfer: transfer });
+    fireDrop(canvas, transfer, 220, 190);
+
+    const loose = await waitFor(() => {
+      const element = panel.querySelector('[data-wayfinder-loose]');
+      expect(element).toBeTruthy();
+      return element as HTMLButtonElement;
+    });
+    expect(loose).toHaveTextContent('桌面上的散文件');
+    expect(loose.querySelector('.paw-wayfinder-work__file-art svg')).not.toBeNull();
+    expect(panel.querySelectorAll('[data-dialogue-file]')).toHaveLength(1);
+    await waitFor(() => {
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        wayfinder?: { iconPositions?: Record<string, unknown>; projectAssignments?: Record<string, string> };
+      };
+      expect(snapshot.wayfinder?.iconPositions?.['session:s-loose']).toBeTruthy();
+      expect(snapshot.wayfinder?.projectAssignments?.['session:s-loose']).toBeUndefined();
+    });
+
+    fireEvent.click(loose);
+    expect(loose).toHaveAttribute('aria-selected', 'true');
+
+    const folder = panel.querySelector('[data-project-folder]') as HTMLDetailsElement;
+    const backTransfer = dragTransfer();
+    fireEvent.dragStart(loose, { dataTransfer: backTransfer });
+    fireDrop(folder, backTransfer);
+
+    await waitFor(() => {
+      expect(panel.querySelector('[data-wayfinder-loose]')).toBeNull();
+      expect(panel.querySelectorAll('[data-dialogue-file]')).toHaveLength(2);
     });
   });
 

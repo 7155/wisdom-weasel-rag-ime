@@ -304,6 +304,45 @@ describe('Agent chat rendering', () => {
     ]);
   });
 
+  it('renders autocompact as one event-driven timeline step that settles in place', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'busy',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'compaction_started', {
+        reason: 'threshold',
+        tokensBefore: 120_000,
+      }),
+    ]);
+
+    render(<AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    const running = screen.getByRole('status', { name: 'Autocompact 自动压缩中' });
+    expect(running).toHaveAttribute('data-kind', 'autocompact');
+    expect(running).toHaveAttribute('data-state', 'running');
+    expect(running.querySelectorAll('.agent-compaction-notice__fold > i')).toHaveLength(3);
+    expect(running).toHaveTextContent('达到上下文阈值，正在生成可继续对话的摘要');
+
+    act(() => void useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(2, 'compaction_completed', {
+        reason: 'threshold',
+        tokensBefore: 120_000,
+        estimatedTokensAfter: 24_000,
+      }),
+    ]));
+
+    const completed = screen.getByRole('status', { name: 'Autocompact 自动压缩完成' });
+    expect(completed).toBe(running);
+    expect(completed).toHaveAttribute('data-state', 'completed');
+    expect(completed).toHaveTextContent('120K → 约 24.0K');
+  });
+
   it('restores Provider reasoning before the matching durable assistant body', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';

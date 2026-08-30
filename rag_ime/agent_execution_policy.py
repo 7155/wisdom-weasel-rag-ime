@@ -17,6 +17,11 @@ READ_ONLY_EXECUTION_MODE = "read_only"
 PER_ACTION_EXECUTION_MODE = "per_action"
 WORKSPACE_MANAGED_EXECUTION_MODE = "workspace_managed"
 FULL_TRUST_EXECUTION_MODE = "full_trust"
+# Room-only execution mode. It is deliberately separate from the ordinary
+# Session executionMode enum: a Room can opt into this only after its explicit
+# start confirmation, while the Session's normal mode and workspace lease stay
+# authoritative hard fences.
+ROOM_UNRESTRICTED_EXECUTION_MODE = "room_unrestricted"
 
 SUPPORTED_EXECUTION_MODES = frozenset(
     {
@@ -77,6 +82,21 @@ def read_only_policy_active(session: Mapping[str, object]) -> bool:
         == READ_ONLY_EXECUTION_MODE
         or str(session.get("toolProfileVersion") or "").strip()
         == READONLY_TOOL_PROFILE
+    )
+
+
+def room_unrestricted_policy_active(session: Mapping[str, object]) -> bool:
+    """Return whether a confirmed Room may skip per-Tool approval prompts.
+
+    This flag is intentionally not accepted by ``normalize_execution_mode``;
+    it is a Room overlay on top of the ordinary Session policy. That keeps
+    read-only Sessions and the four existing Session modes compatible while
+    making the Room migration's runtime consumer explicit.
+    """
+
+    return (
+        str(session.get("roomExecutionMode") or "").strip().lower()
+        == ROOM_UNRESTRICTED_EXECUTION_MODE
     )
 
 # Full automation is model-arbitrated, never policy auto-approval. Product
@@ -319,6 +339,15 @@ def approval_strategy(
     effect = (str(tool), str(operation))
     if mode == READ_ONLY_EXECUTION_MODE:
         return APPROVAL_DENY
+    if room_unrestricted_policy_active(session):
+        # A Room confirmation removes the repeated per-Tool prompt, not the
+        # workspace lease, parameter validation, Stop/cancel path, or native
+        # hard fences for product/runtime replacement.
+        if effect in _ALWAYS_MANUAL_EFFECTS:
+            return APPROVAL_ASK
+        if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
+            return APPROVAL_DENY
+        return APPROVAL_AUTO
     if mode == PER_ACTION_EXECUTION_MODE:
         return APPROVAL_ASK
     if mode == FULL_TRUST_EXECUTION_MODE:
@@ -405,6 +434,13 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
             )
         ),
     }[mode]
+    if room_unrestricted_policy_active(session) and mode != READ_ONLY_EXECUTION_MODE:
+        guidance = (
+            f"{guidance}\n"
+            "本轮已由 Room 显式确认 room_unrestricted：已披露且在授权边界内的 Tool 连续执行，"
+            "不再逐 Tool 弹出审批；工作区范围、参数校验、系统权限、取消/停止和审计仍然有效，"
+            "触发硬围栏的运行时替换等操作仍需人工处理。"
+        )
     return (
         f'<execution-mode mode="{mode}">\n'
         f"{guidance}\n\n"

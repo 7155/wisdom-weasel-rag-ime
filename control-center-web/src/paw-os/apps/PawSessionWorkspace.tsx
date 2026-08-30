@@ -21,6 +21,7 @@ import {
 } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
+import { useComposerClearance } from '@/components/layout/use-composer-clearance';
 import type { AgentActivityProjection, AgentMessageProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
@@ -181,6 +182,11 @@ export function PawSessionWorkspace({
   const toolMenuButtonRef = useRef<HTMLButtonElement>(null);
   const toolMenuRef = useRef<HTMLElement>(null);
   const toolMenuInitialFocusRef = useRef<'first' | 'last'>('first');
+  const primaryRef = useRef<HTMLDivElement>(null);
+  /* The composer floats over the full-height conversation canvas, so the
+     timeline must reserve exactly the overlay's rendered height as footer
+     space — the same measured-clearance contract the classic workspace uses. */
+  useComposerClearance(primaryRef, '.paw-session-workspace__composer');
   const runtimeToolWindow = useMemo(() => createRuntimeToolWindowProjector(), [recordId]);
 
   useEffect(() => {
@@ -1160,7 +1166,7 @@ export function PawSessionWorkspace({
       {windowChromeTarget ? null : sessionChrome}
 
       <div className="paw-session-workspace__body">
-        <div className="paw-session-workspace__primary">
+        <div className="paw-session-workspace__primary" ref={primaryRef}>
           <div className="paw-session-workspace__viewport">
             <main
               aria-hidden={workspaceView !== 'conversation'}

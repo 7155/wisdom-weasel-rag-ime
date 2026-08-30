@@ -51,7 +51,7 @@ export function createConfiguredControlTransport(): ControlTransport {
   const developmentOverride = developmentTransportOverride();
   const requested = developmentOverride
     ?? import.meta.env.VITE_CONTROL_TRANSPORT
-    ?? detectTransport();
+    ?? (import.meta.env.DEV ? 'http' : detectTransport());
   if (requested === 'native') {
     try {
       return new NativeControlTransport();
@@ -80,7 +80,7 @@ function developmentTransportOverride(): 'http' | 'mock' | null {
   if (!import.meta.env.DEV) return null;
   const requested = new URLSearchParams(window.location.search).get('controlTransport');
   if (requested === 'http' || requested === 'mock') return requested;
-  return 'http';
+  return null;
 }
 
 function detectTransport(): 'native' | 'http' | 'mock' {

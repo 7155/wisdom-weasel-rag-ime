@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from rag_ime.eval_run_store import EvalRunConflict, EvalRunStore
@@ -58,7 +59,7 @@ class EvalRunStoreTests(unittest.TestCase):
             self.assertNotIn("input", persisted)
             self.assertNotIn("prompt", persisted)
             self.assertNotIn("transcript", persisted)
-            with sqlite3.connect(Path(tmp) / "eval.sqlite") as conn:
+            with closing(sqlite3.connect(Path(tmp) / "eval.sqlite")) as conn:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(eval_runs)")}
             self.assertFalse({"input", "prompt", "transcript"}.intersection(columns))
 

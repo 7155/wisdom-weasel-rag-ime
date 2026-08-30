@@ -1689,12 +1689,36 @@ function ContextCompactionNotice({ activity }: { activity: AgentActivityProjecti
   const before = numberValue(activity.payload.tokensBefore);
   const after = numberValue(activity.payload.estimatedTokensAfter);
   const reason = text(activity.payload.reason);
-  const reasonLabel = reason === 'manual' ? '手动触发' : reason === 'overflow' ? '溢出恢复' : '达到自动阈值';
+  const automatic = reason === 'threshold' || reason === 'automatic';
+  const reasonLabel = reason === 'manual'
+    ? '手动触发'
+    : reason === 'overflow'
+      ? '溢出恢复'
+      : automatic
+        ? '达到上下文阈值'
+        : 'Runtime 触发';
+  const stateLabel = running ? '自动压缩中' : failed ? '自动压缩失败' : '自动压缩完成';
+  const title = automatic
+    ? `Autocompact · ${stateLabel}`
+    : running
+      ? '正在压缩上下文'
+      : failed
+        ? '上下文压缩失败'
+        : '上下文压缩完成';
   return (
-    <div className="agent-compaction-notice" data-state={activity.status} role="status" aria-live="polite">
-      <span className="agent-compaction-notice__mark" aria-hidden="true"><RefreshCcw size={15} /></span>
+    <div
+      aria-label={automatic ? `Autocompact ${stateLabel}` : title}
+      aria-live="polite"
+      className="agent-compaction-notice"
+      data-kind={automatic ? 'autocompact' : 'compaction'}
+      data-state={activity.status}
+      role="status"
+    >
+      <span className="agent-compaction-notice__mark" aria-hidden="true">
+        <span className="agent-compaction-notice__fold"><i /><i /><i /></span>
+      </span>
       <span>
-        <strong>{running ? '正在压缩上下文' : failed ? '上下文压缩失败' : '上下文已压缩'}</strong>
+        <strong>{title}</strong>
         <small>
           {running
             ? `${reasonLabel}，正在生成可继续对话的摘要`
@@ -1703,7 +1727,6 @@ function ContextCompactionNotice({ activity }: { activity: AgentActivityProjecti
               : `${reasonLabel}，下一轮响应后校准实际占用`}
         </small>
       </span>
-      {running ? <i className="agent-compaction-notice__pulse" aria-hidden="true" /> : null}
     </div>
   );
 }

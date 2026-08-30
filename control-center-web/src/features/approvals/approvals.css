@@ -13,23 +13,23 @@ main[data-route-id='approvals'] .approvals-pulse {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-tertiary) 22%, transparent);
   border-radius: 16px;
   background:
-    linear-gradient(135deg, color-mix(in srgb, #38bdf8 7%, transparent), transparent 55%),
-    color-mix(in srgb, #f8fafc 88%, #dbeafe 12%);
+    linear-gradient(135deg, color-mix(in srgb, var(--color-info) 7%, transparent), transparent 55%),
+    color-mix(in srgb, var(--color-surface) 88%, var(--color-info-soft) 12%);
 }
 main[data-route-id='approvals'] .approvals-pulse[data-tone='attention'] {
   border-color: color-mix(in srgb, var(--color-warning) 34%, transparent);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 9%, transparent), transparent 55%),
-    color-mix(in srgb, #f8fafc 92%, #fde68a 8%);
+    color-mix(in srgb, var(--color-surface) 92%, var(--color-warning-soft) 8%);
 }
 main[data-route-id='approvals'] .approvals-pulse[data-tone='danger'] {
   border-color: color-mix(in srgb, var(--color-danger) 32%, transparent);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--color-danger) 8%, transparent), transparent 55%),
-    color-mix(in srgb, #f8fafc 93%, #fecaca 7%);
+    color-mix(in srgb, var(--color-surface) 93%, var(--color-danger-soft) 7%);
 }
 main[data-route-id='approvals'] .approvals-pulse__icon {
   display: grid;
@@ -51,14 +51,14 @@ main[data-route-id='approvals'] .approvals-pulse[data-tone='danger'] .approvals-
 }
 main[data-route-id='approvals'] .approvals-pulse__copy { display: grid; min-width: 0; gap: 2px; }
 main[data-route-id='approvals'] .approvals-pulse__copy strong {
-  color: #0f172a;
+  color: var(--color-text);
   font-size: 16px;
   font-weight: 700;
   letter-spacing: -.01em;
 }
 main[data-route-id='approvals'] .approvals-pulse__copy p {
   margin: 0;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.55;
 }
@@ -66,10 +66,10 @@ main[data-route-id='approvals'] .approvals-pulse__done {
   flex: none;
   margin-left: auto;
   padding: 5px 11px;
-  border: 1px solid color-mix(in srgb, #64748b 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, #fff 72%, transparent);
-  color: #64748b;
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
@@ -119,9 +119,9 @@ main[data-route-id='approvals'] .approvals-queue__list > li > button {
   gap: 10px;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   padding: 9px 12px;
-  border: 1px solid color-mix(in srgb, #64748b 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
   border-radius: 12px;
-  background: color-mix(in srgb, #fff 84%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 84%, transparent);
   cursor: pointer;
   font: inherit;
   text-align: start;
@@ -133,7 +133,7 @@ main[data-route-id='approvals'] .approvals-queue__list > li > button:focus-visib
 }
 main[data-route-id='approvals'] .approvals-queue__list > li[data-active] > button {
   border-color: color-mix(in srgb, var(--color-accent) 46%, transparent);
-  background: color-mix(in srgb, var(--color-accent) 6%, #fff 84%);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface) 94%);
 }
 main[data-route-id='approvals'] .approvals-queue__list > li[data-state='failed'] > button {
   border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
@@ -141,14 +141,14 @@ main[data-route-id='approvals'] .approvals-queue__list > li[data-state='failed']
 main[data-route-id='approvals'] .approvals-queue__copy { display: grid; min-width: 0; gap: 2px; }
 main[data-route-id='approvals'] .approvals-queue__copy strong {
   overflow: hidden;
-  color: #0f172a;
+  color: var(--color-text);
   font-size: 13.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 main[data-route-id='approvals'] .approvals-queue__copy small {
   overflow: hidden;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -172,8 +172,8 @@ main[data-route-id='approvals'] .approvals-risk {
   flex: none;
   place-items: center;
   border-radius: 10px;
-  background: color-mix(in srgb, #64748b 12%, transparent);
-  color: #475569;
+  background: color-mix(in srgb, var(--color-text-tertiary) 12%, transparent);
+  color: var(--color-text-secondary);
   font: 750 12px var(--font-mono);
 }
 main[data-route-id='approvals'] :is(li, article)[data-risk='R2'] .approvals-risk {
@@ -192,9 +192,9 @@ main[data-route-id='approvals'] .approvals-decision__card {
   min-width: 0;
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid color-mix(in srgb, #64748b 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-tertiary) 22%, transparent);
   border-radius: 16px;
-  background: #fff;
+  background: var(--color-surface);
 }
 main[data-route-id='approvals'] .approvals-decision__card[data-risk='R3'][data-state='pending'] {
   border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
@@ -210,7 +210,7 @@ main[data-route-id='approvals'] .approvals-decision__head .approvals-risk { widt
 main[data-route-id='approvals'] .approvals-decision__title { min-width: 0; }
 main[data-route-id='approvals'] .approvals-decision__title h3 {
   margin: 0;
-  color: #0f172a;
+  color: var(--color-text);
   font-size: 15.5px;
   font-weight: 700;
   letter-spacing: -.01em;
@@ -219,7 +219,7 @@ main[data-route-id='approvals'] .approvals-decision__title h3 {
 }
 main[data-route-id='approvals'] .approvals-decision__title p {
   margin: 3px 0 0;
-  color: #64748b;
+  color: var(--color-text-secondary);
   font-size: 12.5px;
   line-height: 1.5;
 }
@@ -348,7 +348,7 @@ main[data-route-id='approvals'] .approvals-decision__actions {
 @media (hover: hover) and (pointer: fine) {
   main[data-route-id='approvals'] .approvals-queue__list > li:not([data-active]) > button:hover {
     border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
-    background: color-mix(in srgb, var(--color-accent) 4%, #fff 84%);
+    background: color-mix(in srgb, var(--color-accent) 4%, var(--color-surface) 96%);
   }
   main[data-route-id='approvals'] .approvals-preview > summary:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
 }

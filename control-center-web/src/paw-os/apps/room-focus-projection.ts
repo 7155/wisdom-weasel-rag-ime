@@ -225,7 +225,8 @@ export function buildRoomFocusProjection(
         collaborationRole: participant.collaborationRole,
         state,
         ownedWorkItemIds: owned.map((item) => item.id),
-        currentAction: latestActivity?.summary.trim()
+        currentAction: stringValue(latestActivity?.payload.task)
+          || latestActivity?.summary.trim()
           || owned.find((item) => ['running', 'review', 'blocked', 'waiting'].includes(item.state))?.objective
           || owned.at(0)?.objective
           || '等待新的工作项',
@@ -307,10 +308,15 @@ function currentRoomFocusScope(
 
   const activityIds = new Set(turn.activityIds);
   const messageIds = new Set(turn.messageIds);
+  const scopedWorkItems = (room.workItems ?? []).filter((item) => item.rootTurnId === turnId);
   return {
     activities: activities.filter((activity) => activityIds.has(activity.id)),
     messages: messages.filter((message) => messageIds.has(message.id)),
-    workItems: (room.workItems ?? []).filter((item) => item.rootTurnId === turnId),
+    /* A metadata refresh can publish the latest public turn before its
+       WorkItem's rootTurnId is attached to the Room snapshot. Keep the
+       authoritative roster visible during that short skew; otherwise the
+       collaboration graph silently loses each planet's actual assignment. */
+    workItems: scopedWorkItems.length ? scopedWorkItems : room.workItems ?? [],
     turnId,
     turn,
   };

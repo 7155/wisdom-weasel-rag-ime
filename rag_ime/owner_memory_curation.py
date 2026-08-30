@@ -203,6 +203,9 @@ class OwnerMemoryCurator:
         embedding_provider: EmbeddingProvider | None = None,
         personal_window_ms: int = MAX_PERSONAL_V2_WINDOW_MS,
         observations: object | None = None,
+        trace_id: str = "",
+        maintenance_job_id: str = "",
+        parent_span_id: str = "",
     ) -> None:
         self.db_path = Path(db_path)
         self.organizer = organizer
@@ -222,6 +225,9 @@ class OwnerMemoryCurator:
         # Gateway supplies ObservationHub so a real maintenance run can keep
         # one durable run id across started, review, apply, and failure phases.
         self.observations = observations
+        self.trace_id = compact_whitespace(trace_id)
+        self.maintenance_job_id = compact_whitespace(maintenance_job_id)
+        self.parent_span_id = compact_whitespace(parent_span_id)
         self.curation_protocol_version = compact_whitespace(
             str(getattr(organizer, "curation_protocol_version", ""))
         )
@@ -1057,14 +1063,28 @@ class OwnerMemoryCurator:
     ) -> None:
         emitter = getattr(self.observations, "emit_memory_event", None)
         if callable(emitter):
-            emitter(
-                phase=phase,
-                status=status,
-                summary=summary,
-                run_id=run_id,
-                attempt_id=attempt_id,
-                metrics=metrics,
-            )
+            values: dict[str, object] = {
+                "phase": phase,
+                "status": status,
+                "summary": summary,
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "metrics": metrics,
+            }
+            if self.trace_id:
+                values.update(
+                    {
+                        "trace_id": self.trace_id,
+                        "maintenance_job_id": self.maintenance_job_id,
+                        # The Gateway's started span is the parent only for
+                        # the first owner phase. Later phases naturally hang
+                        # from the owner attempt's started span.
+                        "parent_span_id": (
+                            self.parent_span_id if phase == "started" else ""
+                        ),
+                    }
+                )
+            emitter(**values)
 
     def _apply_model_decisions(
         self,

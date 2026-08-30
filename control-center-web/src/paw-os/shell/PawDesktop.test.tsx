@@ -524,7 +524,7 @@ describe('PAWOS desktop', () => {
     expect(desktopSource).toMatch(/const toggleLaunchpad = useCallback\(/);
     expect(desktopSource).toMatch(/const toggleOverview = useCallback\(/);
     // …and when a lasso frame that crosses no new identity keeps its Set.
-    expect(desktopSource).toMatch(/sameAppSelection\(current, next\) \? current : next/);
+    expect(desktopSource).toMatch(/sameIconSelection\(current, next\) \? current : next/);
   });
 });
 

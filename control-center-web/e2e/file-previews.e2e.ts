@@ -79,7 +79,10 @@ test('managed Markdown, code, Diff, image, and interactive HTML previews stay us
   await expect(iframe).toHaveAttribute('sandbox', /allow-forms/);
   await expect(iframe.contentFrame().getByRole('heading', { name: '交互验收报告' })).toBeVisible();
   await expect(iframe.contentFrame().getByText('脚本与远程资源已运行。')).toBeVisible();
-  await expect(iframe.contentFrame().locator('script')).toHaveCount(1);
+  // The isolated preview contains the bootstrap loader and the authored
+  // report script. Both are expected: the first decodes the source into the
+  // sandbox, while the second provides the report's interaction.
+  await expect(iframe.contentFrame().locator('script')).toHaveCount(2);
   await expect(iframe.contentFrame().locator('form')).toHaveCount(1);
   await expect(iframe.contentFrame().locator('link[rel="stylesheet"]')).toHaveCount(1);
   await iframe.contentFrame().getByRole('textbox', { name: '报告备注' }).fill('表单交互正常');

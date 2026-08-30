@@ -3467,6 +3467,64 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertTrue(receipt["mutationApplied"])
         self.assertNotIn("roomExecutionReceipt", receipt)
 
+    def test_confirmed_room_unrestricted_executes_without_per_tool_prompt(self) -> None:
+        workspace = Path(self.tmp.name) / "room-unrestricted"
+        workspace.mkdir()
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            allowed_tools=None,
+            workspace_roots=[str(workspace)],
+        )
+
+        class _ConfirmedRoom:
+            def _active_room_dispatch_authorizes_work(self, _session_id: str) -> bool:
+                return True
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_ConfirmedRoom(),
+        )
+
+        def auto_approve(approval):
+            decided = self.store.decide_approval(
+                str(approval["approvalId"]),
+                approved=True,
+                payload_sha256=str(approval["payloadSha256"]),
+                decided_by="execution-policy:room_unrestricted",
+            )
+            receipt = gateway.apply_approval(decided)
+            return {
+                "summary": receipt["summary"],
+                "approvalRequired": False,
+                "autoApproved": True,
+                "approvalId": approval["approvalId"],
+                "receipt": receipt,
+            }
+
+        gateway.bind_auto_approval_executor(auto_approve)
+        response = gateway.execute(
+            {
+                **self._tool_call(
+                    "planning",
+                    "task_action",
+                    taskId="task:1",
+                    action="complete",
+                    date="2026-07-13",
+                ),
+                "toolCallId": "tool:room-unrestricted-patch",
+            }
+        )
+
+        self.assertTrue(response["result"]["autoApproved"])
+        self.assertEqual(self.store.get(str(self.session["id"]))["roomExecutionMode"], "")
+
     def test_room_workspace_managed_auto_approval_uses_session_receipt(self) -> None:
         workspace = Path(self.tmp.name) / "room-managed"
         workspace.mkdir()

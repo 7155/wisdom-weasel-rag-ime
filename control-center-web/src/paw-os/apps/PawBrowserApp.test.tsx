@@ -28,6 +28,7 @@ describe('PAW Browser App', () => {
     );
 
     expect(await screen.findByRole('textbox', { name: '页面地址' })).toBeInTheDocument();
+    expect(document.querySelector('main[data-route-id="browser"]')).toBeInTheDocument();
     expect(screen.queryByText('CDP 直连')).not.toBeInTheDocument();
     expect(screen.queryByText('Agent 拥有完整控制权')).not.toBeInTheDocument();
     expect(screen.queryByText(/配对/)).not.toBeInTheDocument();
@@ -180,7 +181,7 @@ describe('PAW Browser App', () => {
     );
 
     await screen.findByRole('tab', { name: 'Two' });
-    await user.click(screen.getByRole('button', { name: '关闭标签页：Two' }));
+    await user.click(document.querySelector('[data-tab-close-label="Two"]') as HTMLElement);
     await waitFor(() => expect(transport.requests.some(({ request }) => (
       request.pathId === 'browser.command'
       && record(request.body).action === 'close_tab'
@@ -274,7 +275,7 @@ describe('PAW Browser App', () => {
     expect(within(tablist).getAllByRole('tab')).toHaveLength(2);
     await user.click(within(tablist).getAllByRole('tab')[0]);
     expect(within(tablist).getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
-    await user.click(within(tablist).getByLabelText('关闭标签页'));
+    await user.click(document.querySelector('.paw-browser-tab-close') as HTMLElement);
     expect(within(tablist).getAllByRole('tab')).toHaveLength(1);
   });
 

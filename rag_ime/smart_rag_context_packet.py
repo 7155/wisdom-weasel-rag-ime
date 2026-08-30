@@ -108,15 +108,20 @@ def _take_budgeted_window_context(
     *,
     remaining_tokens: int,
     maximum_tokens: int,
+    max_nodes: int = 160,
+    max_chars: int = 12000,
 ) -> tuple[dict[str, object], int]:
     projected = project_window_context_for_generation(context)
     if not projected or remaining_tokens <= 0:
         return {}, max(0, remaining_tokens)
     budget = max(0, min(int(remaining_tokens), int(maximum_tokens)))
+    requested_nodes = max(1, min(160, int(max_nodes)))
+    requested_chars = max(1, min(12000, int(max_chars)))
     compact: dict[str, object] = {
         "schemaVersion": str(projected.get("schemaVersion") or ""),
         "captureMode": str(projected.get("captureMode") or "accessibility_semantics"),
         "projection": str(projected.get("projection") or ""),
+        "capturedAtMs": max(0, int(projected.get("capturedAtMs") or 0)),
         "sourceNodeCount": max(0, int(projected.get("sourceNodeCount") or 0)),
         "nodes": [],
         "truncated": bool(projected.get("truncated")),
@@ -143,8 +148,15 @@ def _take_budgeted_window_context(
     header_tokens = min(budget, header_tokens)
     consumed = header_tokens
     raw_nodes = projected.get("nodes") if isinstance(projected.get("nodes"), list) else []
+    actual_node_count = len(raw_nodes)
+    actual_char_count = sum(
+        len(str(node.get("label") or "")) + len(str(node.get("value") or ""))
+        for node in raw_nodes
+        if isinstance(node, Mapping)
+    )
     selected_nodes: list[dict[str, object]] = []
-    for raw in raw_nodes[:48]:
+    selected_char_count = 0
+    for raw in raw_nodes[:requested_nodes]:
         if not isinstance(raw, Mapping):
             continue
         node: dict[str, object] = {
@@ -168,6 +180,24 @@ def _take_budgeted_window_context(
                 )
             ),
         )
+        node_chars = len(str(node.get("label") or "")) + len(str(node.get("value") or ""))
+        remaining_chars = requested_chars - selected_char_count
+        if remaining_chars <= 0:
+            compact["truncated"] = True
+            break
+        if node_chars > remaining_chars:
+            compact["truncated"] = True
+            label = str(node.get("label") or "")
+            value = str(node.get("value") or "")
+            if len(label) >= remaining_chars:
+                node["label"] = label[:remaining_chars]
+                node.pop("value", None)
+            else:
+                node["label"] = label
+                node["value"] = value[: max(0, remaining_chars - len(label))]
+            node_chars = len(str(node.get("label") or "")) + len(str(node.get("value") or ""))
+            if node_chars <= 0:
+                continue
         if consumed + node_tokens > budget:
             compact["truncated"] = True
             value = str(node.get("value") or "")
@@ -189,10 +219,25 @@ def _take_budgeted_window_context(
                 continue
             node = {**base_node, "value": bounded_value}
             node_tokens = base_tokens + estimate_tokens(bounded_value)
+            node_chars = len(str(node.get("label") or "")) + len(str(node.get("value") or ""))
+            if consumed + node_tokens > budget:
+                continue
         selected_nodes.append(node)
         consumed += node_tokens
+        selected_char_count += node_chars
+        if len(selected_nodes) >= requested_nodes:
+            break
     compact["nodes"] = selected_nodes
     compact["nodeCount"] = len(selected_nodes)
+    compact["requestedNodeCount"] = requested_nodes
+    compact["effectiveNodeCount"] = len(selected_nodes)
+    compact["actualNodeCount"] = actual_node_count
+    compact["requestedCharCount"] = requested_chars
+    compact["effectiveCharCount"] = selected_char_count
+    compact["actualCharCount"] = actual_char_count
+    compact["unavailableReason"] = "no_accessibility_nodes" if actual_node_count == 0 else ""
+    if actual_node_count > len(selected_nodes) or actual_char_count > selected_char_count:
+        compact["truncated"] = True
     return compact, max(0, remaining_tokens - consumed)
 
 
@@ -350,6 +395,9 @@ def build_active_rag_context_packet(
     reserved_output_tokens: int = 1024,
     recent_input_baseline: int = 4,
     recent_input_maximum: int = 4,
+    recent_input_char_maximum: int = 12000,
+    ax_node_maximum: int = 160,
+    ax_char_maximum: int = 12000,
     window_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     raw_context = compact_whitespace(current_context)
@@ -363,6 +411,19 @@ def build_active_rag_context_packet(
     context = tail_for_token_budget(raw_context or selected, current_input_budget)
     evidence_items = tuple(evidence)
     history_items = tuple(recent_input_history)
+    raw_window_projection = project_window_context_for_generation(raw_window_context)
+    raw_window_nodes = (
+        raw_window_projection.get("nodes")
+        if isinstance(raw_window_projection.get("nodes"), list)
+        else []
+    )
+    raw_ax_actual_node_count = len(raw_window_nodes)
+    raw_ax_actual_char_count = sum(
+        len(str(node.get("label") or "")) + len(str(node.get("value") or ""))
+        for node in raw_window_nodes
+        if isinstance(node, Mapping)
+    )
+    raw_ax_captured_at_ms = max(0, int(raw_window_projection.get("capturedAtMs") or 0))
     raw_planning_items = [_planning_item(item) for item in evidence_items if _is_planning_evidence(item)]
     raw_activity_items = [
         _activity_timeline_item(item)
@@ -397,6 +458,8 @@ def build_active_rag_context_packet(
         raw_window_context,
         remaining_tokens=remaining_tokens,
         maximum_tokens=900,
+        max_nodes=ax_node_maximum,
+        max_chars=ax_char_maximum,
     )
     window_context_tokens = _window_context_estimated_tokens(compact_window_context)
     activity_items, remaining_tokens = _take_budgeted_items(
@@ -408,8 +471,71 @@ def build_active_rag_context_packet(
     recent_items, remaining_tokens = _take_budgeted_recent_items(
         raw_recent_items,
         remaining_tokens=remaining_tokens,
-        limit=min(4, max(1, int(recent_input_maximum))),
+        limit=max(1, min(200, int(recent_input_maximum))),
+        max_chars=recent_input_char_maximum,
     )
+    requested_recent_count = max(1, min(200, int(recent_input_maximum)))
+    requested_recent_chars = max(1, min(100000, int(recent_input_char_maximum)))
+    actual_recent_count = len(raw_recent_items)
+    actual_recent_chars = sum(
+        len(str(item.get("textPreview") or ""))
+        for item in raw_recent_items
+    )
+    effective_recent_chars = sum(
+        len(str(item.get("textPreview") or ""))
+        for item in recent_items
+    )
+    recent_input_policy = {
+        "requestedCount": requested_recent_count,
+        "requestedChars": requested_recent_chars,
+        "effectiveCount": len(recent_items),
+        "effectiveChars": effective_recent_chars,
+        "actualCount": actual_recent_count,
+        "actualChars": actual_recent_chars,
+        "truncated": bool(
+            actual_recent_count > len(recent_items)
+            or actual_recent_chars > effective_recent_chars
+            or any(bool(item.get("truncated")) for item in recent_items)
+        ),
+        "unavailableReason": (
+            "no_recent_input"
+            if actual_recent_count == 0
+            else "budget_exhausted"
+            if actual_recent_count > 0 and not recent_items
+            else ""
+        ),
+    }
+    compact_ax_actual_node_count = int(compact_window_context.get("actualNodeCount") or 0)
+    compact_ax_actual_char_count = int(compact_window_context.get("actualCharCount") or 0)
+    ax_actual_node_count = compact_ax_actual_node_count or raw_ax_actual_node_count
+    ax_actual_char_count = compact_ax_actual_char_count or raw_ax_actual_char_count
+    ax_effective_node_count = int(compact_window_context.get("effectiveNodeCount") or 0)
+    ax_effective_char_count = int(compact_window_context.get("effectiveCharCount") or 0)
+    ax_has_raw_nodes = raw_ax_actual_node_count > 0
+    ax_truncated = bool(compact_window_context.get("truncated")) or (
+        ax_actual_node_count > ax_effective_node_count
+        or ax_actual_char_count > ax_effective_char_count
+    )
+    ax_unavailable_reason = str(compact_window_context.get("unavailableReason") or "")
+    if not ax_unavailable_reason:
+        ax_unavailable_reason = (
+            "no_accessibility_nodes"
+            if not ax_has_raw_nodes
+            else "budget_exhausted"
+            if not compact_window_context
+            else ""
+        )
+    ax_policy = {
+        "requestedNodeCount": max(1, min(160, int(ax_node_maximum))),
+        "requestedCharCount": max(1, min(12000, int(ax_char_maximum))),
+        "effectiveNodeCount": ax_effective_node_count,
+        "effectiveCharCount": ax_effective_char_count,
+        "actualNodeCount": ax_actual_node_count,
+        "actualCharCount": ax_actual_char_count,
+        "truncated": ax_truncated,
+        "unavailableReason": ax_unavailable_reason,
+        "capturedAtMs": int(compact_window_context.get("capturedAtMs") or raw_ax_captured_at_ms),
+    }
     grounding_items = _structured_grounding_evidence(evidence_items, limit=6)
     rag_hints, remaining_tokens = _take_budgeted_items(
         _rag_evidence_hints_from_grounding(grounding_items),
@@ -492,14 +618,16 @@ def build_active_rag_context_packet(
             "selectionEpoch": int(selection_epoch),
             "panelSessionId": compact_whitespace(panel_session_id),
             "deleteState": {"recentDeletedTextHashes": []},
+            "recentCompleteInputs": recent_items,
+            "recentInputPolicy": recent_input_policy,
         },
         "windowContext": compact_window_context,
         "oneRing": {
             "role": "continuity_context",
             "maySupportIntent": True,
             "maySupportFacts": False,
-            "baselineEvents": min(4, max(1, int(recent_input_baseline))),
-            "maxEvents": min(4, max(1, int(recent_input_maximum))),
+            "baselineEvents": max(1, min(200, int(recent_input_baseline))),
+            "maxEvents": max(1, min(200, int(recent_input_maximum))),
             "events": recent_items,
             "negativeSignals": [],
         },
@@ -561,6 +689,8 @@ def build_active_rag_context_packet(
             "oneRingEventCount": len(recent_items),
             "planningCount": len(planning_items),
             "activityTimelineCount": len(activity_items),
+            "recentInputPolicy": recent_input_policy,
+            "axPolicy": ax_policy,
             "tokenBudget": token_budget,
             "reservedOutputTokens": reserved_tokens,
             "availableContextTokens": available_tokens,
@@ -612,16 +742,29 @@ def _take_budgeted_recent_items(
     *,
     remaining_tokens: int,
     limit: int,
+    max_chars: int = 12000,
 ) -> tuple[list[dict[str, object]], int]:
     selected_reversed: list[dict[str, object]] = []
     remaining = max(0, int(remaining_tokens))
+    remaining_chars = max(1, min(100000, int(max_chars)))
     for item in reversed(items):
         text = compact_whitespace(str(item.get("textPreview") or ""))
+        if not text or remaining_chars <= 0:
+            break
+        truncated = len(text) > remaining_chars
+        if truncated and selected_reversed:
+            break
+        if truncated:
+            text = text[:remaining_chars].rstrip()
         cost = estimate_tokens(text) + 2
         if not text or cost > remaining:
             continue
-        selected_reversed.append(item)
+        selected_item = item
+        if truncated:
+            selected_item = {**item, "textPreview": text, "truncated": True}
+        selected_reversed.append(selected_item)
         remaining -= cost
+        remaining_chars -= len(text)
         if len(selected_reversed) >= max(0, int(limit)):
             break
     selected_reversed.reverse()

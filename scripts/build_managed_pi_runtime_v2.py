@@ -173,21 +173,31 @@ def _default_node() -> str:
 
 
 def _runtime_host_root(pi_root: Path) -> Path:
-    candidates = (
-        pi_root / "integrations" / "rag-ime-runtime-host",
-        pi_root / "packages" / "rag-ime-runtime-host",
-    )
-    return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
+    # The Runtime Host was moved out of the old Pi package tree. Keep one
+    # source of truth so a stale checkout can never be selected implicitly.
+    return pi_root / "integrations" / "rag-ime-runtime-host"
 
 
 def _default_pi_worktree(parent: Path | None = None) -> Path:
     workspace_root = parent or ROOT.parent
-    canonical = workspace_root / "pi"
-    legacy = workspace_root / "pi-rag-ime-runtime"
-    for candidate in (canonical, legacy):
-        if _runtime_host_root(candidate).is_dir():
-            return candidate
-    return canonical
+    return workspace_root / "pi"
+
+
+def _pi_worktree_error(pi_root: Path) -> str:
+    canonical = _runtime_host_root(pi_root)
+    if canonical.is_dir():
+        return ""
+    legacy = pi_root / "packages" / "rag-ime-runtime-host"
+    if legacy.is_dir():
+        return (
+            "unsupported legacy Pi Runtime Host source at "
+            f"{legacy}; use a canonical Pi worktree containing "
+            "integrations/rag-ime-runtime-host"
+        )
+    return (
+        "Pi worktree is incomplete; expected canonical source at "
+        f"{canonical}"
+    )
 
 
 def _node_relocation_error(node: Path) -> str:
@@ -314,6 +324,15 @@ def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object]
         if not relative.parts or relative.is_absolute() or ".." in relative.parts:
             raise ManagedPiRuntimeError(
                 "Session runtime handler source path is unsafe"
+            )
+        if len(relative.parts) < 3 or relative.parts[:2] != (
+            "integrations",
+            "rag-ime-runtime-host",
+        ):
+            raise ManagedPiRuntimeError(
+                "Session runtime handler source path must be under "
+                "integrations/rag-ime-runtime-host: "
+                f"{relative.as_posix()}"
             )
         resolved = (pi_root / relative).resolve()
         if not resolved.is_relative_to(pi_root.resolve()):
@@ -980,8 +999,16 @@ def main(argv: list[str] | None = None) -> int:
     package_root = _runtime_host_root(pi_root)
     package_json = pi_root / "packages" / "coding-agent" / "package.json"
     esbuild = pi_root / "node_modules" / ".bin" / "esbuild"
-    if not package_root.is_dir() or not package_json.is_file() or not esbuild.is_file():
-        print("managed Pi runtime build failed: Pi worktree is incomplete", file=sys.stderr)
+    worktree_error = _pi_worktree_error(pi_root)
+    if worktree_error:
+        print(f"managed Pi runtime build failed: {worktree_error}", file=sys.stderr)
+        return 1
+    if not package_json.is_file() or not esbuild.is_file():
+        print(
+            "managed Pi runtime build failed: canonical Pi worktree is incomplete "
+            "(missing coding-agent package or esbuild)",
+            file=sys.stderr,
+        )
         return 1
     if not node.is_file():
         print("managed Pi runtime build failed: Node executable is missing", file=sys.stderr)

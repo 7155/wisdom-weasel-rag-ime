@@ -50,6 +50,7 @@ import {
   useEvalSuites,
   useObservationFeed,
   useObservationEvals,
+  useObservationAiJudge,
   useObservationEvidenceEval,
   useObservationTrace,
   useSandboxRuns,
@@ -945,6 +946,7 @@ function traceRelationLabel(relation: 'parent' | 'retry' | 'related'): string {
 function TraceEvalPanel({ detail }: { detail: ObservabilityTraceGetV1 }) {
   const trace = detail.trace;
   const evals = useObservationEvals(trace.traceId);
+  const aiJudgeEval = useObservationAiJudge();
   const evidenceEval = useObservationEvidenceEval();
   const activeTraceId = useRef(trace.traceId);
   const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<Set<string>>(() => new Set());
@@ -959,7 +961,8 @@ function TraceEvalPanel({ detail }: { detail: ObservabilityTraceGetV1 }) {
     && !detail.truncated
     && Boolean(datasetId.trim())
     && Boolean(labelRevision.trim())
-    && !evidenceEval.isPending;
+    && !evidenceEval.isPending
+    && !aiJudgeEval.isPending;
 
   useEffect(() => {
     evidenceEval.reset();
@@ -969,7 +972,21 @@ function TraceEvalPanel({ detail }: { detail: ObservabilityTraceGetV1 }) {
     setLabelRevision('manual:1');
     setLastRun(null);
     setSubmissionTraceId('');
+    aiJudgeEval.reset();
   }, [trace.traceId]);
+
+  async function submitAiJudge(): Promise<void> {
+    const submittedTraceId = trace.traceId;
+    setSubmissionTraceId(submittedTraceId);
+    try {
+      const result = await aiJudgeEval.mutateAsync({ traceId: submittedTraceId });
+      if (activeTraceId.current !== submittedTraceId) return;
+      setLastRun(result);
+      await evals.refetch();
+    } catch {
+      // Keep the current trace and existing Eval list visible when the run fails.
+    }
+  }
 
   async function submitHumanEvidence(): Promise<void> {
     const submittedTraceId = trace.traceId;
@@ -1024,6 +1041,23 @@ function TraceEvalPanel({ detail }: { detail: ObservabilityTraceGetV1 }) {
         </InlineNotice>
       ) : null}
       {!evals.isPending && !evals.error ? <EvalSummaryList items={evals.data?.items ?? []} /> : null}
+      <div className="observation-eval__actions">
+        <span>模型评审：<strong>Luna Max</strong> · 结果标记为 AI 评审估计</span>
+        <Button
+          disabled={!canRun}
+          leadingIcon={<Brain size={15} />}
+          loading={aiJudgeEval.isPending}
+          onClick={() => void submitAiJudge()}
+          size="small"
+        >
+          运行 Luna Max Eval
+        </Button>
+      </div>
+      {aiJudgeEval.error && submissionTraceId === trace.traceId ? (
+        <InlineNotice title="AI Judge 未完成" tone="danger">
+          当前 Trace 和 Eval 记录保持不变，请稍后重试。
+        </InlineNotice>
+      ) : null}
       <Disclosure
         className="observation-eval__disclosure"
         summary={<><FileCheck2 aria-hidden="true" size={14} />人工 evidence-set 标注</>}
@@ -1098,9 +1132,9 @@ function TraceEvalPanel({ detail }: { detail: ObservabilityTraceGetV1 }) {
               当前 Trace 和 Eval 记录保持不变，请检查输入后重试。
             </InlineNotice>
           ) : null}
-          {lastRun?.traceIds.includes(trace.traceId) ? <EvalRunReceipt run={lastRun} /> : null}
         </div>
       </Disclosure>
+      {lastRun?.traceIds.includes(trace.traceId) ? <EvalRunReceipt run={lastRun} /> : null}
     </section>
   );
 }
@@ -1138,11 +1172,12 @@ function EvalSummaryList({ items }: { items: ObservabilityEvalListV1['items'] })
 }
 
 function EvalRunReceipt({ run }: { run: EvalRunV1 }) {
+  const isAiJudge = run.mode === 'ai_judge';
   return (
     <div className="observation-eval__receipt" role="status">
-      <strong>人工 Eval 已提交</strong>
+      <strong>{isAiJudge ? 'Luna Max AI Judge 已提交' : '人工 Eval 已提交'}</strong>
       <span>{run.evalRunId} · {evalStatusLabel(run.status)}</span>
-      <small>真值 authority：{metricAuthorityLabel(run.metricAuthority)} · truthKind：{run.truth.status}</small>
+      <small>{isAiJudge ? 'AI 评审估计' : '真值 authority'}：{metricAuthorityLabel(run.metricAuthority)} · truthKind：{run.truth.status}</small>
     </div>
   );
 }

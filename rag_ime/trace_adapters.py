@@ -24,8 +24,9 @@ from .trace_runtime import (
 )
 
 
-_OBSERVATION_STATUSES = frozenset({"queued", "running", "waiting", "completed", "failed", "cancelled", "info"})
+_OBSERVATION_STATUSES = frozenset({"queued", "running", "waiting", "completed", "failed", "cancelled", "expired", "info"})
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_MEMORY_TERMINAL_STATUSES = _TERMINAL_STATUSES | {"expired"}
 _BROWSER_COMMAND_STATUSES = frozenset({"queued", "claimed", "completed", "failed", "cancelled"})
 _SENSITIVE_KEY_PARTS = frozenset({"arg", "args", "content", "input", "message", "output", "prompt", "query", "reasoning", "result", "response", "text", "transcript"})
 _BINDING_KEYS = (
@@ -273,11 +274,11 @@ def envelope_from_observations(
     )
     statuses = [span.status for span in spans]
     latest_status = str(ordered[-1][1].get("status") or "info")
-    if trace_id.startswith("trace:memory:") and latest_status in _TERMINAL_STATUSES:
+    if trace_id.startswith("trace:memory:") and latest_status in _MEMORY_TERMINAL_STATUSES:
         # A maintenance run may retry under the same durable run id.  Its
         # current terminal phase is authoritative for the envelope status;
         # earlier failed/waiting phases remain visible as historical spans.
-        envelope_status = latest_status
+        envelope_status = "failed" if latest_status == "expired" else latest_status
     elif "failed" in statuses:
         envelope_status = "failed"
     elif "cancelled" in statuses:
@@ -346,8 +347,9 @@ def _settle_memory_phase_spans(
     an end timestamp or duration.
     """
 
-    if not trace_id.startswith("trace:memory:") or latest_status not in _TERMINAL_STATUSES:
+    if not trace_id.startswith("trace:memory:") or latest_status not in _MEMORY_TERMINAL_STATUSES:
         return spans
+    terminal_status = "failed" if latest_status == "expired" else latest_status
     result = []
     for span in spans:
         if span.status not in {"queued", "running", "waiting"}:
@@ -356,7 +358,7 @@ def _settle_memory_phase_spans(
         result.append(
             replace(
                 span,
-                status="completed" if latest_status == "completed" else latest_status,
+                status="completed" if terminal_status == "completed" else terminal_status,
                 attributes={
                     **dict(span.attributes),
                     "terminalDerivedFromMaintenancePhase": True,
@@ -491,6 +493,11 @@ def _span_from_group(
     status = str(latest.get("status") or "info")
     if status not in _OBSERVATION_STATUSES:
         raise TraceContractError(f"unsupported observation status: {status}")
+    if status == "expired":
+        # TraceEnvelope v1 has no public expired state. Preserve the source
+        # lifecycle phase in a bounded attribute while projecting expiry as a
+        # terminal failure so consumers do not mistake it for an active run.
+        status = "failed"
     started = min(_integer(record.get("startedAtMs"), "startedAtMs") for record in records)
     ended = _number(latest.get("endedAtMs"), default=None)
     duration = _number(latest.get("durationMs"), default=None)
@@ -505,6 +512,8 @@ def _span_from_group(
         _merged_scalar_mapping(records, "attributes"),
         strict=False,
     )
+    if str(latest.get("status") or "") == "expired":
+        attributes["terminalPhaseStatus"] = "expired"
     if parent and parent not in span_ids:
         attributes["parentUnavailable"] = True
         attributes["parentUnavailableReason"] = "span_not_in_trace"

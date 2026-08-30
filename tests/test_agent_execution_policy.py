@@ -12,6 +12,7 @@ from rag_ime.agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
     PER_ACTION_EXECUTION_MODE,
     READ_ONLY_EXECUTION_MODE,
+    ROOM_UNRESTRICTED_EXECUTION_MODE,
     WORKSPACE_MANAGED_EXECUTION_MODE,
     approval_strategy,
     canonical_tool_profile,
@@ -149,6 +150,54 @@ class AgentExecutionPolicyTests(unittest.TestCase):
                 operation="task_action",
             ),
             APPROVAL_MODEL,
+        )
+
+    def test_confirmed_room_unrestricted_skips_per_tool_approval_within_fences(self) -> None:
+        roots = ["/workspace/project"]
+        session = {
+            "executionMode": PER_ACTION_EXECUTION_MODE,
+            "roomExecutionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
+            "toolProfileVersion": "control-center-v1",
+            "workspaceRoots": roots,
+            "workspaceScopeSha256": workspace_scope_sha256(roots),
+            "workspaceScopeGrantedAtMs": 100,
+        }
+
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="planning",
+                operation="task_action",
+            ),
+            APPROVAL_AUTO,
+        )
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="workspace_patch",
+                operation="apply",
+            ),
+            APPROVAL_AUTO,
+        )
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="runtime",
+                operation="restart_sidecar",
+            ),
+            APPROVAL_ASK,
+        )
+        self.assertEqual(
+            approval_strategy(
+                {**session, "workspaceScopeGrantedAtMs": 0},
+                tool="workspace_patch",
+                operation="apply",
+            ),
+            APPROVAL_DENY,
+        )
+        self.assertIn(
+            "room_unrestricted",
+            execution_policy_prompt(session),
         )
 
     def test_full_auto_only_skips_review_for_scoped_ordinary_commands(self) -> None:

@@ -1251,16 +1251,19 @@ describe('Rooms experience', () => {
 
 
   it('renders and submits a text-only wait without inventing options', async () => {
+    const activeWork = roomWorkItemFixture('room-a', 'room-work:alignment', { state: 'active' });
+    const snapshot = roomSnapshot('room-a', [
+      roomQuestionEvent('room-a', 1, {
+        content: '请补充不能改变的边界。',
+        prompt: '还有哪些实现边界必须保留？',
+        options: [],
+      }),
+    ]);
+    snapshot.room = { ...snapshot.room, workItems: [activeWork] };
     const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '自由回答 Room')] },
+      'agent.rooms.list': { ok: true, items: [{ ...roomSummary('room-a', '自由回答 Room'), workItems: [activeWork] }] },
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.room.snapshot': roomSnapshot('room-a', [
-        roomQuestionEvent('room-a', 1, {
-          content: '请补充不能改变的边界。',
-          prompt: '还有哪些实现边界必须保留？',
-          options: [],
-        }),
-      ]),
+      'agent.room.snapshot': snapshot,
       'agent.room.message': (request: ControlRequest) => {
         const body = request.body as Record<string, unknown>;
         return {
@@ -1300,8 +1303,8 @@ describe('Rooms experience', () => {
       attachmentIds: [],
       answerToPostId: 'room-a:question-1',
       answerToRootId: 'room-a:turn-1',
+      workItemId: 'room-work:alignment',
     });
-    expect(answerRequest).not.toHaveProperty('workItemId');
     await waitFor(() => expect(
       within(screen.getByRole('region', { name: '需要回答：还有哪些实现边界必须保留？' }))
         .queryByRole('button', { name: '发送回答' }),
@@ -2875,6 +2878,23 @@ describe('Rooms experience', () => {
     });
   });
 
+  it('renders the Room list as soon as its catalog resolves', async () => {
+    const pendingRoles = deferred<{ ok: true; items: typeof previewPersonas }>();
+    const pendingSessions = deferred<{ ok: true; items: never[] }>();
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '立即可见 Room')] },
+      'agent.roles.list': () => pendingRoles.promise,
+      'agent.sessions.list': () => pendingSessions.promise,
+      'agent.room.snapshot': roomSnapshot('room-a', []),
+    } });
+
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    expect(await screen.findByRole('button', { name: '更多协作空间操作' })).toBeInTheDocument();
+    pendingRoles.resolve({ ok: true, items: previewPersonas });
+    pendingSessions.resolve({ ok: true, items: [] });
+  });
+
   it('archives a Room only after the real API confirms the state change', async () => {
     const archived = { ...roomSummary('room-a', '待收起协作空间'), status: 'archived' };
     const transport = new MockControlTransport({ routes: {
@@ -3495,7 +3515,10 @@ describe('Rooms experience', () => {
     expect(document.activeElement).toBe(toolSummary);
     expect(screen.getByLabelText('工具调用参数')).toHaveTextContent('协作记录');
     expect(screen.getByLabelText('工具调用参数')).not.toHaveTextContent('room_event_projection');
-    expect(screen.getByText(/1s/)).toBeInTheDocument();
+    // Module import and user-event setup can cross a second boundary on a
+    // loaded machine; assert the real elapsed-time shape instead of freezing
+    // the wall clock to exactly one second.
+    expect(screen.getByText(/[1-9]\d*s/)).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '停止本轮任务' })).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: '停止本轮任务' }));
     expect(onAbortTurn).toHaveBeenCalledWith('room-turn:root-a');

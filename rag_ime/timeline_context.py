@@ -36,13 +36,17 @@ def build_timeline_context_pack(
     normalized_app = compact_whitespace(app)
     query_text = compact_whitespace(" ".join(item for item in (selected_text, current_context) if item))
     preferences = _timeline_preferences(core)
-    recent_limit = min(
-        _EXPLICIT_RECENT_INPUT_LIMIT,
-        max(1, int(preferences.get("recentInputBaseline") or recent_limit)),
+    # The persisted settings are the source of truth for explicit generation.
+    # Keep the baseline conservative, but do not silently collapse the user's
+    # configured maximum back to the historical four-record default.
+    recent_limit = max(1, min(200, int(preferences.get("recentInputBaseline") or recent_limit)))
+    recent_max_records = max(
+        recent_limit,
+        min(200, int(preferences.get("recentInputMaximum") or recent_max_records)),
     )
-    recent_max_records = min(
-        _EXPLICIT_RECENT_INPUT_LIMIT,
-        max(recent_limit, int(preferences.get("recentInputMaximum") or recent_max_records)),
+    recent_input_char_maximum = max(
+        256,
+        min(100_000, int(preferences.get("recentInputCharMaximum") or 12_000)),
     )
     context_token_budget = int(preferences.get("tokenBudget") or context_token_budget)
     reserved_tokens = int(preferences.get("reservedOutputTokens") or reserved_tokens)
@@ -103,6 +107,7 @@ def build_timeline_context_pack(
         query_text=temporal_query,
         baseline_records=recent_limit,
         max_records=recent_max_records,
+        char_budget=recent_input_char_maximum,
         token_budget=context_token_budget,
         reserved_tokens=(
             reserved_tokens
@@ -226,6 +231,7 @@ def _recent_complete_context(
     query_text: str,
     baseline_records: int,
     max_records: int,
+    char_budget: int,
     token_budget: int,
     reserved_tokens: int,
 ) -> dict[str, object]:
@@ -240,6 +246,7 @@ def _recent_complete_context(
                     query_text=query_text,
                     baseline_records=baseline_records,
                     max_records=max_records,
+                    char_budget=char_budget,
                     token_budget=token_budget,
                     reserved_tokens=reserved_tokens,
                 )
@@ -250,7 +257,13 @@ def _recent_complete_context(
         return {"records": [], "rendered": "", "observability": {}}
     try:
         rendered = compact_whitespace(
-            str(method(project=project, limit=max(1, int(baseline_records)), max_chars=max(420, int(token_budget))))
+            str(
+                method(
+                    project=project,
+                    limit=max(1, int(baseline_records)),
+                    max_chars=max(1, int(char_budget)),
+                )
+            )
         )
         return {
             "records": ([{"id": "legacy-recent-context", "text": rendered, "sourceEventIds": []}] if rendered else []),
@@ -640,6 +653,9 @@ def timeline_context_preferences(core: object) -> dict[str, object]:
     defaults: dict[str, object] = {
         "recentInputBaseline": _EXPLICIT_RECENT_INPUT_LIMIT,
         "recentInputMaximum": _EXPLICIT_RECENT_INPUT_LIMIT,
+        "recentInputCharMaximum": 12000,
+        "axNodeMaximum": 160,
+        "axCharMaximum": 12000,
         "tokenBudget": 4096,
         "reservedOutputTokens": 1024,
         "temporalRecall": True,
@@ -677,7 +693,25 @@ def timeline_context_preferences(core: object) -> dict[str, object]:
             context.get("recentInputMaximum"),
             _EXPLICIT_RECENT_INPUT_LIMIT,
             1,
-            _EXPLICIT_RECENT_INPUT_LIMIT,
+            200,
+        ),
+        "recentInputCharMaximum": _bounded_int(
+            context.get("recentInputCharMaximum"),
+            12000,
+            256,
+            100000,
+        ),
+        "axNodeMaximum": _bounded_int(
+            context.get("axNodeMaximum"),
+            160,
+            1,
+            160,
+        ),
+        "axCharMaximum": _bounded_int(
+            context.get("axCharMaximum"),
+            12000,
+            256,
+            12000,
         ),
         "tokenBudget": _bounded_int(context.get("tokenBudget"), 4096, 2048, 32768),
         "reservedOutputTokens": _bounded_int(context.get("reservedOutputTokens"), 1024, 256, 8192),

@@ -72,7 +72,10 @@ export function MemoryPipeline({
   );
   const pendingSourceCount = numberValue(
     summary.ownerCurationPendingSourceCount,
-    numberValue(ownerCuration.pendingSourceCount, numberValue(summary.pendingCompileEvents)),
+    numberValue(
+      summary.pendingGovernedEvidenceCount,
+      numberValue(ownerCuration.pendingSourceCount, numberValue(summary.pendingCompileEvents)),
+    ),
   );
   const pendingGovernance = numberValue(summary.needsReviewSourceCount)
     + numberValue(governanceCounts.preview)

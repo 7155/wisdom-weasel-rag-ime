@@ -1617,21 +1617,14 @@ function useWindowExit(ref: RefObject<HTMLElement | null>, appId: PawAppId) {
       target = 'translate3d(0, 34px, 0) scale(.9)';
       /* Minimize flies to the App's Dock tile, the way the reference genie
        * reads: window centre travels to the tile centre while the frame
-       * scales toward the tile, 280ms on the shared in-out curve. When the
+       * scales toward the tile, 280ms on the shared genie curve. When the
        * Dock is hidden (a maximized window owns the desktop) or the tile
        * cannot be measured, the window keeps the older sink-in-place exit. */
-      const tile = document.querySelector<HTMLElement>(`.paw-dock [data-desktop-app="${appId}"]`);
-      if (tile) {
-        const windowRect = surface.getBoundingClientRect();
-        const tileRect = tile.getBoundingClientRect();
-        if (windowRect.width > 0 && tileRect.width > 0) {
-          const dx = tileRect.left + tileRect.width / 2 - (windowRect.left + windowRect.width / 2);
-          const dy = tileRect.top + tileRect.height / 2 - (windowRect.top + windowRect.height / 2);
-          const scale = Math.max(.06, Math.min(.24, tileRect.width / windowRect.width));
-          target = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(${scale.toFixed(3)})`;
-          duration = 280;
-          easing = 'cubic-bezier(.4, 0, .2, 1)';
-        }
+      const genie = dockTileGenieDelta(appId, surface);
+      if (genie) {
+        target = `translate3d(${genie.dx.toFixed(1)}px, ${genie.dy.toFixed(1)}px, 0) scale(${genie.scale.toFixed(3)})`;
+        duration = 280;
+        easing = 'cubic-bezier(.4, 0, .2, 1)';
       }
     }
     const animation = surface.animate([
@@ -1644,6 +1637,24 @@ function useWindowExit(ref: RefObject<HTMLElement | null>, appId: PawAppId) {
     });
     void animation.finished.then(finish, finish);
   }, [ref, appId]);
+}
+
+/* The one genie geometry, shared by both directions of the minimize round
+ * trip: the delta from the window's centre to its App's Dock tile centre and
+ * the scale that lands the frame on the tile. Null when the tile cannot be
+ * measured (the Dock is hidden while a maximized window owns the desktop), so
+ * both callers can fall back to their in-place choreography. */
+function dockTileGenieDelta(appId: PawAppId, surface: HTMLElement): { dx: number; dy: number; scale: number } | null {
+  const tile = document.querySelector<HTMLElement>(`.paw-dock [data-desktop-app="${appId}"]`);
+  if (!tile) return null;
+  const windowRect = surface.getBoundingClientRect();
+  const tileRect = tile.getBoundingClientRect();
+  if (windowRect.width <= 0 || tileRect.width <= 0) return null;
+  return {
+    dx: tileRect.left + tileRect.width / 2 - (windowRect.left + windowRect.width / 2),
+    dy: tileRect.top + tileRect.height / 2 - (windowRect.top + windowRect.height / 2),
+    scale: Math.max(.06, Math.min(.24, tileRect.width / windowRect.width)),
+  };
 }
 
 function useWindowDrag(ref: RefObject<HTMLElement | null>, bounds: PawWindowBounds, commit: (bounds: PawWindowBounds) => void, focus: () => void, snap: ((placement: PawWindowPlacement) => void) | undefined, active: boolean, deferPointerInteractionUntilFocused: boolean, containToDesktop: boolean) {

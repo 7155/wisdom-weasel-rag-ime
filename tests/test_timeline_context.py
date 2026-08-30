@@ -8,6 +8,7 @@ from pathlib import Path
 from rag_ime.daily_planner import local_date_string
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.models import InputEvent
+from rag_ime.settings_store import ManagementSettingsStore
 from rag_ime.text_utils import now_ms
 from rag_ime.timeline_context import build_timeline_context_pack, timeline_evidence_pack_from_core
 
@@ -81,6 +82,34 @@ class TimelineContextTests(unittest.TestCase):
         self.assertGreater(observability["currentInput"]["estimatedTokens"], 0)
         self.assertEqual(observability["ragEvidence"]["recordCount"], 4)
         self.assertGreater(observability["totalEstimatedTokens"], 0)
+
+    def test_timeline_applies_configured_recent_input_count_and_char_budget(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-configured-input-budget-") as tmp:
+            db_path = Path(tmp) / "timeline.sqlite"
+            core = LocalSqliteCoreClient(db_path)
+            for index in range(1, 31):
+                _record_event(core, f"配置预算下仍应保留的最近输入第{index}条")
+            settings = ManagementSettingsStore(db_path)
+            settings.update_settings(
+                {
+                    "context": {
+                        "recentInputMaximum": 20,
+                        "recentInputCharMaximum": 256,
+                    }
+                }
+            )
+
+            pack = build_timeline_context_pack(core, project="wisdom-weasel-rag-ime")
+
+        recent = pack["contextObservability"]["recentCompleteInputs"]
+        policy = pack["recentContextObservability"]["recentInputPolicy"]
+        self.assertLessEqual(recent["recordCount"], 20)
+        self.assertEqual(recent["maxRecordCount"], 20)
+        self.assertEqual(policy["requestedCount"], 20)
+        self.assertEqual(policy["requestedChars"], 256)
+        self.assertGreater(policy["effectiveCount"], 4)
+        self.assertLessEqual(policy["effectiveCount"], 20)
+        self.assertLessEqual(policy["effectiveChars"], 256)
 
     def test_timeline_injects_planning_before_latest_approved_semantic_tasks(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-timeline-work-context-") as tmp:

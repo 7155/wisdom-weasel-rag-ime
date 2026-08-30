@@ -5186,7 +5186,10 @@ export const contractSchemas = {
               "artifact_changed",
               "turn_completed",
               "turn_failed",
-              "snapshot_required"
+              "snapshot_required",
+              "room_start_confirmation_required",
+              "room_start_confirmation_confirmed",
+              "room_start_confirmation_rejected"
             ]
           },
           "participantId": {
@@ -5269,7 +5272,10 @@ export const contractSchemas = {
           "artifact_changed",
           "turn_completed",
           "turn_failed",
-          "snapshot_required"
+          "snapshot_required",
+          "room_start_confirmation_required",
+          "room_start_confirmation_confirmed",
+          "room_start_confirmation_rejected"
         ]
       },
       "participantId": {
@@ -5713,6 +5719,13 @@ export const contractSchemas = {
             "items": {
               "type": "object"
             }
+          },
+          "startGate": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
           }
         }
       },
@@ -5767,7 +5780,10 @@ export const contractSchemas = {
               "artifact_changed",
               "turn_completed",
               "turn_failed",
-              "snapshot_required"
+              "snapshot_required",
+              "room_start_confirmation_required",
+              "room_start_confirmation_confirmed",
+              "room_start_confirmation_rejected"
             ]
           },
           "participantId": {
@@ -6210,6 +6226,13 @@ export const contractSchemas = {
         "items": {
           "type": "object"
         }
+      },
+      "startGate": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": true
       }
     }
   },
@@ -6950,6 +6973,13 @@ export const contractSchemas = {
           "per_action",
           "workspace_managed",
           "full_trust"
+        ]
+      },
+      "roomExecutionMode": {
+        "type": "string",
+        "enum": [
+          "",
+          "room_unrestricted"
         ]
       },
       "workspaceScopeGranted": {
@@ -10918,6 +10948,30 @@ export const contractSchemas = {
           }
         }
       },
+      "requestedEvaluator": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "model",
+          "thinking",
+          "displayName"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "thinking": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          }
+        }
+      },
       "suiteBinding": {
         "type": "object",
         "additionalProperties": false,
@@ -10949,6 +11003,139 @@ export const contractSchemas = {
           "completed",
           "failed"
         ]
+      },
+      "promptVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "rubricVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "inputTraceFingerprint": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "startedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "completedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "elapsedMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "latencyMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "input": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cacheRead": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cacheWrite": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "totalTokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "cost": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "input": {
+            "type": "number",
+            "minimum": 0
+          },
+          "output": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cacheRead": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cacheWrite": {
+            "type": "number",
+            "minimum": 0
+          },
+          "total": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "fallbackUsed": {
+        "type": "boolean"
+      },
+      "failureCode": {
+        "enum": [
+          "ai_judge_runtime_unavailable",
+          "ai_judge_request_failed",
+          "ai_judge_invalid_response",
+          "ai_judge_timeout"
+        ]
+      },
+      "sourceTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceScope": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "failureRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "changeReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "testEvidenceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "testStatus": {
+        "const": "passed"
       },
       "createdAtMs": {
         "type": "integer",
@@ -22255,6 +22442,77 @@ export const contractSchemas = {
             "const": "trace"
           }
         }
+      }
+    }
+  },
+  "trace-repair-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-repair-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "repairReceiptId",
+      "sourceScope",
+      "sourceTraceId",
+      "failureRef",
+      "changeReceiptId",
+      "testEvidenceId",
+      "testStatus",
+      "repairTraceId",
+      "repairSessionId",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-repair-receipt.v1"
+      },
+      "repairReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceScope": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "failureRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "changeReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "testEvidenceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "testStatus": {
+        "const": "passed"
+      },
+      "repairTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairSessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
       }
     }
   },

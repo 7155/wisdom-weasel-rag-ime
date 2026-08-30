@@ -35,6 +35,7 @@ export interface AgentSessionV1 {
   thinkingLevel?: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   toolProfileVersion: string;
   executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
+  roomExecutionMode?: '' | 'room_unrestricted';
   workspaceScopeGranted: boolean;
   workspaceScopeSha256: string;
   workspaceScopeGrantedAtMs: number;

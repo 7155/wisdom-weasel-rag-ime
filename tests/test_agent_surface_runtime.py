@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
@@ -12,6 +13,7 @@ from rag_ime.agent_surface_runtime import (
     AgentSurfaceRuntime,
     PiSurfaceCompletionProvider,
     VOICE_REFINEMENT_TOOL_PROFILE,
+    _input_generation_request_metadata,
     _validated_voice_refinement,
 )
 from rag_ime.deepseek_completion import DeepSeekCompletionRequest
@@ -225,6 +227,103 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(request_data["evidencePack"][0]["sourceType"], "memory")
         self.assertNotIn("images", call)
         self.assertEqual(self.sessions.list(include_internal=True), [])
+
+    def test_input_generation_receipt_projects_all_context_budget_outcomes(self) -> None:
+        metadata = _input_generation_request_metadata(
+            {
+                "frontAppBundleId": "com.example.Editor",
+                "contextPacket": {
+                    "currentInput": {
+                        "recentCompleteInputs": [{"textPreview": "旧输入"}],
+                        "recentInputPolicy": {
+                            "requestedCount": 20,
+                            "effectiveCount": 2,
+                            "requestedChars": 12000,
+                            "effectiveChars": 6,
+                            "actualCount": 4,
+                            "actualChars": 18,
+                            "truncated": True,
+                            "unavailableReason": "budget_exhausted",
+                        },
+                    },
+                    "windowContext": {
+                        "nodeCount": 4,
+                        "characterCount": 88,
+                        "requestedNodeCount": 160,
+                        "effectiveNodeCount": 4,
+                        "requestedCharCount": 12000,
+                        "effectiveCharCount": 88,
+                        "actualNodeCount": 7,
+                        "actualCharCount": 144,
+                        "truncated": True,
+                        "unavailableReason": "budget_exhausted",
+                        "capturedAtMs": 123,
+                    },
+                },
+            },
+            current_request="当前请求",
+            provider="openai-codex",
+            model_id="gpt-5.6-luna",
+            thinking_level="max",
+            timeout_seconds=8,
+        )
+
+        metrics = metadata["contextMetrics"]
+        self.assertEqual(metrics["recentInputRequestedCount"], 20)
+        self.assertEqual(metrics["recentInputEffectiveCount"], 2)
+        self.assertEqual(metrics["recentInputRequestedChars"], 12000)
+        self.assertEqual(metrics["recentInputEffectiveChars"], 6)
+        self.assertEqual(metrics["recentInputActualCount"], 4)
+        self.assertEqual(metrics["recentInputActualChars"], 18)
+        self.assertEqual(metrics["recentInputUnavailableReason"], "budget_exhausted")
+        self.assertTrue(metrics["recentInputTruncated"])
+        self.assertEqual(metrics["axRequestedNodeCount"], 160)
+        self.assertEqual(metrics["axEffectiveNodeCount"], 4)
+        self.assertEqual(metrics["axRequestedCharCount"], 12000)
+        self.assertEqual(metrics["axEffectiveCharCount"], 88)
+        self.assertEqual(metrics["axNodeCount"], 4)
+        self.assertEqual(metrics["axCharacterCount"], 88)
+        self.assertEqual(metrics["axActualNodeCount"], 7)
+        self.assertEqual(metrics["axActualCharCount"], 144)
+        self.assertEqual(metrics["axUnavailableReason"], "budget_exhausted")
+        self.assertTrue(metrics["axTruncated"])
+        self.assertEqual(metrics["axCapturedAtMs"], 123)
+
+    def test_input_generation_failure_receipt_keeps_provider_cause_redacted(self) -> None:
+        records: list[dict[str, object]] = []
+        surface = AgentSurfaceRuntime(
+            self.agent,
+            settings_provider=lambda: self.settings,
+            observation_callback=records.append,
+        )
+        with patch.object(
+            self.runtime,
+            "complete_once",
+            side_effect=RuntimeError("PRIVATE provider response and path"),
+        ), self.assertRaisesRegex(RuntimeError, "PRIVATE provider response"):
+            surface.complete(
+                {
+                    "privacyDisposition": "allowed",
+                    "requestId": "surface-failure-receipt",
+                    "currentRequest": "触发安全失败回执",
+                }
+            )
+
+        self.assertEqual([(item["phase"], item["status"]) for item in records], [
+            ("started", "running"),
+            ("failed", "failed"),
+        ])
+        failed = records[-1]
+        self.assertEqual(failed["sourceKind"], "input_generation")
+        self.assertEqual(failed["generation"], {
+            "effectiveProvider": "deepseek",
+            "effectiveModel": "deepseek-v4-flash",
+            "effectiveThinkingLevel": "high",
+            "ok": False,
+            "errorType": "RuntimeError",
+            "failureReason": "runtime_error",
+        })
+        self.assertNotIn("PRIVATE provider response", json.dumps(failed, ensure_ascii=False))
 
     def test_off_surface_setting_is_forwarded_to_supported_model(self) -> None:
         self.settings["activeRag"]["quickThinkingLevel"] = "off"

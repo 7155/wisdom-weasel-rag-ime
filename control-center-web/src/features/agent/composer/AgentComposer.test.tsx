@@ -49,7 +49,18 @@ describe('AgentComposer macOS input methods', () => {
     expect(composer).toHaveAttribute('autocomplete', 'off');
     expect(composer).toHaveAttribute('autocorrect', 'off');
     expect(composer).toHaveAttribute('spellcheck', 'false');
-    expect(composer).toHaveAttribute('aria-expanded', 'false');
+    expect(composer).not.toHaveAttribute('role');
+    expect(composer).not.toHaveAttribute('aria-expanded');
+    expect(composer).not.toHaveAttribute('aria-autocomplete');
+
+    fireEvent.focus(composer);
+    fireEvent.change(composer, { target: { value: '/' } });
+    const commandInput = screen.getByRole('combobox', { name: '消息' });
+    expect(commandInput).toHaveAttribute('aria-autocomplete', 'list');
+    expect(commandInput).toHaveAttribute('aria-expanded', 'true');
+    expect(commandInput).toHaveAttribute('aria-controls', 'agent-command-palette');
+    expect(screen.getByRole('listbox', { name: '命令面板' })).toBeInTheDocument();
+    onDraftChange.mockClear();
 
     fireEvent.compositionStart(composer);
     fireEvent.change(composer, { target: { value: 'jinr' } });

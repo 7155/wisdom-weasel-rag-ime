@@ -78,6 +78,15 @@ type OptimisticSteerReceipt = {
   participantId: string;
 };
 
+type RoomStartConfirmation = {
+  gateId: string;
+  objective: string;
+  workItemId: string;
+  restoreDraft?: string;
+  restoreAttachments?: RoomAttachmentReceipt[];
+  optimisticClientMessageId?: string;
+};
+
 const roomToolPanelLabels: Record<RoomToolPanel, string> = {
   focus: '态势',
   governance: '治理',
@@ -106,7 +115,11 @@ export function followRoomTimelineIfReaderAtEnd(
   if (!readerIsAtEnd()) return false;
   scheduleFrame(() => {
     if (!readerIsAtEnd()) return;
-    timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+    if (typeof timeline.scrollTo === 'function') {
+      timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+    } else {
+      timeline.scrollTop = timeline.scrollHeight;
+    }
   });
   return true;
 }
@@ -137,7 +150,27 @@ export function PawRoomWorkspace({
   const optimisticSteerRef = useRef<OptimisticSteerReceipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(initialError ?? '');
+  const [startConfirmation, setStartConfirmation] = useState<RoomStartConfirmation | null>(null);
   const [panel, setPanel] = useState<RoomToolPanel | 'none'>('none');
+  useEffect(() => {
+    const gate = record?.startGate;
+    if (gate?.status === 'pending') {
+      setStartConfirmation((current) => ({
+        gateId: gate.gateId,
+        objective: gate.objective,
+        workItemId: gate.workItemId,
+        ...(current?.gateId === gate.gateId
+          ? {
+              restoreDraft: current.restoreDraft,
+              restoreAttachments: current.restoreAttachments,
+              optimisticClientMessageId: current.optimisticClientMessageId,
+            }
+          : {}),
+      }));
+    } else if (!gate || gate.status === 'confirmed') {
+      setStartConfirmation(null);
+    }
+  }, [record?.id, record?.startGate?.status, record?.startGate?.gateId, record?.startGate?.objective, record?.startGate?.workItemId]);
   const [view, setView] = useState<'rounds' | 'conversation' | 'starfield'>('rounds');
   const [selectedParticipantId, setSelectedParticipantId] = useState('');
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
@@ -347,9 +380,27 @@ export function PawRoomWorkspace({
                 ? { answerToPostId: authoritativeQuestion.postId, answerToRootId: authoritativeQuestion.rootId }
                 : {}),
               ...(addressed.length ? { participantIds: addressed.map((item) => item.id) } : {}),
+              ...(record.roomKind !== 'roleplay' && activeWork?.id
+                ? { workItemId: activeWork.id }
+                : {}),
             },
           });
       useRoomLiveStore.getState().acceptMessage(recordId, response);
+      const requestedStart = asRecord(asRecord(response).startConfirmation);
+      if (requestedStart.status === 'pending' && typeof requestedStart.gateId === 'string') {
+        setStartConfirmation({
+          gateId: requestedStart.gateId,
+          objective: typeof requestedStart.objective === 'string' ? requestedStart.objective : message,
+          workItemId: typeof requestedStart.workItemId === 'string' ? requestedStart.workItemId : '',
+          ...(!options.preserveDraft
+            ? {
+                restoreDraft: rawValue,
+                restoreAttachments: [...selectedAttachments],
+                optimisticClientMessageId: clientMessageId,
+              }
+            : {}),
+        });
+      }
       const timelineEvents = asRecord(response).timelineEvents;
       if (Array.isArray(timelineEvents)) acknowledgeOptimisticSteer(timelineEvents);
       const workItem = asWorkItem(asRecord(response).workItem);
@@ -405,6 +456,40 @@ export function PawRoomWorkspace({
     } catch (reason) {
       setError(publicErrorText(reason, '审批没有完成，请重试。'));
       throw reason;
+    }
+  }
+
+  async function confirmRoomStart(decision: 'confirm' | 'reject'): Promise<void> {
+    if (!startConfirmation || sending) return;
+    const pendingConfirmation = startConfirmation;
+    setSending(true);
+    try {
+      const response = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.startGate.confirm',
+        params: { roomId: recordId },
+        body: { gateId: pendingConfirmation.gateId, decision },
+      });
+      if (decision === 'confirm') {
+        useRoomLiveStore.getState().acceptMessage(recordId, response);
+      } else {
+        if (pendingConfirmation.optimisticClientMessageId) {
+          useRoomLiveStore.getState().discardOptimistic(
+            recordId,
+            pendingConfirmation.optimisticClientMessageId,
+          );
+        }
+        if (pendingConfirmation.restoreDraft !== undefined) {
+          setDraft(pendingConfirmation.restoreDraft);
+        }
+        if (pendingConfirmation.restoreAttachments) {
+          setAttachments([...pendingConfirmation.restoreAttachments]);
+        }
+      }
+      setStartConfirmation(null);
+    } catch (reason) {
+      setError(publicErrorText(reason, '开始确认没有完成，请重试。'));
+    } finally {
+      setSending(false);
     }
   }
 
@@ -663,8 +748,10 @@ export function PawRoomWorkspace({
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
           <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务</span>
         </div>
-        {signalChips.length ? <div aria-label={`${originLabel} 当前状态`} className="paw-room-workspace__signal-status">
-          {signalChips.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)}
+        {focusProjection ? <div aria-label={`${originLabel} 当前状态`} className="paw-room-workspace__signal-status">
+          {signalChips.length
+            ? signalChips.map(([tone, count, label]) => <span data-tone={tone} key={tone}><i />{count} {label}</span>)
+            : <span data-tone="idle"><i />待命</span>}
         </div> : null}
       </section>
 
@@ -726,6 +813,10 @@ export function PawRoomWorkspace({
           </div>}
 
           <div className="paw-room-workspace__composer">
+              {startConfirmation ? <div className="paw-room-workspace__start-confirmation" aria-label="Room 开始执行确认" role="alert">
+                <div><strong>先确认开始执行</strong><span>{startConfirmation.objective}</span><small>确认后将在授权工作区内连续执行已披露工具；停止、边界和审计仍然有效。</small></div>
+                <div><button disabled={sending} onClick={() => void confirmRoomStart('reject')} type="button">暂不开始</button><button disabled={sending} onClick={() => void confirmRoomStart('confirm')} type="button">确认并开始</button></div>
+              </div> : null}
               {collaborationOpenFailures.size ? <div className="paw-room-workspace__planet-open-error" role="alert">
                 <CircleAlert size={14} />
                 <div>

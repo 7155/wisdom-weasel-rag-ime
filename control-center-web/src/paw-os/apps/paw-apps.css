@@ -380,6 +380,15 @@
 .paw-room-workspace__error { width: min(900px, 100%); display: flex; align-items: center; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-danger) 30%, var(--paw-line)); border-radius: 9px; color: var(--paw-danger); background: color-mix(in srgb, var(--paw-danger) 7%, var(--paw-panel)); font-size: 12px; }
 .paw-room-workspace__error span { min-width: 0; flex: 1; }
 .paw-room-workspace__error button { color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.paw-room-workspace__start-confirmation { width: min(900px, 100%); display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 auto 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--paw-accent) 38%, var(--paw-line)); border-radius: 10px; background: color-mix(in srgb, var(--paw-accent) 8%, var(--paw-panel)); }
+.paw-room-workspace__start-confirmation > div:first-child { min-width: 0; display: grid; gap: 3px; }
+.paw-room-workspace__start-confirmation strong { font-size: 13px; }
+.paw-room-workspace__start-confirmation span, .paw-room-workspace__start-confirmation small { color: var(--paw-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.paw-room-workspace__start-confirmation small { font-size: 11px; }
+.paw-room-workspace__start-confirmation > div:last-child { display: flex; flex: 0 0 auto; gap: 8px; }
+.paw-room-workspace__start-confirmation button { border: 1px solid var(--paw-line); border-radius: 7px; padding: 6px 9px; color: var(--paw-text); background: var(--paw-panel); cursor: pointer; white-space: nowrap; }
+.paw-room-workspace__start-confirmation button:last-child { border-color: color-mix(in srgb, var(--paw-accent) 50%, var(--paw-line)); background: var(--paw-accent); color: white; }
+@media (max-width: 620px) { .paw-room-workspace__start-confirmation { align-items: stretch; flex-direction: column; } .paw-room-workspace__start-confirmation span, .paw-room-workspace__start-confirmation small { white-space: normal; } .paw-room-workspace__start-confirmation > div:last-child { justify-content: flex-end; } }
 .paw-room-workspace__planet-open-error { width: min(900px, 100%); display: flex; align-items: flex-start; gap: 7px; margin: 0 auto 6px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--paw-warning) 34%, var(--paw-line)); border-radius: 9px; color: color-mix(in srgb, var(--paw-warning) 72%, var(--paw-ink)); background: color-mix(in srgb, var(--paw-warning) 8%, var(--paw-panel)); font-size: 12px; }
 .paw-room-workspace__planet-open-error > div { min-width: 0; display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 10px; }
 .paw-room-workspace__planet-open-error [aria-label='未打开的行星'] { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }

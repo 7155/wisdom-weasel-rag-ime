@@ -1,9 +1,11 @@
-import { Activity, Archive, ArrowLeft, Bot, ChevronDown, ChevronRight, CircleAlert, FileText, FolderClosed, FolderOpen, LoaderCircle, MessagesSquare, RotateCcw, Search, Settings2, SlidersHorizontal, Users, X } from 'lucide-react';
+import { Activity, Archive, ArrowLeft, Bot, ChevronDown, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, MessagesSquare, RotateCcw, Search, Settings2, SlidersHorizontal, Users, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { sessionItems } from '@/features/agent/types';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import type { PawWayfinderIconPosition, PawWayfinderState } from '../runtime/desktop-store';
+import { PAW_DESKTOP_GRID, pawDesktopWorkOriginY, pawDesktopWorkPosition, usePawDesktopGridColumns } from './desktop-grid';
+import { PAW_WORK_FILE_ACCENT, PawWorkFileIcon, PawWorkFolderIcon, pawWorkProjectAccent } from './PawWorkIcons';
 import {
   projectWayfinderWork,
   bucketizeWayfinderWork,
@@ -35,11 +37,15 @@ type WayfinderArchiveEntry =
  * assignment, or archive visibility; every click opens the canonical Agent
  * Session/Room window.
  *
- * The panel takes no props, so memo makes it a true leaf: it re-renders when
- * its own directory read, query or expansion state changes, and never because
- * the desktop above it moved a window, drew a lasso or ticked the clock.
+ * The only props are the desktop selection channel — a stable callback and
+ * the current icon-id set — so the panel stays a memo leaf for clock ticks,
+ * window churn and context menus, re-rendering only when its own directory
+ * read, query, expansion or the selection itself changes.
  */
-export const PawWayfinderWork = memo(function PawWayfinderWork() {
+export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, selectedIcons }: {
+  onSelectIcon?: (iconId: string, additive: boolean) => void;
+  selectedIcons?: ReadonlySet<string>;
+}) {
   const transport = useControlTransport();
   const api = usePawDesktopApi();
   const desktopIdle = usePawDesktopStore((state) => Object.keys(state.windows).length === 0);
@@ -191,9 +197,10 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
     api.getState().openApp('system-monitor', { initialRoute: '/observability' });
   }, [api]);
 
+  const gridColumns = usePawDesktopGridColumns();
   const iconPosition = useCallback((iconId: string, index: number): PawWayfinderIconPosition => (
-    wayfinder.iconPositions[iconId] ?? defaultIconPosition(index)
-  ), [wayfinder.iconPositions]);
+    wayfinder.iconPositions[iconId] ?? pawDesktopWorkPosition(index, gridColumns)
+  ), [wayfinder.iconPositions, gridColumns]);
 
   const startDrag = useCallback((event: DragEvent<HTMLElement>, iconId: string) => {
     event.stopPropagation();
@@ -270,10 +277,15 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
   };
 
   const hasRows = view.rowCount > 0;
-  const canvasMinHeight = Math.max(360, Math.ceil(view.projects.length / 4) * 112 + 122);
+  const canvasMinHeight = Math.max(
+    360,
+    pawDesktopWorkOriginY(gridColumns)
+      + Math.ceil((view.projects.length + view.looseItems.length) / gridColumns) * PAW_DESKTOP_GRID.pitchY
+      + 34,
+  );
   return (
-    <section aria-label="最近工作" className="paw-wayfinder-work" data-paw-desktop-panel data-paw-desktop-work-files onPointerDown={(event) => event.stopPropagation()}>
-      <div className="paw-wayfinder-work__masthead">
+    <section aria-label="最近工作" className="paw-wayfinder-work" data-paw-desktop-work-files>
+      <div className="paw-wayfinder-work__masthead" data-paw-desktop-ui>
       <header className="paw-wayfinder-work__head">
         <span>
           <strong>项目桌面</strong>
@@ -369,14 +381,32 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
               }}
               onDrop={(event) => dropOnProject(event, project.id)}
               onOpen={openItem}
+              onSelect={onSelectIcon}
               onToggle={() => setExpandedProjectId(folderExpanded ? null : project.id)}
               onToggleBucket={(key) => setExpandedBuckets((current) => toggled(current, key))}
               onToggleRepeats={(key) => setExpandedRepeats((current) => toggled(current, key))}
               project={project}
               searching={searching}
+              selected={selectedIcons?.has(projectIconId(project.id)) ?? false}
             />
           );
         })}
+        {/* Loose conversation files: dragged out of their folder onto the
+            desktop, they keep their own coordinates and stay loose until they
+            are dropped on a folder again. They flow on the same grid right
+            after the project folders. */}
+        {view.looseItems.map((item, looseIndex) => (
+          <LooseWorkFile
+            iconPosition={iconPosition(item.key, view.projects.length + looseIndex)}
+            item={item}
+            key={item.key}
+            onDragEnd={endDrag}
+            onDragStart={startDrag}
+            onOpen={openItem}
+            onSelect={onSelectIcon}
+            selected={selectedIcons?.has(item.key) ?? false}
+          />
+        ))}
         {draggingKey ? <p className="paw-wayfinder-work__drop-hint">拖到空白处放回项目桌面，拖到项目文件夹归类</p> : null}
       </div>
       {contextProject ? (
@@ -394,7 +424,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork() {
   );
 });
 
-function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPosition, onContext, onDragEnd, onDragStart, onDrop, onOpen, onToggle, onToggleBucket, onToggleRepeats, project, searching }: {
+function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPosition, onContext, onDragEnd, onDragStart, onDrop, onOpen, onSelect, onToggle, onToggleBucket, onToggleRepeats, project, searching, selected }: {
   expanded: boolean;
   expandedBuckets: ReadonlySet<string>;
   expandedRepeats: ReadonlySet<string>;
@@ -404,11 +434,13 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
   onDragStart: (event: DragEvent<HTMLElement>, iconId: string) => void;
   onDrop: (event: DragEvent<HTMLElement>) => void;
   onOpen: (kind: 'session' | 'room', id: string, title: string) => void;
+  onSelect?: (iconId: string, additive: boolean) => void;
   onToggle: () => void;
   onToggleBucket: (key: string) => void;
   onToggleRepeats: (key: string) => void;
   project: WayfinderWorkProject;
   searching: boolean;
+  selected: boolean;
 }) {
   const displayedOpen = expanded;
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -472,16 +504,28 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
       >
         <summary
           aria-expanded={displayedOpen}
+          aria-selected={selected || undefined}
+          data-wayfinder-icon={projectIconId(project.id)}
           data-wayfinder-project
           draggable
-          onClick={(event) => { event.preventDefault(); onToggle(); }}
+          onClick={(event) => {
+            event.preventDefault();
+            const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+            onSelect?.(projectIconId(project.id), additive);
+            if (!additive) onToggle();
+          }}
           onDoubleClick={() => { if (!displayedOpen) onToggle(); }}
           onDragEnd={onDragEnd}
           onDragStart={(event) => onDragStart(event, projectIconId(project.id))}
           title={`${project.label} · ${project.items.length} 个对话`}
         >
-          <span className="paw-wayfinder-work__folder-art" data-attention={project.attentionCount > 0 || undefined} data-running={project.runningCount > 0 || undefined}>
-            {displayedOpen ? <FolderOpen aria-hidden="true" size={30} /> : <FolderClosed aria-hidden="true" size={30} />}
+          <span
+            className="paw-wayfinder-work__folder-art"
+            data-attention={project.attentionCount > 0 || undefined}
+            data-running={project.runningCount > 0 || undefined}
+            style={{ '--paw-work-accent': pawWorkProjectAccent(project.id) } as CSSProperties}
+          >
+            <PawWorkFolderIcon open={displayedOpen} />
             <span aria-hidden="true" className="paw-wayfinder-work__folder-mark">
               {project.roomCount > 0 ? <MessagesSquare size={11} /> : <Bot size={11} />}
             </span>
@@ -500,6 +544,7 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
         {displayedOpen ? <div
           aria-label={`${project.label} 项目窗口`}
           className="paw-wayfinder-work__project-content"
+          data-paw-desktop-ui
           data-wayfinder-project-window
           role="dialog"
           ref={panelRef}
@@ -558,6 +603,55 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
   );
 }
 
+/* A conversation file living directly on the desktop: dragged out of its
+ * folder, it keeps the document glyph, the kind/status line and its own
+ * coordinates. Single click selects it like any desktop icon; double-click
+ * opens the canonical Agent window. */
+function LooseWorkFile({ iconPosition, item, onDragEnd, onDragStart, onOpen, onSelect, selected }: {
+  iconPosition: PawWayfinderIconPosition;
+  item: WayfinderWorkItem;
+  onDragEnd: () => void;
+  onDragStart: (event: DragEvent<HTMLElement>, iconId: string) => void;
+  onOpen: (kind: 'session' | 'room', id: string, title: string) => void;
+  onSelect?: (iconId: string, additive: boolean) => void;
+  selected: boolean;
+}) {
+  const style = {
+    '--wayfinder-x': `${iconPosition.x}px`,
+    '--wayfinder-y': `${iconPosition.y}px`,
+    '--paw-work-accent': PAW_WORK_FILE_ACCENT[item.kind],
+  } as CSSProperties;
+  const state = item.activity === 'running' ? 'running' : item.activity === 'attention' ? 'attention' : undefined;
+  return (
+    <div className="paw-wayfinder-work__loose-shell" style={style}>
+      <button
+        aria-selected={selected || undefined}
+        className="paw-wayfinder-work__loose-file"
+        data-activity={item.activity}
+        data-kind={item.kind}
+        data-wayfinder-icon={item.key}
+        data-wayfinder-loose
+        draggable
+        onClick={(event) => onSelect?.(item.key, event.shiftKey || event.metaKey || event.ctrlKey)}
+        onDoubleClick={() => onOpen(item.kind, item.id, item.title)}
+        onDragEnd={onDragEnd}
+        onDragStart={(event) => onDragStart(event, item.key)}
+        title={`${item.title} · ${item.kind === 'room' ? 'Room' : 'Session'} · ${item.statusLabel}`}
+        type="button"
+      >
+        <span aria-hidden="true" className="paw-wayfinder-work__file-art" data-kind={item.kind}>
+          <PawWorkFileIcon kind={item.kind} />
+          <i />
+        </span>
+        <span className="paw-wayfinder-work__project-copy">
+          <strong><span className="paw-wayfinder-work__label-ink">{item.title}</span></strong>
+          <small data-state={state}>{item.kind === 'room' ? 'Room' : 'Session'} · {item.statusLabel}</small>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 /** The Files App only browses Session-authorized workspace roots, so a root
  * is openable there exactly when one of the project's Sessions names it. */
 function filesSessionForRoot(project: WayfinderWorkProject, root: string): string | null {
@@ -579,6 +673,7 @@ function ProjectContextSheet({ onBack, onOpen, onOpenInFiles, onOpenObservabilit
       aria-label={`${project.label} 项目上下文`}
       aria-modal="false"
       className="paw-wayfinder-work__context-sheet"
+      data-paw-desktop-ui
       data-wayfinder-context-sheet
       ref={sheetRef}
       role="dialog"
@@ -800,7 +895,7 @@ function ArchiveTray({ entries, onDragEnd, onDragStart, onOpen, onRestore }: {
   onRestore: (iconId: string) => void;
 }) {
   return (
-    <section aria-label="已归档项目与对话" className="paw-wayfinder-work__archive-tray" data-wayfinder-archive-tray>
+    <section aria-label="已归档项目与对话" className="paw-wayfinder-work__archive-tray" data-paw-desktop-ui data-wayfinder-archive-tray>
       <header>
         <span><Archive aria-hidden="true" size={13} /><strong>已归档</strong></span>
         <small>点击恢复到桌面 · 双击打开</small>
@@ -845,14 +940,23 @@ function applyWayfinderUiState(
   source: WayfinderWorkView,
   state: PawWayfinderState,
   baseProjects: readonly WayfinderWorkProject[],
-): WayfinderWorkView {
+): WayfinderWorkView & { looseItems: WayfinderWorkItem[] } {
   const archived = new Set(state.archived);
   const projectById = new Map(baseProjects.map((project) => [project.id, project]));
 
+  /* A dialogue file with its own desktop coordinates and no folder assignment
+   * is a loose desktop file: it left its project folder deliberately (dropped
+   * on bare canvas) and renders as a standalone icon until it is dropped on a
+   * folder again. Everything else groups into project folders as before. */
+  const looseItems: WayfinderWorkItem[] = [];
   const grouped = new Map<string, WayfinderWorkItem[]>();
   for (const sourceProject of source.projects) {
     for (const item of sourceProject.items) {
       if (archived.has(item.key)) continue;
+      if (!state.projectAssignments[item.key] && state.iconPositions[item.key]) {
+        if (!archived.has(projectIconId(sourceProject.id))) looseItems.push(item);
+        continue;
+      }
       const target = state.projectAssignments[item.key]
         ? projectById.get(state.projectAssignments[item.key]!) ?? sourceProject
         : sourceProject;
@@ -865,6 +969,7 @@ function applyWayfinderUiState(
       grouped.set(target.id, items);
     }
   }
+  looseItems.sort((left, right) => right.updatedAtMs - left.updatedAtMs);
 
   const projects = [...grouped.entries()]
     .map(([id, items]) => {
@@ -898,6 +1003,7 @@ function applyWayfinderUiState(
     .sort((left, right) => (right.items[0]?.updatedAtMs ?? 0) - (left.items[0]?.updatedAtMs ?? 0));
 
   const visibleKeys = new Set(projects.flatMap((project) => project.items.map((item) => item.key)));
+  for (const item of looseItems) visibleKeys.add(item.key);
   return {
     ...source,
     buckets: source.buckets
@@ -905,13 +1011,7 @@ function applyWayfinderUiState(
       .filter((bucket) => bucket.items.length > 0),
     projects,
     rowCount: visibleKeys.size,
-  };
-}
-
-function defaultIconPosition(index: number): PawWayfinderIconPosition {
-  return {
-    x: 18 + (index % 4) * 112,
-    y: 132 + Math.floor(index / 4) * 112,
+    looseItems,
   };
 }
 

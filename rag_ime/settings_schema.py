@@ -131,6 +131,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "context": {
         "recentInputBaseline": 20,
         "recentInputMaximum": 80,
+        "recentInputCharMaximum": 12000,
+        "axNodeMaximum": 160,
+        "axCharMaximum": 12000,
         "tokenBudget": 4096,
         "reservedOutputTokens": 1024,
         "temporalRecall": True,
@@ -507,7 +510,10 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "上下文",
             "fields": [
                 {"key": "context.recentInputBaseline", "type": "integer", "label": "最近完整输入基线", "default": 20},
-                {"key": "context.recentInputMaximum", "type": "integer", "label": "最近完整输入上限", "default": 80},
+                {"key": "context.recentInputMaximum", "type": "integer", "label": "最近完整输入条数上限", "default": 80},
+                {"key": "context.recentInputCharMaximum", "type": "integer", "label": "最近输入字符预算", "default": 12000},
+                {"key": "context.axNodeMaximum", "type": "integer", "label": "AX 节点数预算", "default": 160},
+                {"key": "context.axCharMaximum", "type": "integer", "label": "AX 字符预算", "default": 12000},
                 {"key": "context.tokenBudget", "type": "integer", "label": "上下文 token 预算", "default": 4096},
                 {"key": "context.reservedOutputTokens", "type": "integer", "label": "预留输出 token", "default": 1024},
                 {"key": "context.temporalRecall", "type": "boolean", "label": "识别昨天、上周等时间表达", "default": True},
@@ -934,6 +940,9 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     },
     "context.recentInputBaseline": {"min": 10, "max": 80, "unit": "条"},
     "context.recentInputMaximum": {"min": 20, "max": 200, "unit": "条"},
+    "context.recentInputCharMaximum": {"min": 256, "max": 100000, "unit": "字符"},
+    "context.axNodeMaximum": {"min": 1, "max": 160, "unit": "节点"},
+    "context.axCharMaximum": {"min": 256, "max": 12000, "unit": "字符"},
     "context.tokenBudget": {"min": 2048, "max": 32768, "step": 512, "unit": "token"},
     "context.reservedOutputTokens": {"min": 256, "max": 8192, "step": 256, "unit": "token"},
 }

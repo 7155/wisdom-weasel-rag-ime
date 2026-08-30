@@ -170,22 +170,32 @@ def _tool_item(
     canonical_id = f"tool:{tool_id}"
     authorized = session is not None and manifest.get("enabled") is True
     risk = str(manifest.get("riskLevel") or "R0")
-    disclosure = (
-        {
-            "preference": "inherit",
-            "effective": "enabled",
-            "state": "disclosed",
-            "reason": "required_session_tool",
-            "scope": "built_in_default",
-        }
-        if manifest.get("alwaysAvailable") is True
-        else _disclosure(
-            canonical_id,
-            global_preferences=global_preferences,
-            project_preferences=project_preferences,
-            session_preferences=session_preferences,
-        )
+    disclosure = _disclosure(
+        canonical_id,
+        global_preferences=global_preferences,
+        project_preferences=project_preferences,
+        session_preferences=session_preferences,
     )
+    if manifest.get("alwaysAvailable") is True:
+        if tool_id == "room_partner" and manifest.get("availability") != "online":
+            # `alwaysAvailable` describes the formal Room primitive once a
+            # real participant identity is present. It must not turn an
+            # offline, ordinary Session catalog entry into an enabled
+            # capability merely because the tool is registered globally.
+            disclosure = {
+                **disclosure,
+                "effective": "disabled",
+                "state": "hidden",
+                "reason": "room_context_required",
+            }
+        else:
+            disclosure = {
+                "preference": "inherit",
+                "effective": "enabled",
+                "state": "disclosed",
+                "reason": "required_session_tool",
+                "scope": "built_in_default",
+            }
     return {
         **dict(manifest),
         "canonicalId": canonical_id,

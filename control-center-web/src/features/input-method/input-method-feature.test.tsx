@@ -96,6 +96,13 @@ const review = {
 afterEach(cleanup);
 
 describe('InputMethodFeature', () => {
+  it('lets mode descriptions grow under Dynamic Type instead of clipping them', () => {
+    expect(inputMethodCss).toContain(
+      ".input-mode-card__note {\n  display: block;\n  overflow: visible;",
+    );
+    expect(inputMethodCss).not.toMatch(/\.input-mode-card__note \{[^}]*-webkit-line-clamp: 2;[^}]*\}/);
+  });
+
   it('shows only safe input trace facts and links the latest stable request', async () => {
     renderFeature(new MockControlTransport({
       routes: {

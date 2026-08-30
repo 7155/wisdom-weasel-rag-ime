@@ -316,6 +316,7 @@ function capabilityReasonLabel(reason: string): string {
     existing_session_policy_authorizes_tool: '当前对话的既有工具权限允许执行',
     existing_session_policy_does_not_authorize_tool: '当前对话的既有工具权限不允许执行',
     session_context_required: '进入具体对话后才能核对执行权限',
+    room_context_required: '只有真实 Room participant 身份存在时才能使用',
     room_skill_load_receipt_required: '需要 Room 的终端加载回执才能使用',
     installed_extension_enabled: '扩展已安装并启用',
     extension_not_installed_or_enabled: '扩展尚未安装或启用',

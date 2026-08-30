@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import closing
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import ProxyHandler, Request, build_opener
@@ -19,20 +22,42 @@ from .owner_memory_curation import (
 
 _DEFAULT_GATEWAY_URL = "http://127.0.0.1:8768"
 _TERMINAL_JOB_STATES = frozenset({"completed", "failed", "expired"})
+_RESTART_EXPIRY_ERROR = (
+    "Gateway restarted before this process-local Memory maintenance job "
+    "could finish; the old worker cannot be resumed."
+)
 
 
 class GatewayMemoryMaintenanceJobs:
-    """One process-local trigger lane; curation truth remains in SQLite."""
+    """One trigger lane with a durable job receipt and Trace identity.
+
+    The worker itself remains process-owned, but its admission/progress/result
+    receipt is persisted. This matters for a Trace handoff: a Gateway restart
+    must not turn a real failed maintenance job into an uncorrelated
+    ``expired`` placeholder.
+    """
 
     def __init__(
         self,
         execute: Callable[[Mapping[str, object]], Mapping[str, object]],
+        *,
+        db_path: str | Path | None = None,
+        event_publisher: Callable[[Mapping[str, object]], None] | None = None,
     ) -> None:
         self._execute = execute
+        self._db_path = (
+            Path(db_path).expanduser()
+            if db_path not in (None, "", ":memory:")
+            else None
+        )
+        self._event_publisher = event_publisher
         self._lock = threading.RLock()
         self._jobs: dict[str, dict[str, object]] = {}
         self._active_job_id = ""
         self._closed = False
+        if self._db_path is not None:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize_store()
 
     def trigger(self, payload: Mapping[str, object]) -> dict[str, object]:
         with self._lock:
@@ -60,6 +85,7 @@ class GatewayMemoryMaintenanceJobs:
             }
             self._jobs[job_id] = job
             self._active_job_id = job_id
+            self._persist_job(job)
             thread = threading.Thread(
                 target=self._run,
                 args=(job_id,),
@@ -75,13 +101,13 @@ class GatewayMemoryMaintenanceJobs:
         with self._lock:
             job = self._jobs.get(normalized)
             if job is None:
-                # Jobs deliberately live in the Gateway process because the
-                # durable maintenance truth is recorded by the SQLite owner.
-                # A refresh after a Gateway restart therefore cannot recover
-                # the old worker, and must not look like an active/failed run
-                # with invented progress. Return a terminal, retryable
-                # projection so HTTP clients can stop polling and start a new
-                # run explicitly.
+                job = self._load_job(normalized)
+                if job is not None:
+                    self._jobs[normalized] = job
+                    return self._payload(job, reused=False)
+                # No durable receipt exists for this id. This is different
+                # from a persisted failed/completed job and remains a truthful
+                # retryable expiry projection.
                 return self._expired_payload(normalized)
             return self._payload(job, reused=False)
 
@@ -113,6 +139,18 @@ class GatewayMemoryMaintenanceJobs:
                     return self._timeline_payload(job)
                 if self._automatic_timeline_result(job):
                     return self._timeline_payload(job)
+            for job in self._load_recent_jobs():
+                if not self._matches_project(job, normalized_project):
+                    continue
+                request = (
+                    job.get("request")
+                    if isinstance(job.get("request"), Mapping)
+                    else {}
+                )
+                if request.get("timelineDate") or request.get("timelineThroughDate"):
+                    return self._timeline_payload(job)
+                if self._automatic_timeline_result(job):
+                    return self._timeline_payload(job)
             return {}
 
     def close(self) -> None:
@@ -125,6 +163,14 @@ class GatewayMemoryMaintenanceJobs:
             job["state"] = "running"
             job["updatedAtMs"] = int(time.time() * 1_000)
             request = dict(job["request"])
+            # The Gateway job owns the public maintenance trace.  Keep this
+            # context internal to the worker request; it is not user input
+            # and is deliberately excluded from the persisted request JSON.
+            request["_memoryTraceContext"] = {
+                "traceId": f"trace:memory:{job_id}",
+                "maintenanceJobId": job_id,
+                "parentSpanId": f"span:memory:{job_id}:started",
+            }
             timeline_date = str(request.get("timelineDate") or "").strip()
             timeline_through_date = str(
                 request.get("timelineThroughDate") or ""
@@ -151,6 +197,13 @@ class GatewayMemoryMaintenanceJobs:
                     "totalDayCount": 0,
                     "completedDayCount": 0,
                 }
+            self._persist_job(job)
+            self._publish_event(
+                job,
+                phase="started",
+                status="running",
+                summary="Memory maintenance job started",
+            )
             request["_progressCallback"] = lambda value: self._set_progress(
                 job_id,
                 value,
@@ -174,9 +227,20 @@ class GatewayMemoryMaintenanceJobs:
             job["updatedAtMs"] = timestamp
             job["completedAtMs"] = timestamp
             job.pop("thread", None)
+            self._persist_job(job)
             if self._active_job_id == job_id:
                 self._active_job_id = ""
             self._prune_locked()
+            self._publish_event(
+                job,
+                phase=state,
+                status="completed" if state == "completed" else "failed",
+                summary=(
+                    "Memory maintenance job completed"
+                    if state == "completed"
+                    else error or "Memory maintenance job failed"
+                ),
+            )
 
     def _set_progress(
         self,
@@ -189,6 +253,182 @@ class GatewayMemoryMaintenanceJobs:
                 return
             job["progress"] = dict(value)
             job["updatedAtMs"] = int(time.time() * 1_000)
+            self._persist_job(job)
+
+    def _initialize_store(self) -> None:
+        if self._db_path is None:
+            return
+        with closing(sqlite3.connect(self._db_path, timeout=10)) as conn:
+            with conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS memory_maintenance_jobs (
+                        job_id TEXT PRIMARY KEY,
+                        state TEXT NOT NULL,
+                        request_json TEXT NOT NULL,
+                        result_json TEXT NOT NULL,
+                        progress_json TEXT NOT NULL,
+                        error TEXT NOT NULL DEFAULT '',
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        completed_at_ms INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_memory_maintenance_jobs_updated
+                    ON memory_maintenance_jobs(updated_at_ms DESC)
+                    """
+                )
+
+    def _persist_job(self, job: Mapping[str, object]) -> None:
+        if self._db_path is None:
+            return
+        request = job.get("request") if isinstance(job.get("request"), Mapping) else {}
+        request_json = json.dumps(
+            {
+                str(key): value
+                for key, value in request.items()
+                if not str(key).startswith("_")
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        result = job.get("result") if isinstance(job.get("result"), Mapping) else {}
+        progress = job.get("progress") if isinstance(job.get("progress"), Mapping) else {}
+        with closing(sqlite3.connect(self._db_path, timeout=10)) as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO memory_maintenance_jobs(
+                        job_id, state, request_json, result_json, progress_json,
+                        error, created_at_ms, updated_at_ms, completed_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        state=excluded.state,
+                        request_json=excluded.request_json,
+                        result_json=excluded.result_json,
+                        progress_json=excluded.progress_json,
+                        error=excluded.error,
+                        updated_at_ms=excluded.updated_at_ms,
+                        completed_at_ms=excluded.completed_at_ms
+                    """,
+                    (
+                        str(job.get("jobId") or ""),
+                        str(job.get("state") or "queued"),
+                        request_json,
+                        json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str),
+                        json.dumps(progress, ensure_ascii=False, separators=(",", ":"), default=str),
+                        str(job.get("error") or ""),
+                        int(job.get("createdAtMs") or 0),
+                        int(job.get("updatedAtMs") or 0),
+                        int(job.get("completedAtMs") or 0),
+                    ),
+                )
+
+    def _load_job(self, job_id: str) -> dict[str, object] | None:
+        if self._db_path is None or not job_id:
+            return None
+        with closing(sqlite3.connect(self._db_path, timeout=10)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM memory_maintenance_jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            job = self._job_from_row(row)
+        return self._recover_persisted_job(job)
+
+    def _load_recent_jobs(self) -> list[dict[str, object]]:
+        if self._db_path is None:
+            return []
+        with closing(sqlite3.connect(self._db_path, timeout=10)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT * FROM memory_maintenance_jobs
+                ORDER BY updated_at_ms DESC
+                LIMIT 64
+                """
+            ).fetchall()
+            jobs = [self._job_from_row(row) for row in rows]
+        return [self._recover_persisted_job(job) for job in jobs]
+
+    def _recover_persisted_job(self, job: dict[str, object]) -> dict[str, object]:
+        """Do not resurrect a worker that died with the Gateway process."""
+
+        if str(job.get("state") or "") not in {"queued", "running"}:
+            return job
+        timestamp = int(time.time() * 1_000)
+        job["state"] = "expired"
+        job["error"] = _RESTART_EXPIRY_ERROR
+        job["updatedAtMs"] = timestamp
+        job["completedAtMs"] = timestamp
+        self._persist_job(job)
+        self._publish_event(
+            job,
+            phase="expired",
+            status="expired",
+            summary=_RESTART_EXPIRY_ERROR,
+        )
+        return job
+
+    @staticmethod
+    def _job_from_row(row: sqlite3.Row) -> dict[str, object]:
+        def decoded(name: str) -> dict[str, object]:
+            try:
+                value = json.loads(row[name] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                return {}
+            return dict(value) if isinstance(value, Mapping) else {}
+
+        return {
+            "jobId": str(row["job_id"] or ""),
+            "state": str(row["state"] or ""),
+            "request": decoded("request_json"),
+            "result": decoded("result_json"),
+            "progress": decoded("progress_json"),
+            "error": str(row["error"] or ""),
+            "createdAtMs": int(row["created_at_ms"] or 0),
+            "updatedAtMs": int(row["updated_at_ms"] or 0),
+            "completedAtMs": int(row["completed_at_ms"] or 0),
+        }
+
+    def _publish_event(
+        self,
+        job: Mapping[str, object],
+        *,
+        phase: str,
+        status: str,
+        summary: str,
+    ) -> None:
+        publisher = self._event_publisher
+        if not callable(publisher):
+            return
+        job_id = str(job.get("jobId") or "")
+        result = job.get("result") if isinstance(job.get("result"), Mapping) else {}
+        try:
+            publisher(
+                {
+                    "eventType": "memory_maintenance_job",
+                    "phase": phase,
+                    "status": status,
+                    "summary": summary,
+                    "jobId": job_id,
+                    "runId": job_id,
+                    "traceId": f"trace:memory:{job_id}",
+                    "sourceCursor": _nested_mapping(result, "sourceCursor"),
+                    "result": dict(result),
+                    "error": str(job.get("error") or ""),
+                }
+            )
+        except Exception:
+            # Trace is an observability side channel; failure to emit it must
+            # never lose the durable maintenance result or change its state.
+            return
 
     def _prune_locked(self) -> None:
         terminal = sorted(
@@ -251,6 +491,14 @@ class GatewayMemoryMaintenanceJobs:
             )
             if key in timeline_result
         }
+        result = (
+            job.get("result")
+            if isinstance(job.get("result"), Mapping)
+            else {}
+        )
+        job_id = str(job.get("jobId") or "")
+        state = str(job.get("state") or "")
+        trace_id = f"trace:memory:{job_id}"
         return {
             "schemaVersion": "rag-ime.activity-timeline-job-status.v1",
             "ok": str(job.get("state") or "") != "failed",
@@ -267,6 +515,17 @@ class GatewayMemoryMaintenanceJobs:
             "createdAtMs": int(job.get("createdAtMs") or 0),
             "updatedAtMs": int(job.get("updatedAtMs") or 0),
             "completedAtMs": int(job.get("completedAtMs") or 0),
+            "traceId": trace_id,
+            "runId": job_id,
+            "failureRef": job_id if state == "failed" else "",
+            "sourceCursor": _nested_mapping(result, "sourceCursor"),
+            "sourceInputRefs": _nested_list(result, "sourceInputRefs"),
+            "traceEvidence": {
+                "traceId": trace_id,
+                "runId": job_id,
+                "source": "observation_journal",
+                "terminal": state in _TERMINAL_JOB_STATES,
+            },
         }
 
     @staticmethod
@@ -302,17 +561,21 @@ class GatewayMemoryMaintenanceJobs:
         *,
         reused: bool,
     ) -> dict[str, object]:
-        return {
+        job_id = str(job.get("jobId") or "")
+        result = (
+            dict(job.get("result") or {})
+            if isinstance(job.get("result"), Mapping)
+            else {}
+        )
+        state = str(job.get("state") or "")
+        source_cursor = _nested_mapping(result, "sourceCursor")
+        payload = {
             "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
-            "ok": str(job.get("state")) != "failed",
-            "jobId": str(job.get("jobId") or ""),
-            "state": str(job.get("state") or ""),
+            "ok": state not in {"failed", "expired"},
+            "jobId": job_id,
+            "state": state,
             "reused": bool(reused),
-            "result": (
-                dict(job.get("result") or {})
-                if isinstance(job.get("result"), Mapping)
-                else {}
-            ),
+            "result": result,
             "progress": (
                 dict(job.get("progress") or {})
                 if isinstance(job.get("progress"), Mapping)
@@ -322,7 +585,31 @@ class GatewayMemoryMaintenanceJobs:
             "createdAtMs": int(job.get("createdAtMs") or 0),
             "updatedAtMs": int(job.get("updatedAtMs") or 0),
             "completedAtMs": int(job.get("completedAtMs") or 0),
+            "traceId": f"trace:memory:{job_id}",
+            "runId": job_id,
+            "failureRef": job_id if state == "failed" else "",
+            "sourceCursor": source_cursor,
+            "sourceInputRefs": _nested_list(result, "sourceInputRefs"),
+            "traceEvidence": {
+                "traceId": f"trace:memory:{job_id}",
+                "runId": job_id,
+                "source": "observation_journal",
+                "terminal": state in _TERMINAL_JOB_STATES,
+            },
         }
+        if state == "expired":
+            payload.update(
+                {
+                    "errorCode": "memory_maintenance_job_expired",
+                    "recovery": {
+                        "recoverable": False,
+                        "retryable": True,
+                        "action": "trigger_new_job",
+                        "reason": "process_local_job_registry_lost",
+                    },
+                }
+            )
+        return payload
 
     @staticmethod
     def _expired_payload(job_id: str) -> dict[str, object]:
@@ -349,6 +636,42 @@ class GatewayMemoryMaintenanceJobs:
             "updatedAtMs": 0,
             "completedAtMs": 0,
         }
+
+
+def _nested_mapping(value: object, key: str) -> dict[str, object]:
+    """Find a bounded structured receipt in a nested maintenance report."""
+
+    if isinstance(value, Mapping):
+        candidate = value.get(key)
+        if isinstance(candidate, Mapping):
+            return dict(candidate)
+        for child in value.values():
+            found = _nested_mapping(child, key)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value[:128]:
+            found = _nested_mapping(child, key)
+            if found:
+                return found
+    return {}
+
+
+def _nested_list(value: object, key: str) -> list[dict[str, object]]:
+    if isinstance(value, Mapping):
+        candidate = value.get(key)
+        if isinstance(candidate, list):
+            return [dict(item) for item in candidate[:128] if isinstance(item, Mapping)]
+        for child in value.values():
+            found = _nested_list(child, key)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value[:128]:
+            found = _nested_list(child, key)
+            if found:
+                return found
+    return []
 
 
 def build_parser() -> argparse.ArgumentParser:

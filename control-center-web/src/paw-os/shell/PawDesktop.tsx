@@ -8,6 +8,7 @@ import { PawAppIcon, PawBrandMark } from './PawAppIcon';
 import { PawCompositionField } from './PawCompositionField';
 import { pulsePawComposition } from '../runtime/composition-pulse';
 import { PawContextMenu, type PawContextMenuItem } from './PawContextMenu';
+import { pawDesktopGridPosition, usePawDesktopGridColumns } from './desktop-grid';
 import { PawFieldLede } from './PawFieldLede';
 import { clampWayfinderIconPosition, PawWayfinderWork, WAYFINDER_DRAG_MIME } from './PawWayfinderWork';
 import { PawWindowLayer } from './PawWindowLayer';
@@ -64,7 +65,12 @@ export function PawDesktop() {
    * focus and live drag/resize keep their own suspension rules. */
   const documentHidden = useDocumentHidden();
   const ambientPaused = documentHidden || Boolean(activeWindowId) || launchpadOpen || overviewOpen;
-  const [selectedApps, setSelectedApps] = useState<ReadonlySet<PawAppId>>(() => new Set());
+  /* Desktop selection is one set of icon ids across both families on the
+   * plane: App shortcuts (`app:<id>`), project folders (`project:<id>`) and
+   * loose conversation files (`session:<id>` / `room:<id>`). The lasso, icon
+   * clicks and the context menu all speak these ids so a rubber-band sweep
+   * can select a mixed neighbourhood exactly like the macOS desktop. */
+  const [selectedIcons, setSelectedIcons] = useState<ReadonlySet<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PawMenuState | null>(null);
   const [lasso, setLasso] = useState<PawSelectionRect | null>(null);
   /* Menus and their disabled states need only structural window facts:
@@ -109,6 +115,7 @@ export function PawDesktop() {
         if (api.getState().launchpadOpen) api.getState().setLaunchpadOpen(false);
         else if (api.getState().overviewOpen) api.getState().setOverviewOpen(false);
         else if (api.getState().collaborationFocusGroup) api.getState().setCollaborationFocusGroup(null);
+        else setSelectedIcons((current) => (current.size ? new Set() : current));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -169,12 +176,12 @@ export function PawDesktop() {
     const state = api.getState();
     state.setOverviewOpen(!state.overviewOpen);
   }, [api]);
-  const selectApp = useCallback((appId: PawAppId, additive: boolean) => {
-    setSelectedApps((current) => {
-      if (!additive) return new Set([appId]);
+  const selectIcon = useCallback((iconId: string, additive: boolean) => {
+    setSelectedIcons((current) => {
+      if (!additive) return new Set([iconId]);
       const next = new Set(current);
-      if (next.has(appId)) next.delete(appId);
-      else next.add(appId);
+      if (next.has(iconId)) next.delete(iconId);
+      else next.add(iconId);
       return next;
     });
   }, []);
@@ -186,15 +193,31 @@ export function PawDesktop() {
     const appElement = target.closest<HTMLElement>('[data-desktop-app]');
     if (appElement) {
       const appId = appElement.dataset.desktopApp as PawAppId;
-      const appIds = selectedApps.has(appId) ? [...selectedApps] : [appId];
-      if (!selectedApps.has(appId)) setSelectedApps(new Set([appId]));
+      const iconId = `app:${appId}`;
+      /* A right-click on an unselected icon selects just it (macOS); one on a
+       * selected icon keeps the existing multi-selection and acts on the App
+       * members of it. */
+      const appIds = (selectedIcons.has(iconId) ? [...selectedIcons] : [iconId])
+        .filter((id) => id.startsWith('app:'))
+        .map((id) => id.slice(4) as PawAppId);
+      if (!selectedIcons.has(iconId)) setSelectedIcons(new Set([iconId]));
+      const acted = appIds.length ? appIds : [appId];
       setContextMenu({
         kind: 'apps',
-        appIds,
-        label: appIds.length === 1 ? pawApp(appId).label : `${appIds.length} 个 App`,
+        appIds: acted,
+        label: acted.length === 1 ? pawApp(acted[0]!).label : `${acted.length} 个 App`,
         x: event.clientX,
         y: event.clientY,
       });
+      return;
+    }
+    const workElement = target.closest<HTMLElement>('[data-wayfinder-icon]');
+    if (workElement) {
+      /* Folders and conversation files own no item menu yet; right-click
+       * selects the icon under the pointer and keeps the desktop menu. */
+      const iconId = workElement.dataset.wayfinderIcon ?? '';
+      if (iconId && !selectedIcons.has(iconId)) setSelectedIcons(new Set([iconId]));
+      setContextMenu({ kind: 'desktop', x: event.clientX, y: event.clientY });
       return;
     }
     const windowElement = target.closest<HTMLElement>('[data-paw-window-id]');
@@ -206,14 +229,28 @@ export function PawDesktop() {
         return;
       }
     }
-    setSelectedApps(new Set());
+    setSelectedIcons(new Set());
     setContextMenu({ kind: 'desktop', x: event.clientX, y: event.clientY });
-  }, [api, selectedApps]);
+  }, [api, selectedIcons]);
 
+  /* Rubber-band selection, restored for the whole desktop plane. A left
+   * press on bare desktop starts the sweep; icons are measured once at the
+   * gesture edge, the band appears only past a 4px travel threshold, Escape
+   * or a right-click mid-sweep cancels and restores the starting selection,
+   * and Shift/Cmd/Ctrl add the sweep to it. Furniture (masthead, archive
+   * tray, context sheet, an open folder window) is marked
+   * [data-paw-desktop-ui] and never starts a band. */
   const startLasso = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement;
-    if (target.closest('button, input, textarea, select, a, [data-paw-window-id], [data-paw-text-selection], [data-paw-desktop-panel]')) return;
+    if (target.closest('button, input, textarea, select, a, summary, [data-paw-window-id], [data-paw-text-selection], [data-paw-desktop-ui], [data-wayfinder-icon]')) {
+      /* Like the macOS desktop, pressing a window or desktop furniture drops
+       * the icon selection; icons themselves handle their own clicks. */
+      if (!target.closest('[data-desktop-app], [data-wayfinder-icon]')) {
+        setSelectedIcons((current) => (current.size ? new Set() : current));
+      }
+      return;
+    }
     event.preventDefault();
     setContextMenu(null);
     const viewport = viewportRef.current;
@@ -221,26 +258,32 @@ export function PawDesktop() {
     const viewportBounds = viewport.getBoundingClientRect();
     const origin = { x: event.clientX, y: event.clientY };
     const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-    const baseline = additive ? new Set(selectedApps) : new Set<PawAppId>();
-    if (!additive) setSelectedApps(new Set());
+    const baseline = additive ? new Set(selectedIcons) : new Set<string>();
+    if (!additive) setSelectedIcons(new Set());
     event.currentTarget.setPointerCapture?.(event.pointerId);
     /* Desktop identities cannot move while the lasso is being drawn, so their
      * boxes are measured once at the gesture edge. Re-reading them per frame
      * forced a synchronous layout of the whole desktop on every sample — the
      * single most expensive thing a rubber-band selection could do. */
-    const targets = Array.from(viewport.querySelectorAll<HTMLElement>('[data-desktop-app]'))
-      .map((element) => ({ appId: element.dataset.desktopApp as PawAppId, rect: element.getBoundingClientRect() }));
+    const targets = Array.from(viewport.querySelectorAll<HTMLElement>('[data-desktop-app], [data-wayfinder-icon]'))
+      .map((element) => ({
+        iconId: element.dataset.desktopApp ? `app:${element.dataset.desktopApp}` : element.dataset.wayfinderIcon ?? '',
+        rect: element.getBoundingClientRect(),
+      }))
+      .filter((candidate) => candidate.iconId);
     let frame = 0;
     let latest: PointerEvent | null = null;
+    let dragging = false;
     const apply = () => {
       frame = 0;
       const moveEvent = latest;
       if (!moveEvent) return;
+      if (!dragging && Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) < 4) return;
+      dragging = true;
       const left = Math.min(origin.x, moveEvent.clientX);
       const top = Math.min(origin.y, moveEvent.clientY);
       const right = Math.max(origin.x, moveEvent.clientX);
       const bottom = Math.max(origin.y, moveEvent.clientY);
-      if (right - left < 3 && bottom - top < 3) return;
       setLasso({
         x: left - viewportBounds.left,
         y: top - viewportBounds.top,
@@ -248,29 +291,52 @@ export function PawDesktop() {
         height: bottom - top,
       });
       const next = new Set(baseline);
-      for (const { appId, rect } of targets) {
-        if (rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top) next.add(appId);
+      for (const { iconId, rect } of targets) {
+        if (rect.left < right && rect.right > left && rect.top < bottom && rect.bottom > top) next.add(iconId);
       }
       // Most frames of a drag cross no new identity; keeping the same Set
       // keeps the Wayfinder out of the frame entirely.
-      setSelectedApps((current) => sameAppSelection(current, next) ? current : next);
+      setSelectedIcons((current) => sameIconSelection(current, next) ? current : next);
     };
     const move = (moveEvent: PointerEvent) => {
       latest = moveEvent;
       if (!frame) frame = window.requestAnimationFrame(apply);
     };
-    const finish = () => {
+    const teardown = () => {
       if (frame) window.cancelAnimationFrame(frame);
-      apply();
       setLasso(null);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('keydown', key, true);
+      window.removeEventListener('contextmenu', abortMenu, true);
+    };
+    const finish = () => {
+      apply();
+      teardown();
+    };
+    const cancel = () => {
+      if (dragging) setSelectedIcons(baseline);
+      teardown();
+    };
+    const key = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      cancel();
+    };
+    const abortMenu = (menuEvent: MouseEvent) => {
+      if (!dragging) return;
+      menuEvent.preventDefault();
+      menuEvent.stopPropagation();
+      cancel();
     };
     window.addEventListener('pointermove', move, { passive: true });
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', finish);
-  }, [selectedApps]);
+    window.addEventListener('keydown', key, true);
+    window.addEventListener('contextmenu', abortMenu, true);
+  }, [selectedIcons]);
 
   const menuItems = useMemo<readonly PawContextMenuItem[]>(() => {
     if (!contextMenu || contextMenu.kind === 'desktop') {
@@ -454,7 +520,7 @@ export function PawDesktop() {
       </header>
 
       <main className="paw-desktop-viewport" onPointerDown={startLasso} ref={viewportRef}>
-        <Wayfinder onOpen={openApp} onSelect={selectApp} selectedApps={selectedApps} />
+        <Wayfinder onOpen={openApp} onSelectIcon={selectIcon} selectedIcons={selectedIcons} />
         <PawWindowLayer />
         {lasso ? <div className="paw-selection-lasso" data-testid="paw-selection-lasso" style={{ left: lasso.x, top: lasso.y, width: lasso.width, height: lasso.height }} /> : null}
       </main>
@@ -520,16 +586,17 @@ function PawMenuClock() {
  * stable callbacks plus the selection set, so clock ticks, menus, focus
  * changes and every lasso frame that crosses no new identity leave it
  * untouched. */
-const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
+const Wayfinder = memo(function Wayfinder({ onOpen, onSelectIcon, selectedIcons }: {
   onOpen: (id: PawAppId) => void;
-  onSelect: (id: PawAppId, additive: boolean) => void;
-  selectedApps: ReadonlySet<PawAppId>;
+  onSelectIcon: (iconId: string, additive: boolean) => void;
+  selectedIcons: ReadonlySet<string>;
 }) {
   const desktopApps: PawAppId[] = ['project-workbench', 'agent', 'files', 'browser', 'terminal'];
   const shortcutsRef = useRef<HTMLDivElement>(null);
   const api = usePawDesktopApi();
   const wayfinder = usePawDesktopStore((state) => state.wayfinder);
   const running = usePawRunningApps();
+  const gridColumns = usePawDesktopGridColumns();
   // Roving arrows walk the shortcut list like a real desktop: focus moves
   // between identities without tabbing out of the Wayfinder, and Enter on the
   // focused identity still opens it (owned by the per-button handler below).
@@ -592,17 +659,18 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
         {desktopApps.map((id, index) => {
           const open = running.open.has(id);
           const minimizedOnly = open && !running.visible.has(id);
-          const position = wayfinder.iconPositions[`app:${id}`] ?? defaultAppIconPosition(index);
+          const iconId = `app:${id}`;
+          const position = wayfinder.iconPositions[iconId] ?? pawDesktopGridPosition(index, gridColumns);
           return (
             <button
-              aria-selected={selectedApps.has(id) || undefined}
+              aria-selected={selectedIcons.has(iconId) || undefined}
               data-app={id}
               data-desktop-app={id}
               data-minimized={minimizedOnly || undefined}
               data-open={open || undefined}
               draggable
               key={id}
-              onClick={(event) => onSelect(id, event.shiftKey || event.metaKey || event.ctrlKey)}
+              onClick={(event) => onSelectIcon(iconId, event.shiftKey || event.metaKey || event.ctrlKey)}
               onDoubleClick={() => onOpen(id)}
               onDragStart={(event) => startAppDrag(event, id)}
               onKeyDown={(event) => {
@@ -612,24 +680,17 @@ const Wayfinder = memo(function Wayfinder({ onOpen, onSelect, selectedApps }: {
               title={minimizedOnly ? `${pawApp(id).shortLabel} · 已最小化` : open ? `${pawApp(id).shortLabel} · 运行中` : pawApp(id).shortLabel}
               type="button"
             >
-              <span><PawAppIcon appId={id} size={28} /></span>
+              <span><PawAppIcon appId={id} size={34} /></span>
               <strong><span className="paw-desktop-shortcuts__label-ink">{pawApp(id).shortLabel}</span></strong>
               <i aria-hidden="true" />
             </button>
           );
         })}
       </div>
-      <PawWayfinderWork />
+      <PawWayfinderWork onSelectIcon={onSelectIcon} selectedIcons={selectedIcons} />
     </section>
   );
 });
-
-function defaultAppIconPosition(index: number): { x: number; y: number } {
-  return {
-    x: 30 + (index % 5) * 104,
-    y: 28 + Math.floor(index / 5) * 104,
-  };
-}
 
 /* One projection answers "which Apps are running, which are hidden" for both
  * the Wayfinder list and the Dock. The sorted string signature keeps the
@@ -891,10 +952,10 @@ function timeLabel(): string {
   }).format(new Date());
 }
 
-function sameAppSelection(left: ReadonlySet<PawAppId>, right: ReadonlySet<PawAppId>): boolean {
+function sameIconSelection(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) return false;
-  for (const appId of right) {
-    if (!left.has(appId)) return false;
+  for (const iconId of right) {
+    if (!left.has(iconId)) return false;
   }
   return true;
 }

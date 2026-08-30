@@ -4,11 +4,18 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { StubControlTransport } from '@/test/stub-control-transport';
 import { GovernanceCenter, GovernanceFeature } from './index';
 import { activeGuards, safeDisplay, type GovernanceProjection, type KnowledgeGovernanceProjection } from './model';
+import governanceStylesheet from './governance.css?raw';
 
 const hash = 'a'.repeat(64);
 
 describe('GovernanceCenter', () => {
   afterEach(cleanup);
+
+  it('keeps transparent empty-state copy paired with the active theme', () => {
+    expect(governanceStylesheet).toMatch(
+      /\.governance-empty-line \{[\s\S]*?color: var\(--color-text-secondary\);[\s\S]*?\}/,
+    );
+  });
 
   it('shows a truthful loading state and waits for both protection projections before rendering the board', async () => {
     const pendingGovernance = deferred<{ governance: GovernanceProjection }>();

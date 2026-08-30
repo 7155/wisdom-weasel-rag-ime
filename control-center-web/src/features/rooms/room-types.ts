@@ -102,6 +102,15 @@ export interface RoomSummary {
   topics?: RoomTopic[];
   artifacts?: RoomArtifact[];
   workItems?: RoomWorkItem[];
+  startGate?: {
+    status: 'pending' | 'confirmed';
+    gateId: string;
+    objective: string;
+    workItemId: string;
+    clientMessageId: string;
+    rootId: string;
+    confirmedAtMs: number;
+  } | null;
   updatedAtMs: number;
   participants: RoomParticipant[];
 }

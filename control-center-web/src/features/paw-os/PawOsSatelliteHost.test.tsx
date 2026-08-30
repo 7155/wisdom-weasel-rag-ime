@@ -683,8 +683,21 @@ describe('PawOsSatelliteHost', () => {
 
   it('keeps history actions and disclosure controls reachable in a narrow satellite', () => {
     expect(satelliteCss).toContain('@container paw-window (max-width: 320px)');
-    expect(satelliteCss).toContain('.paw-participant-chat__history-boundary { align-items: stretch; flex-direction: column; }');
+    expect(satelliteCss).toContain('.paw-participant-chat__history-boundary { gap: 6px; }');
     expect(satelliteCss).toContain('.paw-participant-chat__activity-group__summary { grid-template-columns: minmax(0, 1fr) 16px 12px; padding-inline: 8px; }');
+  });
+
+  it('keeps long English and Chinese satellite labels on one compact row from 320 to 420px', () => {
+    // The activity row is a fixed four-column seam: only its message column
+    // may shrink. This prevents CJK/long-token wrapping while retaining the
+    // state icon, tool glyph, timestamp, and raw-content disclosure.
+    expect(satelliteCss).toContain(".paw-participant-chat__timeline article[data-kind='activity'] { display: grid; min-width: 0; grid-template-columns: 16px 16px minmax(0, 1fr) auto;");
+    expect(satelliteCss).toContain('.paw-participant-chat__activity-message { min-width: 0; overflow: hidden;');
+    expect(satelliteCss).toContain('text-overflow: ellipsis; white-space: nowrap; }');
+    expect(satelliteCss).toContain(".paw-participant-chat__timeline article[data-kind='activity'] > .paw-participant-chat__raw-detail { grid-column: 1 / -1;");
+    expect(satelliteCss).toContain('.paw-participant-chat__history-boundary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }');
+    expect(satelliteCss).toContain('.paw-participant-chat__activity-group__summary > span { display: flex; min-width: 0; align-items: center; gap: 6px; }');
+    expect(satelliteCss).toContain('.paw-participant-chat__activity-group__summary small { min-width: 0; flex: 1 1 auto; overflow: hidden;');
   });
 
   it('keeps the statusline one text row that never squeezes the dialogue at 280 width', () => {
@@ -692,7 +705,9 @@ describe('PawOsSatelliteHost', () => {
     expect(satelliteCss).toContain('.paw-participant-chat__statusline > p { min-width: 0; flex: 1; margin: 0; overflow: hidden; color: var(--paw-ink); text-overflow: ellipsis; white-space: nowrap; }');
     expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='running'] { --paw-satellite-state: #2783de; }");
     expect(satelliteCss).toContain(".paw-participant-chat__statusline[data-state='blocked'],\n.paw-participant-chat__statusline[data-state='failed'] { --paw-satellite-state: #c64747; }");
-    expect(satelliteCss).toContain('.paw-participant-chat__statusline > button > span { display: none; }');
+    expect(satelliteCss).toContain('.paw-participant-chat__statusline > button {');
+    expect(satelliteCss).toContain('white-space: nowrap;');
+    expect(satelliteCss).not.toContain('.paw-participant-chat__statusline > button > span { display: none; }');
   });
 
   it('uses a scoped linear no-card treatment for planet observers', () => {
@@ -705,6 +720,25 @@ describe('PawOsSatelliteHost', () => {
     expect(satelliteCss).toContain('border-left: 1px solid var(--ccui-border);');
     expect(satelliteCss).toContain('border-radius: 0;');
     expect(satelliteCss).toContain('border-block: 1px solid var(--ccui-border);');
+    // Narrow planet windows must keep Runtime rows horizontal. Labels and
+    // summaries yield with ellipsis; a resize must never turn a one-line
+    // activity into the stacked/vertical layout seen in the regression.
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-head");
+    expect(satelliteCss).toContain('grid-template-columns: 8px minmax(0, 1fr) auto;');
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-main strong");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-main strong {\n  min-width: 0;\n  flex: 0 1 auto;");
+    expect(satelliteCss).toContain('max-width: 42%;');
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-main > span {\n  min-width: 0;\n  flex: 1 1 0;");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-meta");
+    expect(satelliteCss).toContain('text-overflow: ellipsis;');
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-thinking-summary");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-assistant-head > :is(strong, small)");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-assistant-head > :is(strong, small) {\n  min-width: 0;\n  flex: 0 1 auto;");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .ccui-tool-action");
+    expect(satelliteCss).toContain('flex-wrap: nowrap;\n  overflow: hidden;\n  white-space: nowrap;');
+    expect(satelliteCss).toContain(".ccui-tool-action > :is(button, [role='alert']) {\n  min-width: 0;\n  max-width: 100%;\n  flex: 0 1 auto;");
+    expect(satelliteCss).toContain(".paw-os-satellite--participant-chat[data-presentation='planet-observer'] .agent-tool-result-panel__header");
+    expect(satelliteCss).toContain('.paw-participant-chat__timeline article > header time { flex: 0 0 auto;');
     // The selector is intentionally rooted at the planet marker; subagent
     // satellite cards and the main Room/Agent surfaces keep their own seam.
     expect(satelliteCss).not.toContain('.ccui-tool-card {\n  border: 0;');

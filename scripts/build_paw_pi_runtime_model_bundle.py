@@ -86,15 +86,15 @@ PI_EXACT_FILES = (
     "packages/coding-agent/README.md",
     "packages/coding-agent/src/index.ts",
     "packages/coding-agent/src/config.ts",
-    "packages/rag-ime-runtime-host/package.json",
-    "packages/rag-ime-runtime-host/README.md",
-    "packages/rag-ime-runtime-host/tsconfig.build.json",
-    "packages/rag-ime-runtime-host/vitest.config.ts",
+    "integrations/rag-ime-runtime-host/package.json",
+    "integrations/rag-ime-runtime-host/README.md",
+    "integrations/rag-ime-runtime-host/tsconfig.build.json",
+    "integrations/rag-ime-runtime-host/vitest.config.ts",
 )
 
 PI_GLOBS = (
-    "packages/rag-ime-runtime-host/src/**/*.ts",
-    "packages/rag-ime-runtime-host/test/**/*.ts",
+    "integrations/rag-ime-runtime-host/src/**/*.ts",
+    "integrations/rag-ime-runtime-host/test/**/*.ts",
     "packages/agent/src/**/*.ts",
     "packages/agent/test/**/*.ts",
     "packages/ai/src/**/*.ts",
@@ -436,10 +436,9 @@ def contract_resolution(pi_root: Path) -> str:
     for owner, relative in sorted(contract.get("handlerSources", {}).items()):
         candidate = pi_root / str(relative)
         rows.append(f"| {owner} | `{relative}` | {'present' if candidate.is_file() else 'missing'} |")
-    detected = next((path for path in (
-        pi_root / "integrations" / "rag-ime-runtime-host",
-        pi_root / "packages" / "rag-ime-runtime-host",
-    ) if path.is_dir()), None)
+    detected = pi_root / "integrations" / "rag-ime-runtime-host"
+    if not detected.is_dir():
+        detected = None
     return "\n".join((
         f"- Detected local Runtime Host source root: `{detected or 'missing'}`.",
         "- Contract-declared handler paths are checked literally against the current worktree:",
@@ -517,7 +516,7 @@ def render_bundle(paw: GitSnapshot, pi: GitSnapshot, sources: list[SourceFile]) 
         "- The PAW repository contains product adapters, contracts, packaging, Room composition and UI projections; it does not contain the complete Pi core.",
         f"- The default future managed build source resolves to the current local worktree `{pi.root}` at `{pi.head}` ({'dirty' if pi.dirty_count else 'clean'}).",
         "- If the installed manifest records another commit or a `+dirty.<digest>` suffix, that exact historical dirty source is not reconstructed from the current clean worktree. Both evidence sets are included and intentionally remain distinct.",
-        "- `packages/rag-ime-runtime-host` is a product adapter living in the Pi fork. `packages/agent`, `packages/ai`, and `packages/coding-agent` contain the Pi-owned runtime/session/provider implementation included below.",
+        "- `integrations/rag-ime-runtime-host` is the product adapter living in the Pi fork. `packages/agent`, `packages/ai`, and `packages/coding-agent` contain the Pi-owned runtime/session/provider implementation included below.",
         "- Room composition, PAW persistence and Web reducers remain PAW-owned consumers/projections; they must not become a second Agent Runtime.",
         "",
         "### Runtime Host source-contract resolution",
@@ -567,8 +566,11 @@ def main() -> None:
     args = parse_args()
     pi_root = args.pi_worktree.expanduser().resolve()
     output = args.output.expanduser().resolve()
-    if not (pi_root / "packages" / "rag-ime-runtime-host").is_dir():
-        raise SystemExit(f"Pi Runtime Host source is unavailable: {pi_root}")
+    if not (pi_root / "integrations" / "rag-ime-runtime-host").is_dir():
+        raise SystemExit(
+            "Pi Runtime Host source is unavailable: expected canonical "
+            f"integrations/rag-ime-runtime-host under {pi_root}"
+        )
     try:
         output_relative = output.relative_to(PAW_ROOT).as_posix()
     except ValueError:

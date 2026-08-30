@@ -118,6 +118,19 @@ describe('MemoryFeature composition', () => {
     expect(memoryStylesheet).toContain('outline-color: var(--memory-signal)');
   });
 
+  it('uses the shared readable text token for catalog section descriptions', () => {
+    expect(memoryStylesheet).toContain(
+      ".memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: var(--color-text-secondary);",
+    );
+    expect(memoryStylesheet).not.toContain('color: #7a8493');
+    expect(memoryStylesheet).toContain(":root[data-theme='dark'] main[data-route-id='memory']");
+    expect(memoryStylesheet).toContain('background: var(--color-surface-subtle);');
+    expect(memoryStylesheet).toContain('background: var(--color-paper);');
+    expect(memoryStylesheet).toContain(
+      '.memory-layer-list .mgmt-list__copy span {\n  display: block;\n  overflow: visible;',
+    );
+  });
+
   it('gives every memory layer its own signal identity in the stylesheet owner', () => {
     for (const scope of [
       ".memory-second-brain[data-view='catalog'][data-layer='evidence']",

@@ -520,7 +520,6 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
   main[data-route-id='configuration'] .configuration-transfer .ui-button,
   main[data-route-id='configuration'] .configuration-portability .ui-button { min-height: 44px; }
 
-  main[data-route-id='configuration'] .configuration-search,
   main[data-route-id='configuration'] .configuration-search input { height: 44px; }
 }
 

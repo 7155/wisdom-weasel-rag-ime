@@ -98,6 +98,7 @@ export function BrowserTabStrip({
           >
             <button
               aria-busy={tab.loading || undefined}
+              aria-keyshortcuts="Delete"
               aria-selected={tab.active}
               className="paw-browser-tab-main"
               onAuxClick={middleClickClose(tab.id)}
@@ -115,15 +116,18 @@ export function BrowserTabStrip({
               <BrowserTabIcon tab={tab} />
               <span>{tab.title || '新标签页'}</span>
             </button>
-            <button
-              aria-label={tab.active ? '关闭标签页' : `关闭标签页：${tab.title || '新标签页'}`}
+            <span
+              aria-hidden="true"
               className="paw-browser-tab-close"
-              onClick={() => onClose(tab.id)}
-              tabIndex={tab.active ? 0 : -1}
-              type="button"
+              data-tab-close-label={tab.active ? '关闭标签页' : tab.title || '新标签页'}
+              onClick={(event) => {
+                event.stopPropagation();
+                onClose(tab.id);
+              }}
+              title={tab.active ? '关闭标签页（Delete）' : `关闭标签页：${tab.title || '新标签页'}`}
             >
               <X size={12} />
-            </button>
+            </span>
           </div>
         ))}
       </div>

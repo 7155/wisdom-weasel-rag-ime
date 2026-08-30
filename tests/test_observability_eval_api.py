@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,6 +101,89 @@ def _invoke_post(
 
 
 class ObservabilityEvalServiceTests(unittest.TestCase):
+    def test_ai_judge_defaults_to_luna_max_and_records_estimate_authority(self) -> None:
+        class JudgeRuntime:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def complete_once(self, **kwargs: object) -> dict[str, object]:
+                self.calls.append(dict(kwargs))
+                return {
+                    "text": json.dumps({
+                        "relevance": 0.9,
+                        "coverage": 0.8,
+                        "groundedness": 1.0,
+                        "contradiction": 0.0,
+                        "confidence": 0.7,
+                    }),
+                    "elapsedMs": 123,
+                    "usage": {"totalTokens": 42},
+                }
+
+        with tempfile.TemporaryDirectory(prefix="observability-ai-judge-") as tmp:
+            service = AgentService.__new__(AgentService)
+            service.eval_runs = EvalRunStore(Path(tmp) / "eval.sqlite")
+            service.observation_trace = lambda payload: _trace_detail()  # type: ignore[method-assign]
+            runtime = JudgeRuntime()
+            service.runtime = runtime
+
+            result = service.evaluate_observation_ai_judge({"traceId": "trace:eval:1"})
+
+            self.assertEqual(runtime.calls[0]["provider"], "openai-codex")
+            self.assertEqual(runtime.calls[0]["model_id"], "gpt-5.6-luna")
+            self.assertEqual(runtime.calls[0]["thinking_level"], "max")
+            self.assertEqual(result["mode"], "ai_judge")
+            self.assertEqual(result["metricAuthority"], "ai_judge_estimate")
+            self.assertEqual(result["truth"]["status"], "none")
+            self.assertEqual(result["evaluator"], {
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+                "thinking": "max",
+                "displayName": "Luna Max",
+            })
+            self.assertEqual(result["requestedEvaluator"], result["evaluator"])
+            self.assertEqual(result["promptVersion"], "trace-eval-ai-judge-v1")
+            self.assertEqual(result["rubricVersion"], "trace-eval-ai-judge-v1")
+            self.assertEqual(
+                result["inputTraceFingerprint"],
+                _trace_detail()["trace"]["input"]["fingerprint"],
+            )
+            self.assertIsInstance(result["startedAtMs"], int)
+            self.assertIsInstance(result["completedAtMs"], int)
+            self.assertGreaterEqual(result["completedAtMs"], result["startedAtMs"])
+            self.assertIsInstance(result["elapsedMs"], int)
+            self.assertGreaterEqual(result["elapsedMs"], 0)
+            self.assertEqual(result["latencyMs"], 123)
+            self.assertEqual(result["usage"], {"totalTokens": 42})
+            self.assertFalse(result["fallbackUsed"])
+            self.assertEqual(result["metrics"]["relevance"], 0.9)
+            self.assertNotIn("private question", str(result))
+
+    def test_ai_judge_failure_is_explicit_without_private_error_payload(self) -> None:
+        class FailingJudgeRuntime:
+            def complete_once(self, **kwargs: object) -> dict[str, object]:
+                raise RuntimeError("PRIVATE provider token and local path")
+
+        with tempfile.TemporaryDirectory(prefix="observability-ai-judge-failure-") as tmp:
+            service = AgentService.__new__(AgentService)
+            service.eval_runs = EvalRunStore(Path(tmp) / "eval.sqlite")
+            service.observation_trace = lambda payload: _trace_detail()  # type: ignore[method-assign]
+            service.runtime = FailingJudgeRuntime()
+
+            result = service.evaluate_observation_ai_judge({"traceId": "trace:eval:1"})
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["failureCode"], "ai_judge_request_failed")
+            self.assertEqual(result["promptVersion"], "trace-eval-ai-judge-v1")
+            self.assertEqual(result["rubricVersion"], "trace-eval-ai-judge-v1")
+            self.assertEqual(
+                result["inputTraceFingerprint"],
+                _trace_detail()["trace"]["input"]["fingerprint"],
+            )
+            self.assertEqual(result["metrics"], {})
+            self.assertNotIn("PRIVATE provider token", str(result))
+            self.assertNotIn("local path", str(result))
+
     def test_eval_suite_catalog_is_a_safe_registry_projection(self) -> None:
         service = AgentService.__new__(AgentService)
 

@@ -15,12 +15,24 @@ import type {
 } from '@/platform/transport';
 import { ConfigurationFeature } from '.';
 import { configurationMutationPathIds, requestConfigurationMutation } from './api';
+import configurationStylesheet from './configuration.css?raw';
 
 const hash = 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
 
 afterEach(cleanup);
 
 describe('Configuration settings WorkContract UI', () => {
+  it('keeps the mobile search field wrapper sized by its contents', () => {
+    // The wrapper contains the label, description, and input. A fixed 44px
+    // height clips those children and lets the section grid cover the input.
+    expect(configurationStylesheet).toContain(
+      "main[data-route-id='configuration'] .configuration-search input { height: 44px; }",
+    );
+    expect(configurationStylesheet).not.toContain(
+      "main[data-route-id='configuration'] .configuration-search,\n  main[data-route-id='configuration'] .configuration-search input { height: 44px; }",
+    );
+  });
+
   it('binds field changes to preview, apply, refresh, and rollback receipts', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(true);

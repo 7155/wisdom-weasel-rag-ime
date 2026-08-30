@@ -44,7 +44,8 @@ Options:
   --include-mlx         Require and reinstall the MLX predictor.
   -h, --help            Show this help.
 
-The stack installer refuses dirty tracked source by default. Set
+The formal stack installer accepts only the canonical `main` branch and
+refuses dirty tracked source by default. Set
 RAG_IME_ALLOW_DIRTY_INSTALL=1 only for an explicitly marked development build.
 
 With --include-squirrel, an explicit RAG_IME_SQUIRREL_WORKDIR or
@@ -149,6 +150,12 @@ while (($#)); do
 done
 
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+SOURCE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+if [[ "$SOURCE_BRANCH" != "main" ]]; then
+  echo "refusing formal product installation from non-main source: ${SOURCE_BRANCH:-detached HEAD}" >&2
+  echo "finish and commit the release on canonical main before installing" >&2
+  exit 1
+fi
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] \
   && [[ "${RAG_IME_ALLOW_DIRTY_INSTALL:-0}" != "1" ]]; then
   echo "refusing to install a mixed product stack from dirty tracked source" >&2
@@ -177,10 +184,7 @@ required=(--require control --require sidecar)
 if [[ "$INCLUDE_PI" == "auto" ]]; then
   if [[ -n "$PI_WORKTREE" ]] \
     || [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
-    || [[ -d "$ROOT/../pi/integrations/rag-ime-runtime-host" ]] \
-    || [[ -d "$ROOT/../pi/packages/rag-ime-runtime-host" ]] \
-    || [[ -d "$ROOT/../pi-rag-ime-runtime/integrations/rag-ime-runtime-host" ]] \
-    || [[ -d "$ROOT/../pi-rag-ime-runtime/packages/rag-ime-runtime-host" ]]; then
+    || [[ -d "$ROOT/../pi/integrations/rag-ime-runtime-host" ]]; then
     INCLUDE_PI=1
   else
     INCLUDE_PI=0

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -268,7 +269,104 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
             (canonical / "integrations" / "rag-ime-runtime-host").rmdir()
             (canonical / "integrations").rmdir()
-            self.assertEqual(_default_pi_worktree(workspace), legacy)
+            self.assertEqual(_default_pi_worktree(workspace), canonical)
+
+    def test_managed_runtime_rejects_a_legacy_only_pi_worktree(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-legacy-pi-") as temporary:
+            root = Path(temporary)
+            (root / "packages" / "rag-ime-runtime-host").mkdir(parents=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "build_managed_pi_runtime_v2.py"),
+                    "--pi-worktree",
+                    str(root),
+                    "--node",
+                    str(root / "missing-node"),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unsupported legacy Pi Runtime Host source", result.stderr)
+        self.assertIn("integrations/rag-ime-runtime-host", result.stderr)
+
+    def test_session_runtime_contract_rejects_legacy_handler_source_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-session-host-legacy-contract-"
+        ) as temporary:
+            root = Path(temporary)
+            relative_sources = {
+                key: Path(
+                    "integrations/rag-ime-runtime-host"
+                    f"/src/{key.replace('runtimeHost', 'runtime-host').replace('contextInspection', 'debug-context').replace('toolBridge', 'tool-bridge').replace('toolResults', 'tool-artifact-buffer').replace('pluginManager', 'plugin-manager').replace('packageCatalog', 'bundled-package-catalog').replace('packageManager', 'native-package-manager')}.ts"
+                )
+                for key in _SESSION_RUNTIME_SOURCE_KEYS
+            }
+            for key, relative in relative_sources.items():
+                source = root / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(
+                    f"// marker:{key}\n"
+                    + (
+                        "export type RuntimeMethod = "
+                        + " ".join(f'| "{method}"' for method in REQUIRED_RUNTIME_METHODS)
+                        + ";\n"
+                        if key == "protocol"
+                        else ""
+                    )
+                    + (
+                        "switch (method) { "
+                        + " ".join(
+                            f'case "{method}": break;'
+                            for method in REQUIRED_RUNTIME_METHODS
+                        )
+                        + " }\n"
+                        if key == "runtimeHost"
+                        else ""
+                    ),
+                    encoding="utf-8",
+                )
+            contract = json.loads(
+                SESSION_RUNTIME_CONTRACT.read_text(encoding="utf-8")
+            )
+            contract["minimumHandlersCommit"] = "a" * 40
+            contract["handlerSources"] = {
+                key: relative.as_posix()
+                for key, relative in relative_sources.items()
+            }
+            contract_path = root / "session-runtime-host-contract.json"
+            contract_path.write_text(
+                json.dumps(contract, sort_keys=True),
+                encoding="utf-8",
+            )
+            contract["handlerSources"]["session"] = (
+                "packages/rag-ime-runtime-host/src/pi-session.ts"
+            )
+            contract_path.write_text(
+                json.dumps(contract, sort_keys=True),
+                encoding="utf-8",
+            )
+            with (
+                patch(
+                    "scripts.build_managed_pi_runtime_v2.SESSION_RUNTIME_CONTRACT",
+                    contract_path,
+                ),
+                patch(
+                    "scripts.build_managed_pi_runtime_v2.REQUIRED_PI_RUNTIME_BASE_COMMIT",
+                    "a" * 40,
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "must be under integrations/rag-ime-runtime-host",
+                ):
+                    _verified_session_runtime_contract(root)
 
     def test_oauth_runtime_smoke_loads_every_lazy_module_and_derives_codex_auth(
         self,

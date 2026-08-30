@@ -7,6 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { ApprovalsFeature } from '.';
+import approvalsStylesheet from './approvals.css?raw';
 
 afterEach(cleanup);
 
@@ -24,6 +25,12 @@ function renderApprovals(transport = createPreviewTransport()) {
 }
 
 describe('ApprovalsFeature', () => {
+  it('uses the theme secondary text token for readable queue metadata', () => {
+    expect(approvalsStylesheet).toMatch(
+      /\.approvals-queue__copy small \{[\s\S]*?color: var\(--color-text-secondary\);[\s\S]*?\}/,
+    );
+  });
+
   it('tells the truth about the queue and mirrors the selected request in the decision panel', async () => {
     const user = userEvent.setup();
     renderApprovals();

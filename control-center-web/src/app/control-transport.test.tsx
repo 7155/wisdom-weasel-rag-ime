@@ -19,6 +19,7 @@ describe('ControlTransportProvider', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     window.history.replaceState({}, '', originalUrl);
   });
 
@@ -60,6 +61,13 @@ describe('ControlTransportProvider', () => {
     } finally {
       window.history.replaceState({}, '', originalUrl);
     }
+  });
+
+  it('honors an explicit mock build transport when the development URL has no override', () => {
+    window.history.replaceState({}, '', '/?frontend=paw-os#/project-field');
+    vi.stubEnv('VITE_CONTROL_TRANSPORT', 'mock');
+
+    expect(createConfiguredControlTransport().kind).toBe('mock');
   });
 
   it('keeps the preview memory surface representative and contract-valid', async () => {

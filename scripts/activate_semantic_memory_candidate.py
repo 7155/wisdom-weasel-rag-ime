@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
 
@@ -429,7 +430,7 @@ def _assert_manual_before_state(
 
 
 def _manual_before_state(path: Path, *, project: str) -> dict[str, str]:
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only = ON")
         return {
@@ -471,7 +472,7 @@ def _table_fingerprint(conn: sqlite3.Connection, table: str) -> str:
 
 
 def _checkpoint_stopped_target(path: Path) -> None:
-    with sqlite3.connect(path, timeout=1.0) as conn:
+    with closing(sqlite3.connect(path, timeout=1.0)) as conn:
         conn.execute("PRAGMA busy_timeout = 1000")
         row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         if row is not None and len(row) >= 1 and int(row[0] or 0) != 0:
@@ -484,7 +485,7 @@ def _verify_semantic_database(
     project: str,
     provider_fingerprint: str,
 ) -> dict[str, object]:
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only = ON")
         verification = verify_semantic_memory_database(
@@ -505,9 +506,9 @@ def _copy_database(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     _reserve_private_file(destination)
     try:
-        with sqlite3.connect(
+        with closing(sqlite3.connect(
             f"file:{source}?mode=ro", uri=True
-        ) as source_conn, sqlite3.connect(destination) as target_conn:
+        )) as source_conn, closing(sqlite3.connect(destination)) as target_conn:
             source_conn.backup(target_conn, pages=2048, sleep=0.01)
             target_conn.execute("PRAGMA journal_mode = DELETE")
             target_conn.execute("PRAGMA synchronous = FULL")

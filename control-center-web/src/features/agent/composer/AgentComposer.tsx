@@ -173,7 +173,7 @@ export function AgentComposer({
   onCapabilityPreferenceChange?: (canonicalId: string, preference: CapabilityPreference) => void;
   onProductCommand: (command: AgentProductCommandName) => void;
   onSend: (delivery: AgentMessageDelivery, draft: string) => void;
-  onStop: () => void;
+  onStop: () => void | Promise<void>;
   editState?: AgentComposerEditState;
   onEditPrevious?: () => void;
   onCancelEdit?: () => void;
@@ -209,6 +209,12 @@ export function AgentComposer({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [commandInputFocused, setCommandInputFocused] = useState(false);
+  // The parent reconciles the stop request with Pi and may have to render a
+  // large transcript before its state update commits. Keep the button's
+  // acknowledgement local so a slow transcript cannot leave an enabled stop
+  // action (or accept a second click) between the click and that commit.
+  const [stopRequested, setStopRequested] = useState(false);
+  const wasStoppingRef = useRef(stopping);
   const commandCatalog = useMemo(
     () => buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
     [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
@@ -258,6 +264,10 @@ export function AgentComposer({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [editState?.messageId]);
+  useEffect(() => {
+    if (wasStoppingRef.current && !stopping) setStopRequested(false);
+    wasStoppingRef.current = stopping;
+  }, [stopping]);
   useEffect(() => () => window.clearTimeout(escapeResetRef.current), []);
   /* One projection answers what the primary action does, whether it is
      available and why not — the button, its label and Enter all read it, so
@@ -269,7 +279,7 @@ export function AgentComposer({
     draftHasAttachments: attachments.length > 0,
     busy,
     sending,
-    stopping,
+    stopping: stopping || stopRequested,
     modelChanging,
     // Running turns use the human model: Enter adds a reversible follow-up
     // beside the composer. Hosts without the local queue hand the same intent
@@ -516,8 +526,9 @@ export function AgentComposer({
             spellCheck={false}
             placeholder={composerPlaceholder(imageSupport)}
             aria-label="消息"
-            aria-autocomplete="list"
-            aria-expanded={commandPanelVisible}
+            role={commandPanelVisible ? 'combobox' : undefined}
+            aria-autocomplete={commandPanelVisible ? 'list' : undefined}
+            aria-expanded={commandPanelVisible ? true : undefined}
             aria-controls={commandPanelVisible ? 'agent-command-palette' : undefined}
             aria-describedby={commandPanelVisible && !helpOpen ? 'agent-command-palette-hint' : undefined}
             aria-activedescendant={commandPanelVisible && commands[activeCommandIndex]
@@ -530,7 +541,7 @@ export function AgentComposer({
             <IconButton
               className="agent-composer__attachment"
               label={imageSupport === 'unsupported' ? '添加附件（当前模型不识别图片）' : '添加附件'}
-              icon={<Plus size={18} />}
+              icon={<Plus size={16} />}
               onClick={onPickAttachments}
               disabled={!session || sending}
               tooltip
@@ -570,18 +581,21 @@ export function AgentComposer({
             {busy ? (
               <IconButton
                 className="agent-composer__stop"
-                label={stopping ? '正在停止本轮' : '停止本轮'}
-                icon={stopping ? <LoaderCircle className="ui-spin" size={18} /> : <StopCircle size={18} />}
-                onClick={onStop}
-                disabled={stopping}
-                aria-busy={stopping || undefined}
+                label={stopping || stopRequested ? '正在停止本轮' : '停止本轮'}
+                icon={stopping || stopRequested ? <LoaderCircle className="ui-spin" size={16} /> : <StopCircle size={16} />}
+                onClick={() => {
+                  setStopRequested(true);
+                  void Promise.resolve(onStop()).finally(() => setStopRequested(false));
+                }}
+                disabled={stopping || stopRequested}
+                aria-busy={stopping || stopRequested || undefined}
                 tooltip
               />
             ) : null}
             <IconButton
               className="agent-composer__send"
               label={sendBlockedReason ? `${sendActionLabel}（${sendBlockedReason}）` : sendActionLabel}
-              icon={<Send size={18} />}
+              icon={<Send size={16} />}
               onClick={() => submit(composerSubmitMode(actionModel))}
               disabled={actionModel.primaryDisabled}
               tooltip
@@ -597,7 +611,7 @@ function CommandIcon({ command }: { command: ComposerCommand }) {
   const Icon = command.source === 'product'
     ? productCommandIcons[command.name]
     : piCommandIcons[command.source];
-  return <Icon size={17} strokeWidth={1.8} />;
+  return <Icon size={16} />;
 }
 
 function isCommandLookupDraft(value: string): boolean {

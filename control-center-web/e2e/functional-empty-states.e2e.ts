@@ -9,7 +9,9 @@ test('functional empty states stay compact and contain no decorative artwork', a
     const emptyStates = page.locator('.ui-empty-state');
     await expect(emptyStates).toHaveCount(2);
     await expect(page.locator('.functional-empty-fixture img')).toHaveCount(0);
-    await expect(page.getByRole('region', { name: '记忆正常数据槽位' }).getByRole('option', { name: /Room 路由审计/ })).toBeVisible();
+    // Normal memory data is an article row, not a select option. Keep this
+    // assertion tied to the semantic row and its visible content.
+    await expect(page.getByRole('region', { name: '记忆正常数据槽位' }).getByRole('article').filter({ hasText: 'Room 路由审计' })).toBeVisible();
 
     for (const emptyState of await emptyStates.all()) {
       const metrics = await emptyState.evaluate((node) => {

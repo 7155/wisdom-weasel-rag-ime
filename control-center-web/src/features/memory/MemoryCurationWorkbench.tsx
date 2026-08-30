@@ -74,6 +74,7 @@ export function MemoryCurationWorkbench({
   const vectorCoverage = numberValue(projectionFreshness.vectorCoverage);
   const vectorFingerprint = stringValue(projectionFreshness.providerFingerprint);
   const automaticOrganizationEnabled = stringValue(statusPayload.policy) !== 'disabled';
+  const automaticOrganizationAutoApply = booleanValue(statusPayload.autoApply);
   const failedOwnerScope = ownerScopes.find((scope) => (
     stringValue(scope.status) === 'backoff' || Boolean(stringValue(scope.lastError))
   ));
@@ -101,7 +102,8 @@ export function MemoryCurationWorkbench({
   const targetDate = stringValue(backlog.targetDate, localToday());
   const caughtUp = booleanValue(backlog.caughtUpThroughToday) || governedPending === 0;
   const hasDraft = Boolean(runId) && runStatus === 'draft';
-  const startBlocked = !automaticOrganizationEnabled || caughtUp || hasDraft || jobActive;
+  const blockingDraft = hasDraft && !automaticOrganizationAutoApply;
+  const startBlocked = !automaticOrganizationEnabled || caughtUp || blockingDraft || jobActive;
   const draftKey = `${runId}:${changes.map((change) => `${numberValue(change.diffId)}:${booleanValue(change.selected)}`).join(',')}`;
   const applyBlockedReason = !runId
     ? `等待自动整理，或让${identity.assistantName}现在准备一份草案。`
@@ -122,7 +124,9 @@ export function MemoryCurationWorkbench({
       <div className="memory-curation__header">
         <div>
           <h2>整理到今天</h2>
-          <span>从上次位置继续推进；按日期和应用核对来源，再审核本轮形成的记忆草案。</span>
+          <span>{automaticOrganizationAutoApply
+            ? '从上次位置继续推进；按日期和应用核对来源，治理通过后自动应用。'
+            : '从上次位置继续推进；按日期和应用核对来源，再审核本轮形成的记忆草案。'}</span>
         </div>
         <div className="memory-curation__actions">
           <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small" variant="quiet">补充整理要求</Button>
@@ -132,7 +136,9 @@ export function MemoryCurationWorkbench({
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection
           title="整理进度"
-          description="原始输入不会被改写；每次只处理一批，形成草案后停下来等你审核。"
+          description={automaticOrganizationAutoApply
+            ? '原始输入不会被改写；每次只处理一批，通过治理校验后自动应用并保留回滚回执。'
+            : '原始输入不会被改写；每次只处理一批，形成草案后停下来等你审核。'}
           trailing={<StatusBadge label={caughtUp ? '已到今天' : `${governedPending} 条待整理`} tone={caughtUp ? 'success' : 'warning'} />}
         >
           {hasGovernedStatus ? (
@@ -169,7 +175,7 @@ export function MemoryCurationWorkbench({
                     loading={jobActive}
                     onClick={() => void startCuration()}
                   >
-                    {jobActive ? '正在整理' : hasDraft ? '先审核本批' : caughtUp ? '已整理到今天' : failedOwnerScope ? '继续整理' : '开始整理'}
+                    {jobActive ? '正在整理' : blockingDraft ? '先审核本批' : caughtUp ? '已整理到今天' : failedOwnerScope ? '继续整理' : '开始整理'}
                   </Button>
                 </div>
               </div>
@@ -181,7 +187,7 @@ export function MemoryCurationWorkbench({
                     : publicErrorText(queries.trigger.error ?? queries.job.error ?? jobPayload.error, '整理任务没有完成；进度已经保留，可以重试。'))}
                 </InlineNotice>
               ) : jobState === 'completed' ? (
-                <InlineNotice title="本轮处理完成" tone="success">状态正在刷新；如果产生了草案，请在下方逐项审核。</InlineNotice>
+                <InlineNotice title="本轮处理完成" tone="success">状态正在刷新；{automaticOrganizationAutoApply ? '通过治理校验的结果会自动应用。' : '如果产生了草案，请在下方逐项审核。'}</InlineNotice>
               ) : jobActive ? (
                 <InlineNotice title="正在读取并整理本轮来源" tone="info">你可以留在此页，完成后会自动刷新；正式记忆不会被直接改写。</InlineNotice>
               ) : null}
@@ -270,8 +276,10 @@ export function MemoryCurationWorkbench({
           )}
         </ManagementSection>
 
-        <ManagementSection title="本批草案" description="按内容判断是否保留；不同应用的原始来源继续分开保存。" trailing={runId ? <StatusBadge label={`${selectedCount} / ${changes.length} 已选择`} tone={selectedCount ? 'success' : 'warning'} /> : undefined}>
-          {runId ? (
+        <ManagementSection title={automaticOrganizationAutoApply ? '自动整理结果' : '本批草案'} description={automaticOrganizationAutoApply
+          ? '通过 Evidence、Atom-first 与计划校验的结果会自动保存；原始来源和回滚回执继续保留。'
+          : '按内容判断是否保留；不同应用的原始来源继续分开保存。'} trailing={!automaticOrganizationAutoApply && runId ? <StatusBadge label={`${selectedCount} / ${changes.length} 已选择`} tone={selectedCount ? 'success' : 'warning'} /> : undefined}>
+          {runId && !automaticOrganizationAutoApply ? (
             <>
               <MetricStrip items={[
                 { label: '批次状态', value: curationStatusLabel(runStatus, stale), detail: formatCreatedAt(numberValue(run.createdAtMs)), icon: ShieldCheck, tone: runStatus === 'draft' && !stale ? 'warning' : 'success' },
@@ -310,12 +318,14 @@ export function MemoryCurationWorkbench({
               })}
             </div>
             </>
+          ) : runId ? (
+            <InlineNotice title="自动应用已启用" tone="info">当前 Gateway 会在治理校验通过后自动应用；历史草案不会阻塞下一批整理。</InlineNotice>
           ) : (
             <EmptyState description={caughtUp ? '新的输入出现后会继续从今天向后整理。' : '点击上方开始或继续整理；形成草案后会停在这里等待审核。'} icon={caughtUp ? CheckCircle2 : CircleDotDashed} title={caughtUp ? '已经整理到今天' : '当前没有待审核草案'} />
           )}
         </ManagementSection>
 
-        {runId ? <ManagementSection title="完成本批审核" description={selectedCount
+        {runId && !automaticOrganizationAutoApply ? <ManagementSection title="完成本批审核" description={selectedCount
           ? '保存所选建议并更新本机检索；完成后可以立即撤销本批次。'
           : '全部排除时只结束本批审核，不会改动正式记忆。'}>
           <ManagementMutationWorkflow
@@ -395,7 +405,9 @@ export function MemoryCurationWorkbench({
     try {
       await queries.trigger.mutateAsync({
         maxSources: batchSize,
-        instruction: '从当前已保存的整理位置继续，按时间顺序处理下一批个人记忆来源；只生成可审核草案，不直接保存。',
+        instruction: automaticOrganizationAutoApply
+          ? '从当前已保存的整理位置继续，按时间顺序处理下一批个人记忆来源；通过治理校验后自动应用，并保留回滚回执。'
+          : '从当前已保存的整理位置继续，按时间顺序处理下一批个人记忆来源；只生成可审核草案，不直接保存。',
       });
     } catch (cause) {
       setStartError(publicErrorText(cause, '未能启动本轮整理；已有进度没有变化。'));
@@ -403,7 +415,9 @@ export function MemoryCurationWorkbench({
   }
 
   function handoffToAgent() {
-    const prompt = '请帮我稳妥地增量整理当前记忆：只准备一份可逐项审核的草案，保留原始来源，不要直接保存，也不要展示内部执行记录。完成后请告诉我可以回来审核。';
+    const prompt = automaticOrganizationAutoApply
+      ? '请帮我稳妥地增量整理当前记忆：按 Evidence、Atom-first 与计划校验推进，通过治理校验后自动应用并保留回滚回执，保留原始来源，不要展示内部执行记录。完成后告诉我本批处理结果。'
+      : '请帮我稳妥地增量整理当前记忆：只准备一份可逐项审核的草案，保留原始来源，不要直接保存，也不要展示内部执行记录。完成后请告诉我可以回来审核。';
     openPawOsRoute(desktop, `/agent?draft=${encodeURIComponent(prompt)}`);
   }
 }

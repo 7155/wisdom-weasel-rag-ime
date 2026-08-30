@@ -17,12 +17,53 @@
       "type": "object", "additionalProperties": false, "required": ["provider", "model", "thinking", "displayName"],
       "properties": {"provider": {"type": "string"}, "model": {"type": "string"}, "thinking": {"type": "string"}, "displayName": {"type": "string"}}
     },
+    "requestedEvaluator": {
+      "type": "object", "additionalProperties": false, "required": ["provider", "model", "thinking", "displayName"],
+      "properties": {"provider": {"type": "string"}, "model": {"type": "string"}, "thinking": {"type": "string"}, "displayName": {"type": "string"}}
+    },
     "suiteBinding": {
       "type": "object", "additionalProperties": false, "required": ["suiteId", "suiteRevision"],
       "properties": {"suiteId": {"type": "string", "minLength": 1}, "suiteRevision": {"type": "string", "minLength": 1}}
     },
     "metrics": {"type": "object", "additionalProperties": {"type": "number"}},
     "status": {"enum": ["queued", "running", "completed", "failed"]},
+    "promptVersion": {"type": "string", "minLength": 1, "maxLength": 160},
+    "rubricVersion": {"type": "string", "minLength": 1, "maxLength": 160},
+    "inputTraceFingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "startedAtMs": {"type": "integer", "minimum": 0},
+    "completedAtMs": {"type": "integer", "minimum": 0},
+    "elapsedMs": {"type": "integer", "minimum": 0},
+    "latencyMs": {"type": "integer", "minimum": 0},
+    "usage": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "input": {"type": "integer", "minimum": 0},
+        "output": {"type": "integer", "minimum": 0},
+        "cacheRead": {"type": "integer", "minimum": 0},
+        "cacheWrite": {"type": "integer", "minimum": 0},
+        "totalTokens": {"type": "integer", "minimum": 0}
+      }
+    },
+    "cost": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "input": {"type": "number", "minimum": 0},
+        "output": {"type": "number", "minimum": 0},
+        "cacheRead": {"type": "number", "minimum": 0},
+        "cacheWrite": {"type": "number", "minimum": 0},
+        "total": {"type": "number", "minimum": 0}
+      }
+    },
+    "fallbackUsed": {"type": "boolean"},
+    "failureCode": {"enum": ["ai_judge_runtime_unavailable", "ai_judge_request_failed", "ai_judge_invalid_response", "ai_judge_timeout"]},
+    "sourceTraceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "repairTraceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceScope": {"type": "string", "minLength": 1, "maxLength": 160},
+    "failureRef": {"type": "string", "minLength": 1, "maxLength": 160},
+    "repairReceiptId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "changeReceiptId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "testEvidenceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "testStatus": {"const": "passed"},
     "createdAtMs": {"type": "integer", "minimum": 0}, "updatedAtMs": {"type": "integer", "minimum": 0}
   }
 }

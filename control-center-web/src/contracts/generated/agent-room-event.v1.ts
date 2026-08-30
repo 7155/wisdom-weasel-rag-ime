@@ -23,7 +23,10 @@ export interface AgentRoomEventV1 {
     | 'artifact_changed'
     | 'turn_completed'
     | 'turn_failed'
-    | 'snapshot_required';
+    | 'snapshot_required'
+    | 'room_start_confirmation_required'
+    | 'room_start_confirmation_confirmed'
+    | 'room_start_confirmation_rejected';
   participantId: string | null;
   sourceSessionId: string;
   topicId?: string;

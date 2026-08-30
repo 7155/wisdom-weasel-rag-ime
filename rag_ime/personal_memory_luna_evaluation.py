@@ -7,6 +7,7 @@ import re
 import sqlite3
 import stat
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -969,7 +970,7 @@ class PrivateCodexLunaMemoryExecutor:
         assert self.audit_db_path is not None
         sessions = AgentSessionStore(self.audit_db_path)
         timestamp = now_ms()
-        with sqlite3.connect(self.audit_db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.audit_db_path, timeout=30.0)) as conn:
             conn.row_factory = sqlite3.Row
             existing = conn.execute(
                 "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
@@ -992,7 +993,7 @@ class PrivateCodexLunaMemoryExecutor:
                 created_at_ms=timestamp,
             )
             session_id = str(session["id"])
-            with sqlite3.connect(self.audit_db_path, timeout=30.0) as conn:
+            with closing(sqlite3.connect(self.audit_db_path, timeout=30.0)) as conn, conn:
                 conn.execute(
                     """
                     INSERT INTO memory_curation_model_runs(
@@ -1025,7 +1026,7 @@ class PrivateCodexLunaMemoryExecutor:
             session_id = compact_whitespace(str(existing["session_id"] or ""))
             if not session_id:
                 raise ValueError("private Luna audit run has no Session")
-            with sqlite3.connect(self.audit_db_path, timeout=30.0) as conn:
+            with closing(sqlite3.connect(self.audit_db_path, timeout=30.0)) as conn, conn:
                 conn.execute(
                     """
                     UPDATE memory_curation_model_runs
@@ -1060,7 +1061,7 @@ class PrivateCodexLunaMemoryExecutor:
             f"{self._active_run_id}\0{phase}\0{input_sha256}"
         )[:40]
         timestamp = now_ms()
-        with sqlite3.connect(self.audit_db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.audit_db_path, timeout=30.0)) as conn, conn:
             existing = conn.execute(
                 """
                 SELECT request_id, messages_json, state, output_text,
@@ -1139,7 +1140,7 @@ class PrivateCodexLunaMemoryExecutor:
             if error is None
             else f"{error.__class__.__name__}:{_sha256(compact_whitespace(str(error))[:800])}"
         )
-        with sqlite3.connect(self.audit_db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.audit_db_path, timeout=30.0)) as conn, conn:
             conn.execute(
                 """
                 UPDATE memory_curation_model_runs
@@ -1516,15 +1517,11 @@ def prepare_verified_memory_shadow(
             "verification": verification,
         }
 
-    source_conn = _immutable_connection(source)
-    destination_conn = sqlite3.connect(working)
-    try:
-        source_verification = _verify_recovered_memory_shadow_connection(source_conn)
-        source_conn.backup(destination_conn)
-        destination_conn.commit()
-    finally:
-        destination_conn.close()
-        source_conn.close()
+    with closing(_immutable_connection(source)) as source_conn:
+        with closing(sqlite3.connect(working)) as destination_conn, destination_conn:
+            source_verification = _verify_recovered_memory_shadow_connection(source_conn)
+            source_conn.backup(destination_conn)
+            destination_conn.commit()
     working.chmod(0o600)
     source_after = _file_identity(source)
     if source_after != source_before:

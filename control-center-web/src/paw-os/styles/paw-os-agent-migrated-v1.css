@@ -372,12 +372,17 @@
 
 .paw-desktop-root .paw-session-workspace__primary {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  /* 悬浮船坞的真实高度由 useComposerClearance 测量写入；字面值只是首帧地板，
+     下游不得假设船坞恰好这么高。 */
+  --workspace-composer-clearance: 132px;
+  --workspace-composer-gap: 10px;
 }
 
 .paw-desktop-root .paw-session-workspace__viewport {
+  grid-area: 1 / 1;
   position: relative;
   display: grid;
   min-width: 0;
@@ -632,15 +637,32 @@
   font-size: 12px;
 }
 
-/* Composer 带：去掉硬分割线，改用向下渐白的落地带——时间线在船坞
-   下方自然淡出，输入区像悬浮在对话之上。禁 backdrop（流式性能红线）。 */
+/* 悬浮船坞：对话画布从上到下铺满整个窗口主体，船坞作为浮卡叠在底部。
+   时间线从船坞下方穿过——包装层不接收指针事件，只有卡片本身可交互；
+   底部留白由 useComposerClearance 按船坞真实高度精确预留。 */
 .paw-desktop-root .paw-session-workspace__composer {
-  grid-row: 2;
+  grid-area: 1 / 1;
   align-self: end;
+  z-index: 5;
   padding: 14px 24px 16px;
   border-top: 0;
-  background: linear-gradient(rgb(255 255 255 / 0), #fff 40%);
+  background: none;
   backdrop-filter: none;
+  pointer-events: none;
+}
+
+.paw-desktop-root .paw-session-workspace__composer > * {
+  pointer-events: auto;
+}
+
+/* 最后一条消息必须能完整滚过浮卡：底部留白 = 船坞实测高度 + 一口呼吸。 */
+.paw-desktop-root .paw-session-workspace__conversation .agent-timeline__footer-space {
+  height: calc(var(--workspace-composer-clearance) + var(--workspace-composer-gap));
+}
+
+/* 右侧对话导航同样避开浮卡，窄窗口下不会与卡片右缘相碰。 */
+.paw-desktop-root .paw-session-workspace__conversation .agent-conversation-nav {
+  bottom: calc(var(--workspace-composer-clearance) + var(--workspace-composer-gap));
 }
 
 .paw-desktop-root .paw-session-workspace__composer > .agent-composer-wrap {
@@ -657,6 +679,16 @@
     0 10px 32px rgb(24 32 43 / 8%),
     0 0 0 1px rgb(24 32 43 / 7%);
   transition: box-shadow 160ms ease;
+}
+
+/* Session 船坞真正浮在滚动的对话之上：投影略深一档，把“悬浮”读出来。
+   卡片保持不透明——时间线在下方流式刷新，叠一层 backdrop 会每帧重绘
+   （流式性能红线），不透明白卡零成本且视觉更干净。 */
+.paw-desktop-root .paw-session-workspace__composer .agent-composer {
+  box-shadow:
+    0 1px 2px rgb(24 32 43 / 5%),
+    0 16px 44px rgb(24 32 43 / 11%),
+    0 0 0 1px rgb(24 32 43 / 7%);
 }
 
 .paw-desktop-root :is(.paw-session-workspace__composer, .paw-room-workspace__composer) .agent-composer:focus-within {

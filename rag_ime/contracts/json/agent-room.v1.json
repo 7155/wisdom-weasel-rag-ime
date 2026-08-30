@@ -74,6 +74,10 @@
       "type": "array",
       "maxItems": 100,
       "items": {"type": "object"}
+    },
+    "startGate": {
+      "type": ["object", "null"],
+      "additionalProperties": true
     }
   }
 }

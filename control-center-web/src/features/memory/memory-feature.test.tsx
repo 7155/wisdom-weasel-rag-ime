@@ -225,6 +225,80 @@ describe('MemoryFeature relations', () => {
     expect(handoffDraft).not.toMatch(/memory Tool|curation_prepare|conservative|Atom-first|runId/);
   });
 
+  it('uses governed pending sources in every Memory surface instead of the legacy compile backlog', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': {
+          ok: true,
+          memoryBookCount: 66,
+          memoryAtomCount: 225,
+          memoryEvidenceCount: 125,
+          pendingCompileEvents: 2219,
+          pendingGovernedEvidenceCount: 777,
+          governedNeedsReviewEvidenceCount: 10,
+        },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'agent.memoryMaintenance.run': memoryCurationStatus(),
+      },
+    });
+    renderMemory(transport);
+
+    expect(await screen.findByRole('button', { name: '整理 · 777 条等待处理' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '整理 · 777 条等待处理' }));
+    expect(await screen.findByText('777 条待整理')).toBeInTheDocument();
+    expect(screen.queryByText('2219 条待整理')).not.toBeInTheDocument();
+  });
+
+  it('does not block the next batch on a legacy draft when governed auto-apply is enabled', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': {
+          ok: true,
+          memoryBookCount: 1,
+          memoryAtomCount: 1,
+          pendingGovernedEvidenceCount: 4,
+        },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'agent.memoryMaintenance.run': (request: ControlRequest) => request.query?.runId
+          ? memoryCurationRun()
+          : {
+            ...memoryCurationStatus(),
+            autoApply: true,
+            ownerCuration: {
+              pendingSourceCount: 4,
+              needsReviewSourceCount: 0,
+              backlog: { pendingSourceCount: 4, pendingDayCount: 1, days: [] },
+              scopes: [{ status: 'waiting_review', totalSourceCount: 5 }],
+            },
+          },
+        'agent.memoryMaintenance.trigger': (request: ControlRequest) => {
+          expect(request.body).toMatchObject({
+            maxSources: 4,
+            instruction: expect.stringContaining('通过治理校验后自动应用'),
+          });
+          return { ok: true, jobId: 'memory-maintenance:auto', state: 'queued' };
+        },
+      },
+    });
+    renderMemory(transport);
+
+    await user.click(await screen.findByRole('tab', { name: '让Agent整理' }));
+    const start = await screen.findByRole('button', { name: '开始整理' });
+    expect(start).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '先审核本批' })).not.toBeInTheDocument();
+    expect(screen.getByText(/通过治理校验后自动应用/)).toBeInTheDocument();
+    expect(screen.queryByText(/等待审核/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/逐项审核/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '补充整理要求' }));
+    const autoApplyPrompt = new URLSearchParams(window.location.hash.split('?')[1]).get('draft') ?? '';
+    expect(autoApplyPrompt).toContain('通过治理校验后自动应用');
+    expect(autoApplyPrompt).not.toContain('逐项审核');
+    await user.click(start);
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.memoryMaintenance.trigger')).toBe(true);
+  });
+
   it('uses governed Evidence and resumable model state instead of legacy compile counters', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({

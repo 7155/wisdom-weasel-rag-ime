@@ -175,4 +175,7 @@ export interface AgentRoomV1 {
   workItems?: {
     [k: string]: unknown;
   }[];
+  startGate?: {
+    [k: string]: unknown;
+  } | null;
 }

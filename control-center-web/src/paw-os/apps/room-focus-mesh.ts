@@ -146,6 +146,9 @@ const EDGE_BOW: Record<RoomFocusMeshEdgeKind, number> = {
   result: 5,
   review: -11,
 };
+const GENERIC_PARTNER_ACTIONS = new Set([
+  '推进中', '进行中', '协作中', '待命', '等待新的工作项',
+]);
 
 export function roomFocusMeshEdgeKindLabel(kind: RoomFocusMeshEdgeKind): string {
   return ({
@@ -517,6 +520,8 @@ function createsDagCycle(
 function partnerResponsibility(partner: RoomFocusPartner, workItems: readonly RoomFocusWorkItem[]): string {
   const objective = workItems.find((item) => workOwner(item) === partner.participantId)?.objective.trim();
   if (objective) return objective;
+  const currentAction = partner.currentAction.trim();
+  if (currentAction && !GENERIC_PARTNER_ACTIONS.has(currentAction)) return currentAction;
   const role = ({
     coordinator: '协调与汇合',
     researcher: '研究与证据',
@@ -524,7 +529,7 @@ function partnerResponsibility(partner: RoomFocusPartner, workItems: readonly Ro
     reviewer: '独立复核',
     specialist: '专项支持',
   } as Record<string, string>)[partner.collaborationRole ?? ''];
-  return role || partner.currentAction.trim() || '等待分工';
+  return role || currentAction || '等待分工';
 }
 
 function workOwner(item: RoomFocusWorkItem | undefined): string | undefined {

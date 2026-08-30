@@ -32,7 +32,8 @@ test('runtime observation stays bounded and filters its causal trace', async ({
   await expect(page).toHaveURL(/category=memory/);
   await expect(page.getByRole('list', { name: '运行记录事件' }).getByRole('listitem')).toHaveCount(1);
   await expect(page.getByRole('heading', { name: '这次是怎样完成的' })).toBeVisible();
-  await expect(feature).toContainText('一次完整流程');
+  await expect(feature).toContainText('同一次流程');
+  await expect(feature).toContainText('标准 Trace');
   await expect(feature).not.toContainText('PRIVATE_');
 
   await testInfo.attach(`observability-${testInfo.project.name}.png`, {

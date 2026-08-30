@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +10,7 @@ import { TooltipProvider } from '@/components/primitives';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import type { ControlRequest } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
+import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { PawWindowFrame } from '../shell/PawWindowLayer';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
 
@@ -22,13 +23,85 @@ vi.mock('./PawStarfield', async (importOriginal) => {
   return await importOriginal();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useRoomLiveStore.getState().reset();
+});
 
 describe('PAWOS Room collaboration tools', () => {
   it('hydrates a planet mention into the one shared Room composer', async () => {
     renderRoom(900, vi.fn(), undefined, undefined, '@Mars ');
 
     expect(await screen.findByRole('textbox', { name: '协作消息' })).toHaveValue('@Mars ');
+  });
+
+  it('binds a normal Room message to the active executable WorkItem', async () => {
+    const user = userEvent.setup();
+    const { room, transport } = renderRoom(900);
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.type(composer, '继续执行当前任务');
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'agent.room.message'
+    ))).toBe(true));
+    const request = transport.requests.find(({ request: item }) => item.pathId === 'agent.room.message')?.request;
+    expect(request?.body).toMatchObject({
+      message: '继续执行当前任务',
+      workItemId: room.workItems?.find((item) => ['queued', 'active', 'review', 'blocked'].includes(item.state))?.id,
+    });
+  });
+
+  it('restores the draft and attachments when the first Room start is declined', async () => {
+    const user = userEvent.setup();
+    const source = previewRoomSnapshot('room-gate');
+    const gateWork = source.room.workItems[0];
+    const gateSnapshot = {
+      ...source,
+      room: { ...source.room, workItems: [{ ...gateWork, state: 'active' as const }] },
+      events: [],
+      firstSequence: 0,
+      lastSequence: 0,
+      resumeToken: '',
+    };
+    const room = gateSnapshot.room as unknown as RoomSummary;
+    const { transport } = renderRoom(900, vi.fn(), room, gateSnapshot, undefined, undefined, vi.fn(), {
+      ok: true,
+      startConfirmation: {
+        status: 'pending',
+        gateId: 'room-gate:preview',
+        objective: '先确认 Room 执行范围',
+        workItemId: 'room-work:preview',
+        clientMessageId: 'room-client:preview',
+        rootId: 'room-gate:turn-start',
+        confirmedAtMs: 0,
+      },
+    });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
+    const image = new File(['png'], 'start-scope.png', { type: 'image/png' });
+    fireEvent.paste(composer, {
+      clipboardData: { files: [image], items: [], getData: () => '' },
+    });
+    expect(await screen.findByLabelText('移除 start-scope.png')).toBeInTheDocument();
+
+    await user.type(composer, '先确认 Room 执行范围');
+    await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
+    await screen.findByRole('button', { name: '暂不开始' });
+    expect(composer).toHaveValue('');
+    expect(useRoomLiveStore.getState().projections[room.id]?.optimisticByClientMessageId)
+      .not.toEqual({});
+
+    await user.click(screen.getByRole('button', { name: '暂不开始' }));
+
+    await waitFor(() => expect(composer).toHaveValue('先确认 Room 执行范围'));
+    expect(screen.getByLabelText('待发送附件')).toHaveTextContent('start-scope.png');
+    expect(useRoomLiveStore.getState().projections[room.id]?.optimisticByClientMessageId)
+      .toEqual({});
+    expect(transport.requests.at(-1)?.request).toMatchObject({
+      pathId: 'agent.room.startGate.confirm',
+      body: { gateId: 'room-gate:preview', decision: 'reject' },
+    });
   });
 
   it('uses one round sheet by default and enters collaboration mode only on explicit request', async () => {
@@ -460,6 +533,7 @@ function renderRoom(
   initialDraft?: string,
   resumeResponse?: Record<string, unknown>,
   setCollaborationFocusGroup = vi.fn(),
+  messageResponse?: Record<string, unknown>,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
@@ -476,6 +550,9 @@ function renderRoom(
     }
     if (resumeResponse && request.pathId === 'agent.room.workItem.resume') {
       return { ok: true, workItem: resumeResponse } as Response;
+    }
+    if (messageResponse && request.pathId === 'agent.room.message') {
+      return messageResponse as Response;
     }
     return send<Response>(request);
   };

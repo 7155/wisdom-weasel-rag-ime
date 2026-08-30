@@ -44,11 +44,13 @@ describe('BrowserTabStrip', () => {
     expect(rendered[0]).toHaveAttribute('title', '文档');
     expect(rendered[1]).toHaveAttribute('title', '加载中页面（正在加载）');
     expect(rendered[3]).toHaveAttribute('title', '坏页面（加载失败）');
-    // Only the selected tab exposes the plain close control; background tabs
-    // carry their own named close revealed on hover.
-    expect(within(strip).getAllByLabelText('关闭标签页')).toHaveLength(1);
-    expect(within(strip).getByLabelText('关闭标签页：坏页面')).toBeInTheDocument();
-    expect(within(strip).getByLabelText('关闭标签页：新标签页')).toBeInTheDocument();
+    // The tablist owns tabs only. Close affordances are inert pointer targets
+    // on the tab surface so they cannot violate aria-required-children.
+    expect(within(strip).queryByRole('button')).toBeNull();
+    expect(document.querySelectorAll('.paw-browser-tab-close')).toHaveLength(4);
+    expect(document.querySelector('.paw-browser-tab-close') as HTMLElement).toHaveAttribute('data-tab-close-label', '关闭标签页');
+    expect(document.querySelector('[data-tab-close-label="坏页面"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-tab-close-label="新标签页"]')).toBeInTheDocument();
     expect(browserTabTooltip({ id: 'x', title: '', active: false, loading: true })).toBe('新标签页（正在加载）');
   });
 
@@ -60,9 +62,9 @@ describe('BrowserTabStrip', () => {
     render(<BrowserTabStrip onClose={onClose} onNewTab={onNewTab} onSelect={onSelect} tabs={tabs} />);
     await user.click(screen.getByRole('tab', { name: /加载中页面/ }));
     expect(onSelect).toHaveBeenCalledWith('b');
-    await user.click(screen.getByLabelText('关闭标签页'));
+    await user.click(document.querySelector('.paw-browser-tab-close') as HTMLElement);
     expect(onClose).toHaveBeenCalledWith('a');
-    await user.click(screen.getByLabelText('关闭标签页：坏页面'));
+    await user.click(document.querySelector('[data-tab-close-label="坏页面"]') as HTMLElement);
     expect(onClose).toHaveBeenCalledWith('d');
     await user.click(screen.getByRole('button', { name: '新建标签页' }));
     expect(onNewTab).toHaveBeenCalledTimes(1);

@@ -276,6 +276,7 @@ export function useActivityTimeline(date: string, enabled: boolean, catchUpTarge
     ?? (buildJobState === 'failed' || buildJobState === 'expired'
       ? new Error(stringValue(buildJobPayload.error, '当天语义整理未通过校验。'))
       : null);
+  const buildJobTraceId = stringValue(buildJobPayload.traceId);
   useEffect(() => {
     if (buildJobState !== 'completed' && buildJobState !== 'failed') return;
     if (buildJobState === 'completed') {
@@ -311,6 +312,7 @@ export function useActivityTimeline(date: string, enabled: boolean, catchUpTarge
     buildJobProgress,
     buildJobResult,
     buildJobState,
+    buildJobTraceId,
     buildJobWarning,
     calendar,
     canRead,
@@ -422,6 +424,16 @@ export function useMemoryCurationQueries(enabled: boolean) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
   const [jobId, setJobId] = useState('');
+  // The detailed maintenance report can include model-run and projection
+  // state, so it is intentionally allowed to be slower than the shared
+  // memory summary. Subscribe to the summary here as well as in the parent
+  // Memory page: a direct /memory?view=organize entry must still get a useful
+  // first paint when this workbench mounts before the summary has arrived.
+  const summary = useQuery({
+    enabled,
+    queryKey: memoryQueryKeys.summary(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'memory.summary', signal }),
+  });
   const status = useQuery({
     enabled,
     queryKey: memoryQueryKeys.curationStatus(),
@@ -430,8 +442,30 @@ export function useMemoryCurationQueries(enabled: boolean) {
       query: { limit: 12 },
       signal,
     }),
+    // Keep the governed count visible while the detailed status endpoint is
+    // reading. This is display-only placeholder data; it cannot be mistaken
+    // for a completed maintenance run and is replaced by the real response.
+    placeholderData: (previousData) => previousData
+      ?? memoryMaintenanceStatusPlaceholder(summary.data
+        ?? queryClient.getQueryData(memoryQueryKeys.summary())),
     refetchInterval: enabled ? 15_000 : false,
   });
+  const summaryPlaceholder = memoryMaintenanceStatusPlaceholder(
+    summary.data ?? queryClient.getQueryData(memoryQueryKeys.summary()),
+  );
+  // Query placeholderData is evaluated before the shared summary can finish
+  // on a direct organize deep link. Promote the derived read-only snapshot on
+  // the next render too, so the workbench does not remain a skeleton until
+  // the slower maintenance report returns.
+  const statusForRender = !status.data && summaryPlaceholder
+    ? {
+      ...status,
+      data: summaryPlaceholder,
+      isLoading: false,
+      isPending: false,
+      isPlaceholderData: true,
+    }
+    : status;
   const statusPayload = asRecord(status.data);
   const runs = Array.isArray(statusPayload.runs)
     ? statusPayload.runs.map(asRecord)
@@ -484,7 +518,71 @@ export function useMemoryCurationQueries(enabled: boolean) {
     if (jobState !== 'completed' && jobState !== 'failed' && jobState !== 'expired') return;
     void queryClient.invalidateQueries({ queryKey: memoryQueryKeys.curationStatus() });
   }, [jobState, queryClient]);
-  return { job, jobId, jobState, run, runId, status, trigger };
+  return { job, jobId, jobState, run, runId, status: statusForRender, trigger };
+}
+
+function memoryMaintenanceStatusPlaceholder(value: unknown): Record<string, unknown> | undefined {
+  const summary = asRecord(value);
+  const summaryOwner = asRecord(summary.ownerCuration);
+  const pending = firstNumber(
+    summary.ownerCurationPendingSourceCount,
+    summary.pendingGovernedEvidenceCount,
+    summaryOwner.pendingSourceCount,
+    summary.pendingCompileEvents,
+  );
+  if (pending === undefined) return undefined;
+
+  const needsReview = firstNumber(
+    summary.governedNeedsReviewEvidenceCount,
+    summaryOwner.needsReviewSourceCount,
+    summary.needsReviewSourceCount,
+  ) ?? 0;
+  const summaryBacklog = asRecord(summaryOwner.backlog);
+  const ownerCuration = {
+    ...summaryOwner,
+    schemaVersion: 'rag-ime.owner-memory-curation-status.v1',
+    ok: true,
+    project: stringValue(summary.project),
+    policy: asRecord(summaryOwner.policy),
+    due: pending > 0,
+    pendingSourceCount: pending,
+    needsReviewSourceCount: needsReview,
+    scopes: Array.isArray(summaryOwner.scopes) ? summaryOwner.scopes : [],
+    backlog: Object.keys(summaryBacklog).length > 0
+      ? summaryBacklog
+      : { pendingSourceCount: pending, pendingDayCount: 0, days: [], applications: [] },
+  };
+
+  // Disable actions until the real report arrives. The placeholder is only a
+  // read model, so it must never make a user believe policy/model details were
+  // loaded or allow a trigger based on incomplete state.
+  return {
+    schemaVersion: 'rag-ime.agent-memory-maintenance-status.v1',
+    ok: true,
+    policy: 'disabled',
+    autoApply: false,
+    scheduledDraftOnly: false,
+    due: pending > 0,
+    dueReason: 'summary_only',
+    idleMs: 0,
+    compileState: {
+      project: stringValue(summary.project),
+      pendingEventCount: firstNumber(summary.pendingCompileEvents) ?? 0,
+      undraftedEventCount: pending,
+    },
+    pendingDraftCount: 0,
+    runs: [],
+    ownerCuration,
+    modelCuration: { stateCounts: {}, runs: [] },
+    bookProjection: asRecord(summary.bookProjection),
+    projection: asRecord(summary.projection),
+  };
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  return values.find((value): value is number => (
+    typeof value === 'number' && Number.isFinite(value)
+  ));
 }
 
 export function useMemoryEntityQuery(

@@ -46,7 +46,10 @@ test('legacy compatibility Agent scene preserves Turn aggregation and composer r
   const visibleText = await page.locator('main[data-route-id="agent"]').innerText();
   expect(visibleText).not.toMatch(/\{"(?:schemaVersion|eventType|payload)"/);
 
-  const composer = page.getByRole('textbox', { name: '消息' });
+  // The same labelled textarea intentionally changes role to combobox while
+  // the command palette is open. Label lookup remains stable across that
+  // interaction while still exercising the accessible name.
+  const composer = page.getByLabel('消息', { exact: true });
   await page.waitForFunction(() => [...document.images].every((image) => image.complete));
   await page.evaluate(() => new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));

@@ -37,12 +37,24 @@ esac
 }
 
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+SOURCE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
   SOURCE_DIRTY="true"
 fi
 
 if [[ "$ACTION" == "install-release" ]]; then
+  if [[ "$SOURCE_BRANCH" != "main" ]]; then
+    echo "refusing formal app installation from non-main source: ${SOURCE_BRANCH:-detached HEAD}" >&2
+    exit 1
+  fi
+  if [[ "$SOURCE_DIRTY" == "true" ]]; then
+    if [[ "${RAG_IME_ALLOW_DIRTY_INSTALL:-0}" != "1" ]]; then
+      echo "refusing formal app installation from dirty main source" >&2
+      exit 1
+    fi
+    echo "Development install: allowing explicitly requested dirty main source." >&2
+  fi
   curl --silent --show-error --fail --max-time 5 \
     -H 'Origin: http://127.0.0.1:8766' \
     -H 'Content-Type: application/json' \

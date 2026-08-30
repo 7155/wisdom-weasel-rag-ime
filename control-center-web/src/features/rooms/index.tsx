@@ -620,29 +620,34 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
       }
     };
     setCatalogLoading(true);
-    void Promise.allSettled([
-      transport.request({ pathId: 'agent.rooms.list', query: { limit: 100, ...(includeArchived ? { includeArchived: true } : {}) } }),
-      requestRoleCatalog(),
-      transport.request({ pathId: 'agent.sessions.list', query: { limit: 200 } }),
-    ]).then(([roomResult, roleResult, sessionResult]) => {
+    const roomRequest = transport.request({
+      pathId: 'agent.rooms.list',
+      query: { limit: 100, ...(includeArchived ? { includeArchived: true } : {}) },
+    });
+    const roleRequest = requestRoleCatalog();
+    const sessionRequest = transport.request({ pathId: 'agent.sessions.list', query: { limit: 200 } });
+    const applyRoomCatalog = (items: RoomSummary[]) => {
+      setRooms(items);
+      setSelectedId((current) => {
+        const next = items.some((item) => item.id === current)
+          ? current
+          : items.some((item) => item.id === initialRoomId)
+            ? initialRoomId
+            : items.find((item) => item.status === 'active')?.id ?? items[0]?.id ?? '';
+        selectedRoomIdRef.current = next;
+        return next;
+      });
+      setRoomCatalogError('');
+    };
+    void roomRequest.then((value) => {
+      if (!active) return;
+      applyRoomCatalog(roomItems(value));
+    }).catch((requestError) => {
+      if (active) setRoomCatalogError(publicErrorText(requestError, '协作空间暂时无法读取，请稍后重试。'));
+    });
+    void Promise.allSettled([roomRequest, roleRequest, sessionRequest]).then(([roomResult, roleResult, sessionResult]) => {
       if (!active) return;
       const loadedRooms = roomResult.status === 'fulfilled' ? roomItems(roomResult.value) : [];
-      if (roomResult.status === 'fulfilled') {
-        const items = loadedRooms;
-        setRooms(items);
-        setSelectedId((current) => {
-          const next = items.some((item) => item.id === current)
-            ? current
-            : items.some((item) => item.id === initialRoomId)
-              ? initialRoomId
-              : items.find((item) => item.status === 'active')?.id ?? items[0]?.id ?? '';
-          selectedRoomIdRef.current = next;
-          return next;
-        });
-        setRoomCatalogError('');
-      } else {
-        setRoomCatalogError(publicErrorText(roomResult.reason, '协作空间暂时无法读取，请稍后重试。'));
-      }
       if (roleResult.status === 'fulfilled') {
         setPersonas(roleItems(roleResult.value));
         setRoleCatalogError('');
@@ -841,6 +846,9 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
                 : {}),
               ...(addressedParticipants.length
                 ? { participantIds: addressedParticipants.map((participant) => participant.id) }
+                : {}),
+              ...(room.roomKind !== 'roleplay' && activeWork?.id
+                ? { workItemId: activeWork.id }
                 : {}),
             },
           });

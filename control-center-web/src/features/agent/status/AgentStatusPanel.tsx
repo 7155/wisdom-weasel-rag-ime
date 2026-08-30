@@ -171,7 +171,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
     >
       <header>
         <span><strong>任务中心</strong><small>{panelStatus}</small></span>
-        <IconButton icon={<PanelRightClose size={17} />} label="收起任务中心" onClick={onClose} tooltip />
+        <IconButton icon={<PanelRightClose size={16} />} label="收起任务中心" onClick={onClose} tooltip />
       </header>
       {contentReady ? <div className="agent-status-panel__body">
         <AgentWorkflowPanel

@@ -126,6 +126,39 @@ def observability_trace_route(path: str) -> str | None:
     return None
 
 
+def observability_trace_repair_route(path: str) -> tuple[str, str]:
+    """Parse the local Trace repair authority routes.
+
+    The write routes intentionally have no free-form identifier in the path;
+    only the server-issued receipt lookup has one.  Keeping this parser
+    strict prevents a typo from falling through to a different observability
+    handler.
+    """
+
+    for prefix in ("/api/observability/trace-repair/",):
+        if not path.startswith(prefix):
+            continue
+        remainder = path[len(prefix):]
+        if not remainder or remainder.endswith("/") or "//" in remainder:
+            return "", ""
+        raw_parts = remainder.split("/")
+        if any(not part for part in raw_parts):
+            return "", ""
+        parts = [unquote(part).strip() for part in raw_parts]
+        if parts == ["evidence", "change"]:
+            return "", "change"
+        if parts == ["evidence", "test"]:
+            return "", "test"
+        if parts == ["receipts"]:
+            return "", "create"
+        if len(parts) == 2 and parts[0] == "receipts" and parts[1]:
+            return parts[1], "get"
+        if parts == ["recheck"]:
+            return "", "recheck"
+        return "", ""
+    return "", ""
+
+
 def observability_sandbox_run_route(path: str) -> tuple[str, str]:
     """Return ``(sandboxRunId, action)`` for the SandboxRun read routes."""
 
@@ -225,6 +258,7 @@ def agent_room_route(path: str) -> tuple[str, str]:
         "",
         "events",
         "messages",
+        "start-gate",
         "steer",
         "abort",
         "snapshot",

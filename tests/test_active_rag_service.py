@@ -9,7 +9,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime.active_rag_service import ACTIVE_RAG_DEFAULT_MAX_CHARS, ActiveRagService, ActiveRagStartRequest
+from rag_ime.active_rag_service import (
+    ACTIVE_RAG_DEFAULT_MAX_CHARS,
+    ActiveRagService,
+    ActiveRagStartRequest,
+    _recent_input_history_evidence,
+)
+from rag_ime.active_rag_models import ActiveRagEvidence
 from rag_ime.daily_planner import local_date_string
 from rag_ime.deepseek_completion import CompletionCandidateDelta, DeepSeekCompletionError, build_deepseek_completion_messages
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -18,6 +24,21 @@ from rag_ime.text_utils import now_ms, stable_text_hash
 
 
 class ActiveRagServiceTests(unittest.TestCase):
+    def test_recent_input_history_keeps_configured_window_for_generation(self) -> None:
+        evidence = tuple(
+            ActiveRagEvidence(
+                evidence_id=f"recent:{index}",
+                text=f"最近输入 {index}",
+                source_type="recent_input_context",
+                source_lane="timeline_recent_input",
+            )
+            for index in range(1, 7)
+        )
+
+        selected = _recent_input_history_evidence(evidence)
+
+        self.assertEqual([item.text for item in selected], [f"最近输入 {index}" for index in range(1, 7)])
+
     def test_sensitive_field_is_blocked_before_hash_validation_retrieval_and_remote(self) -> None:
         provider = FakeActiveRagProvider(("绝不应该调用",))
         service = ActiveRagService(completion_provider=provider)

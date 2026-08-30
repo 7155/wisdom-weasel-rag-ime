@@ -7,7 +7,9 @@ import sqlite3
 import time
 import unicodedata
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from .agent_governed_memory_tools import MemoryGovernanceProposalStore
 from .db import sqlite_connection
@@ -680,11 +682,16 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _connect(path: str | Path) -> sqlite3.Connection:
+@contextmanager
+def _connect(path: str | Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(Path(path).expanduser())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def build_parser() -> argparse.ArgumentParser:

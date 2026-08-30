@@ -45,6 +45,7 @@ from .agent_routes import (
     agent_context_item_route,
     agent_context_trace_route,
     observability_trace_route,
+    observability_trace_repair_route,
     agent_media_route,
     agent_room_route,
     agent_room_work_route,
@@ -68,6 +69,7 @@ from .contracts.context_observability import build_context_injection_trace
 from .contracts.json_schema import validate_contract
 from .trace_adapters import envelope_from_browser_trace, envelope_from_prediction_frame
 from .trace_runtime import TraceContractError, TraceEnvelope
+from .trace_repair import TraceRepairConflict, TraceRepairValidationError
 from .vertical_sandbox_connector import VerticalSandboxConnectorService
 from .control_api import (
     AgentKernelControlFacade,
@@ -652,6 +654,8 @@ class DebugImeService:
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
         self.memory_maintenance_jobs = GatewayMemoryMaintenanceJobs(
             self._execute_gateway_memory_maintenance,
+            db_path=config.db_path,
+            event_publisher=self._publish_memory_maintenance_event,
         )
         self.frontend_gateway = FrontendGateway(
             suggest_handler=self.rime_suggest,
@@ -3523,6 +3527,73 @@ class DebugImeService:
     ) -> dict[str, object]:
         return self.memory_maintenance_jobs.status(job_id)
 
+    def _publish_memory_maintenance_event(
+        self,
+        event: Mapping[str, object],
+    ) -> None:
+        """Project the durable Gateway job receipt into the canonical Trace journal."""
+
+        observations = getattr(getattr(self, "agent", None), "observations", None)
+        emitter = getattr(observations, "emit_memory_event", None)
+        if not callable(emitter):
+            return
+        job_id = _string(event.get("jobId"))
+        run_id = _string(event.get("runId")) or job_id
+        if not run_id:
+            return
+        phase = _string(event.get("phase")) or "updated"
+        status = _string(event.get("status")) or "info"
+        if status not in {"queued", "running", "waiting", "completed", "failed", "cancelled", "expired", "info"}:
+            status = "info"
+        refs: list[dict[str, object]] = []
+        if job_id:
+            refs.append({"kind": "memory_maintenance_job", "id": job_id, "label": "Memory maintenance"})
+        source_cursor = event.get("sourceCursor")
+        if isinstance(source_cursor, Mapping):
+            for key in ("fromSourceId", "toSourceId", "sourceId"):
+                value = _string(source_cursor.get(key))
+                if value:
+                    refs.append({"kind": "memory_source_cursor", "id": value, "label": key})
+        result = event.get("result")
+        owner_run_ids: list[str] = []
+        if isinstance(result, Mapping):
+            direct_run_id = _string(result.get("runId"))
+            if direct_run_id:
+                owner_run_ids.append(direct_run_id)
+            result_items = result.get("results")
+            if isinstance(result_items, list):
+                owner_run_ids.extend(
+                    _string(item.get("runId"))
+                    for item in result_items
+                    if isinstance(item, Mapping) and _string(item.get("runId"))
+                )
+        for owner_run_id in dict.fromkeys(owner_run_ids):
+            if owner_run_id == run_id:
+                continue
+            refs.append(
+                {
+                    "kind": "owner_memory_run",
+                    "id": owner_run_id,
+                    "label": "Owner memory run",
+                }
+            )
+        try:
+            emitter(
+                phase=phase,
+                status=status,
+                summary=_string(event.get("summary")) or "Memory maintenance 状态已更新",
+                run_id=run_id,
+                metrics={
+                    "sourceCount": _memory_maintenance_result_count(event.get("result"), "sourceCount"),
+                    "changeCount": _memory_maintenance_result_count(event.get("result"), "diffCount"),
+                },
+                refs=refs,
+            )
+        except Exception:
+            # Observability must not change the already-persisted maintenance
+            # result or make the Gateway worker fail closed on shutdown.
+            return
+
     def _execute_gateway_memory_maintenance(
         self,
         payload: Mapping[str, object],
@@ -3571,6 +3642,11 @@ class DebugImeService:
             )
             organizer = ManagedPiMemoryOrganizer(executor)
             try:
+                trace_context = (
+                    payload.get("_memoryTraceContext")
+                    if isinstance(payload.get("_memoryTraceContext"), Mapping)
+                    else {}
+                )
                 curator = OwnerMemoryCurator(
                     self.core.db_path,
                     organizer=organizer,
@@ -3592,6 +3668,12 @@ class DebugImeService:
                     )
                     * 1_000,
                     embedding_provider=self.core.embedding_provider,
+                    observations=self.agent.observations,
+                    trace_id=_string(trace_context.get("traceId")),
+                    maintenance_job_id=_string(
+                        trace_context.get("maintenanceJobId")
+                    ),
+                    parent_span_id=_string(trace_context.get("parentSpanId")),
                 )
                 curator.initialize()
                 report = curator.run_due(
@@ -3794,6 +3876,7 @@ class DebugImeService:
                 ),
                 auto_apply=managed.automatic_organization_auto_apply,
                 embedding_provider=self.core.embedding_provider,
+                observations=self.agent.observations,
             )
             curator.initialize()
             reports: list[dict[str, object]] = []
@@ -7212,6 +7295,50 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": "Invalid Eval request"},
                 )
             return
+        trace_repair_receipt_id, trace_repair_action = observability_trace_repair_route(
+            parsed.path
+        )
+        if trace_repair_action == "get":
+            if not self._trace_repair_loopback_allowed():
+                self._write_json(
+                    HTTPStatus.FORBIDDEN,
+                    {
+                        "schemaVersion": "rag-ime.trace-repair-error.v1",
+                        "ok": False,
+                        "errorCode": "trace_repair_loopback_only",
+                        "error": "Trace repair is available only from the local machine",
+                    },
+                )
+                return
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.get_trace_repair_receipt(
+                        trace_repair_receipt_id
+                    ),
+                )
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schemaVersion": "rag-ime.trace-repair-error.v1",
+                        "ok": False,
+                        "errorCode": "repair_receipt_not_found",
+                        "error": "Trace repair receipt not found",
+                        "repairReceiptId": trace_repair_receipt_id,
+                    },
+                )
+            except (TraceRepairValidationError, ValueError):
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.trace-repair-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_repair_receipt_id",
+                        "error": "Invalid Trace repair receipt ID",
+                    },
+                )
+            return
         trace_id = observability_trace_route(parsed.path)
         if trace_id is not None:
             try:
@@ -7584,6 +7711,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 HTTPStatus.OK,
                 self.service.agent.room_snapshot(agent_room_id),
+            )
+            return
+        if agent_room_id and room_action == "start-gate":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_start_gate(agent_room_id),
             )
             return
         if agent_room_id and room_action == "history":
@@ -8367,6 +8500,115 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         {"ok": False, "error": "Invalid Eval request"},
                     )
                 return
+            if path == "/api/observability/evals/ai-judge":
+                try:
+                    self._write_json(
+                        HTTPStatus.OK,
+                        self.service.agent.evaluate_observation_ai_judge(payload),
+                    )
+                except KeyError:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"ok": False, "error": "Trace not found"},
+                    )
+                except (TraceContractError, ValueError):
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"ok": False, "error": "Invalid AI Judge request"},
+                    )
+                return
+            trace_repair_receipt_id, trace_repair_action = observability_trace_repair_route(
+                path
+            )
+            if trace_repair_action in {"change", "test", "create", "recheck"}:
+                if not self._trace_repair_loopback_allowed():
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.trace-repair-error.v1",
+                            "ok": False,
+                            "errorCode": "trace_repair_loopback_only",
+                            "error": "Trace repair is available only from the local machine",
+                        },
+                    )
+                    return
+                try:
+                    if trace_repair_action == "change":
+                        response = self.service.agent.record_trace_repair_change_evidence(
+                            payload
+                        )
+                        status = HTTPStatus.CREATED
+                    elif trace_repair_action == "test":
+                        response = self.service.agent.record_trace_repair_test_evidence(
+                            payload
+                        )
+                        status = HTTPStatus.CREATED
+                    elif trace_repair_action == "create":
+                        response = self.service.agent.create_trace_repair_receipt(payload)
+                        status = HTTPStatus.CREATED
+                    else:
+                        response = self.service.agent.recheck_trace_repair(payload)
+                        status = HTTPStatus.OK
+                    self._write_json(status, response)
+                except KeyError:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND,
+                        {
+                            "schemaVersion": "rag-ime.trace-repair-error.v1",
+                            "ok": False,
+                            "errorCode": "repair_receipt_not_found",
+                            "error": "Trace repair receipt not found",
+                            **(
+                                {"repairReceiptId": trace_repair_receipt_id}
+                                if trace_repair_action == "recheck"
+                                else {}
+                            ),
+                        },
+                    )
+                except TraceRepairConflict:
+                    self._write_json(
+                        HTTPStatus.CONFLICT,
+                        {
+                            "schemaVersion": "rag-ime.trace-repair-error.v1",
+                            "ok": False,
+                            "errorCode": "repair_identity_conflict",
+                            "error": "Trace repair identity is already bound to different content",
+                        },
+                    )
+                except TraceRepairValidationError:
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "schemaVersion": "rag-ime.trace-repair-error.v1",
+                            "ok": False,
+                            "errorCode": "invalid_trace_repair_request",
+                            "error": "Invalid Trace repair request",
+                        },
+                    )
+                except (TypeError, ValueError):
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "schemaVersion": "rag-ime.trace-repair-error.v1",
+                            "ok": False,
+                            "errorCode": "invalid_trace_repair_request",
+                            "error": "Invalid Trace repair request",
+                        },
+                    )
+                except Exception:
+                    # Do not leak provider exceptions or private workspace
+                    # paths through this write endpoint.  The persisted
+                    # receipt/evidence remains the only public authority.
+                    self._write_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {
+                            "schemaVersion": "rag-ime.trace-repair-error.v1",
+                            "ok": False,
+                            "errorCode": "trace_repair_unavailable",
+                            "error": "Trace repair service is unavailable",
+                        },
+                    )
+                return
             # Migrated families are served from the route table. This sits
             # after the security gate and payload read so those semantics are
             # identical to the chain it replaces.
@@ -8652,6 +8894,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
+                )
+            elif agent_room_id and room_action == "start-gate":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.confirm_room_start(agent_room_id, payload),
                 )
             elif agent_room_id and room_action == "steer":
                 self.service.require_agent_runtime_execution_owner()
@@ -8961,6 +9208,25 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     "retryable": False,
                 },
             )
+            return False
+
+    def _trace_repair_loopback_allowed(self) -> bool:
+        """Keep repair evidence and receipts local even on a debug bind-all."""
+
+        address = getattr(self, "client_address", None)
+        # Unit handlers and direct in-process callers have no socket peer; the
+        # normal server always has one. Treating the former as local preserves
+        # the service-level API without weakening a real network request.
+        if not isinstance(address, tuple) or not address:
+            return True
+        host = str(address[0] or "").strip().strip("[]").lower()
+        if not host:
+            return True
+        if host in {"localhost", "localhost.localdomain"}:
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
             return False
 
     def _request_access_context(self) -> ControlAccessContext:
@@ -9976,6 +10242,23 @@ def _cleanup_diff_payload_for_debug(conn, *, diff_id: int) -> dict[str, object]:
 
 def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _memory_maintenance_result_count(value: object, key: str) -> int:
+    if isinstance(value, Mapping):
+        candidate = value.get(key)
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            return max(0, candidate)
+        for child in value.values():
+            found = _memory_maintenance_result_count(child, key)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value[:128]:
+            found = _memory_maintenance_result_count(child, key)
+            if found:
+                return found
+    return 0
 
 
 def _memory_visible_owners_from_payload(

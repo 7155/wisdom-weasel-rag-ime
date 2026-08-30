@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.trace-repair-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repairReceiptId", "sourceScope", "sourceTraceId", "failureRef", "changeReceiptId", "testEvidenceId", "testStatus", "repairTraceId", "repairSessionId", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.trace-repair-receipt.v1"},
+    "repairReceiptId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceScope": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceTraceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "failureRef": {"type": "string", "minLength": 1, "maxLength": 160},
+    "changeReceiptId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "testEvidenceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "testStatus": {"const": "passed"},
+    "repairTraceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "repairSessionId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

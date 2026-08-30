@@ -463,6 +463,45 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         self.assertEqual(retried["state"], "completed")
         self.assertEqual(retried["attemptCount"], 2)
 
+    def test_resumable_primary_request_retries_in_a_fresh_internal_session(self) -> None:
+        """A cancelled Pi turn may remain active after the Gateway lease ends.
+
+        Retrying the frozen owner-curation request in that same Session would
+        fail forever with ``Session already has an active turn``.  Recovery
+        must preserve the frozen request identity while moving transport to a
+        fresh internal Session.
+        """
+
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        run = first.begin_run("memory_book_primary_active_turn")
+        original_session_id = str(run["sessionId"])
+
+        def reject_active_turn(*args: object, **kwargs: object) -> dict[str, object]:
+            raise RuntimeError("Session already has an active turn")
+
+        first_runtime.prompt = reject_active_turn  # type: ignore[method-assign]
+        with self.assertRaisesRegex(MemoryModelUnavailable, "active turn"):
+            first.complete(phase="evidence-adjudication", messages=messages)
+        failed = first.run_status("memory_book_primary_active_turn")["requests"][0]
+        self.assertEqual(failed["state"], "resumable")
+        self.assertEqual(failed["sessionId"], original_session_id)
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime)
+        second.begin_run("memory_book_primary_active_turn")
+        completed = second.complete(
+            phase="evidence-adjudication",
+            messages=messages,
+        )
+
+        self.assertNotEqual(completed["receipt"]["sessionId"], original_session_id)
+        self.assertEqual(len(second_runtime.prompts), 1)
+        retried = second.run_status("memory_book_primary_active_turn")["requests"][0]
+        self.assertEqual(retried["state"], "completed")
+        self.assertEqual(retried["attemptCount"], 2)
+
     def test_terminal_run_closes_only_its_session_and_retires_projection(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)
         executor = self._executor(runtime)

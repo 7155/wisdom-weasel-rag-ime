@@ -154,6 +154,8 @@ describe('ActivityTimeline activity projection', () => {
       jobResult: {
         jobId: 'memory-maintenance:failed-timeline',
         state: 'failed',
+        traceId: 'trace:memory:memory-maintenance:failed-timeline',
+        runId: 'memory-maintenance:failed-timeline',
         progress: { throughDate: localDateForTest(), completedDayCount: 1, totalDayCount: 3 },
         error: 'selected memory model request failed: Session already has an active turn',
       },
@@ -167,6 +169,8 @@ describe('ActivityTimeline activity projection', () => {
     expect(handoff).toMatchObject({
       kind: 'memory',
       entityId: 'memory-maintenance:failed-timeline',
+      traceId: 'trace:memory:memory-maintenance:failed-timeline',
+      runId: 'memory-maintenance:failed-timeline',
       failureRef: 'memory-maintenance:failed-timeline',
       refs: { jobId: 'memory-maintenance:failed-timeline', state: 'failed' },
     });

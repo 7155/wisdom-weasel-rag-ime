@@ -451,10 +451,10 @@ function RoomWorkRow({ room, work }: { room?: RoomSummary; work: RoomWorkItem })
         <span><small>{work.state === 'queued' ? '准备接手' : '正在完成'}</small><b>{owner}</b></span>
         <span><small>一起检查</small><b>{accountable}</b></span>
       </div>
-      {work.expectedOutput ? <p><span>交付</span>{work.expectedOutput}</p> : null}
-      {work.acceptanceCriteria.length ? <p><span>检查</span>{work.acceptanceCriteria.length} 项标准</p> : null}
-      {work.revision ? <p><span>修订</span>第 {work.revision} 次</p> : null}
-      {blocker ? <p className="room-status-work__blocker"><span>阻塞</span>{blocker}</p> : null}
+      {work.expectedOutput ? <p><span>交付</span><span className="room-status-work__value">{work.expectedOutput}</span></p> : null}
+      {work.acceptanceCriteria.length ? <p><span>检查</span><span className="room-status-work__value">{work.acceptanceCriteria.length} 项标准</span></p> : null}
+      {work.revision ? <p><span>修订</span><span className="room-status-work__value">第 {work.revision} 次</span></p> : null}
+      {blocker ? <p className="room-status-work__blocker"><span>阻塞</span><span className="room-status-work__value">{blocker}</span></p> : null}
       {showFullObjective || work.acceptanceCriteria.length ? (
         <Disclosure
           className="room-status-work__full"

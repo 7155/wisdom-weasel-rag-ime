@@ -283,7 +283,7 @@ describe('PluginsFeature', () => {
     expect(descriptions.every((description) => {
       const style = getComputedStyle(description);
       return style.display === 'block'
-        && style.overflow !== 'hidden'
+        && style.overflow === 'visible'
         && style.webkitLineClamp !== '2';
     })).toBe(true);
     expect(within(list).getByRole('button', { name: /记忆与工具书/ })).toHaveAttribute('aria-pressed', 'false');

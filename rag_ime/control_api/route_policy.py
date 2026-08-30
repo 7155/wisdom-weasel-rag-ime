@@ -31,6 +31,12 @@ class ControlPathId(str, Enum):
     OBSERVABILITY_SANDBOX_RUNS_LIST = "observability.sandboxRuns.list"
     OBSERVABILITY_SANDBOX_RUN_GET = "observability.sandboxRun.get"
     OBSERVABILITY_EVIDENCE_EVAL_RUN = "observability.evals.evidence.run"
+    OBSERVABILITY_AI_JUDGE_EVAL_RUN = "observability.evals.aiJudge.run"
+    OBSERVABILITY_TRACE_REPAIR_CHANGE_EVIDENCE = "observability.traceRepair.changeEvidence"
+    OBSERVABILITY_TRACE_REPAIR_TEST_EVIDENCE = "observability.traceRepair.testEvidence"
+    OBSERVABILITY_TRACE_REPAIR_RECEIPT_CREATE = "observability.traceRepair.receipt.create"
+    OBSERVABILITY_TRACE_REPAIR_RECEIPT_GET = "observability.traceRepair.receipt.get"
+    OBSERVABILITY_TRACE_REPAIR_RECHECK = "observability.traceRepair.recheck"
     OBSERVABILITY_EVAL_SCHEDULES_LIST = "observability.evalSchedules.list"
     OBSERVABILITY_EVAL_SCHEDULES_CREATE = "observability.evalSchedules.create"
     OBSERVABILITY_EVAL_SCHEDULE_RUNS = "observability.evalSchedule.runs"
@@ -96,6 +102,8 @@ class ControlPathId(str, Enum):
     AGENT_ROOM_PARTICIPANT_UPDATE = "agent.room.participant.update"
     AGENT_ROOM_DELETE = "agent.room.delete"
     AGENT_ROOM_MESSAGE = "agent.room.message"
+    AGENT_ROOM_START_GATE_GET = "agent.room.startGate.get"
+    AGENT_ROOM_START_GATE_CONFIRM = "agent.room.startGate.confirm"
     AGENT_ROOM_PARTICIPANT_STEER = "agent.room.participant.steer"
     AGENT_ROOM_ABORT = "agent.room.abort"
     AGENT_ROOM_EVENTS = "agent.room.events"
@@ -693,6 +701,7 @@ _OBSERVATION_FILTER_QUERY = {
 }
 _OBSERVABILITY_TRACE = {"traceId"}
 _OBSERVABILITY_SANDBOX_RUN = {"sandboxRunId"}
+_OBSERVABILITY_TRACE_REPAIR_RECEIPT = {"repairReceiptId"}
 _EVAL_SCHEDULE = {"scheduleId"}
 _SUBAGENT_DELEGATION_BODY = {
     "sessionId",
@@ -737,6 +746,15 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.OBSERVABILITY_SANDBOX_RUNS_LIST, ControlMethod.GET, "/api/observability/sandbox-runs", "/control/v1/observability/sandbox-runs", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"limit"}),
         _route(ControlPathId.OBSERVABILITY_SANDBOX_RUN_GET, ControlMethod.GET, "/api/observability/sandbox-runs/{sandboxRunId}", "/control/v1/observability/sandbox-runs/{sandboxRunId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_OBSERVABILITY_SANDBOX_RUN),
         _route(ControlPathId.OBSERVABILITY_EVIDENCE_EVAL_RUN, ControlMethod.POST, "/api/observability/evals/evidence-ground-truth", None, body={"schemaVersion", "traceId", "requiredEvidenceIds", "datasetId", "labelRevision", "truthKind"}, required_body={"schemaVersion", "traceId", "requiredEvidenceIds", "datasetId", "labelRevision", "truthKind"}),
+        _route(ControlPathId.OBSERVABILITY_AI_JUDGE_EVAL_RUN, ControlMethod.POST, "/api/observability/evals/ai-judge", None, body={"traceId", "evaluator", "provider", "model", "thinking", "displayName"}, required_body={"traceId"}),
+        # Trace repair writes are loopback-only.  Evidence writes accept only
+        # candidate Session/Trace references; the service derives every
+        # signal, status, count, and evidence ID from canonical server state.
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_CHANGE_EVIDENCE, ControlMethod.POST, "/api/observability/trace-repair/evidence/change", None, body={"schemaVersion", "repairSessionId", "repairTraceId"}, required_body={"schemaVersion", "repairSessionId", "repairTraceId"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_TEST_EVIDENCE, ControlMethod.POST, "/api/observability/trace-repair/evidence/test", None, body={"schemaVersion", "repairSessionId", "repairTraceId"}, required_body={"schemaVersion", "repairSessionId", "repairTraceId"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_RECEIPT_CREATE, ControlMethod.POST, "/api/observability/trace-repair/receipts", None, body={"schemaVersion", "sourceScope", "sourceTraceId", "failureRef", "changeReceiptId", "testEvidenceId", "repairTraceId", "repairSessionId"}, required_body={"schemaVersion", "sourceScope", "sourceTraceId", "failureRef", "changeReceiptId", "testEvidenceId", "repairTraceId", "repairSessionId"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_RECEIPT_GET, ControlMethod.GET, "/api/observability/trace-repair/receipts/{repairReceiptId}", None, params=_OBSERVABILITY_TRACE_REPAIR_RECEIPT),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_RECHECK, ControlMethod.POST, "/api/observability/trace-repair/recheck", None, body={"schemaVersion", "repairReceiptId"}, required_body={"schemaVersion", "repairReceiptId"}),
         # Eval schedules are a local ledger.  Their lease token and evaluator
         # remain runtime-owned, so neither schedule route is gateway-safe.
         _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULES_LIST, ControlMethod.GET, "/api/observability/eval-schedules", None, query={"limit"}),
@@ -820,6 +838,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_PARTICIPANT_UPDATE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/participants", "/control/v1/agent/rooms/{roomId}/participants", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"participantId", "collaborationRole"}, required_body={"participantId", "collaborationRole"}, remote_body={"participantId", "collaborationRole"}, remote_required_body={"participantId", "collaborationRole"}),
         _route(ControlPathId.AGENT_ROOM_DELETE, ControlMethod.DELETE, "/api/agent/rooms/{roomId}", None, params=_ROOM, body={"confirmTitle"}, required_body={"confirmTitle"}),
         _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "retryOfRootId", "participantIds", "workItemId", "attachmentIds", "answerToPostId", "answerToRootId"}, required_body={"message"}, remote_body={"message", "clientMessageId", "retryOfRootId", "participantIds", "workItemId", "attachmentIds", "answerToPostId", "answerToRootId"}, remote_required_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_START_GATE_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}/start-gate", "/control/v1/agent/rooms/{roomId}/start-gate", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
+        _route(ControlPathId.AGENT_ROOM_START_GATE_CONFIRM, ControlMethod.POST, "/api/agent/rooms/{roomId}/start-gate", "/control/v1/agent/rooms/{roomId}/start-gate", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"gateId", "decision", "action"}),
         _route(ControlPathId.AGENT_ROOM_PARTICIPANT_STEER, ControlMethod.POST, "/api/agent/rooms/{roomId}/steer", "/control/v1/agent/rooms/{roomId}/steer", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"action", "rootId", "participantId", "clientActionId", "message"}, required_body={"action", "rootId", "clientActionId", "message"}, remote_body={"action", "rootId", "participantId", "clientActionId", "message"}, remote_required_body={"action", "rootId", "clientActionId", "message"}, remote_body_values={"action": {"steer_participant"}}),
         _route(ControlPathId.AGENT_ROOM_ABORT, ControlMethod.POST, "/api/agent/rooms/{roomId}/abort", "/control/v1/agent/rooms/{roomId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"roomTurnId", "clientRequestId"}, required_body={"roomTurnId", "clientRequestId"}, remote_body={"roomTurnId", "clientRequestId"}, remote_required_body={"roomTurnId", "clientRequestId"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),

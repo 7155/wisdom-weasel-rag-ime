@@ -20,7 +20,10 @@ const DOCK_SELECTOR = '.agent-composer-dock, .room-composer-dock';
  * the user types; re-rendering the timeline on those callbacks would cost far
  * more than it is worth, especially mid-stream.
  */
-export function useComposerClearance(hostRef: RefObject<HTMLElement | null>): void {
+export function useComposerClearance(
+  hostRef: RefObject<HTMLElement | null>,
+  dockSelector: string = DOCK_SELECTOR,
+): void {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || typeof ResizeObserver !== 'function') return undefined;
@@ -37,7 +40,7 @@ export function useComposerClearance(hostRef: RefObject<HTMLElement | null>): vo
     // The dock element is swapped when the composer switches between its real
     // and pending forms, so re-target instead of observing a stale node.
     const retarget = () => {
-      const next = host.querySelector(DOCK_SELECTOR);
+      const next = host.querySelector(dockSelector);
       if (next === dock) return;
       if (dock) resizeObserver.unobserve(dock);
       dock = next;
@@ -56,5 +59,5 @@ export function useComposerClearance(hostRef: RefObject<HTMLElement | null>): vo
       resizeObserver.disconnect();
       host.style.removeProperty(CLEARANCE_PROPERTY);
     };
-  }, [hostRef]);
+  }, [dockSelector, hostRef]);
 }

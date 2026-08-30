@@ -49,7 +49,10 @@ export default defineConfig({
     // Most route suites exercise the retained legacy compatibility shell.
     // PAWOS suites opt in explicitly with `frontend=paw-os`, matching the
     // production selector instead of inheriting an ambiguous test default.
-    command: `exec env VITE_PAW_FRONTEND=legacy node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${port} --strictPort`,
+    // The development product intentionally defaults to the live HTTP
+    // Runtime. E2E routes, however, assert deterministic preview fixtures and
+    // must never read or mutate the developer's foreground PAW sessions.
+    command: `exec env VITE_PAW_FRONTEND=legacy VITE_CONTROL_TRANSPORT=mock node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}/#/overview`,
     reuseExistingServer: false,
     timeout: 120_000,

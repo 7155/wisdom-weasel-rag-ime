@@ -1247,8 +1247,8 @@
 .room-agent-lane__route { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--color-border); border-radius: 50%; color: var(--room-flow-dispatch, #7956e8); }
 .room-agent-lane__work { display: grid; min-width: 0; gap: 2px; }
 .room-agent-lane__identity { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
-.room-agent-lane__identity strong { overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
-.room-agent-lane__identity small { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: 11px; font-weight: var(--font-weight-semibold); }
+.room-agent-lane__identity strong { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.room-agent-lane__identity small { min-width: 0; max-width: 42%; flex: 0 1 auto; overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .room-agent-lane__task { display: block; overflow: hidden; color: var(--color-text); font-size: 14px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .room-agent-lane__progress { display: block; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .room-agent-lane__meter {
@@ -1368,7 +1368,7 @@
 .room-agent-activity[data-state='failed'] > svg { color: var(--color-danger); }
 .room-agent-activity[data-state='aborted'] > svg { color: var(--color-text-tertiary); }
 .room-agent-activity > span { display: grid; min-width: 0; gap: 1px; }
-.room-agent-activity strong { font-size: 12px; font-weight: var(--font-weight-semibold); }
+.room-agent-activity strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 .room-agent-activity small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.45; }
 .room-agent-activity__wait-details,
 .room-agent-lane__wait-details {
@@ -1745,7 +1745,7 @@
 .room-status-work__item[data-state='failed'] > svg { color: var(--color-danger); }
 .room-status-work__item > div { display: grid; min-width: 0; gap: 6px; }
 .room-status-work__item > div > header { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 7px; }
-.room-status-work__item > div > header strong { display: -webkit-box; overflow: hidden; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.room-status-work__item > div > header strong { display: block; min-width: 0; overflow: hidden; font-size: 13px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
 .room-status-work__item > div > header em { margin-top: 1px; border-radius: var(--radius-round); padding: 1px 6px; background: var(--color-accent-soft); color: var(--color-accent-strong); font-size: 11px; font-style: normal; font-weight: 700; line-height: 18px; white-space: nowrap; }
 .room-status-work__item[data-state='blocked'] > div > header em,
 .room-status-work__item[data-state='failed'] > div > header em { background: var(--color-danger-soft); color: var(--color-danger); }
@@ -1755,6 +1755,7 @@
 .room-status-work__owners b { overflow: hidden; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .room-status-work__item p { display: grid; min-width: 0; grid-template-columns: 32px minmax(0, 1fr); gap: 5px; margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .room-status-work__item p > span { color: var(--color-text-tertiary); font-size: 11px; font-weight: 700; }
+.room-status-work__item p > .room-status-work__value { min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .room-status-work__item .room-status-work__blocker { color: var(--color-danger); }
 .room-status-work__full > summary { width: max-content; max-width: 100%; color: var(--color-accent); font-size: 12px; font-weight: 700; cursor: pointer; }
 .room-status-work__full > .ui-disclosure__reveal > div { display: grid; min-width: 0; gap: 6px; padding-top: 6px; }
@@ -1769,18 +1770,18 @@
 .room-status-activity[data-state='aborted'] > svg { color: var(--color-text-tertiary); }
 .room-status-activity > span { display: grid; min-width: 0; gap: 2px; }
 .room-status-activity__heading { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 6px; }
-.room-status-activity__heading strong { min-width: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.room-status-activity__heading strong { min-width: 0; overflow: hidden; font-size: 13px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
 .room-status-activity__heading i { flex: 0 0 auto; color: var(--color-text-tertiary); font-size: 11px; font-style: normal; white-space: nowrap; }
 .room-status-activity[data-state='waiting'] .room-status-activity__heading i { color: var(--color-warning); }
 .room-status-activity[data-state='failed'] .room-status-activity__heading i { color: var(--color-danger); }
 .room-status-activity[data-state='aborted'] .room-status-activity__heading i { color: var(--color-text-secondary); }
-.room-status-activity small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.room-status-activity small { min-width: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
 .room-participant-telemetry { display: grid; min-width: 0; gap: 8px; margin-top: 7px; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); box-shadow: var(--shadow-control); }
 .room-participant-telemetry:first-child { margin-top: 0; }
 .room-participant-telemetry > header { display: flex; min-width: 0; align-items: start; justify-content: space-between; gap: 7px; }
 .room-participant-telemetry > header > span { display: grid; min-width: 0; gap: 1px; }
-.room-participant-telemetry > header strong { font-size: 13px; overflow-wrap: anywhere; }
-.room-participant-telemetry > header small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
+.room-participant-telemetry > header strong { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.room-participant-telemetry > header small { min-width: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .room-status-panel { width: 100%; overflow: hidden; }
 .room-status-panel .agent-status-panel__body {
   display: flex;
@@ -1801,13 +1802,6 @@
   border-left: 0;
   transform: none;
 }
-.room-status-panel .agent-status-row strong,
-.room-status-panel .agent-status-row small,
-.room-status-panel .agent-status-turn strong,
-.room-status-panel .agent-status-turn small,
-.room-status-panel .agent-status-files strong,
-.room-status-panel .agent-status-files small { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
-
 /* Room status uses the same collapsible section anatomy as Agent status. */
 .room-status-panel .agent-status-section > header {
   display: block;
@@ -2127,7 +2121,7 @@
  * Keep the existing Room snapshot/reducer as the only collaboration owner and
  * compose its rail, shared timeline and inspector against the window's own
  * container width. */
-.paw-os-app-window[data-paw-os-app='agent'] .rooms-feature {
+.paw-window-shell[data-app='agent'] .rooms-feature {
   --room-rail-width: clamp(226px, 23cqw, 272px);
   --room-status-width: clamp(292px, 29cqw, 350px);
   position: relative;
@@ -2141,20 +2135,20 @@
   overflow: hidden;
   background: var(--color-canvas);
 }
-.paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'] {
+.paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'] {
   grid-template-columns: var(--room-rail-width) minmax(0, 1fr) 0;
 }
-.paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-status-open='true'] {
+.paw-window-shell[data-app='agent'] .rooms-feature[data-status-open='true'] {
   grid-template-columns: 0 minmax(0, 1fr) var(--room-status-width);
 }
-.paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'][data-status-open='true'] {
+.paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'][data-status-open='true'] {
   grid-template-columns: var(--room-rail-width) minmax(0, 1fr) var(--room-status-width);
 }
-.paw-os-app-window[data-paw-os-app='agent'] .rooms-rail,
-.paw-os-app-window[data-paw-os-app='agent'] .room-workspace > header {
+.paw-window-shell[data-app='agent'] .rooms-rail,
+.paw-window-shell[data-app='agent'] .room-workspace > header {
   background: color-mix(in srgb, var(--color-chrome) 92%, transparent);
 }
-.paw-os-app-window[data-paw-os-app='agent'] .room-timeline {
+.paw-window-shell[data-app='agent'] .room-timeline {
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--color-border-soft) 22%, transparent) 1px, transparent 1px),
     var(--color-paper);
@@ -2162,16 +2156,16 @@
 }
 
 @container paw-window (max-width: 1120px) {
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature,
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-status-open='true'] {
+  .paw-window-shell[data-app='agent'] .rooms-feature,
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-status-open='true'] {
     grid-template-columns: 0 minmax(0, 1fr) 0;
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'],
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'][data-status-open='true'] {
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'],
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'][data-status-open='true'] {
     grid-template-columns: var(--room-rail-width) minmax(0, 1fr) 0;
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .room-pane-resizer[data-side='status'] { display: none; }
-  .paw-os-app-window[data-paw-os-app='agent'] .room-status-panel {
+  .paw-window-shell[data-app='agent'] .room-pane-resizer[data-side='status'] { display: none; }
+  .paw-window-shell[data-app='agent'] .room-status-panel {
     position: absolute;
     z-index: 14;
     top: 0;
@@ -2182,8 +2176,8 @@
     grid-row: auto;
     box-shadow: var(--shadow-menu);
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .room-status-panel:not([data-open='true']) { display: none; }
-  .paw-os-app-window[data-paw-os-app='agent'] .room-status-backdrop {
+  .paw-window-shell[data-app='agent'] .room-status-panel:not([data-open='true']) { display: none; }
+  .paw-window-shell[data-app='agent'] .room-status-backdrop {
     position: absolute;
     z-index: 13;
     inset: 0;
@@ -2194,21 +2188,21 @@
     opacity: 0;
     pointer-events: none;
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-status-open='true'] .room-status-backdrop {
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-status-open='true'] .room-status-backdrop {
     opacity: 1;
     pointer-events: auto;
   }
 }
 
 @container paw-window (max-width: 760px) {
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature,
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-status-open='true'],
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'],
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'][data-status-open='true'] {
+  .paw-window-shell[data-app='agent'] .rooms-feature,
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-status-open='true'],
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'],
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'][data-status-open='true'] {
     grid-template-columns: minmax(0, 1fr) 0;
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .room-pane-resizer { display: none; }
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-rail {
+  .paw-window-shell[data-app='agent'] .room-pane-resizer { display: none; }
+  .paw-window-shell[data-app='agent'] .rooms-rail {
     position: absolute;
     z-index: 12;
     inset: 0 auto 0 0;
@@ -2217,11 +2211,11 @@
     box-shadow: 22px 0 60px rgb(0 0 0 / 26%);
     transform: translateX(-102%);
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'] .rooms-rail {
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'] .rooms-rail {
     visibility: visible;
     transform: translateX(0);
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-rail-backdrop {
+  .paw-window-shell[data-app='agent'] .rooms-rail-backdrop {
     position: absolute;
     z-index: 11;
     inset: 0;
@@ -2233,7 +2227,7 @@
     opacity: 0;
     pointer-events: none;
   }
-  .paw-os-app-window[data-paw-os-app='agent'] .rooms-feature[data-rail-open='true'] .rooms-rail-backdrop {
+  .paw-window-shell[data-app='agent'] .rooms-feature[data-rail-open='true'] .rooms-rail-backdrop {
     visibility: visible;
     opacity: 1;
     pointer-events: auto;
@@ -2339,3 +2333,43 @@
 :root[data-reduce-motion='true'] .room-turn__terminal[data-arriving='true'] { animation: none; transition: none; }
 :root[data-reduce-motion='true'] .room-module-panel > summary,
 :root[data-reduce-motion='true'] .room-create-optional > summary::before { transition: none; }
+
+/* A narrow PAWOS Agent window still has a real Room document underneath it.
+   Keep its identity/status pair on one line and let the title yield before
+   the timeline grows vertically. The rule is container-scoped so the full
+   Room route keeps its wider, more descriptive layout. */
+@container paw-window (max-width: 430px) {
+  .paw-window-shell[data-app='agent'] .room-agent-lane__identity {
+    align-items: baseline;
+    flex-direction: row;
+    gap: 6px;
+  }
+  .paw-window-shell[data-app='agent'] .room-agent-lane__identity strong {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .paw-window-shell[data-app='agent'] .room-agent-lane__identity small {
+    max-width: 42%;
+  }
+  .paw-window-shell[data-app='agent'] .room-status-work__item > div > header strong {
+    line-height: 20px;
+  }
+  .paw-window-shell[data-app='agent'] .room-participant-telemetry > header > span {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .paw-window-shell[data-app='agent'] .room-participant-telemetry > header > span > strong {
+    flex: 0 1 auto;
+  }
+  .paw-window-shell[data-app='agent'] .room-participant-telemetry > header > span > small {
+    flex: 1 1 auto;
+  }
+  .paw-window-shell[data-app='agent'] .room-status-public-lane > header small,
+  .paw-window-shell[data-app='agent'] .room-status-public-lane__work li > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

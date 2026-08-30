@@ -52,8 +52,9 @@
   --paw-danger: #ef4444;
   --paw-shadow: 0 24px 60px -12px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.06);
   --paw-radius: 12px;
-  --paw-ease-out: cubic-bezier(.16, 1, .3, 1);
-  --paw-ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  /* Motion easing tokens (--paw-ease-out / --paw-ease-in-out) have exactly one
+     definition site: paw-os-motion.css, the timing owner. Custom properties
+     resolve at computed-value time, so this file may consume them freely. */
   position: fixed;
   z-index: 1000;
   inset: 0;
@@ -420,16 +421,9 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   text-align: center;
   cursor: pointer; transition: background-color 120ms ease, box-shadow 120ms ease;
 }
-/* Hover and selection speak the shared identity wash (paw-app-icon.css), so
-   the desktop, Dock and launcher can never drift into different plates. */
-.paw-desktop-shortcuts button:hover {
-  background: var(--paw-identity-wash);
-}
-.paw-desktop-shortcuts button[aria-selected='true'] {
-  color: var(--paw-ink);
-  background: var(--paw-identity-wash-strong);
-  box-shadow: var(--paw-identity-ring);
-}
+/* Hover and selection no longer plate the whole cell: the macOS desktop
+   treatment scopes feedback to the label text and the icon's own dimming.
+   The visual half lives in paw-os-shell-migrated-v1.css. */
 .paw-desktop-shortcuts button > span {
   display: grid; place-items: center;
   border-radius: 8px;
@@ -1777,7 +1771,46 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   margin: 0;
   z-index: 1;
 }
-.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project[open]) { z-index: 8; }
+/* Loose conversation files sit on the same plane and the same grid rhythm as
+   project folders — one cell, one icon, one label. */
+.paw-wayfinder-work__loose-shell {
+  position: absolute;
+  left: var(--wayfinder-x, 18px);
+  top: var(--wayfinder-y, 16px);
+  width: 96px;
+  z-index: 1;
+}
+.paw-wayfinder-work__loose-file {
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 2px;
+  width: 96px;
+  min-height: 86px;
+  padding: 2px 2px 4px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: grab;
+}
+.paw-wayfinder-work__loose-file:active { cursor: grabbing; }
+.paw-wayfinder-work__file-art {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+}
+.paw-wayfinder-work__file-art > svg { width: 52px; height: 52px; }
+.paw-wayfinder-work__file-art > i {
+  position: absolute;
+  z-index: 2;
+  right: 4px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
 .paw-wayfinder-work__project { width: 96px; }
 .paw-wayfinder-work__project > summary {
   position: relative;
@@ -1792,12 +1825,11 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-wayfinder-work__project > summary:active { cursor: grabbing; }
 .paw-wayfinder-work__project > summary > svg { position: absolute; top: 3px; left: 3px; opacity: .55; }
-.paw-wayfinder-work__folder-art { width: 52px; height: 48px; }
-.paw-wayfinder-work__folder-art::before { inset: 1px 0 0; border-radius: 14px; }
-.paw-wayfinder-work__folder-art > svg { width: 39px; height: 39px; }
+.paw-wayfinder-work__folder-art { width: 52px; height: 52px; }
+.paw-wayfinder-work__folder-art > svg { width: 52px; height: 52px; }
 .paw-wayfinder-work__project-copy { width: 100%; justify-items: center; gap: 1px; }
-.paw-wayfinder-work__project-copy strong { max-width: 92px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 11px; text-align: center; }
-.paw-wayfinder-work__project-copy small { max-width: 92px; overflow: hidden; font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.paw-wayfinder-work__project-copy strong { max-width: 92px; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 12px; text-align: center; }
+.paw-wayfinder-work__project-copy small { max-width: 92px; overflow: hidden; font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .paw-wayfinder-work__project-count { display: none; }
 .paw-wayfinder-work__project-context { top: -4px; right: -8px; }
 .paw-wayfinder-work__project-content {
@@ -1956,8 +1988,18 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   overflow: auto;
 }
 .paw-wayfinder-work__canvas .paw-wayfinder-work__state button,
-.paw-wayfinder-work__project-shell { pointer-events: auto; }
-.paw-wayfinder-work__project-shell { z-index: 8; }
+.paw-wayfinder-work__project-shell,
+.paw-wayfinder-work__loose-shell { pointer-events: auto; }
+.paw-wayfinder-work__project-shell,
+.paw-wayfinder-work__loose-shell { z-index: 8; }
+/* Hovering or selecting a cell lifts it above its neighbours so a revealed
+   full label never slides under the next row; an open folder window floats
+   above every icon. */
+.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project > summary[aria-selected='true']),
+.paw-wayfinder-work__loose-shell:has(.paw-wayfinder-work__loose-file[aria-selected='true']) { z-index: 9; }
+.paw-wayfinder-work__project-shell:hover,
+.paw-wayfinder-work__loose-shell:hover { z-index: 10; }
+.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project[open]) { z-index: 12; }
 .paw-wayfinder-work__context-sheet {
   position: absolute;
   z-index: 30;

@@ -88,6 +88,9 @@ describe('PAWOS shell visual language', () => {
       expect(body, `${surface} uses the shared hairline`).toContain('var(--paw-chrome-hairline)');
       expect(body, `${surface} uses the shared blur`).toContain('backdrop-filter: var(--paw-chrome-blur)');
     }
+    // The menu-bar legibility scrim is a static gradient layered on the same
+    // veil — never a solid bar, and never a fourth glass surface.
+    expect(shellCss).toMatch(/\.paw-desktop-root \.paw-menu-bar\s*\{[^}]*background-image:\s*linear-gradient\(180deg/s);
   });
 
   it('keeps the blur budget at exactly three true-chrome surfaces', () => {
@@ -190,10 +193,12 @@ describe('PAWOS shell visual language', () => {
     expect(dockCurrent).toContain('var(--paw-identity-ring)');
     // Never again an opaque white plate behind the current App's bare icon.
     expect(dockCurrent).not.toContain('#fff');
-    const shortcutSelected = rule(pawOsCss, ".paw-desktop-shortcuts button[aria-selected='true']");
-    expect(shortcutSelected).toContain('var(--paw-identity-wash-strong)');
-    expect(shortcutSelected).toContain('var(--paw-identity-ring)');
-    expect(rule(pawOsCss, '.paw-desktop-shortcuts button:hover')).toContain('var(--paw-identity-wash)');
+    // Desktop selection is the macOS treatment: the accent plate sits behind
+    // the label text only and the icon dims — never a whole-cell wash or ring.
+    expect(pawOsCss).not.toContain(".paw-desktop-shortcuts button[aria-selected='true'] {");
+    expect(pawOsCss).not.toContain('.paw-desktop-shortcuts button:hover {');
+    expect(shellCss).toMatch(/\[aria-selected='true'\][^{]*:is\(\.paw-desktop-shortcuts__label-ink, \.paw-wayfinder-work__label-ink\)\s*\{[^}]*background:\s*var\(--paw-selection-plate/s);
+    expect(shellCss).toMatch(/\[aria-selected='true'\][^{]*:is\(\.paw-app-icon, \.paw-wayfinder-work__folder-art, \.paw-wayfinder-work__file-art\)\s*\{[^}]*filter:\s*brightness\(/s);
     // The running pill is the one notification dot, in the App's own colour.
     expect(rule(pawOsCss, '.paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
     expect(rule(shellCss, '.paw-desktop-root .paw-dock button[data-open]::after')).toContain('var(--paw-identity-dot');
@@ -240,21 +245,47 @@ describe('PAWOS shell visual language', () => {
     expect(running).toContain('var(--paw-identity-dot)');
     expect(running).toContain('height: 3px');
     expect(rule(pawOsCss, '.paw-desktop-shortcuts button[data-minimized] > i')).toContain('width: 6px');
-    // Dense tiles resolve the md ladder step, not the launcher's 48px tile.
-    expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-md)');
+    // Desktop icons share the Dock's step: on the open wallpaper they are
+    // primary objects, not dense list rows.
+    expect(rule(appIconCss, '.paw-desktop-shortcuts .paw-app-icon')).toContain('var(--paw-icon-step-lg)');
   });
 
-  it('keeps desktop project names fully readable instead of clamping them to an ellipsis', () => {
+  it('clamps desktop project names to two quiet lines and reveals them in context', () => {
+    // macOS desktop rhythm: at rest the name keeps its 96px cell with a
+    // two-line clamp; hover, selection and keyboard focus reveal the full
+    // identity. This replaced the old always-fully-wrapped label contract —
+    // elegant truncation at rest, complete names the moment context asks.
     const projectNameStart = shellCss.lastIndexOf('.paw-desktop-root .paw-wayfinder-work__project-copy strong');
     expect(projectNameStart, 'desktop project-name override').toBeGreaterThan(-1);
     const projectNameRule = shellCss.slice(projectNameStart, shellCss.indexOf('}', projectNameStart));
 
     expect(projectNameRule).toContain('max-width: 96px');
-    expect(projectNameRule).toContain('display: block');
-    expect(projectNameRule).toContain('overflow: visible');
-    expect(projectNameRule).toContain('text-overflow: clip');
-    expect(projectNameRule).toContain('white-space: normal');
-    expect(projectNameRule).toContain('-webkit-line-clamp: unset');
+    expect(projectNameRule).toContain('overflow: hidden');
+    expect(projectNameRule).toContain('-webkit-line-clamp: 2');
+    expect(projectNameRule).toContain('text-overflow: ellipsis');
+
+    const reveal = shellCss.match(/:is\(:hover, \[aria-selected='true'\], :focus-visible\) \.paw-wayfinder-work__project-copy strong\s*\{([^}]*)\}/s);
+    expect(reveal, 'hover/selected/focus reveal rule').toBeTruthy();
+    expect(reveal?.[1]).toContain('-webkit-line-clamp: unset');
+    expect(reveal?.[1]).toContain('overflow: visible');
+  });
+
+  it('rests desktop labels on the wallpaper with a halo, plating only the selected label text', () => {
+    // The macOS desktop label contract: white ink with a layered soft dark
+    // halo, cloned per wrapped line; no permanent pill anywhere on the plane.
+    const labelInk = rule(shellCss, '.paw-desktop-root :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink)');
+    expect(labelInk).toContain('background: transparent');
+    expect(labelInk).toContain('color: #fff');
+    expect(labelInk).toContain('text-shadow');
+    expect(labelInk).toContain('box-decoration-break: clone');
+    // The one plate: selection (and keyboard focus) fills behind the label
+    // text with the shared desktop accent, and the halo steps aside.
+    expect(shellCss).toMatch(/\[aria-selected='true'\][^{]*label-ink\)\s*\{[^}]*text-shadow:\s*none/s);
+    // Reduced motion snaps every desktop selection transition: label plates,
+    // icon dims and cell feedback land instantly.
+    const reduced = shellCss.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(reduced).toContain('.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink');
+    expect(reduced).toContain('.paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art');
   });
 
   it('anchors the one project window and lets App and dialogue names wrap naturally', () => {

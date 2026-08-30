@@ -66,6 +66,23 @@ main[data-route-id='memory'] {
   --radius-3: 12px;
 }
 
+/* Layer identity colours need a second contrast pairing on the dark paper.
+   The light palette remains deliberately restrained; these lighter signals
+   keep active labels and icons readable without changing layer identity. */
+:root[data-theme='dark'] main[data-route-id='memory'] {
+  --memory-signal-strong: #f472b6;
+  --memory-evidence-strong: #fdba74;
+  --memory-organize-strong: #fbbf24;
+  --memory-atoms-strong: #f472b6;
+  --memory-books-strong: #a5b4fc;
+  --memory-partner-strong: #c4b5fd;
+  --memory-time-strong: #93c5fd;
+  --memory-relations-strong: #5eead4;
+  --memory-calm-strong: #86efac;
+  --memory-line: rgb(232 236 244 / .16);
+  --memory-line-soft: rgb(232 236 244 / .1);
+}
+
 /* ============================== layer identities ==============================
    The active layer re-points the shared signal tokens, so every rule that
    already speaks var(--memory-signal) inherits the layer's personality
@@ -563,14 +580,12 @@ main[data-route-id='memory'] {
 .memory-layer-list .mgmt-list__copy { grid-column: 1 / -1; }
 .memory-layer-list .mgmt-list__copy strong { display: block; overflow: visible; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .memory-layer-list .mgmt-list__copy span {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   color: var(--color-text-secondary);
   font-size: 13px;
-  line-height: 19px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .memory-layer-list .mgmt-list__meta { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; white-space: normal; }
@@ -2361,11 +2376,11 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
   margin: 0;
   padding: 9px 16px;
   border-bottom: 1px solid var(--memory-line);
-  background: #fff;
+  background: var(--color-paper);
 }
 
 .memory-second-brain[data-view='catalog'] .mgmt-section__header h2 { margin: 0; font-size: 15px; letter-spacing: -.008em; }
-.memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: #7a8493; font-size: 14px; line-height: 1.45; }
+.memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: var(--color-text-secondary); font-size: 14px; line-height: 1.45; }
 
 .memory-second-brain[data-view='catalog'] .memory-catalog-filters {
   min-width: 0;
@@ -2373,7 +2388,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
   gap: 7px;
   padding: 9px 16px 11px;
   border-bottom: 1px solid var(--memory-line);
-  background: #fafbfd;
+  background: var(--color-surface-subtle);
 }
 
 .memory-second-brain[data-view='catalog'] .memory-layer-workspace {
@@ -2383,7 +2398,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
   overflow: hidden;
   border: 0;
   grid-template-columns: minmax(310px, .88fr) minmax(420px, 1.12fr);
-  background: #fff;
+  background: var(--color-paper);
 }
 
 .memory-second-brain[data-view='catalog'] .memory-layer-list {
@@ -2395,7 +2410,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
   min-height: 0;
   overflow: auto;
   padding: 18px clamp(18px, 3cqw, 30px) 30px;
-  background: #fff;
+  background: var(--color-paper);
 }
 
 .memory-second-brain[data-view='catalog'] .memory-catalog-detail {

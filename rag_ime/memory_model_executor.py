@@ -214,6 +214,13 @@ class GovernedMemoryModelExecutor:
                 self.runtime.abort(session_id)
             except Exception as exc:
                 error = f"{error}: {_public_error(exc)}"
+        replacement = self._create_internal_session(
+            title=(
+                "Memory curation recovery · "
+                f"{_short_run_label(run_id)}"
+            ),
+        )
+        replacement_session_id = str(replacement["id"])
         timestamp = _now_ms()
         with self._connect() as conn:
             conn.execute(
@@ -227,10 +234,11 @@ class GovernedMemoryModelExecutor:
             conn.execute(
                 """
                 UPDATE memory_curation_model_runs
-                SET state = 'resumable', last_error = ?, updated_at_ms = ?
+                SET session_id = ?, state = 'resumable', last_error = ?,
+                    updated_at_ms = ?
                 WHERE run_id = ? AND state = 'running'
                 """,
-                (error, timestamp, run_id),
+                (replacement_session_id, error, timestamp, run_id),
             )
             recovered = conn.execute(
                 "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
@@ -597,13 +605,18 @@ class GovernedMemoryModelExecutor:
                 (run_id, phase, input_sha256),
             ).fetchone()
             if row is not None:
-                if isolated and str(row["state"]) == "resumable":
+                if str(row["state"]) == "resumable":
                     replacement = self._create_internal_session(
                         title=(
-                            "Memory curation recovery · "
+                            "Memory verification recovery · "
+                            if isolated
+                            else "Memory curation recovery · "
+                        )
+                        + (
                             f"{_short_run_label(run_id)} · {phase[:32]}"
                         ),
                     )
+                    replacement_session_id = str(replacement["id"])
                     conn.execute(
                         """
                         UPDATE memory_curation_model_requests
@@ -612,11 +625,21 @@ class GovernedMemoryModelExecutor:
                         WHERE request_id = ? AND state = 'resumable'
                         """,
                         (
-                            str(replacement["id"]),
+                            replacement_session_id,
                             _now_ms(),
                             str(row["request_id"]),
                         ),
                     )
+                    if not isolated:
+                        conn.execute(
+                            """
+                            UPDATE memory_curation_model_runs
+                            SET session_id = ?, updated_at_ms = ?
+                            WHERE run_id = ?
+                            """,
+                            (replacement_session_id, _now_ms(), run_id),
+                        )
+                        self._active_session_id = replacement_session_id
                     row = conn.execute(
                         "SELECT * FROM memory_curation_model_requests WHERE request_id = ?",
                         (str(row["request_id"]),),

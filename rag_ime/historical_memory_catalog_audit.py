@@ -5,6 +5,7 @@ import json
 import sqlite3
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 
@@ -59,7 +60,7 @@ def build_historical_catalog_audit_packet(
 
     path = Path(db_path).expanduser().resolve(strict=True)
     uri = f"file:{quote(str(path), safe='/')}?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=30.0) as conn:
+    with closing(sqlite3.connect(uri, uri=True, timeout=30.0)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only = ON")
         atoms = conn.execute(
@@ -354,7 +355,7 @@ def quarantine_historical_catalog_audit_atoms(
 
     timestamp = now_ms()
     normalized_project = compact_whitespace(project)
-    with sqlite3.connect(path, timeout=30.0) as conn:
+    with closing(sqlite3.connect(path, timeout=30.0)) as conn, conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")

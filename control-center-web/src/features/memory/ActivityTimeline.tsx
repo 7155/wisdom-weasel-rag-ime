@@ -136,6 +136,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
     buildJobProgress,
     buildJobResult,
     buildJobState,
+    buildJobTraceId,
     buildJobWarning,
     calendar,
     canRead,
@@ -403,6 +404,7 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
             organizeWarning={Boolean(buildJobWarning)}
             organizeJobId={buildJobId}
             organizeJobState={buildJobState}
+            organizeTraceId={buildJobTraceId}
             organizeMessage={buildProgressMessage}
             onSelect={chooseDate}
             summary={calendarSummary}
@@ -631,6 +633,7 @@ function ActivityTimelineCalendar({
   organizeWarning,
   organizeJobId,
   organizeJobState,
+  organizeTraceId,
   organizeMessage,
   onSelect,
   summary,
@@ -652,6 +655,7 @@ function ActivityTimelineCalendar({
   organizeWarning: boolean;
   organizeJobId: string;
   organizeJobState: string;
+  organizeTraceId: string;
   organizeMessage: string;
   onSelect: (date: string) => void;
   summary: Record<string, unknown>;
@@ -749,6 +753,10 @@ function ActivityTimelineCalendar({
                   summary: organizeMessage,
                   error: organizeError instanceof Error ? organizeError.message : String(organizeError || organizeMessage),
                   failureRef: organizeJobId || undefined,
+                  ...(organizeJobId ? {
+                    runId: organizeJobId,
+                    traceId: organizeTraceId || `trace:memory:${organizeJobId}`,
+                  } : {}),
                   refs: {
                     jobId: organizeJobId,
                     state: organizeJobState,

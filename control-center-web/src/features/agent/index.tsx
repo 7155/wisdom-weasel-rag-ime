@@ -1946,7 +1946,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
         inert={railModal || sidePanelModal ? true : undefined}
       >
         <header className="agent-conversation__header">
-          <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
+          <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起对话列表' : '展开对话列表'} icon={railOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />} onClick={toggleRail} tooltip />
           <span>
             <strong>{session?.title ?? identity.assistantName}</strong>
             <small>
@@ -1962,10 +1962,10 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
           </span>
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
-            <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
-            {subagentPackageEnabled ? <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={17} />} disabled={!session} onClick={toggleSubagents} tooltip /> : null}
-            <IconButton ref={filesToggleRef} className="agent-files-toggle" aria-controls="agent-files-panel" aria-expanded={filesOpen} label={filesOpen ? '收起文件目录' : '展开文件目录'} icon={<FolderTree size={17} />} disabled={!session} onClick={toggleFiles} tooltip />
-            <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} disabled={!session} onClick={toggleStatus} tooltip />
+            <IconButton label="查看对话路径与分支" icon={<GitBranch size={16} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
+            {subagentPackageEnabled ? <IconButton ref={subagentsToggleRef} className="agent-subagents-toggle" aria-controls="agent-subagent-panel" aria-expanded={subagentsOpen} label={subagentsOpen ? '收起子 Agent 工作台' : '打开子 Agent 工作台'} icon={<Network size={16} />} disabled={!session} onClick={toggleSubagents} tooltip /> : null}
+            <IconButton ref={filesToggleRef} className="agent-files-toggle" aria-controls="agent-files-panel" aria-expanded={filesOpen} label={filesOpen ? '收起文件目录' : '展开文件目录'} icon={<FolderTree size={16} />} disabled={!session} onClick={toggleFiles} tooltip />
+            <IconButton ref={statusToggleRef} className="agent-status-toggle" aria-controls="agent-status-panel" aria-expanded={statusOpen} label={statusOpen ? '收起任务中心' : '展开任务中心'} icon={statusOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />} disabled={!session} onClick={toggleStatus} tooltip />
           </div>
         </header>
         {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} loading={loading && !session} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked && isUserConversation} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onFollowStateChange={setTimelineFollow} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onRetryTurn={retryTurn} onContinueTurn={continueTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
@@ -2016,7 +2016,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
             onPickAttachments={() => void pickAttachments()}
             onProductCommand={runProductCommand}
             onSend={(delivery, value) => void send(delivery, value)}
-            onStop={() => void stop()}
+            onStop={stop}
             onToolSelect={chooseTool}
             onWorkspaceRootsChange={() => void manageWorkspaceRoots()}
           />

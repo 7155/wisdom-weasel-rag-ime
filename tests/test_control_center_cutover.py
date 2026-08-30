@@ -19,7 +19,25 @@ class ControlCenterCutoverTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(package["scripts"]["test"], "vitest run --maxWorkers=4")
+        self.assertEqual(
+            package["scripts"]["test"],
+            "vitest run --maxWorkers=1 --testTimeout=60000",
+        )
+
+    def test_full_stack_installer_only_accepts_the_canonical_main_branch(self) -> None:
+        installer = (ROOT / "scripts" / "install_product_stack.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            'SOURCE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"',
+            installer,
+        )
+        self.assertIn('if [[ "$SOURCE_BRANCH" != "main" ]]; then', installer)
+        self.assertLess(
+            installer.index('if [[ "$SOURCE_BRANCH" != "main" ]]; then'),
+            installer.index('echo "Installing product runtime generation $SOURCE_COMMIT"'),
+        )
 
     def test_full_stack_installer_refuses_existing_explicit_squirrel_workspace(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-product-stack-") as tmp:
@@ -89,6 +107,26 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("build_paw_os_electron_host.sh", script)
         self.assertNotIn("build_control_center_web_host.sh", script)
 
+    def test_pi_model_bundle_only_collects_the_canonical_runtime_host(self) -> None:
+        script = (
+            ROOT / "scripts" / "build_paw_pi_runtime_model_bundle.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"integrations/rag-ime-runtime-host/package.json"',
+            script,
+        )
+        self.assertIn(
+            '"integrations/rag-ime-runtime-host/src/**/*.ts"',
+            script,
+        )
+        self.assertNotIn('"packages/rag-ime-runtime-host/package.json"', script)
+        self.assertNotIn('"packages/rag-ime-runtime-host/src/**/*.ts"', script)
+        self.assertNotIn(
+            'pi_root / "packages" / "rag-ime-runtime-host"',
+            script,
+        )
+
     def test_release_footprint_gate_requires_the_electron_bundle(self) -> None:
         script = (ROOT / "scripts" / "check_control_center_footprint.sh").read_text(
             encoding="utf-8"
@@ -127,7 +165,9 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("build_managed_pi_runtime_v2.py", installer)
         self.assertIn("--pi-worktree", installer)
         self.assertIn("RAG_IME_PI_WORKTREE", installer)
-        self.assertIn("../pi/packages/rag-ime-runtime-host", installer)
+        self.assertIn("../pi/integrations/rag-ime-runtime-host", installer)
+        self.assertNotIn("../pi/packages/rag-ime-runtime-host", installer)
+        self.assertNotIn("../pi-rag-ime-runtime", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
         self.assertIn("--no-activate", installer)
         self.assertIn("smoke_pi_session_staged_runtime.py", installer)
@@ -253,6 +293,9 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn('"browserHost": "electron-webview"', build)
         self.assertIn('"browserTransport": "cdp"', build)
         self.assertIn('"forbiddenTransportModulesExcluded": True', build)
+        self.assertIn('if [[ "$ACTION" == "install-release" ]]; then', build)
+        self.assertIn('if [[ "$SOURCE_BRANCH" != "main" ]]', build)
+        self.assertIn('if [[ "$SOURCE_DIRTY" == "true" ]]', build)
 
     def test_database_maintenance_stop_and_reinstall_cover_voice_and_maintenance_jobs(self) -> None:
         stop = (ROOT / "scripts" / "stop_rag_ime_runtime.sh").read_text(encoding="utf-8")

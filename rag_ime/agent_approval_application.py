@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import closing
 import sqlite3
 from typing import Any, Protocol
 
@@ -205,7 +206,7 @@ class AgentApprovalApplicationService:
         if db_path is None:
             return ""
         try:
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn:
                 row = conn.execute(
                     "SELECT status FROM memory_cleanup_runs WHERE run_id = ?",
                     (run_id,),

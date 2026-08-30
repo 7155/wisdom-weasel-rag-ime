@@ -595,7 +595,7 @@
         {
           "file": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
           "contains": [
-            "<PawWayfinderWork />"
+            "<PawWayfinderWork"
           ]
         }
       ],

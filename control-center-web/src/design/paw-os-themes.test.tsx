@@ -2,6 +2,7 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import pawOsStyles from '@/paw-os/styles/paw-os.css?raw';
+import pawOsMotionStyles from '@/paw-os/styles/paw-os-motion.css?raw';
 import {
   PAW_OS_THEME_STORAGE_KEY,
   PawOsAppearanceProvider,
@@ -54,7 +55,13 @@ describe('PAWOS appearance themes', () => {
 
     expect(baseTheme).toContain('--paw-panel: #ffffff');
     expect(baseTheme).toContain('--paw-accent: #2563eb');
-    expect(baseTheme).toContain('--paw-ease-out: cubic-bezier(.16, 1, .3, 1)');
+    // Easing tokens have exactly one definition site: the motion authority.
+    // The structure owner consumes them but never re-declares them.
+    expect(baseTheme).not.toContain('--paw-ease-out:');
+    expect(baseTheme).not.toContain('--paw-ease-in-out:');
+    expect(pawOsMotionStyles.match(/--paw-ease-out:/g)).toHaveLength(1);
+    expect(pawOsMotionStyles.match(/--paw-ease-in-out:/g)).toHaveLength(1);
+    expect(pawOsMotionStyles).toContain('--paw-ease-out: cubic-bezier(.23, 1, .32, 1)');
     expect(pawOsStyles).not.toContain(".paw-desktop-root[data-paw-theme='glacier']");
     expect(pawOsStyles).not.toContain(".paw-desktop-root[data-paw-theme='ink-paper']");
     expect(pawOsStyles).not.toContain(".paw-desktop-root[data-paw-theme='blueprint']");

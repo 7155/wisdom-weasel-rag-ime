@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import threading
+import tempfile
 import time
 import unittest
+import json
+import sqlite3
+from contextlib import closing
 from collections.abc import Mapping
+from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.owner_memory_maintenance import (
@@ -29,6 +34,12 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         def execute(payload: Mapping[str, object]) -> dict[str, object]:
             values = dict(payload)
             progress = values.pop("_progressCallback")
+            trace_context = values.pop("_memoryTraceContext")
+            self.assertTrue(str(trace_context["maintenanceJobId"]).startswith("memory-maintenance:"))
+            self.assertEqual(
+                trace_context["traceId"],
+                f"trace:memory:{trace_context['maintenanceJobId']}",
+            )
             self.assertTrue(callable(progress))
             progress({"completedDayCount": 1, "totalDayCount": 2})
             calls.append(values)
@@ -255,6 +266,93 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         self.assertEqual(result, expired)
         self.assertEqual(request_json.call_count, 2)
         sleep.assert_called_once()
+
+    def test_job_status_survives_gateway_restart_with_trace_and_source_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "paw.sqlite"
+            events: list[dict[str, object]] = []
+
+            def execute(_payload: Mapping[str, object]) -> dict[str, object]:
+                return {
+                    "ok": False,
+                    "error": "memory model request failed",
+                    "results": [{
+                        "runId": "memory_book_owner_1",
+                        "sourceCursor": {"fromSourceId": "source-1", "toSourceId": "source-2"},
+                    }],
+                }
+
+            first = GatewayMemoryMaintenanceJobs(
+                execute,
+                db_path=db_path,
+                event_publisher=events.append,
+            )
+            started = first.trigger({"project": "project-a", "manual": True})
+            terminal = self._wait_for_terminal(first, str(started["jobId"]))
+
+            self.assertEqual(terminal["state"], "failed")
+            self.assertEqual(terminal["traceId"], f"trace:memory:{started['jobId']}")
+            self.assertEqual(terminal["runId"], started["jobId"])
+            self.assertEqual(
+                terminal["sourceCursor"],
+                {"fromSourceId": "source-1", "toSourceId": "source-2"},
+            )
+            self.assertEqual([event["phase"] for event in events], ["started", "failed"])
+
+            restarted = GatewayMemoryMaintenanceJobs(lambda _payload: {"ok": True}, db_path=db_path)
+            recovered = restarted.status(str(started["jobId"]))
+            self.assertEqual(recovered["state"], "failed")
+            self.assertEqual(recovered["error"], "memory model request failed")
+            self.assertEqual(recovered["result"], terminal["result"])
+            self.assertEqual(recovered["traceId"], terminal["traceId"])
+            self.assertEqual(recovered["sourceCursor"], terminal["sourceCursor"])
+
+    def test_restart_expiry_publishes_terminal_trace_event(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "paw.sqlite"
+            job_id = "memory-maintenance:running-before-restart"
+            with closing(sqlite3.connect(db_path)) as conn:
+                with conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE memory_maintenance_jobs (
+                            job_id TEXT PRIMARY KEY,
+                            state TEXT NOT NULL,
+                            request_json TEXT NOT NULL,
+                            result_json TEXT NOT NULL,
+                            progress_json TEXT NOT NULL,
+                            error TEXT NOT NULL DEFAULT '',
+                            created_at_ms INTEGER NOT NULL,
+                            updated_at_ms INTEGER NOT NULL,
+                            completed_at_ms INTEGER NOT NULL DEFAULT 0
+                        )
+                        """,
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO memory_maintenance_jobs(
+                            job_id, state, request_json, result_json, progress_json,
+                            error, created_at_ms, updated_at_ms, completed_at_ms
+                        ) VALUES (?, 'running', '{}', '{}', ?, '', 1, 2, 0)
+                        """,
+                        (job_id, json.dumps({"phase": "memory_maintenance"})),
+                    )
+
+            events: list[dict[str, object]] = []
+            restarted = GatewayMemoryMaintenanceJobs(
+                lambda _payload: {"ok": True},
+                db_path=db_path,
+                event_publisher=events.append,
+            )
+            status = restarted.status(job_id)
+
+            self.assertEqual(status["state"], "expired")
+            self.assertEqual(status["errorCode"], "memory_maintenance_job_expired")
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["phase"], "expired")
+            self.assertEqual(events[0]["status"], "expired")
+            self.assertEqual(events[0]["traceId"], f"trace:memory:{job_id}")
+            self.assertEqual(events[0]["runId"], job_id)
 
     @staticmethod
     def _wait_for_terminal(

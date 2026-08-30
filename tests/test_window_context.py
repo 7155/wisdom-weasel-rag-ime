@@ -75,6 +75,53 @@ def _window_context() -> dict[str, object]:
 
 
 class WindowContextTests(unittest.TestCase):
+    def test_context_packet_applies_recent_input_and_ax_count_char_budgets(self) -> None:
+        context = _window_context()
+        context["nodes"] = [
+            {
+                "nodeRef": f"ax_{index}",
+                "parentRef": "ax_window",
+                "depth": 1,
+                "role": "AXStaticText",
+                "label": f"标签 {index}",
+                "value": f"界面文本 {index} " + ("额外字符 " * 20),
+                "enabled": True,
+                "focused": False,
+                "selected": False,
+                "secure": False,
+                "actions": [],
+            }
+            for index in range(1, 6)
+        ]
+        packet = build_active_rag_context_packet(
+            scene="active_rag",
+            current_context="当前请求",
+            selected_text="当前请求",
+            selected_text_hash="sha256:test",
+            frontend_revision=1,
+            selection_epoch=1,
+            panel_session_id="budget-test",
+            project="Project",
+            app="com.example.Editor",
+            evidence=(),
+            recent_input_history=(),
+            recent_input_char_maximum=24,
+            recent_input_maximum=5,
+            ax_node_maximum=2,
+            ax_char_maximum=80,
+            window_context=validate_window_context(context),
+        )
+
+        trace = packet["trace"]
+        self.assertEqual(trace["recentInputPolicy"]["requestedCount"], 5)
+        self.assertEqual(trace["recentInputPolicy"]["requestedChars"], 24)
+        self.assertEqual(trace["axPolicy"]["requestedNodeCount"], 2)
+        self.assertEqual(trace["axPolicy"]["requestedCharCount"], 80)
+        self.assertLessEqual(packet["windowContext"]["nodeCount"], 2)
+        self.assertLessEqual(
+            sum(len(str(node.get("value") or "")) for node in packet["windowContext"]["nodes"]),
+            80,
+        )
     def test_validator_keeps_bounded_semantics_and_redacts_secure_values(self) -> None:
         context = validate_window_context(_window_context())
 

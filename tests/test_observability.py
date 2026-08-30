@@ -1729,6 +1729,33 @@ class ObservationHubTests(unittest.TestCase):
                 run_id="",
             )
 
+    def test_memory_maintenance_owner_run_can_be_nested_in_gateway_trace(self) -> None:
+        event = self.hub.emit_memory_event(
+            phase="started",
+            status="completed",
+            summary="owner curation started",
+            run_id="owner-run-1",
+            trace_id="trace:memory:memory-maintenance:job-1",
+            maintenance_job_id="memory-maintenance:job-1",
+            parent_span_id="span:memory:memory-maintenance:job-1:started",
+        )
+
+        self.assertEqual(event["traceId"], "trace:memory:memory-maintenance:job-1")
+        self.assertEqual(event["runId"], "owner-run-1")
+        self.assertEqual(
+            event["parentSpanId"],
+            "span:memory:memory-maintenance:job-1:started",
+        )
+        self.assertEqual(
+            event["attributes"]["maintenanceJobId"],
+            "memory-maintenance:job-1",
+        )
+        self.assertEqual(event["attributes"]["ownerRunId"], "owner-run-1")
+        self.assertEqual(
+            event["attributes"]["traceContext"],
+            "gateway_memory_maintenance",
+        )
+
     def test_memory_maintenance_retry_keeps_one_trace_without_timing_inflation(self) -> None:
         for phase, status in (
             ("started", "completed"),
@@ -1856,6 +1883,60 @@ class ObservationHubTests(unittest.TestCase):
         self.assertEqual(event["summary"], "Agent 正在分析")
         self.assertEqual(event["category"], "runtime")
 
+    def test_projection_queue_overflow_is_visible_and_flush_does_not_claim_no_loss(self) -> None:
+        # Hold the real worker on its original queue, then replace the bounded
+        # queue with a one-slot queue so overflow is deterministic and cannot
+        # make the test depend on thread scheduling.
+        original_queue = self.hub._projection_queue
+        projection_queue = queue.Queue(maxsize=1)
+        projection_queue.put_nowait(("test", None))
+        self.hub._projection_queue = projection_queue
+
+        self.hub._enqueue_projection("test", None)
+
+        health = self.hub.projection_health()
+        self.assertEqual(health["droppedCount"], 1)
+        self.assertEqual(health["errorCount"], 0)
+        self.assertEqual(health["lastFailure"], None)
+        self.assertFalse(self.hub.flush(timeout_seconds=0))
+        self.hub._projection_queue = original_queue
+
+    def test_projection_exception_is_a_structured_durable_failure_and_flush_reports_it(self) -> None:
+        with patch.object(
+            self.hub,
+            "observe_room_event",
+            side_effect=RuntimeError("PRIVATE projection detail"),
+        ):
+            self.hub.enqueue_room_event(
+                {
+                    "eventId": "room-projection-failure",
+                    "roomId": "room-projection-failure",
+                    "eventType": "room_post",
+                    "createdAtMs": 701,
+                    "payload": {},
+                }
+            )
+            self.assertFalse(self.hub.flush())
+
+        health = self.hub.projection_health()
+        self.assertEqual(health["droppedCount"], 0)
+        self.assertEqual(health["errorCount"], 1)
+        failure = health["lastFailure"]
+        self.assertIsInstance(failure, dict)
+        self.assertEqual(failure["kind"], "room")
+        self.assertEqual(failure["errorType"], "RuntimeError")
+        self.assertNotIn("PRIVATE projection detail", json.dumps(failure))
+
+        snapshot = self.hub.snapshot({"category": "system"})
+        failure_events = [
+            item
+            for item in snapshot["items"]
+            if item["phase"] == "projection_failure"
+        ]
+        self.assertEqual(len(failure_events), 1)
+        self.assertEqual(failure_events[0]["status"], "failed")
+        self.assertEqual(failure_events[0]["attributes"]["producerKind"], "room")
+
     def test_input_generation_lifecycle_becomes_one_measured_privacy_safe_trace(self) -> None:
         base = {
             "schemaVersion": "rag-ime.input-generation-observation.v1",
@@ -1875,12 +1956,24 @@ class ObservationHubTests(unittest.TestCase):
                 "latencyBudgetMs": 3_000,
                 "currentRequest": "PRIVATE REQUEST",
                 "contextMetrics": {
+                    "recentInputRequestedCount": 20,
+                    "recentInputEffectiveCount": 2,
                     "recentInputActualCount": 2,
+                    "recentInputRequestedChars": 12000,
+                    "recentInputEffectiveChars": 40,
                     "recentInputActualChars": 40,
+                    "recentInputUnavailableReason": "budget_exhausted",
                     "recentInputTruncated": True,
+                    "axRequestedNodeCount": 160,
+                    "axEffectiveNodeCount": 5,
+                    "axActualNodeCount": 7,
+                    "axRequestedCharCount": 12000,
+                    "axEffectiveCharCount": 280,
+                    "axActualCharCount": 321,
                     "axNodeCount": 7,
                     "axCharacterCount": 321,
                     "axTruncated": False,
+                    "axUnavailableReason": "budget_exhausted",
                     "contextRequestedTokens": 900,
                     "contextEffectiveTokens": 640,
                     "contextTruncated": True,
@@ -1932,7 +2025,20 @@ class ObservationHubTests(unittest.TestCase):
         completed = by_status["completed"]
         self.assertEqual(completed["durationMs"], 25)
         self.assertEqual(completed["metrics"]["firstTokenMs"], 9)
+        self.assertEqual(completed["metrics"]["recentInputRequestedCount"], 20)
+        self.assertEqual(completed["metrics"]["recentInputEffectiveCount"], 2)
         self.assertEqual(completed["metrics"]["recentInputActualCount"], 2)
+        self.assertEqual(completed["metrics"]["recentInputRequestedChars"], 12000)
+        self.assertEqual(completed["metrics"]["recentInputEffectiveChars"], 40)
+        self.assertEqual(completed["metrics"]["recentInputActualChars"], 40)
+        self.assertEqual(completed["attributes"]["recentInputUnavailableReason"], "budget_exhausted")
+        self.assertEqual(completed["metrics"]["axRequestedNodeCount"], 160)
+        self.assertEqual(completed["metrics"]["axEffectiveNodeCount"], 5)
+        self.assertEqual(completed["metrics"]["axActualNodeCount"], 7)
+        self.assertEqual(completed["metrics"]["axRequestedCharCount"], 12000)
+        self.assertEqual(completed["metrics"]["axEffectiveCharCount"], 280)
+        self.assertEqual(completed["metrics"]["axActualCharCount"], 321)
+        self.assertEqual(completed["attributes"]["axUnavailableReason"], "budget_exhausted")
         self.assertTrue(completed["metrics"]["contextTruncated"])
         self.assertEqual(completed["attributes"]["sourceKind"], "input_generation")
         self.assertEqual(completed["attributes"]["inputFingerprint"], "sha256:" + "a" * 64)

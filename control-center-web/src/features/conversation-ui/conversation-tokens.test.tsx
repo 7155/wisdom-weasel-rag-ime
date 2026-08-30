@@ -31,6 +31,27 @@ describe('conversation-ui palette roots', () => {
   });
 });
 
+describe('conversation-ui tool rows', () => {
+  /* CJK labels have a one-character min-content width, so a shrinkable
+     `strong` wraps vertically and stretches the whole row in narrow windows
+     (planet satellites). The label stays on one line; the ellipsizing summary
+     absorbs the squeeze. */
+  it('keeps the tool label on one line and lets the summary absorb the squeeze', () => {
+    expect(css).toContain('.ccui-tool-main strong { flex: 0 0 auto; font-size: 12px; font-weight: 620; white-space: nowrap; }');
+    expect(css).toContain('.ccui-tool-meta { display: flex; gap: 6px; font-size: 11px; color: var(--ccui-faint); white-space: nowrap; }');
+  });
+
+  /* The running state speaks through the words themselves — the same
+     text-level sweep the Session's paw-activity rows use — never a bar or a
+     row background. Reduced motion falls back to static ink. */
+  it('shimmers the running tool words, not the row', () => {
+    expect(css).toContain(".ccui-tool-card.status-running .ccui-tool-main :is(strong, span)");
+    expect(css).toContain('background-clip: text;');
+    expect(css).toContain('@keyframes ccui-text-sweep');
+    expect(css).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+});
+
 /** The selector list of the rule that owns the palette. */
 function paletteRootSelectors(): string[] {
   const block = /(?<selectors>[^{}]+)\{[^{}]*--ccui-surface:/u.exec(css.replace(/\/\*[\s\S]*?\*\//gu, ''));

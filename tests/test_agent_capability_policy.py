@@ -46,6 +46,10 @@ class _Rooms:
     def __init__(self) -> None:
         self.active_session_id = ""
 
+    @property
+    def rooms(self) -> "_Rooms":
+        return self
+
     def participant_for_session(
         self, session_id: str, *, active_only: bool
     ) -> dict[str, object] | None:
@@ -177,6 +181,46 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertEqual(frozenset(_TOOL_SPEC_BY_ID), frozenset(CONTROL_TOOL_IDS))
         self.assertEqual(len(_TOOL_SPEC_BY_ID), len(CONTROL_TOOL_IDS))
         self.assertIn("plugins", CONTROL_TOOL_IDS)
+
+    def test_room_partner_is_disabled_outside_a_real_room_participant_session(self) -> None:
+        session = self.sessions.create(title="ordinary session")
+        self.policy.update_session(
+            str(session["id"]),
+            {
+                "capabilityDisclosurePreferences": {
+                    "tool:room_partner": "enabled",
+                },
+            },
+        )
+        catalog = self._gateway(collaboration=self.rooms).manifests(
+            session_id=str(session["id"])
+        )
+        room_partner = next(
+            item for item in catalog["items"] if item["canonicalId"] == "tool:room_partner"
+        )
+
+        self.assertEqual(room_partner["status"], "offline")
+        self.assertEqual(room_partner["authorization"]["state"], "denied")
+        self.assertEqual(room_partner["disclosure"]["effective"], "disabled")
+        self.assertEqual(room_partner["disclosure"]["state"], "hidden")
+        self.assertEqual(room_partner["disclosure"]["reason"], "room_context_required")
+
+    def test_room_partner_is_enabled_for_an_active_room_participant_session(self) -> None:
+        session = self.sessions.create(title="room participant", mode="coordinator")
+        session_id = str(session["id"])
+        self.rooms.active_session_id = session_id
+
+        catalog = self._gateway(collaboration=self.rooms).manifests(
+            session_id=session_id
+        )
+        room_partner = next(
+            item for item in catalog["items"] if item["canonicalId"] == "tool:room_partner"
+        )
+
+        self.assertEqual(room_partner["status"], "online")
+        self.assertEqual(room_partner["authorization"]["state"], "authorized")
+        self.assertEqual(room_partner["disclosure"]["effective"], "enabled")
+        self.assertEqual(room_partner["disclosure"]["state"], "disclosed")
 
     def test_disclosure_never_grants_tool_authorization(self) -> None:
         session = self.sessions.create(title="restricted")

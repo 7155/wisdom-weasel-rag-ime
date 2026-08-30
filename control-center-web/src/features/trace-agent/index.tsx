@@ -20,6 +20,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState } from '@/components/primitives';
 import type { EvalRunV1 } from '@/contracts/generated/eval-run.v1';
+import type { TraceRepairReceiptV1 } from '@/contracts/generated/trace-repair-receipt.v1';
 import type { ObservationSnapshotV1 } from '@/contracts/generated/observation-snapshot.v1';
 import type { AgentRoomSnapshotV1 } from '@/contracts/generated/agent-room-snapshot.v1';
 import type { ObservabilityEvalListV1 } from '@/contracts/generated/observability-eval-list.v1';
@@ -43,6 +44,15 @@ import {
   redactTraceAgentText,
   type TraceAgentHandoff,
 } from './handoff';
+import { TraceFailureReasonPanel } from './failure-reasons';
+import {
+  parseTraceRepairEvidenceWrite,
+  parseTraceRepairReceiptCreate,
+  parseTraceRepairRecheck,
+  parseTraceRepairReceiptGet,
+  TraceRepairValidationError,
+  type TraceRepairIdentity,
+} from './trace-repair';
 import './trace-agent.css';
 
 const TRACE_AGENT_SKILL_REF = 'integrations/pi/skills/trace-agent-diagnostics/SKILL.md';
@@ -78,9 +88,12 @@ type TraceRepairHandoff = {
   promptAccepted: boolean;
 };
 
+type TraceRepairReceipt = TraceRepairReceiptV1;
+
 type TraceEvalReceipt = {
   sourceTraceId: string;
   repairTraceId: string;
+  repairReceipt: TraceRepairReceipt;
   evalRun: EvalRunV1;
 };
 
@@ -278,6 +291,9 @@ export function TraceAgentFeature() {
   });
   const repair = useMutation({
     mutationFn: async (diagnostic: TraceAgentReport) => {
+      if (!diagnosticReportReady(diagnosticSession.data)) {
+        throw new Error('结构化诊断报告尚未完成，暂不能交给 Agent 修复。');
+      }
       const executionMode = 'per_action' as const;
       const created = await transport.request({
         pathId: 'agent.sessions.create',
@@ -331,41 +347,72 @@ export function TraceAgentFeature() {
       });
       const repairTraceId = latestCompletedTrace(repairSnapshot, repairSessionId);
       if (!repairTraceId) throw new Error('修复 Session 尚未产生已完成 Trace，请先完成修复后再复检。');
-      const detail = await transport.request<ObservabilityTraceGetV1>({
-        pathId: 'observability.trace.get',
-        params: { traceId: repairTraceId },
-        responseContract: 'observability-trace-get.v1',
-      });
-      if (detail.traceId !== repairTraceId || detail.trace.traceId !== repairTraceId) {
-        throw new Error('修复 Trace 返回标识不一致，暂不能复检。');
-      }
-      if (detail.truncated) throw new Error('修复 Trace 仍是截断窗口，暂不能复检。');
-      if (detail.trace.status !== 'completed') {
-        throw new Error(`修复 Trace 当前状态为 ${detail.trace.status}，暂不能复检。`);
-      }
-      // The existing Eval endpoint is the persistence authority.  A repair
-      // handoff is an explicit user confirmation, so the evidence currently
-      // present in the repair Trace becomes this run's human baseline.
-      // It is deliberately labelled as a recheck baseline, not an automatic
-      // quality claim or a second evaluation state machine.
-      const requiredEvidenceIds = [...new Set(
-        detail.trace.evidence
-          .filter((item) => item.disposition === 'included')
-          .map((item) => item.evidenceId),
-      )];
-      const evalRun = await transport.request<EvalRunV1>({
-        pathId: 'observability.evals.evidence.run',
+      const identity = traceRepairIdentity(diagnostic);
+      const repairRefs = { repairSessionId, repairTraceId };
+      const changeResponse = await transport.request({
+        pathId: 'observability.traceRepair.changeEvidence',
         body: {
-          schemaVersion: 'rag-ime.observability-evidence-eval-request.v1',
-          traceId: repairTraceId,
-          requiredEvidenceIds,
-          datasetId: 'trace-agent:recheck',
-          labelRevision: `repair:${repairSessionId}`,
-          truthKind: 'human',
+          schemaVersion: 'rag-ime.trace-repair-change-evidence.v1',
+          ...repairRefs,
         },
-        responseContract: 'eval-run.v1',
       });
-      return { sourceTraceId: diagnostic.traceId, repairTraceId, evalRun } satisfies TraceEvalReceipt;
+      const changeEvidence = parseTraceRepairEvidenceWrite(changeResponse, 'change', repairRefs);
+      const testResponse = await transport.request({
+        pathId: 'observability.traceRepair.testEvidence',
+        body: {
+          schemaVersion: 'rag-ime.trace-repair-test-evidence.v1',
+          ...repairRefs,
+        },
+      });
+      const testEvidence = parseTraceRepairEvidenceWrite(testResponse, 'test', repairRefs);
+      if (testEvidence.testStatus !== 'passed') {
+        throw new Error('实际修复 Trace 的测试证据未通过，不能创建权威回执。');
+      }
+      const receiptResponse = await transport.request({
+        pathId: 'observability.traceRepair.receipt.create',
+        body: {
+          schemaVersion: 'rag-ime.trace-repair-receipt-create.v1',
+          sourceScope: identity.sourceScope,
+          sourceTraceId: identity.sourceTraceId,
+          failureRef: identity.failureRef,
+          changeReceiptId: changeEvidence.evidenceId,
+          testEvidenceId: testEvidence.evidenceId,
+          repairTraceId,
+          repairSessionId,
+        },
+      });
+      const repairReceipt = parseTraceRepairReceiptCreate(receiptResponse, identity, {
+        changeReceiptId: changeEvidence.evidenceId,
+        testEvidenceId: testEvidence.evidenceId,
+        repairTraceId,
+        repairSessionId,
+      });
+      // Re-read the immutable server receipt before asking for a recheck. This
+      // makes a stale/mutated transport fail closed and makes the final API
+      // request opaque-ID-only as required by the backend contract.
+      const verifiedReceiptResponse = await transport.request({
+        pathId: 'observability.traceRepair.receipt.get',
+        params: { repairReceiptId: repairReceipt.repairReceiptId },
+      });
+      const verifiedReceipt = parseTraceRepairReceiptGet(
+        verifiedReceiptResponse,
+        identity,
+        repairReceipt.repairReceiptId,
+      );
+      const recheckResponse = await transport.request({
+        pathId: 'observability.traceRepair.recheck',
+        body: {
+          schemaVersion: 'rag-ime.trace-repair-recheck-request.v1',
+          repairReceiptId: verifiedReceipt.repairReceiptId,
+        },
+      });
+      const recheckResult = parseTraceRepairRecheck(recheckResponse, identity, verifiedReceipt);
+      return {
+        sourceTraceId: diagnostic.traceId,
+        repairTraceId,
+        repairReceipt: recheckResult.receipt,
+        evalRun: recheckResult.evalRun,
+      } satisfies TraceEvalReceipt;
     },
     onSuccess: (next) => {
       setEvalReceipt(next);
@@ -659,6 +706,7 @@ export function TraceAgentFeature() {
                 <p aria-live="polite" className="trace-agent-inline-note" role="status">关联绑定存在冲突，未显示不可靠的 Session / Room 回跳。</p>
               ) : null}
               <TraceEvidence desktop={desktop} evidence={evidence} loading={sourceSnapshot.isFetching || snapshot.isFetching || runHistory.loading} />
+              <TraceFailureReasonPanel evidence={evidence} loading={sourceSnapshot.isFetching || snapshot.isFetching || runHistory.loading} />
               {selected.handoffOnly ? <p className="trace-agent-inline-note">这是 handoff-only 输入；没有 Session、Room 或 Run 标识，因此未请求 canonical snapshot。诊断 Agent 会以交接包和可回跳原位置为边界报告未知。</p> : null}
               {snapshot.error ? <p className="trace-agent-inline-note">最新 Trace 暂时无法读取；仍可以启动诊断，Agent 会在 Session 内按权限重新查询。</p> : null}
               {sourceSnapshot.error ? <p className="trace-agent-inline-note">原始对话快照暂时无法读取；诊断 Agent 仍会以可用的 Trace、Room 和运行证据标注未知边界。</p> : null}
@@ -737,10 +785,10 @@ function TraceAgentReport({
   onRefreshDiagnostic: () => void;
   diagnosticSession: { error: unknown; isFetching: boolean; source: unknown; timedOut: boolean };
 }) {
-  const recheckLabelRevision = repairHandoff ? `repair:${repairHandoff.sessionId}` : '';
   const persistedEval = evalReceipt?.evalRun ?? evalList?.items.find((item) => (
-    item.datasetId === 'trace-agent:recheck'
-    && item.labelRevision === recheckLabelRevision
+    item.mode === 'ai_judge'
+    && item.metricAuthority === 'ai_judge_estimate'
+    && item.evaluatorDisplayName === 'Trace recheck'
   )) ?? null;
   const sourceTraceId = evalReceipt?.sourceTraceId ?? report.traceId;
   const repairTraceId = evalReceipt?.repairTraceId ?? evalList?.traceId ?? '';
@@ -773,7 +821,7 @@ function TraceAgentReport({
           {report.traceId ? <Button leadingIcon={<Activity size={14} />} onClick={() => openTrace(desktop, report.traceId)} size="small" variant="quiet">查看关联 Trace</Button> : null}
           <Button
             data-testid="trace-agent-repair"
-            disabled={repairState.isPending || Boolean(repairHandoff)}
+            disabled={!diagnosticReady || repairState.isPending || Boolean(repairHandoff)}
             leadingIcon={repairState.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Wrench size={14} />}
             onClick={onRepair}
             variant="primary"
@@ -831,16 +879,16 @@ function TraceAgentReport({
         {recheckState.error ? (
           <div aria-live="polite" className="trace-agent-repair-state trace-agent-repair-state--error" role="alert">
             <TriangleAlert size={15} />
-            <span>{publicErrorText(recheckState.error, '修复 Session 尚未形成可复检的 Trace。')}</span>
+            <span>{traceRecheckErrorText(recheckState.error)}</span>
           </div>
         ) : null}
         {persistedEval ? (
           <div aria-live="polite" className="trace-agent-repair-state trace-agent-repair-state--success" data-testid="trace-agent-eval-receipt" role="status">
             <CheckCircle2 size={15} />
             <span>
-              Eval 复检已持久化：{persistedEval.evalRunId} · {evalStatusLabel(persistedEval.status)}
+              独立复验已持久化：{persistedEval.evalRunId} · {evalStatusLabel(persistedEval.status)}
             </span>
-            <small>诊断 Trace：{sourceTraceId || '未知'} · 修复 Trace：{repairTraceId || '未知'} · 本次以修复 Trace 已记录 evidence 作为显式复检基线，不代替独立质量标注。</small>
+            <small>诊断 Trace：{sourceTraceId || '未知'} · 修复 Trace：{repairTraceId || '未知'} · Luna Max AI Judge 仅为独立评审估计，不伪装成人工验收。</small>
           </div>
         ) : null}
         <dl className="trace-agent-report-meta">
@@ -865,6 +913,7 @@ type TraceEvidenceItem = {
   summary: string;
   createdAtMs: number;
   traceId?: string;
+  code?: string;
 };
 
 type TraceTimelineKind = 'user' | 'assistant' | 'reasoning' | 'tool_started' | 'tool_finished' | 'room_event';
@@ -1038,13 +1087,22 @@ function diagnosticReportReady(source: unknown): boolean {
   const finalAssistant = assistantMessages[0];
   if (!finalAssistant || stringValue(finalAssistant.status) !== 'completed') return false;
   const blocks = Array.isArray(finalAssistant.blocks) ? finalAssistant.blocks : [];
-  return blocks.some((rawBlock) => {
+  const text = blocks.filter((rawBlock) => {
     const block = asRecord(rawBlock);
     if (stringValue(block.status) !== 'completed') return false;
     if (stringValue(block.type) !== 'text') return false;
-    return Boolean(firstText(asRecord(block.data), ['text', 'markdown', 'bodyMarkdown', 'content']))
-      || Boolean(firstText(block, ['text', 'markdown', 'bodyMarkdown', 'content']));
-  });
+    return true;
+  }).map((rawBlock) => {
+    const block = asRecord(rawBlock);
+    return firstText(asRecord(block.data), ['text', 'markdown', 'bodyMarkdown', 'content'])
+      || firstText(block, ['text', 'markdown', 'bodyMarkdown', 'content']);
+  }).filter(Boolean).join('\n');
+  if (!text) return false;
+  // A completed assistant message alone is not a repair authorization. The
+  // report must expose the sections needed to distinguish observed evidence,
+  // hypotheses, and a reproducible validation plan.
+  return ['现象', '影响', 'Trace', '根因', '置信度', '候选修复', '验证', '回跳']
+    .every((marker) => text.includes(marker));
 }
 
 function timelineSourceIdentity(kind: 'session' | 'room', roomId: string, source: unknown): string {
@@ -1439,10 +1497,10 @@ function sessionTimelineEntries(
     const text = blocks
       .map(asRecord)
       .filter((block) => stringValue(block.type) === 'text')
-      .map((block) => firstText(asRecord(block.data), ['text', 'markdown', 'bodyMarkdown']))
+      .map((block) => firstText(asRecord(block.data), ['text', 'content', 'markdown', 'bodyMarkdown']))
       .filter(Boolean)
       .join(' ');
-    const summary = text || firstText(message, ['text', 'message', 'summary']);
+    const summary = text || firstText(message, ['text', 'content', 'message', 'summary']);
     if (summary) {
       add({
         id: `message:${stringValue(message.id, String(index))}`,
@@ -1830,6 +1888,19 @@ function latestCompletedTrace(value: ObservationSnapshotV1 | undefined, sessionI
     .find(Boolean) ?? '';
 }
 
+function traceRepairIdentity(report: TraceAgentReport): TraceRepairIdentity {
+  const sourceScope = `${report.target.kind}:${redactTraceAgentText(report.target.id, 180)}`;
+  const sourceTraceId = redactTraceAgentText(report.traceId, 180);
+  const failureRef = redactTraceAgentText(
+    report.target.handoff?.failureRef
+      || report.evidence.find((item) => item.id.startsWith('trace:'))?.id
+      || report.evidence[0]?.id
+      || sourceTraceId,
+    180,
+  );
+  return { sourceScope, sourceTraceId, failureRef };
+}
+
 function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source: unknown): TraceEvidenceItem[] {
   const evidence: TraceEvidenceItem[] = [];
   for (const item of observations?.items ?? []) {
@@ -1843,6 +1914,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
         summary: summary || 'Trace 标记为异常，但未提供摘要。',
         createdAtMs: item.createdAtMs,
         traceId: item.traceId,
+        code: failureCode(asRecord(item.attributes)),
       });
     }
   }
@@ -1852,7 +1924,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
     const message = asRecord(rawMessage);
     const messageId = stringValue(message.id, `message-${evidence.length}`);
     const blocks = Array.isArray(message.blocks) ? message.blocks : [];
-    const directSummary = firstText(message, ['error', 'errorMessage', 'message', 'summary']);
+    const directSummary = firstText(message, ['error', 'errorMessage', 'message', 'summary', 'content']);
     if (directSummary && (stringValue(message.status) === 'failed' || /(error|fail|failed|timeout|timed out|validation|失败|错误|超时|验证)/i.test(directSummary))) {
       evidence.push({
         id: `message:${messageId}:summary`,
@@ -1861,6 +1933,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
         title: '消息异常',
         summary: directSummary,
         createdAtMs: numberValue(message.createdAtMs),
+        code: failureCode(message),
       });
     }
     for (const rawBlock of blocks) {
@@ -1868,7 +1941,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
       const data = asRecord(block.data);
       const blockType = stringValue(block.type, 'message');
       const blockStatus = stringValue(block.status, stringValue(message.status, 'info'));
-      const summary = firstText(data, ['error', 'errorMessage', 'message', 'summary', 'text', 'markdown']);
+      const summary = firstText(data, ['error', 'errorMessage', 'message', 'summary', 'text', 'content', 'markdown', 'bodyMarkdown']);
       if (!summary || (blockStatus !== 'failed' && blockType !== 'error' && !/(error|fail|failed|timeout|timed out|validation|失败|错误|超时|验证)/i.test(summary))) continue;
       evidence.push({
         id: `message:${messageId}:${stringValue(block.id, String(evidence.length))}`,
@@ -1877,6 +1950,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
         title: blockType === 'tool_result' ? 'Tool 结果' : blockType === 'error' ? '运行错误' : '消息异常',
         summary,
         createdAtMs: numberValue(message.createdAtMs),
+        code: failureCode(data) || failureCode(block) || failureCode(message),
       });
     }
   }
@@ -1884,7 +1958,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
   for (const rawEvent of rawEvents) {
     const event = asRecord(rawEvent);
     const eventPayload = asRecord(event.payload);
-    const summary = firstText(eventPayload, ['error', 'errorMessage', 'message', 'summary', 'text']);
+    const summary = firstText(eventPayload, ['error', 'errorMessage', 'message', 'summary', 'text', 'content']);
     const eventStatus = stringValue(event.status, stringValue(event.eventType, 'info'));
     if (!summary || (eventStatus !== 'failed' && !/(error|fail|failed|timeout|timed out|validation|失败|错误|超时|验证)/i.test(summary))) continue;
     evidence.push({
@@ -1894,6 +1968,7 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
       title: stringValue(event.name, stringValue(event.eventType, '协作事件')),
       summary,
       createdAtMs: numberValue(event.createdAtMs),
+      code: failureCode(eventPayload) || failureCode(event),
     });
   }
   const seen = new Set<string>();
@@ -1903,6 +1978,19 @@ function sourceEvidence(observations: ObservationSnapshotV1 | undefined, source:
     seen.add(key);
     return true;
   }).sort((left, right) => right.createdAtMs - left.createdAtMs).slice(0, 30);
+}
+
+function failureCode(value: Record<string, unknown>): string {
+  return firstText(value, [
+    'causeCode',
+    'cause_code',
+    'reasonCode',
+    'reason_code',
+    'errorCode',
+    'error_code',
+    'failureKind',
+    'failure_kind',
+  ]);
 }
 
 function firstText(value: Record<string, unknown>, keys: string[]): string {
@@ -1920,6 +2008,11 @@ function evalStatusLabel(status: string): string {
     completed: '完成',
     failed: '失败',
   } as Record<string, string>)[status] ?? status;
+}
+
+function traceRecheckErrorText(value: unknown): string {
+  if (value instanceof TraceRepairValidationError) return value.message;
+  return publicErrorText(value, '修复 Session 尚未形成可复检的 Trace。');
 }
 
 function createdSessionId(value: unknown): string {
@@ -1987,6 +2080,7 @@ function diagnosticPrompt(target: TraceTarget, traceId: string): string {
 }
 
 function repairPrompt(report: TraceAgentReport): string {
+  const identity = traceRepairIdentity(report);
   const handoff = {
     target: {
       kind: report.target.kind,
@@ -2008,6 +2102,7 @@ function repairPrompt(report: TraceAgentReport): string {
       status: item.status,
       title: redactTraceAgentText(item.title, 180),
       summary: redactTraceAgentError(item.summary) || redactTraceAgentText(item.summary, 640),
+      code: item.code ? redactTraceAgentText(item.code, 120) : null,
       traceId: item.traceId ? redactTraceAgentText(item.traceId, 180) : null,
       createdAtMs: item.createdAtMs,
     })),
@@ -2020,6 +2115,24 @@ function repairPrompt(report: TraceAgentReport): string {
     '--- TRACE_DIAGNOSTIC_HANDOFF ---',
     JSON.stringify(handoff, null, 2),
     '--- END TRACE_DIAGNOSTIC_HANDOFF ---',
+    '',
+    '本次修复必须限定在以下原始失败身份：',
+    `sourceScope: ${identity.sourceScope}`,
+    `sourceTraceId: ${identity.sourceTraceId}`,
+    `failureRef: ${identity.failureRef}`,
+    '',
+    '完成修复与最小验证后，最终回复必须包含下列结构化报告，供界面核对范围；报告中的 ID、testStatus 都只是声明，不能替代实际 Session/Trace 证据：',
+    'TRACE_REPAIR_EVIDENCE',
+    JSON.stringify({
+      sourceScope: identity.sourceScope,
+      sourceTraceId: identity.sourceTraceId,
+      failureRef: identity.failureRef,
+      repairTraceId: '<actual completed repair Trace id>',
+      changeEvidence: { files: ['<changed file>'], operations: ['<authorized operation>'] },
+      testEvidence: { commands: ['<actual verification command>'], results: [{ status: 'completed', exitCode: 0 }] },
+      testStatus: 'passed',
+    }, null, 2),
+    '不要输出 changeReceiptId、testEvidenceId、repairReceiptId；这些 ID 由服务端在证据写入后生成。不要把没有对应已完成工具/span/命令状态的文本描述写入 changeEvidence/testEvidence。',
   ].join('\n');
 }
 

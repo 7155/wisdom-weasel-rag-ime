@@ -860,7 +860,11 @@ def _bounded_text(value: object, *, maximum: int) -> str:
 _INPUT_GENERATION_REASON_TOKENS = frozenset(
     {
         "ax_timeout",
+        "budget_exhausted",
         "budget_exceeded",
+        "no_accessibility_nodes",
+        "no_recent_input",
+        "no_eligible_inputs",
         "not_captured",
         "provider_unavailable",
         "redacted",
@@ -912,10 +916,14 @@ def _input_generation_request_metadata(
     packet = dict(context_packet) if isinstance(context_packet, Mapping) else {}
     current_input = packet.get("currentInput")
     current_input = dict(current_input) if isinstance(current_input, Mapping) else {}
+    trace = packet.get("trace")
+    trace = dict(trace) if isinstance(trace, Mapping) else {}
     policy = current_input.get("recentInputPolicy")
     policy = dict(policy) if isinstance(policy, Mapping) else {}
     if not policy and isinstance(packet.get("recentInputPolicy"), Mapping):
         policy = dict(packet["recentInputPolicy"])
+    if not policy and isinstance(trace.get("recentInputPolicy"), Mapping):
+        policy = dict(trace["recentInputPolicy"])
     recent_items = current_input.get("recentCompleteInputs")
     if not isinstance(recent_items, list):
         recent_items = packet.get("recentCompleteInputs")
@@ -924,8 +932,34 @@ def _input_generation_request_metadata(
     timeline = dict(timeline) if isinstance(timeline, Mapping) else {}
     window_context = packet.get("windowContext")
     window_context = dict(window_context) if isinstance(window_context, Mapping) else {}
+    ax_policy = trace.get("axPolicy")
+    if isinstance(ax_policy, Mapping):
+        for key in (
+            "requestedNodeCount",
+            "effectiveNodeCount",
+            "requestedCharCount",
+            "effectiveCharCount",
+            "actualNodeCount",
+            "actualCharCount",
+            "truncated",
+            "unavailableReason",
+            "capturedAtMs",
+        ):
+            if key not in window_context and ax_policy.get(key) is not None:
+                window_context[key] = ax_policy[key]
     context_budget = packet.get("contextBudget")
     context_budget = dict(context_budget) if isinstance(context_budget, Mapping) else {}
+    if not context_budget:
+        context_budget = {
+            key: trace[key]
+            for key in (
+                "requestedTokens",
+                "effectiveTokens",
+                "truncated",
+                "unavailableReason",
+            )
+            if trace.get(key) is not None
+        }
 
     recent_actual_count = _metric_int(
         timeline,
@@ -951,13 +985,27 @@ def _input_generation_request_metadata(
     }
     _copy_metric(context_metrics, "recentInputRequestedCount", policy, "requestedCount")
     _copy_metric(context_metrics, "recentInputEffectiveCount", policy, "effectiveCount")
+    _copy_metric(context_metrics, "recentInputRequestedChars", policy, "requestedChars")
+    _copy_metric(context_metrics, "recentInputEffectiveChars", policy, "effectiveChars")
+    _copy_metric(context_metrics, "recentInputActualCount", policy, "actualCount")
+    _copy_metric(context_metrics, "recentInputActualChars", policy, "actualChars")
     _copy_bool(context_metrics, "recentInputTruncated", policy, "truncated")
+    _copy_reason(context_metrics, "recentInputUnavailableReason", policy)
+    _copy_metric(context_metrics, "axRequestedNodeCount", window_context, "requestedNodeCount")
+    _copy_metric(context_metrics, "axEffectiveNodeCount", window_context, "effectiveNodeCount")
+    _copy_metric(context_metrics, "axRequestedCharCount", window_context, "requestedCharCount")
+    _copy_metric(context_metrics, "axEffectiveCharCount", window_context, "effectiveCharCount")
+    _copy_metric(context_metrics, "axActualNodeCount", window_context, "actualNodeCount")
+    _copy_metric(context_metrics, "axActualCharCount", window_context, "actualCharCount")
     _copy_metric(context_metrics, "axNodeCount", window_context, "nodeCount")
     ax_chars = _metric_int(window_context, "characterCount", "charCount", "textChars")
     if ax_chars is not None:
         context_metrics["axCharacterCount"] = ax_chars
     _copy_bool(context_metrics, "axTruncated", window_context, "truncated")
     _copy_reason(context_metrics, "axUnavailableReason", window_context)
+    captured_at_ms = _metric_int(window_context, "capturedAtMs")
+    if captured_at_ms is not None:
+        context_metrics["axCapturedAtMs"] = captured_at_ms
     _copy_metric(context_metrics, "contextRequestedTokens", context_budget, "requestedTokens")
     _copy_metric(context_metrics, "contextEffectiveTokens", context_budget, "effectiveTokens")
     _copy_bool(context_metrics, "contextTruncated", context_budget, "truncated")

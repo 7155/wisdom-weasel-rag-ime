@@ -233,6 +233,16 @@ _EVAL_TRUTH_STATUSES = frozenset({"none", "human", "frozen"})
 _EVAL_STATUSES = frozenset({"queued", "running", "completed", "failed"})
 _EVALUATOR_KEYS = frozenset({"provider", "model", "thinking", "displayName"})
 _EVAL_SUITE_BINDING_KEYS = frozenset({"suiteId", "suiteRevision"})
+_EVAL_USAGE_KEYS = frozenset({"input", "output", "cacheRead", "cacheWrite", "totalTokens"})
+_EVAL_COST_KEYS = frozenset({"input", "output", "cacheRead", "cacheWrite", "total"})
+_EVAL_FAILURE_CODES = frozenset(
+    {
+        "ai_judge_runtime_unavailable",
+        "ai_judge_request_failed",
+        "ai_judge_invalid_response",
+        "ai_judge_timeout",
+    }
+)
 _SANDBOX_STATUSES = frozenset({"queued", "running", "completed", "failed", "cancelled"})
 _SANDBOX_MUTATION_MODES = frozenset({"read_only", "staged"})
 _SANDBOX_NETWORK_MODES = frozenset({"blocked", "allowlisted"})
@@ -1271,7 +1281,15 @@ def _copy_eval_payload(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise TraceContractError("EvalRun payload must be a mapping")
     result = dict(value)
-    for key in ("truth", "evaluator", "metrics", "suiteBinding"):
+    for key in (
+        "truth",
+        "evaluator",
+        "requestedEvaluator",
+        "metrics",
+        "suiteBinding",
+        "usage",
+        "cost",
+    ):
         nested = result.get(key)
         if isinstance(nested, Mapping):
             result[key] = dict(nested)
@@ -1283,7 +1301,15 @@ def _copy_eval_payload(value: object) -> dict[str, object]:
 
 def _freeze_eval_payload(value: Mapping[str, object]) -> Mapping[str, object]:
     result = dict(value)
-    for key in ("truth", "evaluator", "metrics", "suiteBinding"):
+    for key in (
+        "truth",
+        "evaluator",
+        "requestedEvaluator",
+        "metrics",
+        "suiteBinding",
+        "usage",
+        "cost",
+    ):
         nested = result.get(key)
         if isinstance(nested, Mapping):
             result[key] = _FrozenDict(nested)
@@ -1316,6 +1342,119 @@ def _validated_eval_metrics(
     return result
 
 
+def _validated_eval_fingerprint(value: object, name: str) -> str:
+    if not isinstance(value, str) or not _SHA256_FINGERPRINT_PATTERN.fullmatch(value):
+        raise TraceContractError(f"{name} must be a SHA-256 fingerprint")
+    return value
+
+
+def _validated_eval_usage(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping) or not value:
+        raise TraceContractError("eval usage must contain at least one token count")
+    if set(value) - _EVAL_USAGE_KEYS:
+        raise TraceContractError("eval usage contains unsupported fields")
+    result: dict[str, int] = {}
+    for key, raw_value in value.items():
+        result[key] = _safe_non_negative_int(raw_value, f"eval usage {key}")
+    return result
+
+
+def _validated_eval_cost(value: object) -> dict[str, float | int]:
+    if not isinstance(value, Mapping) or not value:
+        raise TraceContractError("eval cost must contain at least one amount")
+    if set(value) - _EVAL_COST_KEYS:
+        raise TraceContractError("eval cost contains unsupported fields")
+    result: dict[str, float | int] = {}
+    for key, raw_value in value.items():
+        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+            raise TraceContractError(f"eval cost {key} must be a finite non-negative number")
+        amount = float(raw_value)
+        if not math.isfinite(amount) or amount < 0:
+            raise TraceContractError(f"eval cost {key} must be a finite non-negative number")
+        result[key] = raw_value
+    return result
+
+
+def _validate_eval_provenance(payload: Mapping[str, object], *, mode: str) -> None:
+    provenance_keys = {
+        "requestedEvaluator",
+        "promptVersion",
+        "rubricVersion",
+        "inputTraceFingerprint",
+        "startedAtMs",
+        "completedAtMs",
+        "elapsedMs",
+        "latencyMs",
+        "usage",
+        "cost",
+        "fallbackUsed",
+        "failureCode",
+        "sourceTraceId",
+        "repairTraceId",
+        "sourceScope",
+        "failureRef",
+        "repairReceiptId",
+        "changeReceiptId",
+        "testEvidenceId",
+        "testStatus",
+    }
+    present = provenance_keys.intersection(payload)
+    if mode == "ground_truth" and present:
+        raise TraceContractError("ground truth eval cannot carry AI Judge provenance")
+    if "requestedEvaluator" in payload:
+        _validated_evaluator(payload.get("requestedEvaluator"))
+    for key in ("promptVersion", "rubricVersion"):
+        if key in payload:
+            _safe_token(payload.get(key), f"eval {key}")
+    if (
+        "promptVersion" in payload
+        and "rubricVersion" in payload
+        and payload.get("promptVersion") != payload.get("rubricVersion")
+    ):
+        raise TraceContractError("eval promptVersion and rubricVersion must agree")
+    if "inputTraceFingerprint" in payload:
+        _validated_eval_fingerprint(
+            payload.get("inputTraceFingerprint"),
+            "eval inputTraceFingerprint",
+        )
+    for key in ("startedAtMs", "completedAtMs", "elapsedMs", "latencyMs"):
+        if key in payload:
+            _safe_non_negative_int(payload.get(key), f"eval {key}")
+    started = payload.get("startedAtMs")
+    completed = payload.get("completedAtMs")
+    if started is not None and completed is not None and completed < started:
+        raise TraceContractError("eval completedAtMs must not precede startedAtMs")
+    if "usage" in payload:
+        _validated_eval_usage(payload.get("usage"))
+    if "cost" in payload:
+        _validated_eval_cost(payload.get("cost"))
+    if "fallbackUsed" in payload and not isinstance(payload.get("fallbackUsed"), bool):
+        raise TraceContractError("eval fallbackUsed must be a boolean")
+    if "failureCode" in payload:
+        failure_code = payload.get("failureCode")
+        if failure_code not in _EVAL_FAILURE_CODES:
+            raise TraceContractError("eval failureCode is not supported")
+        if payload.get("status") != "failed":
+            raise TraceContractError("eval failureCode requires a failed EvalRun")
+    repair_keys = {
+        "sourceTraceId", "repairTraceId", "sourceScope", "failureRef",
+        "repairReceiptId", "changeReceiptId", "testEvidenceId", "testStatus",
+    }
+    repair_present = repair_keys.intersection(payload)
+    if repair_present:
+        if mode != "ai_judge":
+            raise TraceContractError("repair provenance requires an AI Judge EvalRun")
+        if repair_present != repair_keys:
+            raise TraceContractError("repair provenance must contain the complete binding")
+        for key in (
+            "sourceTraceId", "repairTraceId", "sourceScope", "failureRef",
+            "repairReceiptId", "changeReceiptId", "testEvidenceId",
+        ):
+            _safe_token(payload.get(key), f"eval {key}")
+        if payload.get("testStatus") != "passed":
+            raise TraceContractError("repair provenance requires a passed test")
+
+
 def build_eval_run(
     *,
     eval_run_id: str,
@@ -1329,6 +1468,27 @@ def build_eval_run(
     suite_binding: Mapping[str, str] | None = None,
     status: str = "completed",
     now_ms: int | None = None,
+    updated_at_ms: int | None = None,
+    requested_evaluator: Mapping[str, str] | None = None,
+    prompt_version: str | None = None,
+    rubric_version: str | None = None,
+    input_trace_fingerprint: str | None = None,
+    started_at_ms: int | None = None,
+    completed_at_ms: int | None = None,
+    elapsed_ms: int | None = None,
+    latency_ms: int | None = None,
+    usage: Mapping[str, int] | None = None,
+    cost: Mapping[str, float | int] | None = None,
+    fallback_used: bool | None = None,
+    failure_code: str | None = None,
+    source_trace_id: str | None = None,
+    repair_trace_id: str | None = None,
+    repair_source_scope: str | None = None,
+    repair_failure_ref: str | None = None,
+    repair_receipt_id: str | None = None,
+    change_receipt_id: str | None = None,
+    test_evidence_id: str | None = None,
+    test_status: str | None = None,
 ) -> EvalRun:
     safe_mode = _safe_token(mode, "eval mode")
     if safe_mode not in _EVAL_MODES:
@@ -1393,6 +1553,9 @@ def build_eval_run(
     timestamp = _now_ms() if now_ms is None else int(now_ms)
     if timestamp < 0:
         raise TraceContractError("eval timestamp must be non-negative")
+    updated_timestamp = timestamp if updated_at_ms is None else int(updated_at_ms)
+    if updated_timestamp < timestamp:
+        raise TraceContractError("eval updated timestamp must not precede created timestamp")
     payload = {
         "schemaVersion": EVAL_SCHEMA_VERSION,
         "evalRunId": _safe_token(eval_run_id, "eval_run_id"),
@@ -1408,10 +1571,35 @@ def build_eval_run(
         "metrics": safe_metrics,
         "status": _safe_status(status, "eval status", _EVAL_STATUSES),
         "createdAtMs": timestamp,
-        "updatedAtMs": timestamp,
+        "updatedAtMs": updated_timestamp,
     }
     if safe_suite_binding is not None:
         payload["suiteBinding"] = safe_suite_binding
+    optional_provenance = (
+        ("requestedEvaluator", None if requested_evaluator is None else _validated_evaluator(requested_evaluator)),
+        ("promptVersion", None if prompt_version is None else _safe_token(prompt_version, "eval promptVersion")),
+        ("rubricVersion", None if rubric_version is None else _safe_token(rubric_version, "eval rubricVersion")),
+        ("inputTraceFingerprint", None if input_trace_fingerprint is None else _validated_eval_fingerprint(input_trace_fingerprint, "eval inputTraceFingerprint")),
+        ("startedAtMs", started_at_ms),
+        ("completedAtMs", completed_at_ms),
+        ("elapsedMs", elapsed_ms),
+        ("latencyMs", latency_ms),
+        ("usage", None if usage is None else _validated_eval_usage(usage)),
+        ("cost", None if cost is None else _validated_eval_cost(cost)),
+        ("fallbackUsed", fallback_used),
+        ("failureCode", failure_code),
+        ("sourceTraceId", None if source_trace_id is None else _safe_token(source_trace_id, "eval sourceTraceId")),
+        ("repairTraceId", None if repair_trace_id is None else _safe_token(repair_trace_id, "eval repairTraceId")),
+        ("sourceScope", None if repair_source_scope is None else _safe_token(repair_source_scope, "eval sourceScope")),
+        ("failureRef", None if repair_failure_ref is None else _safe_token(repair_failure_ref, "eval failureRef")),
+        ("repairReceiptId", None if repair_receipt_id is None else _safe_token(repair_receipt_id, "eval repairReceiptId")),
+        ("changeReceiptId", None if change_receipt_id is None else _safe_token(change_receipt_id, "eval changeReceiptId")),
+        ("testEvidenceId", None if test_evidence_id is None else _safe_token(test_evidence_id, "eval testEvidenceId")),
+        ("testStatus", test_status),
+    )
+    for key, value in optional_provenance:
+        if value is not None:
+            payload[key] = value
     validate_eval_run(payload)
     return EvalRun(payload)
 
@@ -1483,6 +1671,7 @@ def validate_eval_run(payload: Mapping[str, object]) -> None:
         if authority != "ai_judge_estimate" or not isinstance(truth, Mapping) or truth.get("status") != "none":
             raise TraceContractError("AI Judge eval must carry estimate authority and no ground truth")
         _validated_evaluator(evaluator)
+    _validate_eval_provenance(payload, mode=mode)
 
 
 def _validated_evaluator(value: object) -> dict[str, str]:

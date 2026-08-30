@@ -12,21 +12,18 @@
   --paw-motion-window: 240ms;
 }
 
-/* Window creation is a single, restrained spatial entrance. Existing WAAPI
- * close/minimize paths remain authoritative for exits and stay interruptible. */
+/* Window creation has exactly one entrance path: the WAAPI mount animation in
+ * PawWindowLayer.tsx (200ms, reduced-motion gated and interruptible). A former
+ * @starting-style entrance on this same element ran a second, differently
+ * tuned transition underneath it, so it was removed — do not reintroduce a
+ * CSS entrance here. The transitions below remain for focus and chrome state
+ * changes after the window is on stage. */
 .paw-window {
   transition:
     opacity var(--paw-motion-chrome) var(--paw-ease-out),
     transform var(--paw-motion-window) var(--paw-ease-out),
     box-shadow var(--paw-motion-chrome) ease,
     border-color var(--paw-motion-chrome) ease;
-}
-
-@starting-style {
-  .paw-window {
-    opacity: 0;
-    transform: translate3d(0, 8px, 0) scale(.985);
-  }
 }
 
 .paw-window-shell[data-active] .paw-window {

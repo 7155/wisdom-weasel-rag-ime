@@ -114,6 +114,55 @@ test.describe('full route layout health', () => {
     await expect(page.locator('main[data-route-id="overview"]')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   });
+
+  test('input pipeline stages stay single-line and bounded at narrow widths', async ({ page }) => {
+    await page.goto('/#/input');
+    const main = page.locator('main[data-route-id="input"]');
+    await expect(main).toBeVisible();
+    const steps = main.locator('.input-pipeline__steps');
+    await expect(steps).toBeVisible();
+    await expect(steps.locator('.input-pipeline__step')).toHaveCount(3);
+
+    const layout = await steps.evaluate((element) => {
+      const container = element.getBoundingClientRect();
+      const styles = getComputedStyle(element);
+      const children = Array.from(element.children).map((child) => {
+        const node = child as HTMLElement;
+        const rect = node.getBoundingClientRect();
+        const childStyles = getComputedStyle(node);
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          height: rect.height,
+          whiteSpace: childStyles.whiteSpace,
+          overflow: childStyles.overflow,
+          textOverflow: childStyles.textOverflow,
+        };
+      });
+      return {
+        left: container.left,
+        right: container.right,
+        bottom: container.bottom,
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+        flexWrap: styles.flexWrap,
+        children,
+      };
+    });
+
+    expect(layout.flexWrap).toBe('nowrap');
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 1);
+    for (const child of layout.children) {
+      expect(child.right).toBeLessThanOrEqual(layout.right + 1);
+      expect(child.left).toBeGreaterThanOrEqual(layout.left - 1);
+      expect(child.bottom - child.top).toBeLessThanOrEqual(layout.bottom - layout.children[0].top + 1);
+      expect(child.whiteSpace).toBe('nowrap');
+      expect(child.overflow).toBe('hidden');
+      expect(child.textOverflow).toBe('ellipsis');
+    }
+  });
 });
 
 async function collectRouteEvidence(page: Page, routeId: string, title: string): Promise<RouteEvidence> {

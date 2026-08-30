@@ -1283,16 +1283,24 @@ main[data-route-id='observability'] .observation-sandbox-runs__identity .mgmt-st
 
 main[data-route-id='observability'] .observation-sandbox-runs__chain {
   display: grid;
-  grid-template-columns: max-content auto max-content auto max-content;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 7px;
   min-width: 0;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 main[data-route-id='observability'] .observation-sandbox-runs__node small {
   color: var(--color-text-tertiary);
   font-size: 11px;
+}
+
+main[data-route-id='observability'] .observation-sandbox-runs__node code,
+main[data-route-id='observability'] .observation-sandbox-runs__node a {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 main[data-route-id='observability'] .observation-sandbox-runs__node a {

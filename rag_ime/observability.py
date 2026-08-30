@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -34,7 +35,7 @@ OBSERVATION_CATEGORIES = frozenset(
     }
 )
 OBSERVATION_STATUSES = frozenset(
-    {"queued", "running", "waiting", "completed", "failed", "cancelled", "info"}
+    {"queued", "running", "waiting", "completed", "failed", "cancelled", "expired", "info"}
 )
 _SENSITIVE_KEY_TOKENS = frozenset(
     {
@@ -73,8 +74,14 @@ _PUBLIC_METRIC_NUMBER_KEYS = frozenset(
     {
         "argumentFieldCount",
         "attachmentCount",
+        "axActualCharCount",
+        "axActualNodeCount",
         "axCharacterCount",
+        "axEffectiveCharCount",
+        "axEffectiveNodeCount",
         "axNodeCount",
+        "axRequestedCharCount",
+        "axRequestedNodeCount",
         "blockCount",
         "cacheHitPercent",
         "cacheReadTokens",
@@ -110,7 +117,9 @@ _PUBLIC_METRIC_NUMBER_KEYS = frozenset(
         "ragElapsedMs",
         "recentInputActualChars",
         "recentInputActualCount",
+        "recentInputEffectiveChars",
         "recentInputEffectiveCount",
+        "recentInputRequestedChars",
         "recentInputRequestedCount",
         "recentCompleteInputCount",
         "recentConversationCount",
@@ -183,6 +192,19 @@ _PUBLIC_ATTRIBUTE_FINGERPRINT_KEYS = frozenset(
     {"answerFingerprint", "inputFingerprint"}
 )
 _PUBLIC_REASON_VALUES = frozenset({"threshold", "event_replay_gap"})
+_INPUT_GENERATION_CONTEXT_REASON_VALUES = frozenset(
+    {
+        "ax_timeout",
+        "budget_exhausted",
+        "no_accessibility_nodes",
+        "no_eligible_inputs",
+        "no_recent_input",
+        "not_captured",
+        "provider_unavailable",
+        "redacted",
+        "unsupported",
+    }
+)
 _PUBLIC_ATTRIBUTE_IDENTIFIER_KEYS = frozenset(
     {
         "action",
@@ -202,14 +224,18 @@ _PUBLIC_ATTRIBUTE_IDENTIFIER_KEYS = frozenset(
         "knowledgeBaseId",
         "lifecycleAuthority",
         "memoryId",
+        "maintenanceJobId",
         "model",
+        "axUnavailableReason",
         "parentUnavailableReason",
         "participantState",
         "phase",
         "postKind",
         "producerKind",
         "project",
+        "recentInputUnavailableReason",
         "provider",
+        "ownerRunId",
         "receiptId",
         "requestKind",
         "retrievalMode",
@@ -221,6 +247,7 @@ _PUBLIC_ATTRIBUTE_IDENTIFIER_KEYS = frozenset(
         "sourceKind",
         "targetParticipantId",
         "terminalPhaseStatus",
+        "traceContext",
         "thinkingLevel",
         "toolName",
         "trigger",
@@ -652,6 +679,12 @@ class ObservationHub:
         ] = {}
         self._next_subscriber_id = 1
         self._projection_queue: queue.Queue[tuple[str, object]] = queue.Queue(maxsize=2_048)
+        self._projection_health_lock = threading.Lock()
+        self._projection_dropped_count = 0
+        self._projection_error_count = 0
+        self._projection_last_drop: dict[str, object] | None = None
+        self._projection_last_failure: dict[str, object] | None = None
+        self._projection_failure_receipts: deque[dict[str, object]] = deque(maxlen=32)
         self._projection_closed = threading.Event()
         self._projection_thread = threading.Thread(
             target=self._run_projection_worker,
@@ -740,7 +773,41 @@ class ObservationHub:
             if time.monotonic() >= deadline:
                 return False
             time.sleep(0.005)
-        return True
+        # A task can be marked done after its projection raised.  Keep that
+        # failure visible to callers instead of claiming a clean flush.
+        with self._projection_health_lock:
+            return (
+                self._projection_dropped_count == 0
+                and self._projection_error_count == 0
+            )
+
+    def projection_health(self) -> dict[str, object]:
+        """Return bounded health evidence for the non-authoritative projector.
+
+        The primary Agent/Room path remains fail-open and non-blocking.  This
+        endpoint makes that trade-off observable: queue overflow is counted,
+        projector exceptions receive durable failure observations when the
+        journal is available, and callers can refuse to treat a flush as
+        lossless after either condition.
+        """
+
+        with self._projection_health_lock:
+            dropped_count = self._projection_dropped_count
+            error_count = self._projection_error_count
+            last_drop = dict(self._projection_last_drop or {}) or None
+            last_failure = dict(self._projection_last_failure or {}) or None
+            failures = [dict(item) for item in self._projection_failure_receipts]
+        return {
+            "schemaVersion": "rag-ime.observation-projection-health.v1",
+            "healthy": dropped_count == 0 and error_count == 0,
+            "queueCapacity": self._projection_queue.maxsize,
+            "pendingCount": self._projection_queue.unfinished_tasks,
+            "droppedCount": dropped_count,
+            "errorCount": error_count,
+            "lastDrop": last_drop,
+            "lastFailure": last_failure,
+            "recentFailures": failures,
+        }
 
     def close(self) -> None:
         if self._projection_closed.is_set():
@@ -1654,8 +1721,16 @@ class ObservationHub:
             "recentInputActualChars",
             "recentInputRequestedCount",
             "recentInputEffectiveCount",
+            "recentInputRequestedChars",
+            "recentInputEffectiveChars",
             "axNodeCount",
             "axCharacterCount",
+            "axRequestedNodeCount",
+            "axEffectiveNodeCount",
+            "axActualNodeCount",
+            "axRequestedCharCount",
+            "axEffectiveCharCount",
+            "axActualCharCount",
             "contextRequestedTokens",
             "contextEffectiveTokens",
         ):
@@ -1666,6 +1741,15 @@ class ObservationHub:
             value = context_metrics.get(key)
             if isinstance(value, bool):
                 metrics[key] = value
+        context_reason_attributes = {
+            key: context_metrics[key]
+            for key in (
+                "recentInputUnavailableReason",
+                "axUnavailableReason",
+                "contextUnavailableReason",
+            )
+            if context_metrics.get(key) in _INPUT_GENERATION_CONTEXT_REASON_VALUES
+        }
         for key in (
             "elapsedMs",
             "firstTokenMs",
@@ -1695,6 +1779,7 @@ class ObservationHub:
             ),
             "rawTextStored": False,
             "sourceRawTextIncluded": privacy.get("rawTextIncluded") is True,
+            **context_reason_attributes,
         }
         input_fingerprint = request.get("inputFingerprint")
         if isinstance(input_fingerprint, str) and re.fullmatch(
@@ -1961,24 +2046,51 @@ class ObservationHub:
         attempt_id: str = "",
         metrics: Mapping[str, object] | None = None,
         refs: Sequence[Mapping[str, object]] | None = None,
+        trace_id: str = "",
+        maintenance_job_id: str = "",
+        parent_span_id: str = "",
     ) -> dict[str, object]:
         safe_run_id = _identifier(run_id)
         if not safe_run_id:
             raise ValueError("run_id is required for memory maintenance observations")
         safe_phase = _bounded_label(phase, fallback="updated")
         safe_attempt_id = _identifier(attempt_id) or safe_run_id
+        safe_trace_id = _identifier(trace_id) or f"trace:memory:{safe_run_id}"
+        safe_maintenance_job_id = _identifier(maintenance_job_id)
+        # Keep the historical owner-run span IDs when no Gateway context is
+        # supplied.  A Gateway-owned maintenance run deliberately uses the
+        # same trace as its job while retaining the owner run in runId and in
+        # structured attributes, so the two identities cannot be confused.
         span_prefix = f"span:memory:{safe_run_id}"
         if safe_attempt_id != safe_run_id:
             span_prefix += f":attempt:{safe_attempt_id}"
+        safe_parent_span_id = (
+            _identifier(parent_span_id)
+            if safe_phase == "started"
+            else f"{span_prefix}:started"
+        )
         timestamp_ms = _now_ms()
-        return self.emit(
-            traceId=f"trace:memory:{safe_run_id}",
-            spanId=f"{span_prefix}:{safe_phase}",
-            parentSpanId=(
-                ""
-                if safe_phase == "started"
-                else f"{span_prefix}:started"
+        attributes = {
+            "rawMemoryTextStored": False,
+            **(
+                {"attemptId": safe_attempt_id}
+                if safe_attempt_id != safe_run_id
+                else {}
             ),
+            **(
+                {
+                    "maintenanceJobId": safe_maintenance_job_id,
+                    "ownerRunId": safe_run_id,
+                    "traceContext": "gateway_memory_maintenance",
+                }
+                if safe_maintenance_job_id
+                else {}
+            ),
+        }
+        return self.emit(
+            traceId=safe_trace_id,
+            spanId=f"{span_prefix}:{safe_phase}",
+            parentSpanId=safe_parent_span_id,
             sessionId="",
             roomId="",
             turnId="",
@@ -1996,14 +2108,7 @@ class ObservationHub:
             endedAtMs=None,
             privacyClass="metadata",
             metrics=dict(metrics or {}),
-            attributes={
-                "rawMemoryTextStored": False,
-                **(
-                    {"attemptId": safe_attempt_id}
-                    if safe_attempt_id != safe_run_id
-                    else {}
-                ),
-            },
+            attributes=attributes,
             refs=list(refs or ()),
         )
 
@@ -2017,8 +2122,16 @@ class ObservationHub:
                 self._projection_queue.put_nowait((kind, value))
         except queue.Full:
             # Observation backpressure is intentionally fail-open. The primary
-            # Agent, Room, and Active RAG paths must keep moving.
-            return
+            # Agent, Room, and Active RAG paths must keep moving.  Do not turn
+            # the overflow path into a blocking database write; retain a
+            # bounded health receipt instead.
+            with self._projection_health_lock:
+                self._projection_dropped_count += 1
+                self._projection_last_drop = {
+                    "kind": kind,
+                    "reason": "queue_full",
+                    "createdAtMs": _now_ms(),
+                }
 
     def _run_projection_worker(self) -> None:
         while True:
@@ -2042,11 +2155,66 @@ class ObservationHub:
                     self.observe_knowledge_retrieval_record(value)
                 elif kind == "browser" and isinstance(value, Mapping):
                     self.observe_browser_record(value)
-            except Exception:
-                # The projector is a non-authoritative diagnostic consumer.
-                pass
+            except Exception as exc:
+                # The projector is a non-authoritative diagnostic consumer,
+                # but a silent failure makes Trace itself impossible to debug.
+                # Record a metadata-only failure receipt from this worker so
+                # the foreground producer still never waits on the journal.
+                self._record_projection_failure(kind, exc)
             finally:
                 self._projection_queue.task_done()
+
+    def _record_projection_failure(self, kind: str, error: Exception) -> None:
+        receipt_id = f"projection-failure:{uuid.uuid4().hex}"
+        failure = {
+            "receiptId": receipt_id,
+            "kind": kind,
+            "reason": "projection_exception",
+            "errorType": type(error).__name__,
+            "createdAtMs": _now_ms(),
+            "persisted": False,
+        }
+        with self._projection_health_lock:
+            self._projection_error_count += 1
+            self._projection_last_failure = dict(failure)
+            self._projection_failure_receipts.append(dict(failure))
+        try:
+            self.store.append(
+                {
+                    "eventId": f"observation:{receipt_id}",
+                    "traceId": "trace:observation-projection",
+                    "spanId": f"span:{receipt_id}",
+                    "category": "system",
+                    "phase": "projection_failure",
+                    "name": "observation_projection",
+                    "status": "failed",
+                    "summary": "Trace 投影失败",
+                    "createdAtMs": int(failure["createdAtMs"]),
+                    "startedAtMs": int(failure["createdAtMs"]),
+                    "endedAtMs": int(failure["createdAtMs"]),
+                    "privacyClass": "metadata",
+                    "metrics": {"eventCount": 1},
+                    "attributes": {
+                        "action": "projection_failure",
+                        "failureKind": "projection_exception",
+                        "producerKind": kind,
+                        "receiptId": receipt_id,
+                    },
+                    "refs": [
+                        {
+                            "kind": "projection_failure",
+                            "id": receipt_id,
+                            "label": kind,
+                        }
+                    ],
+                }
+            )
+        except Exception:
+            # Health remains useful even if the journal itself is unavailable.
+            return
+        with self._projection_health_lock:
+            self._projection_last_failure["persisted"] = True  # type: ignore[index]
+            self._projection_failure_receipts[-1]["persisted"] = True
 
 
 def _agent_projection_payload(event: AgentEventEnvelope) -> dict[str, object]:
@@ -2674,8 +2842,16 @@ def _input_generation_projection_record(
         "recentInputActualChars",
         "recentInputRequestedCount",
         "recentInputEffectiveCount",
+        "recentInputRequestedChars",
+        "recentInputEffectiveChars",
         "axNodeCount",
         "axCharacterCount",
+        "axRequestedNodeCount",
+        "axEffectiveNodeCount",
+        "axActualNodeCount",
+        "axRequestedCharCount",
+        "axEffectiveCharCount",
+        "axActualCharCount",
         "contextRequestedTokens",
         "contextEffectiveTokens",
     ):
@@ -2685,6 +2861,14 @@ def _input_generation_projection_record(
     for key in ("recentInputTruncated", "axTruncated", "contextTruncated"):
         value = context.get(key)
         if isinstance(value, bool):
+            context_payload[key] = value
+    for key in (
+        "recentInputUnavailableReason",
+        "axUnavailableReason",
+        "contextUnavailableReason",
+    ):
+        value = context.get(key)
+        if value in _INPUT_GENERATION_CONTEXT_REASON_VALUES:
             context_payload[key] = value
     if context_payload:
         request_payload["contextMetrics"] = context_payload

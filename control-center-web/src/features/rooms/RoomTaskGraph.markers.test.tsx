@@ -72,6 +72,18 @@ describe('RoomTaskGraph SVG marker ownership', () => {
     expect(roomsCss).toContain('@container room-cockpit-shell (max-width: 375px)');
     expect(roomsCss).toContain('.room-cockpit__subagent > .room-cockpit__disclosure-summary { grid-template-columns: auto minmax(0, 1fr); }');
   });
+
+  it('keeps Room lane metadata single-line at narrow window widths', () => {
+    expect(roomsCss).toMatch(/\.room-agent-lane__identity strong \{[^}]*min-width: 0;[^}]*flex: 1 1 auto;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    expect(roomsCss).toMatch(/\.room-agent-lane__identity small \{[^}]*min-width: 0;[^}]*max-width: 42%;[^}]*flex: 0 1 auto;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    expect(roomsCss).toMatch(/\.room-agent-activity strong \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    expect(roomsCss).toMatch(/\.room-status-activity__heading strong \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    expect(roomsCss).toMatch(/\.room-status-activity small \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    expect(roomsCss).toMatch(/\.room-status-work__item p > \.room-status-work__value \{[^}]*min-width: 0;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+    expect(roomsCss).toContain('@container paw-window (max-width: 430px)');
+    expect(roomsCss).toContain(".paw-window-shell[data-app='agent'] .room-status-work__item > div > header strong");
+    expect(roomsCss).not.toContain('.paw-os-app-window');
+  });
 });
 
 function markerFixture() {

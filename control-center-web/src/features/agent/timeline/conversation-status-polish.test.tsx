@@ -53,6 +53,20 @@ describe('conversation status polish', () => {
     expect(agentFxCss).toMatch(/\.agent-assistant-pending \{[^}]*box-shadow: none;/);
   });
 
+  it('binds PAWOS Agent responsive rules to the real window shell', () => {
+    expect(agentCss).toContain(".paw-window-shell[data-app='agent'] .agent-feature");
+    expect(agentCss).not.toContain('.paw-os-app-window');
+  });
+
+  it('animates autocompact with composited properties and a reduced-motion state', () => {
+    expect(agentCss).toMatch(/\.agent-compaction-notice \{[^}]*animation: agent-autocompact-enter var\(--duration-enter\) var\(--ease-standard\) both;/);
+    expect(agentCss).toContain('@keyframes agent-autocompact-fold-top');
+    expect(agentCss).toContain('transform: translateY(5px) scaleX(.72);');
+    expect(agentCss).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(agentCss).toMatch(/\.agent-compaction-notice\[data-state='running'\] \.agent-compaction-notice__fold > i \{ animation: none; \}/);
+    expect(agentCss).not.toMatch(/\.agent-compaction-notice[^}]*transition:\s*all/);
+  });
+
   it('keeps terminal failures as a compact recoverable inline notice', () => {
     const sessionId = 'session-status-polish';
     const turnId = 'turn-status-polish';

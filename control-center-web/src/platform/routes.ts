@@ -127,6 +127,62 @@ export const CONTROL_ROUTES = {
     ],
     responseContract: 'eval-run.v1',
   },
+  'observability.evals.aiJudge.run': {
+    method: 'POST',
+    path: '/api/observability/evals/ai-judge',
+    body: ['traceId', 'evaluator', 'provider', 'model', 'thinking', 'displayName'],
+    requiredBody: ['traceId'],
+    responseContract: 'eval-run.v1',
+  },
+  // Trace repair evidence is an ordered, loopback-only write pipeline. The
+  // server issues evidence and receipt identities.
+  'observability.traceRepair.changeEvidence': {
+    method: 'POST',
+    path: '/api/observability/trace-repair/evidence/change',
+    body: ['schemaVersion', 'repairSessionId', 'repairTraceId'],
+    requiredBody: ['schemaVersion', 'repairSessionId', 'repairTraceId'],
+  },
+  'observability.traceRepair.testEvidence': {
+    method: 'POST',
+    path: '/api/observability/trace-repair/evidence/test',
+    body: ['schemaVersion', 'repairSessionId', 'repairTraceId'],
+    requiredBody: ['schemaVersion', 'repairSessionId', 'repairTraceId'],
+  },
+  'observability.traceRepair.receipt.create': {
+    method: 'POST',
+    path: '/api/observability/trace-repair/receipts',
+    body: [
+      'schemaVersion',
+      'sourceScope',
+      'sourceTraceId',
+      'failureRef',
+      'changeReceiptId',
+      'testEvidenceId',
+      'repairTraceId',
+      'repairSessionId',
+    ],
+    requiredBody: [
+      'schemaVersion',
+      'sourceScope',
+      'sourceTraceId',
+      'failureRef',
+      'changeReceiptId',
+      'testEvidenceId',
+      'repairTraceId',
+      'repairSessionId',
+    ],
+  },
+  'observability.traceRepair.receipt.get': {
+    method: 'GET',
+    path: '/api/observability/trace-repair/receipts/:repairReceiptId',
+    params: { repairReceiptId: null },
+  },
+  'observability.traceRepair.recheck': {
+    method: 'POST',
+    path: '/api/observability/trace-repair/recheck',
+    body: ['schemaVersion', 'repairReceiptId'],
+    requiredBody: ['schemaVersion', 'repairReceiptId'],
+  },
   'observability.evalSchedules.list': {
     method: 'GET',
     path: '/api/observability/eval-schedules',
@@ -598,6 +654,17 @@ export const CONTROL_ROUTES = {
       'answerToRootId',
     ],
     requiredBody: ['message'],
+  },
+  'agent.room.startGate.get': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/start-gate',
+    params: { roomId: null },
+  },
+  'agent.room.startGate.confirm': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/start-gate',
+    params: { roomId: null },
+    body: ['gateId', 'decision', 'action'],
   },
   'agent.room.participant.steer': {
     method: 'POST',

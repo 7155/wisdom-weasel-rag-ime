@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Mapping
+from typing import Iterator, Mapping
 
 from .activity_timeline import DailyActivityTimelineStore, TIMELINE_SEGMENTATION_MODE
 from .db import apply_database_migrations, migration_status
@@ -1086,12 +1087,17 @@ def _fts_orphan_count(conn: sqlite3.Connection) -> int:
     )
 
 
-def _connect(path: Path) -> sqlite3.Connection:
+@contextmanager
+def _connect(path: Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _count(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -68,6 +69,7 @@ from .agent_room_intercom_application import (
     RoomIntercomApplicationService,
 )
 from .agent_room_session_dispatch import RoomSessionDispatchService
+from .agent_room_start_gate import AgentRoomStartGateStore
 from .agent_room_session_cancellation import RoomSessionCancellationService
 from .agent_room_management import RoomManagementService
 from .agent_room_partner_application import (
@@ -110,6 +112,13 @@ from .agent_wake_application import AgentWakeApplicationService
 from .contracts.json_schema import validate_contract
 from .embeddings import EmbeddingProvider
 from .eval_run_store import EvalRunStore
+from .ai_judge_eval import (
+    AI_JUDGE_RUBRIC_VERSION,
+    AiJudgeOutputError,
+    build_ai_judge_prompt,
+    effective_ai_judge_evaluator,
+    parse_ai_judge_metrics,
+)
 from .eval_schedule_store import (
     EvalScheduleExecutionError,
     EvalScheduleRunner,
@@ -129,10 +138,17 @@ from .trace_adapters import envelope_from_observations
 from .trace_runtime import (
     TraceContractError,
     TraceEnvelope,
+    build_eval_run,
     validate_sandbox_run,
     validate_trace_envelope,
 )
 from .trace_store import TraceStore
+from .trace_repair import (
+    TraceRepairStore,
+    TraceRepairValidationError,
+    derive_repair_evidence,
+    run_ai_judge_recheck,
+)
 from .sandbox_run_store import SandboxRunStore
 from .vertical_agent_suite import (
     BuiltinVerticalSuiteError,
@@ -265,6 +281,8 @@ class AgentService:
             ),
         )
         self.rooms.initialize()
+        self.room_start_gates = AgentRoomStartGateStore(db_path)
+        self.room_start_gates.initialize()
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
         self.room_partner_dispatches = AgentRoomPartnerDispatchStore(db_path)
@@ -289,6 +307,13 @@ class AgentService:
             initialize_trace_store()
         self.eval_runs = EvalRunStore(db_path)
         self.eval_runs.initialize()
+        # Trace repair evidence and receipts are a Runtime-owned authority,
+        # separate from the bounded Observation journal.  The HTTP surface
+        # below only accepts opaque IDs returned by this store and derives
+        # every recheck binding from the persisted receipt.
+        self.trace_repairs = TraceRepairStore(db_path)
+        self.trace_repairs.initialize()
+        self._trace_repair_recheck_lock = RLock()
         self.sandbox_runs = sandbox_run_store or SandboxRunStore(db_path)
         self.sandbox_runs.initialize()
         if self._eval_schedule_executor is None:
@@ -1289,7 +1314,16 @@ class AgentService:
         self,
         session_id: str,
     ) -> bool:
-        return self._active_room_dispatch_context(session_id) is not None
+        context = self._active_room_dispatch_context(session_id)
+        if context is None:
+            return False
+        room_id = str(context.get("roomId") or "")
+        gate = self.room_start_gates.get(room_id) if room_id else None
+        # A live dispatch proves ownership, but not user alignment. The
+        # Room-only no-per-Tool overlay becomes available only after the
+        # durable start gate was explicitly confirmed. Legacy active Rooms
+        # without that receipt continue under their ordinary Session policy.
+        return bool(gate and gate.get("status") == "confirmed")
 
     def _room_delegation_context(
         self,
@@ -2256,6 +2290,41 @@ class AgentService:
             ]
         else:
             raise ValueError("participantIds must be an array")
+        # A collaboration Room's first executable request is a public start
+        # gate. Keep this before the ordinary command receipt and dispatch
+        # path: a pending gate must not reach route planning, Pi, Tools or
+        # Partner/private child dispatch.
+        if work_item_id:
+            room = self.rooms.get(room_id)
+            if str(room.get("roomKind") or "collaboration") == "collaboration":
+                gate = self._claim_room_start_gate(
+                    room_id,
+                    message=message,
+                    client_message_id=client_message_id,
+                    requested_participant_ids=requested_participant_ids,
+                    work_item_id=work_item_id,
+                    attachment_ids=attachment_ids,
+                    retry_of_root_id=retry_of_root_id,
+                )
+                if gate is not None:
+                    if gate.get("status") == "pending":
+                        return self._room_start_confirmation_response(gate)
+                    stored = gate.get("response")
+                    if isinstance(stored, Mapping):
+                        return {**dict(stored), "idempotentReplay": True}
+                    # A confirmed gate with no completed response is a safe
+                    # retry window (for example a process died after the
+                    # confirmation was recorded but before Pi admission).
+                    return self._post_room_message_command(
+                        room_id,
+                        message=message,
+                        client_message_id=client_message_id,
+                        retry_of_root_id=retry_of_root_id,
+                        requested_participant_ids=requested_participant_ids,
+                        work_item_id=work_item_id,
+                        attachment_ids=attachment_ids,
+                        bypass_start_gate=True,
+                    )
         if not client_message_id:
             return self._post_room_message_once(
                 room_id,
@@ -2318,6 +2387,169 @@ class AgentService:
             response=response,
         )
 
+    def _claim_room_start_gate(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        requested_participant_ids: Sequence[str],
+        work_item_id: str,
+        attachment_ids: Sequence[str],
+        retry_of_root_id: str,
+    ) -> dict[str, object] | None:
+        # Client IDs are the replay boundary for Room commands. Requests from
+        # older direct callers without one retain the pre-gate compatibility
+        # path; the Control Center always supplies one.
+        if not client_message_id:
+            return None
+        existing_gate = self.room_start_gates.get(room_id)
+        if (
+            existing_gate is not None
+            and existing_gate.get("status") == "confirmed"
+            and str(existing_gate.get("clientMessageId") or "") != client_message_id
+        ):
+            # The Room start boundary is crossed once. A later WorkItem owns a
+            # new command receipt, not a new alignment gate. The original
+            # client id still reaches `claim()` below so an exact retry can
+            # replay the stored first response and a mutated retry is rejected.
+            return None
+        target_ids = list(requested_participant_ids)
+        if not target_ids:
+            try:
+                _work, owner_id = self.room_work.authoritative_owner(
+                    work_item_id,
+                    room_id=room_id,
+                )
+                target_ids = [str(owner_id)]
+            except Exception:
+                target_ids = []
+        gate = self.room_start_gates.claim(
+            room_id=room_id,
+            objective_text=message,
+            client_message_id=client_message_id,
+            target_participant_ids=target_ids,
+            work_item_id=work_item_id,
+            attachment_ids=attachment_ids,
+            retry_of_root_id=retry_of_root_id,
+        )
+        if gate.get("status") == "pending" and not gate.get("idempotentReplay"):
+            event = self.room_events.publish(
+                room_id=room_id,
+                event_type="room_start_confirmation_required",
+                payload={
+                    "gateId": gate["gateId"],
+                    "objective": gate["objective"],
+                    "workItemId": gate["workItemId"],
+                    "targetParticipantIds": gate["targetParticipantIds"],
+                    "requiresConfirmation": True,
+                },
+                turn_id=str(gate["gateId"]),
+                topic_id=str(self.rooms.get(room_id).get("activeTopicId") or ""),
+            )
+            gate = {**gate, "event": event}
+        return gate
+
+    @staticmethod
+    def _room_start_confirmation_response(gate: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.agent-room-message.v1",
+            "ok": True,
+            "accepted": False,
+            "status": "awaiting_confirmation",
+            "phase": "alignment",
+            "executionOwner": "session",
+            "roomId": gate["roomId"],
+            "clientMessageId": gate["clientMessageId"],
+            "workItemId": gate["workItemId"],
+            "startConfirmation": {
+                "gateId": gate["gateId"],
+                "status": gate["status"],
+                "objective": gate["objective"],
+                "workItemId": gate["workItemId"],
+                "targetParticipantIds": gate["targetParticipantIds"],
+                "requiresConfirmation": True,
+                "afterConfirmExecutionMode": "room_unrestricted",
+            },
+            "timelineEvents": ([gate["event"]] if isinstance(gate.get("event"), Mapping) else []),
+        }
+
+    def _post_room_message_command(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        retry_of_root_id: str,
+        requested_participant_ids: Sequence[str],
+        work_item_id: str,
+        attachment_ids: Sequence[str],
+        bypass_start_gate: bool = False,
+    ) -> dict[str, object]:
+        del bypass_start_gate
+        if not client_message_id:
+            return self._post_room_message_once(
+                room_id,
+                message=message,
+                client_message_id="",
+                retry_of_root_id=retry_of_root_id,
+                requested_participant_ids=requested_participant_ids,
+                work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
+                answer_to_post_id="",
+                answer_to_root_id="",
+            )
+        claim = self.command_receipts.begin(
+            command_scope="room_message",
+            scope_id=room_id,
+            client_message_id=client_message_id,
+            payload={
+                "message": message,
+                "retryOfRootId": retry_of_root_id,
+                "participantIds": list(requested_participant_ids),
+                "workItemId": work_item_id,
+                "attachmentIds": list(attachment_ids),
+                "answerToPostId": "",
+                "answerToRootId": "",
+            },
+        )
+        if claim.replay_response is not None:
+            return {**claim.replay_response, "idempotentReplay": True}
+        try:
+            response = self._post_room_message_once(
+                room_id,
+                message=message,
+                client_message_id=client_message_id,
+                retry_of_root_id=retry_of_root_id,
+                requested_participant_ids=requested_participant_ids,
+                work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
+                answer_to_post_id="",
+                answer_to_root_id="",
+            )
+        except Exception as exc:
+            self.command_receipts.fail(
+                claim,
+                command_scope="room_message",
+                scope_id=room_id,
+                client_message_id=client_message_id,
+                error=exc,
+            )
+            raise
+        response = self.command_receipts.complete(
+            claim,
+            command_scope="room_message",
+            scope_id=room_id,
+            client_message_id=client_message_id,
+            response=response,
+        )
+        self.room_start_gates.complete(
+            room_id,
+            root_id=str(response.get("roomTurnId") or ""),
+            response=response,
+        )
+        return response
+
     def execute_room_partner_tool(
         self,
         session_id: str,
@@ -2332,6 +2564,79 @@ class AgentService:
             tool_call_id=tool_call_id,
             source_loop_id=source_loop_id,
         )
+
+    def room_start_gate(self, room_id: str) -> dict[str, object]:
+        gate = self.room_start_gates.get(room_id)
+        if gate is None:
+            raise KeyError(room_id)
+        return gate
+
+    def confirm_room_start(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        gate = self.room_start_gates.get(room_id)
+        if gate is None:
+            raise KeyError(room_id)
+        gate_id = str(payload.get("gateId") or "").strip()
+        if gate_id and gate_id != str(gate["gateId"]):
+            raise ValueError("Room start gate identity does not match")
+        decision = str(payload.get("decision") or payload.get("action") or "confirm").strip().lower()
+        if decision in {"reject", "rejected", "cancel"}:
+            if gate["status"] == "pending":
+                rejected = self.room_start_gates.reject(room_id)
+                self.room_events.publish(
+                    room_id=room_id,
+                    event_type="room_start_confirmation_rejected",
+                    payload={"gateId": gate["gateId"], "objective": gate["objective"]},
+                    turn_id=str(gate["gateId"]),
+                )
+            else:
+                rejected = gate
+            return {
+                "schemaVersion": "rag-ime.agent-room-start-gate.v1",
+                "ok": True,
+                "status": "rejected",
+                "gateId": rejected["gateId"],
+                "roomId": room_id,
+                "idempotentReplay": gate["status"] != "pending",
+            }
+        confirmed = self.room_start_gates.confirm(room_id)
+        stored = confirmed.get("response")
+        if isinstance(stored, Mapping):
+            return {**dict(stored), "idempotentReplay": True}
+        self.room_events.publish(
+            room_id=room_id,
+            event_type="room_start_confirmation_confirmed",
+            payload={
+                "gateId": confirmed["gateId"],
+                "objective": confirmed["objective"],
+                "workItemId": confirmed["workItemId"],
+                "executionMode": "room_unrestricted",
+            },
+            turn_id=str(confirmed["gateId"]),
+        )
+        response = self._post_room_message_command(
+            room_id,
+            message=str(confirmed["objective"]),
+            client_message_id=str(confirmed["clientMessageId"]),
+            retry_of_root_id=str(confirmed.get("retryOfRootId") or ""),
+            requested_participant_ids=[
+                str(value) for value in confirmed["targetParticipantIds"]
+            ],
+            work_item_id=str(confirmed["workItemId"]),
+            attachment_ids=[
+                str(value) for value in confirmed.get("attachmentIds", [])
+            ],
+            bypass_start_gate=True,
+        )
+        self.room_start_gates.complete(
+            room_id,
+            root_id=str(response.get("roomTurnId") or ""),
+            response=response,
+        )
+        return response
 
     def steer_room_participant(
         self,
@@ -3905,6 +4210,400 @@ class AgentService:
             store=self.eval_runs,
         )
 
+    def evaluate_observation_ai_judge(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Run one redacted Trace through the Luna Max AI-Judge seam.
+
+        AI Judge output is always persisted as an estimate.  Runtime or model
+        output failures still produce a failed EvalRun with the effective
+        evaluator recorded, so the UI never turns an unavailable judge into a
+        silently missing or deterministic result.
+        """
+
+        values = dict(payload)
+        trace_id = _observation_trace_id(values)
+        detail = self.observation_trace({"traceId": trace_id, "limit": 500})
+        if detail.get("truncated") is True:
+            raise TraceContractError(
+                "AI Judge evaluation requires a complete observation window"
+            )
+        trace = detail.get("trace")
+        if not isinstance(trace, Mapping):
+            raise TraceContractError("observation Trace projection is invalid")
+        if str(trace.get("status") or "") != "completed":
+            raise TraceContractError("AI Judge evaluation requires completed traces")
+
+        requested = values.get("evaluator")
+        if not isinstance(requested, Mapping):
+            requested_fields = {
+                key: values[key]
+                for key in ("provider", "model", "thinking", "displayName")
+                if key in values
+            }
+            requested = requested_fields or None
+        evaluator = effective_ai_judge_evaluator(requested)
+        # Store only the normalized four-field identity.  This makes an
+        # explicit requested evaluator auditable while dropping arbitrary
+        # request fields that could contain private provider diagnostics.
+        requested_evaluator = dict(evaluator)
+        started_at_ms = int(time.time() * 1000)
+        started_clock = time.perf_counter()
+        request_id = "ai-judge:" + hashlib.sha256(
+            f"{trace_id}:{started_at_ms}".encode("utf-8")
+        ).hexdigest()[:32]
+        metrics: dict[str, float] = {}
+        status = "completed"
+        failure_code: str | None = None
+        response: Mapping[str, object] | None = None
+        runtime = getattr(self, "runtime", None)
+        try:
+            complete_once = getattr(runtime, "complete_once", None)
+            if not callable(complete_once):
+                failure_code = "ai_judge_runtime_unavailable"
+                raise RuntimeError("AI Judge runtime is unavailable")
+            response_value = complete_once(
+                request_id=request_id,
+                provider=evaluator["provider"],
+                model_id=evaluator["model"],
+                thinking_level=evaluator["thinking"],
+                message=build_ai_judge_prompt(trace),
+                timeout_seconds=120.0,
+            )
+            if isinstance(response_value, Mapping):
+                response = response_value
+            response_text = response.get("text") if response is not None else response_value
+            metrics = parse_ai_judge_metrics(response_text)
+        except AiJudgeOutputError:
+            # Keep model output details out of the receipt; the closed code is
+            # enough for the Trace/diagnostic UI to distinguish this failure.
+            status = "failed"
+            failure_code = "ai_judge_invalid_response"
+        except TimeoutError:
+            status = "failed"
+            failure_code = "ai_judge_timeout"
+        except RuntimeError:
+            status = "failed"
+            if failure_code is None:
+                failure_code = "ai_judge_request_failed"
+        except Exception:
+            # The failed receipt is intentional: it keeps evaluator identity,
+            # timing, and estimate authority visible without inventing scores
+            # or persisting a raw provider exception.
+            status = "failed"
+            failure_code = "ai_judge_request_failed"
+
+        completed_at_ms = max(started_at_ms, int(time.time() * 1000))
+        elapsed_ms = max(0, int(round((time.perf_counter() - started_clock) * 1000)))
+        latency_ms = _public_ai_judge_latency(response) if response is not None else None
+        if latency_ms is None:
+            latency_ms = elapsed_ms
+        usage = _public_ai_judge_usage(response.get("usage")) if response is not None else None
+        cost = _public_ai_judge_cost(response) if response is not None else None
+        input_trace_fingerprint = None
+        trace_input = trace.get("input")
+        if isinstance(trace_input, Mapping):
+            candidate_fingerprint = trace_input.get("fingerprint")
+            if isinstance(candidate_fingerprint, str):
+                input_trace_fingerprint = candidate_fingerprint
+
+        eval_run_id = "eval:ai-judge:" + hashlib.sha256(
+            f"{trace_id}:{request_id}".encode("utf-8")
+        ).hexdigest()[:32]
+        run = build_eval_run(
+            eval_run_id=eval_run_id,
+            trace_ids=[trace_id],
+            mode="ai_judge",
+            truth_kind="none",
+            dataset_id="trace-eval-ai-judge",
+            label_revision="trace-eval-ai-judge-v1",
+            metrics=metrics,
+            evaluator=evaluator,
+            requested_evaluator=requested_evaluator,
+            prompt_version=AI_JUDGE_RUBRIC_VERSION,
+            rubric_version=AI_JUDGE_RUBRIC_VERSION,
+            input_trace_fingerprint=input_trace_fingerprint,
+            started_at_ms=started_at_ms,
+            completed_at_ms=completed_at_ms,
+            elapsed_ms=elapsed_ms,
+            latency_ms=latency_ms,
+            usage=usage,
+            cost=cost,
+            fallback_used=False,
+            failure_code=failure_code,
+            status=status,
+            now_ms=started_at_ms,
+            updated_at_ms=completed_at_ms,
+        )
+        return self.eval_runs.persist(run)
+
+    def record_trace_repair_change_evidence(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Persist change evidence derived from a server-owned repair run.
+
+        ``repairSessionId`` and ``repairTraceId`` are references, not proof.
+        The evidence body, status and identity are rebuilt from the durable
+        Session message snapshot and the canonical TraceStore envelope.  This
+        intentionally rejects the old client-provided ``evidence`` shape;
+        accepting it would let a caller turn arbitrary prose into a repair
+        receipt.
+        """
+
+        values = _trace_repair_candidate_payload(
+            payload,
+            schema_version="rag-ime.trace-repair-change-evidence.v1",
+        )
+        repair_session_id = _required_trace_repair_text(values, "repairSessionId")
+        repair_trace_id = _required_trace_repair_text(values, "repairTraceId")
+        canonical = self._derive_trace_repair_evidence(
+            repair_session_id=repair_session_id,
+            repair_trace_id=repair_trace_id,
+        )["change"]
+        if int(canonical.get("changeCount") or 0) < 1:
+            raise TraceRepairValidationError(
+                "repair run has no completed mutating Tool evidence"
+            )
+        stored = self.trace_repairs.record_change_evidence(
+            # Evidence rows are keyed by the server-owned repair candidate;
+            # the original failure identity belongs only to the receipt.
+            source_scope="trace-repair",
+            source_trace_id=repair_trace_id,
+            evidence=canonical,
+        )
+        return {
+            "schemaVersion": "rag-ime.trace-repair-evidence-write.v1",
+            "ok": True,
+            "evidence": stored,
+        }
+
+    def record_trace_repair_test_evidence(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Persist test evidence and derive status from completed Tool facts."""
+
+        values = _trace_repair_candidate_payload(
+            payload,
+            schema_version="rag-ime.trace-repair-test-evidence.v1",
+        )
+        repair_session_id = _required_trace_repair_text(values, "repairSessionId")
+        repair_trace_id = _required_trace_repair_text(values, "repairTraceId")
+        canonical = self._derive_trace_repair_evidence(
+            repair_session_id=repair_session_id,
+            repair_trace_id=repair_trace_id,
+        )["test"]
+        test_status = _required_trace_repair_text(canonical, "status")
+        stored = self.trace_repairs.record_test_evidence(
+            source_scope="trace-repair",
+            source_trace_id=repair_trace_id,
+            evidence=canonical,
+            status=test_status,
+        )
+        return {
+            "schemaVersion": "rag-ime.trace-repair-evidence-write.v1",
+            "ok": True,
+            "evidence": stored,
+        }
+
+    def create_trace_repair_receipt(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Bind persisted change/test evidence to one repair Trace.
+
+        Receipt and test-status identifiers are deliberately not accepted from
+        the request.  The status is read from the persisted test evidence and
+        the receipt ID is derived by ``TraceRepairStore``.  This prevents a
+        copied assistant message from manufacturing a successful receipt.
+        """
+
+        values = _trace_repair_receipt_payload(payload)
+        source_scope = _required_trace_repair_text(values, "sourceScope")
+        source_trace_id = _required_trace_repair_text(values, "sourceTraceId")
+        failure_ref = _required_trace_repair_text(values, "failureRef")
+        change_id = _required_trace_repair_text(values, "changeReceiptId")
+        test_id = _required_trace_repair_text(values, "testEvidenceId")
+        repair_trace_id = _required_trace_repair_text(values, "repairTraceId")
+        repair_session_id = _required_trace_repair_text(values, "repairSessionId")
+        store = self.trace_repairs
+        test = store.get_evidence(test_id)
+        if test is None or test.get("evidenceKind") != "test":
+            raise TraceRepairValidationError(
+                "testEvidenceId does not reference persisted test evidence"
+            )
+        canonical_test = test.get("evidence")
+        canonical_change = store.get_evidence(change_id)
+        if not isinstance(canonical_test, Mapping) or not isinstance(canonical_change, Mapping):
+            raise TraceRepairValidationError("repair evidence payload is invalid")
+        for evidence_payload, label in (
+            (canonical_change.get("evidence"), "changeReceiptId"),
+            (canonical_test, "testEvidenceId"),
+        ):
+            if not isinstance(evidence_payload, Mapping):
+                raise TraceRepairValidationError(f"{label} has no canonical repair binding")
+            if str(evidence_payload.get("repairTraceId") or "") != repair_trace_id:
+                raise TraceRepairValidationError(f"{label} is bound to a different repair Trace")
+            bound_session_id = str(evidence_payload.get("repairSessionId") or "")
+            if not bound_session_id:
+                raise TraceRepairValidationError(f"{label} has no repair Session binding")
+            if bound_session_id != repair_session_id:
+                raise TraceRepairValidationError(f"{label} is bound to a different repair Session")
+        # Receipt creation is a second authority check, not merely a lookup
+        # of the earlier candidate snapshot.  This catches failed/building or
+        # rebound Trace references between evidence and receipt creation.
+        repair_trace = self._require_trace_repair_trace(repair_trace_id)
+        if str(repair_trace.get("status") or "") != "completed":
+            raise TraceRepairValidationError("repair trace must be completed")
+        binding = repair_trace.get("binding")
+        if not isinstance(binding, Mapping) or str(binding.get("sessionId") or "") != repair_session_id:
+            raise TraceRepairValidationError("repair trace is bound to a different repair Session")
+        if int(canonical_change.get("evidence", {}).get("changeCount") or 0) < 1:
+            raise TraceRepairValidationError("change evidence has no completed mutating Tool")
+        if str(canonical_test.get("status") or "") != "passed":
+            raise TraceRepairValidationError("test evidence is not passed")
+        receipt = store.persist_receipt(
+            source_scope=source_scope,
+            source_trace_id=source_trace_id,
+            failure_ref=failure_ref,
+            change_receipt_id=change_id,
+            test_evidence_id=test_id,
+            repair_trace_id=repair_trace_id,
+            repair_session_id=repair_session_id,
+        )
+        return {
+            "schemaVersion": "rag-ime.trace-repair-receipt-create.v1",
+            "ok": True,
+            "receipt": receipt,
+        }
+
+    def get_trace_repair_receipt(
+        self,
+        repair_receipt_id: str,
+    ) -> dict[str, object]:
+        """Read one immutable repair receipt by its server-issued ID."""
+
+        if not isinstance(repair_receipt_id, str) or not repair_receipt_id.strip():
+            raise TraceRepairValidationError("repairReceiptId must be a non-empty string")
+        receipt = self.trace_repairs.get_receipt(repair_receipt_id.strip())
+        if receipt is None:
+            raise KeyError(repair_receipt_id)
+        return {
+            "schemaVersion": "rag-ime.trace-repair-receipt-get.v1",
+            "ok": True,
+            "receipt": receipt,
+        }
+
+    def recheck_trace_repair(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Run the Runtime-owned AI Judge against exactly one stored receipt.
+
+        The request contains only the opaque receipt ID.  Source scope,
+        source/repair Trace IDs, failure reference, and evidence IDs all come
+        from the immutable receipt and are passed to the recheck helper as
+        canonical values.
+        """
+
+        values = _trace_repair_recheck_payload(payload)
+        receipt_id = _required_trace_repair_text(values, "repairReceiptId")
+        store = self.trace_repairs
+        receipt = store.get_receipt(receipt_id)
+        if receipt is None:
+            raise KeyError(receipt_id)
+        eval_store = self.eval_runs
+
+        # Rechecking one immutable receipt is idempotent at the public API.
+        # Hold the per-service lock across lookup, model call, and persistence:
+        # two concurrent HTTP requests must not both invoke Luna before either
+        # one has written the deterministic EvalRun.
+        with self._trace_repair_recheck_guard():
+            existing = next(
+                (
+                    run
+                    for run in eval_store.list()
+                    if run.get("repairReceiptId") == receipt_id
+                ),
+                None,
+            )
+            if existing is not None:
+                return {
+                    "schemaVersion": "rag-ime.trace-repair-recheck.v1",
+                    "ok": True,
+                    "receipt": receipt,
+                    "evalRun": dict(existing),
+                    "idempotent": True,
+                }
+
+            def judge(trace: Mapping[str, object]) -> Mapping[str, object] | str:
+                request_id = "trace-repair-recheck:" + hashlib.sha256(
+                    f"{receipt_id}:{receipt['repairTraceId']}".encode("utf-8")
+                ).hexdigest()[:32]
+                response = self.runtime.complete_once(
+                    request_id=request_id,
+                    provider="openai-codex",
+                    model_id="gpt-5.6-luna",
+                    thinking_level="max",
+                    message=build_ai_judge_prompt(trace),
+                    timeout_seconds=120.0,
+                )
+                if isinstance(response, Mapping):
+                    return response.get("text", response)
+                return response
+
+            eval_run = run_ai_judge_recheck(
+                trace_store=self.trace_store,
+                repair_store=store,
+                eval_store=eval_store,
+                source_trace_id=str(receipt["sourceTraceId"]),
+                repair_trace_id=str(receipt["repairTraceId"]),
+                source_scope=str(receipt["sourceScope"]),
+                failure_ref=str(receipt["failureRef"]),
+                judge=judge,
+            )
+            return {
+                "schemaVersion": "rag-ime.trace-repair-recheck.v1",
+                "ok": True,
+                "receipt": receipt,
+                "evalRun": eval_run,
+                "idempotent": False,
+            }
+
+    def _require_trace_repair_trace(self, trace_id: str) -> Mapping[str, object]:
+        trace = self.trace_store.get(trace_id)
+        if trace is None:
+            raise TraceRepairValidationError("source trace is not persisted")
+        if not isinstance(trace, Mapping):
+            raise TraceRepairValidationError("persisted source trace is invalid")
+        return trace
+
+    def _derive_trace_repair_evidence(
+        self,
+        *,
+        repair_session_id: str,
+        repair_trace_id: str,
+    ) -> dict[str, dict[str, object]]:
+        """Build canonical evidence from the server's Session and Trace views."""
+
+        repair_trace = self._require_trace_repair_trace(repair_trace_id)
+        snapshot = self.message_snapshot.messages(repair_session_id)
+        if not isinstance(snapshot, Mapping):
+            raise TraceRepairValidationError(
+                "repair Session message snapshot is unavailable"
+            )
+        return derive_repair_evidence(
+            repair_session_id=repair_session_id,
+            repair_trace_id=repair_trace_id,
+            session_snapshot=snapshot,
+            repair_trace=repair_trace,
+        )
+
+    def _trace_repair_recheck_guard(self):
+        return self._trace_repair_recheck_lock
+
     def subscribe_observations(
         self,
         *,
@@ -4697,6 +5396,86 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     return value
 
 
+def _trace_repair_payload(
+    payload: Mapping[str, object],
+    *,
+    schema_version: str,
+    required: set[str],
+    optional: set[str] | None = None,
+) -> dict[str, object]:
+    """Validate a small Trace repair HTTP request before storage access."""
+
+    if not isinstance(payload, Mapping):
+        raise TraceRepairValidationError("Trace repair request must be an object")
+    values = dict(payload)
+    if values.get("schemaVersion") != schema_version:
+        raise TraceRepairValidationError(
+            f"schemaVersion must be {schema_version}"
+        )
+    allowed = required | set(optional or ()) | {"schemaVersion"}
+    unknown = sorted(set(values) - allowed)
+    if unknown:
+        raise TraceRepairValidationError(
+            f"Trace repair request contains unsupported fields: {', '.join(unknown)}"
+        )
+    missing = sorted(required - set(values))
+    if missing:
+        raise TraceRepairValidationError(
+            f"Trace repair request is missing fields: {', '.join(missing)}"
+        )
+    return values
+
+
+def _required_trace_repair_text(
+    payload: Mapping[str, object],
+    key: str,
+) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise TraceRepairValidationError(f"{key} must be a non-empty string")
+    return value.strip()
+
+
+def _trace_repair_candidate_payload(
+    payload: Mapping[str, object],
+    *,
+    schema_version: str,
+) -> dict[str, object]:
+    return _trace_repair_payload(
+        payload,
+        schema_version=schema_version,
+        required={"repairSessionId", "repairTraceId"},
+    )
+
+
+def _trace_repair_receipt_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    return _trace_repair_payload(
+        payload,
+        schema_version="rag-ime.trace-repair-receipt-create.v1",
+        required={
+            "sourceScope",
+            "sourceTraceId",
+            "failureRef",
+            "changeReceiptId",
+            "testEvidenceId",
+            "repairTraceId",
+            "repairSessionId",
+        },
+    )
+
+
+def _trace_repair_recheck_payload(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    return _trace_repair_payload(
+        payload,
+        schema_version="rag-ime.trace-repair-recheck-request.v1",
+        required={"repairReceiptId"},
+    )
+
+
 def _observation_trace_id(payload: Mapping[str, object]) -> str:
     try:
         trace_id = _required_text(payload, "traceId")
@@ -4705,6 +5484,58 @@ def _observation_trace_id(payload: Mapping[str, object]) -> str:
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", trace_id) is None:
         raise ValueError("invalid_trace_id")
     return trace_id
+
+
+def _public_ai_judge_usage(value: object) -> dict[str, int] | None:
+    """Project provider usage into the bounded EvalRun public shape."""
+
+    if not isinstance(value, Mapping):
+        return None
+    usage: dict[str, int] = {}
+    for key in ("input", "output", "cacheRead", "cacheWrite", "totalTokens"):
+        raw = value.get(key)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        number = float(raw)
+        if not math.isfinite(number) or number < 0:
+            continue
+        usage[key] = int(number)
+    return usage or None
+
+
+def _public_ai_judge_cost(response: Mapping[str, object]) -> dict[str, float | int] | None:
+    """Project provider cost metadata without retaining arbitrary diagnostics."""
+
+    raw_cost = response.get("cost")
+    if isinstance(raw_cost, Mapping):
+        cost: dict[str, float | int] = {}
+        for key in ("input", "output", "cacheRead", "cacheWrite", "total"):
+            raw = raw_cost.get(key)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            amount = float(raw)
+            if math.isfinite(amount) and amount >= 0:
+                cost[key] = raw
+        return cost or None
+    for key in ("costUsd", "totalCost", "total"):
+        raw = response.get(key)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        amount = float(raw)
+        if math.isfinite(amount) and amount >= 0:
+            return {"total": raw}
+    return None
+
+
+def _public_ai_judge_latency(response: Mapping[str, object]) -> int | None:
+    for key in ("latencyMs", "elapsedMs"):
+        raw = response.get(key)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            continue
+        number = float(raw)
+        if math.isfinite(number) and number >= 0:
+            return int(number)
+    return None
 
 
 def _media_owner_input(

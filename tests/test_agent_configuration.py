@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from rag_ime.agent_configuration import (
@@ -93,7 +94,7 @@ class AgentConfigurationTests(unittest.TestCase):
         path = Path(self.tmp.name) / "legacy-agent.sqlite"
         legacy = default_agent_configuration()
         legacy["sessionDefaults"]["roleId"] = "zhiyou-v1"
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             apply_database_migrations(conn)
             conn.execute(
                 """
@@ -112,7 +113,7 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(snapshot["configuration"]["sessionDefaults"]["roleId"], "companion-present-v1")
         self.assertEqual(snapshot["revision"], 8)
         self.assertEqual(snapshot["lastEventId"], "agent-control:1")
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn:
             stored = conn.execute(
                 "SELECT configuration_json FROM agent_configuration_state WHERE singleton_id = 1"
             ).fetchone()[0]
@@ -130,7 +131,7 @@ class AgentConfigurationTests(unittest.TestCase):
             "roomPartnerModelProfile": "openai-codex/gpt-5.4",
             "roomPartnerThinkingLevel": "medium",
         }
-        with sqlite3.connect(path) as conn:
+        with closing(sqlite3.connect(path)) as conn, conn:
             apply_database_migrations(conn)
             conn.execute(
                 """

@@ -38,6 +38,26 @@ class AgentSessionStoreTests(unittest.TestCase):
             count = conn.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0]
         self.assertEqual(count, 0)
 
+    def test_room_execution_mode_is_persisted_separately_from_session_mode(self) -> None:
+        session = self.store.create(
+            title="confirmed Room",
+            mode="coordinator",
+            execution_mode="per_action",
+            room_execution_mode="room_unrestricted",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=100,
+        )
+
+        self.assertEqual(session["executionMode"], "per_action")
+        self.assertEqual(session["roomExecutionMode"], "room_unrestricted")
+
+        updated = self.store.set_room_execution_mode(
+            str(session["id"]),
+            "",
+            updated_at_ms=200,
+        )
+        self.assertEqual(updated["roomExecutionMode"], "")
+
     def test_list_recovers_legacy_empty_model_profile(self) -> None:
         session = self.store.create(title="legacy", model_profile="pi/default")
         session_id = str(session["id"])

@@ -44,7 +44,7 @@ describe('TraceAgentFeature', () => {
     await user.click(within(selected).getByRole('button', { name: '回到原位置' }));
     expect(routes).toContain('/memory?view=activity');
 
-    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const promptRequest = await waitFor(() => {
       const request = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
       expect(request).toBeTruthy();
@@ -197,6 +197,30 @@ describe('TraceAgentFeature', () => {
       request.pathId === 'agent.session.snapshot'
       && request.params?.sessionId === 'agent:trace-diagnostic'
     )).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps repair locked when the diagnostic Session has text but no structured evidence report', async () => {
+    const user = userEvent.setup();
+    const base = diagnosticSessionSnapshot();
+    const incomplete = {
+      ...base,
+      items: base.items.map((item) => item.id === 'message-assistant-diagnostic'
+        ? {
+          ...item,
+          blocks: item.blocks.map((block) => ({
+            ...block,
+            data: { text: '报告已完成，但这里只有一段普通文本。' },
+          })),
+        }
+        : item),
+    };
+    const transport = traceAgentTransport({ diagnosticSnapshots: [incomplete] });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    expect(within(report).getByRole('button', { name: '交给 Agent 修复' })).toBeDisabled();
+    expect(report).toHaveTextContent('生成中');
   });
 
   it('stops a diagnostic poll at the deadline and lets Refresh retry the diagnostic snapshot', async () => {
@@ -474,6 +498,12 @@ describe('TraceAgentFeature', () => {
     expect(repairPrompt).toContain('session-source');
     expect(repairPrompt).toContain('agent:trace-diagnostic');
     expect(repairPrompt).toContain('trace:source');
+    expect(repairPrompt).toContain('sourceScope: session:session-source');
+    expect(repairPrompt).toContain('failureRef: trace:observation-source');
+    expect(repairPrompt).toContain('TRACE_REPAIR_EVIDENCE');
+    expect(repairPrompt).toContain('服务端在证据写入后生成');
+    expect(repairPrompt).not.toContain('changeReceiptId: <');
+    expect(repairPrompt).not.toContain('testEvidenceId: <');
     expect(repairPrompt).toContain('write/edit validation error: target file changed');
     expect(repairPrompt).toContain('per_action 授权');
 
@@ -485,7 +515,7 @@ describe('TraceAgentFeature', () => {
     expect(screen.getByRole('button', { name: '开始诊断' })).toBeInTheDocument();
   });
 
-  it('reads the repair Session Trace before Eval and shows both trace identities in the persisted receipt', async () => {
+  it('submits only repair references in order, then rechecks the authoritative receipt', async () => {
     const user = userEvent.setup();
     const transport = traceAgentTransport();
     renderFeature(transport, []);
@@ -499,23 +529,110 @@ describe('TraceAgentFeature', () => {
 
     await waitFor(() => expect(screen.getByTestId('trace-agent-eval-receipt')).toBeInTheDocument());
     const receipt = screen.getByTestId('trace-agent-eval-receipt');
-    expect(receipt).toHaveTextContent('eval:trace-agent:recheck:repair');
+    expect(receipt).toHaveTextContent('eval:trace-agent:recheck:independent');
     expect(receipt).toHaveTextContent('诊断 Trace：trace:source');
     expect(receipt).toHaveTextContent('修复 Trace：trace:repair');
+    expect(receipt).toHaveTextContent('独立复验');
     const repairSnapshotRequest = transport.requests.find(({ request }) => (
       request.pathId === 'observability.snapshot'
       && request.query?.sessionId === 'agent:trace-repair'
     ));
     expect(repairSnapshotRequest?.request.query).toMatchObject({ sessionId: 'agent:trace-repair', limit: 100 });
-    const traceRequest = transport.requests.find(({ request }) => request.pathId === 'observability.trace.get');
-    expect(traceRequest?.request.params).toEqual({ traceId: 'trace:repair' });
-    const evalRequest = transport.requests.find(({ request }) => request.pathId === 'observability.evals.evidence.run');
-    expect(evalRequest?.request.body).toMatchObject({
-      schemaVersion: 'rag-ime.observability-evidence-eval-request.v1',
-      traceId: 'trace:repair',
-      requiredEvidenceIds: ['knowledge:repair'],
-      truthKind: 'human',
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.trace.get'
+      && request.params?.traceId === 'trace:repair')).toBe(false);
+    const repairRequests = transport.requests
+      .map(({ request }) => request)
+      .filter((request) => request.pathId.startsWith('observability.traceRepair'));
+    expect(repairRequests.map((request) => request.pathId)).toEqual([
+      'observability.traceRepair.changeEvidence',
+      'observability.traceRepair.testEvidence',
+      'observability.traceRepair.receipt.create',
+      'observability.traceRepair.receipt.get',
+      'observability.traceRepair.recheck',
+    ]);
+    expect(repairRequests[0]?.body).toEqual({
+      schemaVersion: 'rag-ime.trace-repair-change-evidence.v1',
+      repairSessionId: 'agent:trace-repair',
+      repairTraceId: 'trace:repair',
     });
+    expect(repairRequests[1]?.body).toEqual({
+      schemaVersion: 'rag-ime.trace-repair-test-evidence.v1',
+      repairSessionId: 'agent:trace-repair',
+      repairTraceId: 'trace:repair',
+    });
+    expect(repairRequests.at(-1)?.body).toEqual({
+      schemaVersion: 'rag-ime.trace-repair-recheck-request.v1',
+      repairReceiptId: 'repair-receipt:server-issued',
+    });
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.evidence.run')).toBe(false);
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.aiJudge.run')).toBe(false);
+  });
+
+  it('does not require an assistant-authored repair evidence report', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({ repairSessionSnapshot: repairSessionSnapshot({ receipt: '' }) });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-eval-receipt')).toBeInTheDocument());
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.aiJudge.run')).toBe(false);
+  });
+
+  it('blocks a claimed passed repair when snapshots contain no completed test evidence', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({
+      serverRejectTest: true,
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('没有已通过的测试工具证据'));
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.traceRepair.changeEvidence')).toBe(true);
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.traceRepair.recheck')).toBe(false);
+  });
+
+  it('rejects a completed read/model-only Trace as change evidence', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({
+      serverRejectChange: true,
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('没有已完成的修改工具证据'));
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.traceRepair.changeEvidence')).toBe(true);
+  });
+
+  it('ignores a mismatched failureRef claimed in assistant text', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({
+      repairSessionSnapshot: repairSessionSnapshot({ failureRef: 'trace:other-failure' }),
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-eval-receipt')).toBeInTheDocument());
+    expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.aiJudge.run')).toBe(false);
   });
 
   it('does not evaluate the diagnostic Trace until the repair Session has a completed Trace', async () => {
@@ -763,10 +880,14 @@ function renderFeature(transport: MockControlTransport, routes: string[], initia
 
 function traceAgentTransport(options: {
   repairTrace?: boolean;
+  repairTraceHasTestEvidence?: boolean;
+  serverRejectChange?: boolean;
+  serverRejectTest?: boolean;
   rooms?: Array<Record<string, unknown>>;
   sessions?: Array<Record<string, unknown>>;
   sourceSnapshot?: unknown;
   sourceSnapshots?: unknown[];
+  repairSessionSnapshot?: unknown;
   diagnosticSnapshots?: unknown[];
   runObservationSnapshots?: Array<{ beforeSequence: number; snapshot: unknown }>;
   traceDetails?: Record<string, unknown | null | Promise<unknown>>;
@@ -777,6 +898,9 @@ function traceAgentTransport(options: {
   let diagnosticSnapshotIndex = 0;
   let sourceSnapshotIndex = 0;
   let roomSourceSnapshotIndex = 0;
+  let changeEvidence: Record<string, unknown> | null = null;
+  let testEvidence: Record<string, unknown> | null = null;
+  let repairReceipt: Record<string, unknown> | null = null;
   const diagnosticSnapshots = options.diagnosticSnapshots ?? [diagnosticSessionSnapshot()];
   const sourceSnapshots = options.sourceSnapshots ?? [options.sourceSnapshot ?? sessionSourceSnapshot()];
   const roomSourceSnapshots = options.roomSourceSnapshots ?? [options.roomSourceSnapshot ?? roomSnapshot()];
@@ -814,6 +938,9 @@ function traceAgentTransport(options: {
           const index = Math.min(diagnosticSnapshotIndex++, Math.max(0, diagnosticSnapshots.length - 1));
           return diagnosticSnapshots[index] ?? emptyDiagnosticSessionSnapshot();
         }
+        if (request.params?.sessionId === 'agent:trace-repair') {
+          return options.repairSessionSnapshot ?? repairSessionSnapshot();
+        }
         const index = Math.min(sourceSnapshotIndex++, Math.max(0, sourceSnapshots.length - 1));
         return sourceSnapshots[index] ?? emptyDiagnosticSessionSnapshot();
       },
@@ -822,7 +949,9 @@ function traceAgentTransport(options: {
         if (options.traceDetails && Object.prototype.hasOwnProperty.call(options.traceDetails, traceId)) {
           return options.traceDetails[traceId];
         }
-        return traceResponse(traceId);
+        return traceResponse(traceId, {
+          repairTraceHasTestEvidence: options.repairTraceHasTestEvidence !== false,
+        });
       },
       'agent.room.snapshot': () => {
         const index = Math.min(roomSourceSnapshotIndex++, Math.max(0, roomSourceSnapshots.length - 1));
@@ -839,6 +968,109 @@ function traceAgentTransport(options: {
       }),
       'agent.session.mode.update': { ok: true },
       'agent.session.prompt': { ok: true },
+      'observability.traceRepair.changeEvidence': (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        if (options.serverRejectChange) throw new Error('修复运行没有已完成的修改工具证据');
+        expect(body).toEqual({
+          schemaVersion: 'rag-ime.trace-repair-change-evidence.v1',
+          repairSessionId: 'agent:trace-repair',
+          repairTraceId: 'trace:repair',
+        });
+        changeEvidence = {
+          schemaVersion: 'rag-ime.trace-repair-evidence.v1',
+          evidenceId: 'change-evidence:server-issued',
+          evidenceKind: 'change',
+          sourceScope: 'trace-repair',
+          sourceTraceId: body.repairTraceId,
+          testStatus: '',
+          evidence: {
+            schemaVersion: 'rag-ime.trace-repair-canonical-evidence.v1',
+            evidenceKind: 'change',
+            repairSessionId: body.repairSessionId,
+            repairTraceId: body.repairTraceId,
+            eventCount: 1,
+            completedCount: 1,
+            toolCount: 1,
+            toolNames: ['workspace_patch'],
+            signalIds: ['event:edit'],
+            changeCount: 1,
+          },
+          createdAtMs: 300,
+        };
+        return { schemaVersion: 'rag-ime.trace-repair-evidence-write.v1', ok: true, evidence: changeEvidence };
+      },
+      'observability.traceRepair.testEvidence': (request: ControlRequest) => {
+        if (!changeEvidence) throw new Error('test evidence arrived before change evidence');
+        if (options.serverRejectTest) throw new Error('修复运行没有已通过的测试工具证据');
+        const body = request.body as Record<string, unknown>;
+        expect(body).toEqual({
+          schemaVersion: 'rag-ime.trace-repair-test-evidence.v1',
+          repairSessionId: 'agent:trace-repair',
+          repairTraceId: 'trace:repair',
+        });
+        testEvidence = {
+          schemaVersion: 'rag-ime.trace-repair-evidence.v1',
+          evidenceId: 'test-evidence:server-issued',
+          evidenceKind: 'test',
+          sourceScope: 'trace-repair',
+          sourceTraceId: body.repairTraceId,
+          testStatus: 'passed',
+          evidence: {
+            schemaVersion: 'rag-ime.trace-repair-canonical-evidence.v1',
+            evidenceKind: 'test',
+            repairSessionId: body.repairSessionId,
+            repairTraceId: body.repairTraceId,
+            eventCount: 1,
+            completedCount: 1,
+            toolCount: 1,
+            toolNames: ['bash'],
+            signalIds: ['event:test'],
+            testCount: 1,
+            passedCount: 1,
+            failedCount: 0,
+            status: 'passed',
+          },
+          createdAtMs: 301,
+        };
+        return { schemaVersion: 'rag-ime.trace-repair-evidence-write.v1', ok: true, evidence: testEvidence };
+      },
+      'observability.traceRepair.receipt.create': (request: ControlRequest) => {
+        if (!changeEvidence || !testEvidence) throw new Error('receipt arrived before evidence');
+        const body = request.body as Record<string, unknown>;
+        if (body.repairSessionId !== 'agent:trace-repair') throw new Error('receipt repair Session binding mismatch');
+        repairReceipt = {
+          schemaVersion: 'rag-ime.trace-repair-receipt.v1',
+          repairReceiptId: 'repair-receipt:server-issued',
+          sourceScope: body.sourceScope,
+          sourceTraceId: body.sourceTraceId,
+          failureRef: body.failureRef,
+          changeReceiptId: body.changeReceiptId,
+          testEvidenceId: body.testEvidenceId,
+          testStatus: 'passed',
+          repairTraceId: body.repairTraceId,
+          repairSessionId: body.repairSessionId,
+          createdAtMs: 302,
+        };
+        return { schemaVersion: 'rag-ime.trace-repair-receipt-create.v1', ok: true, receipt: repairReceipt };
+      },
+      'observability.traceRepair.receipt.get': (request: ControlRequest) => {
+        if (!repairReceipt) throw new Error('receipt was not created');
+        if (request.params?.repairReceiptId !== repairReceipt.repairReceiptId) throw new Error('wrong receipt id');
+        return { schemaVersion: 'rag-ime.trace-repair-receipt-get.v1', ok: true, receipt: repairReceipt };
+      },
+      'observability.traceRepair.recheck': (request: ControlRequest) => {
+        if (!repairReceipt) throw new Error('recheck arrived before receipt');
+        const body = request.body as Record<string, unknown>;
+        if (Object.keys(body).sort().join(',') !== 'repairReceiptId,schemaVersion') throw new Error('recheck must be receipt-id-only');
+        if (body.repairReceiptId !== repairReceipt.repairReceiptId) throw new Error('wrong receipt id');
+        return {
+          schemaVersion: 'rag-ime.trace-repair-recheck.v1',
+          ok: true,
+          receipt: repairReceipt,
+          evalRun: aiJudgeRunResponse(repairReceipt),
+          idempotent: false,
+        };
+      },
       'observability.evals.list': (request: ControlRequest) => ({
         schemaVersion: 'rag-ime.observability-eval-list.v1',
         traceId: String(request.query?.traceId ?? ''),
@@ -859,6 +1091,7 @@ function traceAgentTransport(options: {
         createdAtMs: 120,
         updatedAtMs: 120,
       }),
+      'observability.evals.aiJudge.run': () => aiJudgeRunResponse(),
     },
   });
 }
@@ -949,7 +1182,7 @@ function sessionSourceSnapshot() {
         status: 'completed',
         timelineSequence: 5,
         createdAtMs: 150,
-        blocks: [{ id: 'assistant-text-source', type: 'text', status: 'completed', data: { text: '发现写入版本冲突' } }],
+        blocks: [{ id: 'assistant-text-source', type: 'text', status: 'completed', data: { content: '发现写入版本冲突' } }],
       },
       {
         id: 'message-error-source',
@@ -958,7 +1191,7 @@ function sessionSourceSnapshot() {
         role: 'assistant',
         status: 'failed',
         createdAtMs: 155,
-        blocks: [{ id: 'error-source', type: 'error', status: 'failed', data: { message: 'write/edit validation error: target file changed' } }],
+        blocks: [{ id: 'error-source', type: 'error', status: 'failed', data: { content: 'write/edit validation error: target file changed' } }],
       },
     ],
     liveEvents: [
@@ -1014,7 +1247,17 @@ function diagnosticSessionSnapshot() {
         status: 'completed',
         timelineSequence: 3,
         createdAtMs: 230,
-        blocks: [{ id: 'assistant-text-diagnostic', type: 'text', status: 'completed', data: { text: '根因是资源版本回执不合法；建议重新读取后再编辑。' } }],
+        blocks: [{ id: 'assistant-text-diagnostic', type: 'text', status: 'completed', data: { text: [
+          '根因是资源版本回执不合法；建议重新读取后再编辑。',
+          '现象：写入文件失败。',
+          '影响：本轮操作未完成。',
+          'Trace/span/run 证据：trace:source。',
+          '可能根因：资源版本回执不合法。',
+          '置信度/未知边界：中等，尚未重放。',
+          '候选修复：重新读取后再编辑。',
+          '如何用沙盒或 Eval 验证：运行最小回归测试。',
+          '可回跳的 Trace/Session/Room/文件：trace:source。',
+        ].join('\n') } }],
       },
     ],
     liveEvents: [{
@@ -1025,6 +1268,57 @@ function diagnosticSessionSnapshot() {
       createdAtMs: 220,
       payload: { summary: '已核对 Trace 与原始对话', toolId: 'trace', operation: 'inspect' },
     }],
+  };
+}
+
+function repairSessionSnapshot(options: { receipt?: string; failureRef?: string; actualTestEvidence?: boolean; actualChangeEvidence?: boolean } = {}) {
+  const failureRef = options.failureRef ?? 'trace:observation-source';
+  const receipt = options.receipt ?? [
+    'TRACE_REPAIR_EVIDENCE',
+    JSON.stringify({
+      sourceScope: 'session:session-source',
+      sourceTraceId: 'trace:source',
+      failureRef,
+      repairTraceId: 'trace:repair',
+      changeEvidence: { files: ['control-center-web/src/example.ts'], operations: ['write'] },
+      testEvidence: { commands: ['pnpm test --filter trace-repair'], results: [{ status: 'completed', exitCode: 0 }] },
+      testStatus: 'passed',
+      // These are deliberately attacker-controlled-looking claims. The
+      // frontend must ignore them and use IDs returned by the server.
+      changeReceiptId: 'attacker-change-id',
+      testEvidenceId: 'attacker-test-id',
+    }, null, 2),
+  ].join('\n');
+  const blocks = [
+    ...(options.actualChangeEvidence === false ? [] : [{
+      id: 'tool-edit-repair',
+      type: 'tool',
+      status: 'completed',
+      data: { name: 'write file', operation: 'write', status: 'completed' },
+    }]),
+    ...(options.actualTestEvidence === false ? [] : [{
+      id: 'tool-test-repair',
+      type: 'command',
+      status: 'completed',
+      data: { command: 'pnpm test --filter trace-repair', status: 'completed', exitCode: 0 },
+    }]),
+    { id: 'assistant-text-repair', type: 'text', status: 'completed', data: { text: receipt } },
+  ];
+  return {
+    ok: true,
+    sessionId: 'agent:trace-repair',
+    status: 'idle',
+    items: [{
+      id: 'message-assistant-repair',
+      sessionId: 'agent:trace-repair',
+      turnId: 'turn-repair',
+      role: 'assistant',
+      status: 'completed',
+      timelineSequence: 3,
+      createdAtMs: 260,
+      blocks,
+    }],
+    liveEvents: [],
   };
 }
 
@@ -1174,7 +1468,7 @@ function emptyObservationSnapshot() {
   };
 }
 
-function traceResponse(traceId: string) {
+function traceResponse(traceId: string, options: { repairTraceHasTestEvidence?: boolean } = {}) {
   const isRepair = traceId === 'trace:repair';
   const sessionId = isRepair ? 'agent:trace-repair' : 'session-source';
   const evidenceId = isRepair ? 'knowledge:repair' : 'knowledge:source';
@@ -1188,7 +1482,19 @@ function traceResponse(traceId: string) {
       status: 'completed' as const,
       binding: { sessionId, roomId: 'room-source', runId: isRepair ? 'run-repair' : 'run-source' },
       input: { fingerprint: 'sha256:' + '0'.repeat(64), contentPolicy: 'hash_only' as const, normalization: 'test' },
-      spans: [],
+      spans: isRepair && options.repairTraceHasTestEvidence !== false ? [{
+        spanId: 'span:repair:test',
+        name: 'tool.call',
+        parentSpanId: null,
+        status: 'completed' as const,
+        startedAtMs: 200,
+        endedAtMs: 210,
+        durationMs: 10,
+        recorded: true,
+        unavailableReason: '',
+        metrics: {},
+        attributes: { toolName: 'workspace_shell', command: 'pnpm test --filter trace-repair', exitCode: 0 },
+      }] : [],
       evidence: [{
         evidenceId,
         sourceKind: 'knowledge' as const,
@@ -1213,6 +1519,32 @@ function traceResponse(traceId: string) {
       resumeToken: `trace-store:${traceId}`,
       nextBeforeSequence: null,
     },
+  };
+}
+
+function aiJudgeRunResponse(receipt?: Record<string, unknown> | null) {
+  return {
+    schemaVersion: 'rag-ime.eval-run.v1' as const,
+    evalRunId: 'eval:trace-agent:recheck:independent',
+    traceIds: ['trace:repair'],
+    mode: 'ai_judge' as const,
+    metricAuthority: 'ai_judge_estimate' as const,
+    truth: { status: 'none' as const, datasetId: 'trace-eval-ai-judge', labelRevision: 'trace-eval-ai-judge-v1' },
+    evaluator: { provider: 'openai-codex', model: 'gpt-5.6-luna', thinking: 'max', displayName: 'Trace recheck' },
+    metrics: { groundedness: 1, confidence: 1 },
+    status: 'completed' as const,
+    ...(receipt ? {
+      sourceTraceId: receipt.sourceTraceId,
+      repairTraceId: receipt.repairTraceId,
+      sourceScope: receipt.sourceScope,
+      failureRef: receipt.failureRef,
+      repairReceiptId: receipt.repairReceiptId,
+      changeReceiptId: receipt.changeReceiptId,
+      testEvidenceId: receipt.testEvidenceId,
+      testStatus: 'passed' as const,
+    } : {}),
+    createdAtMs: 120,
+    updatedAtMs: 120,
   };
 }
 

@@ -111,15 +111,16 @@
   margin-bottom: 16px;
 }
 
-/* 用户气泡：冷钴微渐变 + hairline 边 + 收紧的右下角，像一枚落款。 */
+/* 用户气泡：一块平坦的浅钴落款——去掉描边、渐变与蓝色投影，内容本身
+   已经足够区分说话人，与桌面文件系统的平面语言一致。 */
 .paw-desktop-root .paw-chatfx .paw-user-message {
   max-width: calc(95% - 40px);
   margin-left: 70px;
   padding: 8px 15px;
-  border: 1px solid color-mix(in srgb, var(--paw-chat-accent) 14%, var(--paw-chat-border));
+  border: 0;
   border-radius: 18px 18px 6px 18px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--paw-chat-accent) 7%, #fff), var(--paw-chat-user-bubble));
-  box-shadow: 0 1px 2px rgb(24 32 43 / 4%), 0 5px 16px rgb(47 107 255 / 6%);
+  background: var(--paw-chat-user-bubble);
+  box-shadow: none;
   font-size: 16px;
   line-height: 24px;
   overflow-wrap: anywhere;
@@ -564,23 +565,6 @@
   margin: 6px 0 4px 20px;
 }
 
-.paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label {
-  color: transparent;
-  background:
-    linear-gradient(
-      100deg,
-      var(--paw-chat-text-secondary) 10%,
-      var(--paw-chat-text-secondary) 36%,
-      var(--paw-chat-accent) 50%,
-      var(--paw-chat-text-secondary) 64%,
-      var(--paw-chat-text-secondary) 90%
-    );
-  background-clip: text;
-  background-size: 230% 100%;
-  -webkit-background-clip: text;
-  animation: paw-agent-fx-text-sweep 1.85s ease-in-out infinite;
-}
-
 /* 状态是一个词，不是一枚徽章。填充胶囊在每一行都加了一圈边缘与 18px 内边距，
    密集步骤树里既是卡片语汇，也直接吃掉可读宽度；颜色与行星标记已足够表达状态。 */
 .paw-desktop-root .paw-chatfx .fx-pill {
@@ -1016,8 +1000,6 @@
   align-items: baseline;
   gap: 7px;
   color: var(--paw-chat-text);
-  background: none;
-  animation: none;
   font-size: 13.5px;
   font-weight: 620;
 }
@@ -1037,6 +1019,42 @@
   font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 运行态流光落在字上：行与卡的背景保持干净，进行中的状态文字本身过一道
+   柔和的钴色受光带。base 是各节点原本的墨色（--paw-running-ink），sheen 是
+   钴蓝的受光色；只动 background-position，不触发布局，也不在流式 token
+   路径上加重绘。strong 里的 elapsed <time> 自带不透明墨色，保持静止可读。
+   prefers-reduced-motion 与 data-reduce-motion 下回落为静态墨色（见尾部）。 */
+.paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label { --paw-running-ink: var(--paw-chat-text-secondary); }
+.paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__hint { --paw-running-ink: var(--paw-chat-text-tertiary); }
+.paw-desktop-root .paw-chatfx .fx-progress-card[data-state='running'] .fx-progress-head strong { --paw-running-ink: var(--paw-chat-text); }
+.paw-desktop-root .paw-chatfx .fx-progress-card[data-state='running'] .fx-progress__detail { --paw-running-ink: var(--paw-chat-text-secondary); }
+.paw-desktop-root .paw-chatfx .agent-assistant-pending strong { --paw-running-ink: var(--paw-chat-text); }
+.paw-desktop-root .paw-chatfx .agent-assistant-pending small { --paw-running-ink: var(--paw-chat-text-tertiary); }
+
+.paw-desktop-root .paw-chatfx :is(
+  .paw-activity[data-state='running'] .paw-activity__label,
+  .paw-activity[data-state='running'] .paw-activity__hint,
+  .fx-progress-card[data-state='running'] .fx-progress-head strong,
+  .fx-progress-card[data-state='running'] .fx-progress__detail,
+  .agent-assistant-pending strong,
+  .agent-assistant-pending small
+) {
+  color: transparent;
+  background:
+    linear-gradient(
+      100deg,
+      var(--paw-running-ink) 10%,
+      var(--paw-running-ink) 36%,
+      color-mix(in srgb, var(--paw-chat-accent) 68%, #fff) 50%,
+      var(--paw-running-ink) 64%,
+      var(--paw-running-ink) 90%
+    );
+  background-clip: text;
+  background-size: 230% 100%;
+  -webkit-background-clip: text;
+  animation: paw-agent-fx-text-sweep 1.85s ease-in-out infinite;
 }
 
 .paw-desktop-root .paw-chatfx .agent-working-dots b {
@@ -1059,6 +1077,35 @@
   border-radius: 0 5px 5px 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* 上下文压缩提示与失败注解同一语汇：一行安静的行间注记，不再是
+   描边 + 左侧粗条 + 暖底 + 图标徽章套娃的卡片。色调只落在小图标上。 */
+.paw-desktop-root .paw-chatfx .agent-compaction-notice {
+  min-height: 0;
+  max-width: none;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  margin: 2px 0 10px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.paw-desktop-root .paw-chatfx .agent-compaction-notice__mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.paw-desktop-root .paw-chatfx .agent-compaction-notice[data-state='failed'] {
+  background: transparent;
+}
+
+.paw-desktop-root .paw-chatfx .agent-compaction-notice[data-state='failed'] .agent-compaction-notice__mark {
+  color: var(--paw-chat-danger);
 }
 
 /* 空态：居中的邀请卡——环形图标、一句话主张、可行动的下一步。 */
@@ -1180,27 +1227,30 @@
     animation: none;
   }
 
-  .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label {
-    color: var(--paw-chat-text-secondary);
-    background: none;
-    animation: none;
-  }
-
-  .paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
-    color: var(--paw-chat-text);
+  /* 字上流光整体关闭，文字回到各自原本的静态墨色。 */
+  .paw-desktop-root .paw-chatfx :is(
+    .paw-activity[data-state='running'] .paw-activity__label,
+    .paw-activity[data-state='running'] .paw-activity__hint,
+    .fx-progress-card[data-state='running'] .fx-progress-head strong,
+    .fx-progress-card[data-state='running'] .fx-progress__detail,
+    .agent-assistant-pending strong,
+    .agent-assistant-pending small
+  ) {
+    color: var(--paw-running-ink);
     background: none;
     animation: none;
   }
 }
 
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label {
-  color: var(--paw-chat-text-secondary);
-  background: none;
-  animation: none;
-}
-
-:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
-  color: var(--paw-chat-text);
+:root[data-reduce-motion='true'] .paw-desktop-root .paw-chatfx :is(
+  .paw-activity[data-state='running'] .paw-activity__label,
+  .paw-activity[data-state='running'] .paw-activity__hint,
+  .fx-progress-card[data-state='running'] .fx-progress-head strong,
+  .fx-progress-card[data-state='running'] .fx-progress__detail,
+  .agent-assistant-pending strong,
+  .agent-assistant-pending small
+) {
+  color: var(--paw-running-ink);
   background: none;
   animation: none;
 }
@@ -1231,8 +1281,14 @@
 }
 
 @media (forced-colors: active) {
-  .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label,
-  .paw-desktop-root .paw-chatfx .agent-assistant-pending strong {
+  .paw-desktop-root .paw-chatfx :is(
+    .paw-activity[data-state='running'] .paw-activity__label,
+    .paw-activity[data-state='running'] .paw-activity__hint,
+    .fx-progress-card[data-state='running'] .fx-progress-head strong,
+    .fx-progress-card[data-state='running'] .fx-progress__detail,
+    .agent-assistant-pending strong,
+    .agent-assistant-pending small
+  ) {
     color: CanvasText;
     background: none;
     animation: none;
