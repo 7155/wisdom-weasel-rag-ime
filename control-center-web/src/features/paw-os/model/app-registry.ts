@@ -31,6 +31,7 @@ export type PawOsAppDefinition = {
   shortLabel: string;
   routeIds: readonly RouteId[];
   defaultRouteId: RouteId | null;
+  homeRoute?: string;
   presentation: PawOsAppPresentation;
   accent: 'cyan' | 'blue' | 'violet' | 'amber' | 'green' | 'rose' | 'slate';
   tagline: string;
@@ -65,6 +66,7 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     shortLabel: '记忆',
     routeIds: ['memory'],
     defaultRouteId: 'memory',
+    homeRoute: '/memory?view=timeline',
     presentation: 'library',
     accent: 'rose',
     tagline: '可追溯的个人记忆',

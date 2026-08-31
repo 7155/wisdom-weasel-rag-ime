@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pawAppForPath, pawApps } from './app-registry';
+import { pawApp, pawAppForPath, pawApps } from './app-registry';
 
 describe('PAWOS App registry', () => {
   it('maps legacy feature URLs onto native PAWOS Apps', () => {
@@ -17,6 +17,11 @@ describe('PAWOS App registry', () => {
 
   it('does not silently turn an unknown hash into a project window', () => {
     expect(pawAppForPath('/not-a-paw-app')).toBeNull();
+  });
+
+  it('opens Memory on the timeline steward home', () => {
+    expect(pawApp('memory').route).toBe('/memory?view=timeline');
+    expect(pawAppForPath('/memory?view=timeline')?.id).toBe('memory');
   });
 
   it('discovers source-isolated Extension Apps without adding business ids to the core registry', () => {

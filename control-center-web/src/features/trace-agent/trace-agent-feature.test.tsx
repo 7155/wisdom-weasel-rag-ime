@@ -276,9 +276,7 @@ describe('TraceAgentFeature', () => {
     vi.useFakeTimers();
     await act(async () => {
       start.click();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
     });
     const report = screen.getByRole('region', { name: 'Trace 诊断报告' });
     expect(report).toHaveTextContent('生成中');

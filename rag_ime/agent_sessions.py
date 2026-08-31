@@ -5,10 +5,11 @@ import re
 import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
-from typing import Iterable, Mapping, cast
+from typing import Callable, Iterable, Mapping, cast
 from urllib.parse import quote
 
 from .agent_approval_model import pending_model_arbitration
@@ -54,6 +55,8 @@ class AgentGoalExecutionBlocked(ValueError):
 
 _EXTENSION_APP_ID = re.compile(r"^extension:[a-z0-9][a-z0-9-]{0,63}$")
 _SURFACE_KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_BUILTIN_APP_IDS = frozenset({"memory"})
+_MEMORY_JOURNAL_KEY = re.compile(r"^journal-(\d{4}-\d{2}-\d{2})$")
 
 
 _SESSION_SELECT = """
@@ -106,6 +109,7 @@ class AgentSessionStore:
         owner_app_id: str = "",
         surface_key: str = "",
         created_at_ms: int | None = None,
+        _connection: sqlite3.Connection | None = None,
     ) -> dict[str, object]:
         if mode not in {"assistant", "coordinator"}:
             raise ValueError("agent session mode must be assistant or coordinator")
@@ -128,7 +132,7 @@ class AgentSessionStore:
             )
         )
         if normalized_kind != "conversation" and normalized_surface != "agent":
-            raise ValueError("internal Agent sessions cannot be owned by an Extension App")
+            raise ValueError("internal Agent sessions cannot be owned by an App surface")
         normalized_thinking = str(thinking_level or "").strip().lower()
         if normalized_thinking not in {
             "",
@@ -189,7 +193,35 @@ class AgentSessionStore:
         shell_policy = shell_policy_version or (
             "coordinator-per-command-v1" if mode == "coordinator" else "assistant-no-shell-v1"
         )
-        with self._connect() as conn:
+        values = (
+            session_id,
+            normalized_title,
+            mode,
+            normalized_role_id,
+            role_version,
+            normalized_role_book_revision_id,
+            normalized_model_profile,
+            normalized_thinking,
+            normalized_tool_profile,
+            normalized_execution_mode,
+            normalized_room_execution_mode,
+            scope_sha256,
+            scope_granted_at_ms,
+            1 if project_context_enabled else 0,
+            1 if pi_skills_enabled else 0,
+            1 if codex_skills_enabled else 0,
+            json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
+            shell_policy,
+            normalized_kind,
+            normalized_surface,
+            normalized_owner_app_id,
+            normalized_surface_key,
+            timestamp,
+            timestamp,
+            timestamp,
+        )
+
+        def insert(conn: sqlite3.Connection) -> dict[str, object]:
             conn.execute(
                 """
                 INSERT INTO agent_sessions(
@@ -205,35 +237,57 @@ class AgentSessionStore:
                     last_opened_at_ms, status
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
-                (
-                    session_id,
-                    normalized_title,
-                    mode,
-                    normalized_role_id,
-                    role_version,
-                    normalized_role_book_revision_id,
-                    normalized_model_profile,
-                    normalized_thinking,
-                    normalized_tool_profile,
-                    normalized_execution_mode,
-                    normalized_room_execution_mode,
-                    scope_sha256,
-                    scope_granted_at_ms,
-                    1 if project_context_enabled else 0,
-                    1 if pi_skills_enabled else 0,
-                    1 if codex_skills_enabled else 0,
-                    json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
-                    shell_policy,
-                    normalized_kind,
-                    normalized_surface,
-                    normalized_owner_app_id,
-                    normalized_surface_key,
-                    timestamp,
-                    timestamp,
-                    timestamp,
-                ),
+                values,
             )
-        return self.get(session_id)
+            return self._get(conn, session_id)
+
+        if _connection is not None:
+            return insert(_connection)
+        with self._connect() as conn:
+            return insert(conn)
+
+    def ensure_surface_session(
+        self,
+        *,
+        surface_kind: str,
+        owner_app_id: str,
+        surface_key: str,
+        create: Callable[[sqlite3.Connection], Mapping[str, object]],
+    ) -> tuple[bool, dict[str, object]]:
+        normalized_surface, normalized_owner, normalized_key = _surface_ownership(
+            surface_kind,
+            owner_app_id,
+            surface_key,
+            require_surface_key=True,
+        )
+        if normalized_surface == "agent":
+            raise ValueError("surface ensure requires an App-owned Session")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                f"""
+                {_SESSION_SELECT}
+                WHERE s.session_kind = 'conversation'
+                  AND s.status <> 'archived'
+                  AND s.surface_kind = ?
+                  AND s.owner_app_id = ?
+                  AND s.surface_key = ?
+                ORDER BY s.updated_at_ms DESC, s.id DESC
+                LIMIT 1
+                """,
+                (normalized_surface, normalized_owner, normalized_key),
+            ).fetchone()
+            if row is not None:
+                return False, _session_payload(row, _joined_runtime_binding(row))
+            created = dict(create(conn))
+            if (
+                created.get("sessionKind") != "conversation"
+                or created.get("surfaceKind") != normalized_surface
+                or created.get("ownerAppId") != normalized_owner
+                or created.get("surfaceKey") != normalized_key
+            ):
+                raise RuntimeError("surface Session creator returned a mismatched Session")
+            return True, created
 
     def set_role_book_revision(
         self,
@@ -365,7 +419,7 @@ class AgentSessionStore:
         if normalized_surface:
             clauses.append("s.surface_kind = ?")
             query_params.append(normalized_surface)
-        if normalized_surface == "extension_app":
+        if normalized_surface in {"extension_app", "builtin_app"}:
             clauses.append("s.owner_app_id = ?")
             query_params.append(normalized_owner_app_id)
             if normalized_surface_key:
@@ -4268,19 +4322,37 @@ def _surface_ownership(
     normalized_surface = str(surface_kind or "agent").strip().lower()
     normalized_owner = str(owner_app_id or "").strip()
     normalized_key = str(surface_key or "").strip()
-    if normalized_surface not in {"agent", "extension_app"}:
-        raise ValueError("session surface kind must be agent or extension_app")
+    if normalized_surface not in {"agent", "extension_app", "builtin_app"}:
+        raise ValueError(
+            "session surface kind must be agent, extension_app, or builtin_app"
+        )
     if normalized_surface == "agent":
         if normalized_owner or normalized_key:
-            raise ValueError("Agent sessions cannot carry Extension App ownership")
+            raise ValueError("Agent sessions cannot carry App surface ownership")
         return "agent", "", ""
-    if _EXTENSION_APP_ID.fullmatch(normalized_owner) is None:
-        raise ValueError("Extension App sessions require a valid owner app id")
+    if normalized_surface == "extension_app":
+        if _EXTENSION_APP_ID.fullmatch(normalized_owner) is None:
+            raise ValueError("Extension App sessions require a valid owner app id")
+        if require_surface_key and not normalized_key:
+            raise ValueError("Extension App sessions require a surface key")
+        if normalized_key and _SURFACE_KEY.fullmatch(normalized_key) is None:
+            raise ValueError("Extension App session surface key is invalid")
+        return "extension_app", normalized_owner, normalized_key
+    if normalized_owner not in _BUILTIN_APP_IDS:
+        raise ValueError("built-in App sessions require a stable owner app id")
     if require_surface_key and not normalized_key:
-        raise ValueError("Extension App sessions require a surface key")
-    if normalized_key and _SURFACE_KEY.fullmatch(normalized_key) is None:
-        raise ValueError("Extension App session surface key is invalid")
-    return "extension_app", normalized_owner, normalized_key
+        raise ValueError("built-in App sessions require a surface key")
+    if not normalized_key:
+        return "builtin_app", normalized_owner, ""
+    if normalized_key != "timeline":
+        match = _MEMORY_JOURNAL_KEY.fullmatch(normalized_key)
+        if match is None:
+            raise ValueError("Memory Session surface key is invalid")
+        try:
+            date.fromisoformat(match.group(1))
+        except ValueError as exc:
+            raise ValueError("Memory Session journal date is invalid") from exc
+    return "builtin_app", normalized_owner, normalized_key
 
 
 def _normalize_room_execution_mode(value: object) -> str:

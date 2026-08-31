@@ -109,7 +109,7 @@ export function sessionItems(
   return source.filter((item): item is SessionSummary => (
     isSessionSummary(item)
     && !isTransientSubagentSession(item)
-    && (options.includeAppOwned || !isExtensionAppOwnedSession(item))
+    && (options.includeAppOwned || !isAppOwnedSession(item))
   ));
 }
 
@@ -176,8 +176,9 @@ function isTransientSubagentSession(value: unknown): boolean {
   return isRecord(value) && value.sessionKind === 'subagent_runtime';
 }
 
-function isExtensionAppOwnedSession(value: unknown): boolean {
-  return isRecord(value) && value.surfaceKind === 'extension_app';
+function isAppOwnedSession(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.surfaceKind !== 'string') return false;
+  return Boolean(value.surfaceKind) && value.surfaceKind !== 'agent';
 }
 
 function isAgentCommand(value: unknown): value is AgentCommand {

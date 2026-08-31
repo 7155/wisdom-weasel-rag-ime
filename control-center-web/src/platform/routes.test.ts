@@ -52,6 +52,7 @@ const canonicalPathIds = [
   'agent.configuration.update',
   'agent.sessions.list',
   'agent.sessions.create',
+  'agent.sessions.surface.ensure',
   'agent.session.snapshot',
   'agent.session.workspace.list',
   'agent.session.workspace.read',

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type {
@@ -12,6 +12,10 @@ import type {
 import { ActivityTimeline } from './ActivityTimeline';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { parseTraceAgentHandoff } from '@/features/trace-agent/handoff';
+
+vi.mock('./MemorySteward', () => ({
+  MemorySteward: () => <section aria-label="Memory 管家" />,
+}));
 
 afterEach(cleanup);
 
@@ -101,7 +105,11 @@ describe('ActivityTimeline activity projection', () => {
       },
     });
 
-    expect(await screen.findByRole('button', { name: '正在整理' })).toBeDisabled();
+    expect(await screen.findByRole(
+      'button',
+      { name: '正在整理' },
+      { timeout: 3_000 },
+    )).toBeDisabled();
     const status = screen.getByRole('status', { name: '历史日记整理进度' });
     expect(status).toHaveTextContent('已完成 2 / 5 天');
     expect(status).toHaveTextContent('任务 memory-maintenance:existing-timeline');
@@ -338,6 +346,102 @@ describe('ActivityTimeline activity projection', () => {
     expect(within(referenceDialog).getByText('准备切换工作账号')).toBeVisible();
   });
 
+  it('uses a compact 24-hour density track with separate readable summaries', async () => {
+    const user = userEvent.setup();
+    const timeline = semanticTimeline();
+    const tasks = timeline.semanticTasks as Array<Record<string, unknown>>;
+    const [year, month, day] = localDateForTest().split('-').map(Number);
+    const dayStart = new Date(year, month - 1, day, 0, 0).getTime();
+    tasks[0]!.startMs = dayStart + 9 * 3_600_000;
+    tasks[0]!.endMs = dayStart + 11 * 3_600_000;
+    tasks[1]!.startMs = dayStart + 14 * 3_600_000;
+    tasks[1]!.endMs = dayStart + 15.5 * 3_600_000;
+    tasks.push({
+      segmentId: 'semantic-task:unclassified',
+      title: '补充未归类来源',
+      period: 'day',
+      startMs: dayStart,
+      endMs: dayStart + 24 * 3_600_000,
+      activityKind: 'unclassified_activity',
+      summary: '来源尚未形成可靠的时间归类。',
+      apps: [],
+      eventCount: 1,
+      evidenceCount: 1,
+    });
+    renderTimeline(timeline);
+
+    const map = await screen.findByRole('region', { name: `${localDateForTest()} 活动分布` });
+    const density = within(map).getByRole('list', { name: '24 小时活动密度轨道' });
+    const summary = within(map).getByRole('list', { name: '活动摘要' });
+    const morningMarker = within(density).getByRole('button', { name: /查看活动：切换 Codex 账号并继续开发/u });
+    const unclassifiedMarker = within(density).getByRole('button', { name: /查看活动：补充未归类来源/u });
+
+    expect(morningMarker).toBeEmptyDOMElement();
+    expect(unclassifiedMarker).toHaveAttribute('data-unclassified', 'true');
+    expect(within(summary).getByText('切换 Codex 账号并继续开发')).toBeVisible();
+    expect(within(summary).getByText('补充未归类来源')).toBeVisible();
+
+    await user.click(morningMarker);
+    expect(await screen.findByRole('dialog', { name: '切换 Codex 账号并继续开发' })).toBeInTheDocument();
+  });
+
+  it('keeps a long daily journal bounded until the reader explicitly expands it', async () => {
+    const user = userEvent.setup();
+    const timeline = semanticTimeline();
+    const fullStory = [
+      '上午完成账号切换与连续开发，下午验证记忆召回。',
+      '这段补充说明用于确认时间线日记不会把长篇原始整理内容直接撑满首屏。',
+      '完整内容仍应在用户选择展开后可读，并且当天来源入口始终保留。',
+    ].join(' ').repeat(5);
+    timeline.summary = fullStory;
+    renderTimeline(timeline);
+
+    const story = await screen.findByTestId('daily-journal-story');
+    const expand = screen.getByRole('button', { name: '展开完整日记' });
+    expect(story).toHaveAttribute('data-expanded', 'false');
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: '查看日记与当天来源' })).toBeVisible();
+
+    await user.click(expand);
+    expect(story).toHaveAttribute('data-expanded', 'true');
+    expect(screen.getByRole('button', { name: '收起完整日记' })).toHaveAttribute('aria-expanded', 'true');
+    expect(story).toHaveTextContent(fullStory);
+  });
+
+  it('puts evidence-bounded memory insights before the journal and secondary steward', async () => {
+    const user = userEvent.setup();
+    const timeline = semanticTimeline();
+    const tasks = timeline.semanticTasks as Array<Record<string, unknown>>;
+    tasks[0]!.title = '继续完成记忆召回方案';
+    tasks[0]!.summary = '当前实现仍待继续完成，先核对来源后再安排下一步。';
+    tasks[0]!.evidenceCount = 8;
+    renderTimeline(timeline);
+
+    const canvas = await screen.findByRole('region', { name: '记忆画布' });
+    const journal = screen.getByRole('region', { name: /每日日记/u });
+    const steward = screen.getByRole('region', { name: 'Memory 管家' });
+
+    expect(canvas).toHaveTextContent('今天值得回看的内容');
+    expect(await within(canvas).findByText('未完成')).toBeVisible();
+    expect(within(canvas).getByText('继续完成记忆召回方案')).toBeVisible();
+    expect(within(canvas).getAllByText(/8 条来源/u)).toHaveLength(2);
+    expect(within(canvas).getByText(/不是对情绪或计划的推断/u)).toBeVisible();
+    expect(canvas.compareDocumentPosition(journal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(journal.compareDocumentPosition(steward) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(within(canvas).getByRole('button', { name: /查看未完成线索：继续完成记忆召回方案/u }));
+    expect(await screen.findByRole('dialog', { name: '继续完成记忆召回方案' })).toBeInTheDocument();
+  });
+
+  it('does not invent a memory insight when organized activities have no explicit signal', async () => {
+    renderTimeline(semanticTimeline());
+
+    const canvas = await screen.findByRole('region', { name: '记忆画布' });
+    expect(await within(canvas).findByText(/今天没有可确认的 idea/u)).toBeVisible();
+    expect(within(canvas).queryByRole('button', { name: /查看.+线索/u })).not.toBeInTheDocument();
+    expect(within(canvas).getByText(/没有足够文字证据支持进一步归类/u)).toBeVisible();
+  });
+
   it('keeps nested timeline details mounted through their closing transition', async () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
@@ -496,6 +600,9 @@ function timelineTransport(
     }),
     request: async <Response,>(request: ControlRequest) => {
       options.requests?.push(request);
+      if (request.pathId === 'agent.sessions.list') {
+        return { ok: true, items: [] } as Response;
+      }
       if (request.pathId === 'memory.activityTimeline.get') {
         return { ok: true, timeline } as Response;
       }

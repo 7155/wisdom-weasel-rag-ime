@@ -5,8 +5,8 @@ that can only read GitHub still has the complete requirement set.
 
 | Document | Role |
 | --- | --- |
-| [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md) | Canonical index for the sixteen append-only requirement volumes `UR-001`–`UR-207`, exact-source evidence, product contract, and continuation links. `current` means controlling semantics, not implementation completion. |
-| [requirements/](requirements/) | Fourteen stable-ID ledger volumes plus separate verbatim evidence and cross-requirement product contract. Every file links to previous, index, and next. |
+| [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md) | Canonical index for the eighteen append-only requirement volumes `UR-001`–`UR-209`, exact-source evidence, product contract, and continuation links. `current` means controlling semantics, not implementation completion. |
+| [requirements/](requirements/) | Eighteen stable-ID ledger volumes plus separate verbatim evidence and cross-requirement product contract. Every file links to previous, index, and next. |
 | [PAWOS_REQUIREMENT_STATUS.md](PAWOS_REQUIREMENT_STATUS.md) | Per-requirement assessment, independent run/requirement verdicts, and E1–E6 evidence receipts. |
 | [PAWOS_SHOWCASE.md](PAWOS_SHOWCASE.md) | Current final-verification, Demo, capture, evidence-boundary, and closeout record. |
 | [PAWOS_TRACE_EVAL.md](PAWOS_TRACE_EVAL.md) | Common Trace authority, producer timing/privacy, retrieval evidence, deterministic and estimated Eval boundaries, periodic schedules, vertical fixtures, and UI acceptance limits. |

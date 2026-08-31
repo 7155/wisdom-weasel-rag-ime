@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Field } from './Field';
 import { Select } from './Select';
 
@@ -40,5 +41,24 @@ describe('Select inside a Field', () => {
     // No dangling aria-labelledby: an unreachable reference would blank the
     // name out entirely, which is worse than falling back to the value.
     expect(screen.getByRole('combobox')).not.toHaveAttribute('aria-labelledby');
+  });
+
+  it('keeps a portalled option interactive inside the desktop lasso boundary', async () => {
+    const user = userEvent.setup();
+    const onValueChange = vi.fn();
+    render(
+      <div onPointerDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest('[data-paw-desktop-ui]')) event.preventDefault();
+      }}>
+        <Select aria-label="切换知识库" onValueChange={onValueChange} options={options} value="a" />
+      </div>,
+    );
+
+    await user.click(screen.getByRole('combobox', { name: '切换知识库' }));
+    expect(await screen.findByRole('listbox')).toHaveAttribute('data-paw-desktop-ui');
+    await user.click(await screen.findByRole('option', { name: '会议纪要' }));
+
+    expect(onValueChange).toHaveBeenCalledWith('b');
   });
 });

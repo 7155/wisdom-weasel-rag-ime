@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
+import { transientControlErrorRefetchInterval } from '@/app/query-client';
 import type {
   ControlTransport,
   JsonValue,
@@ -374,42 +375,46 @@ export const knowledgeLibraryKeys = {
   ] as const,
 };
 
-export function useKnowledgeLibraryQueries(baseId: string) {
+export function useKnowledgeLibraryQueries(baseId: string, enabled = true) {
   const transport = useControlTransport();
   const bases = useQuery({
     queryKey: knowledgeLibraryKeys.bases(),
+    enabled,
     queryFn: async ({ signal }) => normalizeBases(await transport.request({
       pathId: 'knowledgeBases.list',
       signal,
     })),
+    refetchInterval: transientControlErrorRefetchInterval(enabled),
     staleTime: 10_000,
   });
   const base = useQuery({
     queryKey: knowledgeLibraryKeys.base(baseId),
-    enabled: Boolean(baseId),
+    enabled: enabled && Boolean(baseId),
     queryFn: async ({ signal }) => normalizeBaseEnvelope(await transport.request({
       pathId: 'knowledgeBases.get',
       params: { kbId: baseId },
       signal,
     })),
+    refetchInterval: transientControlErrorRefetchInterval(enabled && Boolean(baseId)),
     staleTime: 10_000,
   });
   const documents = useQuery({
     queryKey: knowledgeLibraryKeys.documents(baseId),
-    enabled: Boolean(baseId),
+    enabled: enabled && Boolean(baseId),
     queryFn: async ({ signal }) => normalizeDocuments(await transport.request({
       pathId: 'knowledgeBases.documents.list',
       params: { kbId: baseId },
       signal,
     }), baseId),
     refetchInterval: (query) => {
+      if (query.state.status === 'error') return enabled ? 4_000 : false;
       const rows = (query.state.data ?? []) as KnowledgeDocument[];
       return rows.some((row) => ['queued', 'parsing', 'indexing'].includes(row.status)) ? 1_500 : false;
     },
   });
   const jobs = useQuery({
     queryKey: knowledgeLibraryKeys.jobs(baseId),
-    enabled: Boolean(baseId),
+    enabled: enabled && Boolean(baseId),
     queryFn: async ({ signal }) => normalizeJobs(await transport.request({
       pathId: 'knowledgeBases.jobs.list',
       params: { kbId: baseId },
@@ -423,17 +428,20 @@ export function useKnowledgeLibraryQueries(baseId: string) {
   });
   const worker = useQuery({
     queryKey: knowledgeLibraryKeys.worker(),
+    enabled,
     queryFn: ({ signal }) => transport.request({ pathId: 'knowledgeWorker.health', signal }),
     staleTime: 15_000,
     refetchInterval: 30_000,
   });
   const parsers = useQuery({
     queryKey: knowledgeLibraryKeys.parsers(),
+    enabled,
     queryFn: ({ signal }) => transport.request({ pathId: 'knowledgeParsers.list', signal }),
     staleTime: 30_000,
   });
   const embeddingProfile = useQuery({
     queryKey: knowledgeLibraryKeys.embeddingProfile(),
+    enabled,
     queryFn: async ({ signal }) => normalizeEmbeddingProfileState(await transport.request({
       pathId: 'knowledgeEmbedding.profile',
       signal,
@@ -442,6 +450,7 @@ export function useKnowledgeLibraryQueries(baseId: string) {
   });
   const settings = useQuery({
     queryKey: knowledgeLibraryKeys.settings(),
+    enabled,
     queryFn: ({ signal }) => transport.request({ pathId: 'configuration.settings', signal }),
     staleTime: 10_000,
   });
@@ -468,11 +477,11 @@ export async function previewKnowledgeEmbeddingImpact(
   }));
 }
 
-export function useKnowledgeGraphQuery(baseId: string, filters: KnowledgeGraphFilters) {
+export function useKnowledgeGraphQuery(baseId: string, filters: KnowledgeGraphFilters, enabled = true) {
   const transport = useControlTransport();
   return useQuery({
     queryKey: knowledgeLibraryKeys.graph(baseId, filters),
-    enabled: Boolean(baseId),
+    enabled: enabled && Boolean(baseId),
     queryFn: async ({ signal }) => normalizeKnowledgeGraph(await transport.request({
       pathId: 'knowledgeBases.graph.get',
       params: { kbId: baseId },

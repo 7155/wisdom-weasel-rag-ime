@@ -26,9 +26,9 @@ const builtinApps: readonly PawAppDefinition[] = pawOsAppRegistry.map((app) => (
   label: app.label,
   shortLabel: app.shortLabel,
   tagline: app.tagline,
-  route: app.id === 'system-settings'
+  route: app.homeRoute ?? (app.id === 'system-settings'
     ? '/appearance'
-    : app.defaultRouteId ? canonicalRoutePath(app.defaultRouteId) : `/${app.id}`,
+    : app.defaultRouteId ? canonicalRoutePath(app.defaultRouteId) : `/${app.id}`),
   kind: appKind(app.presentation),
 }));
 

@@ -8895,6 +8895,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self._write_json(
                         HTTPStatus.OK, handler(work_document_id, payload)
                     )
+            elif path == "/api/agent/sessions/surface/ensure":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.ensure_surface_session(payload),
+                )
             elif path == "/api/agent/sessions":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
             elif context_session_id and context_item_id and context_item_action == "ack":

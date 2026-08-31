@@ -1,0 +1,119 @@
+.memory-steward {
+  --steward-accent: color-mix(in srgb, var(--color-accent) 82%, #4c5cff);
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--steward-accent) 24%, var(--color-border));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--steward-accent) 9%, transparent), transparent 30%),
+    var(--color-surface);
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--steward-accent) 6%, transparent);
+}
+
+.memory-steward__header {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  padding: 13px 15px 11px;
+  grid-template-columns: 38px max-content minmax(0, 1fr);
+  gap: 10px;
+}
+
+.memory-steward__mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  color: var(--steward-accent);
+  background: color-mix(in srgb, var(--steward-accent) 10%, var(--color-surface));
+  place-items: center;
+}
+
+.memory-steward__header > span:nth-child(2) { display: grid; gap: 1px; }
+.memory-steward__header small { color: var(--steward-accent); font-size: 11px; font-weight: 760; }
+.memory-steward__header strong { font-size: 14px; letter-spacing: -.01em; }
+.memory-steward__header p {
+  min-width: 0;
+  margin: 0 0 0 auto;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-steward__start { display: grid; padding: 0 15px 15px; gap: 10px; }
+.memory-steward__suggestions { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; }
+.memory-steward__suggestions button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.memory-steward__suggestions button:hover { color: var(--steward-accent); border-color: color-mix(in srgb, var(--steward-accent) 34%, var(--color-border)); }
+.memory-steward__start form { position: relative; min-width: 0; }
+.memory-steward__start textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 68px;
+  padding: 12px 50px 12px 13px;
+  resize: none;
+  border: 1px solid color-mix(in srgb, var(--steward-accent) 24%, var(--color-border));
+  border-radius: 13px;
+  outline: 0;
+  color: var(--color-text-primary);
+  background: var(--color-surface-raised);
+  font: inherit;
+  line-height: 1.5;
+}
+.memory-steward__start textarea:focus { border-color: var(--steward-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--steward-accent) 9%, transparent); }
+.memory-steward__start form > button {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  color: white;
+  background: var(--steward-accent);
+  place-items: center;
+}
+.memory-steward__start form > button:disabled { opacity: .38; }
+.memory-steward__loading,
+.memory-steward__error { margin: 0; padding: 0 15px 14px 63px; color: var(--color-text-secondary); font-size: 12px; }
+.memory-steward__loading { display: flex; align-items: center; gap: 7px; }
+.memory-steward__error { color: var(--color-danger); }
+.memory-steward__session { min-height: 360px; height: min(48vh, 520px); border-top: 1px solid var(--color-border); }
+
+.memory-steward .paw-session-workspace[data-appearance='embedded'] {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  grid-template-rows: minmax(0, 1fr);
+}
+.memory-steward .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__body { grid-template-columns: minmax(0, 1fr); }
+.memory-steward .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__primary { grid-template-rows: minmax(0, 1fr); }
+.memory-steward .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__viewport,
+.memory-steward .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__composer { grid-area: 1 / 1; }
+.memory-steward .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__composer { align-self: end; padding: 10px 14px 12px; }
+.memory-steward .paw-session-workspace[data-appearance='embedded'] .agent-timeline { width: min(860px, 100%); margin-inline: auto; padding-inline: clamp(14px, 4vw, 54px); }
+
+@container memory-second-brain (max-width: 720px) {
+  .memory-steward__header { grid-template-columns: 36px minmax(0, 1fr); }
+  .memory-steward__header p { display: none; }
+  .memory-steward__suggestions { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .memory-steward__suggestions button { flex: 0 0 auto; }
+}

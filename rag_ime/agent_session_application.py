@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -123,6 +124,48 @@ class AgentSessionApplicationService:
         }
 
     def create_session(self, payload: Mapping[str, object]) -> dict[str, object]:
+        session = self._create_session_record(payload)
+        return {
+            "schemaVersion": "rag-ime.agent-session-create.v1",
+            "ok": True,
+            "session": session,
+            "roleBook": {
+                "ok": True,
+                "status": "persona_package_not_installed",
+                "revisionId": "",
+            },
+            "memoryBootstrap": self.pending_memory_bootstrap(session),
+        }
+
+    def ensure_surface_session(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        surface_kind = str(payload.get("surfaceKind") or "").strip()
+        owner_app_id = str(payload.get("ownerAppId") or "").strip()
+        surface_key = str(payload.get("surfaceKey") or "").strip()
+        created, session = self.sessions.ensure_surface_session(
+            surface_kind=surface_kind,
+            owner_app_id=owner_app_id,
+            surface_key=surface_key,
+            create=lambda conn: self._create_session_record(
+                payload,
+                connection=conn,
+            ),
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-surface-session-ensure.v1",
+            "ok": True,
+            "created": created,
+            "session": session,
+        }
+
+    def _create_session_record(
+        self,
+        payload: Mapping[str, object],
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
         title = str(payload.get("title") or "新对话")
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
@@ -240,18 +283,9 @@ class AgentSessionApplicationService:
             surface_kind=str(payload.get("surfaceKind") or "agent"),
             owner_app_id=str(payload.get("ownerAppId") or ""),
             surface_key=str(payload.get("surfaceKey") or ""),
+            _connection=connection,
         )
-        return {
-            "schemaVersion": "rag-ime.agent-session-create.v1",
-            "ok": True,
-            "session": session,
-            "roleBook": {
-                "ok": True,
-                "status": "persona_package_not_installed",
-                "revisionId": "",
-            },
-            "memoryBootstrap": self.pending_memory_bootstrap(session),
-        }
+        return session
 
     def delete_session(self, session_id: str) -> dict[str, object]:
         if self.rooms.participant_for_session(

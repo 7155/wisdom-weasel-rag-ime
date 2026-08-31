@@ -26,6 +26,160 @@
   gap: var(--space-3);
 }
 
+/* The canvas is the first screen: it only surfaces claims that can point back
+   to the selected day's already-organized activities. The journal, calendar,
+   and optional conversation remain supporting detail below it. */
+.memory-insight-canvas {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-accent-soft) 58%, var(--color-surface)), var(--color-surface) 56%);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.memory-insight-canvas__header {
+  display: flex;
+  min-width: 0;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 18px 15px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.memory-insight-canvas__header > div { min-width: 0; }
+.memory-insight-canvas__header > div > span {
+  display: block;
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  line-height: 1.4;
+}
+.memory-insight-canvas__header h2 {
+  overflow: hidden;
+  margin: 3px 0 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-insight-canvas__header > small {
+  overflow: hidden;
+  max-width: 42%;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-insight-canvas__grid {
+  display: grid;
+  min-width: 0;
+  padding: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.memory-insight-card {
+  display: grid;
+  min-width: 0;
+  min-height: 152px;
+  align-content: start;
+  padding: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-surface) 91%, transparent);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  gap: 6px;
+  text-align: left;
+  transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), transform var(--duration-press) var(--ease-press);
+}
+
+.memory-insight-card__kind {
+  overflow: hidden;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-insight-card[data-kind='unfinished'] .memory-insight-card__kind { background: color-mix(in srgb, var(--color-warning) 16%, var(--color-surface)); color: var(--color-warning); }
+.memory-insight-card[data-kind='plan'] .memory-insight-card__kind { background: color-mix(in srgb, var(--color-info) 14%, var(--color-surface)); color: var(--color-info); }
+.memory-insight-card[data-kind='emotion'] .memory-insight-card__kind { background: color-mix(in srgb, var(--color-danger) 11%, var(--color-surface)); color: var(--color-danger); }
+.memory-insight-card[data-kind='suggestion'] .memory-insight-card__kind { background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface)); color: var(--color-success); }
+
+.memory-insight-card > strong {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-insight-card > p {
+  display: -webkit-box;
+  min-height: 2.9em;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.memory-insight-card > footer {
+  display: grid;
+  min-width: 0;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  gap: 3px;
+}
+.memory-insight-card > footer > span,
+.memory-insight-card > footer > small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-insight-card > footer > span { color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.memory-insight-card:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+.memory-insight-canvas__empty {
+  display: grid;
+  min-height: 112px;
+  align-content: center;
+  padding: 17px 18px;
+  color: var(--color-text-secondary);
+  gap: 4px;
+}
+.memory-insight-canvas__empty strong { overflow: hidden; color: var(--color-text-primary); font-size: 14px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.memory-insight-canvas__empty span { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; }
+
+.memory-insight-canvas__boundary {
+  padding: 9px 18px 11px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 @container memory-second-brain (max-width: 960px) {
   .activity-timeline__layout { grid-template-columns: minmax(0, 1fr); }
 }
@@ -374,10 +528,13 @@
 }
 
 .daily-journal__identity h3 {
+  overflow: hidden;
   margin: 1px 0 0;
   font-family: var(--font-display);
   font-size: 17px;
   letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .daily-journal__body {
@@ -400,6 +557,31 @@
   font-size: 17px;
   line-height: 1.75;
 }
+
+.daily-journal__story[data-expanded='false'] .daily-journal__story-copy {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.daily-journal__story-toggle {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  margin: -5px 0 10px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.daily-journal__story-toggle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
 
 .daily-journal__highlights {
   display: grid;
@@ -559,8 +741,8 @@
 .activity-day-map {
   display: grid;
   min-width: 0;
-  gap: 7px;
-  padding: 12px 14px 14px;
+  gap: 8px;
+  padding: 13px 14px 12px;
   border-block: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-surface-subtle) 66%, transparent);
 }
@@ -576,7 +758,14 @@
 .activity-day-map > header > div { display: inline-flex; align-items: center; gap: 7px; }
 .activity-day-map > header svg { color: var(--color-accent); }
 .activity-day-map > header strong { font-size: 13px; }
-.activity-day-map > header > span { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.4; }
+.activity-day-map > header > span {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .activity-day-map__axis {
   display: flex;
@@ -588,39 +777,106 @@
   font-size: 13px;
 }
 
-.activity-day-map__rows {
+.activity-day-map__tracks {
   display: grid;
   min-width: 0;
-  gap: 4px;
-  background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px);
-  background-size: 25% 100%;
+  gap: 5px;
 }
 
-.activity-day-map__row { position: relative; min-width: 0; height: 25px; }
+.activity-day-map__track {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 8px;
+}
 
-.activity-day-map__row > button {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  min-width: 8px;
+.activity-day-map__lane-label {
   overflow: hidden;
-  padding: 0 8px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-day-map__track-line {
+  position: relative;
+  min-width: 0;
+  height: 18px;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--color-border) 48%, transparent);
+  background-image: linear-gradient(to right, transparent calc(25% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(25% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(25% + .5px), transparent calc(25% + .5px), transparent calc(50% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(50% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(50% + .5px), transparent calc(50% + .5px), transparent calc(75% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(75% - .5px), color-mix(in srgb, var(--color-border-strong) 72%, transparent) calc(75% + .5px), transparent calc(75% + .5px));
+}
+
+.activity-day-map__track-line > button {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  bottom: 3px;
+  min-width: 7px;
+  padding: 0;
   border: 0;
-  border-left: 3px solid var(--period-color, var(--color-accent));
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--period-color, var(--color-accent)) 13%, var(--color-surface));
+  border-radius: 999px;
+  background: var(--period-color, var(--color-accent));
+  cursor: pointer;
+  transition: filter var(--duration-fast) var(--ease-standard), transform var(--duration-press) var(--ease-press);
+}
+
+.activity-day-map__track-line > button[data-period='morning'] { --period-color: var(--color-warning); }
+.activity-day-map__track-line > button[data-period='afternoon'] { --period-color: var(--color-info); }
+.activity-day-map__track-line > button[data-period='evening'] { --period-color: var(--color-accent); }
+.activity-day-map__track-line > button[data-period='day'] { --period-color: var(--color-success); }
+.activity-day-map__track-line > button[data-unclassified='true'] {
+  top: 1px;
+  bottom: 1px;
+  min-width: 12px;
+  border: 2px solid var(--color-surface);
+  background: var(--color-text-tertiary);
+  box-shadow: 0 0 0 1px var(--color-border-strong);
+  transform: translateX(-50%);
+}
+.activity-day-map__track-line > button:focus-visible { outline: 2px solid var(--period-color, var(--color-focus)); outline-offset: 2px; }
+
+.activity-day-map__summary {
+  display: grid;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--color-border);
+  list-style: none;
+}
+
+.activity-day-map__summary li { min-width: 0; border-bottom: 1px solid var(--color-border); }
+.activity-day-map__summary button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  padding: 7px 2px;
+  border: 0;
+  background: transparent;
   color: var(--color-text-primary);
   cursor: pointer;
+  font: inherit;
+  grid-template-columns: 76px minmax(0, 1fr) minmax(0, 30%) 16px;
+  gap: 8px;
   text-align: left;
-  transition: background-color var(--motion-exit) var(--ease-standard);
 }
-
-.activity-day-map__row > button[data-period='morning'] { --period-color: var(--color-warning); }
-.activity-day-map__row > button[data-period='afternoon'] { --period-color: var(--color-info); }
-.activity-day-map__row > button[data-period='evening'] { --period-color: var(--color-accent); }
-.activity-day-map__row > button[data-period='day'] { --period-color: var(--color-success); }
-.activity-day-map__row > button:focus-visible { outline: 2px solid var(--period-color); outline-offset: 2px; }
-.activity-day-map__row > button span { display: block; overflow: hidden; font-size: 14px; line-height: 1.4; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.activity-day-map__summary time,
+.activity-day-map__summary strong,
+.activity-day-map__summary button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-day-map__summary time { color: var(--color-text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.activity-day-map__summary strong { font-size: 13px; line-height: 1.4; }
+.activity-day-map__summary button > span { color: var(--color-text-secondary); font-size: 12px; line-height: 1.4; }
+.activity-day-map__summary svg { color: var(--color-text-tertiary); }
+.activity-day-map__summary button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 
 .activity-timeline__period {
   display: grid;
@@ -669,9 +925,12 @@
 }
 
 .activity-timeline__period-header h3 {
+  overflow: hidden;
   margin: 0;
   font-size: 15px;
   letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-timeline__period-header p {
@@ -782,9 +1041,11 @@
 }
 
 .activity-timeline__task-main > strong {
+  overflow: hidden;
   font-size: 15px;
   line-height: 1.4;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-timeline__task-summary {
@@ -1141,6 +1402,12 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .memory-insight-card:hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    transform: translateY(-1px);
+  }
+
   .activity-calendar__day:hover:not(:disabled) {
     background: var(--color-surface-hover);
     box-shadow: inset 0 0 0 1px var(--color-border-strong);
@@ -1162,10 +1429,8 @@
 
   .activity-timeline__open-event:hover { color: var(--color-text-primary); }
 
-  .activity-day-map__row > button:hover {
-    background: color-mix(in srgb, var(--period-color) 21%, var(--color-surface));
-    box-shadow: var(--shadow-2);
-  }
+  .activity-day-map__track-line > button:hover { filter: brightness(.88) saturate(1.12); }
+  .activity-day-map__summary button:hover { background: var(--color-surface-hover); }
 
   .activity-timeline__task:hover {
     background: var(--color-surface-subtle);
@@ -1189,6 +1454,8 @@
 }
 
 @container memory-second-brain (max-width: 720px) {
+  .memory-insight-canvas__header { align-items: start; }
+  .memory-insight-canvas__header > small { max-width: 48%; }
   .daily-journal__body { grid-template-columns: 1fr; }
   .daily-journal__story { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .activity-timeline__period-header { align-items: flex-start; }
@@ -1212,27 +1479,31 @@
   .activity-timeline__task-detail-metrics > div:nth-child(-n + 2) { border-bottom: 1px solid var(--color-border); }
 }
 
+@container memory-second-brain (max-width: 560px) {
+  .memory-insight-canvas__header { display: grid; gap: 7px; padding: 15px 14px 13px; }
+  .memory-insight-canvas__header > small { max-width: 100%; text-align: left; }
+  .memory-insight-canvas__grid { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+  .memory-insight-card { min-height: 140px; }
+  .memory-insight-canvas__boundary { padding-inline: 14px; }
+}
+
 @container memory-second-brain (max-width: 480px) {
   .daily-journal__header { align-items: flex-start; padding-inline: 14px 12px; }
   .daily-journal__identity { align-items: flex-start; }
   .daily-journal__identity h3 { font-size: 15px; }
   .daily-journal__story { padding: 15px 14px 13px; }
   .daily-journal__story > p { font-size: 16px; }
+  .daily-journal__story[data-expanded='false'] .daily-journal__story-copy { -webkit-line-clamp: 3; }
   .daily-journal__highlights button { min-height: 54px; grid-template-columns: 72px minmax(0, 1fr) 18px; }
   .daily-journal__source { min-height: 44px; padding-block: 10px; }
   .daily-journal__facts dl { grid-template-columns: 1fr; }
   .daily-journal__facts dl > div { border-right: 0; }
   .daily-journal__empty-copy { min-height: 150px; padding: 20px 16px; }
   .daily-journal__boundary { padding-inline: 14px 12px; }
-  .activity-day-map__row {
-    height: 44px;
-    overflow: hidden;
-  }
-  .activity-day-map__row > button {
-    top: 0;
-    bottom: 0;
-    min-width: 44px;
-  }
+  .activity-day-map > header > span { display: none; }
+  .activity-day-map__track { grid-template-columns: 34px minmax(0, 1fr); gap: 6px; }
+  .activity-day-map__summary button { grid-template-columns: 62px minmax(0, 1fr) 15px; gap: 6px; }
+  .activity-day-map__summary button > span { display: none; }
   .activity-timeline__period-header { display: grid; gap: 5px; }
   .activity-timeline__period-header > span { padding: 0 0 0 44px; }
   .activity-timeline__task { grid-template-columns: 1fr 28px; }
@@ -1256,11 +1527,12 @@
 @media (prefers-reduced-motion: reduce) {
   .daily-journal,
   .daily-journal__loading svg,
+  .memory-insight-card,
   .activity-calendar__organize-status svg,
   .daily-journal__highlights button,
   .daily-journal__source svg:last-child,
   .activity-calendar__day,
-  .activity-day-map__row > button,
+  .activity-day-map__track-line > button,
   .activity-timeline__task,
   .activity-timeline__event summary svg,
   .activity-timeline__source-refs summary svg { animation: none; transition: none; }

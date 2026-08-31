@@ -348,6 +348,21 @@ export const CONTROL_ROUTES = {
       'surfaceKey',
     ],
   },
+  'agent.sessions.surface.ensure': {
+    method: 'POST',
+    path: '/api/agent/sessions/surface/ensure',
+    body: [
+      'title',
+      'mode',
+      'toolProfileVersion',
+      'executionMode',
+      'workspaceRoots',
+      'surfaceKind',
+      'ownerAppId',
+      'surfaceKey',
+    ],
+    requiredBody: ['title', 'surfaceKind', 'ownerAppId', 'surfaceKey'],
+  },
   'agent.session.snapshot': {
     method: 'GET',
     path: '/api/agent/sessions/:sessionId/messages',

@@ -50,7 +50,13 @@ export function Select<T extends string>({
         <RadixSelect.Icon className="ui-select__icon"><ChevronDown aria-hidden="true" size={14} /></RadixSelect.Icon>
       </RadixSelect.Trigger>
       <RadixSelect.Portal>
-        <RadixSelect.Content className="ui-select__content" collisionPadding={8} position="popper" sideOffset={4}>
+        <RadixSelect.Content
+          className="ui-select__content"
+          collisionPadding={8}
+          data-paw-desktop-ui
+          position="popper"
+          sideOffset={4}
+        >
           <RadixSelect.Viewport className="ui-select__viewport">
             {options.map((option) => (
               <RadixSelect.Item

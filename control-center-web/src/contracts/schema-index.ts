@@ -6796,6 +6796,74 @@ export const contractSchemas = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-session.v1",
     "type": "object",
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "surfaceKind": {
+              "const": "agent"
+            }
+          },
+          "required": [
+            "surfaceKind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "ownerAppId": {
+              "const": ""
+            },
+            "surfaceKey": {
+              "const": ""
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "surfaceKind": {
+              "const": "extension_app"
+            }
+          },
+          "required": [
+            "surfaceKind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "ownerAppId": {
+              "pattern": "^extension:[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "surfaceKey": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "surfaceKind": {
+              "const": "builtin_app"
+            }
+          },
+          "required": [
+            "surfaceKind"
+          ]
+        },
+        "then": {
+          "properties": {
+            "ownerAppId": {
+              "const": "memory"
+            },
+            "surfaceKey": {
+              "pattern": "^(?:timeline|journal-[0-9]{4}-[0-9]{2}-[0-9]{2})$"
+            }
+          }
+        }
+      }
+    ],
     "required": [
       "schemaVersion",
       "id",
@@ -6914,12 +6982,13 @@ export const contractSchemas = {
         "type": "string",
         "enum": [
           "agent",
-          "extension_app"
+          "extension_app",
+          "builtin_app"
         ]
       },
       "ownerAppId": {
         "type": "string",
-        "pattern": "^$|^extension:[a-z0-9][a-z0-9-]{0,63}$"
+        "pattern": "^$|^memory$|^extension:[a-z0-9][a-z0-9-]{0,63}$"
       },
       "surfaceKey": {
         "type": "string",

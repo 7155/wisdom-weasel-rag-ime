@@ -251,7 +251,12 @@ describe('PAWOS native Apps', () => {
   });
 
   it.each([
-    ['memory', '我的记忆', ['memory.summary', 'memory.pages']],
+    ['memory', '我的记忆', [
+      'agent.sessions.list',
+      'memory.summary',
+      'memory.activityTimeline.get',
+      'memory.activityTimeline.calendar',
+    ]],
     ['input-studio', '输入法', ['input.source.get']],
     ['app-center', '插件管理', ['agent.extensions.list', 'agent.extensions.catalog', 'agent.extensions.proposals']],
     ['system-monitor', '运行记录', ['observability.snapshot']],

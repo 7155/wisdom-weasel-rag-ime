@@ -977,12 +977,20 @@ describe('Agent experience', () => {
       ownerAppId: 'extension:zhanggui-wenshu',
       surfaceKey: 'ask',
     };
+    const memoryOwned = {
+      ...agent,
+      id: 'session-memory-owned',
+      title: 'Memory 管家 · 2026-08-31',
+      surfaceKind: 'builtin_app' as never,
+      ownerAppId: 'memory',
+      surfaceKey: 'journal-2026-08-31',
+    };
 
-    expect(sessionItems({ ok: true, items: [agent, appOwned] })).toEqual([agent]);
+    expect(sessionItems({ ok: true, items: [agent, appOwned, memoryOwned] })).toEqual([agent]);
     expect(sessionItems(
-      { ok: true, items: [agent, appOwned] },
+      { ok: true, items: [agent, appOwned, memoryOwned] },
       { includeAppOwned: true },
-    )).toEqual([agent, appOwned]);
+    )).toEqual([agent, appOwned, memoryOwned]);
   });
 
   it('preserves Room member conversation metadata for task-view deep links', () => {

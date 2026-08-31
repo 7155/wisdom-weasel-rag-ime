@@ -2,7 +2,7 @@
 
 ## 用户需求账本总索引
 
-这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成十六卷，
+这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成十八卷，
 避免一次读取或编辑全部需求时发生截断。拆分只改变导航，不改变编号、
 语义、优先级、来源、修正关系或实施状态。
 
@@ -30,6 +30,8 @@ verdict 和 E1–E6 证据仍由
 | 14 | [UR-196–UR-205](requirements/PAWOS_REQUIREMENTS_196_205.md) | 本轮 MIT 参考边界、Dock、桌面文件/图标、后台活动、通知与性能/验收顺序 |
 | 15 | [UR-206](requirements/PAWOS_REQUIREMENTS_206_206.md) | Room 行星的未分配起始面、协作任务表与独立最终结果分面 |
 | 16 | [UR-207](requirements/PAWOS_REQUIREMENTS_207_207.md) | 垂直 App 自举、掌柜问数、专属 Skill、SGG 沙盒与安装/卸载生命周期 |
+| 17 | [UR-208](requirements/PAWOS_REQUIREMENTS_208_208.md) | Memory 时间线首页、日记/活动分布、Memory 管家对话、偏好与加载恢复 |
+| 18 | [UR-209](requirements/PAWOS_REQUIREMENTS_209_209.md) | 桌面图标移除、隐藏与恢复，不改变 App 或对象数据 |
 
 ## 同一文档集的其他文件
 
@@ -42,7 +44,7 @@ verdict 和 E1–E6 证据仍由
 
 ## 读取与编辑规则
 
-- 从本索引进入后按十六卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
+- 从本索引进入后按十八卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
   下一份；最后一卷继续到逐字证据、产品契约和实施状态，不会静默结束。
 - 修正已有需求时，编辑包含该稳定 ID 的分卷；不得重新编号。新增需求追加到
   最后一卷，超过可维护规模后再新建下一卷，并同时更新本索引与相邻导航。
@@ -54,5 +56,5 @@ verdict 和 E1–E6 证据仍由
 ## 继续阅读 / 编辑
 
 - 下一份：[UR-001–UR-030](requirements/PAWOS_REQUIREMENTS_001_030.md)
-- 若只查最新要求：[UR-207](requirements/PAWOS_REQUIREMENTS_207_207.md)
+- 若只查最新要求：[UR-209](requirements/PAWOS_REQUIREMENTS_209_209.md)
 - 若记录实现结果：[PAWOS_REQUIREMENT_STATUS.md](PAWOS_REQUIREMENT_STATUS.md)

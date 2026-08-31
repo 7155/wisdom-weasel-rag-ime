@@ -1300,6 +1300,12 @@ class AgentService:
     def list_sessions(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
         return self.session_application.list_sessions(payload)
 
+    def ensure_surface_session(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.session_application.ensure_surface_session(payload)
+
     def workflow_state(self, session_id: str) -> dict[str, object]:
         state = self.sessions.workflow_state(
             session_id,

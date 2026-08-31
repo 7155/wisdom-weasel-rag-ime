@@ -1,6 +1,6 @@
 # PAWOS 用户逐字证据
 
-> 导航：[UR-207](PAWOS_REQUIREMENTS_207_207.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
+> 导航：[UR-209](PAWOS_REQUIREMENTS_209_209.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
 >
 > 本文件保存需求账本引用的逐字来源与来源覆盖。不得用 Agent 转述替代用户原话。
 
@@ -733,17 +733,49 @@ Extension App 目录持有；PAWOS 核心只能增加可复用宿主。SGG 是�
 Trace/Eval 自测，不是生产经营数据。安装、停用、卸载和回滚必须由受管 Package
 状态驱动可见 App 身份，不能把编译进 bundle 冒充已安装。
 
+### 2026-08-31 · Memory 时间线首页、日记与个人记忆整理小管家
+
+> 这些点不动，修改不了
+
+> 记忆库和知识库加载不出来
+
+> 记忆首页换成这个，时间线，然后优化日记显示，顺便加入agent，可以在日记和时间线这里直接聊天，比如问我最近有哪些idea，哪些没有完成，你感觉我最近心情怎么样，你建议我继续干什么，我最近有哪些安排这些。美观，这个就可以作为个人记忆整理的小管家，问什么都可以，这个显示优化
+
+> 现在我前端的要求就是整齐了，一定要整齐，比如改一行显示拉伸后变成多行很丑的
+
+> 需求都要记录
+
+> 这些在最下面，中间应该是是画布，展示整理的东西，最近的，设置可以专门agent完成这个。
+
+> 中间应该是整理的最近或者今天agent觉得用户该展示的
+
+以上当前任务中与本条直接相关的 5 条用户原话映射到 `UR-208`。第三条原消息所附
+第二张图片是“这个显示优化”指向的活动分布视觉参考；第一、第二条也各自带有对应
+前台截图。附件只建立指代关系，不从图片文字、样例数量或 Agent 输出推导个人记忆
+事实。嵌套 Agent 回执、实现建议、测试结果和命令不属于用户原话，未纳入本节。
+当前 Codex 文档环境未提供稳定 message/turn ID，因此来源边界记录为当前任务与
+日期，不能伪造更精确的来源标识。后两条原话整体修正首页中部的布局解释：中部画布
+展示基于真实整理结果的今日/最近内容；此前关于时间线、日记和活动分布的原话不删除，
+改为下沉或次级入口的可达内容。该段是来源映射说明，不是新的用户引语。
+
+### 2026-08-31 · 桌面图标可移除
+
+> 桌面图标可以移除
+
+该条消息映射到 `UR-209`。卸载、归档、删除和恢复是对“移除”的控制语义解释，
+不是追加用户引语。
+
 以下各节覆盖本次继续工作中可直接检索到的新增实质性用户消息。进度查询、
 “好了吗”等消息是状态询问，不新增产品语义；附件图片是视觉证据，不从图片
 文字或布局推导额外要求。逐条用户消息 ID 在当前 Codex 环境不可用，因此统一
 使用当前任务、线程 `codex://threads/<redacted-current-thread>` 和
 日期作为来源边界，不伪造 turn ID。
 
-Updated: 2026-08-30
+Updated: 2026-08-31
 
 - **Document owner:** Project product direction
 - **Status:** accepted user requirements; not implementation or Runtime proof
-- **Revision:** `pawos-requirements.r9`
+- **Revision:** `pawos-requirements.r12`
 - **Historical execution record:** [PAWOS_FRONTEND_HISTORY.md](../PAWOS_FRONTEND_HISTORY.md)
 
 This is the canonical requirements record for the PAWOS product surface and

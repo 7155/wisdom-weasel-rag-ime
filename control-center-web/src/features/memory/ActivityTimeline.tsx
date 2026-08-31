@@ -45,6 +45,7 @@ import {
   MemoryReferenceDialog,
   type MemoryReferenceSelection,
 } from './MemoryReferenceDialog';
+import { MemorySteward } from './MemorySteward';
 import './activity-timeline.css';
 
 type TimelinePeriod = 'day' | 'morning' | 'afternoon' | 'evening';
@@ -93,6 +94,18 @@ interface SemanticTimelineTask {
   sourceEventIds: string[];
   sourceRefs: TimelineSourceRef[];
   events: TimelineEvidenceEvent[];
+}
+
+type MemoryInsightKind = 'idea' | 'unfinished' | 'plan' | 'emotion' | 'suggestion';
+
+interface MemoryInsight {
+  id: string;
+  kind: MemoryInsightKind;
+  label: string;
+  title: string;
+  summary: string;
+  taskId: string;
+  task: SemanticTimelineTask;
 }
 
 interface ActivityCalendarDay {
@@ -245,6 +258,17 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
           </Button>
         </div>
       </header>
+
+      <MemoryInsightCanvas
+        canRead={canRead}
+        date={date}
+        hasError={Boolean(timeline.error)}
+        isLoading={capabilities.isPending || (canRead && timeline.isPending)}
+        onSelectTask={setSelectedTaskId}
+        semanticReady={semanticReady}
+        tasks={tasks}
+        timelineId={timelineId}
+      />
 
       {/* Master-detail viewport: the journal is the primary object and owns
           the first screen; the month calendar accompanies it as a side rail
@@ -414,6 +438,8 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
         </aside>
       </div>
 
+      <MemorySteward date={date} timelineId={timelineId} />
+
       <TaskDetailDialog
         onClose={() => setSelectedTaskId('')}
         onOpenReference={setSelectedReference}
@@ -468,6 +494,92 @@ export function ActivityTimeline({ initialDate = '' }: { initialDate?: string })
   );
 }
 
+function MemoryInsightCanvas({
+  canRead,
+  date,
+  hasError,
+  isLoading,
+  onSelectTask,
+  semanticReady,
+  tasks,
+  timelineId,
+}: {
+  canRead: boolean;
+  date: string;
+  hasError: boolean;
+  isLoading: boolean;
+  onSelectTask: (taskId: string) => void;
+  semanticReady: boolean;
+  tasks: SemanticTimelineTask[];
+  timelineId: string;
+}) {
+  const insights = useMemo(() => deriveMemoryInsights(tasks), [tasks]);
+  const totalEvidence = sumEvidenceCount(tasks);
+
+  return (
+    <section aria-label="记忆画布" className="memory-insight-canvas">
+      <header className="memory-insight-canvas__header">
+        <div>
+          <span>记忆画布</span>
+          <h2 id="memory-insight-canvas-title">今天值得回看的内容</h2>
+        </div>
+        {timelineId && semanticReady ? <small>{tasks.length} 项已整理活动 · {totalEvidence} 条来源</small> : null}
+      </header>
+
+      {isLoading ? (
+        <div className="memory-insight-canvas__empty" role="status">
+          正在读取当天整理结果，尚不展示推断。
+        </div>
+      ) : !canRead || hasError ? (
+        <div className="memory-insight-canvas__empty">
+          <strong>暂时没有可验证的画布内容</strong>
+          <span>时间线恢复后，才会从真实整理结果中挑选线索。</span>
+        </div>
+      ) : !timelineId ? (
+        <div className="memory-insight-canvas__empty">
+          <strong>{formatDateHeading(date)}还没有整理结果</strong>
+          <span>先整理当天来源；没有可验证内容时，画布不会虚构 idea、安排或情绪。</span>
+        </div>
+      ) : !semanticReady ? (
+        <div className="memory-insight-canvas__empty">
+          <strong>当天来源尚未核对成可用线索</strong>
+          <span>原始来源已经保留；通过整理验收后，才会在画布中显示可回看的内容。</span>
+        </div>
+      ) : insights.length ? (
+        <div className="memory-insight-canvas__grid" aria-label="可回看的记忆线索">
+          {insights.map((insight) => (
+            <button
+              aria-label={`查看${insight.label}线索：${insight.title}`}
+              className="memory-insight-card"
+              data-kind={insight.kind}
+              key={insight.id}
+              onClick={() => onSelectTask(insight.taskId)}
+              type="button"
+            >
+              <span className="memory-insight-card__kind">{insight.label}</span>
+              <strong title={insight.title}>{insight.title}</strong>
+              <p>{insight.summary}</p>
+              <footer>
+                <span>{insightEvidenceLabel(insight.task)}</span>
+                <small>{insightCaution(insight.kind)}</small>
+              </footer>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="memory-insight-canvas__empty">
+          <strong>今天没有可确认的 idea、未完成事项、安排或情绪迹象</strong>
+          <span>当前有 {tasks.length} 项已整理活动，但没有足够文字证据支持进一步归类。</span>
+        </div>
+      )}
+
+      <footer className="memory-insight-canvas__boundary">
+        画布只从当天已整理活动及其来源计数提取线索；不是对情绪或计划的推断。点击卡片可核对完整活动与来源。
+      </footer>
+    </section>
+  );
+}
+
 function DailyJournal({
   busy,
   canRead,
@@ -501,6 +613,14 @@ function DailyJournal({
 }) {
   const highlights = tasks.slice(0, 3);
   const apps = topJournalApps(tasks, 5);
+  const journalStory = stringValue(item.summary, '当天活动已完成结构化整理。');
+  const journalPreview = journalStoryPreview(journalStory);
+  const [storyExpanded, setStoryExpanded] = useState(false);
+
+  useEffect(() => {
+    setStoryExpanded(false);
+  }, [journalStory, timelineId]);
+
   return (
     <section className="daily-journal" aria-labelledby="daily-journal-title" data-state={timelineId ? status : 'empty'}>
       <header className="daily-journal__header">
@@ -560,8 +680,21 @@ function DailyJournal({
         </div>
       ) : (
         <div className="daily-journal__body">
-          <article className="daily-journal__story">
-            <p>{stringValue(item.summary, '当天活动已完成结构化整理。')}</p>
+          <article className="daily-journal__story" data-expanded={storyExpanded} data-testid="daily-journal-story">
+            <p className="daily-journal__story-copy" id="daily-journal-story-copy">
+              {storyExpanded ? journalStory : journalPreview.text}
+            </p>
+            {journalPreview.truncated ? (
+              <button
+                aria-controls="daily-journal-story-copy"
+                aria-expanded={storyExpanded}
+                className="daily-journal__story-toggle"
+                onClick={() => setStoryExpanded((expanded) => !expanded)}
+                type="button"
+              >
+                {storyExpanded ? '收起完整日记' : '展开完整日记'}
+              </button>
+            ) : null}
             {highlights.length ? (
               <ol className="daily-journal__highlights" aria-label="日记重点">
                 {highlights.map((task) => (
@@ -884,6 +1017,7 @@ function ActivityDayMap({
   tasks: SemanticTimelineTask[];
 }) {
   const bounds = dayBounds(date);
+  const densityLanes = activityDensityLanes(tasks);
   return (
     <section className="activity-day-map" aria-label={`${date} 活动分布`}>
       <header>
@@ -891,34 +1025,87 @@ function ActivityDayMap({
           <Clock3 aria-hidden="true" size={15} />
           <strong>一天的活动分布</strong>
         </div>
-        <span>时间范围按记录的首尾时间计算，不代表全程持续活跃；点击活动可查看来源</span>
+        <span>{tasks.length} 项活动 · 点击轨道查看详情</span>
       </header>
       <div className="activity-day-map__axis" aria-hidden="true">
         {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
       </div>
-      <div className="activity-day-map__rows">
-        {tasks.map((task) => {
-          const start = percentInDay(task.startMs, bounds.start, bounds.end);
-          const end = percentInDay(Math.max(task.startMs + 60_000, task.endMs), bounds.start, bounds.end);
-          const width = Math.max(1.8, end - start);
-          return (
-            <div className="activity-day-map__row" key={task.id}>
-              <button
-                aria-label={`${task.title}，${formatTimeRange(task.startMs, task.endMs)}`}
-                data-period={task.period}
-                onClick={() => onSelect(task.id)}
-                style={{ left: `${start}%`, width: `${Math.min(width, 100 - start)}%` }}
-                title={`${formatTimeRange(task.startMs, task.endMs)} · ${task.title}`}
-                type="button"
-              >
-                <span>{task.title}</span>
-              </button>
+      <div aria-label="24 小时活动密度轨道" className="activity-day-map__tracks" role="list">
+        {densityLanes.map((lane) => (
+          <div className="activity-day-map__track" data-lane={lane.id} key={lane.id} role="listitem">
+            <span aria-hidden="true" className="activity-day-map__lane-label">{lane.label}</span>
+            <div className="activity-day-map__track-line">
+              {lane.tasks.map((task) => {
+                const marker = densityMarker(task, bounds);
+                const unclassified = task.activityKind === 'unclassified_activity';
+                const label = densityActivityLabel(task, unclassified);
+                return (
+                  <button
+                    aria-label={label}
+                    data-period={task.period}
+                    data-unclassified={unclassified || undefined}
+                    key={task.id}
+                    onClick={() => onSelect(task.id)}
+                    style={{ left: `${marker.left}%`, width: `${marker.width}%` }}
+                    title={label}
+                    type="button"
+                  />
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
+      <ol aria-label="活动摘要" className="activity-day-map__summary">
+        {tasks.map((task) => (
+          <li key={task.id}>
+            <button aria-label={densityActivityLabel(task, task.activityKind === 'unclassified_activity')} onClick={() => onSelect(task.id)} type="button">
+              <time>{task.activityKind === 'unclassified_activity' ? '待归类' : formatTimeRange(task.startMs, task.endMs)}</time>
+              <strong>{task.title}</strong>
+              <span>{activitySummaryMeta(task)}</span>
+              <ChevronRight aria-hidden="true" size={14} />
+            </button>
+          </li>
+        ))}
+      </ol>
     </section>
   );
+}
+
+function activityDensityLanes(tasks: SemanticTimelineTask[]): Array<{
+  id: TimelinePeriod | 'unclassified';
+  label: string;
+  tasks: SemanticTimelineTask[];
+}> {
+  const periods: TimelinePeriod[] = ['morning', 'afternoon', 'evening', 'day'];
+  const lanes = periods.map((period) => ({
+    id: period,
+    label: periodLabel(period),
+    tasks: tasks.filter((task) => task.period === period && task.activityKind !== 'unclassified_activity'),
+  })).filter((lane) => lane.tasks.length);
+  const unclassified = tasks.filter((task) => task.activityKind === 'unclassified_activity');
+  return unclassified.length ? [...lanes, { id: 'unclassified', label: '待归类', tasks: unclassified }] : lanes;
+}
+
+function densityMarker(
+  task: SemanticTimelineTask,
+  bounds: { start: number; end: number },
+): { left: number; width: number } {
+  if (task.activityKind === 'unclassified_activity') return { left: 50, width: 0 };
+  const start = percentInDay(task.startMs, bounds.start, bounds.end);
+  const end = percentInDay(Math.max(task.startMs + 60_000, task.endMs), bounds.start, bounds.end);
+  return { left: start, width: Math.max(0.65, Math.min(end - start, 100 - start)) };
+}
+
+function densityActivityLabel(task: SemanticTimelineTask, unclassified: boolean): string {
+  const time = unclassified ? '时间未归类' : formatTimeRange(task.startMs, task.endMs);
+  return `查看活动：${task.title}，${time}，${task.evidenceCount} 条来源`;
+}
+
+function activitySummaryMeta(task: SemanticTimelineTask): string {
+  const appNames = task.apps.slice(0, 2).map((app) => app.name).join('、');
+  const moreApps = task.apps.length > 2 ? ` 等 ${task.apps.length} 个应用` : '';
+  return `${appNames || '未知应用'}${moreApps} · ${task.evidenceCount} 条来源`;
 }
 
 function dayBounds(date: string): { start: number; end: number } {
@@ -1525,6 +1712,78 @@ function topJournalApps(tasks: SemanticTimelineTask[], limit: number): TimelineA
   return [...byId.values()]
     .sort((left, right) => right.eventCount - left.eventCount || left.name.localeCompare(right.name, 'zh-CN'))
     .slice(0, Math.max(0, limit));
+}
+
+function deriveMemoryInsights(tasks: SemanticTimelineTask[]): MemoryInsight[] {
+  const extracted: MemoryInsight[] = tasks.flatMap((task): MemoryInsight[] => {
+    const kind = insightKindForTask(task);
+    if (!kind) return [];
+    return [{
+      id: `${kind}:${task.id}`,
+      kind,
+      label: memoryInsightLabel(kind),
+      title: task.title,
+      summary: task.summary || '这项活动没有可展示的摘要；请打开活动核对来源。',
+      taskId: task.id,
+      task,
+    } satisfies MemoryInsight];
+  }).slice(0, 4);
+
+  const unfinished = extracted.find((item) => item.kind === 'unfinished');
+  if (unfinished && extracted.length < 4) {
+    extracted.push({
+      id: `suggestion:${unfinished.task.id}`,
+      kind: 'suggestion',
+      label: '建议',
+      title: `先核对「${unfinished.task.title}」`,
+      summary: '这条建议只基于上方“未完成”线索；打开活动核对来源后，再决定下一步。',
+      taskId: unfinished.taskId,
+      task: unfinished.task,
+    });
+  }
+  return extracted;
+}
+
+function insightKindForTask(task: SemanticTimelineTask): Exclude<MemoryInsightKind, 'suggestion'> | null {
+  const text = `${task.title}\n${task.summary}`.toLocaleLowerCase('zh-CN');
+  if (/(未完成|待处理|待办|待继续|继续完成|阻塞|卡住|失败|pending|todo|next step)/u.test(text)) return 'unfinished';
+  if (/(计划|安排|明天|下周|会议|约定|schedule|plan)/u.test(text)) return 'plan';
+  if (/(想法|灵感|构思|方案|设计|idea)/u.test(text)) return 'idea';
+  if (/(情绪|心情|焦虑|疲惫|压力|开心|兴奋|沮丧|emotion|mood)/u.test(text)) return 'emotion';
+  return null;
+}
+
+function memoryInsightLabel(kind: MemoryInsightKind): string {
+  return ({ idea: '想法', unfinished: '未完成', plan: '安排', emotion: '情绪迹象', suggestion: '建议' } as const)[kind];
+}
+
+function insightEvidenceLabel(task: SemanticTimelineTask): string {
+  if (!task.evidenceCount) return '证据不足：没有可验证来源';
+  const appNames = task.apps.slice(0, 2).map((app) => app.name).filter(Boolean).join('、');
+  return `${task.evidenceCount} 条来源${appNames ? ` · ${appNames}` : ''}`;
+}
+
+function insightCaution(kind: MemoryInsightKind): string {
+  if (kind === 'emotion') return '仅为文本迹象，不代表情绪结论';
+  if (kind === 'plan') return '来自记录措辞，不代表已确认安排';
+  if (kind === 'idea') return '来自记录措辞，不代表已采用决定';
+  if (kind === 'suggestion') return '建议基于未完成线索，需先核对来源';
+  return '状态以完整活动与来源为准';
+}
+
+function journalStoryPreview(story: string): { text: string; truncated: boolean } {
+  const full = story.trim();
+  const limit = 260;
+  if (full.length <= limit) return { text: full, truncated: false };
+
+  const sentenceEnd = Math.max(
+    full.lastIndexOf('。', limit),
+    full.lastIndexOf('！', limit),
+    full.lastIndexOf('？', limit),
+    full.lastIndexOf('.', limit),
+  );
+  const cutAt = sentenceEnd >= Math.floor(limit * 0.62) ? sentenceEnd + 1 : limit;
+  return { text: `${full.slice(0, cutAt).trimEnd()}…`, truncated: true };
 }
 
 function journalTaskCaption(task: SemanticTimelineTask): string {

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
+import { transientControlErrorRefetchInterval } from '@/app/query-client';
 import type {
   MemoryReferenceV1,
   ReferenceKind as MemoryReferenceKind,
@@ -85,6 +86,7 @@ export function useMemoryQueries(
   const summary = useQuery({
     queryKey: memoryQueryKeys.summary(),
     queryFn: ({ signal }) => transport.request({ pathId: 'memory.summary', signal }),
+    refetchInterval: transientControlErrorRefetchInterval(true),
   });
   const pages = useInfiniteQuery({
     enabled,
@@ -103,6 +105,7 @@ export function useMemoryQueries(
     }),
     initialPageParam: '',
     getNextPageParam: (lastPage) => stringValue(asRecord(lastPage).nextCursor) || undefined,
+    refetchInterval: transientControlErrorRefetchInterval(enabled),
   });
   return { pages, summary, transportKind: transport.kind };
 }

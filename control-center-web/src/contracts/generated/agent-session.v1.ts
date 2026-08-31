@@ -4,7 +4,9 @@
  * Source: rag_ime/contracts/json/agent-session.v1.json
  */
 
-export interface AgentSessionV1 {
+export type AgentSessionV1 = {
+  [k: string]: unknown;
+} & {
   schemaVersion: 'rag-ime.agent-session.v1';
   id: string;
   piSessionId?: string;
@@ -23,7 +25,7 @@ export interface AgentSessionV1 {
   mode: 'assistant' | 'coordinator';
   status: 'idle' | 'active' | 'busy' | 'faulted' | 'archived';
   sessionKind?: 'conversation' | 'subagent_runtime';
-  surfaceKind?: 'agent' | 'extension_app';
+  surfaceKind?: 'agent' | 'extension_app' | 'builtin_app';
   ownerAppId?: string;
   surfaceKey?: string;
   roomParticipant?: {
@@ -60,4 +62,4 @@ export interface AgentSessionV1 {
   workspaceRoots: string[];
   shellPolicyVersion?: string;
   [k: string]: unknown;
-}
+};

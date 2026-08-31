@@ -45,9 +45,9 @@ not prove the Runtime path.
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
-| All requirements | `204 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-207` remain unassessed. |
+| All requirements | `206 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-209` remain unassessed. |
 | Current P0 requirements | 175 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
-| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-207` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
+| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-209` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
 | Install / Runtime / foreground | No E4, E5, or E6 receipt is linked here | Do not claim installed or foreground acceptance from source, tests, builds, or screenshots. |
 
 This conservative baseline is intentional. It does not say that no code exists;
@@ -383,7 +383,9 @@ not inferred status.
     "UR-204": {},
     "UR-205": {},
     "UR-206": {},
-    "UR-207": {}
+    "UR-207": {},
+    "UR-208": {},
+    "UR-209": {}
   }
 }
 ```
