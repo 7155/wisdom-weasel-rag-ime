@@ -958,9 +958,9 @@ function extensionCatalogItem(overrides: Record<string, unknown> = {}) {
     permissions: ['sandbox.run'],
     capabilities: [`pawos.extension.binding.${extension.bindingSha256.slice(0, 40)}`],
     security: { notes: 'Host 拥有沙盒边界，Package 不直接写入生产数据。' },
-    versions: [{ version: '0.1.0' }],
-    version: '0.1.0',
-    latestVersion: '0.1.0',
+    versions: [{ version: extension.version }],
+    version: extension.version,
+    latestVersion: extension.version,
     installed: false,
     enabled: false,
     extensionApp: {
@@ -985,7 +985,7 @@ function extensionInventoryItem(overrides: Record<string, unknown> = {}) {
   return {
     id: '@paw/zhanggui-wenshu',
     displayName: '掌柜问数',
-    version: '0.1.0',
+    version: extension.version,
     digest: 'c'.repeat(64),
     enabled: true,
     installed: true,
