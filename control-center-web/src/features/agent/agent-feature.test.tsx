@@ -967,6 +967,24 @@ describe('Agent experience', () => {
     expect(sessionItems({ ok: true, items: [parent, child] })).toEqual([parent]);
   });
 
+  it('keeps App-owned Sessions out of Agent while allowing their owning App to project them', () => {
+    const agent = { ...previewSessions[0]!, id: 'session-agent', title: '用户主对话' };
+    const appOwned = {
+      ...agent,
+      id: 'session-app-owned',
+      title: '掌柜问数 · 问数',
+      surfaceKind: 'extension_app' as const,
+      ownerAppId: 'extension:zhanggui-wenshu',
+      surfaceKey: 'ask',
+    };
+
+    expect(sessionItems({ ok: true, items: [agent, appOwned] })).toEqual([agent]);
+    expect(sessionItems(
+      { ok: true, items: [agent, appOwned] },
+      { includeAppOwned: true },
+    )).toEqual([agent, appOwned]);
+  });
+
   it('preserves Room member conversation metadata for task-view deep links', () => {
     const roomMember = {
       ...previewSessions[0]!,

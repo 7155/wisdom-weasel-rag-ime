@@ -168,3 +168,18 @@ implementation choices or live status.
   follow Tutti's interaction grammar, but `deviceId + tabId` selection, the
   command queue, permissions, traces, and Stop stay PAW-owned so human and
   Agent operate one visible page.
+
+## D-013 — Extension App Conversations Are App-Owned Pi Sessions
+
+- **Status:** accepted
+- **Decision:** a conversation started inside an Extension App remains an
+  ordinary Pi Session for execution, transcript, Stop, recovery, approval, and
+  audit, but carries durable App surface ownership. Agent's ordinary list and
+  history search exclude it; only its owning App restores and presents it.
+- **Why:** vertical Apps need their own information architecture and visual
+  language without duplicating Pi or filling Agent with implementation-facing
+  App conversations.
+- **Consequence:** App ownership is persisted and queried explicitly rather
+  than inferred from titles or browser storage. Diagnostics and evaluations
+  may inspect it only through explicit App/Session references, and disabling
+  the App removes its surface without deleting the underlying audit record.

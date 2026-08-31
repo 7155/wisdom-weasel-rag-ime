@@ -18,7 +18,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 177))
+POST_0126_MIGRATIONS = tuple(range(127, 178))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 176)
+            self.assertEqual(status["currentVersion"], 177)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -988,7 +988,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 176)
+                self.assertEqual(upgraded.current_version, 177)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -1163,7 +1163,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, tuple(range(153, 177)))
+                self.assertEqual(upgraded.applied_versions, tuple(range(153, 178)))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -1231,7 +1231,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 176)
+                self.assertEqual(status["currentVersion"], 177)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1970,7 +1970,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    tuple(range(135, 177)),
+                    tuple(range(135, 178)),
                 )
                 todo = conn.execute(
                     """
@@ -2113,8 +2113,11 @@ class DatabaseMigrationTests(unittest.TestCase):
             )
 
             upgraded = apply_database_migrations(conn, applied_at_ms=161)
-            self.assertEqual(upgraded.applied_versions, (160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176))
-            self.assertEqual(upgraded.current_version, 176)
+            self.assertEqual(
+                upgraded.applied_versions,
+                (160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177),
+            )
+            self.assertEqual(upgraded.current_version, 177)
             review_columns = {
                 str(row[1])
                 for row in conn.execute(

@@ -323,6 +323,9 @@ export const CONTROL_ROUTES = {
       'limit',
       'beforeUpdatedAtMs',
       'beforeId',
+      'surfaceKind',
+      'ownerAppId',
+      'surfaceKey',
     ],
   },
   'agent.sessions.create': {
@@ -340,6 +343,9 @@ export const CONTROL_ROUTES = {
       'workspaceRoots',
       'workspaceScopeConfirmation',
       'dangerousModeConfirmation',
+      'surfaceKind',
+      'ownerAppId',
+      'surfaceKey',
     ],
   },
   'agent.session.snapshot': {

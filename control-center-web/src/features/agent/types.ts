@@ -30,6 +30,9 @@ export type SessionSummary = Pick<
     | 'piSkillsEnabled'
     | 'codexSkillsEnabled'
     | 'roomParticipant'
+    | 'surfaceKind'
+    | 'ownerAppId'
+    | 'surfaceKey'
   >>;
 
 export interface AgentPermissionSelection {
@@ -90,7 +93,10 @@ export interface AgentCommand {
   source: AgentCommandSource;
 }
 
-export function sessionItems(value: unknown): SessionSummary[] {
+export function sessionItems(
+  value: unknown,
+  options: { includeAppOwned?: boolean } = {},
+): SessionSummary[] {
   if (!isRecord(value)) return [];
   const source = Array.isArray(value.items)
     ? value.items
@@ -101,7 +107,9 @@ export function sessionItems(value: unknown): SessionSummary[] {
   // they are not user conversations. Keep them out of the conversation rail
   // even when an older backend includes them in the generic session response.
   return source.filter((item): item is SessionSummary => (
-    isSessionSummary(item) && !isTransientSubagentSession(item)
+    isSessionSummary(item)
+    && !isTransientSubagentSession(item)
+    && (options.includeAppOwned || !isExtensionAppOwnedSession(item))
   ));
 }
 
@@ -166,6 +174,10 @@ function isSessionSummary(value: unknown): value is SessionSummary {
 
 function isTransientSubagentSession(value: unknown): boolean {
   return isRecord(value) && value.sessionKind === 'subagent_runtime';
+}
+
+function isExtensionAppOwnedSession(value: unknown): boolean {
+  return isRecord(value) && value.surfaceKind === 'extension_app';
 }
 
 function isAgentCommand(value: unknown): value is AgentCommand {

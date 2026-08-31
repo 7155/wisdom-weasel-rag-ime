@@ -7580,6 +7580,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "limit": _query_first(query, "limit"),
                         "beforeUpdatedAtMs": _query_first(query, "beforeUpdatedAtMs"),
                         "beforeId": _query_first(query, "beforeId"),
+                        "surfaceKind": _query_first(query, "surfaceKind"),
+                        "ownerAppId": _query_first(query, "ownerAppId"),
+                        "surfaceKey": _query_first(query, "surfaceKey"),
                     }
                 ),
             )

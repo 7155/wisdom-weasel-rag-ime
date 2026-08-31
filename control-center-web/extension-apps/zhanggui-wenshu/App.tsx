@@ -1,5 +1,5 @@
-import { Activity, ArrowUpRight, BarChart3, CircleAlert, FolderOpen, LoaderCircle, MoreHorizontal, PackageOpen, Send } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { BarChart3, CircleAlert, FolderOpen, LoaderCircle, MoreHorizontal, PackageOpen, Send } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
 
 import { useControlTransport } from '@/app/control-transport';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
@@ -53,21 +53,28 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   const [error, setError] = useState('');
   const activeMode = MODES.find((mode) => mode.id === modeId)!;
   const activeSession = sessions[modeId];
-  const sessionIds = useMemo(() => readSessionIds(manifest.id), [manifest.id]);
-  const liveSessionIds = useRef(sessionIds);
 
   useEffect(() => {
     let active = true;
-    void transport.request({ pathId: 'agent.sessions.list', query: { limit: 100, includeArchived: false } })
+    void transport.request({
+      pathId: 'agent.sessions.list',
+      query: {
+        limit: 100,
+        includeArchived: false,
+        surfaceKind: 'extension_app',
+        ownerAppId: manifest.id,
+      },
+    })
       .then((value) => {
         if (!active) return;
-        const listed = new Map(sessionItems(value).map((session) => [session.id, session]));
-        const restored = Object.fromEntries(MODES.flatMap((mode) => {
-          const session = listed.get(liveSessionIds.current[mode.id] ?? '');
-          return session ? [[mode.id, session]] : [];
-        })) as Partial<Record<ModeId, SessionSummary>>;
+        const restored: Partial<Record<ModeId, SessionSummary>> = {};
+        for (const session of sessionItems(value, { includeAppOwned: true })) {
+          if (session.surfaceKind !== 'extension_app' || session.ownerAppId !== manifest.id) continue;
+          const surfaceKey = session.surfaceKey as ModeId;
+          if (!MODES.some((mode) => mode.id === surfaceKey) || restored[surfaceKey]) continue;
+          restored[surfaceKey] = session;
+        }
         setSessions(restored);
-        persistSessionIds(manifest.id, restored);
         setError('');
       })
       .catch((reason) => {
@@ -93,6 +100,9 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
           toolProfileVersion: 'control-center-v1',
           executionMode: 'per_action',
           workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+          surfaceKind: 'extension_app',
+          ownerAppId: manifest.id,
+          surfaceKey: modeId,
         },
       });
       const raw = record(record(created).session);
@@ -110,11 +120,17 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
           codexSkillsEnabled: false,
         },
       });
-      const session = sessionSummary(raw, sessionId, `${manifest.label} · ${activeMode.label}`, userMessage, workspaceRoot);
+      const session = sessionSummary(
+        raw,
+        sessionId,
+        `${manifest.label} · ${activeMode.label}`,
+        userMessage,
+        workspaceRoot,
+        manifest.id,
+        modeId,
+      );
       const next = { ...sessions, [modeId]: session };
       setSessions(next);
-      liveSessionIds.current = Object.fromEntries(Object.entries(next).map(([key, value]) => [key, value?.id])) as Partial<Record<ModeId, string>>;
-      persistSessionIds(manifest.id, next);
       setDraft('');
       await transport.request({
         pathId: 'agent.session.prompt',
@@ -158,8 +174,6 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
     const next = { ...sessions };
     delete next[modeId];
     setSessions(next);
-    liveSessionIds.current = Object.fromEntries(Object.entries(next).map(([key, value]) => [key, value?.id])) as Partial<Record<ModeId, string>>;
-    persistSessionIds(manifest.id, next);
     setDraft('');
   }
 
@@ -175,7 +189,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             <FolderOpen size={15} />
             <span>{workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) : '连接数据'}</span>
           </button>
-          {activeSession ? <button aria-label="打开运行详情" onClick={() => openPawOsRoute(desktop, `/agent?session=${encodeURIComponent(activeSession.id)}`)} type="button"><Activity size={15} /><span>运行详情</span><ArrowUpRight size={13} /></button> : null}
+          {activeSession ? <span className="zhanggui-app__status" data-status={activeSession.status}><i />{activeSession.status === 'busy' || activeSession.status === 'active' ? '处理中' : '对话已连接'}</span> : null}
           <details className="zhanggui-app__more">
             <summary aria-label="掌柜问数更多操作"><MoreHorizontal size={18} /></summary>
             <div>
@@ -217,13 +231,10 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             onSessionCreated={(session) => {
               const next = { ...sessions, [modeId]: session };
               setSessions(next);
-              persistSessionIds(manifest.id, next);
             }}
             onSessionUpdated={(session) => {
               setSessions((current) => {
-                const next = { ...current, [modeId]: session };
-                persistSessionIds(manifest.id, next);
-                return next;
+                return { ...current, [modeId]: session };
               });
             }}
             record={activeSession}
@@ -266,7 +277,15 @@ function bootstrapPrompt(skillRef: string, mode: (typeof MODES)[number], userMes
   ].join('\n');
 }
 
-function sessionSummary(raw: Record<string, unknown>, id: string, title: string, preview: string, workspaceRoot: string): SessionSummary {
+function sessionSummary(
+  raw: Record<string, unknown>,
+  id: string,
+  title: string,
+  preview: string,
+  workspaceRoot: string,
+  ownerAppId: string,
+  surfaceKey: ModeId,
+): SessionSummary {
   return {
     id,
     title: text(raw.title) || title,
@@ -280,32 +299,10 @@ function sessionSummary(raw: Record<string, unknown>, id: string, title: string,
     lastMessagePreview: preview,
     executionMode: 'per_action',
     piSkillsEnabled: true,
+    surfaceKind: 'extension_app',
+    ownerAppId,
+    surfaceKey,
   } as SessionSummary;
-}
-
-function storageKey(appId: string): string {
-  return `pawos.extension-app.sessions.v1:${appId}`;
-}
-
-function readSessionIds(appId: string): Partial<Record<ModeId, string>> {
-  try {
-    const raw = window.localStorage.getItem(storageKey(appId));
-    const value = raw ? JSON.parse(raw) : {};
-    if (!isRecord(value)) return {};
-    return Object.fromEntries(MODES.flatMap((mode) => typeof value[mode.id] === 'string' ? [[mode.id, value[mode.id]]] : []));
-  } catch {
-    return {};
-  }
-}
-
-function persistSessionIds(appId: string, sessions: Partial<Record<ModeId, SessionSummary>>): void {
-  const ids = Object.fromEntries(Object.entries(sessions).flatMap(([modeId, session]) => session?.id ? [[modeId, session.id]] : []));
-  try {
-    window.localStorage.setItem(storageKey(appId), JSON.stringify(ids));
-  } catch {
-    // Session ownership stays in Pi. Losing this convenience index only means
-    // the App starts a new mode conversation after reload.
-  }
 }
 
 function record(value: unknown): Record<string, unknown> {

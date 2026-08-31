@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -51,6 +52,10 @@ class AgentGoalExecutionBlocked(ValueError):
         self.error_code = reason
 
 
+_EXTENSION_APP_ID = re.compile(r"^extension:[a-z0-9][a-z0-9-]{0,63}$")
+_SURFACE_KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
 _SESSION_SELECT = """
 SELECT
     s.*,
@@ -97,6 +102,9 @@ class AgentSessionStore:
         workspace_roots: Iterable[str] = (),
         shell_policy_version: str | None = None,
         session_kind: str = "conversation",
+        surface_kind: str = "agent",
+        owner_app_id: str = "",
+        surface_key: str = "",
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         if mode not in {"assistant", "coordinator"}:
@@ -111,6 +119,16 @@ class AgentSessionStore:
         normalized_kind = str(session_kind or "").strip()
         if normalized_kind not in {"conversation", "subagent_runtime"}:
             raise ValueError("agent session kind must be conversation or subagent_runtime")
+        normalized_surface, normalized_owner_app_id, normalized_surface_key = (
+            _surface_ownership(
+                surface_kind,
+                owner_app_id,
+                surface_key,
+                require_surface_key=True,
+            )
+        )
+        if normalized_kind != "conversation" and normalized_surface != "agent":
+            raise ValueError("internal Agent sessions cannot be owned by an Extension App")
         normalized_thinking = str(thinking_level or "").strip().lower()
         if normalized_thinking not in {
             "",
@@ -181,9 +199,11 @@ class AgentSessionStore:
                     workspace_scope_sha256, workspace_scope_granted_at_ms,
                     project_context_enabled,
                     pi_skills_enabled, codex_skills_enabled, workspace_roots_json,
-                    shell_policy_version, session_kind, created_at_ms, updated_at_ms,
+                    shell_policy_version, session_kind,
+                    surface_kind, owner_app_id, surface_key,
+                    created_at_ms, updated_at_ms,
                     last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -205,6 +225,9 @@ class AgentSessionStore:
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                     shell_policy,
                     normalized_kind,
+                    normalized_surface,
+                    normalized_owner_app_id,
+                    normalized_surface_key,
                     timestamp,
                     timestamp,
                     timestamp,
@@ -278,6 +301,9 @@ class AgentSessionStore:
         limit: int = 100,
         before_updated_at_ms: int | None = None,
         before_id: str | None = None,
+        surface_kind: str | None = None,
+        owner_app_id: str = "",
+        surface_key: str = "",
     ) -> list[dict[str, object]]:
         page = self.list_page(
             include_archived=include_archived,
@@ -285,6 +311,9 @@ class AgentSessionStore:
             limit=limit,
             before_updated_at_ms=before_updated_at_ms,
             before_id=before_id,
+            surface_kind=surface_kind,
+            owner_app_id=owner_app_id,
+            surface_key=surface_key,
         )
         return cast(list[dict[str, object]], page["items"])
 
@@ -296,6 +325,9 @@ class AgentSessionStore:
         limit: int = 100,
         before_updated_at_ms: int | None = None,
         before_id: str | None = None,
+        surface_kind: str | None = None,
+        owner_app_id: str = "",
+        surface_key: str = "",
     ) -> dict[str, object]:
         """Return a stable page of Sessions ordered by recency.
 
@@ -306,6 +338,21 @@ class AgentSessionStore:
         listing seam used by the HTTP application service.
         """
         bounded_limit = max(1, min(int(limit), 500))
+        if surface_kind is None or not str(surface_kind).strip():
+            if str(owner_app_id or "").strip() or str(surface_key or "").strip():
+                raise ValueError("session surface filters require a surface kind")
+            normalized_surface = ""
+            normalized_owner_app_id = ""
+            normalized_surface_key = ""
+        else:
+            normalized_surface, normalized_owner_app_id, normalized_surface_key = (
+                _surface_ownership(
+                    surface_kind,
+                    owner_app_id,
+                    surface_key,
+                    require_surface_key=False,
+                )
+            )
         clauses = [] if include_archived else ["s.status <> 'archived'"]
         if not include_internal:
             clauses.extend(
@@ -314,18 +361,26 @@ class AgentSessionStore:
                     "s.id NOT IN (SELECT child_session_id FROM agent_subagent_runs)",
                 ]
             )
+        query_params: list[object] = []
+        if normalized_surface:
+            clauses.append("s.surface_kind = ?")
+            query_params.append(normalized_surface)
+        if normalized_surface == "extension_app":
+            clauses.append("s.owner_app_id = ?")
+            query_params.append(normalized_owner_app_id)
+            if normalized_surface_key:
+                clauses.append("s.surface_key = ?")
+                query_params.append(normalized_surface_key)
         normalized_before_id = str(before_id or "").strip()
         if before_updated_at_ms is not None and normalized_before_id:
             clauses.append(
                 "(s.updated_at_ms < ? OR "
                 "(s.updated_at_ms = ? AND s.id < ?))"
             )
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        query_params: list[object] = []
-        if before_updated_at_ms is not None and normalized_before_id:
             query_params.extend(
                 [before_updated_at_ms, before_updated_at_ms, normalized_before_id]
             )
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query_params.append(bounded_limit + 1)
         with self._connect() as conn:
             rows = conn.execute(
@@ -382,6 +437,7 @@ class AgentSessionStore:
         bounded_limit = max(1, min(int(limit), 50))
         where = [
             "s.session_kind = 'conversation'",
+            "s.surface_kind = 'agent'",
             "s.id NOT IN (SELECT child_session_id FROM agent_subagent_runs)",
         ]
         params: list[object] = []
@@ -2936,6 +2992,9 @@ def _session_payload(
         "mode": str(row["session_mode"]),
         "status": str(row["status"]),
         "sessionKind": str(row["session_kind"]),
+        "surfaceKind": str(row["surface_kind"]),
+        "ownerAppId": str(row["owner_app_id"]),
+        "surfaceKey": str(row["surface_key"]),
         "roleId": canonical_agent_role_id(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "roleBookRevisionId": canonical_role_book_revision_id(
@@ -4197,6 +4256,31 @@ def _workspace_roots(values: Iterable[str]) -> list[str]:
         if normalized not in roots:
             roots.append(normalized)
     return roots
+
+
+def _surface_ownership(
+    surface_kind: object,
+    owner_app_id: object,
+    surface_key: object,
+    *,
+    require_surface_key: bool,
+) -> tuple[str, str, str]:
+    normalized_surface = str(surface_kind or "agent").strip().lower()
+    normalized_owner = str(owner_app_id or "").strip()
+    normalized_key = str(surface_key or "").strip()
+    if normalized_surface not in {"agent", "extension_app"}:
+        raise ValueError("session surface kind must be agent or extension_app")
+    if normalized_surface == "agent":
+        if normalized_owner or normalized_key:
+            raise ValueError("Agent sessions cannot carry Extension App ownership")
+        return "agent", "", ""
+    if _EXTENSION_APP_ID.fullmatch(normalized_owner) is None:
+        raise ValueError("Extension App sessions require a valid owner app id")
+    if require_surface_key and not normalized_key:
+        raise ValueError("Extension App sessions require a surface key")
+    if normalized_key and _SURFACE_KEY.fullmatch(normalized_key) is None:
+        raise ValueError("Extension App session surface key is invalid")
+    return "extension_app", normalized_owner, normalized_key
 
 
 def _normalize_room_execution_mode(value: object) -> str:

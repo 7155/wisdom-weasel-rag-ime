@@ -86,6 +86,9 @@ class AgentSessionApplicationService:
             ),
             before_updated_at_ms=_optional_integer(value.get("beforeUpdatedAtMs")),
             before_id=_optional_cursor_id(value.get("beforeId")),
+            surface_kind=str(value.get("surfaceKind") or "agent"),
+            owner_app_id=str(value.get("ownerAppId") or ""),
+            surface_key=str(value.get("surfaceKey") or ""),
         )
         sessions = page["items"]
         if not isinstance(sessions, list):
@@ -234,6 +237,9 @@ class AgentSessionApplicationService:
                 payload.get("codexSkillsEnabled", False)
             ),
             workspace_roots=workspace_roots,
+            surface_kind=str(payload.get("surfaceKind") or "agent"),
+            owner_app_id=str(payload.get("ownerAppId") or ""),
+            surface_key=str(payload.get("surfaceKey") or ""),
         )
         return {
             "schemaVersion": "rag-ime.agent-session-create.v1",

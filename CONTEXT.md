@@ -34,6 +34,15 @@ _Avoid:_ treating Outcome as a live task, frontend card, or filesystem folder.
 A private, resumable Pi conversation and execution unit with its own transcript,
 context, model/Tool loop, Steer, Stop, compaction, and recovery.
 
+## App-owned Session
+
+A Session whose user-facing conversation belongs to one installed Extension
+App. Pi still owns its transcript and execution; the App owns its visible entry
+and presentation, so it is not an ordinary conversation in the Agent surface.
+
+_Avoid:_ building a second App-specific Agent runtime, or exposing an App-owned
+conversation as though the user started it in Agent.
+
 ## Room
 
 A visible collaboration that composes a Facilitator Session and optional

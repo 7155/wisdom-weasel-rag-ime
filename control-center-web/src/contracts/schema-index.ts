@@ -6802,6 +6802,10 @@ export const contractSchemas = {
       "title",
       "mode",
       "status",
+      "sessionKind",
+      "surfaceKind",
+      "ownerAppId",
+      "surfaceKey",
       "roleId",
       "roleVersion",
       "roleBookRevisionId",
@@ -6909,6 +6913,21 @@ export const contractSchemas = {
           "conversation",
           "subagent_runtime"
         ]
+      },
+      "surfaceKind": {
+        "type": "string",
+        "enum": [
+          "agent",
+          "extension_app"
+        ]
+      },
+      "ownerAppId": {
+        "type": "string",
+        "pattern": "^$|^extension:[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "surfaceKey": {
+        "type": "string",
+        "pattern": "^$|^[a-z0-9][a-z0-9._-]{0,63}$"
       },
       "roomParticipant": {
         "type": "object",

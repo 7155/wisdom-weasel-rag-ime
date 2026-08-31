@@ -27,6 +27,7 @@
 
 .zhanggui-app__identity,
 .zhanggui-app__header-actions,
+.zhanggui-app__status,
 .zhanggui-app__session-note,
 .zhanggui-app__error,
 .zhanggui-app__loading { display: flex; align-items: center; }
@@ -70,6 +71,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.zhanggui-app__status {
+  gap: 6px;
+  padding-inline: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.zhanggui-app__status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--zhanggui-accent);
+  box-shadow: 0 0 0 3px var(--zhanggui-accent-soft);
 }
 
 .zhanggui-app__more { position: relative; }

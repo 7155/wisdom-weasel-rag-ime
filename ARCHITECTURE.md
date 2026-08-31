@@ -315,7 +315,7 @@ control-center-web/extension-apps/<slug>/
   -> managed Pi Package prepare / confirm / install
   -> installed+enabled inventory projects extension:<slug>
   -> desktop / Launchpad / Dock / generic ExtensionAppHost
-  -> ordinary Pi Session + shared Agent timeline and Composer
+  -> App-owned Pi Session + reusable transcript and Composer primitives
   -> registered sandbox suite -> Trace -> frozen Eval
 ```
 
@@ -328,8 +328,10 @@ available. Disable or uninstall removes the visible identity and closes its
 windows; whole-product rollback owns the compiled frontend chunk.
 
 Conversation-mode Apps may select a mode, shape the first-turn contract, and
-format domain results. They reuse the ordinary Session, Tool loop, ordered
-timeline, Markdown, Stop, recovery, model and approval semantics. Registered
+format domain results. Their conversations are absent from Agent's ordinary
+conversation index and are restored only by the owning App. They still reuse
+Pi's Session, Tool loop, ordered transcript, Markdown, Stop, recovery, model
+and approval semantics rather than creating a second Runtime. Registered
 vertical fixtures are offline test references only; they never become
 production data merely because a sandbox Eval passed.
 

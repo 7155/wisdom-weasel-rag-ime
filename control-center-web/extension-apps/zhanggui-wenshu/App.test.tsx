@@ -78,11 +78,63 @@ describe('掌柜问数 Extension App', () => {
       codexSkillsEnabled: false,
     });
     const prompt = requestFor(transport, 'agent.session.prompt');
+    const list = requestFor(transport, 'agent.sessions.list');
+    expect(list.query).toMatchObject({
+      surfaceKind: 'extension_app',
+      ownerAppId: manifest.id,
+    });
+    const create = requestFor(transport, 'agent.sessions.create');
+    expect(create.body).toMatchObject({
+      surfaceKind: 'extension_app',
+      ownerAppId: manifest.id,
+      surfaceKey: 'reconcile',
+    });
     expect(prompt.params).toEqual({ sessionId: 'session-zhanggui' });
     expect(prompt.body).toMatchObject({ delivery: 'prompt' });
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('`zhanggui-wenshu` Skill');
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('当前掌柜问数模式：对账');
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('核对销售台账与回款表');
+    expect(window.localStorage.length).toBe(0);
+    expect(screen.queryByRole('button', { name: '打开运行详情' })).not.toBeInTheDocument();
+  });
+
+  it('restores only App-owned conversations from the durable Session owner query', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': {
+        ok: true,
+        items: [
+          {
+            id: 'session-app-ask',
+            title: '掌柜问数 · 问数',
+            mode: 'assistant',
+            status: 'idle',
+            updatedAtMs: 12,
+            surfaceKind: 'extension_app',
+            ownerAppId: manifest.id,
+            surfaceKey: 'ask',
+          },
+          {
+            id: 'session-agent',
+            title: '普通 Agent 对话',
+            mode: 'assistant',
+            status: 'idle',
+            updatedAtMs: 11,
+            surfaceKind: 'agent',
+            ownerAppId: '',
+            surfaceKey: '',
+          },
+        ],
+      },
+    } });
+
+    renderApp(transport);
+
+    expect(await screen.findByTestId('shared-session')).toHaveTextContent('session-app-ask');
+    expect(screen.queryByText('session-agent')).not.toBeInTheDocument();
+    expect(requestFor(transport, 'agent.sessions.list').query).toMatchObject({
+      surfaceKind: 'extension_app',
+      ownerAppId: manifest.id,
+    });
   });
 });
 

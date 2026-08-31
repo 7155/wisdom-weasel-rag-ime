@@ -11,6 +11,9 @@ describe('session and Room list pagination routes', () => {
       'limit',
       'beforeUpdatedAtMs',
       'beforeId',
+      'surfaceKind',
+      'ownerAppId',
+      'surfaceKey',
     ]);
     expect(CONTROL_ROUTES['agent.rooms.list'].query).toEqual([
       'includeArchived',
