@@ -38,21 +38,21 @@
   gap: var(--space-2);
 }
 
-main[data-route-id='planning'] .mgmt-section__header h2 {
+:is(main, section)[data-route-id='planning'] .mgmt-section__header h2 {
   font-size: var(--text-section-lead);
   line-height: var(--text-section-lead-lh);
 }
 
-main[data-route-id='planning'] .mgmt-section__header p {
+:is(main, section)[data-route-id='planning'] .mgmt-section__header p {
   font-size: 13px;
   line-height: 1.5;
 }
 
-main[data-route-id='planning'] .mgmt-page__actions {
+:is(main, section)[data-route-id='planning'] .mgmt-page__actions {
   flex-wrap: wrap;
 }
 
-main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
+:is(main, section)[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   width: 148px;
 }
 
@@ -469,7 +469,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
     min-height: 44px;
   }
 
-  main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
+  :is(main, section)[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
     width: min(148px, 44vw);
   }
 
@@ -560,21 +560,21 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 .planning-summary-item > small { grid-row: 3; line-height: 1.45; }
 
 @container paw-window (max-width: 860px) {
-  main[data-route-id='planning'][data-paw-os-app] .planning-companion { display: grid; align-items: start; }
-  main[data-route-id='planning'][data-paw-os-app] .planning-companion__actions,
-  main[data-route-id='planning'][data-paw-os-app] .planning-wake-row__actions { justify-content: flex-start; }
-  main[data-route-id='planning'][data-paw-os-app] .planning-overview-grid,
-  main[data-route-id='planning'][data-paw-os-app] .planning-dialog__grid,
-  main[data-route-id='planning'][data-paw-os-app] .planning-wake-row,
-  main[data-route-id='planning'][data-paw-os-app] .planning-plan-summary { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='planning'][data-paw-os-app] .planning-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='planning'][data-paw-os-app] .planning-list .mgmt-list__row { grid-template-columns: minmax(0, 1fr) auto auto; }
-  main[data-route-id='planning'][data-paw-os-app] .planning-list .mgmt-list__meta { display: none; }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-companion { display: grid; align-items: start; }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-companion__actions,
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-wake-row__actions { justify-content: flex-start; }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-overview-grid,
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-dialog__grid,
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-wake-row,
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-plan-summary { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-list .mgmt-list__row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-list .mgmt-list__meta { display: none; }
 }
 
 @container paw-window (max-width: 520px) {
-  main[data-route-id='planning'][data-paw-os-app] .planning-wake-catalog-state { align-items: stretch; flex-direction: column; }
-  main[data-route-id='planning'][data-paw-os-app] .planning-dialog__selects,
-  main[data-route-id='planning'][data-paw-os-app] .planning-wake-form { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='planning'][data-paw-os-app] .planning-wake-form__wide { grid-column: auto; }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-wake-catalog-state { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-dialog__selects,
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-wake-form { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='planning'][data-paw-os-app] .planning-wake-form__wide { grid-column: auto; }
 }

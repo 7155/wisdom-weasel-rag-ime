@@ -13,6 +13,47 @@ afterEach(() => {
 });
 
 describe('useRoomLiveSession snapshot recovery', () => {
+  it('does not initialize an inactive Room and resumes exactly one stream when activated', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': roomSnapshot([]),
+      },
+    });
+    const callbacks = {
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState: vi.fn(),
+      onEvents: vi.fn(),
+    };
+
+    const { rerender, unmount } = renderHook(
+      ({ active }: { active: boolean }) => useRoomLiveSession({
+        active,
+        roomId: 'room-1',
+        transport,
+        ...callbacks,
+      }),
+      { initialProps: { active: false } },
+    );
+
+    await flushAsyncWork();
+    expect(transport.requests).toHaveLength(0);
+    expect(transport.subscriptionCalls).toHaveLength(0);
+
+    rerender({ active: true });
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.snapshot')).toHaveLength(1);
+
+    rerender({ active: false });
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(0));
+    expect(transport.subscriptionCalls).toHaveLength(1);
+    unmount();
+  });
+
   it('resumes from the confirmed live cursor when a reconnect snapshot is older', async () => {
     const store = useRoomLiveStore.getState();
     store.applyEvents('room-1', [

@@ -17,7 +17,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import { Select } from '@/components/primitives';
@@ -47,6 +47,7 @@ import {
   selectPublicRoomTurnOrder,
 } from '@/features/rooms/runtime/room-execution-lanes';
 import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-session';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import { pulsePawCompositionForRuntimeEvents } from '../runtime/composition-pulse';
 import {
   createRuntimeToolWindowProjector,
@@ -101,6 +102,7 @@ const roomToolPanelIcons: Record<RoomToolPanel, LucideIcon> = {
   focus: Focus,
   governance: Settings2,
 };
+const roomToolPanelItems = Object.keys(roomToolPanelLabels) as RoomToolPanel[];
 
 /* This is the active-participant ceiling enforced by agent-room.v1 and
    AgentRoomService. The displayed count still comes only from the current
@@ -149,6 +151,8 @@ export function PawRoomWorkspace({
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
+  const pageVisible = usePageVisibility();
+  const liveActive = active && pageVisible;
   const timelineRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState(initialDraft ?? '');
   const [attachments, setAttachments] = useState<RoomAttachmentReceipt[]>([]);
@@ -180,6 +184,7 @@ export function PawRoomWorkspace({
   }, [record?.id, record?.startGate?.status, record?.startGate?.gateId, record?.startGate?.objective, record?.startGate?.workItemId]);
   const [view, setView] = useState<'rounds' | 'conversation' | 'starfield'>('rounds');
   const [selectedParticipantId, setSelectedParticipantId] = useState('');
+  const collaborationTriggerRef = useRef<HTMLButtonElement>(null);
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [collaborationOpenFailures, setCollaborationOpenFailures] = useState<Set<string>>(() => new Set());
   const [resumeErrorByRow, setResumeErrorByRow] = useState<Record<string, string>>({});
@@ -267,6 +272,7 @@ export function PawRoomWorkspace({
   const queueFollowUp = useCallback((value: string) => queue.enqueue(value), [queue]);
 
   const retrySnapshot = useRoomLiveSession({
+    active: liveActive,
     roomId: recordId,
     transport,
     onLoadingChange: setLoading,
@@ -685,6 +691,10 @@ export function PawRoomWorkspace({
     setSelectedParticipantId('');
     desktop?.setCollaborationFocusGroup?.(null);
   }, [desktop]);
+  const closeCollaborationFocus = useCallback(() => {
+    exitCollaborationFocus();
+    collaborationTriggerRef.current?.focus();
+  }, [exitCollaborationFocus]);
   const retryCollaborationPlanet = useCallback((participantId: string) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!desktop || !participant) return;
@@ -773,10 +783,10 @@ export function PawRoomWorkspace({
   const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
     {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
-      <button aria-pressed={panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); exitCollaborationFocus(); }} type="button"><ListChecks size={14} /><span>任务表</span></button>
-      <button aria-pressed={panel !== 'none'} data-room-view="collaboration" onClick={enterCollaborationMode} type="button"><Focus size={14} /><span>协同模式</span></button>
-      <button aria-pressed={panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); exitCollaborationFocus(); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
-      <button aria-pressed={view === 'starfield'} data-room-view="starfield" onClick={() => { setView('starfield'); exitCollaborationFocus(); }} type="button"><Orbit size={14} /><span>星空</span></button>
+      <button aria-label="任务表" aria-pressed={panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); exitCollaborationFocus(); }} type="button"><ListChecks size={14} /><span>任务表</span></button>
+      <button aria-label="协同模式" aria-pressed={panel !== 'none'} data-room-view="collaboration" onClick={enterCollaborationMode} ref={collaborationTriggerRef} type="button"><Focus size={14} /><span>协同模式</span></button>
+      <button aria-label="公开记录" aria-pressed={panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); exitCollaborationFocus(); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
+      <button aria-label="星空" aria-pressed={view === 'starfield'} data-room-view="starfield" onClick={() => { setView('starfield'); exitCollaborationFocus(); }} type="button"><Orbit size={14} /><span>星空</span></button>
     </nav>
     <div className="paw-room-workspace__runtime"><span><i />{abortingActiveTurn ? '正在停止' : sending && activeTurn ? '正在干预' : activeTurn ? '协作中' : recoveryState === 'synced' ? '已同步' : '连接中'}</span>{activeTurn ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
   </div>;
@@ -805,7 +815,7 @@ export function PawRoomWorkspace({
       </section>
 
       <div className="paw-room-workspace__body">
-        <main aria-label={`${title} 主 Room`} className="paw-room-workspace__main">
+        <section aria-label={`${title} 主 Room`} className="paw-room-workspace__main" role="region">
           {view === 'starfield' && focusProjection ? (
             <LazyPawRoomStarfield
               active={active}
@@ -939,9 +949,9 @@ export function PawRoomWorkspace({
                 </>
               )}
           </div>
-        </main>
+        </section>
         {panel !== 'none' && record ? <PawRoomToolWorkspace
-          onClose={exitCollaborationFocus}
+          onClose={closeCollaborationFocus}
           onError={setError}
           onOpenParticipant={openParticipantById}
           onPanelChange={setPanel}
@@ -991,6 +1001,20 @@ function PawRoomToolWorkspace({
   selectedParticipantId: string;
 }) {
   const tabId = useId();
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const moveTabFocus = useCallback((event: KeyboardEvent<HTMLButtonElement>, current: RoomToolPanel) => {
+    const currentIndex = roomToolPanelItems.indexOf(current);
+    if (currentIndex < 0) return;
+    let nextIndex: number;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % roomToolPanelItems.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + roomToolPanelItems.length) % roomToolPanelItems.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = roomToolPanelItems.length - 1;
+    else return;
+    event.preventDefault();
+    onPanelChange(roomToolPanelItems[nextIndex]);
+    tabRefs.current[nextIndex]?.focus();
+  }, [onPanelChange]);
   /* 空间指向：协作态势键在标题栏尾端，面板也必须从尾端展开。data-side 把这个
      朝向写成契约而不是 DOM 顺序的副作用，CSS 用同名网格区落位。 */
   return <aside aria-label="Room 协作态势" className="paw-room-tools" data-side="trailing">
@@ -1001,8 +1025,8 @@ function PawRoomToolWorkspace({
         <button aria-label="关闭协作态势" onClick={onClose} type="button"><X aria-hidden="true" size={15} /></button>
       </div>
     </header>
-    <nav aria-label="协作工具视图" className="paw-room-tools__tabs" role="tablist">
-      {(Object.keys(roomToolPanelLabels) as RoomToolPanel[]).map((item) => {
+    <nav aria-label="协作工具视图" aria-orientation="horizontal" className="paw-room-tools__tabs" role="tablist">
+      {roomToolPanelItems.map((item, index) => {
         const Icon = roomToolPanelIcons[item];
         return <button
           aria-controls={`${tabId}-panel`}
@@ -1010,7 +1034,9 @@ function PawRoomToolWorkspace({
           id={`${tabId}-${item}`}
           key={item}
           onClick={() => onPanelChange(item)}
+          onKeyDown={(event) => moveTabFocus(event, item)}
           role="tab"
+          ref={(node) => { tabRefs.current[index] = node; }}
           tabIndex={item === panel ? 0 : -1}
           type="button"
         ><Icon aria-hidden="true" size={14} /><span>{roomToolPanelLabels[item]}</span></button>;

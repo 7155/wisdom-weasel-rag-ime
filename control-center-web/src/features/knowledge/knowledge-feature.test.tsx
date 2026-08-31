@@ -24,10 +24,19 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  document.querySelectorAll('[data-test-paw-desktop-root]').forEach((element) => element.remove());
   vi.restoreAllMocks();
 });
 
 describe('document knowledge library', () => {
+  it('does not start Knowledge queries while its PAWOS window is inactive', async () => {
+    const transport = createTransport();
+    renderKnowledge(transport, '/knowledge', true, false);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(transport.requests.some((call) => String(call.request.pathId).startsWith('knowledge'))).toBe(false);
+  });
+
   it('uses one PAWOS navigation layer while keeping the real library tabs interactive', async () => {
     const user = userEvent.setup();
     renderKnowledge(createTransport(), '/knowledge', true);
@@ -542,6 +551,10 @@ describe('document knowledge library', () => {
   it('manages an independent document graph with source navigation and rebuild state', async () => {
     const transport = createTransport();
     const user = userEvent.setup();
+    const desktopRoot = document.createElement('div');
+    desktopRoot.className = 'paw-desktop-root';
+    desktopRoot.dataset.testPawDesktopRoot = 'true';
+    document.body.append(desktopRoot);
     renderKnowledge(transport);
 
     await user.click(await screen.findByRole('tab', { name: '知识图谱' }));
@@ -556,7 +569,9 @@ describe('document knowledge library', () => {
     expect(screen.getByRole('button', { name: '适应画布' })).toHaveAttribute('title', '图谱正在加载');
     expect(screen.getByRole('button', { name: '定位节点' })).toHaveAttribute('title', '请先选择一个节点');
     await user.click(screen.getByRole('button', { name: '专注查看' }));
-    expect(screen.getByLabelText('知识图谱工作区')).toHaveAttribute('data-focus', 'true');
+    const focusedGraph = screen.getByLabelText('知识图谱工作区');
+    expect(focusedGraph).toHaveAttribute('data-focus', 'true');
+    expect(focusedGraph.parentElement).toBe(desktopRoot);
     expect(screen.getByRole('button', { name: '返回知识库' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: '节点上限' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '返回知识库' }));
@@ -744,14 +759,14 @@ describe('document knowledge library', () => {
 
 });
 
-function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge', pawOs = false) {
+function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge', pawOs = false, active = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const feature = <QueryClientProvider client={client}><KnowledgeFeature /></QueryClientProvider>;
   render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <TooltipProvider delayDuration={0}>
         <ControlTransportProvider transport={transport}>
-          {pawOs ? <PawOsAppSurfaceProvider appId="knowledge" height={760} width={1_200}>{feature}</PawOsAppSurfaceProvider> : feature}
+          {pawOs ? <PawOsAppSurfaceProvider active={active} appId="knowledge" height={760} width={1_200}>{feature}</PawOsAppSurfaceProvider> : feature}
         </ControlTransportProvider>
       </TooltipProvider>
     </MemoryRouter>,

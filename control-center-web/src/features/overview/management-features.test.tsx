@@ -345,7 +345,7 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('更改设置后，可以在这里直接保存；需要重启、部署或权限的更改会先说明需要采取的操作。')).toBeInTheDocument();
+    expect(await screen.findByText('调整称呼、本机模型、上下文和各项功能。普通设置可直接保存；涉及重启、部署或权限的更改会先说明影响。')).toBeInTheDocument();
     expect(screen.queryByText('sha256:live-settings-hash')).not.toBeInTheDocument();
     expect(screen.queryByText('sha256:effective-settings')).not.toBeInTheDocument();
     expect(screen.queryByText('554')).not.toBeInTheDocument();

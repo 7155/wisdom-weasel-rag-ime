@@ -26,6 +26,7 @@ describe('PAWOS Extension App installation projection', () => {
     skillSha256: extension.skillSha256,
     verticalSuiteId: extension.verticalSuiteId,
     verticalSuiteRevision: extension.verticalSuiteRevision,
+    sandbox: extension.sandbox,
   };
 
   it('maps a Runtime Package ID to its manifest without treating disabled as enabled', () => {
@@ -118,6 +119,7 @@ describe('PAWOS Extension App installation projection', () => {
     ['binding digest', { bindingSha256: 'f'.repeat(64), bindingCapability: `pawos.extension.binding.${'f'.repeat(40)}` }],
     ['skill', { skillRef: 'wrong-skill' }],
     ['suite', { verticalSuiteId: 'wrong-suite' }],
+    ['sandbox', { sandbox: { ...extension.sandbox, default: 'required' } }],
   ])('fails closed when Extension App %s evidence is stale or mismatched', (_label, override) => {
     const projection = projectPawExtensionInstallation({
       ok: true,

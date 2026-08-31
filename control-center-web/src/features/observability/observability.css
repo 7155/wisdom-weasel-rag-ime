@@ -1,18 +1,18 @@
-main[data-route-id='observability'] .mgmt-page__body {
+:is(main, section)[data-route-id='observability'] .mgmt-page__body {
   gap: var(--space-4);
 }
 
-main[data-route-id='observability'] .observation-connection-notice {
+:is(main, section)[data-route-id='observability'] .observation-connection-notice {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-main[data-route-id='observability'] .observation-connection-notice .mgmt-notice {
+:is(main, section)[data-route-id='observability'] .observation-connection-notice .mgmt-notice {
   flex: 1 1 auto;
 }
 
-main[data-route-id='observability'] .observation-console {
+:is(main, section)[data-route-id='observability'] .observation-console {
   display: grid;
   gap: var(--space-4);
   min-width: 0;
@@ -22,11 +22,11 @@ main[data-route-id='observability'] .observation-console {
    the pulse, filters and timeline then force the whole Monitor canvas to the
    width of every chip in one row. Let each section own its local wrapping or
    horizontal scroller instead of widening the App behind the window edge. */
-main[data-route-id='observability'] .observation-console > * { min-width: 0; }
+:is(main, section)[data-route-id='observability'] .observation-console > * { min-width: 0; }
 
 /* The pulse strip is ambient status, not a destination: one row of live
    counts that reads at a glance without claiming a whole card section. */
-main[data-route-id='observability'] .observation-pulse {
+:is(main, section)[data-route-id='observability'] .observation-pulse {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -39,7 +39,7 @@ main[data-route-id='observability'] .observation-pulse {
 
 /* Live means live: the connection dot breathes only while the stream is
    actually open, so motion itself is a truthful signal. */
-main[data-route-id='observability'] .observation-pulse[data-connection='live'] .mgmt-status i {
+:is(main, section)[data-route-id='observability'] .observation-pulse[data-connection='live'] .mgmt-status i {
   animation: observation-live-dot 2.4s ease-in-out infinite;
 }
 
@@ -48,7 +48,7 @@ main[data-route-id='observability'] .observation-pulse[data-connection='live'] .
   50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-success) 12%, transparent); }
 }
 
-main[data-route-id='observability'] .observation-pulse__stat {
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -58,28 +58,28 @@ main[data-route-id='observability'] .observation-pulse__stat {
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='observability'] .observation-pulse__stat svg {
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat svg {
   color: var(--color-text-tertiary);
 }
 
 /* Snapshot mode names when its evidence was captured instead of posing as
    the present tense. */
-main[data-route-id='observability'] .observation-pulse__stat[data-role='snapshot-age'] {
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat[data-role='snapshot-age'] {
   color: var(--color-text-tertiary);
   font-weight: 550;
 }
 
-main[data-route-id='observability'] .observation-pulse__stat[data-tone='active'],
-main[data-route-id='observability'] .observation-pulse__stat[data-tone='active'] svg {
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat[data-tone='active'],
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat[data-tone='active'] svg {
   color: var(--color-info);
 }
 
-main[data-route-id='observability'] .observation-pulse__stat[data-tone='danger'],
-main[data-route-id='observability'] .observation-pulse__stat[data-tone='danger'] svg {
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat[data-tone='danger'],
+:is(main, section)[data-route-id='observability'] .observation-pulse__stat[data-tone='danger'] svg {
   color: var(--color-danger);
 }
 
-main[data-route-id='observability'] .observation-controls {
+:is(main, section)[data-route-id='observability'] .observation-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 320px) auto;
   align-items: center;
@@ -88,7 +88,7 @@ main[data-route-id='observability'] .observation-controls {
   border-block: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='observability'] .observation-category-tabs {
+:is(main, section)[data-route-id='observability'] .observation-category-tabs {
   display: flex;
   min-width: 0;
   gap: 4px;
@@ -96,13 +96,13 @@ main[data-route-id='observability'] .observation-category-tabs {
   scrollbar-width: none;
 }
 
-main[data-route-id='observability'] .observation-category-tabs::-webkit-scrollbar {
+:is(main, section)[data-route-id='observability'] .observation-category-tabs::-webkit-scrollbar {
   display: none;
 }
 
 /* Category filters are quiet rounded chips: the selected scope reads as a
    filled pill instead of an underline borrowed from browser tabs. */
-main[data-route-id='observability'] .observation-category-tabs button {
+:is(main, section)[data-route-id='observability'] .observation-category-tabs button {
   flex: 0 0 auto;
   min-height: 30px;
   padding: 0 12px;
@@ -117,22 +117,22 @@ main[data-route-id='observability'] .observation-category-tabs button {
   transition: border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='observability'] .observation-category-tabs button[data-active='true'] {
+:is(main, section)[data-route-id='observability'] .observation-category-tabs button[data-active='true'] {
   border-color: color-mix(in srgb, var(--color-accent) 32%, transparent);
   background: var(--color-accent-soft);
   color: var(--color-accent);
 }
 
-main[data-route-id='observability'] .observation-category-tabs button:focus-visible,
-main[data-route-id='observability'] .observation-timeline button:focus-visible,
-main[data-route-id='observability'] .observation-trace__summary:focus-visible,
-main[data-route-id='observability'] .observation-facts__disclosure > summary:focus-visible,
-main[data-route-id='observability'] .observation-canonical__disclosure > summary:focus-visible {
+:is(main, section)[data-route-id='observability'] .observation-category-tabs button:focus-visible,
+:is(main, section)[data-route-id='observability'] .observation-timeline button:focus-visible,
+:is(main, section)[data-route-id='observability'] .observation-trace__summary:focus-visible,
+:is(main, section)[data-route-id='observability'] .observation-facts__disclosure > summary:focus-visible,
+:is(main, section)[data-route-id='observability'] .observation-canonical__disclosure > summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
 
-main[data-route-id='observability'] .observation-search {
+:is(main, section)[data-route-id='observability'] .observation-search {
   display: flex;
   align-items: center;
   min-width: 0;
@@ -144,12 +144,12 @@ main[data-route-id='observability'] .observation-search {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-search:focus-within {
+:is(main, section)[data-route-id='observability'] .observation-search:focus-within {
   border-color: var(--color-focus);
   box-shadow: var(--shadow-focus);
 }
 
-main[data-route-id='observability'] .observation-search input {
+:is(main, section)[data-route-id='observability'] .observation-search input {
   min-width: 0;
   width: 100%;
   height: 100%;
@@ -162,7 +162,7 @@ main[data-route-id='observability'] .observation-search input {
   font-size: 13px;
 }
 
-main[data-route-id='observability'] .observation-scope {
+:is(main, section)[data-route-id='observability'] .observation-scope {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -171,32 +171,32 @@ main[data-route-id='observability'] .observation-scope {
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-scope > span {
+:is(main, section)[data-route-id='observability'] .observation-scope > span {
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-workspace {
+:is(main, section)[data-route-id='observability'] .observation-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.8fr);
   gap: 18px;
   align-items: start;
 }
 
-main[data-route-id='observability'] .observation-workspace > .mgmt-section {
+:is(main, section)[data-route-id='observability'] .observation-workspace > .mgmt-section {
   min-width: 0;
 }
 
-main[data-route-id='observability'] .observation-timeline,
-main[data-route-id='observability'] .observation-trace {
+:is(main, section)[data-route-id='observability'] .observation-timeline,
+:is(main, section)[data-route-id='observability'] .observation-trace {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-main[data-route-id='observability'] .observation-timeline {
+:is(main, section)[data-route-id='observability'] .observation-timeline {
   max-height: min(66vh, 720px);
   overflow: auto;
   overscroll-behavior: contain;
@@ -205,28 +205,28 @@ main[data-route-id='observability'] .observation-timeline {
   background: var(--color-surface);
 }
 
-main[data-route-id='observability'] .observation-timeline > li {
+:is(main, section)[data-route-id='observability'] .observation-timeline > li {
   border-bottom: 1px solid var(--color-border-soft);
   box-shadow: inset 3px 0 transparent;
 }
 
-main[data-route-id='observability'] .observation-timeline > li:last-child {
+:is(main, section)[data-route-id='observability'] .observation-timeline > li:last-child {
   border-bottom: 0;
 }
 
-main[data-route-id='observability'] .observation-timeline > li[data-active='true'] {
+:is(main, section)[data-route-id='observability'] .observation-timeline > li[data-active='true'] {
   background: color-mix(in srgb, var(--color-accent-soft) 70%, var(--color-surface));
   box-shadow: inset 3px 0 var(--color-accent);
 }
 
-main[data-route-id='observability'] .observation-timeline > li[data-status='failed'] {
+:is(main, section)[data-route-id='observability'] .observation-timeline > li[data-status='failed'] {
   box-shadow: inset 3px 0 var(--color-danger);
 }
 
 /* Restrained work motion: a running row's icon breathes; final states hold
    still so completed history never competes with active work. */
-main[data-route-id='observability'] .observation-timeline > li[data-status='running'] .observation-row__icon,
-main[data-route-id='observability'] .observation-trace li[data-status='running'] .observation-trace__index {
+:is(main, section)[data-route-id='observability'] .observation-timeline > li[data-status='running'] .observation-row__icon,
+:is(main, section)[data-route-id='observability'] .observation-trace li[data-status='running'] .observation-trace__index {
   animation: observation-running-breathe 2.2s ease-in-out infinite;
 }
 
@@ -235,7 +235,7 @@ main[data-route-id='observability'] .observation-trace li[data-status='running']
   50% { opacity: .55; }
 }
 
-main[data-route-id='observability'] .observation-timeline button {
+:is(main, section)[data-route-id='observability'] .observation-timeline button {
   display: grid;
   grid-template-columns: 30px minmax(160px, 1fr) minmax(105px, auto) auto;
   align-items: center;
@@ -250,11 +250,11 @@ main[data-route-id='observability'] .observation-timeline button {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-timeline button:hover {
+:is(main, section)[data-route-id='observability'] .observation-timeline button:hover {
   background: color-mix(in srgb, var(--color-surface-muted) 66%, transparent);
 }
 
-main[data-route-id='observability'] .observation-row__icon {
+:is(main, section)[data-route-id='observability'] .observation-row__icon {
   display: grid;
   place-items: center;
   width: 28px;
@@ -265,47 +265,47 @@ main[data-route-id='observability'] .observation-row__icon {
   background: var(--color-surface);
 }
 
-main[data-route-id='observability'] li[data-category='tool'] .observation-row__icon {
+:is(main, section)[data-route-id='observability'] li[data-category='tool'] .observation-row__icon {
   color: var(--color-warning);
   background: var(--color-warning-soft);
 }
 
-main[data-route-id='observability'] li[data-category='retrieval'] .observation-row__icon,
-main[data-route-id='observability'] li[data-category='context'] .observation-row__icon {
+:is(main, section)[data-route-id='observability'] li[data-category='retrieval'] .observation-row__icon,
+:is(main, section)[data-route-id='observability'] li[data-category='context'] .observation-row__icon {
   color: var(--color-info);
   background: var(--color-info-soft);
 }
 
-main[data-route-id='observability'] li[data-category='memory'] .observation-row__icon {
+:is(main, section)[data-route-id='observability'] li[data-category='memory'] .observation-row__icon {
   color: var(--color-collaboration);
   background: var(--color-collaboration-soft);
 }
 
-main[data-route-id='observability'] li[data-category='room'] .observation-row__icon,
-main[data-route-id='observability'] li[data-category='intercom'] .observation-row__icon {
+:is(main, section)[data-route-id='observability'] li[data-category='room'] .observation-row__icon,
+:is(main, section)[data-route-id='observability'] li[data-category='intercom'] .observation-row__icon {
   color: var(--color-memory);
   background: var(--color-memory-soft);
 }
 
-main[data-route-id='observability'] .observation-row__copy,
-main[data-route-id='observability'] .observation-row__scope {
+:is(main, section)[data-route-id='observability'] .observation-row__copy,
+:is(main, section)[data-route-id='observability'] .observation-row__scope {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='observability'] .observation-row__copy strong,
-main[data-route-id='observability'] .observation-trace strong {
+:is(main, section)[data-route-id='observability'] .observation-row__copy strong,
+:is(main, section)[data-route-id='observability'] .observation-trace strong {
   overflow-wrap: anywhere;
   color: var(--color-text);
   font-size: 13px;
   font-weight: 680;
 }
 
-main[data-route-id='observability'] .observation-row__copy small,
-main[data-route-id='observability'] .observation-row__scope small,
-main[data-route-id='observability'] .observation-row__scope time,
-main[data-route-id='observability'] .observation-trace small {
+:is(main, section)[data-route-id='observability'] .observation-row__copy small,
+:is(main, section)[data-route-id='observability'] .observation-row__scope small,
+:is(main, section)[data-route-id='observability'] .observation-row__scope time,
+:is(main, section)[data-route-id='observability'] .observation-trace small {
   overflow: hidden;
   color: var(--color-text-tertiary);
   font-size: 12px;
@@ -313,11 +313,11 @@ main[data-route-id='observability'] .observation-trace small {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-row__scope {
+:is(main, section)[data-route-id='observability'] .observation-row__scope {
   text-align: right;
 }
 
-main[data-route-id='observability'] .observation-trace-heading {
+:is(main, section)[data-route-id='observability'] .observation-trace-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -326,7 +326,7 @@ main[data-route-id='observability'] .observation-trace-heading {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-trace-heading span {
+:is(main, section)[data-route-id='observability'] .observation-trace-heading span {
   display: flex;
   align-items: center;
   min-width: 0;
@@ -339,17 +339,17 @@ main[data-route-id='observability'] .observation-trace-heading span {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-trace-heading small {
+:is(main, section)[data-route-id='observability'] .observation-trace-heading small {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-trace {
+:is(main, section)[data-route-id='observability'] .observation-trace {
   position: relative;
   padding-block: 4px;
 }
 
-main[data-route-id='observability'] .observation-trace::before {
+:is(main, section)[data-route-id='observability'] .observation-trace::before {
   position: absolute;
   inset: 20px auto 20px 14px;
   width: 1px;
@@ -357,17 +357,17 @@ main[data-route-id='observability'] .observation-trace::before {
   content: '';
 }
 
-main[data-route-id='observability'] .observation-trace li {
+:is(main, section)[data-route-id='observability'] .observation-trace li {
   position: relative;
   min-width: 0;
 }
 
-main[data-route-id='observability'] .observation-trace__card {
+:is(main, section)[data-route-id='observability'] .observation-trace__card {
   min-width: 0;
   padding-block: 9px;
 }
 
-main[data-route-id='observability'] .observation-trace__summary {
+:is(main, section)[data-route-id='observability'] .observation-trace__summary {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: start;
@@ -384,13 +384,13 @@ main[data-route-id='observability'] .observation-trace__summary {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-trace__summary:hover {
+:is(main, section)[data-route-id='observability'] .observation-trace__summary:hover {
   background: color-mix(in srgb, var(--color-surface-muted) 66%, transparent);
 }
 
 /* Each reconstructed step names its capture moment; order alone is not
    enough evidence for "what happened when". */
-main[data-route-id='observability'] .observation-trace__summary > time {
+:is(main, section)[data-route-id='observability'] .observation-trace__summary > time {
   margin-top: 2px;
   color: var(--color-text-tertiary);
   font-size: 12px;
@@ -398,7 +398,7 @@ main[data-route-id='observability'] .observation-trace__summary > time {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-trace__index {
+:is(main, section)[data-route-id='observability'] .observation-trace__index {
   z-index: 1;
   display: grid;
   place-items: center;
@@ -412,37 +412,37 @@ main[data-route-id='observability'] .observation-trace__index {
   font-weight: 750;
 }
 
-main[data-route-id='observability'] .observation-trace li[data-category='tool'] .observation-trace__index {
+:is(main, section)[data-route-id='observability'] .observation-trace li[data-category='tool'] .observation-trace__index {
   border-color: var(--color-warning-border);
   color: var(--color-warning);
 }
 
-main[data-route-id='observability'] .observation-trace li[data-category='memory'] .observation-trace__index {
+:is(main, section)[data-route-id='observability'] .observation-trace li[data-category='memory'] .observation-trace__index {
   border-color: color-mix(in srgb, var(--color-collaboration) 34%, var(--color-border));
   color: var(--color-collaboration);
 }
 
 /* A failed step is the loudest thing in the reconstruction, whatever its
    category colour would otherwise be. */
-main[data-route-id='observability'] .observation-trace li[data-status='failed'] .observation-trace__index {
+:is(main, section)[data-route-id='observability'] .observation-trace li[data-status='failed'] .observation-trace__index {
   border-color: var(--color-danger);
   background: var(--color-danger-soft);
   color: var(--color-danger);
 }
 
-main[data-route-id='observability'] .observation-trace__summary > span:last-child {
+:is(main, section)[data-route-id='observability'] .observation-trace__summary > span:last-child {
   display: grid;
   align-content: start;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='observability'] .observation-facts-shell {
+:is(main, section)[data-route-id='observability'] .observation-facts-shell {
   min-width: 0;
   margin-left: 38px;
 }
 
-main[data-route-id='observability'] .observation-facts {
+:is(main, section)[data-route-id='observability'] .observation-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px 10px;
@@ -451,21 +451,21 @@ main[data-route-id='observability'] .observation-facts {
   border-top: 1px dashed var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-facts[data-nested] {
+:is(main, section)[data-route-id='observability'] .observation-facts[data-nested] {
   margin-top: 0;
   padding-top: 4px;
   border-top: 0;
 }
 
-main[data-route-id='observability'] .observation-facts div {
+:is(main, section)[data-route-id='observability'] .observation-facts div {
   display: flex;
   min-width: 0;
   justify-content: space-between;
   gap: 6px;
 }
 
-main[data-route-id='observability'] .observation-facts dt,
-main[data-route-id='observability'] .observation-facts dd {
+:is(main, section)[data-route-id='observability'] .observation-facts dt,
+:is(main, section)[data-route-id='observability'] .observation-facts dd {
   margin: 0;
   overflow: hidden;
   font-size: 12px;
@@ -473,7 +473,7 @@ main[data-route-id='observability'] .observation-facts dd {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-progress {
+:is(main, section)[data-route-id='observability'] .observation-progress {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(84px, .72fr);
   align-items: center;
@@ -483,7 +483,7 @@ main[data-route-id='observability'] .observation-progress {
   border-top: 1px dashed var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-progress > span {
+:is(main, section)[data-route-id='observability'] .observation-progress > span {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -492,9 +492,9 @@ main[data-route-id='observability'] .observation-progress > span {
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-progress strong { color: var(--color-text-secondary); }
-main[data-route-id='observability'] .observation-progress small { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
-main[data-route-id='observability'] .observation-progress progress {
+:is(main, section)[data-route-id='observability'] .observation-progress strong { color: var(--color-text-secondary); }
+:is(main, section)[data-route-id='observability'] .observation-progress small { color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+:is(main, section)[data-route-id='observability'] .observation-progress progress {
   width: 100%;
   height: 5px;
   overflow: hidden;
@@ -504,11 +504,11 @@ main[data-route-id='observability'] .observation-progress progress {
   accent-color: var(--color-warning);
 }
 
-main[data-route-id='observability'] .observation-progress progress::-webkit-progress-bar { background: var(--color-surface-muted); }
-main[data-route-id='observability'] .observation-progress progress::-webkit-progress-value { border-radius: inherit; background: var(--color-warning); }
-main[data-route-id='observability'] .observation-progress progress::-moz-progress-bar { border-radius: inherit; background: var(--color-warning); }
+:is(main, section)[data-route-id='observability'] .observation-progress progress::-webkit-progress-bar { background: var(--color-surface-muted); }
+:is(main, section)[data-route-id='observability'] .observation-progress progress::-webkit-progress-value { border-radius: inherit; background: var(--color-warning); }
+:is(main, section)[data-route-id='observability'] .observation-progress progress::-moz-progress-bar { border-radius: inherit; background: var(--color-warning); }
 
-main[data-route-id='observability'] .observation-facts__disclosure > summary {
+:is(main, section)[data-route-id='observability'] .observation-facts__disclosure > summary {
   min-height: 30px;
   display: inline-flex;
   align-items: center;
@@ -524,11 +524,11 @@ main[data-route-id='observability'] .observation-facts__disclosure > summary {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-facts__disclosure > summary:hover { color: var(--color-text); background: var(--color-surface-muted); }
-main[data-route-id='observability'] .observation-facts__disclosure > summary svg { transition: transform 190ms cubic-bezier(.16, 1, .3, 1); }
-main[data-route-id='observability'] .observation-facts__disclosure[data-expanded] > summary svg { transform: rotate(180deg); }
+:is(main, section)[data-route-id='observability'] .observation-facts__disclosure > summary:hover { color: var(--color-text); background: var(--color-surface-muted); }
+:is(main, section)[data-route-id='observability'] .observation-facts__disclosure > summary svg { transition: transform 190ms cubic-bezier(.16, 1, .3, 1); }
+:is(main, section)[data-route-id='observability'] .observation-facts__disclosure[data-expanded] > summary svg { transform: rotate(180deg); }
 
-main[data-route-id='observability'] .observation-facts__reveal {
+:is(main, section)[data-route-id='observability'] .observation-facts__reveal {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
@@ -536,19 +536,19 @@ main[data-route-id='observability'] .observation-facts__reveal {
   transition: grid-template-rows 190ms cubic-bezier(.16, 1, .3, 1), opacity 140ms ease-out, transform 190ms cubic-bezier(.16, 1, .3, 1);
 }
 
-main[data-route-id='observability'] .observation-facts__reveal[data-open] {
+:is(main, section)[data-route-id='observability'] .observation-facts__reveal[data-open] {
   grid-template-rows: 1fr;
   opacity: 1;
   transform: none;
 }
 
-main[data-route-id='observability'] .observation-facts__reveal > div { min-height: 0; overflow: hidden; }
+:is(main, section)[data-route-id='observability'] .observation-facts__reveal > div { min-height: 0; overflow: hidden; }
 
-main[data-route-id='observability'] .observation-facts dt {
+:is(main, section)[data-route-id='observability'] .observation-facts dt {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-facts dd {
+:is(main, section)[data-route-id='observability'] .observation-facts dd {
   color: var(--color-text-secondary);
   font-weight: 650;
 }
@@ -556,7 +556,7 @@ main[data-route-id='observability'] .observation-facts dd {
 /* Canonical trace details stay subordinate to the event timeline: compact
    disclosure rows expose the machine envelope without turning every span
    into another card. */
-main[data-route-id='observability'] .observation-canonical {
+:is(main, section)[data-route-id='observability'] .observation-canonical {
   display: grid;
   gap: 8px;
   margin-top: 12px;
@@ -564,7 +564,7 @@ main[data-route-id='observability'] .observation-canonical {
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-canonical__heading {
+:is(main, section)[data-route-id='observability'] .observation-canonical__heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -573,21 +573,21 @@ main[data-route-id='observability'] .observation-canonical__heading {
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-canonical__heading span {
+:is(main, section)[data-route-id='observability'] .observation-canonical__heading span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-weight: 700;
 }
 
-main[data-route-id='observability'] .observation-canonical__heading small,
-main[data-route-id='observability'] .observation-canonical__copy small,
-main[data-route-id='observability'] .observation-canonical__evidence small {
+:is(main, section)[data-route-id='observability'] .observation-canonical__heading small,
+:is(main, section)[data-route-id='observability'] .observation-canonical__copy small,
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence small {
   color: var(--color-text-tertiary);
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-canonical__relations {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations {
   display: grid;
   gap: 7px;
   padding: 8px;
@@ -596,7 +596,7 @@ main[data-route-id='observability'] .observation-canonical__relations {
   background: var(--color-surface-muted);
 }
 
-main[data-route-id='observability'] .observation-canonical__relations > header span {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations > header span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -605,7 +605,7 @@ main[data-route-id='observability'] .observation-canonical__relations > header s
   font-weight: 680;
 }
 
-main[data-route-id='observability'] .observation-canonical__relations :is(dl, ul) {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations :is(dl, ul) {
   display: flex;
   flex-wrap: wrap;
   gap: 5px 10px;
@@ -614,8 +614,8 @@ main[data-route-id='observability'] .observation-canonical__relations :is(dl, ul
   list-style: none;
 }
 
-main[data-route-id='observability'] .observation-canonical__relations dl > div,
-main[data-route-id='observability'] .observation-canonical__relations li {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations dl > div,
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations li {
   display: inline-flex;
   min-width: 0;
   align-items: baseline;
@@ -623,32 +623,32 @@ main[data-route-id='observability'] .observation-canonical__relations li {
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-canonical__relations dt,
-main[data-route-id='observability'] .observation-canonical__relations li > span {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations dt,
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations li > span {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-canonical__relations dd { min-width: 0; margin: 0; }
-main[data-route-id='observability'] .observation-canonical__relations code {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations dd { min-width: 0; margin: 0; }
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations code {
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
   font: 11px/1.4 var(--font-mono);
 }
 
-main[data-route-id='observability'] .observation-canonical__relations a {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations a {
   overflow-wrap: anywhere;
   color: var(--color-accent);
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-canonical__relations nav {
+:is(main, section)[data-route-id='observability'] .observation-canonical__relations nav {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 12px;
   padding-top: 2px;
 }
 
-main[data-route-id='observability'] .observation-canonical__disclosure > summary {
+:is(main, section)[data-route-id='observability'] .observation-canonical__disclosure > summary {
   display: flex;
   min-height: 32px;
   align-items: center;
@@ -663,14 +663,14 @@ main[data-route-id='observability'] .observation-canonical__disclosure > summary
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-canonical__disclosure > summary:hover {
+:is(main, section)[data-route-id='observability'] .observation-canonical__disclosure > summary:hover {
   border-color: var(--color-border);
   color: var(--color-text);
 }
 
-main[data-route-id='observability'] .observation-canonical__list,
-main[data-route-id='observability'] .observation-canonical__evidence,
-main[data-route-id='observability'] .observation-canonical__artifacts {
+:is(main, section)[data-route-id='observability'] .observation-canonical__list,
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence,
+:is(main, section)[data-route-id='observability'] .observation-canonical__artifacts {
   display: grid;
   gap: 1px;
   margin: 4px 0 0;
@@ -678,7 +678,7 @@ main[data-route-id='observability'] .observation-canonical__artifacts {
   list-style: none;
 }
 
-main[data-route-id='observability'] .observation-canonical__list > li {
+:is(main, section)[data-route-id='observability'] .observation-canonical__list > li {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto auto;
   align-items: center;
@@ -688,7 +688,7 @@ main[data-route-id='observability'] .observation-canonical__list > li {
   border-bottom: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='observability'] .observation-canonical__index {
+:is(main, section)[data-route-id='observability'] .observation-canonical__index {
   display: grid;
   place-items: center;
   width: 22px;
@@ -700,14 +700,14 @@ main[data-route-id='observability'] .observation-canonical__index {
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='observability'] .observation-canonical__copy {
+:is(main, section)[data-route-id='observability'] .observation-canonical__copy {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='observability'] .observation-canonical__copy strong,
-main[data-route-id='observability'] .observation-canonical__evidence-head strong {
+:is(main, section)[data-route-id='observability'] .observation-canonical__copy strong,
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence-head strong {
   overflow: hidden;
   color: var(--color-text);
   font-size: 12px;
@@ -715,20 +715,20 @@ main[data-route-id='observability'] .observation-canonical__evidence-head strong
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-canonical__copy small {
+:is(main, section)[data-route-id='observability'] .observation-canonical__copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-canonical__span-facts {
+:is(main, section)[data-route-id='observability'] .observation-canonical__span-facts {
   display: flex;
   flex-wrap: wrap;
   gap: 3px 9px;
   margin: 3px 0 0;
 }
 
-main[data-route-id='observability'] .observation-canonical__span-facts > div {
+:is(main, section)[data-route-id='observability'] .observation-canonical__span-facts > div {
   display: inline-flex;
   min-width: 0;
   align-items: baseline;
@@ -736,11 +736,11 @@ main[data-route-id='observability'] .observation-canonical__span-facts > div {
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-canonical__span-facts dt {
+:is(main, section)[data-route-id='observability'] .observation-canonical__span-facts dt {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-canonical__span-facts dd {
+:is(main, section)[data-route-id='observability'] .observation-canonical__span-facts dd {
   max-width: 34ch;
   overflow: hidden;
   margin: 0;
@@ -750,21 +750,21 @@ main[data-route-id='observability'] .observation-canonical__span-facts dd {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-canonical__duration {
+:is(main, section)[data-route-id='observability'] .observation-canonical__duration {
   color: var(--color-text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-canonical__evidence > li {
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence > li {
   display: grid;
   gap: 4px;
   padding: 8px 4px;
   border-bottom: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='observability'] .observation-canonical__artifacts > li {
+:is(main, section)[data-route-id='observability'] .observation-canonical__artifacts > li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 3px 10px;
@@ -774,50 +774,50 @@ main[data-route-id='observability'] .observation-canonical__artifacts > li {
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-canonical__artifacts strong,
-main[data-route-id='observability'] .observation-canonical__artifacts small {
+:is(main, section)[data-route-id='observability'] .observation-canonical__artifacts strong,
+:is(main, section)[data-route-id='observability'] .observation-canonical__artifacts small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-canonical__artifacts strong {
+:is(main, section)[data-route-id='observability'] .observation-canonical__artifacts strong {
   color: var(--color-text);
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-canonical__artifacts small {
+:is(main, section)[data-route-id='observability'] .observation-canonical__artifacts small {
   grid-column: 1 / -1;
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-canonical__evidence-head,
-main[data-route-id='observability'] .observation-canonical__evidence-meta {
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence-head,
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 5px 10px;
 }
 
-main[data-route-id='observability'] .observation-canonical__evidence-meta span {
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence-meta span {
   color: var(--color-text-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='observability'] .observation-canonical__evidence > li > small {
+:is(main, section)[data-route-id='observability'] .observation-canonical__evidence > li > small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-canonical-loading {
+:is(main, section)[data-route-id='observability'] .observation-canonical-loading {
   padding: 8px 4px;
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-debug-actions {
+:is(main, section)[data-route-id='observability'] .observation-debug-actions {
   display: grid;
   gap: 6px;
   margin-top: 10px;
@@ -825,8 +825,8 @@ main[data-route-id='observability'] .observation-debug-actions {
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-debug-actions > a,
-main[data-route-id='observability'] .observation-debug-context > summary {
+:is(main, section)[data-route-id='observability'] .observation-debug-actions > a,
+:is(main, section)[data-route-id='observability'] .observation-debug-context > summary {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -839,42 +839,42 @@ main[data-route-id='observability'] .observation-debug-context > summary {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-debug-actions > a:hover,
-main[data-route-id='observability'] .observation-debug-context > summary:hover {
+:is(main, section)[data-route-id='observability'] .observation-debug-actions > a:hover,
+:is(main, section)[data-route-id='observability'] .observation-debug-context > summary:hover {
   border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
   background: var(--color-accent-soft);
 }
 
-main[data-route-id='observability'] .observation-debug-actions > a > span,
-main[data-route-id='observability'] .observation-debug-context > summary > span {
+:is(main, section)[data-route-id='observability'] .observation-debug-actions > a > span,
+:is(main, section)[data-route-id='observability'] .observation-debug-context > summary > span {
   display: grid;
   min-width: 0;
   gap: 1px;
 }
 
-main[data-route-id='observability'] .observation-debug-actions strong { font-size: 12px; }
-main[data-route-id='observability'] .observation-debug-actions small { color: var(--color-text-tertiary); font-size: 12px; }
-main[data-route-id='observability'] .observation-debug-context > summary::marker { content: ''; }
+:is(main, section)[data-route-id='observability'] .observation-debug-actions strong { font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-debug-actions small { color: var(--color-text-tertiary); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-debug-context > summary::marker { content: ''; }
 
 /* The privacy boundary is a standing property of this surface, not an alert;
    it closes the console as quiet fine print instead of a leading banner. */
-main[data-route-id='observability'] .observation-eval {
+:is(main, section)[data-route-id='observability'] .observation-eval {
   display: grid;
   gap: 10px;
   padding-top: 4px;
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-eval__heading,
-main[data-route-id='observability'] .observation-eval__run-head,
-main[data-route-id='observability'] .observation-eval__actions {
+:is(main, section)[data-route-id='observability'] .observation-eval__heading,
+:is(main, section)[data-route-id='observability'] .observation-eval__run-head,
+:is(main, section)[data-route-id='observability'] .observation-eval__actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-main[data-route-id='observability'] .observation-eval__heading span {
+:is(main, section)[data-route-id='observability'] .observation-eval__heading span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -883,17 +883,17 @@ main[data-route-id='observability'] .observation-eval__heading span {
   font-weight: 700;
 }
 
-main[data-route-id='observability'] .observation-eval__heading small,
-main[data-route-id='observability'] .observation-eval__run-meta,
-main[data-route-id='observability'] .observation-eval__receipt small,
-main[data-route-id='observability'] .observation-eval__hint,
-main[data-route-id='observability'] .observation-eval__actions > span {
+:is(main, section)[data-route-id='observability'] .observation-eval__heading small,
+:is(main, section)[data-route-id='observability'] .observation-eval__run-meta,
+:is(main, section)[data-route-id='observability'] .observation-eval__receipt small,
+:is(main, section)[data-route-id='observability'] .observation-eval__hint,
+:is(main, section)[data-route-id='observability'] .observation-eval__actions > span {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-eval__list,
-main[data-route-id='observability'] .observation-eval__evidence {
+:is(main, section)[data-route-id='observability'] .observation-eval__list,
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence {
   display: grid;
   gap: 8px;
   margin: 0;
@@ -901,7 +901,7 @@ main[data-route-id='observability'] .observation-eval__evidence {
   list-style: none;
 }
 
-main[data-route-id='observability'] .observation-eval__list > li {
+:is(main, section)[data-route-id='observability'] .observation-eval__list > li {
   display: grid;
   gap: 7px;
   padding: 10px 11px;
@@ -910,25 +910,25 @@ main[data-route-id='observability'] .observation-eval__list > li {
   background: var(--color-surface);
 }
 
-main[data-route-id='observability'] .observation-eval__run-head strong {
+:is(main, section)[data-route-id='observability'] .observation-eval__run-head strong {
   color: var(--color-text);
   font-size: 13px;
 }
 
-main[data-route-id='observability'] .observation-eval__run-meta {
+:is(main, section)[data-route-id='observability'] .observation-eval__run-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
 }
 
-main[data-route-id='observability'] .observation-eval__metrics {
+:is(main, section)[data-route-id='observability'] .observation-eval__metrics {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin: 0;
 }
 
-main[data-route-id='observability'] .observation-eval__metrics div {
+:is(main, section)[data-route-id='observability'] .observation-eval__metrics div {
   display: inline-flex;
   gap: 5px;
   padding: 3px 7px;
@@ -937,10 +937,10 @@ main[data-route-id='observability'] .observation-eval__metrics div {
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-eval__metrics dt { color: var(--color-text-tertiary); }
-main[data-route-id='observability'] .observation-eval__metrics dd { margin: 0; color: var(--color-text); font-variant-numeric: tabular-nums; }
+:is(main, section)[data-route-id='observability'] .observation-eval__metrics dt { color: var(--color-text-tertiary); }
+:is(main, section)[data-route-id='observability'] .observation-eval__metrics dd { margin: 0; color: var(--color-text); font-variant-numeric: tabular-nums; }
 
-main[data-route-id='observability'] .observation-eval__form {
+:is(main, section)[data-route-id='observability'] .observation-eval__form {
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -949,15 +949,15 @@ main[data-route-id='observability'] .observation-eval__form {
   background: var(--color-surface-muted);
 }
 
-main[data-route-id='observability'] .observation-eval__hint { margin: 0; line-height: 1.5; }
+:is(main, section)[data-route-id='observability'] .observation-eval__hint { margin: 0; line-height: 1.5; }
 
-main[data-route-id='observability'] .observation-eval__fields {
+:is(main, section)[data-route-id='observability'] .observation-eval__fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-main[data-route-id='observability'] .observation-eval__fields label {
+:is(main, section)[data-route-id='observability'] .observation-eval__fields label {
   display: grid;
   gap: 5px;
   color: var(--color-text-secondary);
@@ -965,7 +965,7 @@ main[data-route-id='observability'] .observation-eval__fields label {
   font-weight: 650;
 }
 
-main[data-route-id='observability'] .observation-eval__fields input {
+:is(main, section)[data-route-id='observability'] .observation-eval__fields input {
   width: 100%;
   min-height: 36px;
   padding: 7px 9px;
@@ -976,7 +976,7 @@ main[data-route-id='observability'] .observation-eval__fields input {
   font: inherit;
 }
 
-main[data-route-id='observability'] .observation-eval__missing-evidence {
+:is(main, section)[data-route-id='observability'] .observation-eval__missing-evidence {
   display: grid;
   gap: 5px;
   color: var(--color-text-secondary);
@@ -984,7 +984,7 @@ main[data-route-id='observability'] .observation-eval__missing-evidence {
   font-weight: 650;
 }
 
-main[data-route-id='observability'] .observation-eval__missing-evidence textarea {
+:is(main, section)[data-route-id='observability'] .observation-eval__missing-evidence textarea {
   width: 100%;
   min-height: 76px;
   resize: vertical;
@@ -996,21 +996,21 @@ main[data-route-id='observability'] .observation-eval__missing-evidence textarea
   font: 12px/1.5 var(--font-mono);
 }
 
-main[data-route-id='observability'] .observation-eval__evidence {
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence {
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-2);
 }
 
-main[data-route-id='observability'] .observation-eval__evidence legend {
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence legend {
   padding-inline: 4px;
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 650;
 }
 
-main[data-route-id='observability'] .observation-eval__evidence-row {
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence-row {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1019,16 +1019,16 @@ main[data-route-id='observability'] .observation-eval__evidence-row {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-eval__evidence-row:hover { background: var(--color-surface-muted); }
-main[data-route-id='observability'] .observation-eval__evidence-row input { margin-top: 3px; accent-color: var(--color-accent); }
-main[data-route-id='observability'] .observation-eval__evidence-row span { display: grid; min-width: 0; gap: 2px; }
-main[data-route-id='observability'] .observation-eval__evidence-row strong { overflow-wrap: anywhere; color: var(--color-text); font-size: 12px; }
-main[data-route-id='observability'] .observation-eval__evidence-row small { overflow-wrap: anywhere; color: var(--color-text-tertiary); font-size: 12px; }
-main[data-route-id='observability'] .observation-eval__empty,
-main[data-route-id='observability'] .observation-eval__loading,
-main[data-route-id='observability'] .observation-eval__no-metrics { margin: 0; color: var(--color-text-tertiary); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence-row:hover { background: var(--color-surface-muted); }
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence-row input { margin-top: 3px; accent-color: var(--color-accent); }
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence-row span { display: grid; min-width: 0; gap: 2px; }
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence-row strong { overflow-wrap: anywhere; color: var(--color-text); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-eval__evidence-row small { overflow-wrap: anywhere; color: var(--color-text-tertiary); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-eval__empty,
+:is(main, section)[data-route-id='observability'] .observation-eval__loading,
+:is(main, section)[data-route-id='observability'] .observation-eval__no-metrics { margin: 0; color: var(--color-text-tertiary); font-size: 12px; }
 
-main[data-route-id='observability'] .observation-eval__receipt {
+:is(main, section)[data-route-id='observability'] .observation-eval__receipt {
   display: grid;
   gap: 3px;
   padding: 9px 10px;
@@ -1037,16 +1037,16 @@ main[data-route-id='observability'] .observation-eval__receipt {
   background: var(--color-success-soft);
 }
 
-main[data-route-id='observability'] .observation-eval__receipt strong { color: var(--color-text); font-size: 12px; }
-main[data-route-id='observability'] .observation-eval__receipt span { color: var(--color-text-secondary); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-eval__receipt strong { color: var(--color-text); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-eval__receipt span { color: var(--color-text-secondary); font-size: 12px; }
 
 @media (max-width: 760px) {
-  main[data-route-id='observability'] .observation-eval__fields { grid-template-columns: 1fr; }
-  main[data-route-id='observability'] .observation-eval__actions { align-items: stretch; flex-direction: column; }
-  main[data-route-id='observability'] .observation-eval__actions .ui-button { min-height: 44px; }
+  :is(main, section)[data-route-id='observability'] .observation-eval__fields { grid-template-columns: 1fr; }
+  :is(main, section)[data-route-id='observability'] .observation-eval__actions { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='observability'] .observation-eval__actions .ui-button { min-height: 44px; }
 }
 
-main[data-route-id='observability'] .observation-privacy {
+:is(main, section)[data-route-id='observability'] .observation-privacy {
   display: flex;
   align-items: flex-start;
   gap: 7px;
@@ -1055,12 +1055,12 @@ main[data-route-id='observability'] .observation-privacy {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-privacy svg {
+:is(main, section)[data-route-id='observability'] .observation-privacy svg {
   flex: 0 0 auto;
   margin-top: 2px;
 }
 
-main[data-route-id='observability'] .observation-privacy p {
+:is(main, section)[data-route-id='observability'] .observation-privacy p {
   margin: 0;
   font-size: 12px;
   line-height: 1.55;
@@ -1069,26 +1069,26 @@ main[data-route-id='observability'] .observation-privacy p {
 /* Category filters are high-frequency controls: only color changes, with no
    positional motion or delayed panel transition. */
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='observability'] .observation-category-tabs button:hover {
+  :is(main, section)[data-route-id='observability'] .observation-category-tabs button:hover {
     color: var(--color-text);
     background: color-mix(in srgb, var(--color-surface-muted) 64%, transparent);
   }
 }
 
 @media (max-width: 980px) {
-  main[data-route-id='observability'] .observation-controls {
+  :is(main, section)[data-route-id='observability'] .observation-controls {
     grid-template-columns: minmax(0, 1fr) minmax(210px, 280px);
   }
 
-  main[data-route-id='observability'] .observation-scope {
+  :is(main, section)[data-route-id='observability'] .observation-scope {
     grid-column: 1 / -1;
   }
 
-  main[data-route-id='observability'] .observation-workspace {
+  :is(main, section)[data-route-id='observability'] .observation-workspace {
     grid-template-columns: 1fr;
   }
 
-  main[data-route-id='observability'] .observation-timeline {
+  :is(main, section)[data-route-id='observability'] .observation-timeline {
     max-height: 560px;
   }
 }
@@ -1097,91 +1097,91 @@ main[data-route-id='observability'] .observation-privacy p {
    landscape phones and 200% browser zoom keep the same touch-safe controls as
    portrait phones instead of falling into a 32px gap between layouts. */
 @media (max-width: 760px) {
-  main[data-route-id='observability'] .observation-connection-notice {
+  :is(main, section)[data-route-id='observability'] .observation-connection-notice {
     align-items: stretch;
     flex-direction: column;
   }
 
-  main[data-route-id='observability'] .observation-connection-notice .ui-button {
+  :is(main, section)[data-route-id='observability'] .observation-connection-notice .ui-button {
     min-height: var(--control-height-lg);
   }
 
-  main[data-route-id='observability'] .observation-controls {
+  :is(main, section)[data-route-id='observability'] .observation-controls {
     grid-template-columns: 1fr;
   }
 
-  main[data-route-id='observability'] .observation-search,
-  main[data-route-id='observability'] .observation-scope {
+  :is(main, section)[data-route-id='observability'] .observation-search,
+  :is(main, section)[data-route-id='observability'] .observation-scope {
     grid-column: auto;
   }
 
-  main[data-route-id='observability'] .observation-search {
+  :is(main, section)[data-route-id='observability'] .observation-search {
     /* The one-pixel wrapper border sits outside the actual input. A 46px
        wrapper keeps the editable hit target itself at a full 44px. */
     min-height: 46px;
     height: 46px;
   }
 
-  main[data-route-id='observability'] .mgmt-page__actions .ui-button { min-height: 44px; }
+  :is(main, section)[data-route-id='observability'] .mgmt-page__actions .ui-button { min-height: 44px; }
 
-  main[data-route-id='observability'] .observation-category-tabs {
+  :is(main, section)[data-route-id='observability'] .observation-category-tabs {
     flex-wrap: wrap;
     overflow: visible;
   }
 
-  main[data-route-id='observability'] .observation-category-tabs button {
+  :is(main, section)[data-route-id='observability'] .observation-category-tabs button {
     flex: 1 0 auto;
     padding-inline: 8px;
     min-height: 44px;
   }
 
-  main[data-route-id='observability'] .observation-timeline button {
+  :is(main, section)[data-route-id='observability'] .observation-timeline button {
     grid-template-columns: 28px minmax(0, 1fr) auto;
     min-height: 68px;
   }
 
-  main[data-route-id='observability'] .observation-row__scope {
+  :is(main, section)[data-route-id='observability'] .observation-row__scope {
     grid-column: 2 / 3;
     grid-row: 2;
     grid-template-columns: minmax(0, 1fr) auto;
     text-align: left;
   }
 
-  main[data-route-id='observability'] .observation-timeline .mgmt-status {
+  :is(main, section)[data-route-id='observability'] .observation-timeline .mgmt-status {
     grid-column: 3;
     grid-row: 1 / 3;
   }
 
-  main[data-route-id='observability'] .observation-facts {
+  :is(main, section)[data-route-id='observability'] .observation-facts {
     grid-template-columns: 1fr;
   }
 
-  main[data-route-id='observability'] .observation-trace__summary {
+  :is(main, section)[data-route-id='observability'] .observation-trace__summary {
     grid-template-columns: 30px minmax(0, 1fr);
   }
 
-  main[data-route-id='observability'] .observation-trace__summary > time {
+  :is(main, section)[data-route-id='observability'] .observation-trace__summary > time {
     grid-column: 2;
     grid-row: 2;
     justify-self: start;
     margin-top: 0;
   }
 
-  main[data-route-id='observability'] .observation-canonical__list > li {
+  :is(main, section)[data-route-id='observability'] .observation-canonical__list > li {
     grid-template-columns: 24px minmax(0, 1fr) auto;
   }
 
-  main[data-route-id='observability'] .observation-canonical__duration {
+  :is(main, section)[data-route-id='observability'] .observation-canonical__duration {
     grid-column: 2 / 3;
   }
 
-  main[data-route-id='observability'] .observation-canonical__list > li > .mgmt-status {
+  :is(main, section)[data-route-id='observability'] .observation-canonical__list > li > .mgmt-status {
     grid-column: 3;
     grid-row: 1 / 3;
   }
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs {
   display: grid;
   min-width: 0;
   gap: 8px;
@@ -1189,14 +1189,14 @@ main[data-route-id='observability'] .observation-sandbox-runs {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__heading {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__heading > span {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__heading > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1205,15 +1205,15 @@ main[data-route-id='observability'] .observation-sandbox-runs__heading > span {
   font-weight: 700;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__heading small,
-main[data-route-id='observability'] .observation-sandbox-runs__loading {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__heading small,
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__loading {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__loading { margin: 0; }
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__loading { margin: 0; }
 
-main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state {
   min-height: 0;
   padding: 14px 10px;
   border: 1px solid var(--color-border-soft);
@@ -1221,20 +1221,20 @@ main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state {
   background: var(--color-surface-muted);
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__icon {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__icon {
   display: none;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__title {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__title {
   font-size: 13px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__description {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs .ui-empty-state__description {
   max-width: none;
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__list {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__list {
   display: grid;
   min-width: 0;
   gap: 6px;
@@ -1243,7 +1243,7 @@ main[data-route-id='observability'] .observation-sandbox-runs__list {
   list-style: none;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__row {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__row {
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(130px, .48fr) minmax(0, 1.7fr) minmax(220px, .9fr);
@@ -1255,19 +1255,19 @@ main[data-route-id='observability'] .observation-sandbox-runs__row {
   background: var(--color-surface-muted);
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__identity,
-main[data-route-id='observability'] .observation-sandbox-runs__node {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__identity,
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__identity {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__identity {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__identity strong {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__identity strong {
   overflow: hidden;
   color: var(--color-text);
   font-size: 13px;
@@ -1275,22 +1275,22 @@ main[data-route-id='observability'] .observation-sandbox-runs__identity strong {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node code,
-main[data-route-id='observability'] .observation-sandbox-runs__node a {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node code,
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a {
   font: 11px/1.4 var(--font-mono);
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__policy code {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__policy code {
   font: 11px/1.4 var(--font-mono);
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__identity .mgmt-status {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__identity .mgmt-status {
   grid-column: 2;
   grid-row: 1;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__chain {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__chain {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
@@ -1299,38 +1299,38 @@ main[data-route-id='observability'] .observation-sandbox-runs__chain {
   overflow: hidden;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node small {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node small {
   color: var(--color-text-tertiary);
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node code,
-main[data-route-id='observability'] .observation-sandbox-runs__node a {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node code,
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node a {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a {
   color: var(--color-accent);
   text-decoration: none;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node a:hover {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a:hover {
   text-decoration: underline;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node code {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node code {
   color: var(--color-text-secondary);
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__arrow {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__arrow {
   color: var(--color-text-tertiary);
   font-size: 15px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__policy {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__policy {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
@@ -1338,21 +1338,21 @@ main[data-route-id='observability'] .observation-sandbox-runs__policy {
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__policy span {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__policy span {
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__policy code {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__policy code {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='observability'] .observation-sandbox-runs__node a:focus-visible {
+:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
-main[data-route-id='observability'] .observation-schedules {
+:is(main, section)[data-route-id='observability'] .observation-schedules {
   display: grid;
   min-width: 0;
   gap: 10px;
@@ -1362,36 +1362,36 @@ main[data-route-id='observability'] .observation-schedules {
   background: var(--color-surface);
 }
 
-main[data-route-id='observability'] .observation-schedules__heading,
-main[data-route-id='observability'] .observation-schedules__heading > span,
-main[data-route-id='observability'] .observation-schedules__runs > header,
-main[data-route-id='observability'] .observation-schedules__create-action {
+:is(main, section)[data-route-id='observability'] .observation-schedules__heading,
+:is(main, section)[data-route-id='observability'] .observation-schedules__heading > span,
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs > header,
+:is(main, section)[data-route-id='observability'] .observation-schedules__create-action {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-main[data-route-id='observability'] .observation-schedules__heading > span { justify-content: flex-start; }
-main[data-route-id='observability'] .observation-schedules__heading small,
-main[data-route-id='observability'] .observation-schedules__hint,
-main[data-route-id='observability'] .observation-schedules__list small,
-main[data-route-id='observability'] .observation-schedules__runs small,
-main[data-route-id='observability'] .observation-schedules__create-action > span {
+:is(main, section)[data-route-id='observability'] .observation-schedules__heading > span { justify-content: flex-start; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__heading small,
+:is(main, section)[data-route-id='observability'] .observation-schedules__hint,
+:is(main, section)[data-route-id='observability'] .observation-schedules__list small,
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs small,
+:is(main, section)[data-route-id='observability'] .observation-schedules__create-action > span {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-schedules__hint { margin: 0; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__hint { margin: 0; }
 
-main[data-route-id='observability'] .observation-schedules__workspace {
+:is(main, section)[data-route-id='observability'] .observation-schedules__workspace {
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(240px, .8fr) minmax(280px, 1.2fr);
   gap: 10px;
 }
 
-main[data-route-id='observability'] .observation-schedules__workspace > div {
+:is(main, section)[data-route-id='observability'] .observation-schedules__workspace > div {
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--color-border-soft);
@@ -1399,8 +1399,8 @@ main[data-route-id='observability'] .observation-schedules__workspace > div {
   background: var(--color-surface-muted);
 }
 
-main[data-route-id='observability'] .observation-schedules__list,
-main[data-route-id='observability'] .observation-schedules__runs ol {
+:is(main, section)[data-route-id='observability'] .observation-schedules__list,
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs ol {
   display: grid;
   gap: 4px;
   margin: 0;
@@ -1408,7 +1408,7 @@ main[data-route-id='observability'] .observation-schedules__runs ol {
   list-style: none;
 }
 
-main[data-route-id='observability'] .observation-schedules__list button {
+:is(main, section)[data-route-id='observability'] .observation-schedules__list button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -1424,31 +1424,31 @@ main[data-route-id='observability'] .observation-schedules__list button {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-schedules__list button:hover,
-main[data-route-id='observability'] .observation-schedules__list button[data-active] {
+:is(main, section)[data-route-id='observability'] .observation-schedules__list button:hover,
+:is(main, section)[data-route-id='observability'] .observation-schedules__list button[data-active] {
   border-color: var(--color-accent-border);
   background: var(--color-accent-soft);
 }
 
-main[data-route-id='observability'] .observation-schedules__list button > span,
-main[data-route-id='observability'] .observation-schedules__runs header > span,
-main[data-route-id='observability'] .observation-schedules__runs li > span {
+:is(main, section)[data-route-id='observability'] .observation-schedules__list button > span,
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs header > span,
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs li > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='observability'] .observation-schedules__list strong,
-main[data-route-id='observability'] .observation-schedules__runs strong {
+:is(main, section)[data-route-id='observability'] .observation-schedules__list strong,
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs strong {
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='observability'] .observation-schedules__runs { display: grid; align-content: start; gap: 7px; }
-main[data-route-id='observability'] .observation-schedules__runs > header { padding-bottom: 7px; border-bottom: 1px solid var(--color-border); font-size: 12px; }
-main[data-route-id='observability'] .observation-schedules__runs li {
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs { display: grid; align-content: start; gap: 7px; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs > header { padding-bottom: 7px; border-bottom: 1px solid var(--color-border); font-size: 12px; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs li {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1458,10 +1458,10 @@ main[data-route-id='observability'] .observation-schedules__runs li {
   font-size: 12px;
   text-align: right;
 }
-main[data-route-id='observability'] .observation-schedules__runs li > span:first-child { text-align: left; }
-main[data-route-id='observability'] .observation-schedules__runs li[data-state='failed'] { color: var(--color-danger); }
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs li > span:first-child { text-align: left; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__runs li[data-state='failed'] { color: var(--color-danger); }
 
-main[data-route-id='observability'] .observation-schedules__create > summary {
+:is(main, section)[data-route-id='observability'] .observation-schedules__create > summary {
   display: inline-flex;
   min-height: 36px;
   align-items: center;
@@ -1476,16 +1476,16 @@ main[data-route-id='observability'] .observation-schedules__create > summary {
   cursor: pointer;
 }
 
-main[data-route-id='observability'] .observation-schedules__form {
+:is(main, section)[data-route-id='observability'] .observation-schedules__form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 9px;
   padding-top: 10px;
 }
 
-main[data-route-id='observability'] .observation-schedules__form > label { display: grid; gap: 4px; min-width: 0; }
-main[data-route-id='observability'] .observation-schedules__form > label > span { color: var(--color-text-tertiary); font-size: 11px; }
-main[data-route-id='observability'] .observation-schedules__form :is(input, select) {
+:is(main, section)[data-route-id='observability'] .observation-schedules__form > label { display: grid; gap: 4px; min-width: 0; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__form > label > span { color: var(--color-text-tertiary); font-size: 11px; }
+:is(main, section)[data-route-id='observability'] .observation-schedules__form :is(input, select) {
   width: 100%;
   min-width: 0;
   min-height: 36px;
@@ -1496,7 +1496,7 @@ main[data-route-id='observability'] .observation-schedules__form :is(input, sele
   color: var(--color-text);
 }
 
-main[data-route-id='observability'] .observation-schedules__suite-revision {
+:is(main, section)[data-route-id='observability'] .observation-schedules__suite-revision {
   display: grid;
   min-width: 0;
   align-content: start;
@@ -1507,13 +1507,13 @@ main[data-route-id='observability'] .observation-schedules__suite-revision {
   background: var(--color-surface-muted);
 }
 
-main[data-route-id='observability'] .observation-schedules__suite-revision > span,
-main[data-route-id='observability'] .observation-schedules__suite-revision > small {
+:is(main, section)[data-route-id='observability'] .observation-schedules__suite-revision > span,
+:is(main, section)[data-route-id='observability'] .observation-schedules__suite-revision > small {
   color: var(--color-text-tertiary);
   font-size: 11px;
 }
 
-main[data-route-id='observability'] .observation-schedules__suite-revision > strong {
+:is(main, section)[data-route-id='observability'] .observation-schedules__suite-revision > strong {
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -1521,86 +1521,86 @@ main[data-route-id='observability'] .observation-schedules__suite-revision > str
   font-size: 12px;
 }
 
-main[data-route-id='observability'] .observation-schedules__create-action,
-main[data-route-id='observability'] .observation-schedules__form > .mgmt-inline-notice,
-main[data-route-id='observability'] .observation-schedules__form > .observation-eval__receipt {
+:is(main, section)[data-route-id='observability'] .observation-schedules__create-action,
+:is(main, section)[data-route-id='observability'] .observation-schedules__form > .mgmt-inline-notice,
+:is(main, section)[data-route-id='observability'] .observation-schedules__form > .observation-eval__receipt {
   grid-column: 1 / -1;
 }
 
 @media (max-width: 760px) {
-  main[data-route-id='observability'] .observation-schedules__workspace,
-  main[data-route-id='observability'] .observation-schedules__form { grid-template-columns: 1fr; }
-  main[data-route-id='observability'] .observation-schedules__create-action { align-items: stretch; flex-direction: column; }
-  main[data-route-id='observability'] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr) auto; }
-  main[data-route-id='observability'] .observation-sandbox-runs__chain,
-  main[data-route-id='observability'] .observation-sandbox-runs__policy { grid-column: 1 / -1; }
-  main[data-route-id='observability'] .observation-sandbox-runs__chain { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'] .observation-schedules__workspace,
+  :is(main, section)[data-route-id='observability'] .observation-schedules__form { grid-template-columns: 1fr; }
+  :is(main, section)[data-route-id='observability'] .observation-schedules__create-action { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='observability'] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr) auto; }
+  :is(main, section)[data-route-id='observability'] .observation-sandbox-runs__chain,
+  :is(main, section)[data-route-id='observability'] .observation-sandbox-runs__policy { grid-column: 1 / -1; }
+  :is(main, section)[data-route-id='observability'] .observation-sandbox-runs__chain { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main[data-route-id='observability'] .observation-category-tabs button { transition: none; }
-  main[data-route-id='observability'] .observation-facts__disclosure > summary svg,
-  main[data-route-id='observability'] .observation-facts__reveal { transition-duration: 1ms; }
-  main[data-route-id='observability'] .observation-pulse[data-connection='live'] .mgmt-status i,
-  main[data-route-id='observability'] .observation-timeline > li[data-status='running'] .observation-row__icon,
-  main[data-route-id='observability'] .observation-trace li[data-status='running'] .observation-trace__index { animation: none; }
+  :is(main, section)[data-route-id='observability'] .observation-category-tabs button { transition: none; }
+  :is(main, section)[data-route-id='observability'] .observation-facts__disclosure > summary svg,
+  :is(main, section)[data-route-id='observability'] .observation-facts__reveal { transition-duration: 1ms; }
+  :is(main, section)[data-route-id='observability'] .observation-pulse[data-connection='live'] .mgmt-status i,
+  :is(main, section)[data-route-id='observability'] .observation-timeline > li[data-status='running'] .observation-row__icon,
+  :is(main, section)[data-route-id='observability'] .observation-trace li[data-status='running'] .observation-trace__index { animation: none; }
 }
 
 @container paw-window (max-width: 900px) {
-  main[data-route-id='observability'][data-paw-os-app] .observation-controls { grid-template-columns: minmax(0, 1fr) minmax(190px, 260px); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: 1 / -1; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-workspace { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-timeline { max-height: 520px; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__chain,
-  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__policy { grid-column: 1; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-controls { grid-template-columns: minmax(0, 1fr) minmax(190px, 260px); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: 1 / -1; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-workspace { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-timeline { max-height: 520px; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__chain,
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__policy { grid-column: 1; }
 }
 
 @container paw-window (max-width: 620px) {
-  main[data-route-id='observability'][data-paw-os-app] .observation-connection-notice { align-items: stretch; flex-direction: column; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-controls,
-  main[data-route-id='observability'][data-paw-os-app] .observation-facts { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-search,
-  main[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: auto; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs { flex-wrap: nowrap; overflow-x: auto; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-category-tabs button { flex: 0 0 auto; min-height: 44px; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-timeline button { grid-template-columns: 28px minmax(0, 1fr) auto; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-row__scope {
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-connection-notice { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-controls,
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-facts { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-search,
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-scope { grid-column: auto; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-category-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-category-tabs button { flex: 0 0 auto; min-height: 44px; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-timeline button { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-row__scope {
     grid-column: 2 / 3;
     grid-row: 2;
     grid-template-columns: minmax(0, 1fr) auto;
     text-align: left;
   }
-  main[data-route-id='observability'][data-paw-os-app] .observation-timeline .mgmt-status {
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-timeline .mgmt-status {
     grid-column: 3;
     grid-row: 1 / 3;
   }
-  main[data-route-id='observability'][data-paw-os-app] .observation-progress { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-trace__summary { grid-template-columns: 30px minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-trace__summary > time {
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-progress { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-trace__summary { grid-template-columns: 30px minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-trace__summary > time {
     grid-column: 2;
     grid-row: 2;
     justify-self: start;
     margin-top: 0;
   }
-  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__workspace,
-  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__form { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__heading,
-  main[data-route-id='observability'][data-paw-os-app] .observation-schedules__create-action { align-items: stretch; flex-direction: column; }
-  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__chain,
-  main[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__policy { grid-column: 1; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-schedules__workspace,
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-schedules__form { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-schedules__heading,
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-schedules__create-action { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__row { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__chain,
+  :is(main, section)[data-route-id='observability'][data-paw-os-app] .observation-sandbox-runs__policy { grid-column: 1; }
 }
 
 /* UR-102 monitor-observability semantic typography */
-main[data-route-id='observability'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='observability'][data-paw-os-app] :is(
   .observation-category-tabs button,
   .observation-row__copy strong,
   .observation-trace strong,
   .observation-trace-heading span,
   .observation-debug-actions strong
 ) { font-size: 14px; }
-main[data-route-id='observability'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='observability'][data-paw-os-app] :is(
   .observation-scope,
   .observation-pulse__stat,
   .observation-privacy p,

@@ -92,13 +92,18 @@ import {
 import { KnowledgeDocumentViewer, KnowledgeJobsPanel, KnowledgeMaterialsPanel, type KnowledgeUploadItem } from './document-workspace';
 import { KnowledgeGraphPanel } from './knowledge-graph';
 import { publicKnowledgeText } from './public-copy';
-import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { usePawOsAppActive, usePawOsAppCompact, usePawOsAppIdentity } from '@/features/paw-os/surface-context';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import './knowledge.css';
 
 type DetailTab = 'materials' | 'viewer' | 'search' | 'graph' | 'jobs' | 'settings';
 
 export function KnowledgeFeature() {
-  const appSurface = usePawOsAppSurface();
+  const appSurface = usePawOsAppIdentity();
+  const surfaceActive = usePawOsAppActive();
+  const compact = usePawOsAppCompact();
+  const pageVisible = usePageVisibility();
+  const queriesEnabled = (surfaceActive ?? true) && pageVisible;
   const [selectedBaseId, setSelectedBaseId] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = asDetailTab(searchParams.get('tab') ?? 'materials');
@@ -113,12 +118,12 @@ export function KnowledgeFeature() {
   const [reparseDocument, setReparseDocument] = useState<KnowledgeDocument | null>(null);
   const [uploadItems, setUploadItems] = useState<KnowledgeUploadItem[]>([]);
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
-  const queries = useKnowledgeLibraryQueries(selectedBaseId);
+  const queries = useKnowledgeLibraryQueries(selectedBaseId, queriesEnabled);
   const queryClient = useQueryClient();
   const bases = queries.bases.data ?? [];
   const selectedBase = queries.base.data ?? bases.find((item) => item.id === selectedBaseId) ?? null;
   const documents = queries.documents.data ?? [];
-  const detailQuery = useKnowledgeDocumentDetail(selectedBaseId, selectedDocumentId);
+  const detailQuery = useKnowledgeDocumentDetail(selectedBaseId, selectedDocumentId, queriesEnabled);
   const selectTab = (nextTab: DetailTab, replace = true) => {
     const next = new URLSearchParams(searchParams);
     if (nextTab === 'materials') next.delete('tab');
@@ -328,14 +333,17 @@ export function KnowledgeFeature() {
       ? candidate
       : null;
   };
+  const Surface = appSurface ? 'section' : 'main';
 
   return (
-    <main
+    <Surface
+      aria-label={appSurface ? '知识库' : undefined}
       className="knowledge-feature knowledge-feature--migrated-v1"
       data-knowledge-view={tab}
       data-paw-os-app={appSurface?.appId}
-      data-paw-os-compact={appSurface?.compact || undefined}
+      data-paw-os-compact={compact || undefined}
       data-route-id="knowledge"
+      role={appSurface ? 'region' : undefined}
     >
       <h1 className="knowledge-feature__title">知识库</h1>
       <QueryState error={pageError} isPending={queries.bases.isPending} onRetry={refresh}>
@@ -435,6 +443,7 @@ export function KnowledgeFeature() {
                   </TabsContent>
                   <TabsContent value="graph">
                     <KnowledgeGraphPanel
+                      active={queriesEnabled}
                       base={selectedBase}
                       documents={documents}
                       onOpenSource={(node) => {
@@ -547,7 +556,7 @@ export function KnowledgeFeature() {
         onOpenChange={(open) => { if (!open) { setReparseDocument(null); retryMutation.reset(); } }}
         returnFocusRef={dialogTriggerRef}
       />
-    </main>
+    </Surface>
   );
 }
 

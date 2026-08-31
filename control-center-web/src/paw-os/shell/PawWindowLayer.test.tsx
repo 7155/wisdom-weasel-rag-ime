@@ -374,6 +374,35 @@ describe('PAWOS compositor window frame', () => {
     expect(resizeWindowBounds(bounds, 'west', -900, 0).x).toBe(0);
   });
 
+  it('previews pointer resize with transform only and commits layout once on release', () => {
+    const commit = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => undefined);
+    try {
+      render(<FrameHarness initial={{ x: 40, y: 50, width: 420, height: 300 }} onCommit={commit}><div /></FrameHarness>);
+      const shell = screen.getByLabelText('Rooms窗口');
+      const east = screen.getByRole('button', { name: '调整窗口右边缘' });
+
+      fireEvent.pointerDown(east, { button: 0, clientX: 460, clientY: 200, pointerId: 17 });
+      fireEvent.pointerMove(window, { clientX: 560, clientY: 200, pointerId: 17 });
+
+      expect(shell.style.width).toBe('420px');
+      expect(shell.style.height).toBe('300px');
+      expect(shell.style.transform).toBe('translate3d(40px, 50px, 0) scale(1.2380952380952381, 1)');
+      expect(commit).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(window, { clientX: 560, clientY: 200, pointerId: 17 });
+      expect(commit).toHaveBeenCalledWith({ x: 40, y: 50, width: 520, height: 300 });
+      expect(shell.style.width).toBe('520px');
+      expect(shell.style.transform).toBe('translate3d(40px, 50px, 0)');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('tracks the pointer 1:1 while dragging and keeps a recoverable titlebar grip on screen', () => {
     const commit = vi.fn();
     // The gesture paints inside one rAF slot per frame; running that slot
@@ -491,6 +520,41 @@ describe('PAWOS compositor window frame', () => {
     expect(screen.getByLabelText('Rooms窗口')).toHaveAttribute('data-placement', 'maximized');
   });
 
+  it('reveals an ordinary window in one short responsive beat', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    const calls: Array<{ target: HTMLElement; frames: Keyframe[]; options: KeyframeAnimationOptions }> = [];
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value(this: HTMLElement, frames: Keyframe[], options: KeyframeAnimationOptions) {
+        calls.push({ target: this, frames, options });
+        return { cancel: vi.fn(), finished: Promise.resolve() } as unknown as Animation;
+      },
+    });
+    try {
+      render(<FrameHarness initial={{ x: 0, y: 0, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>);
+
+      const arrival = calls.find((call) => call.target.classList.contains('paw-window'));
+      expect(arrival?.frames[0]).toMatchObject({ opacity: 0.6, transform: 'translate3d(0, 6px, 0) scale(.98)' });
+      expect(arrival?.options).toMatchObject({ duration: 150 });
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, 'animate', descriptor);
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+    }
+  });
+
+  it('moves focus from the desktop into a newly active window', () => {
+    const desktopTrigger = document.createElement('button');
+    document.body.append(desktopTrigger);
+    desktopTrigger.focus();
+
+    render(<FrameHarness initial={{ x: 0, y: 0, width: 760, height: 560 }} onCommit={() => undefined}><div /></FrameHarness>);
+
+    const shell = screen.getByLabelText('Rooms窗口');
+    expect(shell).toHaveAttribute('tabindex', '-1');
+    expect(shell).toHaveFocus();
+    desktopTrigger.remove();
+  });
+
   it('animates a placement change with transform-only FLIP keyframes', () => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
     const calls: Array<{ target: HTMLElement; frames: Keyframe[]; options: KeyframeAnimationOptions }> = [];
@@ -532,7 +596,7 @@ describe('PAWOS compositor window frame', () => {
       expect(flip?.frames[0]?.transform).toMatch(/^translate3d\(40px, 50px, 0\) scale\(/);
       expect(flip?.frames[1]?.transform).toBe('translate3d(0px, 0px, 0) scale(1, 1)');
       expect(flip?.frames.every((frame) => frame.width === undefined && frame.height === undefined)).toBe(true);
-      expect(flip?.options).toMatchObject({ duration: 240, easing: 'cubic-bezier(.23, 1, .32, 1)' });
+      expect(flip?.options).toMatchObject({ duration: 180, easing: 'cubic-bezier(.23, 1, .32, 1)' });
     } finally {
       if (descriptor) Object.defineProperty(HTMLElement.prototype, 'animate', descriptor);
       else delete (HTMLElement.prototype as Partial<HTMLElement>).animate;

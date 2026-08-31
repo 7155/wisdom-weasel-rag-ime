@@ -26,10 +26,12 @@ interface RoomLiveSessionCallbacks {
 export function useRoomLiveSession({
   roomId,
   transport,
+  active: surfaceActive = true,
   ...callbacks
 }: {
   roomId: string;
   transport: ControlTransport;
+  active?: boolean;
 } & RoomLiveSessionCallbacks): () => void {
   const callbacksRef = useRef<RoomLiveSessionCallbacks>(callbacks);
   const retrySnapshotRef = useRef<() => void>(() => undefined);
@@ -37,7 +39,7 @@ export function useRoomLiveSession({
   callbacksRef.current = callbacks;
 
   useEffect(() => {
-    if (!roomId) {
+    if (!roomId || !surfaceActive) {
       retrySnapshotRef.current = () => undefined;
       callbacksRef.current.onLoadingChange(false);
       return;
@@ -264,7 +266,7 @@ export function useRoomLiveSession({
       batcher.clear();
       unsubscribe?.();
     };
-  }, [roomId, transport]);
+  }, [roomId, surfaceActive, transport]);
   return retrySnapshot;
 }
 

@@ -115,6 +115,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
   const [treeFocusPath, setTreeFocusPath] = useState('');
   const [filterQuery, setFilterQuery] = useState('');
   const [copiedAction, setCopiedAction] = useState<'' | 'path' | 'content'>('');
+  const [copyError, setCopyError] = useState('');
   const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const treeRef = useRef<HTMLElement | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -314,6 +315,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     setPreviewError('');
     setPreviewMoreError('');
     setCopiedAction('');
+    setCopyError('');
     try {
       const response = await transport.request({
         pathId: 'agent.session.workspace.read',
@@ -436,13 +438,16 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
     if (!selectedFile) return;
     const value = action === 'path' ? selectedFile.path : preview?.content ?? '';
     if (!value) return;
+    setCopyError('');
     try {
       await writeClipboardText(value);
       setCopiedAction(action);
       window.setTimeout(() => setCopiedAction((current) => current === action ? '' : current), 1_500);
     } catch {
-      // The full path and content remain readable in place when the clipboard
-      // is denied; the inspection flow is never blocked by copy.
+      setCopiedAction('');
+      setCopyError(action === 'path'
+        ? '无法访问剪贴板，文件路径没有复制。'
+        : '无法访问剪贴板，文件内容没有复制。');
     }
   }
 
@@ -684,6 +689,11 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                             data-kind={directory ? 'directory' : symlink ? 'symlink' : undefined}
                             data-selected={!directory && entry.path === selectedFile?.path || undefined}
                             onClick={() => openFilterMatch(entry)}
+                            onFocus={() => setTreeFocusPath(entry.path)}
+                            ref={(node) => {
+                              if (node) treeItemRefs.current.set(entry.path, node);
+                              else treeItemRefs.current.delete(entry.path);
+                            }}
                             title={entry.path}
                             type="button"
                           >
@@ -739,7 +749,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
             ) : null}
           </div>
         </aside>
-        <main className="paw-files-preview" onKeyDown={(event) => { if (event.key === 'Escape' && treeHidden()) goBackToTree(); }}>
+        <section aria-label="文件预览" className="paw-files-preview" onKeyDown={(event) => { if (event.key === 'Escape' && treeHidden()) goBackToTree(); }} role="region">
           {!selectedFile ? (
             <div className="paw-files-preview__empty">
               <div aria-hidden="true" className="paw-files-preview__empty-art">
@@ -815,6 +825,12 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
                   </button>
                 </div>
               </header>
+              {copyError ? (
+                <div className="paw-files-preview__copy-error" role="alert">
+                  <TriangleAlert aria-hidden="true" size={14} />
+                  <span>{copyError}</span>
+                </div>
+              ) : null}
               <div className="paw-files-preview__body" key={`body:${selectedFile.path}`}>
                 {previewLoading ? (
                   <div className="paw-files-preview__state paw-files-preview__state--loading" role="status">
@@ -860,7 +876,7 @@ export function PawOsFilesApp({ initialRoute = '' }: { initialRoute?: string } =
               <EvidenceEchoUsage appId="files" entityId={selectedFile.path} entityLabel={selectedFile.name} />
             </>
           )}
-        </main>
+        </section>
         </div>
         <footer className="paw-files-statusbar" aria-live="polite">
           <span>已加载 {visibleEntryCount} 项</span>

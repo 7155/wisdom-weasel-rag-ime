@@ -19,7 +19,7 @@ export type PawExtensionAppGate = {
  */
 export type PawWayfinderIconPosition = { x: number; y: number };
 export type PawWayfinderState = {
-  layoutVersion: 2;
+  layoutVersion: 3;
   iconPositions: Record<string, PawWayfinderIconPosition>;
   archived: string[];
   projectAssignments: Record<string, string>;
@@ -153,6 +153,7 @@ export type PawDesktopState = {
   pinDockApp: (appId: PawAppId) => void;
   unpinDockApp: (appId: PawAppId) => void;
   arrangeWayfinderIcons: () => void;
+  setWayfinderIconPositions: (positions: Record<string, PawWayfinderIconPosition>) => void;
   setWayfinderIconPosition: (iconId: string, position: PawWayfinderIconPosition) => void;
   setWayfinderArchived: (iconId: string, archived: boolean) => void;
   setWayfinderProjectAssignment: (iconId: string, projectId: string | null) => void;
@@ -166,7 +167,7 @@ export type PawDesktopState = {
 };
 
 export type PawDesktopStore = StoreApi<PawDesktopState>;
-export type PawPersistedWayfinderState = Omit<PawWayfinderState, 'layoutVersion'> & { layoutVersion?: 2 };
+export type PawPersistedWayfinderState = Omit<PawWayfinderState, 'layoutVersion'> & { layoutVersion?: 2 | 3 };
 export type PawDesktopSnapshot = Pick<PawDesktopState, 'windows' | 'stack' | 'activeWindowId'> & {
   dockAppIds?: PawAppId[];
   wayfinder?: PawPersistedWayfinderState;
@@ -185,8 +186,8 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
     activeWindowId: initialActiveWindowId,
     dockAppIds: initialDockAppIds,
     wayfinder: {
-      layoutVersion: 2,
-      iconPositions: snapshot?.wayfinder?.layoutVersion === 2
+      layoutVersion: 3,
+      iconPositions: snapshot?.wayfinder?.layoutVersion === 2 || snapshot?.wayfinder?.layoutVersion === 3
         ? snapshot.wayfinder.iconPositions ?? {}
         : {},
       archived: snapshot?.wayfinder?.archived ?? [],
@@ -449,6 +450,11 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         ? { wayfinder: { ...state.wayfinder, iconPositions: {} } }
         : state);
     },
+    setWayfinderIconPositions(positions) {
+      set((state) => sameWayfinderIconPositions(state.wayfinder.iconPositions, positions)
+        ? state
+        : { wayfinder: { ...state.wayfinder, iconPositions: positions } });
+    },
     setWayfinderIconPosition(iconId, position) {
       set((state) => {
         const current = state.wayfinder.iconPositions[iconId];
@@ -586,6 +592,17 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
   if (initialAppId) store.getState().openApp(initialAppId, { initialRoute });
   store.getState().fitWindowsToViewport();
   return store;
+}
+
+function sameWayfinderIconPositions(
+  left: Readonly<Record<string, PawWayfinderIconPosition>>,
+  right: Readonly<Record<string, PawWayfinderIconPosition>>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((id) => (
+    right[id]?.x === left[id]?.x && right[id]?.y === left[id]?.y
+  ));
 }
 
 function canOpenApp(appId: PawAppId, gate: PawExtensionAppGate): boolean {

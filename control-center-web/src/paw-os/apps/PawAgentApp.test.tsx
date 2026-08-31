@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -28,13 +28,71 @@ afterEach(() => {
 });
 
 describe('PAWOS Agent App', () => {
+  it('commits the new-work shell before catalog hydration starts on the next frame', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames[handle - 1] = () => undefined;
+    });
+    try {
+      const transport = createTransport();
+      renderAgent(transport);
+
+      // The first interactive surface is already stable, but the four catalog
+      // requests are not allowed to consume the Dock click's paint frame.
+      expect(screen.getByRole('heading', { name: '交给 Agent 一件事。' })).toBeInTheDocument();
+      expect(catalogRequestPaths(transport)).toEqual([]);
+      expect(frames).toHaveLength(1);
+
+      await act(async () => {
+        frames.splice(0).forEach((frame) => frame(performance.now()));
+        await Promise.resolve();
+      });
+
+      await waitFor(() => expect(catalogRequestPaths(transport)).toEqual([
+        'agent.sessions.list',
+        'agent.rooms.list',
+        'agent.roles.list',
+        'agent.role.models',
+      ]));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('cancels a scheduled catalog hydration on unmount instead of starting a duplicate request', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames[handle - 1] = () => undefined;
+    });
+    try {
+      const transport = createTransport();
+      const view = renderAgent(transport);
+      expect(frames).toHaveLength(1);
+
+      view.unmount();
+      act(() => frames.splice(0).forEach((frame) => frame(performance.now())));
+
+      expect(catalogRequestPaths(transport)).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('uses one rail for Sessions and Rooms and starts on the central new-work composer', async () => {
     renderAgent();
 
     expect(await screen.findByRole('heading', { name: '交给 Agent 一件事。' })).toBeInTheDocument();
     const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
     expect(within(rail).getByText('工作记录')).toBeInTheDocument();
-    expect(within(rail).getByRole('button', { name: /^发布检查/ })).toBeInTheDocument();
+    expect(await within(rail).findByRole('button', { name: /^发布检查/ })).toBeInTheDocument();
     expect(within(rail).getByRole('button', { name: /迁移作战室/ })).toBeInTheDocument();
     expect(within(rail).getByText('paw')).toBeInTheDocument();
     expect(within(rail).getByText('Session')).toBeInTheDocument();
@@ -177,7 +235,7 @@ describe('PAWOS Agent App', () => {
     await waitFor(() => expect(bindAgentMain).toHaveBeenCalledWith('agent'));
     const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
 
-    await user.click(within(rail).getByRole('button', { name: /^迁移作战室/ }));
+    await user.click(await within(rail).findByRole('button', { name: /^迁移作战室/ }));
     await waitFor(() => expect(bindAgentMain).toHaveBeenCalledWith('agent', expect.objectContaining({
       kind: 'room', id: 'room-old', title: '迁移作战室',
     })));
@@ -573,6 +631,18 @@ function agentTree(transport = createTransport(), props: { initialRoute?: string
 
 function renderAgent(transport = createTransport(), props: { initialRoute?: string; target?: PawOsWindowTarget } = {}) {
   return render(agentTree(transport, props));
+}
+
+function catalogRequestPaths(transport: MockControlTransport): string[] {
+  const catalogPaths = new Set([
+    'agent.sessions.list',
+    'agent.rooms.list',
+    'agent.roles.list',
+    'agent.role.models',
+  ]);
+  return transport.requests
+    .map(({ request }) => request.pathId)
+    .filter((pathId) => catalogPaths.has(pathId));
 }
 
 function createTransport(options: {

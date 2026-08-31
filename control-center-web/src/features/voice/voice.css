@@ -1,23 +1,23 @@
-main[data-route-id='voice'] .mgmt-grid-2,
-main[data-route-id='voice'] .mgmt-grid-2 > * {
+:is(main, section)[data-route-id='voice'] .mgmt-grid-2,
+:is(main, section)[data-route-id='voice'] .mgmt-grid-2 > * {
   min-width: 0;
 }
 
-main[data-route-id='voice'] .mgmt-list__row {
+:is(main, section)[data-route-id='voice'] .mgmt-list__row {
   grid-template-columns: minmax(0, 1fr) max-content max-content;
 }
 
-main[data-route-id='voice'] .mgmt-list__meta { grid-column: 2; }
-main[data-route-id='voice'] .mgmt-list__status { grid-column: 3; }
+:is(main, section)[data-route-id='voice'] .mgmt-list__meta { grid-column: 2; }
+:is(main, section)[data-route-id='voice'] .mgmt-list__status { grid-column: 3; }
 
-main[data-route-id='voice'] .voice-service-layout {
+:is(main, section)[data-route-id='voice'] .voice-service-layout {
   display: grid;
   gap: var(--space-4);
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
 }
 
-main[data-route-id='voice'] .voice-service-choice {
+:is(main, section)[data-route-id='voice'] .voice-service-choice {
   display: grid;
   gap: 10px;
   justify-items: start;
@@ -26,26 +26,26 @@ main[data-route-id='voice'] .voice-service-choice {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='voice'] .voice-service-choice > strong {
+:is(main, section)[data-route-id='voice'] .voice-service-choice > strong {
   font-size: 13px;
 }
 
-main[data-route-id='voice'] .voice-service-choice .ui-segmented {
+:is(main, section)[data-route-id='voice'] .voice-service-choice .ui-segmented {
   max-width: 100%;
 }
 
-main[data-route-id='voice'] .voice-readonly-note {
+:is(main, section)[data-route-id='voice'] .voice-readonly-note {
   align-content: start;
   justify-items: start;
 }
 
-main[data-route-id='voice'] .voice-native-actions {
+:is(main, section)[data-route-id='voice'] .voice-native-actions {
   display: grid;
   border-block: 1px solid var(--color-border);
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-main[data-route-id='voice'] .voice-native-action-group {
+:is(main, section)[data-route-id='voice'] .voice-native-action-group {
   display: flex;
   min-width: 0;
   min-height: 54px;
@@ -55,11 +55,11 @@ main[data-route-id='voice'] .voice-native-action-group {
   border-right: 1px solid var(--color-border);
 }
 
-main[data-route-id='voice'] .voice-native-action-group:last-child {
+:is(main, section)[data-route-id='voice'] .voice-native-action-group:last-child {
   border-right: 0;
 }
 
-main[data-route-id='voice'] .voice-native-action-group > span {
+:is(main, section)[data-route-id='voice'] .voice-native-action-group > span {
   min-width: 64px;
   margin-right: auto;
   color: var(--color-text-secondary);
@@ -67,18 +67,18 @@ main[data-route-id='voice'] .voice-native-action-group > span {
   font-weight: 700;
 }
 
-main[data-route-id='voice'] .voice-credential-grid {
+:is(main, section)[data-route-id='voice'] .voice-credential-grid {
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-main[data-route-id='voice'] .voice-credential-grid + .mgmt-notice,
-main[data-route-id='voice'] .voice-native-actions + .mgmt-notice {
+:is(main, section)[data-route-id='voice'] .voice-credential-grid + .mgmt-notice,
+:is(main, section)[data-route-id='voice'] .voice-native-actions + .mgmt-notice {
   margin-top: var(--space-3);
 }
 
-main[data-route-id='voice'] .voice-runtime-issue {
+:is(main, section)[data-route-id='voice'] .voice-runtime-issue {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -86,25 +86,25 @@ main[data-route-id='voice'] .voice-runtime-issue {
   gap: var(--space-3);
 }
 
-main[data-route-id='voice'] .voice-runtime-issue .mgmt-notice {
+:is(main, section)[data-route-id='voice'] .voice-runtime-issue .mgmt-notice {
   min-width: 0;
   flex: 1;
 }
 
-main[data-route-id='voice'] .voice-runtime-issue .ui-button {
+:is(main, section)[data-route-id='voice'] .voice-runtime-issue .ui-button {
   flex: none;
 }
 
-main[data-route-id='voice'] .voice-credential-grid .ui-field {
+:is(main, section)[data-route-id='voice'] .voice-credential-grid .ui-field {
   min-width: 0;
 }
 
-main[data-route-id='voice'] .voice-credential-grid .ui-input,
-main[data-route-id='voice'] .voice-credential-grid .ui-textarea {
+:is(main, section)[data-route-id='voice'] .voice-credential-grid .ui-input,
+:is(main, section)[data-route-id='voice'] .voice-credential-grid .ui-textarea {
   width: 100%;
 }
 
-main[data-route-id='voice'] .voice-credential-actions {
+:is(main, section)[data-route-id='voice'] .voice-credential-actions {
   display: flex;
   justify-content: flex-end;
   padding-top: var(--space-3);
@@ -112,37 +112,37 @@ main[data-route-id='voice'] .voice-credential-actions {
   margin-top: var(--space-4);
 }
 
-main[data-route-id='voice'] .voice-hotword-editor {
+:is(main, section)[data-route-id='voice'] .voice-hotword-editor {
   display: grid;
   min-width: 0;
   gap: 6px;
 }
 
-main[data-route-id='voice'] .voice-hotword-editor > span {
+:is(main, section)[data-route-id='voice'] .voice-hotword-editor > span {
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 700;
 }
 
-main[data-route-id='voice'] .voice-hotword-editor .ui-textarea {
+:is(main, section)[data-route-id='voice'] .voice-hotword-editor .ui-textarea {
   width: 100%;
   min-height: 136px;
   font-family: var(--font-mono);
   line-height: 1.55;
 }
 
-main[data-route-id='voice'] .voice-hotword-editor > small {
+:is(main, section)[data-route-id='voice'] .voice-hotword-editor > small {
   color: var(--color-text-tertiary);
   font-size: 13px;
 }
 
-main[data-route-id='voice'] .voice-hotword-suggestions {
+:is(main, section)[data-route-id='voice'] .voice-hotword-suggestions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-main[data-route-id='voice'] .voice-hotword-suggestions button {
+:is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button {
   display: inline-flex;
   min-height: 32px;
   align-items: center;
@@ -163,25 +163,25 @@ main[data-route-id='voice'] .voice-hotword-suggestions button {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='voice'] .voice-hotword-suggestions button:hover {
+  :is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button:hover {
     border-color: var(--color-border-strong);
     background: var(--color-surface-hover);
     color: var(--color-text);
   }
 }
 
-main[data-route-id='voice'] .voice-hotword-suggestions button:active {
+:is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button:active {
   transform: scale(0.98);
 }
 
-main[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
+:is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
-main[data-route-id='voice'] .voice-connection-details > summary,
-main[data-route-id='voice'] .voice-recognition-details > summary,
-main[data-route-id='voice'] .voice-refinement-status > summary {
+:is(main, section)[data-route-id='voice'] .voice-connection-details > summary,
+:is(main, section)[data-route-id='voice'] .voice-recognition-details > summary,
+:is(main, section)[data-route-id='voice'] .voice-refinement-status > summary {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -194,13 +194,13 @@ main[data-route-id='voice'] .voice-refinement-status > summary {
   list-style: none;
 }
 
-main[data-route-id='voice'] .voice-connection-details > summary::-webkit-details-marker,
-main[data-route-id='voice'] .voice-recognition-details > summary::-webkit-details-marker,
-main[data-route-id='voice'] .voice-refinement-status > summary::-webkit-details-marker { display: none; }
+:is(main, section)[data-route-id='voice'] .voice-connection-details > summary::-webkit-details-marker,
+:is(main, section)[data-route-id='voice'] .voice-recognition-details > summary::-webkit-details-marker,
+:is(main, section)[data-route-id='voice'] .voice-refinement-status > summary::-webkit-details-marker { display: none; }
 
-main[data-route-id='voice'] .voice-connection-details > summary::after,
-main[data-route-id='voice'] .voice-recognition-details > summary::after,
-main[data-route-id='voice'] .voice-refinement-status > summary::after {
+:is(main, section)[data-route-id='voice'] .voice-connection-details > summary::after,
+:is(main, section)[data-route-id='voice'] .voice-recognition-details > summary::after,
+:is(main, section)[data-route-id='voice'] .voice-refinement-status > summary::after {
   width: 7px;
   height: 7px;
   flex: 0 0 auto;
@@ -211,84 +211,84 @@ main[data-route-id='voice'] .voice-refinement-status > summary::after {
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='voice'] .voice-connection-details[open] > summary,
-main[data-route-id='voice'] .voice-recognition-details[open] > summary,
-main[data-route-id='voice'] .voice-refinement-status[open] > summary {
+:is(main, section)[data-route-id='voice'] .voice-connection-details[open] > summary,
+:is(main, section)[data-route-id='voice'] .voice-recognition-details[open] > summary,
+:is(main, section)[data-route-id='voice'] .voice-refinement-status[open] > summary {
   color: var(--color-text-primary);
 }
 
-main[data-route-id='voice'] .voice-connection-details[open] > summary::after,
-main[data-route-id='voice'] .voice-recognition-details[open] > summary::after,
-main[data-route-id='voice'] .voice-refinement-status[open] > summary::after {
+:is(main, section)[data-route-id='voice'] .voice-connection-details[open] > summary::after,
+:is(main, section)[data-route-id='voice'] .voice-recognition-details[open] > summary::after,
+:is(main, section)[data-route-id='voice'] .voice-refinement-status[open] > summary::after {
   transform: rotate(225deg) translateY(-2px);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main[data-route-id='voice'] .voice-hotword-suggestions button,
-  main[data-route-id='voice'] .voice-connection-details > summary::after,
-  main[data-route-id='voice'] .voice-recognition-details > summary::after,
-  main[data-route-id='voice'] .voice-refinement-status > summary::after { transition: none; }
-  main[data-route-id='voice'] .voice-hotword-suggestions button:active { transform: none; }
+  :is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button,
+  :is(main, section)[data-route-id='voice'] .voice-connection-details > summary::after,
+  :is(main, section)[data-route-id='voice'] .voice-recognition-details > summary::after,
+  :is(main, section)[data-route-id='voice'] .voice-refinement-status > summary::after { transition: none; }
+  :is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button:active { transform: none; }
 }
 
 @media (max-width: 900px) {
-  main[data-route-id='voice'] .voice-service-layout,
-  main[data-route-id='voice'] .voice-credential-grid {
+  :is(main, section)[data-route-id='voice'] .voice-service-layout,
+  :is(main, section)[data-route-id='voice'] .voice-credential-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='voice'] .voice-native-actions {
+  :is(main, section)[data-route-id='voice'] .voice-native-actions {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='voice'] .voice-native-action-group {
+  :is(main, section)[data-route-id='voice'] .voice-native-action-group {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 
-  main[data-route-id='voice'] .voice-native-action-group:last-child {
+  :is(main, section)[data-route-id='voice'] .voice-native-action-group:last-child {
     border-bottom: 0;
   }
 }
 
 @media (max-width: 560px) {
-  main[data-route-id='voice'] .voice-runtime-issue {
+  :is(main, section)[data-route-id='voice'] .voice-runtime-issue {
     align-items: stretch;
     flex-direction: column;
   }
 
-  main[data-route-id='voice'] .voice-runtime-issue .ui-button {
+  :is(main, section)[data-route-id='voice'] .voice-runtime-issue .ui-button {
     align-self: flex-start;
   }
 
-  main[data-route-id='voice'] .voice-native-action-group {
+  :is(main, section)[data-route-id='voice'] .voice-native-action-group {
     flex-wrap: wrap;
   }
 
-  main[data-route-id='voice'] .voice-native-action-group > span {
+  :is(main, section)[data-route-id='voice'] .voice-native-action-group > span {
     width: 100%;
   }
 
-  main[data-route-id='voice'] .ui-button,
-  main[data-route-id='voice'] .ui-input,
-  main[data-route-id='voice'] .ui-select__trigger,
-  main[data-route-id='voice'] .ui-segmented__item,
-  main[data-route-id='voice'] .voice-hotword-suggestions button {
+  :is(main, section)[data-route-id='voice'] .ui-button,
+  :is(main, section)[data-route-id='voice'] .ui-input,
+  :is(main, section)[data-route-id='voice'] .ui-select__trigger,
+  :is(main, section)[data-route-id='voice'] .ui-segmented__item,
+  :is(main, section)[data-route-id='voice'] .voice-hotword-suggestions button {
     min-height: 44px;
   }
 
-  main[data-route-id='voice'] .voice-service-choice .ui-segmented {
+  :is(main, section)[data-route-id='voice'] .voice-service-choice .ui-segmented {
     width: 100%;
   }
 
-  main[data-route-id='voice'] .ui-switch::before {
+  :is(main, section)[data-route-id='voice'] .ui-switch::before {
     top: 8px;
     left: 0;
     width: 44px;
     height: 28px;
   }
 
-  main[data-route-id='voice'] .ui-switch__thumb {
+  :is(main, section)[data-route-id='voice'] .ui-switch__thumb {
     top: 12px;
     left: 0;
     width: 20px;
@@ -296,20 +296,20 @@ main[data-route-id='voice'] .voice-refinement-status[open] > summary::after {
     transform: translateX(3px);
   }
 
-  main[data-route-id='voice'] .ui-switch__thumb[data-state='checked'] {
+  :is(main, section)[data-route-id='voice'] .ui-switch__thumb[data-state='checked'] {
     transform: translateX(19px);
   }
 }
 
 @container paw-window (max-width: 900px) {
-  main[data-route-id='voice'][data-paw-os-app] .voice-service-layout,
-  main[data-route-id='voice'][data-paw-os-app] .voice-credential-grid,
-  main[data-route-id='voice'][data-paw-os-app] .voice-native-actions { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='voice'][data-paw-os-app] .voice-native-action-group { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-service-layout,
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-credential-grid,
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-native-actions { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-native-action-group { border-right: 0; border-bottom: 1px solid var(--color-border); }
 }
 
 @container paw-window (max-width: 520px) {
-  main[data-route-id='voice'][data-paw-os-app] .voice-runtime-issue { align-items: stretch; flex-direction: column; }
-  main[data-route-id='voice'][data-paw-os-app] .voice-native-action-group { flex-wrap: wrap; }
-  main[data-route-id='voice'][data-paw-os-app] .voice-native-action-group > span { width: 100%; }
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-runtime-issue { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-native-action-group { flex-wrap: wrap; }
+  :is(main, section)[data-route-id='voice'][data-paw-os-app] .voice-native-action-group > span { width: 100%; }
 }

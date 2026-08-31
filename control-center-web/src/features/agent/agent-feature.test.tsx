@@ -4695,16 +4695,16 @@ describe('Agent experience', () => {
     const panel = screen.getByRole('complementary', { name: '当前对话文件目录' });
     expect(panel).toHaveAttribute('data-open', 'true');
     expect(screen.getByLabelText('当前对话任务中心')).toHaveAttribute('aria-hidden', 'true');
-    expect(await within(panel).findByRole('button', { name: '预览文件 README.md' })).toBeVisible();
+    expect(await within(panel).findByRole('treeitem', { name: '预览文件 README.md' })).toBeVisible();
     expect(transport.requests).toContainEqual(expect.objectContaining({
       pathId: 'agent.session.workspace.list',
       query: { path: root, depth: 1, limit: 240 },
     }));
 
-    await user.click(within(panel).getByRole('button', { name: '展开目录 src' }));
-    expect(await within(panel).findByRole('button', { name: '预览文件 index.ts' })).toBeVisible();
+    await user.click(within(panel).getByRole('treeitem', { name: '展开目录 src' }));
+    expect(await within(panel).findByRole('treeitem', { name: '预览文件 index.ts' })).toBeVisible();
 
-    await user.click(within(panel).getByRole('button', { name: '预览文件 README.md' }));
+    await user.click(within(panel).getByRole('treeitem', { name: '预览文件 README.md' }));
     const preview = await screen.findByRole('dialog', { name: 'README.md' });
     expect(within(preview).getByRole('heading', { name: 'Agent workspace' })).toBeVisible();
     expect(transport.requests).toContainEqual(expect.objectContaining({

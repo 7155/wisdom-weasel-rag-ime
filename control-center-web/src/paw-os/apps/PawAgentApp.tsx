@@ -11,7 +11,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -36,7 +36,7 @@ import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { evidenceEchoFocusFromRoute } from '@/features/evidence-echo/evidence-echo';
 import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
-import { usePawOsAppSurface, usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { usePawOsAppActive, usePawOsAppIdentity, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { PawSessionWorkspace } from './PawSessionWorkspace';
 import { PawRoomWorkspace } from './PawRoomWorkspace';
 import { PawAgentHome } from './PawAgentHome';
@@ -57,7 +57,8 @@ export function PawAgentApp({
 }) {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
-  const surface = usePawOsAppSurface();
+  const surfaceIdentity = usePawOsAppIdentity();
+  const surfaceActive = usePawOsAppActive();
   /* The rail toggle reveals a leading-edge aside, so it docks in the leading
      titlebar slot and falls back inline only when that slot is absent. */
   const windowChromeTarget = usePawWindowLeadingChromeTarget();
@@ -85,6 +86,10 @@ export function PawAgentApp({
   const railToggleRef = useRef<HTMLButtonElement>(null);
   const optimisticSessionsRef = useRef<Record<string, SessionSummary>>({});
   const optimisticRoomsRef = useRef<Record<string, RoomSummary>>({});
+  /* Catalog hydration is deliberately cancellable. Opening Agent first commits
+     the lightweight new-work shell; a superseded route, filter change or an
+     unmounted window must never let an older catalog write into the new view. */
+  const catalogRequestRef = useRef(0);
   const targetKind = target?.kind;
   const targetId = target?.id;
   const targetRoomId = target?.kind === 'participant' ? target.roomId : undefined;
@@ -103,6 +108,7 @@ export function PawAgentApp({
   }, [initialRoute, targetId, targetKind, targetRoomId]);
 
   const loadCatalog = useCallback(async () => {
+    const requestId = ++catalogRequestRef.current;
     setLoading(true);
     setLoadError('');
     const [sessionResult, roomResult, roleResult, modelResult] = await Promise.allSettled([
@@ -111,46 +117,66 @@ export function PawAgentApp({
       transport.request({ pathId: 'agent.roles.list' }),
       transport.request({ pathId: 'agent.role.models' }),
     ]);
-    if (sessionResult.status === 'fulfilled') {
-      /* Room Partner Sessions stay out of the ordinary work-record rail, but
-       * a planet window must retain the one explicitly targeted Session so it
-       * can render the same complete workspace as any other Session. */
-      const listed = sessionItems(sessionResult.value).filter((item) => (
-        !item.roomParticipant || (targetKind === 'session' && item.id === targetId)
-      ));
-      const listedIds = new Set(listed.map((item) => item.id));
-      for (const id of Object.keys(optimisticSessionsRef.current)) {
-        if (listedIds.has(id)) delete optimisticSessionsRef.current[id];
-      }
-      setSessions([
-        ...Object.values(optimisticSessionsRef.current),
-        ...listed.filter((item) => !optimisticSessionsRef.current[item.id]),
-      ]);
-    }
-    if (roomResult.status === 'fulfilled') {
-      const listed = roomItems(roomResult.value);
-      const listedIds = new Set(listed.map((item) => item.id));
-      for (const id of Object.keys(optimisticRoomsRef.current)) {
-        if (listedIds.has(id)) delete optimisticRoomsRef.current[id];
-      }
-      setRooms([
-        ...Object.values(optimisticRoomsRef.current),
-        ...listed.filter((item) => !optimisticRoomsRef.current[item.id]),
-      ]);
-    }
-    if (roleResult.status === 'fulfilled') setPersonas(roleItems(roleResult.value));
-    if (modelResult.status === 'fulfilled') {
-      const catalog = parsePiModelCatalogOptions(modelResult.value);
-      setModels(catalog.models);
-      setDefaultModel(catalog.selectedReference);
-    }
+    if (catalogRequestRef.current !== requestId) return;
     const failures = [sessionResult, roomResult, roleResult, modelResult]
       .filter((result) => result.status === 'rejected').length;
-    if (failures) setLoadError(failures === 4 ? 'Agent 工作记录暂时无法读取。' : '部分 Agent 目录暂时不可用。');
-    setLoading(false);
+    /* A mock/local transport can resolve all four reads in the same turn. Put
+     * the directory projection behind React's transition lane so it cannot
+     * steal the click frame that opened the Agent window. */
+    startTransition(() => {
+      if (catalogRequestRef.current !== requestId) return;
+      if (sessionResult.status === 'fulfilled') {
+        /* Room Partner Sessions stay out of the ordinary work-record rail, but
+         * a planet window must retain the one explicitly targeted Session so it
+         * can render the same complete workspace as any other Session. */
+        const listed = sessionItems(sessionResult.value).filter((item) => (
+          !item.roomParticipant || (targetKind === 'session' && item.id === targetId)
+        ));
+        const listedIds = new Set(listed.map((item) => item.id));
+        for (const id of Object.keys(optimisticSessionsRef.current)) {
+          if (listedIds.has(id)) delete optimisticSessionsRef.current[id];
+        }
+        setSessions([
+          ...Object.values(optimisticSessionsRef.current),
+          ...listed.filter((item) => !optimisticSessionsRef.current[item.id]),
+        ]);
+      }
+      if (roomResult.status === 'fulfilled') {
+        const listed = roomItems(roomResult.value);
+        const listedIds = new Set(listed.map((item) => item.id));
+        for (const id of Object.keys(optimisticRoomsRef.current)) {
+          if (listedIds.has(id)) delete optimisticRoomsRef.current[id];
+        }
+        setRooms([
+          ...Object.values(optimisticRoomsRef.current),
+          ...listed.filter((item) => !optimisticRoomsRef.current[item.id]),
+        ]);
+      }
+      if (roleResult.status === 'fulfilled') setPersonas(roleItems(roleResult.value));
+      if (modelResult.status === 'fulfilled') {
+        const catalog = parsePiModelCatalogOptions(modelResult.value);
+        setModels(catalog.models);
+        setDefaultModel(catalog.selectedReference);
+      }
+      if (failures) setLoadError(failures === 4 ? 'Agent 工作记录暂时无法读取。' : '部分 Agent 目录暂时不可用。');
+      setLoading(false);
+    });
   }, [showArchived, targetId, targetKind, transport]);
 
-  useEffect(() => { void loadCatalog(); }, [catalogRevision, loadCatalog]);
+  useEffect(() => {
+    let cancelled = false;
+    /* Let PawAppProcess' boot surface and the Agent home commit first. The
+     * catalog remains truthful, but no longer runs inside the Dock click's
+     * first paint budget. */
+    const frame = window.requestAnimationFrame(() => {
+      if (!cancelled) void loadCatalog();
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      catalogRequestRef.current += 1;
+    };
+  }, [catalogRevision, loadCatalog]);
 
   useEffect(() => {
     if (!railOpen) return;
@@ -185,13 +211,13 @@ export function PawAgentApp({
     : undefined;
 
   useEffect(() => {
-    if (!surface?.windowId || !desktop?.bindAgentMain) return;
+    if (!surfaceIdentity?.windowId || !desktop?.bindAgentMain) return;
     if (selection.kind === 'new') {
-      desktop.bindAgentMain(surface.windowId);
+      desktop.bindAgentMain(surfaceIdentity.windowId);
       return;
     }
     if (selection.kind === 'session' && selectedSession) {
-      desktop.bindAgentMain(surface.windowId, {
+      desktop.bindAgentMain(surfaceIdentity.windowId, {
         kind: 'session',
         id: selectedSession.id,
         title: selectedSession.title,
@@ -199,14 +225,14 @@ export function PawAgentApp({
       return;
     }
     if (selection.kind === 'room' && selectedRoom) {
-      desktop.bindAgentMain(surface.windowId, {
+      desktop.bindAgentMain(surfaceIdentity.windowId, {
         kind: 'room',
         id: selectedRoom.id,
         title: selectedRoom.title,
         subtitle: selectedRoom.description,
       });
     }
-  }, [desktop, selectedRoom, selectedSession, selection.kind, surface?.windowId]);
+  }, [desktop, selectedRoom, selectedSession, selection.kind, surfaceIdentity?.windowId]);
 
   async function archiveSession(session: SessionSummary): Promise<void> {
     const archived = session.status === 'archived';
@@ -255,7 +281,7 @@ export function PawAgentApp({
 
   const railToggle = <button aria-controls="paw-agent-work-records" aria-expanded={railOpen} aria-label={railOpen ? '收起工作记录' : '打开工作记录'} className="paw-agent-rail-toggle" onClick={() => setRailOpen((open) => !open)} ref={railToggleRef} type="button"><PanelLeft size={16} /></button>;
   return (
-    <main className="paw-agent-app" data-rail-open={railOpen || undefined} data-selection={selection.kind}>
+    <section aria-label="Agent 工作台" className="paw-agent-app" data-rail-open={railOpen || undefined} data-selection={selection.kind} role="region">
       {windowChromeTarget ? <PawWindowLeadingPortal>{railToggle}</PawWindowLeadingPortal> : null}
       <aside aria-label="Agent 工作记录" className="paw-agent-rail" id="paw-agent-work-records">
         <header>
@@ -345,7 +371,7 @@ export function PawAgentApp({
           />
         ) : selection.kind === 'session' ? (
           <PawSessionWorkspace
-            active={surface?.active ?? true}
+            active={surfaceActive ?? true}
             key={`session:${selection.id}`}
             initialDraft={selection.draft}
             persona={personas.find((item) => item.roleId === sessions.find((session) => session.id === selection.id)?.roleId)}
@@ -365,7 +391,7 @@ export function PawAgentApp({
           />
         ) : selection.kind === 'room' ? (
           <PawRoomWorkspace
-            active={surface?.active ?? true}
+            active={surfaceActive ?? true}
             initialDraft={selection.draft}
             initialError={selection.error}
             key={`room:${selection.id}`}
@@ -397,7 +423,7 @@ export function PawAgentApp({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </main>
+    </section>
   );
 }
 

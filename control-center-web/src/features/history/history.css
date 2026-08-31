@@ -223,10 +223,10 @@
   .history-filter-toolbar .ui-input,
   .history-filter-toolbar .ui-select__trigger,
   .history-filter-toolbar > .ui-button { min-height: 44px; font-size: 16px; }
-  main[data-route-id='history'] .mgmt-page__actions .ui-button,
-  main[data-route-id='history'] .mgmt-pagination .ui-button,
-  main[data-route-id='history'] #history-record,
-  main[data-route-id='history'] .mgmt-workflow .ui-button,
+  :is(main, section)[data-route-id='history'] .mgmt-page__actions .ui-button,
+  :is(main, section)[data-route-id='history'] .mgmt-pagination .ui-button,
+  :is(main, section)[data-route-id='history'] #history-record,
+  :is(main, section)[data-route-id='history'] .mgmt-workflow .ui-button,
   .history-detail-dialog .ui-button {
     min-height: 44px;
   }
@@ -262,19 +262,19 @@
 }
 
 @container paw-window (max-width: 620px) {
-  main[data-route-id='history'][data-paw-os-app] .history-table { min-width: 0; }
-  main[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(2),
-  main[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(2),
-  main[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(4),
-  main[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(4),
-  main[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(5),
-  main[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(5) { display: none; }
-  main[data-route-id='history'][data-paw-os-app] .history-filter-toolbar {
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table { min-width: 0; }
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(2),
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(2),
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(4),
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(4),
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table th:nth-child(5),
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-table td:nth-child(5) { display: none; }
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-filter-toolbar {
     width: 100%;
     grid-template-areas: 'search submit' 'source source';
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  main[data-route-id='history'][data-paw-os-app] .history-detail__facts,
-  main[data-route-id='history'][data-paw-os-app] .history-detail__context-grid,
-  main[data-route-id='history'][data-paw-os-app] .history-detail__feedback-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-detail__facts,
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-detail__context-grid,
+  :is(main, section)[data-route-id='history'][data-paw-os-app] .history-detail__feedback-grid { grid-template-columns: minmax(0, 1fr); }
 }

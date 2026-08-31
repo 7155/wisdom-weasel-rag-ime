@@ -15,7 +15,7 @@ describe('ManagementPage PAWOS surface', () => {
       </PawOsAppSurfaceProvider>,
     );
 
-    const page = screen.getByRole('main');
+    const page = screen.getByRole('region', { name: '我的记忆' });
     expect(page).toHaveAttribute('data-paw-os-app', 'memory');
     expect(page).toHaveAttribute('data-paw-os-compact', 'true');
     expect(page).toHaveAttribute('data-route-id', 'memory');

@@ -14,6 +14,7 @@ import {
 } from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import { mergeAcceptedRoomTimeline } from '../runtime/accepted-room-timeline';
+import { publishRoomProjectionSnapshot } from './projection-bridge';
 
 export interface RoomHistoryWindow {
   events: readonly UiRoomEvent[];
@@ -245,6 +246,15 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
     });
   },
 }));
+
+/* Publish only when the immutable projections record changes. Direct test or
+ * recovery setState calls are covered as well as the normal reducer actions,
+ * while history/revision-only updates do not wake the shell. */
+useRoomLiveStore.subscribe((state, previous) => {
+  if (state.projections !== previous.projections) {
+    publishRoomProjectionSnapshot(state.projections);
+  }
+});
 
 function mergeSnapshotWindow(
   snapshot: RoomEventSnapshot,

@@ -1,4 +1,4 @@
-.shell-route-stage > main.context-debug-feature {
+.shell-route-stage > :is(main, section).context-debug-feature {
   display: grid;
   width: 100%;
   height: calc(100dvh - var(--topbar-height));
@@ -478,7 +478,7 @@
 }
 
 @media (max-width: 820px) {
-  .shell-route-stage > main.context-debug-feature {
+  .shell-route-stage > :is(main, section).context-debug-feature {
     display: block;
     height: auto;
     min-height: calc(100dvh - 52px - var(--mobile-nav-height));
@@ -517,7 +517,7 @@
 
 
 /* Adopts the shared sheet grammar: a paper console page on the canvas. */
-.shell-route-stage > main.context-debug-feature {
+.shell-route-stage > :is(main, section).context-debug-feature {
   height: auto;
   min-height: calc(100dvh - var(--topbar-height));
   padding: var(--space-4) var(--workspace-gutter) var(--space-6);
@@ -575,7 +575,7 @@
     min-height: var(--control-height-lg);
     justify-content: center;
   }
-  .shell-route-stage > main.context-debug-feature { padding-inline: 0; }
+  .shell-route-stage > :is(main, section).context-debug-feature { padding-inline: 0; }
   .context-debug-header,
   .context-debug-feature > .context-debug-header ~ * { border-inline: 0; border-radius: 0; }
   .context-debug-feature > :last-child { border-bottom: 0; border-radius: 0; }
@@ -942,7 +942,7 @@
   .context-debug-turns button { transition: none; }
 }
 
-main.context-debug-feature[data-paw-os-app='system-monitor'] {
+:is(main, section).context-debug-feature[data-paw-os-app='system-monitor'] {
   display: grid;
   width: 100%;
   height: 100%;
@@ -954,7 +954,7 @@ main.context-debug-feature[data-paw-os-app='system-monitor'] {
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
-main.context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-header[data-native-actions] {
+:is(main, section).context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-header[data-native-actions] {
   min-height: 48px;
   justify-content: flex-end;
   padding: 7px 14px;
@@ -965,11 +965,11 @@ main.context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-he
   backdrop-filter: blur(16px) saturate(1.06);
 }
 
-main.context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-controls {
+:is(main, section).context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-controls {
   flex-wrap: wrap;
 }
 
-main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+:is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
   .ui-button,
   .ui-select__trigger,
   .ui-switch-field__label,
@@ -982,14 +982,14 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   summary
 ) { font-size: 14px; }
 
-main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+:is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
   small,
   dt,
   time,
   .context-debug-reader__call-status
 ) { font-size: 13px; }
 
-main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+:is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
   .context-debug-reader__messages > li > div,
   .context-debug-reader__code--text,
   .context-debug-reader__masthead p,
@@ -998,9 +998,9 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 ) { font-size: 15px; }
 
 @container paw-window (max-width: 720px) {
-  main.context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-header[data-native-actions] { justify-content: flex-start; }
-  main.context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-controls { justify-content: flex-start; }
-  main.context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-select--session { width: min(100%, 320px); }
+  :is(main, section).context-debug-feature[data-paw-os-app='system-monitor'] > .context-debug-header[data-native-actions] { justify-content: flex-start; }
+  :is(main, section).context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-controls { justify-content: flex-start; }
+  :is(main, section).context-debug-feature[data-paw-os-app='system-monitor'] .context-debug-select--session { width: min(100%, 320px); }
 }
 
 /* OMP-style session viewer. This uses the local OMP export source as the
@@ -1631,7 +1631,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   }
 }
 
-.shell-route-stage > main.context-debug-feature {
+.shell-route-stage > :is(main, section).context-debug-feature {
   display: flex;
   width: 100%;
   height: calc(100dvh - var(--topbar-height));
@@ -2092,10 +2092,10 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
 }
 
 @container paw-window (max-width: 900px) {
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-header { align-items: stretch; flex-direction: column; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-controls { justify-content: flex-start; flex-wrap: wrap; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-select--session { width: min(100%, 420px); }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-viewer {
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-header { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-controls { justify-content: flex-start; flex-wrap: wrap; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-select--session { width: min(100%, 420px); }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-viewer {
     grid-template-columns: minmax(0, 1fr);
     overflow-x: hidden;
     overflow-y: auto;
@@ -2104,7 +2104,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
        minimums and the overflow:hidden box clips the session list entirely. */
     align-items: start;
   }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree {
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree {
     width: 100%;
     height: auto;
     max-height: none;
@@ -2113,25 +2113,25 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   /* Bound the two internal lists directly instead of clipping the panel:
      grid tracks size against an indefinite height first, so a max-height on
      the panel only cuts rows off after the fact. */
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-turns > ol { max-height: 200px; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree > ol { max-height: 260px; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { height: auto; overflow: visible; padding-inline: 22px; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-turns > ol { max-height: 200px; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-tree > ol { max-height: 260px; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { height: auto; overflow: visible; padding-inline: 22px; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @container paw-window (max-width: 560px) {
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-heading small,
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__title > em { display: none; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__title { grid-template-columns: 34px minmax(0, 1fr); }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics > div { border-right: 0; padding-inline: 0; }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { padding-inline: 12px; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-heading small,
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__title > em { display: none; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__title { grid-template-columns: 34px minmax(0, 1fr); }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__metrics > div { border-right: 0; padding-inline: 0; }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-assembly__layers { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='context-debug'][data-paw-os-app] .context-debug-session-content { padding-inline: 12px; }
 }
 
 /* UR-102 monitor-context semantic typography */
-main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+:is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
   .context-debug-turns > header strong,
   .context-debug-turns__copy strong,
   .context-debug-session-tree > ol button > strong,
@@ -2140,7 +2140,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   .context-debug-session-message-list > li > header strong,
   .context-debug-reader__disclosure > summary strong
 ) { font-size: 14px; }
-main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+:is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
   .context-debug-turns > header small,
   .context-debug-turns__copy time,
   .context-debug-turns__copy small,
@@ -2152,7 +2152,7 @@ main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='syste
   .context-debug-assembly__layers em,
   .context-debug-session-message-list > li > header small
 ) { font-size: 13px; }
-main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
+:is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor'] :is(
   .context-debug-assembly__title p,
   .context-debug-assembly__layers small,
   .context-debug-session-message__body

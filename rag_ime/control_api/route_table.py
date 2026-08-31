@@ -412,6 +412,14 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
+EXTENSION_SANDBOX_EXPERIMENT_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="POST",
+        path="/api/extensions/sandbox/experiments",
+        handler="extension_sandbox_experiments.execute",
+    ),
+)
+
 def _session_id_from_either_key(payload: dict[str, Any]) -> dict[str, Any]:
     """`sessionId` wins, `id` is the fallback, and only `sessionId` is sent on.
 
@@ -667,6 +675,7 @@ WORK_DOCUMENT_ROUTES: tuple[RouteDescriptor, ...] = (
 
 
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
+    *EXTENSION_SANDBOX_EXPERIMENT_ROUTES,
     *SYSTEM_TERMINAL_ROUTES,
     *WORK_DOCUMENT_ROUTES,
     *VOCABULARY_ROUTES,

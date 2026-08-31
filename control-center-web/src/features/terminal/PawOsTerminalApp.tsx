@@ -6,8 +6,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, ChevronDown, Folder, List, LoaderCircle, Plus, Search, TriangleAlert, X } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
+import { usePawOsAppActive } from '@/features/paw-os/surface-context';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '@/paw-os/shell/PawWindowChrome';
 import { writeClipboardText } from '@/platform/clipboard';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import './paw-os-terminal-app.css';
 
 type TerminalState = 'running' | 'exited' | 'closed';
@@ -108,6 +110,9 @@ function prefersReducedMotion(): boolean {
 
 export function PawOsTerminalApp() {
   const transport = useControlTransport();
+  const surfaceActive = usePawOsAppActive() ?? true;
+  const pageVisible = usePageVisibility();
+  const pollingEnabled = surfaceActive && pageVisible;
   const windowChromeTarget = usePawWindowChromeTarget();
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState('');
@@ -127,6 +132,7 @@ export function PawOsTerminalApp() {
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const cwdInputRef = useRef<HTMLInputElement | null>(null);
+  const cwdCreateToggleRef = useRef<HTMLButtonElement | null>(null);
   const terminalTabRefs = useRef(new Map<string, HTMLButtonElement>());
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const tabSwitcherToggleRef = useRef<HTMLButtonElement | null>(null);
@@ -134,6 +140,7 @@ export function PawOsTerminalApp() {
   const emptyCreateRef = useRef<HTMLButtonElement | null>(null);
   const initialLoadHandled = useRef(false);
   const restoreTabFocusRef = useRef(false);
+  const restoreCwdCreateFocusRef = useRef(false);
   const selectedStatusRef = useRef<TerminalState>('running');
   const createShortcutRef = useRef<() => void>(() => undefined);
   const ordinalShortcutRef = useRef<(ordinal: number) => void>(() => undefined);
@@ -141,8 +148,9 @@ export function PawOsTerminalApp() {
 
   const sessionsQuery = useQuery({
     queryKey: terminalKeys.root,
+    enabled: pollingEnabled,
     queryFn: ({ signal }) => transport.request<TerminalListResponse>({ pathId: 'terminal.sessions.list', signal }),
-    refetchInterval: 2_000,
+    refetchInterval: pollingEnabled ? 2_000 : false,
   });
   const sessions = sessionsQuery.data?.items ?? emptySessions;
   const selected = sessions.find((item) => item.terminalId === selectedId) ?? null;
@@ -281,6 +289,22 @@ export function PawOsTerminalApp() {
     if (showCreateForm) cwdInputRef.current?.focus();
   }, [showCreateForm]);
 
+  useEffect(() => {
+    if (showCreateForm || create.isPending || !restoreCwdCreateFocusRef.current) return;
+    cwdCreateToggleRef.current?.focus();
+    let settleFrame = 0;
+    const focusFrame = window.requestAnimationFrame(() => {
+      settleFrame = window.requestAnimationFrame(() => {
+        cwdCreateToggleRef.current?.focus();
+        restoreCwdCreateFocusRef.current = false;
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      if (settleFrame) window.cancelAnimationFrame(settleFrame);
+    };
+  }, [create.isPending, showCreateForm]);
+
   // The tab strip scrolls locally; keep the selected identity visible even when
   // selection changes through keyboard navigation or session-list updates.
   useEffect(() => {
@@ -377,7 +401,8 @@ export function PawOsTerminalApp() {
     observer.observe(host);
     const frame = window.requestAnimationFrame(() => {
       fitTerminal();
-      terminal.focus();
+      if (restoreCwdCreateFocusRef.current) cwdCreateToggleRef.current?.focus();
+      else terminal.focus();
     });
 
     return () => {
@@ -395,24 +420,50 @@ export function PawOsTerminalApp() {
 
   const readQuery = useQuery({
     queryKey: [...terminalKeys.root, 'read', selectedId, cursor],
-    enabled: Boolean(selectedId),
+    enabled: pollingEnabled && Boolean(selectedId),
     queryFn: ({ signal }) => transport.request<TerminalReadResponse>({
       pathId: 'terminal.session.read',
       body: { terminalId: selectedId, cursor, maxBytes: 262_144 },
       signal,
     }),
-    refetchInterval: selected?.status === 'running' ? 120 : 1_000,
+    refetchInterval: pollingEnabled ? (selected?.status === 'running' ? 120 : 1_000) : false,
     retry: false,
   });
 
   useEffect(() => {
     const chunk = readQuery.data;
+    if (!chunk) return;
+    const receipt = chunk.terminal;
+    selectedStatusRef.current = receipt.status;
+    queryClient.setQueryData<TerminalListResponse>(terminalKeys.root, (current) => {
+      if (!current) return current;
+      const existing = current.items.find((item) => item.terminalId === receipt.terminalId);
+      if (
+        !existing
+        || (existing.status === receipt.status
+          && existing.exitCode === receipt.exitCode
+          && existing.baseCursor === receipt.baseCursor
+          && existing.nextCursor === receipt.nextCursor)
+      ) return current;
+      return {
+        ...current,
+        items: current.items.map((item) => item.terminalId === receipt.terminalId
+          ? {
+              ...item,
+              status: receipt.status,
+              exitCode: receipt.exitCode,
+              baseCursor: receipt.baseCursor,
+              nextCursor: receipt.nextCursor,
+            }
+          : item),
+      };
+    });
     const terminal = terminalRef.current;
-    if (!chunk || !terminal) return;
+    if (!terminal) return;
     if (chunk.truncated) terminal.reset();
     if (chunk.text) terminal.write(chunk.text);
     if (chunk.nextCursor !== cursor) setCursor(chunk.nextCursor);
-  }, [cursor, readQuery.data]);
+  }, [cursor, queryClient, readQuery.data]);
 
   // One error surface, but each source keeps a truthful recovery: interaction
   // and mutation failures are dismissible (reset), polled query failures offer
@@ -471,6 +522,7 @@ export function PawOsTerminalApp() {
   const cwdInvalid = cwdDraft.trim() !== '' && !cwdDraft.trim().startsWith('/');
 
   const closeCreateForm = () => {
+    restoreCwdCreateFocusRef.current = true;
     setShowCreateForm(false);
     setCwdDraft('');
   };
@@ -605,6 +657,7 @@ export function PawOsTerminalApp() {
               setShowSearch(false);
               setShowCreateForm((value) => !value);
             }}
+            ref={cwdCreateToggleRef}
             title="在指定目录新建终端"
             type="button"
           >
@@ -641,14 +694,15 @@ export function PawOsTerminalApp() {
               ) : null}
             </div>
           ) : null}
-          <main
+          <section
+            aria-label="终端输出"
             aria-labelledby={selectedTabId}
             className="paw-terminal-console"
             data-ended={selected && selected.status !== 'running' ? true : undefined}
             data-search={selected && showSearch ? true : undefined}
             data-session={selected ? true : undefined}
             id={terminalPanelId}
-            role={selected ? 'tabpanel' : undefined}
+            role={selected ? 'tabpanel' : 'region'}
           >
             {selected && showSearch ? (
               <div className="paw-terminal-search" role="search">
@@ -825,7 +879,7 @@ export function PawOsTerminalApp() {
                 </button>
               </footer>
             ) : null}
-          </main>
+          </section>
         </div>
       </section>
     </>

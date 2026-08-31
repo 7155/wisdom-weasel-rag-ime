@@ -78,9 +78,37 @@ describe('PawWayfinderWork', () => {
     await openProjectFolder(panel);
     expect(within(panel).getByRole('button', { name: /重构列表/ })).toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: /整理知识库/ })).toBeInTheDocument();
+    expect(panel.querySelectorAll('[data-dialogue-file] .paw-work-glyph__tile')).toHaveLength(2);
     expect(within(panel).queryByRole('searchbox', { name: '搜索最近工作' })).not.toBeInTheDocument();
     expect(within(panel).queryByText('项目桌面')).not.toBeInTheDocument();
     expect(panel.querySelector('[data-wayfinder-archive]')).toBeNull();
+  });
+
+  it('reveals the rest of a busy project through one clearly named list control', async () => {
+    renderPanel({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          items: Array.from({ length: 7 }, (_, index) => sessionRecord(
+            `session-${index}`,
+            `对话 ${index + 1}`,
+            { updatedAtMs: NOW - index * 1_000 },
+          )),
+        },
+        'agent.rooms.list': { ok: true, items: [] },
+      },
+    });
+
+    const panel = await screen.findByRole('region', { name: '最近工作' });
+    await openProjectFolder(panel);
+    expect(panel.querySelectorAll('[data-dialogue-file]')).toHaveLength(5);
+
+    const reveal = within(panel).getByRole('button', { name: '显示其余 2 个对话' });
+    expect(reveal).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(reveal);
+
+    expect(panel.querySelectorAll('[data-dialogue-file]')).toHaveLength(7);
+    expect(within(panel).queryByRole('button', { name: '显示其余 2 个对话' })).not.toBeInTheDocument();
   });
 
   it('rests the 更早 bucket collapsed so stale history never fills the first screen', async () => {
@@ -275,6 +303,23 @@ describe('PawWayfinderWork', () => {
     expect(panelTop + 400).toBeLessThanOrEqual(canvas.bottom - 8);
   });
 
+  it('reserves the resident Dock when clamping an expanded project panel', () => {
+    const canvas = domRect(0, 34, 390, 810);
+    const shell = domRect(248, 522, 96, 86);
+    const dockInset = 74;
+    const placement = placeWayfinderProjectPanel({
+      canvasRect: canvas,
+      shellRect: shell,
+      panelWidth: 366,
+      panelHeight: 555,
+      bottomInset: dockInset,
+    });
+
+    const panelTop = shell.top + placement.y;
+    expect(panelTop).toBeGreaterThanOrEqual(canvas.top + 8);
+    expect(panelTop + 555).toBeLessThanOrEqual(canvas.bottom - dockInset - 8);
+  });
+
   it('re-measures the open project window on resize and writes an in-place flipped placement', async () => {
     renderPanel({
       routes: {
@@ -331,8 +376,10 @@ describe('PawWayfinderWork', () => {
     const contextTrigger = panel.querySelector<HTMLElement>('[data-wayfinder-project]')!;
     fireEvent.contextMenu(contextTrigger);
 
-    const sheet = within(panel).getByRole('dialog', { name: 'paw 项目上下文' });
+    const sheet = within(panel).getByRole('dialog', { name: 'paw 项目详情' });
     expect(sheet).toHaveAttribute('aria-modal', 'false');
+    expect(panel.querySelector('[data-wayfinder-canvas]')).not.toHaveAttribute('hidden');
+    expect(contextTrigger).toBeVisible();
     expect(within(sheet).getByText('/work/paw')).toBeInTheDocument();
     expect(within(sheet).getByText('/work/shared')).toBeInTheDocument();
     expect(within(sheet).getByText('Session')).toBeInTheDocument();
@@ -364,7 +411,7 @@ describe('PawWayfinderWork', () => {
     });
 
     fireEvent.keyDown(document, { key: 'Escape' });
-    await waitFor(() => expect(within(panel).queryByRole('dialog', { name: 'paw 项目上下文' })).not.toBeInTheDocument());
+    await waitFor(() => expect(within(panel).queryByRole('dialog', { name: 'paw 项目详情' })).not.toBeInTheDocument());
     expect(document.activeElement).toBe(contextTrigger);
   });
 
@@ -381,7 +428,7 @@ describe('PawWayfinderWork', () => {
     const panel = await screen.findByRole('region', { name: '最近工作' });
     fireEvent.contextMenu(panel.querySelector<HTMLElement>('[data-wayfinder-project]')!);
 
-    const sheet = within(panel).getByRole('dialog', { name: 'paw 项目上下文' });
+    const sheet = within(panel).getByRole('dialog', { name: 'paw 项目详情' });
     fireEvent.click(within(sheet).getByRole('button', { name: '在 Files 中打开 /work/paw' }));
 
     await waitFor(() => {
@@ -411,7 +458,7 @@ describe('PawWayfinderWork', () => {
     const panel = await screen.findByRole('region', { name: '最近工作' });
     fireEvent.contextMenu(panel.querySelector<HTMLElement>('[data-wayfinder-project]')!);
 
-    const sheet = within(panel).getByRole('dialog', { name: 'room 项目上下文' });
+    const sheet = within(panel).getByRole('dialog', { name: 'room 项目详情' });
     expect(within(sheet).getByText('/work/room')).toBeInTheDocument();
     expect(within(sheet).queryByRole('button', { name: /在 Files 中打开/ })).not.toBeInTheDocument();
   });
@@ -433,7 +480,7 @@ describe('PawWayfinderWork', () => {
     expect(folder).not.toHaveAttribute('open');
     fireEvent.keyDown(contextTrigger, { key: 'F10', shiftKey: true });
 
-    expect(within(panel).getByRole('dialog', { name: 'paw 项目上下文' })).toBeInTheDocument();
+    expect(within(panel).getByRole('dialog', { name: 'paw 项目详情' })).toBeInTheDocument();
     expect(folder).not.toHaveAttribute('open');
   });
 
@@ -495,7 +542,7 @@ describe('PawWayfinderWork', () => {
       const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
         wayfinder?: { iconPositions?: Record<string, { x: number; y: number }> };
       };
-      expect(snapshot.wayfinder?.iconPositions?.['project:/work/paw']).toEqual({ x: 162, y: 124 });
+      expect(snapshot.wayfinder?.iconPositions?.['project:/work/paw']).toEqual({ x: 136, y: 140 });
     });
 
     expect(panel.querySelector('[data-dialogue-file]')).toBeInTheDocument();
@@ -645,6 +692,12 @@ describe('PawWayfinderWork', () => {
       expect(panel.querySelector('[data-wayfinder-loose]')).toBeNull();
       expect(panel.querySelectorAll('[data-dialogue-file]')).toHaveLength(2);
     });
+
+    const projectSummary = folder.querySelector('summary')!;
+    fireEvent.click(projectSummary);
+    expect(projectSummary).toHaveAttribute('data-selected');
+    expect(projectSummary).toHaveAttribute('aria-description', '已选择');
+    expect(projectSummary).not.toHaveAttribute('aria-pressed');
   });
 
   it('reports an unreadable directory with a retry instead of an empty desktop', async () => {

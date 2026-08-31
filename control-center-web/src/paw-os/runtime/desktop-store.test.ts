@@ -52,12 +52,13 @@ describe('PAWOS desktop store', () => {
     expect(store.getState().windows[windowId]).toBe(runningWindow);
   });
 
-  it('migrates pre-grid scattered icon coordinates once while preserving filing choices', () => {
+  it('preserves v2 coordinates for the view-layer snap migration and keeps filing choices', () => {
     const store = createPawDesktopStore(undefined, undefined, {
       windows: {},
       stack: [],
       activeWindowId: null,
       wayfinder: {
+        layoutVersion: 2,
         iconPositions: { 'project:/work/paw': { x: 731, y: 418 } },
         archived: ['session:old'],
         projectAssignments: { 'session:moved': '/work/paw' },
@@ -65,8 +66,8 @@ describe('PAWOS desktop store', () => {
     });
 
     expect(store.getState().wayfinder).toEqual({
-      layoutVersion: 2,
-      iconPositions: {},
+      layoutVersion: 3,
+      iconPositions: { 'project:/work/paw': { x: 731, y: 418 } },
       archived: ['session:old'],
       projectAssignments: { 'session:moved': '/work/paw' },
     });
@@ -81,6 +82,21 @@ describe('PAWOS desktop store', () => {
 
     expect(store.getState().wayfinder.iconPositions).toEqual({});
     expect(store.getState().wayfinder.projectAssignments).toEqual({ 'session:moved': '/work/paw' });
+  });
+
+  it('keeps App, project, Session and Room removal in visual desktop state only', () => {
+    const store = createPawDesktopStore('agent');
+    const windows = store.getState().windows;
+    const iconIds = ['app:agent', 'project:/work/paw', 'session:s1', 'room:r1'];
+
+    iconIds.forEach((iconId) => store.getState().setWayfinderArchived(iconId, true));
+
+    expect(store.getState().wayfinder.archived).toEqual(iconIds);
+    expect(store.getState().windows).toBe(windows);
+    expect(store.getState().windows.agent).toBeDefined();
+
+    iconIds.forEach((iconId) => store.getState().setWayfinderArchived(iconId, false));
+    expect(store.getState().wayfinder.archived).toEqual([]);
   });
 
   it('keeps one primary window per App and restores it without creating a second process', () => {

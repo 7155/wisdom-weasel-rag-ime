@@ -36,6 +36,7 @@ const canonicalPathIds = [
   'observability.evalSuites.list',
   'observability.sandboxRuns.list',
   'observability.sandboxRun.get',
+  'extension.sandbox.experiment.run',
   'observability.evals.evidence.run',
   'observability.evalSchedules.list',
   'observability.evalSchedules.create',

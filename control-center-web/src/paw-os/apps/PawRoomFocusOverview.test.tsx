@@ -184,15 +184,15 @@ describe('PawRoomFocusOverview', () => {
     const attempts = attemptSummary!.closest('details')!;
     expect(attempts).toHaveTextContent(/Earth\s*→\s*Mars/);
     expect(attempts).toHaveTextContent('交接 · 已分派');
-    const relations = within(mesh).getByRole('list', { name: '协作关系列表' });
-    expect(relations).toHaveTextContent('Earth → Mars · 分派 · 已完成');
+    expect(within(mesh).getByRole('button', { name: 'Earth → Mars，分派，已完成' })).toBeInTheDocument();
+    expect(within(mesh).queryByRole('list', { name: '协作关系列表' })).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: '焦点详情' })).toHaveTextContent('等待独立复核');
   });
 
   it('keeps planet responsibility labels aligned on the readable partner grid', () => {
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={vi.fn()} />);
     const mesh = screen.getByRole('group', { name: '协作网状图' });
-    const planets = within(mesh).getAllByRole('button');
+    const planets = Array.from(mesh.querySelectorAll<HTMLButtonElement>('.paw-room-focus-overview__mesh-node'));
     expect(planets).toHaveLength(3);
     expect(new Set(planets.map((planet) => planet.style.top))).toHaveLength(2);
     expect(new Set(planets.map((planet) => planet.style.left))).toHaveLength(2);
@@ -219,13 +219,13 @@ describe('PawRoomFocusOverview', () => {
     expect(onOpenParticipant).toHaveBeenCalledWith('p-earth');
   });
 
-  it('selects the same gravity relation from its visible label and accessible list, with real provenance and planet actions', async () => {
+  it('selects a gravity relation from one visible accessible control, with real provenance and planet actions', async () => {
     const user = userEvent.setup();
     const onOpenParticipant = vi.fn();
     render(<PawRoomFocusOverview focus={focus} onOpenParticipant={onOpenParticipant} />);
     const mesh = screen.getByRole('group', { name: '协作网状图' });
 
-    const relationLabel = mesh.querySelector<HTMLAnchorElement>('.paw-room-focus-overview__mesh-edge-label[data-kind="dispatch"]')!;
+    const relationLabel = mesh.querySelector<HTMLButtonElement>('.paw-room-focus-overview__mesh-edge-label[data-kind="dispatch"]')!;
     await user.click(relationLabel);
 
     const detail = screen.getByRole('region', { name: '协作关系详情' });
@@ -241,9 +241,8 @@ describe('PawRoomFocusOverview', () => {
     await user.click(within(detail).getByRole('button', { name: '打开 Mars 伙伴窗口' }));
     expect(onOpenParticipant.mock.calls).toEqual([['p-earth'], ['p-mars']]);
 
-    const accessible = within(within(mesh).getByRole('list', { name: '协作关系列表' }))
-      .getByRole('link', { name: 'Earth → Mars，分派，已完成' });
-    accessible.focus();
+    expect(relationLabel).toHaveAttribute('aria-pressed', 'true');
+    relationLabel.focus();
     await user.keyboard(' ');
     expect(screen.getByRole('region', { name: '协作关系详情' })).toHaveTextContent('activity:dispatch-mars');
   });
@@ -351,7 +350,7 @@ describe('PawRoomFocusOverview', () => {
     expect(packets).toHaveTextContent('Earth → Mars');
 
     // The latest packet is pre-selected; picking the dispatch reveals its refs.
-    expect(within(ledger).getByRole('button', { name: /任务图交互已通过测试/ })).toHaveAttribute('aria-current', 'true');
+    expect(within(ledger).getByRole('button', { name: /任务图交互已通过测试/ })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(within(ledger).getByRole('button', { name: /分派依赖投影支线/ }));
     const detail = ledger.querySelector('.paw-room-focus-overview__packet-detail')!;
     expect(detail).toHaveTextContent('任务分派');

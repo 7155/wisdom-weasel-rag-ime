@@ -162,7 +162,7 @@ export function DiagnosticsFeature() {
           </ManagementSection>
         )}
 
-        <ManagementSection title="服务状态" trailing={<StatusBadge label={`${components.length} 项`} tone={components.every((item) => booleanValue(item.ok)) ? 'success' : 'warning'} />}>
+        <ManagementSection title="服务状态" trailing={<StatusBadge label={`${components.length} 项`} tone={components.length ? (components.every((item) => booleanValue(item.ok)) ? 'success' : 'warning') : 'neutral'} />}>
           {components.length ? <DiagnosticsServiceList components={components} /> : <EmptyState action={<Button onClick={refresh} size="small">重新检查</Button>} description="暂未收到本机服务状态。" headingLevel={3} icon={Activity} title="暂无服务状态" />}
         </ManagementSection>
 

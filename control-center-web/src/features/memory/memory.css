@@ -13,7 +13,7 @@
    the timeline within the Memory frame. Shared mgmt-* grammar is owned by
    management.css; only Memory-scoped composition may override it here. */
 
-main[data-route-id='memory'] {
+:is(main, section)[data-route-id='memory'] {
   /* The App root is the responsive container. Every Memory surface — window
      chrome included — reads the width of the PAWOS window it was given, so a
      resize reflows the App without the browser viewport ever being asked. */
@@ -69,7 +69,7 @@ main[data-route-id='memory'] {
 /* Layer identity colours need a second contrast pairing on the dark paper.
    The light palette remains deliberately restrained; these lighter signals
    keep active labels and icons readable without changing layer identity. */
-:root[data-theme='dark'] main[data-route-id='memory'] {
+:root[data-theme='dark'] :is(main, section)[data-route-id='memory'] {
   --memory-signal-strong: #f472b6;
   --memory-evidence-strong: #fdba74;
   --memory-organize-strong: #fbbf24;
@@ -603,11 +603,11 @@ main[data-route-id='memory'] {
   font-size: 12px;
 }
 
-/* Book rows read like spines on a shelf: an indigo spine edge and a larger
-   serif-weight title mark the settled, long-term register. */
+/* Book rows use one quiet indigo outline and a larger title to mark the
+   settled, long-term register without adding a decorative side stripe. */
 .memory-second-brain[data-view='catalog'][data-layer='books'] .memory-layer-list .mgmt-list__row {
-  border-left: 3px solid color-mix(in srgb, var(--memory-signal) 45%, var(--color-border));
-  border-radius: 7px 11px 11px 7px;
+  border-color: color-mix(in srgb, var(--memory-signal) 38%, var(--color-border));
+  border-radius: 9px;
 }
 
 .memory-second-brain[data-view='catalog'][data-layer='books'] .memory-layer-list .mgmt-list__copy strong {
@@ -616,7 +616,7 @@ main[data-route-id='memory'] {
 }
 
 .memory-second-brain[data-view='catalog'][data-layer='books'] .memory-layer-list .mgmt-list__row[data-selected] {
-  border-left-color: var(--memory-signal);
+  border-color: var(--memory-signal);
   box-shadow: none;
 }
 
@@ -2266,7 +2266,7 @@ main[data-route-id='memory'] {
    and the Radix Tabs root stay structural; the pipeline band, the filter band,
    and the workspace panes provide all visible structure. */
 
-main[data-route-id='memory'][data-paw-os-app='memory'] {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] {
   height: 100%;
   min-height: 0;
   display: grid;
@@ -2280,7 +2280,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] {
   font-family: var(--font-body, "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif);
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-actions {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-actions {
   position: relative;
   min-height: 52px;
   display: grid;
@@ -2292,7 +2292,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__native-acti
   background: #fff;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
   min-height: 0;
   overflow: hidden;
   padding: 0;
@@ -2301,7 +2301,7 @@ main[data-route-id='memory'][data-paw-os-app='memory'] > .mgmt-page__body {
 /* Window layout: pipeline band, optional collapsed page nav, then one
    scrollable page body. The rows are addressed explicitly because the nav is
    absent from the flow whenever the window is wide enough for a real rail. */
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -2311,33 +2311,33 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
   background: #f5f7fa;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline { grid-row: 1; }
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-app-nav { grid-row: 2; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline { grid-row: 1; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-app-nav { grid-row: 2; }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs,
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .mgmt-loading,
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > [role='alert'] {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs,
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .mgmt-loading,
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > [role='alert'] {
   min-height: 0;
   grid-row: 3;
   overflow: auto;
 }
 
 /* The pipeline becomes a full-bleed band under the window chrome. */
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline {
   border: 0;
   border-bottom: 1px solid var(--memory-line);
   border-radius: 0;
   background: #fff;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__summary {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-pipeline .memory-pipeline__summary {
   background: #fafbfd;
 }
 
 /* Structural resets: no stacked frames around the same catalog. */
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs,
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs > [role='tabpanel'],
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs,
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs > [role='tabpanel'],
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-view-tabs .mgmt-section {
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -2349,13 +2349,13 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .mem
   min-height: 0;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs > [role='tabpanel'] {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .memory-view-tabs > [role='tabpanel'] {
   min-height: 0;
   overflow: auto;
   animation: memory-view-arrive 260ms cubic-bezier(.16, 1, .3, 1) both;
@@ -2463,12 +2463,12 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain > .m
    the body below it scrolls. The reading measure moves from the frame onto the
    page blocks so a pinned heading can span the whole pane. */
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain {
   --memory-page-gutter: clamp(14px, 3cqw, 28px);
   --memory-page-measure: 1120px;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
   .memory-preferences,
   .memory-curation,
   .activity-timeline,
@@ -2480,18 +2480,18 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
   margin-inline: 0;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
   .memory-curation,
   .activity-timeline,
   .memory-relations,
   .memory-role-book-layer
 ) > *,
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-preferences > .mgmt-section > * {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-preferences > .mgmt-section > * {
   width: min(var(--memory-page-measure), calc(100% - 2 * var(--memory-page-gutter)));
   margin-inline: auto;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
   .memory-curation > .memory-curation__header,
   .activity-timeline > .activity-timeline__toolbar,
   .memory-relations > .memory-relations__toolbar,
@@ -2510,37 +2510,37 @@ main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(
   background: #fff;
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-preferences > .mgmt-section { padding: 0 0 36px; }
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-curation { padding-top: 0; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-preferences > .mgmt-section { padding: 0 0 36px; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .memory-curation { padding-top: 0; }
 
 /* The relation graph is sized by the window, never by the browser viewport:
    inside a short window the canvas shrinks instead of pushing the controls and
    the node list out of the pane. */
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-relation-canvas { height: clamp(280px, 58cqh, 820px); }
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-explorer__visual { grid-template-rows: auto auto minmax(0, 1fr); }
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-node-list { max-height: clamp(220px, 58cqh, 590px); }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-relation-canvas { height: clamp(280px, 58cqh, 820px); }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-explorer__visual { grid-template-rows: auto auto minmax(0, 1fr); }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-node-list { max-height: clamp(220px, 58cqh, 590px); }
 
 /* Loading and empty states report inside the pane instead of forcing it open. */
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(.mgmt-loading, .memory-layer-loading) {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain :is(.mgmt-loading, .memory-layer-loading) {
   min-height: 0;
   padding: var(--space-4) var(--memory-page-gutter);
 }
 
-main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .ui-empty-state {
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain .ui-empty-state {
   min-width: 0;
   max-width: 100%;
 }
 
 /* Selection, focus, and scrollbars all follow the layer identity. */
-main[data-route-id='memory'] ::selection { background: color-mix(in srgb, var(--memory-signal) 24%, transparent); }
-main[data-route-id='memory'] :focus-visible { outline-color: var(--memory-signal); }
-main[data-route-id='memory'][data-paw-os-app='memory'] :where(.memory-layer-list, [role='tabpanel']) { scrollbar-color: color-mix(in srgb, var(--memory-signal) 28%, transparent) transparent; scrollbar-width: thin; }
+:is(main, section)[data-route-id='memory'] ::selection { background: color-mix(in srgb, var(--memory-signal) 24%, transparent); }
+:is(main, section)[data-route-id='memory'] :focus-visible { outline-color: var(--memory-signal); }
+:is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] :where(.memory-layer-list, [role='tabpanel']) { scrollbar-color: color-mix(in srgb, var(--memory-signal) 28%, transparent) transparent; scrollbar-width: thin; }
 
 /* UR-102 memory semantic typography */
-main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span { font-size: 13px; }
-main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__signal strong { font-size: 13px; }
-main[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 14px; }
-main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong { font-size: 14px; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span { font-size: 13px; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app] .memory-pipeline__signal strong { font-size: 13px; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app] .memory-pipeline__stage-copy strong { font-size: 14px; }
+:is(main, section)[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong { font-size: 14px; }
 /* UR-102 memory semantic typography end */
 
 /* ============================== interaction states ============================== */
@@ -2775,6 +2775,48 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
   .memory-preferences__grid > :last-child { border-bottom: 0; }
 }
 
+/* Phone-width PAWOS windows keep the full information architecture visible:
+   the four stages become one compact segmented row instead of a 668px strip
+   that exposes only two-and-a-half steps. Labels remain in each button's
+   accessible name; the shorter visual copy protects the workspace height. */
+@container memory-second-brain (max-width: 480px) {
+  .memory-pipeline__stages {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow-x: hidden;
+  }
+
+  .memory-pipeline__stage { min-width: 0; flex: none; }
+  .memory-pipeline__flow { display: none; }
+
+  .memory-pipeline__stage > button {
+    min-height: 52px;
+    padding: 5px 4px;
+    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 5px;
+    row-gap: 0;
+  }
+
+  .memory-pipeline__stage-icon {
+    width: 24px;
+    height: 24px;
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+
+  .memory-pipeline__stage-copy { grid-column: 2; grid-row: 1; }
+  .memory-pipeline__stage-copy small { display: none; }
+  .memory-pipeline__stage-copy strong { font-size: 12px; }
+  .memory-pipeline__stage-count {
+    grid-column: 2;
+    grid-row: 2;
+    padding: 0;
+    font-size: 12px;
+  }
+  .memory-pipeline__stage-count small { display: none; }
+}
+
 /* Portalled dialogs live outside both containers; they follow the viewport. */
 @media (max-width: 680px) {
   .memory-reference-view__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2787,22 +2829,22 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 /* Touch targets grow to 44px once the App itself is compact — a narrow window
    on a large display needs the same reachable controls as a small screen. */
 @container memory-app (max-width: 760px) {
-  main[data-route-id='memory'] .ui-button,
-  main[data-route-id='memory'] .ui-icon-button,
-  main[data-route-id='memory'] .ui-input,
-  main[data-route-id='memory'] .ui-select__trigger,
-  main[data-route-id='memory'] [role='tab'] {
+  :is(main, section)[data-route-id='memory'] .ui-button,
+  :is(main, section)[data-route-id='memory'] .ui-icon-button,
+  :is(main, section)[data-route-id='memory'] .ui-input,
+  :is(main, section)[data-route-id='memory'] .ui-select__trigger,
+  :is(main, section)[data-route-id='memory'] [role='tab'] {
     min-height: 44px;
   }
 
-  main[data-route-id='memory'] [role='tab'] { min-width: 44px; }
+  :is(main, section)[data-route-id='memory'] [role='tab'] { min-width: 44px; }
 
-  main[data-route-id='memory'] .memory-relation-canvas__controls .ui-button {
+  :is(main, section)[data-route-id='memory'] .memory-relation-canvas__controls .ui-button {
     width: 44px;
     min-width: 44px;
   }
 
-  main[data-route-id='memory'] .memory-entity__row button {
+  :is(main, section)[data-route-id='memory'] .memory-entity__row button {
     display: flex;
     min-height: 44px;
     align-items: center;
@@ -2812,11 +2854,11 @@ main[data-route-id='memory'][data-paw-os-app] .memory-second-brain__mode strong 
 /* 375px class windows. The App keeps one column everywhere: nothing may push
    the pane wider than the window, and the pinned page headings shrink with it. */
 @container memory-app (max-width: 430px) {
-  main[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain { --memory-page-gutter: 12px; }
-  main[data-route-id='memory'] .memory-app-nav { padding-inline: 12px; }
-  main[data-route-id='memory'] .memory-second-brain__mode small { display: none; }
-  main[data-route-id='memory'] .memory-catalog-filters .ui-field,
-  main[data-route-id='memory'] .memory-catalog-filters__query { min-width: 0; flex-basis: 100%; }
-  main[data-route-id='memory'] .memory-graph__scope code { max-width: 100%; }
-  main[data-route-id='memory'] .memory-relations__filters > .memory-relations__source { width: 100%; flex-basis: 100%; }
+  :is(main, section)[data-route-id='memory'][data-paw-os-app='memory'] .memory-second-brain { --memory-page-gutter: 12px; }
+  :is(main, section)[data-route-id='memory'] .memory-app-nav { padding-inline: 12px; }
+  :is(main, section)[data-route-id='memory'] .memory-second-brain__mode small { display: none; }
+  :is(main, section)[data-route-id='memory'] .memory-catalog-filters .ui-field,
+  :is(main, section)[data-route-id='memory'] .memory-catalog-filters__query { min-width: 0; flex-basis: 100%; }
+  :is(main, section)[data-route-id='memory'] .memory-graph__scope code { max-width: 100%; }
+  :is(main, section)[data-route-id='memory'] .memory-relations__filters > .memory-relations__source { width: 100%; flex-basis: 100%; }
 }

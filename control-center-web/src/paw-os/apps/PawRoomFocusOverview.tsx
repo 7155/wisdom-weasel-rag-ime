@@ -259,25 +259,16 @@ function FocusMeshGraph({
             ))}
           </svg>
           {mesh.edges.map((edge) => (
-            <a
-              aria-current={selection.kind === 'edge' && selection.id === edge.id ? 'true' : undefined}
+            <button
               aria-label={meshEdgeAriaLabel(edge, nodeLabels)}
+              aria-pressed={selection.kind === 'edge' && selection.id === edge.id}
               className="paw-room-focus-overview__mesh-edge-label"
               data-kind={edge.kind}
-              href={`#room-relation-${encodeURIComponent(edge.id)}`}
               key={`${edge.id}:label`}
-              onClick={(event) => {
-                event.preventDefault();
-                onSelect({ kind: 'edge', id: edge.id });
-              }}
-              onKeyDown={(event) => {
-                if (event.key === ' ') {
-                  event.preventDefault();
-                  onSelect({ kind: 'edge', id: edge.id });
-                }
-              }}
+              onClick={() => onSelect({ kind: 'edge', id: edge.id })}
               style={{ left: `${edge.labelX}%`, top: `${(edge.labelY / mesh.height) * 100}%` }}
-            >{edge.label}</a>
+              type="button"
+            >{edge.label}</button>
           ))}
           {mesh.nodes.map((node) => <FocusMeshNode
             canvasHeight={mesh.height}
@@ -290,35 +281,6 @@ function FocusMeshGraph({
               : selection.kind === 'partner' && selection.id === node.refId}
             onSelect={onSelect}
           />)}
-          {mesh.edges.length ? (
-            <ul aria-label="协作关系列表" className="sr-only">
-              {mesh.edges.map((edge) => (
-                <li key={`${edge.id}:accessible`}>
-                  <a
-                    aria-current={selection.kind === 'edge' && selection.id === edge.id ? 'true' : undefined}
-                    aria-label={meshEdgeAriaLabel(edge, nodeLabels)}
-                    href={`#room-relation-${encodeURIComponent(edge.id)}`}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      onSelect({ kind: 'edge', id: edge.id });
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === ' ') {
-                        event.preventDefault();
-                        onSelect({ kind: 'edge', id: edge.id });
-                      }
-                    }}
-                  >
-                    {nodeLabels.get(edge.sourceId) ?? edge.sourceId}
-                    {' → '}
-                    {nodeLabels.get(edge.targetId) ?? edge.targetId}
-                    {' · '}{edge.label}
-                    {' · '}{relationStateLabel(edge.state)}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          ) : null}
           </div>
           {selection.kind === 'edge' ? (
             <MeshEdgeDetail
@@ -554,7 +516,7 @@ function FocusFlowLedger({
           {visiblePackets.map((packet, index) => (
             <li data-kind={packet.kind} data-status={packet.status} key={packet.id}>
               <button
-                aria-current={packet.id === selectedPacket?.id || undefined}
+                aria-pressed={packet.id === selectedPacket?.id}
                 onClick={() => setSelectedPacketId(packet.id)}
                 type="button"
               >

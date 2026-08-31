@@ -112,6 +112,24 @@ describe('DiagnosticsFeature runtime actions', () => {
     expect(screen.getByText('本机服务正常不代表候选已经显示。请依次检查输入法、已安装组件、本机补全服务、候选生成和前台显示。')).toBeInTheDocument();
   });
 
+  it('reports an absent service inventory as unknown instead of healthy', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        ...routes,
+        'diagnostics.runtime': {
+          ...routes['diagnostics.runtime'],
+          components: {},
+        },
+      },
+    }));
+
+    const heading = await screen.findByRole('heading', { name: '服务状态' });
+    const section = heading.closest('section');
+    expect(section).not.toBeNull();
+    expect(within(section as HTMLElement).getByText('0 项')).toHaveAttribute('data-tone', 'neutral');
+    expect(within(section as HTMLElement).getByRole('heading', { name: '暂无服务状态' })).toBeInTheDocument();
+  });
+
   it('runs the server-bound accessibility workflow and renders the terminal receipt', async () => {
     const user = userEvent.setup();
     const externalAction = vi.fn(async (request) => ({

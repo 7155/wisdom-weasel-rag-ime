@@ -192,7 +192,8 @@ export function extensionAppInstallationMatches(
     && evidence.skillRef === app.skillRef
     && evidence.skillSha256 === app.skillSha256
     && evidence.verticalSuiteId === app.verticalSuiteId
-    && evidence.verticalSuiteRevision === app.verticalSuiteRevision;
+    && evidence.verticalSuiteRevision === app.verticalSuiteRevision
+    && sameSandboxContract(evidence.sandbox, app.sandbox);
 }
 
 function extensionAppInstallationEvidence(
@@ -211,6 +212,7 @@ function extensionAppInstallationEvidence(
   const skillSha256 = text(raw.skillSha256);
   const verticalSuiteId = text(raw.verticalSuiteId);
   const verticalSuiteRevision = text(raw.verticalSuiteRevision);
+  const sandbox = extensionSandboxContract(raw.sandbox);
   if (!isPawExtensionAppId(id)
     || !packageId
     || !version
@@ -231,7 +233,31 @@ function extensionAppInstallationEvidence(
     skillSha256,
     verticalSuiteId,
     verticalSuiteRevision,
+    ...(sandbox ? { sandbox } : {}),
   };
+}
+
+function extensionSandboxContract(value: unknown): PawExtensionAppInstallationEvidence['sandbox'] | undefined {
+  const raw = asRecord(value);
+  return raw.default === 'required' || raw.default === 'optional' || raw.default === 'disabled'
+    ? raw.connectorPackageId === 'vertical-agent-sandbox' && raw.policyId === 'vertical-readonly-v1'
+      ? {
+          default: raw.default,
+          connectorPackageId: 'vertical-agent-sandbox',
+          policyId: 'vertical-readonly-v1',
+        }
+      : undefined
+    : undefined;
+}
+
+function sameSandboxContract(
+  left: PawExtensionAppInstallationEvidence['sandbox'],
+  right: PawExtensionAppManifest['sandbox'],
+): boolean {
+  if (!left || !right) return left === right;
+  return left.default === right.default
+    && left.connectorPackageId === right.connectorPackageId
+    && left.policyId === right.policyId;
 }
 
 function extensionBindingCapabilityFromList(value: unknown): string {

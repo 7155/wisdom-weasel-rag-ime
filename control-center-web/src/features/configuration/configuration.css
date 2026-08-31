@@ -1,16 +1,16 @@
-main[data-route-id='configuration'] .configuration-search {
+:is(main, section)[data-route-id='configuration'] .configuration-search {
   max-width: 440px;
   margin-bottom: var(--space-4);
 }
 
-main[data-route-id='configuration'] .configuration-provider-models[data-expanded] {
+:is(main, section)[data-route-id='configuration'] .configuration-provider-models[data-expanded] {
   max-height: min(420px, 48dvh);
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
-main[data-route-id='configuration'] .configuration-provider-models__toggle {
+:is(main, section)[data-route-id='configuration'] .configuration-provider-models__toggle {
   width: fit-content;
   min-height: 34px;
   padding: 5px 7px;
@@ -25,10 +25,10 @@ main[data-route-id='configuration'] .configuration-provider-models__toggle {
   cursor: pointer;
 }
 
-main[data-route-id='configuration'] .configuration-provider-models__toggle:hover,
-main[data-route-id='configuration'] .configuration-provider-models__toggle:focus-visible { background: var(--color-accent-soft); }
+:is(main, section)[data-route-id='configuration'] .configuration-provider-models__toggle:hover,
+:is(main, section)[data-route-id='configuration'] .configuration-provider-models__toggle:focus-visible { background: var(--color-accent-soft); }
 
-main[data-route-id='configuration'] .configuration-editor {
+:is(main, section)[data-route-id='configuration'] .configuration-editor {
   display: grid;
   min-width: 0;
   gap: var(--space-4);
@@ -37,7 +37,7 @@ main[data-route-id='configuration'] .configuration-editor {
 
 /* The group rail is a set of quiet rounded destinations, not a bordered
    table: the selected group reads as one soft filled pill. */
-main[data-route-id='configuration'] .configuration-section-nav {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -45,7 +45,7 @@ main[data-route-id='configuration'] .configuration-section-nav {
   align-self: start;
 }
 
-main[data-route-id='configuration'] .configuration-section-nav button {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav button {
   display: grid;
   min-width: 0;
   grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -61,23 +61,23 @@ main[data-route-id='configuration'] .configuration-section-nav button {
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='configuration'] .configuration-section-nav button:focus-visible {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav button:focus-visible {
   background: var(--color-surface-subtle);
   color: var(--color-text-secondary);
 }
 
-main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
   background: var(--color-accent-soft);
   color: var(--color-accent);
 }
 
-main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] strong {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] strong {
   color: var(--color-accent);
 }
 
 /* Unsaved drafts stay visible from the rail so no edit is silently parked
    in a group the person has already left. */
-main[data-route-id='configuration'] .configuration-section-nav__pending {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav__pending {
   display: inline-grid;
   min-width: 18px;
   height: 18px;
@@ -93,28 +93,28 @@ main[data-route-id='configuration'] .configuration-section-nav__pending {
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='configuration'] .configuration-section-nav span,
-main[data-route-id='configuration'] .configuration-editor__heading > span {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav span,
+:is(main, section)[data-route-id='configuration'] .configuration-editor__heading > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='configuration'] .configuration-section-nav strong {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav strong {
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 700;
 }
 
-main[data-route-id='configuration'] .configuration-section-nav small,
-main[data-route-id='configuration'] .configuration-editor__heading small {
+:is(main, section)[data-route-id='configuration'] .configuration-section-nav small,
+:is(main, section)[data-route-id='configuration'] .configuration-editor__heading small {
   color: var(--color-text-tertiary);
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='configuration'] .configuration-editor__heading {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__heading {
   display: flex;
   min-height: 38px;
   align-items: start;
@@ -122,19 +122,19 @@ main[data-route-id='configuration'] .configuration-editor__heading {
   gap: var(--space-3);
 }
 
-main[data-route-id='configuration'] .configuration-editor__heading strong {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__heading strong {
   font-size: 14px;
 }
 
 /* Feature destinations are rounded cards on the bright sheet; each one names
    the page it opens and what lives there. */
-main[data-route-id='configuration'] .configuration-destinations {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations button {
   display: grid;
   min-width: 0;
   min-height: 60px;
@@ -151,38 +151,38 @@ main[data-route-id='configuration'] .configuration-destinations button {
   transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button > svg:first-child {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations button > svg:first-child {
   color: var(--color-accent);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button > svg:last-child {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations button > svg:last-child {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button:focus-visible {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations button:focus-visible {
   border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
   background: var(--color-surface-subtle);
   color: var(--color-text-primary);
 }
 
-main[data-route-id='configuration'] .configuration-destinations button > span {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations button > span {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='configuration'] .configuration-destinations strong,
-main[data-route-id='configuration'] .configuration-destinations small {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations strong,
+:is(main, section)[data-route-id='configuration'] .configuration-destinations small {
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='configuration'] .configuration-subagents[data-highlighted] > .mgmt-section {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents[data-highlighted] > .mgmt-section {
   border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
   background: color-mix(in srgb, var(--color-accent-soft) 24%, var(--color-surface));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
-main[data-route-id='configuration'] .configuration-subagents__summary {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__summary {
   display: grid;
   min-height: 62px;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -192,8 +192,8 @@ main[data-route-id='configuration'] .configuration-subagents__summary {
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-subagents__summary > div,
-main[data-route-id='configuration'] .configuration-subagents__templates article {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__summary > div,
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates article {
   display: grid;
   min-width: 0;
   grid-template-columns: 32px minmax(0, 1fr) auto;
@@ -201,8 +201,8 @@ main[data-route-id='configuration'] .configuration-subagents__templates article 
   gap: 9px;
 }
 
-main[data-route-id='configuration'] .configuration-subagents__summary > div > span,
-main[data-route-id='configuration'] .configuration-subagents__templates article > span {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__summary > div > span,
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates article > span {
   display: grid;
   width: 30px;
   height: 30px;
@@ -212,26 +212,26 @@ main[data-route-id='configuration'] .configuration-subagents__templates article 
   color: var(--color-accent);
 }
 
-main[data-route-id='configuration'] .configuration-subagents__summary p,
-main[data-route-id='configuration'] .configuration-subagents__templates p {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__summary p,
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates p {
   display: grid;
   min-width: 0;
   gap: 2px;
   margin: 0;
 }
 
-main[data-route-id='configuration'] .configuration-subagents__summary strong,
-main[data-route-id='configuration'] .configuration-subagents__templates strong { font-size: 13px; }
-main[data-route-id='configuration'] .configuration-subagents__summary small,
-main[data-route-id='configuration'] .configuration-subagents__templates small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__summary strong,
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates strong { font-size: 13px; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__summary small,
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates small { color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; }
 
-main[data-route-id='configuration'] .configuration-subagents__rules {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-subagents__rules article {
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules article {
   display: grid;
   min-width: 0;
   min-height: 78px;
@@ -243,71 +243,71 @@ main[data-route-id='configuration'] .configuration-subagents__rules article {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-subagents__rules article:nth-child(2n) { border-right: 0; }
-main[data-route-id='configuration'] .configuration-subagents__rules article:nth-last-child(-n + 2) { border-bottom: 0; }
-main[data-route-id='configuration'] .configuration-subagents__rules svg { color: var(--color-accent); }
-main[data-route-id='configuration'] .configuration-subagents__rules span { display: grid; gap: 3px; }
-main[data-route-id='configuration'] .configuration-subagents__rules strong { font-size: 13px; }
-main[data-route-id='configuration'] .configuration-subagents__rules small { color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules article:nth-child(2n) { border-right: 0; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules article:nth-last-child(-n + 2) { border-bottom: 0; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules svg { color: var(--color-accent); }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules span { display: grid; gap: 3px; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules strong { font-size: 13px; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__rules small { color: var(--color-text-secondary); font-size: 12px; line-height: 1.45; }
 
-main[data-route-id='configuration'] .configuration-subagents__templates { display: grid; }
-main[data-route-id='configuration'] .configuration-subagents__templates article { min-height: 58px; padding: 8px 2px; border-bottom: 1px solid var(--color-border); }
-main[data-route-id='configuration'] .configuration-subagents__templates em { color: var(--color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 650; }
-main[data-route-id='configuration'] .configuration-subagents__error { margin: 0; padding: 9px; border-left: 3px solid var(--color-danger); background: var(--color-danger-soft); color: var(--color-danger); font-size: 12px; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates { display: grid; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates article { min-height: 58px; padding: 8px 2px; border-bottom: 1px solid var(--color-border); }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__templates em { color: var(--color-text-tertiary); font-size: 11px; font-style: normal; font-weight: 650; }
+:is(main, section)[data-route-id='configuration'] .configuration-subagents__error { margin: 0; padding: 9px; border-left: 3px solid var(--color-danger); background: var(--color-danger-soft); color: var(--color-danger); font-size: 12px; }
 
 @media (max-width: 760px) {
-  main[data-route-id='configuration'] .configuration-subagents__summary { grid-template-columns: minmax(0, 1fr) auto; }
-  main[data-route-id='configuration'] .configuration-subagents__summary > .ui-button { grid-column: 1 / -1; }
-  main[data-route-id='configuration'] .configuration-subagents__rules { grid-template-columns: 1fr; }
-  main[data-route-id='configuration'] .configuration-subagents__rules article,
-  main[data-route-id='configuration'] .configuration-subagents__rules article:nth-child(2n),
-  main[data-route-id='configuration'] .configuration-subagents__rules article:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  :is(main, section)[data-route-id='configuration'] .configuration-subagents__summary { grid-template-columns: minmax(0, 1fr) auto; }
+  :is(main, section)[data-route-id='configuration'] .configuration-subagents__summary > .ui-button { grid-column: 1 / -1; }
+  :is(main, section)[data-route-id='configuration'] .configuration-subagents__rules { grid-template-columns: 1fr; }
+  :is(main, section)[data-route-id='configuration'] .configuration-subagents__rules article,
+  :is(main, section)[data-route-id='configuration'] .configuration-subagents__rules article:nth-child(2n),
+  :is(main, section)[data-route-id='configuration'] .configuration-subagents__rules article:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--color-border); }
 }
 
-main[data-route-id='configuration'] .configuration-destinations strong {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations strong {
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 700;
 }
 
-main[data-route-id='configuration'] .configuration-destinations small {
+:is(main, section)[data-route-id='configuration'] .configuration-destinations small {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='configuration'] .configuration-editor > * {
+:is(main, section)[data-route-id='configuration'] .configuration-editor > * {
   min-width: 0;
 }
 
-main[data-route-id='configuration'] .configuration-editor__title {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__title {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
   font-weight: 700;
 }
 
-main[data-route-id='configuration'] .configuration-editor__fields > .mgmt-list,
-main[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-wrap {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__fields > .mgmt-list,
+:is(main, section)[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-wrap {
   max-height: 460px;
   overflow: auto;
 }
 
-main[data-route-id='configuration'] .configuration-editor__review {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__review {
   grid-column: 1 / -1;
   padding-top: var(--space-2);
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-editor__empty-review {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__empty-review {
   margin: 0;
   padding: 8px 0 2px;
 }
 
-main[data-route-id='configuration'] .configuration-editor__review[data-has-changes='false'] > .mgmt-workflow[data-stage='idle'] {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__review[data-has-changes='false'] > .mgmt-workflow[data-stage='idle'] {
   display: none;
 }
 
-main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row {
   display: block;
   min-height: 0;
   padding: 11px 8px;
@@ -317,14 +317,14 @@ main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__ro
 
 /* An edited field carries its own quiet marker so a draft is visible where it
    was made, not only in the review table below. */
-main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row[data-changed] {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row[data-changed] {
   background: color-mix(in srgb, var(--color-accent-soft) 44%, var(--color-surface));
   box-shadow: inset 3px 0 0 var(--color-accent);
 }
 
 /* Consequence-first: each field states what saving it will do, in the same
    breath as its description. */
-main[data-route-id='configuration'] .configuration-field-consequence {
+:is(main, section)[data-route-id='configuration'] .configuration-field-consequence {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 7px;
@@ -338,7 +338,7 @@ main[data-route-id='configuration'] .configuration-field-consequence {
   white-space: nowrap;
 }
 
-main[data-route-id='configuration'] .configuration-editor__review-heading {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__review-heading {
   display: flex;
   min-height: 28px;
   align-items: center;
@@ -346,7 +346,7 @@ main[data-route-id='configuration'] .configuration-editor__review-heading {
   gap: var(--space-3);
 }
 
-main[data-route-id='configuration'] .configuration-review-consequence {
+:is(main, section)[data-route-id='configuration'] .configuration-review-consequence {
   margin: 0;
   padding: 8px 10px;
   border-radius: var(--radius-2);
@@ -356,15 +356,15 @@ main[data-route-id='configuration'] .configuration-review-consequence {
   line-height: 1.5;
 }
 
-main[data-route-id='configuration'] .configuration-editor__review .ui-empty-state {
+:is(main, section)[data-route-id='configuration'] .configuration-editor__review .ui-empty-state {
   padding-block: var(--space-6);
 }
 
-main[data-route-id='configuration'] .configuration-details {
+:is(main, section)[data-route-id='configuration'] .configuration-details {
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-details summary {
+:is(main, section)[data-route-id='configuration'] .configuration-details summary {
   padding: 10px 2px;
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -372,46 +372,46 @@ main[data-route-id='configuration'] .configuration-details summary {
   cursor: pointer;
 }
 
-main[data-route-id='configuration'] .configuration-details .mgmt-table-wrap {
+:is(main, section)[data-route-id='configuration'] .configuration-details .mgmt-table-wrap {
   margin-bottom: var(--space-3);
 }
 
-main[data-route-id='configuration'] .configuration-provider-recovery-actions .ui-button {
+:is(main, section)[data-route-id='configuration'] .configuration-provider-recovery-actions .ui-button {
   min-height: 44px;
 }
 
-main[data-route-id='configuration'] .configuration-portability {
+:is(main, section)[data-route-id='configuration'] .configuration-portability {
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-portability > .mgmt-workflow,
-main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow {
+:is(main, section)[data-route-id='configuration'] .configuration-portability > .mgmt-workflow,
+:is(main, section)[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow {
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-main[data-route-id='configuration'] .configuration-portability > .mgmt-workflow {
+:is(main, section)[data-route-id='configuration'] .configuration-portability > .mgmt-workflow {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 {
+:is(main, section)[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 {
   gap: 0;
 }
 
-main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
+:is(main, section)[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
   border-right: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-portability .mgmt-workflow + .mgmt-workflow {
+:is(main, section)[data-route-id='configuration'] .configuration-portability .mgmt-workflow + .mgmt-workflow {
   margin-top: 0;
 }
 
-main[data-route-id='configuration'] .configuration-transfer {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer {
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='configuration'] .configuration-transfer > summary {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -422,131 +422,131 @@ main[data-route-id='configuration'] .configuration-transfer > summary {
   list-style: none;
 }
 
-main[data-route-id='configuration'] .configuration-transfer > summary::-webkit-details-marker {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer > summary::-webkit-details-marker {
   display: none;
 }
 
-main[data-route-id='configuration'] .configuration-transfer > summary > span {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer > summary > span {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='configuration'] .configuration-transfer > summary strong {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer > summary strong {
   color: var(--color-text-primary);
   font-size: 13px;
 }
 
-main[data-route-id='configuration'] .configuration-transfer > summary small {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer > summary small {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
 
-main[data-route-id='configuration'] .configuration-transfer > summary svg {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer > summary svg {
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='configuration'] .configuration-section-nav button:hover {
+  :is(main, section)[data-route-id='configuration'] .configuration-section-nav button:hover {
     background: var(--color-surface-subtle);
     color: var(--color-text-secondary);
   }
 
-  main[data-route-id='configuration'] .configuration-destinations button:hover {
+  :is(main, section)[data-route-id='configuration'] .configuration-destinations button:hover {
     border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
     background: color-mix(in srgb, var(--color-accent-soft) 40%, var(--color-surface));
     color: var(--color-text-primary);
   }
 }
 
-main[data-route-id='configuration'] .configuration-transfer[open] > summary svg {
+:is(main, section)[data-route-id='configuration'] .configuration-transfer[open] > summary svg {
   transform: rotate(90deg);
 }
 
 @media (max-width: 1180px) {
-  main[data-route-id='configuration'] .configuration-editor {
+  :is(main, section)[data-route-id='configuration'] .configuration-editor {
     grid-template-columns: minmax(170px, .42fr) minmax(300px, 1fr);
   }
 }
 
 @media (max-width: 860px) {
-  main[data-route-id='configuration'] .configuration-destinations {
+  :is(main, section)[data-route-id='configuration'] .configuration-destinations {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
+  :is(main, section)[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 }
 
 @media (max-width: 680px) {
-  main[data-route-id='configuration'] .configuration-editor {
+  :is(main, section)[data-route-id='configuration'] .configuration-editor {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='configuration'] .configuration-section-nav {
+  :is(main, section)[data-route-id='configuration'] .configuration-section-nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 4px;
   }
 
-  main[data-route-id='configuration'] .configuration-section-nav button {
+  :is(main, section)[data-route-id='configuration'] .configuration-section-nav button {
     min-height: 48px;
     align-items: center;
     border: 1px solid var(--color-border);
   }
 
-  main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
+  :is(main, section)[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
     border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
   }
 
-  main[data-route-id='configuration'] .configuration-section-nav small { display: none; }
+  :is(main, section)[data-route-id='configuration'] .configuration-section-nav small { display: none; }
 
-  main[data-route-id='configuration'] .configuration-editor__review {
+  :is(main, section)[data-route-id='configuration'] .configuration-editor__review {
     grid-column: auto;
   }
 
-  main[data-route-id='configuration'] .configuration-editor__fields > .mgmt-list,
-  main[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-wrap {
+  :is(main, section)[data-route-id='configuration'] .configuration-editor__fields > .mgmt-list,
+  :is(main, section)[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-wrap {
     max-height: none;
     overflow: visible;
   }
 
-  main[data-route-id='configuration'] .mgmt-page__actions .ui-button,
-  main[data-route-id='configuration'] .configuration-search,
-  main[data-route-id='configuration'] .configuration-search input,
-  main[data-route-id='configuration'] .configuration-editor input.ui-input,
-  main[data-route-id='configuration'] .configuration-transfer .ui-button,
-  main[data-route-id='configuration'] .configuration-portability .ui-button { min-height: 44px; }
+  :is(main, section)[data-route-id='configuration'] .mgmt-page__actions .ui-button,
+  :is(main, section)[data-route-id='configuration'] .configuration-search,
+  :is(main, section)[data-route-id='configuration'] .configuration-search input,
+  :is(main, section)[data-route-id='configuration'] .configuration-editor input.ui-input,
+  :is(main, section)[data-route-id='configuration'] .configuration-transfer .ui-button,
+  :is(main, section)[data-route-id='configuration'] .configuration-portability .ui-button { min-height: 44px; }
 
-  main[data-route-id='configuration'] .configuration-search input { height: 44px; }
+  :is(main, section)[data-route-id='configuration'] .configuration-search input { height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main[data-route-id='configuration'] .configuration-section-nav button,
-  main[data-route-id='configuration'] .configuration-destinations button,
-  main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row,
-  main[data-route-id='configuration'] .configuration-transfer > summary svg { transition: none; }
+  :is(main, section)[data-route-id='configuration'] .configuration-section-nav button,
+  :is(main, section)[data-route-id='configuration'] .configuration-destinations button,
+  :is(main, section)[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row,
+  :is(main, section)[data-route-id='configuration'] .configuration-transfer > summary svg { transition: none; }
 }
 
 @container paw-window (max-width: 860px) {
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-destinations { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-destinations { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 }
 
 @container paw-window (max-width: 620px) {
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-editor { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button { min-height: 44px; align-items: center; border: 1px solid var(--color-border); }
-  main[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button[aria-current='page'] { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-editor { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button { min-height: 44px; align-items: center; border: 1px solid var(--color-border); }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button[aria-current='page'] { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
 }
 
 /* UR-102 settings-configuration semantic typography */
-main[data-route-id='configuration'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='configuration'][data-paw-os-app] :is(
   .configuration-section-nav button,
   .configuration-section-nav strong,
   .configuration-editor__heading strong,
@@ -556,20 +556,20 @@ main[data-route-id='configuration'][data-paw-os-app] :is(
   .configuration-subagents__rules strong,
   .configuration-transfer > summary strong
 ) { font-size: 14px; }
-main[data-route-id='configuration'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='configuration'][data-paw-os-app] :is(
   .configuration-section-nav small,
   .configuration-editor__heading small,
   .configuration-subagents__templates em,
   .configuration-subagents__error
 ) { font-size: 13px; }
-main[data-route-id='configuration'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='configuration'][data-paw-os-app] :is(
   .configuration-destinations small,
   .configuration-subagents__summary small,
   .configuration-subagents__templates small,
   .configuration-subagents__rules small,
   .configuration-transfer > summary small
 ) { font-size: 13px; }
-main[data-route-id='configuration'][data-paw-os-app] .configuration-review-consequence {
+:is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-review-consequence {
   font-size: 15px;
   line-height: 1.6;
 }

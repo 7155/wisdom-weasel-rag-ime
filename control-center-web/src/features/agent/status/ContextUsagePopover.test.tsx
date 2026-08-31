@@ -88,5 +88,6 @@ describe('ContextUsagePopover', () => {
     expect(contextUsageCss).toMatch(/\.agent-context-usage__popover\s*\{[^}]*overflow-y:\s*auto/s);
     expect(contextUsageCss).toMatch(/@container paw-composer-toolbar \(max-width: 360px\)/);
     expect(contextUsageCss).toMatch(/\.agent-context-usage__label\s*\{[^}]*clip-path:\s*inset\(50%\)/s);
+    expect(contextUsageCss).not.toContain('repeating-linear-gradient');
   });
 });

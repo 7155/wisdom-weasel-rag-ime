@@ -102,6 +102,15 @@ function requireManifest(value: unknown, ownerDirectory: string): PawExtensionAp
     || !/^#[0-9A-Fa-f]{6}$/.test(value.icon.background)) {
     throw new Error(`Extension App ${ownerDirectory} icon is invalid`);
   }
+  if (value.sandbox !== undefined && (
+    !isRecord(value.sandbox)
+    || !new Set(['required', 'optional', 'disabled']).has(String(value.sandbox.default))
+    || value.sandbox.connectorPackageId !== 'vertical-agent-sandbox'
+    || value.sandbox.policyId !== 'vertical-readonly-v1'
+    || Object.keys(value.sandbox).some((key) => !new Set(['default', 'connectorPackageId', 'policyId']).has(key))
+  )) {
+    throw new Error(`Extension App ${ownerDirectory} sandbox contract is invalid`);
+  }
   return value as PawExtensionAppManifest;
 }
 

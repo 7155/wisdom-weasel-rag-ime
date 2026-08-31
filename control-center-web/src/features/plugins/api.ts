@@ -18,7 +18,7 @@ export const pluginQueryKeys = {
   lifecycle: () => [...pluginQueryKeys.root, 'lifecycle'] as const,
 };
 
-export function usePluginCatalog(sessionId = '') {
+export function usePluginCatalog(sessionId = '', enabled = true) {
   const transport = useControlTransport();
   const catalog = useQuery({
     queryKey: pluginQueryKeys.catalog(sessionId),
@@ -33,6 +33,7 @@ export function usePluginCatalog(sessionId = '') {
         : requireCapabilityCatalog(response);
     },
     staleTime: 30_000,
+    enabled,
     refetchOnReconnect: 'always',
   });
   const defaults = useQuery({
@@ -44,22 +45,26 @@ export function usePluginCatalog(sessionId = '') {
       return parsed;
     },
     staleTime: 30_000,
+    enabled,
     refetchOnReconnect: 'always',
   });
   const installed = useQuery({
     queryKey: pluginQueryKeys.installed(),
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.list', signal }),
+    enabled,
     staleTime: 5_000,
   });
   const versions = useQuery({
     queryKey: pluginQueryKeys.versions(),
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.catalog', signal }),
+    enabled,
     staleTime: 30_000,
   });
   const proposals = useQuery({
     queryKey: pluginQueryKeys.proposals(),
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.proposals', signal }),
-    refetchInterval: 5_000,
+    enabled,
+    refetchInterval: enabled ? 5_000 : false,
   });
   const queryClient = useQueryClient();
   const validate = useMutation({
@@ -129,6 +134,7 @@ export function usePluginCatalog(sessionId = '') {
   const lifecycle = useQuery({
     queryKey: pluginQueryKeys.lifecycle(),
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.lifecycleHooks.get', query: { limit: 20 }, signal }),
+    enabled,
     staleTime: 5_000,
   });
   const updateLifecycle = useMutation({

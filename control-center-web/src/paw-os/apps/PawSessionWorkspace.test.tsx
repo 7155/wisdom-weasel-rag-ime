@@ -76,6 +76,97 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(sessionWorkspaceProjectionSlice(state, sessionId).activeTurnId).toBe('');
   });
 
+  it('does not initialize an inactive Session and resumes exactly one stream when activated', async () => {
+    const sessionId = 'session-inactive-gate';
+    const transport = new StubControlTransport('mock', idleSessionRoutes());
+    const props = {
+      record: { ...liveSession(), id: sessionId },
+      recordId: sessionId,
+      onNewWork: vi.fn(),
+      onSessionCreated: vi.fn(),
+      onSessionUpdated: vi.fn(),
+    };
+    const { rerender } = render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace active={false} {...props} />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(transport.requests).toHaveLength(0);
+    expect(transport.subscriptionCount('agent.session.events')).toBe(0);
+
+    rerender(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace active {...props} />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    expect(transport.requests.some((request) => request.pathId === 'agent.session.snapshot')).toBe(true);
+
+    rerender(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace active={false} {...props} />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(0));
+  });
+
+  it('does not initialize a visible Session while the document is hidden', async () => {
+    const sessionId = 'session-hidden-gate';
+    const transport = new StubControlTransport('mock', idleSessionRoutes());
+    setDocumentVisibility('hidden');
+    try {
+      const { rerender } = render(
+        <ControlTransportProvider transport={transport}>
+          <TooltipProvider>
+            <PawSessionWorkspace
+              record={{ ...liveSession(), id: sessionId }}
+              recordId={sessionId}
+              onNewWork={vi.fn()}
+              onSessionCreated={vi.fn()}
+              onSessionUpdated={vi.fn()}
+            />
+          </TooltipProvider>
+        </ControlTransportProvider>,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(transport.requests).toHaveLength(0);
+      expect(transport.subscriptionCount('agent.session.events')).toBe(0);
+
+      setDocumentVisibility('visible');
+      rerender(
+        <ControlTransportProvider transport={transport}>
+          <TooltipProvider>
+            <PawSessionWorkspace
+              record={{ ...liveSession(), id: sessionId }}
+              recordId={sessionId}
+              onNewWork={vi.fn()}
+              onSessionCreated={vi.fn()}
+              onSessionUpdated={vi.fn()}
+            />
+          </TooltipProvider>
+        </ControlTransportProvider>,
+      );
+      await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    } finally {
+      setDocumentVisibility('visible');
+    }
+  });
+
   it.each([375, 360])('projects one complete Session chrome into a %ipx production window', async (width) => {
     render(
       <ControlTransportProvider transport={createPreviewTransport()}>
@@ -269,6 +360,7 @@ describe('PAWOS Agent Session structural migration', () => {
     const statusPanel = sidebar.querySelector('.agent-status-panel');
     await user.click(within(sidebar).getByRole('button', { name: '收起任务中心' }));
     expect(screen.queryByRole('complementary', { name: 'Session 工具侧栏' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Session 工具' })).toHaveFocus();
     const residentSidebar = document.querySelector('.paw-session-workspace__side');
     expect(residentSidebar).toHaveAttribute('hidden');
     expect(residentSidebar?.querySelector('.agent-status-panel')).toBe(statusPanel);
@@ -376,6 +468,35 @@ describe('PAWOS Agent Session structural migration', () => {
 
     expect(screen.queryByRole('complementary', { name: 'Session 工具侧栏' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Session 工具' })).toHaveFocus();
+  });
+
+  it('returns focus to the Session tools trigger when a sidebar close button is clicked', async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ControlTransportProvider transport={createPreviewTransport()}>
+          <TooltipProvider>
+            <PawSessionWorkspace
+              record={liveSession()}
+              recordId="session-click-close"
+              onNewWork={vi.fn()}
+              onSessionCreated={vi.fn()}
+              onSessionUpdated={vi.fn()}
+            />
+          </TooltipProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole('textbox', { name: '消息' });
+    const trigger = screen.getByRole('button', { name: 'Session 工具' });
+    await user.click(trigger);
+    await user.click(screen.getByRole('menuitem', { name: '任务与状态' }));
+    const sidebar = screen.getByRole('complementary', { name: 'Session 工具侧栏' });
+    await user.click(within(sidebar).getByRole('button', { name: '收起任务中心' }));
+
+    expect(trigger).toHaveFocus();
   });
 
   it('projects the tool rail as a floating overlay so the message flow keeps the full viewport column', () => {
@@ -1353,4 +1474,12 @@ function liveSession(): SessionSummary {
     executionMode: 'per_action',
     modelProfile: 'openai/gpt-5.6-sol',
   };
+}
+
+function setDocumentVisibility(state: 'hidden' | 'visible'): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: state,
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
 }

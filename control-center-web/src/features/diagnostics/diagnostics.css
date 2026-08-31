@@ -1,20 +1,20 @@
-main[data-route-id='diagnostics'] .diagnostics-action-list {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list {
   margin-top: var(--space-3);
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-capability-state {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-capability-state {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-capability-state > .mgmt-notice {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-capability-state > .mgmt-notice {
   min-width: 0;
   flex: 1 1 auto;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
   padding: 13px 10px;
   border: 0;
   border-bottom: 1px solid var(--color-border);
@@ -22,33 +22,33 @@ main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
   background: transparent;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow:last-child {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow:last-child {
   border-bottom: 0;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow + .mgmt-workflow {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow + .mgmt-workflow {
   margin-top: 0;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow__heading {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow__heading {
   align-items: center;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow__heading p {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow__heading p {
   max-width: 720px;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service-list {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service-list {
   border-block: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service {
   border-bottom: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service:last-child { border-bottom: 0; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service:last-child { border-bottom: 0; }
 
-main[data-route-id='diagnostics'] .diagnostics-service > summary {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary {
   display: grid;
   min-height: 56px;
   grid-template-columns: minmax(0, 1fr) minmax(92px, auto) auto 18px;
@@ -61,11 +61,11 @@ main[data-route-id='diagnostics'] .diagnostics-service > summary {
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service > summary::-webkit-details-marker,
-main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::-webkit-details-marker { display: none; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary::-webkit-details-marker,
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::-webkit-details-marker { display: none; }
 
-main[data-route-id='diagnostics'] .diagnostics-service > summary::after,
-main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::before {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary::after,
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::before {
   color: var(--color-text-tertiary);
   content: '›';
   font-size: 18px;
@@ -73,33 +73,33 @@ main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::befo
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service[open] > summary::after,
-main[data-route-id='diagnostics'] .diagnostics-service__evidence[open] > summary::before { transform: rotate(90deg); }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service[open] > summary::after,
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence[open] > summary::before { transform: rotate(90deg); }
 
-main[data-route-id='diagnostics'] .diagnostics-service > summary:focus-visible,
-main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary:focus-visible {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary:focus-visible,
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence > summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service__copy {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__copy {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service__copy strong { color: var(--color-text-primary); font-size: 15px; }
-main[data-route-id='diagnostics'] .diagnostics-service__copy small,
-main[data-route-id='diagnostics'] .diagnostics-service__meta { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; }
-main[data-route-id='diagnostics'] .diagnostics-service__copy small { overflow-wrap: anywhere; }
-main[data-route-id='diagnostics'] .diagnostics-service__meta { font-family: var(--font-mono); }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__copy strong { color: var(--color-text-primary); font-size: 15px; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__copy small,
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__meta { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__copy small { overflow-wrap: anywhere; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__meta { font-family: var(--font-mono); }
 
-main[data-route-id='diagnostics'] .diagnostics-service__body {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__body {
   padding: 0 28px 14px;
   border-top: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service__facts {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__facts {
   display: grid;
   grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
   gap: 8px 16px;
@@ -107,14 +107,14 @@ main[data-route-id='diagnostics'] .diagnostics-service__facts {
   padding: 13px 0;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
-main[data-route-id='diagnostics'] .diagnostics-service__facts dd { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__facts dd { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 
-main[data-route-id='diagnostics'] .diagnostics-service__evidence {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence {
   border-top: 1px solid var(--color-border-soft);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence > summary {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -125,7 +125,7 @@ main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary {
   list-style: none;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-service__evidence pre {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence pre {
   max-height: 280px;
   margin: 0 0 2px;
   padding: 11px 12px;
@@ -139,11 +139,11 @@ main[data-route-id='diagnostics'] .diagnostics-service__evidence pre {
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-boundary {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary {
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-boundary summary {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -157,9 +157,9 @@ main[data-route-id='diagnostics'] .diagnostics-boundary summary {
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-boundary summary::-webkit-details-marker { display: none; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary::-webkit-details-marker { display: none; }
 
-main[data-route-id='diagnostics'] .diagnostics-boundary summary::before {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary::before {
   color: var(--color-text-tertiary);
   content: '›';
   font-size: 18px;
@@ -167,10 +167,10 @@ main[data-route-id='diagnostics'] .diagnostics-boundary summary::before {
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-boundary[open] summary::before { transform: rotate(90deg); }
-main[data-route-id='diagnostics'] .diagnostics-boundary summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary[open] summary::before { transform: rotate(90deg); }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 
-main[data-route-id='diagnostics'] .diagnostics-boundary p {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary p {
   max-width: 760px;
   margin: 0;
   padding: 0 2px 12px;
@@ -179,14 +179,14 @@ main[data-route-id='diagnostics'] .diagnostics-boundary p {
   line-height: 1.55;
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-summary {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-summary {
   display: grid;
   gap: 0;
   margin-top: var(--space-3);
   border-block: 1px solid var(--color-border);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-summary li {
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-summary li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-3);
@@ -194,66 +194,66 @@ main[data-route-id='diagnostics'] .diagnostics-action-summary li {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='diagnostics'] .diagnostics-action-summary li:last-child { border-bottom: 0; }
-main[data-route-id='diagnostics'] .diagnostics-action-summary strong { color: var(--color-text-primary); font-size: 13px; }
-main[data-route-id='diagnostics'] .diagnostics-action-summary p { margin: 3px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.45; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-summary li:last-child { border-bottom: 0; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-summary strong { color: var(--color-text-primary); font-size: 13px; }
+:is(main, section)[data-route-id='diagnostics'] .diagnostics-action-summary p { margin: 3px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.45; }
 
 @media (max-width: 760px) {
-  main[data-route-id='diagnostics'] .diagnostics-capability-state {
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-capability-state {
     align-items: stretch;
     flex-direction: column;
   }
 
-  main[data-route-id='diagnostics'] .diagnostics-capability-state > .ui-button {
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-capability-state > .ui-button {
     min-height: 44px;
     align-self: stretch;
   }
 
-  main[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .mgmt-workflow {
     padding-inline: 2px;
   }
 
-  main[data-route-id='diagnostics'] .mgmt-page__actions .ui-button,
-  main[data-route-id='diagnostics'] .ui-empty-state .ui-button,
-  main[data-route-id='diagnostics'] .mgmt-notice + .ui-button,
-  main[data-route-id='diagnostics'] .diagnostics-action-list .ui-button { min-height: 44px; }
+  :is(main, section)[data-route-id='diagnostics'] .mgmt-page__actions .ui-button,
+  :is(main, section)[data-route-id='diagnostics'] .ui-empty-state .ui-button,
+  :is(main, section)[data-route-id='diagnostics'] .mgmt-notice + .ui-button,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-action-list .ui-button { min-height: 44px; }
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='diagnostics'] .diagnostics-boundary summary:hover,
-  main[data-route-id='diagnostics'] .diagnostics-service > summary:hover,
-  main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary:hover { background: var(--color-surface-hover); }
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary:hover,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary:hover,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence > summary:hover { background: var(--color-surface-hover); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main[data-route-id='diagnostics'] .diagnostics-boundary summary,
-  main[data-route-id='diagnostics'] .diagnostics-boundary summary::before,
-  main[data-route-id='diagnostics'] .diagnostics-service > summary,
-  main[data-route-id='diagnostics'] .diagnostics-service > summary::after,
-  main[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::before { transition: none; }
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-boundary summary::before,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-service > summary::after,
+  :is(main, section)[data-route-id='diagnostics'] .diagnostics-service__evidence > summary::before { transition: none; }
 }
 
 @container paw-window (max-width: 620px) {
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-capability-state { align-items: stretch; flex-direction: column; }
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-action-list .mgmt-workflow { padding-inline: 2px; }
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-action-summary li { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service > summary { grid-template-columns: minmax(0, 1fr) auto 18px; }
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__meta { display: none; }
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__body { padding-inline: 12px; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-capability-state { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-action-list .mgmt-workflow { padding-inline: 2px; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-action-summary li { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service > summary { grid-template-columns: minmax(0, 1fr) auto 18px; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__meta { display: none; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__body { padding-inline: 12px; }
 }
 
 @container paw-window (max-width: 440px) {
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__facts { grid-template-columns: minmax(0, 1fr); gap: 3px; }
-  main[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__facts dd + dt { margin-top: 8px; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__facts { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  :is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .diagnostics-service__facts dd + dt { margin-top: 8px; }
 }
 
 /* UR-102 monitor-diagnostics semantic typography */
-main[data-route-id='diagnostics'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='diagnostics'][data-paw-os-app] :is(
   .diagnostics-boundary summary,
   .diagnostics-action-summary strong
 ) { font-size: 14px; }
-main[data-route-id='diagnostics'][data-paw-os-app] .mgmt-status { font-size: 13px; }
-main[data-route-id='diagnostics'][data-paw-os-app] :is(
+:is(main, section)[data-route-id='diagnostics'][data-paw-os-app] .mgmt-status { font-size: 13px; }
+:is(main, section)[data-route-id='diagnostics'][data-paw-os-app] :is(
   .diagnostics-boundary p,
   .diagnostics-action-summary p
 ) { font-size: 15px; }

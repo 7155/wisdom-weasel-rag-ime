@@ -1499,6 +1499,14 @@
 }
 
 @container paw-window (max-width: 420px) {
+  /* Once the caption yields at the compact floor, its grid track must yield
+     too. Keeping the old 112px minimum left the 星空 control half outside the
+     window and pushed Session 工具 completely beyond the pointer surface. */
+  .paw-desktop-root .paw-window-titlebar[data-window-chrome='agent-session']:has(.paw-session-workspace__header) {
+    grid-template-columns: var(--paw-titlebar-lead, 68px) 0 minmax(0, 1fr);
+    gap: 6px;
+  }
+
   .paw-desktop-root .paw-window-titlebar[data-window-chrome='agent-session'] .paw-session-workspace__breadcrumb small,
   .paw-desktop-root .paw-window-titlebar[data-window-chrome='agent-session'] .paw-session-workspace__breadcrumb i,
   .paw-desktop-root .paw-window-titlebar[data-window-chrome='agent-session'] .paw-session-workspace__runtime {

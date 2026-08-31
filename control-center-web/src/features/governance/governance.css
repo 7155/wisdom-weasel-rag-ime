@@ -4,10 +4,10 @@
    behind per-record「原始记录」disclosures. Cool slate palette, rounded
    surfaces, hover-only transitions (no ambient animation, no flicker). */
 
-.shell-route-stage > main[data-route-id='governance'] { width: 100%; }
+.shell-route-stage > :is(main, section)[data-route-id='governance'] { width: 100%; }
 
 /* ------------------------------ verdict board ------------------------------ */
-main[data-route-id='governance'] .governance-board {
+:is(main, section)[data-route-id='governance'] .governance-board {
   display: grid;
   align-items: center;
   gap: var(--space-4);
@@ -19,19 +19,19 @@ main[data-route-id='governance'] .governance-board {
     linear-gradient(135deg, color-mix(in srgb, #38bdf8 7%, transparent), transparent 55%),
     color-mix(in srgb, #f8fafc 88%, #dbeafe 12%);
 }
-main[data-route-id='governance'] .governance-board[data-tone='warning'] {
+:is(main, section)[data-route-id='governance'] .governance-board[data-tone='warning'] {
   border-color: color-mix(in srgb, var(--color-warning) 34%, transparent);
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 9%, transparent), transparent 55%),
     color-mix(in srgb, #f8fafc 92%, #fde68a 8%);
 }
-main[data-route-id='governance'] .governance-verdict {
+:is(main, section)[data-route-id='governance'] .governance-verdict {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
 }
-main[data-route-id='governance'] .governance-verdict__icon {
+:is(main, section)[data-route-id='governance'] .governance-verdict__icon {
   display: grid;
   width: 46px;
   height: 46px;
@@ -41,34 +41,34 @@ main[data-route-id='governance'] .governance-verdict__icon {
   background: color-mix(in srgb, #475569 12%, transparent);
   color: #475569;
 }
-main[data-route-id='governance'] .governance-board[data-tone='success'] .governance-verdict__icon {
+:is(main, section)[data-route-id='governance'] .governance-board[data-tone='success'] .governance-verdict__icon {
   background: color-mix(in srgb, var(--color-success) 14%, transparent);
   color: var(--color-success);
 }
-main[data-route-id='governance'] .governance-board[data-tone='warning'] .governance-verdict__icon {
+:is(main, section)[data-route-id='governance'] .governance-board[data-tone='warning'] .governance-verdict__icon {
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
   color: var(--color-warning);
 }
-main[data-route-id='governance'] .governance-verdict__copy { display: grid; min-width: 0; gap: 3px; }
-main[data-route-id='governance'] .governance-verdict__copy strong {
+:is(main, section)[data-route-id='governance'] .governance-verdict__copy { display: grid; min-width: 0; gap: 3px; }
+:is(main, section)[data-route-id='governance'] .governance-verdict__copy strong {
   color: #0f172a;
   font-size: 17px;
   font-weight: 700;
   letter-spacing: -.01em;
 }
-main[data-route-id='governance'] .governance-verdict__copy p {
+:is(main, section)[data-route-id='governance'] .governance-verdict__copy p {
   margin: 0;
   color: #64748b;
   font-size: 13px;
   line-height: 1.55;
 }
-main[data-route-id='governance'] .governance-stats {
+:is(main, section)[data-route-id='governance'] .governance-stats {
   display: grid;
   margin: 0;
   gap: 8px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-main[data-route-id='governance'] .governance-stats > div {
+:is(main, section)[data-route-id='governance'] .governance-stats > div {
   display: grid;
   min-width: 0;
   gap: 2px;
@@ -77,40 +77,40 @@ main[data-route-id='governance'] .governance-stats > div {
   border-radius: 12px;
   background: color-mix(in srgb, #fff 72%, transparent);
 }
-main[data-route-id='governance'] .governance-stats dt {
+:is(main, section)[data-route-id='governance'] .governance-stats dt {
   color: #64748b;
   font-size: 12px;
   font-weight: 650;
   letter-spacing: .02em;
 }
-main[data-route-id='governance'] .governance-stats dd {
+:is(main, section)[data-route-id='governance'] .governance-stats dd {
   margin: 0;
   color: #0f172a;
   font-size: 19px;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
-main[data-route-id='governance'] .governance-stats > div[data-tone='success'] dd { color: var(--color-success); }
-main[data-route-id='governance'] .governance-stats > div[data-tone='warning'] dd { color: var(--color-warning); }
-main[data-route-id='governance'] .governance-stats > div[data-tone='danger'] dd { color: var(--color-danger); }
-main[data-route-id='governance'] .governance-stats > div[data-tone='info'] dd { color: var(--color-accent); }
+:is(main, section)[data-route-id='governance'] .governance-stats > div[data-tone='success'] dd { color: var(--color-success); }
+:is(main, section)[data-route-id='governance'] .governance-stats > div[data-tone='warning'] dd { color: var(--color-warning); }
+:is(main, section)[data-route-id='governance'] .governance-stats > div[data-tone='danger'] dd { color: var(--color-danger); }
+:is(main, section)[data-route-id='governance'] .governance-stats > div[data-tone='info'] dd { color: var(--color-accent); }
 
 /* ------------------------------ view switcher ------------------------------ */
-main[data-route-id='governance'] .governance-viewbar {
+:is(main, section)[data-route-id='governance'] .governance-viewbar {
   display: flex;
   justify-content: flex-start;
   margin-top: 2px;
 }
 
 /* ------------------------------ overview view ------------------------------ */
-main[data-route-id='governance'] .governance-attention {
+:is(main, section)[data-route-id='governance'] .governance-attention {
   display: grid;
   margin: 0;
   gap: 8px;
   padding: 0;
   list-style: none;
 }
-main[data-route-id='governance'] .governance-attention button {
+:is(main, section)[data-route-id='governance'] .governance-attention button {
   display: grid;
   width: 100%;
   min-height: 54px;
@@ -126,19 +126,19 @@ main[data-route-id='governance'] .governance-attention button {
   text-align: start;
   transition: border-color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
-main[data-route-id='governance'] .governance-attention button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-main[data-route-id='governance'] .governance-attention__dot {
+:is(main, section)[data-route-id='governance'] .governance-attention button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+:is(main, section)[data-route-id='governance'] .governance-attention__dot {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: var(--color-warning);
 }
-main[data-route-id='governance'] .governance-attention li[data-tone='danger'] .governance-attention__dot { background: var(--color-danger); }
-main[data-route-id='governance'] .governance-attention__copy { display: grid; min-width: 0; gap: 1px; }
-main[data-route-id='governance'] .governance-attention__copy strong { color: #0f172a; font-size: 13.5px; }
-main[data-route-id='governance'] .governance-attention__copy small { color: #64748b; font-size: 12px; }
-main[data-route-id='governance'] .governance-attention__go { display: grid; color: #94a3b8; place-items: center; }
-main[data-route-id='governance'] .governance-active-grid {
+:is(main, section)[data-route-id='governance'] .governance-attention li[data-tone='danger'] .governance-attention__dot { background: var(--color-danger); }
+:is(main, section)[data-route-id='governance'] .governance-attention__copy { display: grid; min-width: 0; gap: 1px; }
+:is(main, section)[data-route-id='governance'] .governance-attention__copy strong { color: #0f172a; font-size: 13.5px; }
+:is(main, section)[data-route-id='governance'] .governance-attention__copy small { color: #64748b; font-size: 12px; }
+:is(main, section)[data-route-id='governance'] .governance-attention__go { display: grid; color: #94a3b8; place-items: center; }
+:is(main, section)[data-route-id='governance'] .governance-active-grid {
   display: grid;
   margin: 0;
   gap: 9px;
@@ -146,7 +146,7 @@ main[data-route-id='governance'] .governance-active-grid {
   padding: 0;
   list-style: none;
 }
-main[data-route-id='governance'] .governance-active-grid li {
+:is(main, section)[data-route-id='governance'] .governance-active-grid li {
   display: grid;
   min-width: 0;
   gap: 3px;
@@ -155,16 +155,16 @@ main[data-route-id='governance'] .governance-active-grid li {
   border-radius: 12px;
   background: color-mix(in srgb, #fff 82%, transparent);
 }
-main[data-route-id='governance'] .governance-active-grid li[data-state='on'] {
+:is(main, section)[data-route-id='governance'] .governance-active-grid li[data-state='on'] {
   border-color: color-mix(in srgb, var(--color-success) 34%, transparent);
   background: color-mix(in srgb, var(--color-success) 5%, #fff 82%);
 }
-main[data-route-id='governance'] .governance-active-grid__icon { color: #94a3b8; }
-main[data-route-id='governance'] .governance-active-grid li[data-state='on'] .governance-active-grid__icon { color: var(--color-success); }
-main[data-route-id='governance'] .governance-active-grid strong { color: #0f172a; font-size: 13.5px; }
-main[data-route-id='governance'] .governance-active-grid span:not(.governance-active-grid__icon) { color: #64748b; font-size: 12.5px; }
-main[data-route-id='governance'] .governance-active-grid small { color: #94a3b8; font-size: 12px; font-variant-numeric: tabular-nums; }
-main[data-route-id='governance'] .governance-empty-line {
+:is(main, section)[data-route-id='governance'] .governance-active-grid__icon { color: #94a3b8; }
+:is(main, section)[data-route-id='governance'] .governance-active-grid li[data-state='on'] .governance-active-grid__icon { color: var(--color-success); }
+:is(main, section)[data-route-id='governance'] .governance-active-grid strong { color: #0f172a; font-size: 13.5px; }
+:is(main, section)[data-route-id='governance'] .governance-active-grid span:not(.governance-active-grid__icon) { color: #64748b; font-size: 12.5px; }
+:is(main, section)[data-route-id='governance'] .governance-active-grid small { color: #94a3b8; font-size: 12px; font-variant-numeric: tabular-nums; }
+:is(main, section)[data-route-id='governance'] .governance-empty-line {
   margin: 0;
   padding: 13px 14px;
   border: 1px dashed color-mix(in srgb, #64748b 26%, transparent);
@@ -174,12 +174,12 @@ main[data-route-id='governance'] .governance-empty-line {
 }
 
 /* ------------------------------ scope filter ------------------------------ */
-main[data-route-id='governance'] .governance-filter-disclosure {
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure {
   border: 1px solid color-mix(in srgb, #64748b 18%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, #fff 72%, transparent);
 }
-main[data-route-id='governance'] .governance-filter-disclosure > summary {
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -192,23 +192,23 @@ main[data-route-id='governance'] .governance-filter-disclosure > summary {
   list-style: none;
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
-main[data-route-id='governance'] .governance-filter-disclosure > summary::-webkit-details-marker { display: none; }
-main[data-route-id='governance'] .governance-filter-disclosure > summary::before {
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary::-webkit-details-marker { display: none; }
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary::before {
   color: var(--color-text-tertiary);
   content: '›';
   font-size: 17px;
   line-height: 1;
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
-main[data-route-id='governance'] .governance-filter-disclosure[open] > summary::before { transform: rotate(90deg); }
-main[data-route-id='governance'] .governance-filter-disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-main[data-route-id='governance'] .governance-filter-disclosure > .ui-disclosure__reveal > div > p {
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure[open] > summary::before { transform: rotate(90deg); }
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+:is(main, section)[data-route-id='governance'] .governance-filter-disclosure > .ui-disclosure__reveal > div > p {
   margin: 0;
   padding: 0 var(--space-3) var(--space-2);
   color: var(--color-text-tertiary);
   font-size: 12.5px;
 }
-main[data-route-id='governance'] .governance-filters {
+:is(main, section)[data-route-id='governance'] .governance-filters {
   display: grid;
   gap: var(--space-3);
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -216,14 +216,14 @@ main[data-route-id='governance'] .governance-filters {
 }
 
 /* ------------------------------ record lists ------------------------------ */
-main[data-route-id='governance'] .governance-columns {
+:is(main, section)[data-route-id='governance'] .governance-columns {
   display: grid;
   gap: var(--space-5) var(--space-6);
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-main[data-route-id='governance'] .governance-columns--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-main[data-route-id='governance'] .governance-list { min-width: 0; }
-main[data-route-id='governance'] .governance-list > h3 {
+:is(main, section)[data-route-id='governance'] .governance-columns--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+:is(main, section)[data-route-id='governance'] .governance-list { min-width: 0; }
+:is(main, section)[data-route-id='governance'] .governance-list > h3 {
   margin: 0;
   padding: 0 0 7px;
   border-bottom: 1px solid color-mix(in srgb, #64748b 22%, transparent);
@@ -232,14 +232,14 @@ main[data-route-id='governance'] .governance-list > h3 {
   font-weight: 700;
   letter-spacing: .04em;
 }
-main[data-route-id='governance'] .governance-empty {
+:is(main, section)[data-route-id='governance'] .governance-empty {
   margin: 0;
   padding: 10px 0 0;
   color: var(--color-text-tertiary);
   font-size: 13px;
 }
 
-main[data-route-id='governance'] .governance-record {
+:is(main, section)[data-route-id='governance'] .governance-record {
   display: grid;
   min-width: 0;
   gap: 10px;
@@ -247,8 +247,8 @@ main[data-route-id='governance'] .governance-record {
   padding: 12px 0;
   border-bottom: 1px solid color-mix(in srgb, #64748b 13%, transparent);
 }
-main[data-route-id='governance'] .governance-record:last-child { border-bottom: 0; }
-main[data-route-id='governance'] .governance-record__icon {
+:is(main, section)[data-route-id='governance'] .governance-record:last-child { border-bottom: 0; }
+:is(main, section)[data-route-id='governance'] .governance-record__icon {
   display: grid;
   width: 28px;
   height: 28px;
@@ -257,20 +257,20 @@ main[data-route-id='governance'] .governance-record__icon {
   background: color-mix(in srgb, #64748b 11%, transparent);
   color: #64748b;
 }
-main[data-route-id='governance'] .governance-record[data-tone='success'] .governance-record__icon {
+:is(main, section)[data-route-id='governance'] .governance-record[data-tone='success'] .governance-record__icon {
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
   color: var(--color-success);
 }
-main[data-route-id='governance'] .governance-record[data-tone='warning'] .governance-record__icon {
+:is(main, section)[data-route-id='governance'] .governance-record[data-tone='warning'] .governance-record__icon {
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
 }
-main[data-route-id='governance'] .governance-record[data-tone='danger'] .governance-record__icon {
+:is(main, section)[data-route-id='governance'] .governance-record[data-tone='danger'] .governance-record__icon {
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
   color: var(--color-danger);
 }
-main[data-route-id='governance'] .governance-record__body { display: grid; min-width: 0; gap: 5px; }
-main[data-route-id='governance'] .governance-record__body > header {
+:is(main, section)[data-route-id='governance'] .governance-record__body { display: grid; min-width: 0; gap: 5px; }
+:is(main, section)[data-route-id='governance'] .governance-record__body > header {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -278,13 +278,13 @@ main[data-route-id='governance'] .governance-record__body > header {
   justify-content: space-between;
   gap: 6px;
 }
-main[data-route-id='governance'] .governance-record__body > header strong {
+:is(main, section)[data-route-id='governance'] .governance-record__body > header strong {
   min-width: 0;
   color: #0f172a;
   font-size: 13.5px;
   overflow-wrap: anywhere;
 }
-main[data-route-id='governance'] .governance-record__body > p {
+:is(main, section)[data-route-id='governance'] .governance-record__body > p {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -292,11 +292,11 @@ main[data-route-id='governance'] .governance-record__body > p {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-main[data-route-id='governance'] .governance-record__meta {
+:is(main, section)[data-route-id='governance'] .governance-record__meta {
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
-main[data-route-id='governance'] .governance-badges {
+:is(main, section)[data-route-id='governance'] .governance-badges {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -304,7 +304,7 @@ main[data-route-id='governance'] .governance-badges {
 }
 
 /* ------------------------------ audit trail ------------------------------ */
-main[data-route-id='governance'] .governance-trail {
+:is(main, section)[data-route-id='governance'] .governance-trail {
   position: relative;
   display: grid;
   margin: 0;
@@ -312,7 +312,7 @@ main[data-route-id='governance'] .governance-trail {
   padding: 0 0 0 14px;
   list-style: none;
 }
-main[data-route-id='governance'] .governance-trail::before {
+:is(main, section)[data-route-id='governance'] .governance-trail::before {
   position: absolute;
   top: 14px;
   bottom: 14px;
@@ -322,7 +322,7 @@ main[data-route-id='governance'] .governance-trail::before {
   background: color-mix(in srgb, #64748b 18%, transparent);
   content: '';
 }
-main[data-route-id='governance'] .governance-trail > li {
+:is(main, section)[data-route-id='governance'] .governance-trail > li {
   position: relative;
   display: grid;
   min-width: 0;
@@ -330,7 +330,7 @@ main[data-route-id='governance'] .governance-trail > li {
   grid-template-columns: 28px minmax(0, 1fr);
   padding: 8px 0;
 }
-main[data-route-id='governance'] .governance-trail__node {
+:is(main, section)[data-route-id='governance'] .governance-trail__node {
   position: relative;
   z-index: 1;
   display: grid;
@@ -342,19 +342,19 @@ main[data-route-id='governance'] .governance-trail__node {
   background: #fff;
   color: #64748b;
 }
-main[data-route-id='governance'] .governance-trail > li[data-kind='activation'] .governance-trail__node {
+:is(main, section)[data-route-id='governance'] .governance-trail > li[data-kind='activation'] .governance-trail__node {
   border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
   color: var(--color-success);
 }
-main[data-route-id='governance'] .governance-trail > li[data-kind='rollback'] .governance-trail__node {
+:is(main, section)[data-route-id='governance'] .governance-trail > li[data-kind='rollback'] .governance-trail__node {
   border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
   color: var(--color-warning);
 }
-main[data-route-id='governance'] .governance-trail > li[data-kind='eval'] .governance-trail__node {
+:is(main, section)[data-route-id='governance'] .governance-trail > li[data-kind='eval'] .governance-trail__node {
   border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
   color: var(--color-accent);
 }
-main[data-route-id='governance'] .governance-trail article {
+:is(main, section)[data-route-id='governance'] .governance-trail article {
   display: grid;
   min-width: 0;
   gap: 4px;
@@ -363,7 +363,7 @@ main[data-route-id='governance'] .governance-trail article {
   border-radius: 12px;
   background: color-mix(in srgb, #fff 82%, transparent);
 }
-main[data-route-id='governance'] .governance-trail article > header {
+:is(main, section)[data-route-id='governance'] .governance-trail article > header {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -371,8 +371,8 @@ main[data-route-id='governance'] .governance-trail article > header {
   justify-content: space-between;
   gap: 6px;
 }
-main[data-route-id='governance'] .governance-trail article strong { color: #0f172a; font-size: 13.5px; }
-main[data-route-id='governance'] .governance-trail article > p {
+:is(main, section)[data-route-id='governance'] .governance-trail article strong { color: #0f172a; font-size: 13.5px; }
+:is(main, section)[data-route-id='governance'] .governance-trail article > p {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -381,11 +381,11 @@ main[data-route-id='governance'] .governance-trail article > p {
 }
 
 /* ------------------------------ raw record details ------------------------------ */
-main[data-route-id='governance'] .governance-record-details {
+:is(main, section)[data-route-id='governance'] .governance-record-details {
   margin-top: 3px;
   border-top: 1px solid color-mix(in srgb, #64748b 12%, transparent);
 }
-main[data-route-id='governance'] .governance-record-details > summary {
+:is(main, section)[data-route-id='governance'] .governance-record-details > summary {
   min-height: 40px;
   padding: 9px 0;
   color: var(--color-text-tertiary);
@@ -394,16 +394,16 @@ main[data-route-id='governance'] .governance-record-details > summary {
   font-weight: 650;
   list-style-position: inside;
 }
-main[data-route-id='governance'] .governance-record-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-main[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
-main[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > dl > div { min-width: 0; }
-main[data-route-id='governance'] .governance-record-details dt {
+:is(main, section)[data-route-id='governance'] .governance-record-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+:is(main, section)[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > dl { display: grid; gap: 7px; margin: 2px 0 8px; }
+:is(main, section)[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > dl > div { min-width: 0; }
+:is(main, section)[data-route-id='governance'] .governance-record-details dt {
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-weight: 650;
 }
-main[data-route-id='governance'] .governance-record-details dd { margin: 2px 0 0; }
-main[data-route-id='governance'] .governance-record-details code {
+:is(main, section)[data-route-id='governance'] .governance-record-details dd { margin: 2px 0 0; }
+:is(main, section)[data-route-id='governance'] .governance-record-details code {
   display: block;
   min-width: 0;
   color: var(--color-text-secondary);
@@ -411,12 +411,12 @@ main[data-route-id='governance'] .governance-record-details code {
   overflow-wrap: anywhere;
   white-space: normal;
 }
-main[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > section > h4 {
+:is(main, section)[data-route-id='governance'] .governance-record-details > .ui-disclosure__reveal > div > section > h4 {
   margin: 10px 0 0;
   color: var(--color-text-tertiary);
   font-size: 12px;
 }
-main[data-route-id='governance'] .governance-record-details pre {
+:is(main, section)[data-route-id='governance'] .governance-record-details pre {
   max-height: 180px;
   margin: 8px 0 0;
   overflow: auto;
@@ -430,65 +430,65 @@ main[data-route-id='governance'] .governance-record-details pre {
 }
 
 /* ------------------------------ loading and errors ------------------------------ */
-main[data-route-id='governance'] .governance-loading__skeletons {
+:is(main, section)[data-route-id='governance'] .governance-loading__skeletons {
   display: grid;
   gap: var(--space-3);
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-main[data-route-id='governance'] .governance-loading__skeletons .ui-skeleton { min-height: 72px; }
-main[data-route-id='governance'] .governance-load-error {
+:is(main, section)[data-route-id='governance'] .governance-loading__skeletons .ui-skeleton { min-height: 72px; }
+:is(main, section)[data-route-id='governance'] .governance-load-error {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
 }
-main[data-route-id='governance'] .governance-load-error > .mgmt-notice { flex: 1 1 auto; }
-main[data-route-id='governance'] .governance-load-error > .ui-button { min-height: 44px; }
+:is(main, section)[data-route-id='governance'] .governance-load-error > .mgmt-notice { flex: 1 1 auto; }
+:is(main, section)[data-route-id='governance'] .governance-load-error > .ui-button { min-height: 44px; }
 
 /* ------------------------------ interaction states ------------------------------ */
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='governance'] .governance-attention button:hover {
+  :is(main, section)[data-route-id='governance'] .governance-attention button:hover {
     border-color: color-mix(in srgb, var(--color-accent) 38%, transparent);
     background: color-mix(in srgb, var(--color-accent) 5%, #fff 84%);
   }
-  main[data-route-id='governance'] .governance-filter-disclosure > summary:hover { background: var(--color-surface-hover); }
+  :is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary:hover { background: var(--color-surface-hover); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main[data-route-id='governance'] .governance-attention button,
-  main[data-route-id='governance'] .governance-filter-disclosure > summary,
-  main[data-route-id='governance'] .governance-filter-disclosure > summary::before { transition: none; }
+  :is(main, section)[data-route-id='governance'] .governance-attention button,
+  :is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary,
+  :is(main, section)[data-route-id='governance'] .governance-filter-disclosure > summary::before { transition: none; }
 }
 
 /* ------------------------------ responsive: classic shell ------------------------------ */
 @media (max-width: 980px) {
-  main[data-route-id='governance'] .governance-board { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='governance'] .governance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='governance'] .governance-filters,
-  main[data-route-id='governance'] .governance-columns,
-  main[data-route-id='governance'] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='governance'] .governance-board { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='governance'] .governance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='governance'] .governance-filters,
+  :is(main, section)[data-route-id='governance'] .governance-columns,
+  :is(main, section)[data-route-id='governance'] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
-  main[data-route-id='governance'] .governance-filters,
-  main[data-route-id='governance'] .governance-columns,
-  main[data-route-id='governance'] .governance-columns--two,
-  main[data-route-id='governance'] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='governance'] .governance-load-error { align-items: stretch; flex-direction: column; }
-  main[data-route-id='governance'] .governance-filter-disclosure input.ui-input,
-  main[data-route-id='governance'] .governance-filter-disclosure input { min-height: 44px; }
+  :is(main, section)[data-route-id='governance'] .governance-filters,
+  :is(main, section)[data-route-id='governance'] .governance-columns,
+  :is(main, section)[data-route-id='governance'] .governance-columns--two,
+  :is(main, section)[data-route-id='governance'] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='governance'] .governance-load-error { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='governance'] .governance-filter-disclosure input.ui-input,
+  :is(main, section)[data-route-id='governance'] .governance-filter-disclosure input { min-height: 44px; }
 }
 
 /* ------------------------------ responsive: PAWOS window ------------------------------ */
 @container paw-window (max-width: 900px) {
-  main[data-route-id='governance'][data-paw-os-app] .governance-board { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='governance'][data-paw-os-app] .governance-filters,
-  main[data-route-id='governance'][data-paw-os-app] .governance-columns,
-  main[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-board { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-filters,
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-columns,
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container paw-window (max-width: 560px) {
-  main[data-route-id='governance'][data-paw-os-app] .governance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='governance'][data-paw-os-app] .governance-filters,
-  main[data-route-id='governance'][data-paw-os-app] .governance-columns,
-  main[data-route-id='governance'][data-paw-os-app] .governance-columns--two,
-  main[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='governance'][data-paw-os-app] .governance-load-error { align-items: stretch; flex-direction: column; }
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-filters,
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-columns,
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-columns--two,
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-loading__skeletons { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='governance'][data-paw-os-app] .governance-load-error { align-items: stretch; flex-direction: column; }
 }

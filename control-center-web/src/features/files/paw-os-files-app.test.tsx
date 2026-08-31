@@ -19,6 +19,7 @@ describe('PawOsFilesApp', () => {
 
     expect(screen.getByRole('heading', { name: 'Session 文件', level: 1 })).toHaveClass('paw-files-app__title');
     expect(filesCss).toMatch(/\.paw-files-app__title\s*\{[^}]*position:\s*absolute;/s);
+    expect(filesCss).not.toMatch(/transition:\s*width/);
   });
 
   it('frames itself as an App window: fixed chrome bands around one scrolling workspace', async () => {
@@ -1046,6 +1047,50 @@ describe('PawOsFilesApp', () => {
     expect(await screen.findByRole('tree', { name: '项目文件' })).toBeInTheDocument();
   });
 
+  it('returns from a narrow filtered file preview to the filter match that opened it', async () => {
+    const narrowEmulation = applyNarrowLayout();
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/guide.md', name: 'guide.md', kind: 'file', byteSize: 42 }],
+        },
+        'agent.session.workspace.read': (request: ControlRequest) => ({
+          ok: true,
+          path: request.query?.path,
+          content: '# Guide',
+          byteSize: 7,
+          truncated: false,
+        }),
+      },
+    });
+
+    try {
+      renderApp(transport, <PawOsFilesApp />);
+      const filter = await screen.findByRole('searchbox', { name: '筛选已加载的文件' });
+      await user.type(filter, 'guide');
+      const match = within(screen.getByRole('list', { name: '筛选结果' })).getByRole('button', { name: '打开文件 guide.md' });
+      await user.click(match);
+      expect(await screen.findByRole('heading', { name: 'guide.md', level: 2 })).toBeInTheDocument();
+
+      const back = screen.getByRole('button', { name: '返回文件列表' });
+      await waitFor(() => expect(back).toHaveFocus());
+      await user.click(back);
+
+      const restoredMatch = within(screen.getByRole('list', { name: '筛选结果' })).getByRole('button', { name: '打开文件 guide.md' });
+      expect(restoredMatch).toHaveFocus();
+    } finally {
+      narrowEmulation.remove();
+    }
+  });
+
   it('locates a crumb directory in the tree from the reader header', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
@@ -1196,6 +1241,49 @@ describe('PawOsFilesApp', () => {
       expect(await screen.findByRole('button', { name: '已复制文件内容' })).toBeInTheDocument();
     } finally {
       if (!hadClipboard) delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it('announces clipboard failures instead of silently claiming no result', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => { throw new Error('clipboard denied'); });
+    const hadClipboard = 'clipboard' in navigator;
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.sessions.list': {
+          ok: true,
+          activeSessionId: 'session-work',
+          items: [{ id: 'session-work', title: 'PAWOS', updatedAtMs: 1, workspaceRoots: ['/workspace/paw'], status: 'idle' }],
+        },
+        'agent.session.workspace.list': {
+          ok: true,
+          path: '/workspace/paw',
+          items: [{ path: '/workspace/paw/notes.md', name: 'notes.md', kind: 'file', byteSize: 8 }],
+        },
+        'agent.session.workspace.read': {
+          ok: true,
+          path: '/workspace/paw/notes.md',
+          content: '# notes',
+          byteSize: 8,
+          truncated: false,
+        },
+      },
+    });
+
+    try {
+      renderApp(transport, <PawOsFilesApp />);
+      await user.click(await screen.findByRole('treeitem', { name: '打开文件 notes.md' }));
+      await user.click(await screen.findByRole('button', { name: '复制文件路径' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('无法访问剪贴板，文件路径没有复制');
+      expect(screen.getByRole('button', { name: '复制文件路径' })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: hadClipboard ? originalClipboard : undefined,
+      });
     }
   });
 

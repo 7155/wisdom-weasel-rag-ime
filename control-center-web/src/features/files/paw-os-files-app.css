@@ -1038,6 +1038,24 @@ i.paw-files-tree__disclosure {
   color: var(--color-accent);
 }
 
+.paw-files-preview__copy-error {
+  display: flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-block-end: 1px solid color-mix(in srgb, var(--color-danger) 20%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--color-paper));
+  color: var(--color-danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.paw-files-preview__copy-error svg {
+  flex: 0 0 auto;
+}
+
 /* -------------------------------------------------------------------------
    Reader body. The shared code/diff/Markdown/HTML surfaces keep their own
    colour ownership; Files only sizes and frames them.
@@ -1442,7 +1460,6 @@ i.paw-files-tree__disclosure {
   width: var(--paw-files-loaded, 0%);
   border-radius: inherit;
   background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 72%, var(--color-paper)), var(--color-accent));
-  transition: width 300ms var(--paw-files-ease);
 }
 
 /* The reading edge: where the next continue request will pick up. */

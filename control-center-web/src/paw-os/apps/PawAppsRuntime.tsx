@@ -17,18 +17,40 @@ type PawNativeAppId = Extract<PawAppId,
   | 'system-monitor'
   | 'system-settings'>;
 
-const PawAgentApp = lazy(() => import('./entries/PawAgentAppEntry'));
-const PawBrowserApp = lazy(() => import('./entries/PawBrowserAppEntry'));
-const PawNativeApp = lazy(() => import('./entries/PawNativeAppEntry'));
-const PawOsSatelliteHost = lazy(() => import('./entries/PawSatelliteEntry'));
-const PawResultWindow = lazy(() => import('./entries/PawResultWindowEntry'));
-
-const FilesApp = lazy(async () => ({
+const loadPawAgentApp = () => import('./entries/PawAgentAppEntry');
+const loadPawBrowserApp = () => import('./entries/PawBrowserAppEntry');
+const loadPawNativeApp = () => import('./entries/PawNativeAppEntry');
+const loadPawOsSatelliteHost = () => import('./entries/PawSatelliteEntry');
+const loadPawResultWindow = () => import('./entries/PawResultWindowEntry');
+const loadFilesApp = async () => ({
   default: (await import('@/features/files/PawOsFilesApp')).PawOsFilesApp,
-}));
-const TerminalApp = lazy(async () => ({
+});
+const loadTerminalApp = async () => ({
   default: (await import('@/features/terminal/PawOsTerminalApp')).PawOsTerminalApp,
-}));
+});
+
+const PawAgentApp = lazy(loadPawAgentApp);
+const PawBrowserApp = lazy(loadPawBrowserApp);
+const PawNativeApp = lazy(loadPawNativeApp);
+const PawOsSatelliteHost = lazy(loadPawOsSatelliteHost);
+const PawResultWindow = lazy(loadPawResultWindow);
+const FilesApp = lazy(loadFilesApp);
+const TerminalApp = lazy(loadTerminalApp);
+
+export function warmPawAppBody(appId: PawAppId): void {
+  const load = appId === 'agent'
+    ? loadPawAgentApp
+    : appId === 'browser'
+    ? loadPawBrowserApp
+    : appId === 'files'
+    ? loadFilesApp
+    : appId === 'terminal'
+    ? loadTerminalApp
+    : isPawExtensionAppId(appId)
+    ? undefined
+    : loadPawNativeApp;
+  if (load) void load().catch(() => undefined);
+}
 
 export function PawAppBody({
   appId,
@@ -49,6 +71,9 @@ export function PawAppBody({
 }
 
 function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, target?: PawOsWindowTarget) {
+  if (isPawExtensionAppId(appId)) {
+    return <PawExtensionAppHost appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />;
+  }
   if (target?.kind === 'result') return <PawResultWindow target={target} />;
   if (target?.kind === 'process-terminal') return <PawOsSatelliteHost target={target} />;
   /* A Room participant is a planet observation window, not its full Session
@@ -64,9 +89,6 @@ function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, ta
     || target?.kind === 'task'
     || target?.kind === 'package'
   ) return <PawOsSatelliteHost target={target} />;
-  if (isPawExtensionAppId(appId)) {
-    return <PawExtensionAppHost appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />;
-  }
   switch (appId) {
     case 'agent':
       return <PawAgentApp initialRoute={initialRoute} target={target ?? (entityId ? { kind: 'session', id: entityId, title: entityId } : undefined)} />;

@@ -4,10 +4,10 @@
    Rebuilt from five accreted patch layers into a single pass. Two frames own
    the layout:
 
-   1. Web route (`.shell-route-stage > main.knowledge-feature`): a flowing
+   1. Web route (`.shell-route-stage > :is(main, section).knowledge-feature`): a flowing
       paper sheet on the workspace canvas. The page scrolls once; nothing is
       height-locked.
-   2. PAWOS window (`main.knowledge-feature[data-paw-os-app='knowledge']`):
+   2. PAWOS window (`:is(main, section).knowledge-feature[data-paw-os-app='knowledge']`):
       a fixed frame. The height constraint flows window → library → detail →
       active tab panel, and the focusable tab panel owns the scrolling.
 
@@ -27,8 +27,9 @@
    ========================================================================== */
 
 /* -------------------------------------------------------------------------
-   Scoped derivations. The graph panel portals to <body> in focus mode, so it
-   re-declares the same tokens; dialog content (also portalled) deliberately
+   Scoped derivations. The graph panel portals to the PAWOS desktop root (and
+   falls back to <body> on the standalone route), so it re-declares the same
+   tokens; dialog content (also portalled) deliberately
    uses only global tokens.
    ------------------------------------------------------------------------- */
 .knowledge-feature,
@@ -80,7 +81,7 @@
    Frame 1 — web route: one flowing sheet. The sheet grows with its content
    and the page scrolls once, like every other framed route.
    ------------------------------------------------------------------------- */
-.shell-route-stage > main.knowledge-feature {
+.shell-route-stage > :is(main, section).knowledge-feature {
   display: block;
   width: 100%;
   height: auto;
@@ -114,7 +115,7 @@
    viewport, so dragging a window edge is the only thing that can change it
    and resizing the browser around a fixed window changes nothing.
    ------------------------------------------------------------------------- */
-main.knowledge-feature[data-paw-os-app='knowledge'] {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] {
   --knowledge-rail-width: 236px;
 
   display: grid;
@@ -131,9 +132,9 @@ main.knowledge-feature[data-paw-os-app='knowledge'] {
   container: knowledge-library / inline-size;
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] > .mgmt-loading,
-main.knowledge-feature[data-paw-os-app='knowledge'] > [role='alert'],
-main.knowledge-feature[data-paw-os-app='knowledge'] > .ui-empty-state { min-height: 0; overflow: auto; }
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] > .mgmt-loading,
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] > [role='alert'],
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] > .ui-empty-state { min-height: 0; overflow: auto; }
 
 /* A PAWOS Knowledge window already owns the App navigation, so the library
    keeps one compact command band (identity, counts, health, actions) across
@@ -145,7 +146,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] > .ui-empty-state { min-heig
    `align-items: start` so the page can grow, but inside a fixed window that
    detaches the workspace column from its minmax(0, 1fr) row and the library
    clips it without a scrollbar anywhere. */
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-native-layout='app'] {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-native-layout='app'] {
   height: 100%;
   min-height: 0;
   align-items: stretch;
@@ -161,29 +162,29 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-nati
     'rail workspace';
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher { grid-area: band; }
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail { grid-area: rail; }
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher { grid-area: band; }
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail { grid-area: rail; }
 
 /* The workspace column is its own container: a tab panel beside a 236px rail
    is that much narrower than the window, so its two-column surfaces fold on
    their own measured width instead of the window's. */
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__detail {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__detail {
   grid-area: workspace;
   container: knowledge-workspace / inline-size;
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__detail,
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs,
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__detail,
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs,
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] { overflow-y: auto; }
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] { overflow-y: auto; }
 
 /* Library rail inside the window: index only, its own scroll region. */
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] {
   min-height: 0;
   overflow: hidden;
   border-right: 1px solid var(--k-cool-hairline);
@@ -191,16 +192,16 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] > header {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] > header {
   min-height: 44px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--k-hairline-soft);
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] > header strong { font-size: 13px; }
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] > header > div:first-child span { font-size: 12px; }
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] > header strong { font-size: 13px; }
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] > header > div:first-child span { font-size: 12px; }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] .knowledge-base-rail__list {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] .knowledge-base-rail__list {
   min-height: 0;
   height: 100%;
   overflow-y: auto;
@@ -795,7 +796,6 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   height: 100%;
   background: var(--k-accent);
   content: '';
-  transition: width .4s var(--ease-standard);
 }
 
 /* Document facts read as hanging key/value lines, not a properties table. */
@@ -1549,7 +1549,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   gap: 2px;
 }
 
-.knowledge-graph__canvas-controls .ui-button { width: 30px; min-width: 30px; min-height: 30px; padding: 0; border-color: transparent; background: transparent; box-shadow: none; }
+.knowledge-graph__canvas-controls .ui-button { width: 44px; min-width: 44px; min-height: 44px; padding: 0; border-color: transparent; background: transparent; box-shadow: none; }
 .knowledge-graph__canvas-controls .ui-button:hover:not(:disabled) { border-color: var(--k-hairline); background: var(--color-surface-hover); }
 .knowledge-graph__legend {
   position: absolute;
@@ -1735,7 +1735,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   .knowledge-graph__search-group, .knowledge-graph__toolbar .ui-segmented { grid-column: 1 / -1; }
   .knowledge-graph__toolbar-actions { grid-column: 1 / -1; grid-row: auto; justify-content: flex-end; }
   .knowledge-graph__canvas, .knowledge-graph__list { height: 560px; }
-  .knowledge-graph__canvas-controls { display: grid; grid-template-columns: repeat(2, 30px); }
+  .knowledge-graph__canvas-controls { display: flex; }
   .knowledge-graph__inspector { top: auto; left: var(--space-3); width: auto; max-height: min(360px, 52%); }
   .knowledge-graph__stats { flex-wrap: wrap; }
   .knowledge-graph__stats > div { min-width: 0; flex: 1 1 25%; }
@@ -2016,7 +2016,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
 }
 
 @media (max-width: 760px) {
-  .shell-route-stage > main.knowledge-feature {
+  .shell-route-stage > :is(main, section).knowledge-feature {
     height: auto;
     min-height: calc(100dvh - 52px - var(--mobile-nav-height));
     padding: 0;
@@ -2095,14 +2095,14 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
   :where(.knowledge-feature:not([data-paw-os-app])) .knowledge-viewer__bar label { min-width: 0; margin-right: 0; }
 
   /* Touch targets stay comfortable on phones. */
-  main.knowledge-feature:not([data-paw-os-app]) .ui-button,
-  main.knowledge-feature:not([data-paw-os-app]) .ui-icon-button,
-  main.knowledge-feature:not([data-paw-os-app]) .ui-input,
-  main.knowledge-feature:not([data-paw-os-app]) .ui-select__trigger,
-  main.knowledge-feature:not([data-paw-os-app]) .knowledge-material-row__select,
-  main.knowledge-feature:not([data-paw-os-app]) details > summary { min-height: 44px; }
-  main.knowledge-feature:not([data-paw-os-app]) details > summary { display: flex; align-items: center; }
-  main.knowledge-feature:not([data-paw-os-app]) .knowledge-base-header__delete { min-width: 44px; }
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) .ui-button,
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) .ui-icon-button,
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) .ui-input,
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) .ui-select__trigger,
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) .knowledge-material-row__select,
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) details > summary { min-height: 44px; }
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) details > summary { display: flex; align-items: center; }
+  :is(main, section).knowledge-feature:not([data-paw-os-app]) .knowledge-base-header__delete { min-width: 44px; }
 }
 
 @media (max-width: 520px) {
@@ -2150,8 +2150,8 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-va
    shrink-to-fit width; that left a dead column beside Knowledge at wide
    sizes. Reset only this root and its active panel; the real document tabs
    below keep their compact capsule. */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs,
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs,
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] {
   width: 100%;
   border: 0;
   border-radius: 0;
@@ -2159,12 +2159,12 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-libr
   box-shadow: none;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs {
   padding: 0;
   grid-template-rows: 46px minmax(0, 1fr);
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] {
   display: block;
   flex: none;
   flex-wrap: nowrap;
@@ -2179,7 +2179,7 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-libr
    rule, so without this guard the empty materials panel silently occupied
    the grid's flexible row and pushed the active panel into an unconstrained
    implicit row — the clipped, unscrollable Markdown viewer. */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'][hidden] {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'][hidden] {
   display: none;
 }
 
@@ -2187,23 +2187,23 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-libr
    above already carries the library identity — so the Tabs root gets the one
    height-constrained row and the scroll chain stays window → library →
    detail → active tab panel. */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__detail {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__detail {
   border-radius: 0;
   background: var(--color-surface);
   grid-template-rows: minmax(0, 1fr);
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-panel { padding: 12px 18px 26px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-panel { padding: 12px 18px 26px; }
 
 /* Materials opens on the file workspace, not on instrumentation: the panel
    heading duplicates the active 资料 tab, the stat sheet collapses to one
    quiet line, and the import affordance becomes a compact bar. The workspace
    then fills the remaining window height (the tab panel above stays the one
    scroll owner). */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-materials { min-height: 100%; }
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-materials > .knowledge-panel__toolbar { display: none; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-materials { min-height: 100%; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-materials > .knowledge-panel__toolbar { display: none; }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -2214,37 +2214,37 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-mate
   gap: 4px 18px;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats > div {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats > div {
   display: inline-flex;
   align-items: baseline;
   padding: 0;
   gap: 6px;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats > div + div { border-left: 0; }
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats dt { letter-spacing: normal; font-size: 13px; }
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats dd { font-size: 13px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats > div + div { border-left: 0; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats dt { letter-spacing: normal; font-size: 13px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-stats dd { font-size: 13px; }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone {
   min-height: 46px;
   justify-content: flex-start;
   padding: 6px 12px;
   border-radius: 10px;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone > svg { padding: 5px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone > svg { padding: 5px; }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone > span {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-dropzone > span {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 2px 10px;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-workspace { min-height: 380px; }
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-list__body { min-height: 300px; }
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-viewer { padding: 0; }
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-viewer__bar {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-workspace { min-height: 380px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-material-list__body { min-height: 300px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-viewer { padding: 0; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-viewer__bar {
   min-height: 54px;
   align-items: end;
   padding: 8px 16px;
@@ -2257,7 +2257,7 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-view
    when the browser resizes around a fixed window. Here the toolbar, settings,
    notices and stats keep their intrinsic height and the graph workspace takes
    whatever the window has left. */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph {
   display: flex;
   height: 100%;
   min-height: 0;
@@ -2265,31 +2265,31 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-grap
   padding: 0;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph > * { flex: 0 0 auto; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph > * { flex: 0 0 auto; }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph__workspace {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph__workspace {
   min-height: 320px;
   flex: 1 1 auto;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph__canvas,
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph__list {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph__canvas,
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-graph__list {
   height: auto;
   min-height: 0;
 }
 
 /* The window viewer removes panel padding, so the desk carries its own
    gutters; the sheet then fills its reading column. */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-reading-desk { padding: var(--space-3) 16px 28px; }
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-reading-desk { padding: var(--space-3) 16px 28px; }
 
 /* The reading sheet stays true paper white inside the light PAWOS window. */
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-markdown-preview {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-markdown-preview {
   width: min(780px, 100%);
   border-width: 0;
   background: #fff;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-markdown-body {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-markdown-body {
   max-width: 72ch;
   margin-inline: auto;
   padding: 28px clamp(18px, 4cqw, 42px) 48px;
@@ -2297,9 +2297,9 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-mark
   line-height: 1.78;
 }
 
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-markdown-body,
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__detail > p,
-main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-page-preview article p {
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-markdown-body,
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__detail > p,
+:is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-page-preview article p {
   font-size: 15px;
 }
 
@@ -2311,7 +2311,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-page-preview arti
  * exception local to the Knowledge App so the viewer remains a real two-row
  * Tabs surface (list, then one active scroll owner).
  */
-.paw-window-shell[data-app='knowledge'] main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs {
+.paw-window-shell[data-app='knowledge'] :is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs {
   display: grid;
   width: 100%;
   min-width: 0;
@@ -2323,7 +2323,7 @@ main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-page-preview arti
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tablist'] {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tablist'] {
   display: flex;
   width: fit-content;
   min-width: 0;
@@ -2337,7 +2337,7 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   scrollbar-width: none;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'] {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'] {
   display: none;
   width: 100%;
   min-width: 0;
@@ -2350,12 +2350,12 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
   box-shadow: none;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'][data-state='active']:not([hidden]) {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'][data-state='active']:not([hidden]) {
   display: block;
   overflow: auto;
 }
 
-main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'][hidden] {
+:is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-document-tabs > [role='tabpanel'][hidden] {
   display: none;
 }
 
@@ -2377,58 +2377,61 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
    wide enough to read no longer both fit, so the rail leaves and the band's
    当前知识库 selector takes over. Never an icon-only mystery strip. */
 @container knowledge-library (max-width: 880px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-native-layout='app'] {
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library[data-native-layout='app'] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'band'
       'workspace';
   }
 
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] { display: none; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__current { display: none; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { display: grid; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-rail[data-variant='app'] { display: none; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__current { display: none; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { display: grid; }
 }
 
 /* The command band keeps identity, health and actions the longest; the
    secondary counts line is the first thing it can afford to drop. */
 @container knowledge-library (max-width: 640px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__meta { display: none; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__meta { display: none; }
 }
 
 @container knowledge-library (max-width: 560px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { flex-basis: 100%; grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__actions { margin-left: 0; justify-content: flex-start; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher > .ui-field { flex-basis: 100%; grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-base-switcher__actions { margin-left: 0; justify-content: flex-start; }
 }
 
 /* --- Workspace column ---------------------------------------------------- */
 
 @container knowledge-workspace (max-width: 760px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-workspace,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__results { overflow: visible; grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__list { border-right: 0; border-bottom: 1px solid var(--k-hairline); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__form { grid-template-columns: minmax(0, 1fr) auto; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-reading-desk[data-has-outline] { grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-reading-outline { position: static; max-height: 236px; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid { grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid > section { border-right: 0; border-bottom: 1px solid var(--k-hairline-soft); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid > section:last-child { border-bottom: 0; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list__head,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row { grid-template-columns: minmax(150px, 1fr) 82px 42px 140px; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-job-detail dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-workspace,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__results { overflow: visible; grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__list { border-right: 0; border-bottom: 1px solid var(--k-hairline); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__form { grid-template-columns: minmax(0, 1fr) auto; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-reading-desk[data-has-outline] { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-reading-outline { position: static; max-height: 236px; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid > section { border-right: 0; border-bottom: 1px solid var(--k-hairline-soft); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-grid > section:last-child { border-bottom: 0; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list__head,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row { grid-template-columns: minmax(150px, 1fr) 82px 42px 140px; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-job-detail dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @container knowledge-workspace (max-width: 560px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__form { grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields--chunking,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-chunk-grid,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-chunk-preview-controls { grid-template-columns: minmax(0, 1fr); }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__bar { align-items: stretch; flex-direction: column; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__back { align-self: flex-start; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__bar label { min-width: 0; margin-right: 0; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tablist'] {
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-search__form { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-settings-fields--chunking,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-chunk-grid,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-chunk-preview-controls { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__bar { align-items: stretch; flex-direction: column; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__back { align-self: flex-start; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-viewer__bar label { min-width: 0; margin-right: 0; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tablist'] {
     display: grid;
     padding-inline: var(--space-1);
     overflow: visible;
@@ -2436,18 +2439,23 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
     gap: 2px;
   }
 
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tablist'] [role='tab'] { min-width: 0; white-space: normal; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tablist'] [role='tab'] { min-width: 0; white-space: normal; }
 }
 
 @container knowledge-workspace (max-width: 460px) {
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list__head { display: none; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-dropzone { min-height: 96px; flex-direction: column; text-align: center; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row__select { grid-column: 1 / -1; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row__chunks { display: none; }
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-image-grid,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-asset-list,
-  main.knowledge-feature[data-paw-os-app='knowledge'] .knowledge-job-detail dl { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list__head { display: none; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list {
+    min-height: 224px;
+    grid-template-rows: auto minmax(224px, 1fr);
+  }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-list__body { min-height: 224px; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-dropzone { min-height: 96px; flex-direction: column; text-align: center; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row__select { grid-column: 1 / -1; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-material-row__chunks { display: none; }
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-image-grid,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-asset-list,
+  :is(main, section).knowledge-feature[data-paw-os-app='knowledge'] .knowledge-job-detail dl { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* -------------------------------------------------------------------------
@@ -2460,11 +2468,11 @@ main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-docu
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] { animation: none; }
+  :is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] { animation: none; }
   .knowledge-pipeline__stages li[data-state='active'] .knowledge-pipeline__dot { animation: none; }
   .knowledge-job-list__summary > svg { transition: none; }
   .knowledge-material-row__progress::after { transition: none; }
 }
 
-:root[data-reduce-motion='true'] main.knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] { animation: none; }
+:root[data-reduce-motion='true'] :is(main, section).knowledge-feature--migrated-v1[data-paw-os-app='knowledge'] .knowledge-library__tabs > [role='tabpanel'] { animation: none; }
 :root[data-reduce-motion='true'] .knowledge-pipeline__stages li[data-state='active'] .knowledge-pipeline__dot { animation: none; }

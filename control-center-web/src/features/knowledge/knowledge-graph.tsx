@@ -32,11 +32,13 @@ const KIND_OPTIONS = [
 ] as const;
 
 export function KnowledgeGraphPanel({
+  active = true,
   base,
   documents,
   onOpenSource,
   transport,
 }: {
+  active?: boolean;
   base: DocumentKnowledgeBase;
   documents: readonly KnowledgeDocument[];
   onOpenSource: (node: KnowledgeGraphNode) => void;
@@ -63,7 +65,7 @@ export function KnowledgeGraphPanel({
     depth: Number(depth),
     excludeChunks,
   }), [debouncedQuery, depth, documentId, excludeChunks, kind, limit]);
-  const graphQuery = useKnowledgeGraphQuery(base.id, filters);
+  const graphQuery = useKnowledgeGraphQuery(base.id, filters, active);
   const queryClient = useQueryClient();
   const rebuild = useMutation({
     mutationFn: () => rebuildKnowledgeGraph(transport, base.id, graphQuery.data?.revision ?? 0, { extractorMode }),
@@ -131,7 +133,12 @@ export function KnowledgeGraphPanel({
       ) : graph && !graphQuery.isPending ? <EmptyState action={<Button onClick={() => setView('status')} size="small">查看构建状态</Button>} description="调整材料、类型、深度或节点上限后再试。" icon={GitBranch} title="当前范围没有图谱节点" /> : null}
     </div>
   );
-  return focusMode ? createPortal(panel, document.body) : panel;
+  // PAWOS itself is a z-indexed root. Portalling to <body> puts this fixed
+  // surface in a lower sibling stacking context, underneath the entire OS.
+  // Keep the focus canvas inside the desktop root when one exists; standalone
+  // Knowledge pages still use <body> as their full-viewport host.
+  const focusPortalHost = document.querySelector<HTMLElement>('.paw-desktop-root') ?? document.body;
+  return focusMode ? createPortal(panel, focusPortalHost) : panel;
 }
 
 function GraphStats({ graph }: { graph: NonNullable<ReturnType<typeof useKnowledgeGraphQuery>['data']> }) {

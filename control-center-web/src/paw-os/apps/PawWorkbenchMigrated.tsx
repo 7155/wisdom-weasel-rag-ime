@@ -643,7 +643,7 @@ function TaskOrchestration({
         ) : trimmedTaskQuery ? <p className="paw-wb-outline__quiet">没有匹配的任务。</p> : null}
       </aside>
 
-      <main className="paw-wb-graph" aria-label="真实任务依赖图">
+      <section aria-label="真实任务依赖图" className="paw-wb-graph" role="region">
         <header>
           <div><GitBranch aria-hidden size={16} /><strong>依赖图</strong><span>{tasks.length} 节点 · {graph.edges.length} 条真实依赖</span></div>
         </header>
@@ -709,7 +709,7 @@ function TaskOrchestration({
             </div>
           </div>
         ) : resourceSettled(resourceState) ? <EmptyState icon={<GitBranch size={24} />} title="没有可编排的真实任务" copy="Workbench 不会为了填满画布创建演示节点。" /> : null}
-      </main>
+      </section>
 
       <TaskDetail onEditTask={onEditTask} onOpenTask={onOpenTask} onSelectTask={onSelectTask} task={selectedTask} tasks={tasks} />
     </div>
@@ -852,7 +852,7 @@ function WorkDocumentWorkspace({
 
       {/* A reader, not a scrolling page: the document header is fixed chrome and
           only the authority body scrolls, so the title never leaves the pane. */}
-      <main className="paw-wb-document-reader">
+      <section aria-label="工作文档阅读器" className="paw-wb-document-reader" role="region">
         {selectedDocument ? (
           <>
             <header>
@@ -890,7 +890,7 @@ function WorkDocumentWorkspace({
             <EmptyState icon={<ExternalLink size={25} />} title="选择一份工作文档" copy="详情只显示文档合同已有的权威、revision、路径与状态。" />
           </div>
         )}
-      </main>
+      </section>
     </div>
   );
 }

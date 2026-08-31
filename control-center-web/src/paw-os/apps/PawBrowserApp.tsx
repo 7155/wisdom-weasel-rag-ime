@@ -70,13 +70,13 @@ import {
 } from './paw-browser-model';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
-import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { usePawOsAppActive } from '@/features/paw-os/surface-context';
 import { usePageVisibility } from '@/platform/use-page-visibility';
 
 export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, { kind: 'browser-target' }> } = {}) {
   const transport = useControlTransport();
   const electronHost = pawBrowserHost();
-  const surfaceActive = usePawOsAppSurface()?.active ?? true;
+  const surfaceActive = usePawOsAppActive() ?? true;
   const pageVisible = usePageVisibility();
   const windowChromeTarget = usePawWindowChromeTarget();
   const [tabs, setTabs] = useState<BrowserRecord[]>([]);
@@ -715,10 +715,12 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
   return (
     <>
       {windowChromeTarget ? <PawWindowChromePortal>{browserTabs}</PawWindowChromePortal> : null}
-      <main
+      <section
+        aria-label="Browser"
         className="paw-direct-browser"
         data-route-id="browser"
         data-tabs-in-window-chrome={windowChromeTarget ? true : undefined}
+        role="region"
       >
         {windowChromeTarget ? null : browserTabs}
 
@@ -1135,7 +1137,7 @@ export function PawBrowserApp({ target }: { target?: Extract<PawOsWindowTarget, 
           </aside>
         ) : null}
       </section>
-      </main>
+      </section>
     </>
   );
 }

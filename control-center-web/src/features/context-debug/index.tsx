@@ -34,7 +34,7 @@ import {
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
 import { MarkdownBody } from '@/features/agent/timeline/MarkdownRenderer';
 import { publicErrorText } from '@/features/overview/management-ui';
-import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { usePawOsAppCompact, usePawOsAppIdentity } from '@/features/paw-os/surface-context';
 import {
   formatJson,
   describeDebugTurn,
@@ -52,7 +52,8 @@ import './context-debug.css';
 
 export function ContextDebugFeature() {
   const transport = useControlTransport();
-  const appSurface = usePawOsAppSurface();
+  const appSurface = usePawOsAppIdentity();
+  const compact = usePawOsAppCompact();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('sessionId') ?? '';
   const requestedTurnId = searchParams.get('turnId') ?? '';
@@ -156,9 +157,10 @@ export function ContextDebugFeature() {
     });
   }
 
+  const Surface = appSurface ? 'section' : 'main';
   return (
     <>
-    <main className="context-debug-feature" data-paw-os-app={appSurface?.appId} data-paw-os-compact={appSurface?.compact || undefined} data-route-id="context-debug">
+    <Surface aria-label={appSurface ? '上下文检查' : undefined} className="context-debug-feature" data-paw-os-app={appSurface?.appId} data-paw-os-compact={compact || undefined} data-route-id="context-debug" role={appSurface ? 'region' : undefined}>
       <header className="context-debug-header" data-native-actions={appSurface ? true : undefined}>
         {appSurface ? <h1 className="mgmt-sr-only">上下文检查</h1> : (
           <div className="context-debug-heading">
@@ -243,7 +245,7 @@ export function ContextDebugFeature() {
         telemetry={response.telemetry}
         unavailable={unavailableContext}
       />
-    </main>
+    </Surface>
     <Dialog
       onOpenChange={(open) => {
         if (!open) setHtmlPreviewUrls(null);

@@ -14,10 +14,15 @@ import {
   openEvidenceEchoEntity,
 } from './evidence-echo';
 import { EvidenceEchoUsage } from './EvidenceEchoUsage';
+import evidenceEchoCss from './evidence-echo.css?raw';
 
 afterEach(cleanup);
 
 describe('evidenceEchoNodeEntities', () => {
+  it('keeps the shared refresh control large enough to target reliably', () => {
+    expect(evidenceEchoCss).toMatch(/\.evidence-echo-usage__refresh\s*\{[^}]*width:\s*32px;[^}]*height:\s*32px;/s);
+  });
+
   it('resolves only the flat reference keys a trace node can actually carry', () => {
     expect(evidenceEchoNodeEntities(traceNode({
       memoryBookId: 'book-provider-context',

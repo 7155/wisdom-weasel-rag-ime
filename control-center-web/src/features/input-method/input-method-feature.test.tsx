@@ -1746,7 +1746,7 @@ describe('InputMethodFeature', () => {
     ].includes(request.pathId))).toBe(false);
 
     expect(inputMethodCss).toMatch(
-      /main:is\(\[data-route-id='input'\], \[data-route-id='input-lexicon'\]\)\[data-paw-os-app\] > \.mgmt-page__body\s*\{[^}]*padding-top:/s,
+      /:is\(main, section\):is\(\[data-route-id='input'\], \[data-route-id='input-lexicon'\]\)\[data-paw-os-app\] > \.mgmt-page__body\s*\{[^}]*padding-top:/s,
     );
     expect(inputMethodCss).toMatch(
       /@container paw-window \(max-width: 860px\)[\s\S]*?\.input-lexicon-review__row\s*\{[^}]*grid-template-columns:\s*minmax\(20px, max-content\) minmax\(0, 1fr\) max-content/s,

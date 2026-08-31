@@ -202,7 +202,7 @@
 
 .agent-context-usage__list > li[data-state='unknown'] {
   color: var(--paw-control-muted, #5d6675);
-  background: repeating-linear-gradient(135deg, transparent 0 7px, rgb(93 102 117 / .035) 7px 14px);
+  background: var(--paw-control-bg-soft, #f6f8fb);
 }
 
 .agent-context-usage__list > li[data-state='absent'] {

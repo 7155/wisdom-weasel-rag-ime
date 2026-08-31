@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, EmptyState, Skeleton } from '@/components/primitives';
-import { usePawOsAppSurface } from '@/features/paw-os/surface-context';
+import { usePawOsAppCompact, usePawOsAppIdentity } from '@/features/paw-os/surface-context';
 import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import './management.css';
 
@@ -47,14 +47,18 @@ export function ManagementPage({
   routeId: string;
   title: string;
 }) {
-  const appSurface = usePawOsAppSurface();
+  const appSurface = usePawOsAppIdentity();
+  const compact = usePawOsAppCompact();
+  const Surface = appSurface ? 'section' : 'main';
   return (
-    <main
+    <Surface
+      aria-label={appSurface ? title : undefined}
       className="mgmt-page"
       data-layout={layout}
       data-paw-os-app={appSurface?.appId}
-      data-paw-os-compact={appSurface?.compact || undefined}
+      data-paw-os-compact={compact || undefined}
       data-route-id={routeId}
+      role={appSurface ? 'region' : undefined}
     >
       {appSurface ? (
         <>
@@ -72,7 +76,7 @@ export function ManagementPage({
         </header>
       )}
       <div className="mgmt-page__body">{children}</div>
-    </main>
+    </Surface>
   );
 }
 

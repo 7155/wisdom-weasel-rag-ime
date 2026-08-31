@@ -38,7 +38,7 @@ import { EvidenceEchoUsage } from '@/features/evidence-echo/EvidenceEchoUsage';
 import { useProductIdentity } from '@/features/identity/product-identity';
 import {
   openPawOsRoute,
-  usePawOsAppSurface,
+  usePawOsAppIdentity,
   usePawOsDesktop,
 } from '@/features/paw-os/surface-context';
 import {
@@ -98,7 +98,7 @@ function defaultMemoryStatus(kind: MemoryKind): string {
 export function MemoryFeature() {
   const queryClient = useQueryClient();
   const identity = useProductIdentity();
-  const appSurface = usePawOsAppSurface();
+  const appSurface = usePawOsAppIdentity();
   const desktop = usePawOsDesktop();
   const location = useLocation();
   const navigate = useNavigate();

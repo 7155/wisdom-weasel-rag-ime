@@ -217,16 +217,29 @@
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: .55; transform: scale(.82); }
 }
-/* 运行中工具行：底部行进虚线（marching dashes） */
+/* 运行中工具行：底部虚线在独立合成层平移，不重绘整行背景。 */
 .paw-desktop-root .agent-activity-row[data-status='running'],
 .paw-desktop-root .agent-activity-row[data-status='active'] {
-  background:
-    linear-gradient(90deg, var(--comp8-tool) 55%, transparent 45%) bottom left / 12px 1.6px repeat-x,
-    color-mix(in srgb, var(--comp8-tool) 7%, transparent);
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--comp8-tool) 7%, transparent);
+}
+.paw-desktop-root .agent-activity-row[data-status='running']::after,
+.paw-desktop-root .agent-activity-row[data-status='active']::after {
+  position: absolute;
+  right: -12px;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, var(--comp8-tool) 0 6px, transparent 6px 12px);
+  content: '';
+  pointer-events: none;
+  transform: translate3d(-12px, 0, 0);
+  will-change: transform;
   animation: paw-comp8-marching 700ms linear infinite;
 }
 @keyframes paw-comp8-marching {
-  to { background-position-x: 12px, 0; }
+  to { transform: translate3d(0, 0, 0); }
 }
 
 .paw-desktop-root .agent-activity-row__meta {
@@ -378,8 +391,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .paw-desktop-root .agent-assistant-turn[data-status='streaming'] .agent-markdown > :last-child::after,
-  .paw-desktop-root .agent-activity-row[data-status='running'],
-  .paw-desktop-root .agent-activity-row[data-status='active'],
+  .paw-desktop-root .agent-activity-row[data-status='running']::after,
+  .paw-desktop-root .agent-activity-row[data-status='active']::after,
   .paw-desktop-root .agent-activity-row[data-status='running'] .agent-activity-row__icon {
     animation: none !important;
   }

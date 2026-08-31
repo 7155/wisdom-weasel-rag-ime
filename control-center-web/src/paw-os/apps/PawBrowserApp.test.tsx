@@ -77,7 +77,7 @@ describe('PAW Browser App', () => {
     );
 
     expect(await screen.findByRole('textbox', { name: '页面地址' })).toBeInTheDocument();
-    expect(document.querySelector('main[data-route-id="browser"]')).toBeInTheDocument();
+    expect(document.querySelector('section[data-route-id="browser"]')).toBeInTheDocument();
     expect(screen.queryByText('CDP 直连')).not.toBeInTheDocument();
     expect(screen.queryByText('Agent 拥有完整控制权')).not.toBeInTheDocument();
     expect(screen.queryByText(/配对/)).not.toBeInTheDocument();

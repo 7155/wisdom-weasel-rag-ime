@@ -149,6 +149,12 @@ export const CONTROL_ROUTES = {
     params: { sandboxRunId: null },
     responseContract: 'sandbox-run.v1',
   },
+  'extension.sandbox.experiment.run': {
+    method: 'POST',
+    path: '/api/extensions/sandbox/experiments',
+    body: ['sessionId', 'ownerAppId', 'experimentId', 'candidateBindingSha256', 'requestedDecision'],
+    requiredBody: ['sessionId', 'ownerAppId', 'experimentId', 'candidateBindingSha256', 'requestedDecision'],
+  },
   'observability.evals.evidence.run': {
     method: 'POST',
     path: '/api/observability/evals/evidence-ground-truth',

@@ -127,7 +127,7 @@
 
 /* Native App type roles stay stable even when a feature stylesheet contains
    older literal sizes later in the bundle. */
-main.mgmt-page[data-paw-os-app] {
+:is(main, section).mgmt-page[data-paw-os-app] {
   --font-size-caption: 13px;
   --font-size-ui: 14px;
   --font-size-ui-strong: 14px;
@@ -137,7 +137,7 @@ main.mgmt-page[data-paw-os-app] {
   --text-reading: 15px;
 }
 
-main.mgmt-page[data-paw-os-app] :where(
+:is(main, section).mgmt-page[data-paw-os-app] :where(
   button,
   input,
   select,
@@ -150,8 +150,8 @@ main.mgmt-page[data-paw-os-app] :where(
   .ui-segmented__item
 ) { font-size: 14px; }
 
-main.mgmt-page[data-paw-os-app] :where(small, dt, time, .mgmt-list__meta, .mgmt-status) { font-size: 13px; }
-main.mgmt-page[data-paw-os-app] :where(
+:is(main, section).mgmt-page[data-paw-os-app] :where(small, dt, time, .mgmt-list__meta, .mgmt-status) { font-size: 13px; }
+:is(main, section).mgmt-page[data-paw-os-app] :where(
   .ui-empty-state p,
   .mgmt-section__header p,
   .mgmt-inline-notice__body,
@@ -630,7 +630,7 @@ main.mgmt-page[data-paw-os-app] :where(
    A management route is one sheet of paper lifted off the canvas — the canvas
    must actually show around it for the material ladder to exist. */
 @media (min-width: 761px) {
-  .shell-route-stage > main.mgmt-page[data-layout='sheet'] {
+  .shell-route-stage > :is(main, section).mgmt-page[data-layout='sheet'] {
     width: min(100% - 2 * var(--workspace-gutter), calc(var(--workspace-measure) + 200px));
     min-height: 0;
     margin: 0 auto var(--space-8);
@@ -680,8 +680,8 @@ main.mgmt-page[data-paw-os-app] :where(
 /* Overview reads as one report: supporting figures are quiet, sections sit in
    a tighter sequence, absence never dominates. */
 
-main[data-route-id='overview'] .mgmt-section { padding-block: var(--space-5); }
-main[data-route-id='overview'] .ui-empty-state { padding-block: var(--space-3); }
+:is(main, section)[data-route-id='overview'] .mgmt-section { padding-block: var(--space-5); }
+:is(main, section)[data-route-id='overview'] .ui-empty-state { padding-block: var(--space-3); }
 
 .mgmt-query-actions {
   display: flex;
@@ -700,29 +700,29 @@ main[data-route-id='overview'] .ui-empty-state { padding-block: var(--space-3); 
   white-space: nowrap;
 }
 
-main[data-route-id='overview'] .overview-primary-actions .ui-button {
+:is(main, section)[data-route-id='overview'] .overview-primary-actions .ui-button {
   min-height: 44px;
 }
 
-main[data-route-id='overview'] .overview-auxiliary-state {
+:is(main, section)[data-route-id='overview'] .overview-auxiliary-state {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-main[data-route-id='overview'] .overview-auxiliary-state > .mgmt-notice {
+:is(main, section)[data-route-id='overview'] .overview-auxiliary-state > .mgmt-notice {
   min-width: 0;
   flex: 1 1 auto;
 }
 
-main[data-route-id='overview'] .overview-auxiliary-state > .ui-button {
+:is(main, section)[data-route-id='overview'] .overview-auxiliary-state > .ui-button {
   flex: 0 0 auto;
 }
 
 /* A single framed matrix replaces the old full-width service log. The seams
    make rows and columns easy to scan without turning every item into a raised
    card. Healthy services remain visible; only problem cells gain an action. */
-main[data-route-id='overview'] .overview-status-matrix {
+:is(main, section)[data-route-id='overview'] .overview-status-matrix {
   display: grid;
   margin: 0;
   padding: 1px;
@@ -734,7 +734,7 @@ main[data-route-id='overview'] .overview-status-matrix {
   overflow: hidden;
 }
 
-main[data-route-id='overview'] .overview-status-cell {
+:is(main, section)[data-route-id='overview'] .overview-status-cell {
   display: grid;
   min-width: 0;
   min-height: 128px;
@@ -746,16 +746,16 @@ main[data-route-id='overview'] .overview-status-cell {
 }
 
 /* Balance an incomplete final row instead of leaving a large dead cell. */
-main[data-route-id='overview'] .overview-status-cell:nth-child(3n + 1):last-child { grid-column: 1 / -1; }
-main[data-route-id='overview'] .overview-status-cell:nth-child(3n + 1):nth-last-child(2),
-main[data-route-id='overview'] .overview-status-cell:nth-child(3n + 2):last-child { grid-column: span 3; }
+:is(main, section)[data-route-id='overview'] .overview-status-cell:nth-child(3n + 1):last-child { grid-column: 1 / -1; }
+:is(main, section)[data-route-id='overview'] .overview-status-cell:nth-child(3n + 1):nth-last-child(2),
+:is(main, section)[data-route-id='overview'] .overview-status-cell:nth-child(3n + 2):last-child { grid-column: span 3; }
 
-main[data-route-id='overview'] .overview-status-cell[data-state='attention'],
-main[data-route-id='overview'] .overview-status-cell[data-state='unavailable'] {
+:is(main, section)[data-route-id='overview'] .overview-status-cell[data-state='attention'],
+:is(main, section)[data-route-id='overview'] .overview-status-cell[data-state='unavailable'] {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-warning) 72%, transparent);
 }
 
-main[data-route-id='overview'] .overview-status-cell__header {
+:is(main, section)[data-route-id='overview'] .overview-status-cell__header {
   display: flex;
   min-width: 0;
   align-items: flex-start;
@@ -763,14 +763,14 @@ main[data-route-id='overview'] .overview-status-cell__header {
   gap: var(--space-3);
 }
 
-main[data-route-id='overview'] .overview-status-cell__header strong {
+:is(main, section)[data-route-id='overview'] .overview-status-cell__header strong {
   min-width: 0;
   font-size: 15px;
   letter-spacing: -.006em;
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='overview'] .overview-status-cell p {
+:is(main, section)[data-route-id='overview'] .overview-status-cell p {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--font-size-caption);
@@ -863,47 +863,47 @@ main[data-route-id='overview'] .overview-status-cell p {
   .mgmt-page[data-paw-os-app] .mgmt-list__row > svg { grid-column: 2; }
 }
 
-main[data-route-id='overview'] .overview-status-cell__action {
+:is(main, section)[data-route-id='overview'] .overview-status-cell__action {
   justify-self: start;
   margin-top: auto;
   min-height: 44px;
 }
 
-main[data-route-id='overview'] .overview-capability-actions {
+:is(main, section)[data-route-id='overview'] .overview-capability-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
 
-main[data-route-id='overview'] .overview-capability-actions .ui-button { min-height: 44px; }
+:is(main, section)[data-route-id='overview'] .overview-capability-actions .ui-button { min-height: 44px; }
 
 @container (max-width: 900px) {
-  main[data-route-id='overview'] .overview-status-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell { grid-column: span 1; }
-  main[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell:nth-child(odd):last-child { grid-column: 1 / -1; }
+  :is(main, section)[data-route-id='overview'] .overview-status-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell { grid-column: span 1; }
+  :is(main, section)[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell:nth-child(odd):last-child { grid-column: 1 / -1; }
 }
 
 @container (max-width: 599px) {
-  main[data-route-id='overview'] .overview-status-matrix { grid-template-columns: 1fr; }
-  main[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell {
+  :is(main, section)[data-route-id='overview'] .overview-status-matrix { grid-template-columns: 1fr; }
+  :is(main, section)[data-route-id='overview'] .overview-status-matrix > .overview-status-cell.overview-status-cell {
     min-height: 112px;
     grid-column: 1;
   }
 }
 
 @media (max-width: 760px) {
-  main[data-route-id='overview'] .overview-auxiliary-state {
+  :is(main, section)[data-route-id='overview'] .overview-auxiliary-state {
     align-items: stretch;
     flex-direction: column;
   }
 
-  main[data-route-id='overview'] .overview-auxiliary-state > .ui-button {
+  :is(main, section)[data-route-id='overview'] .overview-auxiliary-state > .ui-button {
     min-height: 44px;
     align-self: stretch;
   }
 
-  main[data-route-id='overview'] .mgmt-page__actions .ui-button { min-height: 44px; }
+  :is(main, section)[data-route-id='overview'] .mgmt-page__actions .ui-button { min-height: 44px; }
 
   /* Compact type may stay compact on phones, but the physical target may not.
      This baseline covers the shared controls used across every management
@@ -972,21 +972,21 @@ main[data-route-id='overview'] .overview-capability-actions .ui-button { min-hei
    Six equal thin columns read as a metric strip. Three roomy columns with a
    hanging figure read as a report. */
 /* Six figures resolve as an even 3x2 block; auto-fit left a ragged 4+2. */
-main[data-route-id='overview'] .mgmt-metrics {
+:is(main, section)[data-route-id='overview'] .mgmt-metrics {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-5) var(--space-8);
   padding-top: var(--space-4);
 }
 @media (min-width: 1100px) {
-  main[data-route-id='overview'] .mgmt-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='overview'] .mgmt-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 /* A section holding only an absence should not reserve a full section's air. */
 .mgmt-section:has(> .ui-empty-state:last-child) { padding-block: var(--space-4); }
 .mgmt-section:has(> .ui-empty-state:last-child) .mgmt-section__header { margin-bottom: var(--space-2); }
-main[data-route-id='overview'] .mgmt-metric dt { font-size: var(--font-size-caption); letter-spacing: .04em; }
-main[data-route-id='overview'] .mgmt-metric dd { margin-top: 2px; }
-main[data-route-id='overview'] .mgmt-metric .mgmt-metric__detail { margin-top: 1px; }
+:is(main, section)[data-route-id='overview'] .mgmt-metric dt { font-size: var(--font-size-caption); letter-spacing: .04em; }
+:is(main, section)[data-route-id='overview'] .mgmt-metric dd { margin-top: 2px; }
+:is(main, section)[data-route-id='overview'] .mgmt-metric .mgmt-metric__detail { margin-top: 1px; }
 
 /* Key/value pairs: hanging labels on a quiet rule, not table rows. */
 .mgmt-kv {

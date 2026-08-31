@@ -26,10 +26,10 @@ describe('Configuration settings WorkContract UI', () => {
     // The wrapper contains the label, description, and input. A fixed 44px
     // height clips those children and lets the section grid cover the input.
     expect(configurationStylesheet).toContain(
-      "main[data-route-id='configuration'] .configuration-search input { height: 44px; }",
+      ":is(main, section)[data-route-id='configuration'] .configuration-search input { height: 44px; }",
     );
     expect(configurationStylesheet).not.toContain(
-      "main[data-route-id='configuration'] .configuration-search,\n  main[data-route-id='configuration'] .configuration-search input { height: 44px; }",
+      ":is(main, section)[data-route-id='configuration'] .configuration-search,\n  :is(main, section)[data-route-id='configuration'] .configuration-search input { height: 44px; }",
     );
   });
 
@@ -279,6 +279,16 @@ describe('Configuration settings WorkContract UI', () => {
 
     expect(screen.queryByRole('combobox', { name: '看图模型' })).not.toBeInTheDocument();
   });
+
+  it('shows a model-catalog read failure instead of an empty model catalog', async () => {
+    const transport = renderConfiguration(true, true, true);
+
+    expect(await screen.findByRole('heading', { name: '读取失败' })).toBeInTheDocument();
+    expect(screen.getByText('无法读取本机设置，请刷新后重试。')).toBeInTheDocument();
+    expect(screen.queryByText('当前没有可用模型')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument();
+    expect(findRequest(transport, 'agent.role.models')).toBeDefined();
+  });
 });
 
 class ConfigurationTransport implements ControlTransport {
@@ -289,6 +299,7 @@ class ConfigurationTransport implements ControlTransport {
   constructor(
     private readonly writesAvailable: boolean,
     private readonly modelCatalogAvailable = false,
+    private readonly modelCatalogFails = false,
   ) {}
 
   async capabilities(): Promise<FrontendCapabilities> {
@@ -328,7 +339,10 @@ class ConfigurationTransport implements ControlTransport {
       return settingsPayload() as Response;
     }
     if (request.pathId === 'configuration.schema') return schemaPayload() as Response;
-    if (request.pathId === 'agent.role.models') return modelCatalogPayload() as Response;
+    if (request.pathId === 'agent.role.models') {
+      if (this.modelCatalogFails) throw new Error('model catalog unavailable');
+      return modelCatalogPayload() as Response;
+    }
     if (request.pathId === 'configuration.settings.preview') return {
       schemaVersion: 'rag-ime.management-work-preview.v1',
       ok: true,
@@ -370,8 +384,9 @@ class ConfigurationTransport implements ControlTransport {
 function renderConfiguration(
   writesAvailable: boolean,
   modelCatalogAvailable = false,
+  modelCatalogFails = false,
 ): ConfigurationTransport {
-  const transport = new ConfigurationTransport(writesAvailable, modelCatalogAvailable);
+  const transport = new ConfigurationTransport(writesAvailable, modelCatalogAvailable, modelCatalogFails);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });

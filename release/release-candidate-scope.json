@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-30T18:07:34Z",
+  "generatedAt": "2026-08-31T09:58:09Z",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -15,15 +15,15 @@
   "groups": {
     "project_harness": {
       "description": "Root self-hosting project context and bounded consistency checks.",
-      "pathCount": 38
+      "pathCount": 40
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 894
+      "pathCount": 907
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 507
+      "pathCount": 511
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 1519,
+    "pathCount": 1538,
     "dispositionCounts": {
-      "keep_release": 1481,
-      "delete_old_implementation": 38
+      "delete_old_implementation": 38,
+      "keep_release": 1500
     },
     "groupCounts": {
-      "project_harness": 38,
-      "control_center_release_ui": 894,
-      "session_room_skill_flow": 507,
-      "memory_curation": 38,
+      "control_center_release_ui": 907,
       "desktop_semantic_accessibility": 19,
       "installation_reliability": 18,
+      "memory_curation": 38,
+      "project_harness": 40,
       "release_scope": 3,
-      "room_kernel_cleanup": 2
+      "room_kernel_cleanup": 2,
+      "session_room_skill_flow": 511
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -78,7 +78,7 @@
     }
   ],
   "verification": {
-    "projectHarness": "bounded docs and exact 1519-path inventory preflight pass; the base-to-HEAD check remains pending until the candidate files are committed",
+    "projectHarness": "bounded docs and exact 1538-path inventory prepared from the candidate index; final HEAD check follows the exact commit",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
@@ -92,7 +92,7 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1519/1519 candidate paths classified; 1481 retained and 38 old implementations deleted",
+    "releaseScopeCoverage": "1538/1538 candidate paths classified; 1500 retained and 38 old implementations deleted",
     "repositoryPublicAudit": "Current 2026-08-31 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
@@ -127,41 +127,6 @@
       "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
     },
     {
-      "path": "assets/showcase/pawos-agent-trace.webp",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
-    },
-    {
-      "path": "assets/showcase/pawos-room-focus-satellite.webp",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
-    },
-    {
-      "path": "assets/showcase/pawos-room-starfield.webp",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
-    },
-    {
-      "path": "assets/showcase/README.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
-    },
-    {
-      "path": "assets/showcase/showcase-manifest.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
-    },
-    {
       "path": "CHANGELOG.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -183,7 +148,98 @@
       "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
     },
     {
+      "path": "DECISIONS.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "OUTCOMES.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "PAW_ROOM_MULTI_AGENT_BLACKBOX_ACCEPTANCE_20260825.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the source-linked Room multi-Agent black-box acceptance receipt and its honest foreground boundary."
+    },
+    {
+      "path": "PROJECT.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "README.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+    },
+    {
+      "path": "assets/showcase/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/pawos-agent-trace.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/pawos-room-focus-satellite.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/pawos-room-starfield.webp",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
+      "path": "assets/showcase/showcase-manifest.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the self-contained PAWOS showcase assets, capture source, documentation, and visual acceptance evidence."
+    },
+    {
       "path": "control-center-web/CLOUD_MODEL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/PAWOS_FRONTEND_CONTINUATION.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -246,18 +302,18 @@
       "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
     },
     {
-      "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
     },
     {
       "path": "control-center-web/docs/pawos/PAWOS_SHOWCASE.md",
@@ -282,13 +338,6 @@
     },
     {
       "path": "control-center-web/docs/pawos/requirements/PAWOS_PRODUCT_CONTRACT.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
-    },
-    {
-      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -386,7 +435,63 @@
       "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
     },
     {
-      "path": "control-center-web/docs/README.md",
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_196_205.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend requirement ledger and acceptance boundary."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_206_206.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Room planet presentation contract and its acceptance evidence."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_207_207.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Extension App self-bootstrap, SGG sandbox, icon, install, and uninstall requirement contract."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_208_208.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_209_209.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_210_211.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/LICENSE",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -743,34 +848,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.d.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.d.ts.map",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.js",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.js.map",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/ProgressiveMarkdown.d.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -821,6 +898,34 @@
     },
     {
       "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/ReactMarkdownAdapter.js.map",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.d.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.d.ts.map",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/dist/react/index.js.map",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -953,21 +1058,7 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/LICENSE",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/package.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -1051,13 +1142,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/src/react/index.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/src/react/ProgressiveMarkdown.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -1066,6 +1150,13 @@
     },
     {
       "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/src/react/ReactMarkdownAdapter.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/docs/references/claude_streaming_renderer_cleanroom/src/react/index.ts",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -1282,6 +1373,13 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/e2e/fixtures/minecraft-harness-20260825/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/e2e/fixtures/minecraft-harness-20260825/manifest.json",
       "status": "added",
       "disposition": "keep_release",
@@ -1297,13 +1395,6 @@
     },
     {
       "path": "control-center-web/e2e/fixtures/minecraft-harness-20260825/project/minecraft-harness-project.zip",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/e2e/fixtures/minecraft-harness-20260825/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -1520,6 +1611,55 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the source-isolated 掌柜问数 conversation-mode and Session-binding regressions."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the source-isolated 掌柜问数 Extension App and ordinary Session surface."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/app.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the responsive, mode-specific 掌柜问数 App presentation."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pawos-app.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the validated Extension App identity, icon, Package, Skill, and SGG suite binding."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/index.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the co-versioned managed Pi Package entry for the Extension App."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/package.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the App-owned Pi Package manifest and lifecycle identity."
+    },
+    {
+      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/skills/zhanggui-wenshu/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the App-specific source-backed问数、对账、解释 Skill."
+    },
+    {
       "path": "control-center-web/index.html",
       "status": "modified",
       "disposition": "keep_release",
@@ -1529,20 +1669,6 @@
     {
       "path": "control-center-web/package.json",
       "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/PAWOS_FRONTEND_CLOUD_MODEL_BRIEF.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/PAWOS_FRONTEND_CONTINUATION.md",
-      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
@@ -1567,6 +1693,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/pnpm-workspace.yaml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
     },
     {
       "path": "control-center-web/public/app-icon-192.png",
@@ -1765,6 +1898,27 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/app/FrontendShell.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/FrontendShell.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/app/LegacyProductApp.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the lazy legacy compatibility entry while PAWOS remains the release shell."
+    },
+    {
       "path": "control-center-web/src/app/bootstrap.test.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -1828,20 +1982,6 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/app/FrontendShell.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/app/FrontendShell.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
       "path": "control-center-web/src/app/mount-control-center.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -1891,6 +2031,20 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/app/query-client.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/app/query-client.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
       "path": "control-center-web/src/app/route-registry.test.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -1933,6 +2087,13 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/components/feedback/GlobalFeedback.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep bounded desktop notification history and explicit clear actions."
+    },
+    {
       "path": "control-center-web/src/components/layout/AppShell.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1947,14 +2108,14 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/components/layout/layout.css",
+      "path": "control-center-web/src/components/layout/Navigation.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/components/layout/Navigation.tsx",
+      "path": "control-center-web/src/components/layout/layout.css",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -2024,20 +2185,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/components/primitives/index.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/components/primitives/primitives.css",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
       "path": "control-center-web/src/components/primitives/Select.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -2050,6 +2197,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/components/primitives/index.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/components/primitives/primitives.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
       "path": "control-center-web/src/contracts/agent-reducer.test.ts",
@@ -2374,11 +2535,32 @@
       "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
     },
     {
+      "path": "control-center-web/src/contracts/validation-runtime.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep generated contract validation off the startup path until a validated transport request needs it."
+    },
+    {
       "path": "control-center-web/src/contracts/validators.test.ts",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/design/motion.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep operating-system reduced-motion floor regression coverage."
+    },
+    {
+      "path": "control-center-web/src/design/motion.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the operating-system reduced-motion preference as the product safety floor."
     },
     {
       "path": "control-center-web/src/design/paw-os-themes.test.tsx",
@@ -2437,20 +2619,6 @@
       "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
     },
     {
-      "path": "control-center-web/src/features/agent/composer/agent-preferences-store.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/agent-preferences-store.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/agent/composer/AgentComposer.project-context.test.tsx",
       "status": "deleted",
       "disposition": "delete_old_implementation",
@@ -2472,46 +2640,11 @@
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
-      "path": "control-center-web/src/features/agent/composer/command-catalog.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/composer-action-model.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/composer-action-model.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/agent/composer/ContextResourcesPicker.tsx",
       "status": "deleted",
       "disposition": "delete_old_implementation",
       "group": "control_center_release_ui",
       "reason": "Remove the redundant frontend project-context selector; Pi Session options now own project context."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/model-choice.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/model-choice.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/agent/composer/ModelChoiceList.tsx",
@@ -2529,13 +2662,6 @@
     },
     {
       "path": "control-center-web/src/features/agent/composer/ModelPicker.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/permission-policy.ts",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -2563,18 +2689,67 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/src/features/agent/composer/agent-preferences-store.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/agent-preferences-store.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/command-catalog.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/composer-action-model.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/composer-action-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/model-choice.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/model-choice.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/permission-policy.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/src/features/agent/context-resource-profile.ts",
       "status": "deleted",
       "disposition": "delete_old_implementation",
       "group": "control_center_release_ui",
       "reason": "Remove the redundant frontend project-context selector; Pi Session options now own project context."
-    },
-    {
-      "path": "control-center-web/src/features/agent/delegation/session-subagent.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
     },
     {
       "path": "control-center-web/src/features/agent/delegation/SessionSubagentPanel.test.tsx",
@@ -2591,13 +2766,6 @@
       "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
     },
     {
-      "path": "control-center-web/src/features/agent/delegation/subagent-launch.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
-    },
-    {
       "path": "control-center-web/src/features/agent/delegation/SubagentLaunchPanel.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -2606,6 +2774,20 @@
     },
     {
       "path": "control-center-web/src/features/agent/delegation/SubagentLaunchPanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/session-subagent.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/delegation/subagent-launch.css",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -2654,27 +2836,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/file-preview/file-preview-store.test.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/file-preview/file-preview-store.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/file-preview/file-preview.css",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
       "path": "control-center-web/src/features/agent/file-preview/FilePreviewHost.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -2694,6 +2855,41 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/RichHtmlPreview.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/StaticHtmlPreview.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the replaced static HTML renderer; the managed rich preview is authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/file-preview-store.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/file-preview-store.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/file-preview/file-preview.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
       "path": "control-center-web/src/features/agent/file-preview/renderer-registry.tsx",
@@ -2717,13 +2913,6 @@
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
-      "path": "control-center-web/src/features/agent/file-preview/RichHtmlPreview.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
       "path": "control-center-web/src/features/agent/file-preview/static-html.test.ts",
       "status": "deleted",
       "disposition": "delete_old_implementation",
@@ -2732,13 +2921,6 @@
     },
     {
       "path": "control-center-web/src/features/agent/file-preview/static-html.ts",
-      "status": "deleted",
-      "disposition": "delete_old_implementation",
-      "group": "control_center_release_ui",
-      "reason": "Remove the replaced static HTML renderer; the managed rich preview is authoritative."
-    },
-    {
-      "path": "control-center-web/src/features/agent/file-preview/StaticHtmlPreview.tsx",
       "status": "deleted",
       "disposition": "delete_old_implementation",
       "group": "control_center_release_ui",
@@ -2780,6 +2962,13 @@
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
+      "path": "control-center-web/src/features/agent/marks/ConversationMarks.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/src/features/agent/marks/conversation-compact-chrome.test.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -2802,13 +2991,6 @@
     },
     {
       "path": "control-center-web/src/features/agent/marks/conversation-marks.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/marks/ConversationMarks.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -2934,27 +3116,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/status/context-evidence.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/status/context-usage-model.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/status/context-usage-model.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/agent/status/ContextRuntimePanel.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -3025,27 +3186,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/status/subagent-data.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
-      "path": "control-center-web/src/features/agent/status/subagent-presentation.test.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
-    },
-    {
-      "path": "control-center-web/src/features/agent/status/subagent-presentation.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
-    },
-    {
       "path": "control-center-web/src/features/agent/status/SubagentConsole.css",
       "status": "modified",
       "disposition": "keep_release",
@@ -3081,6 +3221,48 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/src/features/agent/status/context-evidence.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/context-usage-model.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/context-usage-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/subagent-data.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/subagent-presentation.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/agent/status/subagent-presentation.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
       "path": "control-center-web/src/features/agent/surface-layout.test.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -3095,32 +3277,11 @@
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
       "path": "control-center-web/src/features/agent/timeline/ActivitySummary.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/agent-turn-work-model.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/agent-turn-work-model.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/agent/timeline/AgentTimeline.follow.test.tsx",
@@ -3144,18 +3305,130 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/approval-decision.test.tsx",
+      "path": "control-center-web/src/features/agent/timeline/BlockRenderer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/CodeDiffRenderers.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/BlockRenderer.tsx",
+      "path": "control-center-web/src/features/agent/timeline/ConversationPlanetMark.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/InlineHtmlOutput.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MarkdownRenderer.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MediaRenderers.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/PersonaAvatar.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/RouteDecisionPlan.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/SettledTurnAnnouncer.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/SmoothDisclosureReveal.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/SmoothDisclosureReveal.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/StructuredRenderers.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/agent-turn-work-model.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/agent-turn-work-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/approval-decision.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/agent/timeline/chat-rendering.test.tsx",
@@ -3214,13 +3487,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/CodeDiffRenderers.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/agent/timeline/conversation-planet-mark.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -3233,13 +3499,6 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/ConversationPlanetMark.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/agent/timeline/disclosure-anchor.ts",
@@ -3263,13 +3522,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/InlineHtmlOutput.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
       "path": "control-center-web/src/features/agent/timeline/literal-html.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -3277,42 +3529,7 @@
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/MarkdownRenderer.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/MediaRenderers.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/agent/timeline/persona-assets.test.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/PersonaAvatar.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -3327,6 +3544,13 @@
     },
     {
       "path": "control-center-web/src/features/agent/timeline/progressive-markdown/ATTRIBUTION.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/progressive-markdown/ProgressiveMarkdown.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -3355,13 +3579,6 @@
     },
     {
       "path": "control-center-web/src/features/agent/timeline/progressive-markdown/openFence.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/progressive-markdown/ProgressiveMarkdown.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -3417,41 +3634,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/agent/timeline/RouteDecisionPlan.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/SettledTurnAnnouncer.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/SmoothDisclosureReveal.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/SmoothDisclosureReveal.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/agent/timeline/StructuredRenderers.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/agent/timeline/transcript-follow.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -3487,6 +3669,13 @@
       "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
     },
     {
+      "path": "control-center-web/src/features/agent/workspace/AgentFilesPanel.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
       "path": "control-center-web/src/features/agent/workspace/AgentFilesPanel.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -3520,6 +3709,34 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserFindBar.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserOmnibox.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserPageStatus.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/browser/BrowserTabStrip.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/browser/api.ts",
@@ -3564,34 +3781,6 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/features/browser/BrowserFindBar.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/browser/BrowserOmnibox.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/browser/BrowserPageStatus.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/browser/BrowserTabStrip.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/browser/index.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -3604,6 +3793,41 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PiProviderCredentials.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/PortabilityWorkflows.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/configuration/SubagentSettingsPanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
     },
     {
       "path": "control-center-web/src/features/configuration/configuration.css",
@@ -3634,28 +3858,7 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/configuration/PawOsAppearanceSettings.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
       "path": "control-center-web/src/features/configuration/pi-provider-credentials.test.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/configuration/PiProviderCredentials.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -3667,20 +3870,6 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/configuration/PortabilityWorkflows.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/configuration/SubagentSettingsPanel.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
     },
     {
       "path": "control-center-web/src/features/context-debug/context-debug-feature.test.tsx",
@@ -3704,6 +3893,20 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/features/conversation-ui/ATTRIBUTION.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/conversation-ui/ConversationSurfaceContext.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/src/features/conversation-ui/adapters/room-transcript.test.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -3712,13 +3915,6 @@
     },
     {
       "path": "control-center-web/src/features/conversation-ui/adapters/room-transcript.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/conversation-ui/ATTRIBUTION.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -3816,13 +4012,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/conversation-ui/ConversationSurfaceContext.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/features/conversation-ui/hooks/usePinnedTranscript.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -3907,6 +4096,13 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/features/evidence-echo/EvidenceEchoUsage.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/src/features/evidence-echo/evidence-echo.css",
       "status": "added",
       "disposition": "keep_release",
@@ -3928,11 +4124,18 @@
       "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/evidence-echo/EvidenceEchoUsage.tsx",
+      "path": "control-center-web/src/features/files/PawOsFilesApp.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/files/SvgFilePreview.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/files/paw-os-files-app.css",
@@ -3943,20 +4146,6 @@
     },
     {
       "path": "control-center-web/src/features/files/paw-os-files-app.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/files/PawOsFilesApp.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/files/SvgFilePreview.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -4166,13 +4355,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/memory/activity-timeline.css",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
       "path": "control-center-web/src/features/memory/ActivityTimeline.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -4187,48 +4369,6 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/features/memory/api.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/memory/index.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/memory/knowledge-session-workflow.tsx",
-      "status": "deleted",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/memory/knowledge-workbench-api.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/memory/knowledge-workbench.css",
-      "status": "deleted",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/memory/knowledge-workbench.test.tsx",
-      "status": "deleted",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
       "path": "control-center-web/src/features/memory/KnowledgeVisualization.test.tsx",
       "status": "deleted",
       "disposition": "delete_old_implementation",
@@ -4238,41 +4378,6 @@
     {
       "path": "control-center-web/src/features/memory/KnowledgeVisualization.tsx",
       "status": "deleted",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/memory/memory-composition.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/memory/memory-feature.test.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/memory/memory-loading.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the canonical PAWOS frontend, Trace workflow, generated contracts, and regression coverage."
-    },
-    {
-      "path": "control-center-web/src/features/memory/memory-opaque-surfaces.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/memory/memory.css",
-      "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
@@ -4327,6 +4432,20 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/features/memory/MemorySteward.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemorySteward.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
       "path": "control-center-web/src/features/memory/MemorySystemOverview.tsx",
       "status": "deleted",
       "disposition": "keep_release",
@@ -4341,15 +4460,106 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/features/memory/public-copy.ts",
-      "status": "added",
+      "path": "control-center-web/src/features/memory/RoleBookLayer.tsx",
+      "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/features/memory/RoleBookLayer.tsx",
+      "path": "control-center-web/src/features/memory/activity-timeline.css",
       "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/memory/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-session-workflow.tsx",
+      "status": "deleted",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-workbench-api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-workbench.css",
+      "status": "deleted",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/knowledge-workbench.test.tsx",
+      "status": "deleted",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-composition.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-loading.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the canonical PAWOS frontend, Trace workflow, generated contracts, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-opaque-surfaces.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory-steward.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/memory/memory.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/memory/public-copy.ts",
+      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI and its tests."
@@ -4432,6 +4642,27 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/paw-os/PawResultWindow.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/src/features/paw-os/app-icons.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -4475,27 +4706,6 @@
     },
     {
       "path": "control-center-web/src/features/paw-os/paw-os-satellite.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/paw-os/PawOsSatelliteHost.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/paw-os/PawResultWindow.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -4614,6 +4824,20 @@
       "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
     },
     {
+      "path": "control-center-web/src/features/roles/CollaborationProfileGovernancePanel.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/roles/CollaborationProfileGovernancePanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
       "path": "control-center-web/src/features/roles/collaboration-profile-control-gate.test.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -4629,20 +4853,6 @@
     },
     {
       "path": "control-center-web/src/features/roles/collaboration-profile-governance.css",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/roles/CollaborationProfileGovernancePanel.test.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/roles/CollaborationProfileGovernancePanel.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -4677,6 +4887,48 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
+      "path": "control-center-web/src/features/rooms/RoomMemberBoundaryDialog.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomModulePanel.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomStatusPanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomTaskGraph.markers.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomTaskGraph.peer-relations.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI and its tests."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomTaskGraph.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
+    },
+    {
       "path": "control-center-web/src/features/rooms/composer/RoomComposer.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -4698,20 +4950,6 @@
       "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
     },
     {
-      "path": "control-center-web/src/features/rooms/requirements/room-requirements-control-plane.css",
-      "status": "deleted",
-      "disposition": "delete_old_implementation",
-      "group": "control_center_release_ui",
-      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
-    },
-    {
-      "path": "control-center-web/src/features/rooms/requirements/room-requirements-read-model.ts",
-      "status": "deleted",
-      "disposition": "delete_old_implementation",
-      "group": "control_center_release_ui",
-      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
-    },
-    {
       "path": "control-center-web/src/features/rooms/requirements/RoomRequirementsControlPlane.test.tsx",
       "status": "deleted",
       "disposition": "delete_old_implementation",
@@ -4720,6 +4958,20 @@
     },
     {
       "path": "control-center-web/src/features/rooms/requirements/RoomRequirementsControlPlane.tsx",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/requirements/room-requirements-control-plane.css",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
+      "group": "control_center_release_ui",
+      "reason": "Remove the retired heavy Room requirements control plane; Pi Sessions and lightweight Room facts are authoritative."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/requirements/room-requirements-read-model.ts",
       "status": "deleted",
       "disposition": "delete_old_implementation",
       "group": "control_center_release_ui",
@@ -4782,20 +5034,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/rooms/RoomMemberBoundaryDialog.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
-    },
-    {
-      "path": "control-center-web/src/features/rooms/RoomModulePanel.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep governed subagent, approval, and Room projections in the Control Center."
-    },
-    {
       "path": "control-center-web/src/features/rooms/rooms-feature.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -4805,34 +5043,6 @@
     {
       "path": "control-center-web/src/features/rooms/rooms.css",
       "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
-    },
-    {
-      "path": "control-center-web/src/features/rooms/RoomStatusPanel.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/rooms/RoomTaskGraph.markers.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/features/rooms/RoomTaskGraph.peer-relations.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the coherent Control Center release UI and its tests."
-    },
-    {
-      "path": "control-center-web/src/features/rooms/RoomTaskGraph.tsx",
-      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the coherent Control Center release UI, Room task graph, ordered Session timeline, and browser acceptance evidence."
@@ -4873,18 +5083,18 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/rooms/timeline/room-tool-presentation.test.ts",
+      "path": "control-center-web/src/features/rooms/state/live-store.ts",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
     },
     {
-      "path": "control-center-web/src/features/rooms/timeline/room-tool-presentation.ts",
-      "status": "modified",
+      "path": "control-center-web/src/features/rooms/state/projection-bridge.ts",
+      "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
     },
     {
       "path": "control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx",
@@ -4908,6 +5118,20 @@
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
     },
     {
+      "path": "control-center-web/src/features/rooms/timeline/room-tool-presentation.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/timeline/room-tool-presentation.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
       "path": "control-center-web/src/features/rooms/use-room-navigation-documents.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -4920,6 +5144,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the current Control Center Session/Room projection, rich-output, context, recovery, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/terminal/PawOsTerminalApp.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "control-center-web/src/features/terminal/paw-os-terminal-app.css",
@@ -4936,11 +5167,11 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/features/terminal/PawOsTerminalApp.tsx",
+      "path": "control-center-web/src/features/trace-agent/engineering-audit-report.css",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+      "reason": "Keep the structured Trace engineering report presentation."
     },
     {
       "path": "control-center-web/src/features/trace-agent/failure-reasons.test.tsx",
@@ -4971,11 +5202,46 @@
       "reason": "Keep structured, bounded, privacy-safe Trace Agent handoff navigation."
     },
     {
+      "path": "control-center-web/src/features/trace-agent/html-export.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep regression coverage for deterministic Trace report export."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/html-export.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep deterministic local Trace report export."
+    },
+    {
       "path": "control-center-web/src/features/trace-agent/index.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-document.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the structured Trace report document surface."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/report-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the Trace report projection and scoring model."
+    },
+    {
+      "path": "control-center-web/src/features/trace-agent/templates/engineering-audit-report.html",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the privacy-safe local Trace report template."
     },
     {
       "path": "control-center-web/src/features/trace-agent/trace-agent-feature.test.tsx",
@@ -5069,67 +5335,18 @@
       "reason": "Keep the coherent Control Center release UI and its tests."
     },
     {
-      "path": "control-center-web/src/paw-os/apps/paw-app-boot-style.test.ts",
+      "path": "control-center-web/src/paw-os/PawOsApp.test.ts",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/paw-os/apps/paw-app-boot.css",
+      "path": "control-center-web/src/paw-os/PawOsApp.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-apps-style.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-apps.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-browser-host.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-browser-host.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-browser-model.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-browser-model.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/paw-room-round-sheet.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
     },
     {
       "path": "control-center-web/src/paw-os/apps/PawAgentApp.test.tsx",
@@ -5384,6 +5601,104 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/entries/PawAgentAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the lazy PAWOS Agent application entry."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawBrowserAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the canonical Electron and Ego-backed Browser application entry."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawNativeAppEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lazy native PAWOS application routing."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawResultWindowEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lazy standalone result-window routing."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/entries/PawSatelliteEntry.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lazy Room satellite-window routing."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-app-boot-style.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-app-boot.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-apps-style.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-apps.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-browser-host.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-browser-host.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-browser-model.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-browser-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/paw-room-round-sheet.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the user-visible PAWOS Control Center implementation, contracts, accessibility, and regression coverage."
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/room-focus-mesh.test.ts",
       "status": "added",
       "disposition": "keep_release",
@@ -5476,6 +5791,13 @@
     },
     {
       "path": "control-center-web/src/paw-os/apps/starfield-projection.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/starfield/Starfield3D.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
@@ -5615,11 +5937,39 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/paw-os/apps/starfield/Starfield3D.tsx",
+      "path": "control-center-web/src/paw-os/extensions/ExtensionAppHost.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+      "reason": "Keep the generic lazy Extension App host and visible failure boundary."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/installation.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep installed, enabled, unavailable, uninstall, and immediate-refresh lifecycle regressions."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/installation.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep Package-owned Extension App visibility and uninstall projection."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/registry.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep strict source-isolated manifest discovery without business-specific core branches."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/types.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generic Extension App manifest and component contract."
     },
     {
       "path": "control-center-web/src/paw-os/minecraft-harness-fixture.test.ts",
@@ -5629,18 +5979,18 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/paw-os/PawOsApp.test.ts",
+      "path": "control-center-web/src/paw-os/paw-os-landmarks.test.ts",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+      "reason": "Keep the accepted PAWOS frontend, Extension App contract, requirements, and regression coverage."
     },
     {
-      "path": "control-center-web/src/paw-os/PawOsApp.tsx",
+      "path": "control-center-web/src/paw-os/performance-boundaries.test.ts",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+      "reason": "Keep PAWOS bundle and import performance boundaries executable."
     },
     {
       "path": "control-center-web/src/paw-os/real-data-fixtures.test.ts",
@@ -5669,6 +6019,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-context.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep desktop snapshot recovery and focus regression coverage."
     },
     {
       "path": "control-center-web/src/paw-os/runtime/desktop-context.tsx",
@@ -5713,41 +6070,6 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "control-center-web/src/paw-os/shell/collaboration-focus.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/desktop-grid.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the canonical PAWOS frontend, Trace workflow, generated contracts, and regression coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/dock-magnification.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/dock-magnification.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/paw-app-icon.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "control-center-web/src/paw-os/shell/PawAppIcon.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -5760,6 +6082,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep truthful background activity notification coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep truthful Session, Room, and memory background activity projection."
     },
     {
       "path": "control-center-web/src/paw-os/shell/PawCompositionField.test.tsx",
@@ -5811,6 +6147,27 @@
       "reason": "Keep the current PAWOS frontend release source and regression coverage within the reviewed candidate."
     },
     {
+      "path": "control-center-web/src/paw-os/shell/PawNotificationCenter.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep notification lifecycle and focus regression coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawNotificationCenter.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the PAWOS notification side panel."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawRoomProjectionKeeper.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep minimized Room projections live through a lazy background subscriber without loading the Room runtime on an ordinary desktop."
+    },
+    {
       "path": "control-center-web/src/paw-os/shell/PawWayfinderWork.test.tsx",
       "status": "added",
       "disposition": "keep_release",
@@ -5846,11 +6203,88 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep lightweight work-directory and memory projection coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the shared lightweight PAWOS work-directory projection."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawWorkIcons.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep project, Session, and Room icon regression coverage."
+    },
+    {
       "path": "control-center-web/src/paw-os/shell/PawWorkIcons.tsx",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the canonical PAWOS frontend, Trace workflow, generated contracts, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/collaboration-focus.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/desktop-grid.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep deterministic desktop-grid migration coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/desktop-grid.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the canonical PAWOS frontend, Trace workflow, generated contracts, and regression coverage."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/dock-magnification.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/dock-magnification.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-app-icon.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/paw-shell-status.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep PAWOS background status and notification styling."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/wayfinder-running-motion.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep bounded running-state motion and reduced-motion coverage."
     },
     {
       "path": "control-center-web/src/paw-os/shell/wayfinder-work-projection.test.ts",
@@ -6077,25 +6511,25 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
+      "path": "control-center-web/tsconfig.app.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep Extension App sources inside the strict frontend typecheck boundary."
+    },
+    {
+      "path": "control-center-web/vite.config.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep Extension App tests inside the canonical Vitest gate."
+    },
+    {
       "path": "conversation_ui_standalone.zip",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "DECISIONS.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
-    },
-    {
-      "path": "eval/interview-metrics/evidence-ledger.v1.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the machine-validated metrics, run, dataset, and claim-boundary ledger."
     },
     {
       "path": "eval/interview-metrics/MEMORY_AND_RAG_EVAL.md",
@@ -6117,6 +6551,13 @@
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep the Trace and Eval compatibility evidence map."
+    },
+    {
+      "path": "eval/interview-metrics/evidence-ledger.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the machine-validated metrics, run, dataset, and claim-boundary ledger."
     },
     {
       "path": "eval/interview-metrics/runs/pi-context-cache-20260830.v1.json",
@@ -6217,6 +6658,13 @@
       "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
     },
     {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
       "path": "integrations/ego-browser/upstream/package/ego-browser/package-lock.json",
       "status": "added",
       "disposition": "keep_release",
@@ -6225,13 +6673,6 @@
     },
     {
       "path": "integrations/ego-browser/upstream/package/ego-browser/package.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
-    },
-    {
-      "path": "integrations/ego-browser/upstream/package/ego-browser/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -6441,6 +6882,13 @@
       "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
     },
     {
+      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
       "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/app.js",
       "status": "added",
       "disposition": "keep_release",
@@ -6470,13 +6918,6 @@
     },
     {
       "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/index.html",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
-    },
-    {
-      "path": "integrations/ego-browser/upstream/package/ego-browser/scripts/real-browser-e2e/damai-rush/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -6980,6 +7421,13 @@
       "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
     },
     {
+      "path": "integrations/ego-browser/upstream/package/ego-linux-host/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
       "path": "integrations/ego-browser/upstream/package/ego-linux-host/bin/ego-browser.mjs",
       "status": "added",
       "disposition": "keep_release",
@@ -7002,13 +7450,6 @@
     },
     {
       "path": "integrations/ego-browser/upstream/package/ego-linux-host/package.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
-    },
-    {
-      "path": "integrations/ego-browser/upstream/package/ego-linux-host/README.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -7246,6 +7687,13 @@
       "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
     },
     {
+      "path": "integrations/ego-browser/upstream/skills/ego-browser/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
+    },
+    {
       "path": "integrations/ego-browser/upstream/skills/ego-browser/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
@@ -7365,13 +7813,6 @@
       "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
     },
     {
-      "path": "integrations/ego-browser/upstream/skills/ego-browser/SKILL.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Preserve the integrated Room, Pi, Browser, Terminal, Skill, and runtime source within the reviewed candidate."
-    },
-    {
       "path": "integrations/pi/prompts/init.md",
       "status": "added",
       "disposition": "keep_release",
@@ -7400,6 +7841,13 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
+      "path": "integrations/pi/skills/alignment-and-decision/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
       "path": "integrations/pi/skills/alignment-and-decision/agents/openai.yaml",
       "status": "modified",
       "disposition": "keep_release",
@@ -7407,11 +7855,11 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/alignment-and-decision/SKILL.md",
-      "status": "modified",
+      "path": "integrations/pi/skills/bootstrap-project-context/SKILL.md",
+      "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
       "path": "integrations/pi/skills/bootstrap-project-context/agents/openai.yaml",
@@ -7421,11 +7869,11 @@
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
-      "path": "integrations/pi/skills/bootstrap-project-context/SKILL.md",
+      "path": "integrations/pi/skills/ego-browser/SKILL.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
       "path": "integrations/pi/skills/ego-browser/agents/openai.yaml",
@@ -7533,7 +7981,7 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/ego-browser/SKILL.md",
+      "path": "integrations/pi/skills/facilitate-room/SKILL.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -7547,11 +7995,11 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/facilitate-room/SKILL.md",
-      "status": "added",
-      "disposition": "keep_release",
+      "path": "integrations/pi/skills/implementation-execution/SKILL.md",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
     },
     {
       "path": "integrations/pi/skills/implementation-execution/agents/openai.yaml",
@@ -7568,11 +8016,11 @@
       "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
     },
     {
-      "path": "integrations/pi/skills/implementation-execution/SKILL.md",
-      "status": "deleted",
-      "disposition": "delete_old_implementation",
+      "path": "integrations/pi/skills/implementation-planning/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
       "group": "session_room_skill_flow",
-      "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
       "path": "integrations/pi/skills/implementation-planning/agents/openai.yaml",
@@ -7582,14 +8030,14 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/implementation-planning/SKILL.md",
+      "path": "integrations/pi/skills/improve-codebase-architecture/SKILL.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/improve-codebase-architecture/SKILL.md",
+      "path": "integrations/pi/skills/independent-review/SKILL.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -7603,25 +8051,11 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/independent-review/SKILL.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
-    },
-    {
       "path": "integrations/pi/skills/memory-curation/SKILL.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep governed memory context routing and its current Skill contract."
-    },
-    {
-      "path": "integrations/pi/skills/orchestrate-session/agents/openai.yaml",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
       "path": "integrations/pi/skills/orchestrate-session/SKILL.md",
@@ -7631,7 +8065,7 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/organize-work-documents/agents/openai.yaml",
+      "path": "integrations/pi/skills/orchestrate-session/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -7645,11 +8079,25 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/pawos-system/agents/openai.yaml",
+      "path": "integrations/pi/skills/organize-work-documents/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the bounded PAWOS Extension App self-bootstrap workflow Skill."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/references/extension-app-contract.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App, Package, Skill, sandbox, install, and foreground contract."
     },
     {
       "path": "integrations/pi/skills/pawos-system/SKILL.md",
@@ -7659,11 +8107,11 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/plugin-creator/agents/openai.yaml",
-      "status": "modified",
+      "path": "integrations/pi/skills/pawos-system/agents/openai.yaml",
+      "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
-      "reason": "Keep project Pi Package discovery and on-demand Skill creation inside the native Pi Skill flow."
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
       "path": "integrations/pi/skills/plugin-creator/SKILL.md",
@@ -7673,14 +8121,21 @@
       "reason": "Keep project Pi Package discovery and on-demand Skill creation inside the native Pi Skill flow."
     },
     {
-      "path": "integrations/pi/skills/project-maintainer/agents/openai.yaml",
+      "path": "integrations/pi/skills/plugin-creator/agents/openai.yaml",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep project Pi Package discovery and on-demand Skill creation inside the native Pi Skill flow."
+    },
+    {
+      "path": "integrations/pi/skills/project-maintainer/SKILL.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
-      "path": "integrations/pi/skills/project-maintainer/SKILL.md",
+      "path": "integrations/pi/skills/project-maintainer/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -7708,6 +8163,13 @@
       "reason": "Retire the fixed pipeline Skill so it cannot compete with the compact Session/Room Skill catalog."
     },
     {
+      "path": "integrations/pi/skills/systematic-debugging/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+    },
+    {
       "path": "integrations/pi/skills/systematic-debugging/agents/openai.yaml",
       "status": "added",
       "disposition": "keep_release",
@@ -7715,7 +8177,7 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/systematic-debugging/SKILL.md",
+      "path": "integrations/pi/skills/test-driven-implementation/SKILL.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -7729,11 +8191,11 @@
       "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
     },
     {
-      "path": "integrations/pi/skills/test-driven-implementation/SKILL.md",
-      "status": "modified",
+      "path": "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
+      "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session/Room orchestration and compact Skill flow."
+      "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
     },
     {
       "path": "integrations/pi/skills/trace-agent-diagnostics/references/repair-verification.md",
@@ -7755,13 +8217,6 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the strict Session, Trace diagnostic, repair, model-routing, and Runtime contract flow."
-    },
-    {
-      "path": "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
     },
     {
       "path": "integrations/pi/skills/work-document-archive/SKILL.md",
@@ -7855,32 +8310,11 @@
       "reason": "Keep bounded semantic desktop find, bridge metrics, smoke target, and verification."
     },
     {
-      "path": "OUTCOMES.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
-    },
-    {
-      "path": "PAW_ROOM_MULTI_AGENT_BLACKBOX_ACCEPTANCE_20260825.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the source-linked Room multi-Agent black-box acceptance receipt and its honest foreground boundary."
-    },
-    {
       "path": "paw-agent-chat-ui-kit-source.zip",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
-      "path": "PROJECT.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
     },
     {
       "path": "pyproject.toml",
@@ -8072,14 +8506,14 @@
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
-      "path": "rag_ime/agent_room_intercom_application.py",
+      "path": "rag_ime/agent_room_intercom.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
-      "path": "rag_ime/agent_room_intercom.py",
+      "path": "rag_ime/agent_room_intercom_application.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -8156,18 +8590,18 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
-      "path": "rag_ime/agent_room_work_application.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
-    },
-    {
       "path": "rag_ime/agent_room_work.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "rag_ime/agent_room_work_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
       "path": "rag_ime/agent_rooms.py",
@@ -8296,6 +8730,13 @@
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
+      "path": "rag_ime/agent_workspace_roots.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep canonical workspace-root validation shared by Session and Room runtime paths."
+    },
+    {
       "path": "rag_ime/ai_judge_eval.py",
       "status": "added",
       "disposition": "keep_release",
@@ -8336,13 +8777,6 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
-    },
-    {
-      "path": "rag_ime/contracts/json_schema.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "rag_ime/contracts/json/agent-configuration.v1.json",
@@ -8597,6 +9031,13 @@
       "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
     },
     {
+      "path": "rag_ime/contracts/json_schema.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
       "path": "rag_ime/control_api/route_policy.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -8800,6 +9241,20 @@
       "reason": "Keep the strict Session, Trace diagnostic, repair, model-routing, and Runtime contract flow."
     },
     {
+      "path": "rag_ime/db/migrations/0177_agent_session_surfaces.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App-owned Session sandbox experiment route, receipts, and regression coverage."
+    },
+    {
+      "path": "rag_ime/db/migrations/0178_builtin_app_session_surfaces.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App-owned Session sandbox experiment route, receipts, and regression coverage."
+    },
+    {
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -8847,6 +9302,13 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
+    },
+    {
+      "path": "rag_ime/extension_sandbox_experiment.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App-owned Session sandbox experiment route, receipts, and regression coverage."
     },
     {
       "path": "rag_ime/historical_memory_catalog_audit.py",
@@ -8954,6 +9416,13 @@
       "reason": "Keep the project harness and its bounded verification coverage."
     },
     {
+      "path": "rag_ime/pi_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep legacy local Session idle rejection semantics aligned with the managed Pi Host."
+    },
+    {
       "path": "rag_ime/pi_runtime_protocols.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -8980,13 +9449,6 @@
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Preserve bounded Pi Host error codes in a typed Runtime command rejection."
-    },
-    {
-      "path": "rag_ime/pi_runtime.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep legacy local Session idle rejection semantics aligned with the managed Pi Host."
     },
     {
       "path": "rag_ime/plugin_catalog.json",
@@ -9157,11 +9619,11 @@
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
-      "path": "README.md",
+      "path": "release/README.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the repository self-hosting brief, decisions, outcomes, and bounded harness checks."
+      "group": "release_scope",
+      "reason": "Keep release instructions aligned with the current scoped candidate."
     },
     {
       "path": "release/product-status.json",
@@ -9169,13 +9631,6 @@
       "disposition": "keep_release",
       "group": "release_scope",
       "reason": "Keep Session/Room installed evidence current without weakening whole-product distribution blockers."
-    },
-    {
-      "path": "release/README.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "release_scope",
-      "reason": "Keep release instructions aligned with the current scoped candidate."
     },
     {
       "path": "release/release-candidate-scope.json",
@@ -9192,11 +9647,11 @@
       "reason": "Keep the project harness and its bounded verification coverage."
     },
     {
-      "path": "scripts/build_control_center_web_host.sh",
-      "status": "deleted",
-      "disposition": "delete_old_implementation",
+      "path": "scripts/build_control_center.sh",
+      "status": "modified",
+      "disposition": "keep_release",
       "group": "installation_reliability",
-      "reason": "Remove the obsolete WebKit host builder so installation can only produce the Electron WebView release host."
+      "reason": "Keep Control Center build and release-footprint verification aligned with the current product generation."
     },
     {
       "path": "scripts/build_control_center_web.sh",
@@ -9206,11 +9661,11 @@
       "reason": "Keep fail-closed canonical build, provenance, staging, and installation verification."
     },
     {
-      "path": "scripts/build_control_center.sh",
-      "status": "modified",
-      "disposition": "keep_release",
+      "path": "scripts/build_control_center_web_host.sh",
+      "status": "deleted",
+      "disposition": "delete_old_implementation",
       "group": "installation_reliability",
-      "reason": "Keep Control Center build and release-footprint verification aligned with the current product generation."
+      "reason": "Remove the obsolete WebKit host builder so installation can only produce the Electron WebView release host."
     },
     {
       "path": "scripts/build_desktop_bridge.sh",
@@ -9346,6 +9801,13 @@
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
     },
     {
+      "path": "scripts/install_mlx_predictor_launch_agent.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the bounded project and release consistency record for this candidate."
+    },
+    {
       "path": "scripts/install_product_stack.sh",
       "status": "modified",
       "disposition": "keep_release",
@@ -9430,6 +9892,13 @@
       "reason": "Keep Control Center release verification pointed at the canonical Electron WebView host."
     },
     {
+      "path": "scripts/validate_extension_app.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep deterministic source validation for Extension manifests, Packages, Skills, and registered suites."
+    },
+    {
       "path": "scripts/verify_desktop_semantic_foreground.py",
       "status": "added",
       "disposition": "keep_release",
@@ -9498,6 +9967,13 @@
       "disposition": "keep_release",
       "group": "memory_curation",
       "reason": "Keep owner-memory curation, provenance, and model-backed organization reliable."
+    },
+    {
+      "path": "tests/test_agent_app_owned_sessions.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the bounded project and release consistency record for this candidate."
     },
     {
       "path": "tests/test_agent_background_jobs.py",
@@ -9647,15 +10123,15 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
-      "path": "tests/test_agent_room_intercom_application.py",
-      "status": "added",
+      "path": "tests/test_agent_room_intercom.py",
+      "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
-      "path": "tests/test_agent_room_intercom.py",
-      "status": "modified",
+      "path": "tests/test_agent_room_intercom_application.py",
+      "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
@@ -9724,18 +10200,18 @@
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
-      "path": "tests/test_agent_room_work_service.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
-    },
-    {
       "path": "tests/test_agent_room_work.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
+    },
+    {
+      "path": "tests/test_agent_room_work_service.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Pi-native Session, Room, WorkDocument, Tool, and package workflow integration."
     },
     {
       "path": "tests/test_agent_rooms.py",
@@ -9752,18 +10228,18 @@
       "reason": "Keep the strict Session, Trace diagnostic, repair, model-routing, and Runtime contract flow."
     },
     {
-      "path": "tests/test_agent_service_room_partner_wake.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
-    },
-    {
       "path": "tests/test_agent_service.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_agent_service_room_partner_wake.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-owned Session/Room subagent governance, approvals, contracts, and runtime verification."
     },
     {
       "path": "tests/test_agent_session_mode_gate.py",
@@ -9997,6 +10473,13 @@
       "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
     },
     {
+      "path": "tests/test_extension_sandbox_experiment.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App-owned Session sandbox experiment route, receipts, and regression coverage."
+    },
+    {
       "path": "tests/test_input_event_assembly.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -10102,6 +10585,13 @@
       "reason": "Remove regression coverage for the obsolete native WebKit bridge contract; Electron WebView with Ego/CDP is the sole Browser release path."
     },
     {
+      "path": "tests/test_observability.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
+    },
+    {
       "path": "tests/test_observability_eval_api.py",
       "status": "added",
       "disposition": "keep_release",
@@ -10118,13 +10608,6 @@
     {
       "path": "tests/test_observability_trace_api.py",
       "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
-    },
-    {
-      "path": "tests/test_observability.py",
-      "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep Pi-native Session, Room, Trace, sandbox, plugin, evaluation, and managed-runtime behavior with regression coverage."
@@ -10172,18 +10655,18 @@
       "reason": "Preserve the latest main frontend and integrated Room, Pi, Browser, Terminal, Skill, documentation, and regression source within the reviewed candidate."
     },
     {
-      "path": "tests/test_pi_runtime_v2.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep Pi Package create and prepare adapter regression coverage."
-    },
-    {
       "path": "tests/test_pi_runtime.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
       "reason": "Keep the Pi-native Session/Room orchestration, unified Provider-facing Tool surface, and refreshed contract coverage."
+    },
+    {
+      "path": "tests/test_pi_runtime_v2.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Pi Package create and prepare adapter regression coverage."
     },
     {
       "path": "tests/test_project_harness.py",
@@ -10277,6 +10760,13 @@
       "reason": "Keep the strict Session, Trace diagnostic, repair, model-routing, and Runtime contract flow."
     },
     {
+      "path": "tests/test_trace_repair.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the strict Session, Trace diagnostic, repair, model-routing, and Runtime contract flow."
+    },
+    {
       "path": "tests/test_trace_repair_authority.py",
       "status": "added",
       "disposition": "keep_release",
@@ -10285,13 +10775,6 @@
     },
     {
       "path": "tests/test_trace_repair_http.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the strict Session, Trace diagnostic, repair, model-routing, and Runtime contract flow."
-    },
-    {
-      "path": "tests/test_trace_repair.py",
       "status": "added",
       "disposition": "keep_release",
       "group": "session_room_skill_flow",
@@ -10387,356 +10870,6 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
-    },
-    {
-      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_196_205.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the current PAWOS frontend requirement ledger and acceptance boundary."
-    },
-    {
-      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_206_206.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the Room planet presentation contract and its acceptance evidence."
-    },
-    {
-      "path": "control-center-web/src/app/LegacyProductApp.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the lazy legacy compatibility entry while PAWOS remains the release shell."
-    },
-    {
-      "path": "control-center-web/src/components/feedback/GlobalFeedback.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep bounded desktop notification history and explicit clear actions."
-    },
-    {
-      "path": "control-center-web/src/features/trace-agent/engineering-audit-report.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the structured Trace engineering report presentation."
-    },
-    {
-      "path": "control-center-web/src/features/trace-agent/html-export.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep regression coverage for deterministic Trace report export."
-    },
-    {
-      "path": "control-center-web/src/features/trace-agent/html-export.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep deterministic local Trace report export."
-    },
-    {
-      "path": "control-center-web/src/features/trace-agent/report-document.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the structured Trace report document surface."
-    },
-    {
-      "path": "control-center-web/src/features/trace-agent/report-model.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the Trace report projection and scoring model."
-    },
-    {
-      "path": "control-center-web/src/features/trace-agent/templates/engineering-audit-report.html",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the privacy-safe local Trace report template."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/entries/PawAgentAppEntry.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the lazy PAWOS Agent application entry."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/entries/PawBrowserAppEntry.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the canonical Electron and Ego-backed Browser application entry."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/entries/PawNativeAppEntry.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep lazy native PAWOS application routing."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/entries/PawResultWindowEntry.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep lazy standalone result-window routing."
-    },
-    {
-      "path": "control-center-web/src/paw-os/apps/entries/PawSatelliteEntry.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep lazy Room satellite-window routing."
-    },
-    {
-      "path": "control-center-web/src/paw-os/performance-boundaries.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep PAWOS bundle and import performance boundaries executable."
-    },
-    {
-      "path": "control-center-web/src/paw-os/runtime/desktop-context.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep desktop snapshot recovery and focus regression coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep truthful background activity notification coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep truthful Session, Room, and memory background activity projection."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawNotificationCenter.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep notification lifecycle and focus regression coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawNotificationCenter.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the PAWOS notification side panel."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep lightweight work-directory and memory projection coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawWorkDirectory.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the shared lightweight PAWOS work-directory projection."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawWorkIcons.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep project, Session, and Room icon regression coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/desktop-grid.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep deterministic desktop-grid migration coverage."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/paw-shell-status.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep PAWOS background status and notification styling."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/wayfinder-running-motion.test.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep bounded running-state motion and reduced-motion coverage."
-    },
-    {
-      "path": "rag_ime/agent_workspace_roots.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep canonical workspace-root validation shared by Session and Room runtime paths."
-    },
-    {
-      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_207_207.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the Extension App self-bootstrap, SGG sandbox, icon, install, and uninstall requirement contract."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the source-isolated 掌柜问数 conversation-mode and Session-binding regressions."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/App.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the source-isolated 掌柜问数 Extension App and ordinary Session surface."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/app.css",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the responsive, mode-specific 掌柜问数 App presentation."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/pawos-app.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the validated Extension App identity, icon, Package, Skill, and SGG suite binding."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/index.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the co-versioned managed Pi Package entry for the Extension App."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/package.json",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the App-owned Pi Package manifest and lifecycle identity."
-    },
-    {
-      "path": "control-center-web/extension-apps/zhanggui-wenshu/pi-package/skills/zhanggui-wenshu/SKILL.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the App-specific source-backed问数、对账、解释 Skill."
-    },
-    {
-      "path": "control-center-web/src/design/motion.test.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep operating-system reduced-motion floor regression coverage."
-    },
-    {
-      "path": "control-center-web/src/design/motion.tsx",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the operating-system reduced-motion preference as the product safety floor."
-    },
-    {
-      "path": "control-center-web/src/paw-os/extensions/ExtensionAppHost.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the generic lazy Extension App host and visible failure boundary."
-    },
-    {
-      "path": "control-center-web/src/paw-os/extensions/installation.test.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep installed, enabled, unavailable, uninstall, and immediate-refresh lifecycle regressions."
-    },
-    {
-      "path": "control-center-web/src/paw-os/extensions/installation.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep Package-owned Extension App visibility and uninstall projection."
-    },
-    {
-      "path": "control-center-web/src/paw-os/extensions/registry.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep strict source-isolated manifest discovery without business-specific core branches."
-    },
-    {
-      "path": "control-center-web/src/paw-os/extensions/types.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep the generic Extension App manifest and component contract."
-    },
-    {
-      "path": "control-center-web/src/contracts/validation-runtime.ts",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep generated contract validation off the startup path until a validated transport request needs it."
-    },
-    {
-      "path": "control-center-web/src/paw-os/shell/PawRoomProjectionKeeper.tsx",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep minimized Room projections live through a lazy background subscriber without loading the Room runtime on an ordinary desktop."
-    },
-    {
-      "path": "control-center-web/tsconfig.app.json",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep Extension App sources inside the strict frontend typecheck boundary."
-    },
-    {
-      "path": "control-center-web/vite.config.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "control_center_release_ui",
-      "reason": "Keep Extension App tests inside the canonical Vitest gate."
-    },
-    {
-      "path": "integrations/pi/skills/pawos-app-builder/SKILL.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the bounded PAWOS Extension App self-bootstrap workflow Skill."
-    },
-    {
-      "path": "integrations/pi/skills/pawos-app-builder/references/extension-app-contract.md",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the App, Package, Skill, sandbox, install, and foreground contract."
-    },
-    {
-      "path": "scripts/validate_extension_app.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep deterministic source validation for Extension manifests, Packages, Skills, and registered suites."
     }
   ]
 }

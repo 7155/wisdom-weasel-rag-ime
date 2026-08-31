@@ -1130,7 +1130,7 @@
   .paw-desktop-shortcuts button,
   .paw-wayfinder-work__project > summary,
   .paw-wayfinder-work__loose-file
-):is([aria-pressed='true'], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
+):is([aria-pressed='true'], [data-selected], :focus-visible) :is(.paw-desktop-shortcuts__label-ink, .paw-wayfinder-work__label-ink) {
   color: #fff;
   background: var(--paw-selection-plate, #1d4ed8);
   box-shadow: 0 1px 3px rgb(9 13 22 / .3);
@@ -1141,7 +1141,7 @@
 }
 /* An open folder keeps the quiet scrim on its label while its window floats
  * beside the icon — wayfinding, not a second selection. */
-.paw-desktop-root .paw-wayfinder-work__project[open] > summary:not([aria-pressed='true']) .paw-wayfinder-work__label-ink {
+.paw-desktop-root .paw-wayfinder-work__project[open] > summary:not([data-selected]) .paw-wayfinder-work__label-ink {
   background: rgb(13 18 30 / .34);
 }
 /* The icon darkens when selected — the macOS desktop's second selection cue.
@@ -1154,15 +1154,15 @@
   .paw-desktop-shortcuts button,
   .paw-wayfinder-work__project > summary,
   .paw-wayfinder-work__loose-file
-)[aria-pressed='true'] :is(.paw-app-icon, .paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
+):is([aria-pressed='true'], [data-selected]) :is(.paw-app-icon, .paw-wayfinder-work__folder-art, .paw-wayfinder-work__file-art) {
   filter: brightness(.74) saturate(1.06);
 }
 .paw-desktop-root .paw-desktop-shortcuts button[data-open] > i { background: #3f7658; }
 
-/* The folder is a drawn identity, not a coloured tile and not clip-art: one
- * back plate with a left tab, one lighter front sheet, both tinted by the
- * project's own `--paw-work-accent`. The small Agent/Room mark stays as the
- * semantic badge and exactly one status dot sits on the corner. */
+/* Project folders and conversation documents extend the approved App identity
+ * system: saturated tile, soft top sheen, white semantic foreground. The
+ * small Agent/Room mark and exactly one status dot remain content/state cues,
+ * so these objects are unified with Apps without pretending to be Apps. */
 .paw-desktop-root .paw-wayfinder-work__folder-art::before { content: none; }
 .paw-desktop-root .paw-wayfinder-work__folder-art > svg { fill: none; }
 .paw-desktop-root .paw-wayfinder-work__folder-art > i {
@@ -1201,25 +1201,30 @@
 .paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row strong { color: var(--wayfinder-ink); }
 .paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row small { color: var(--wayfinder-muted); }
 .paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__file-icon {
-  width: 30px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border: 0;
   border-radius: 9px;
+  color: inherit;
+  background: transparent;
+}
+.paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__file-icon > svg {
+  width: 32px;
+  height: 32px;
+  filter: drop-shadow(0 2px 3px rgb(9 13 22 / .18));
 }
 .paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__kind {
-  color: var(--wayfinder-moss);
-  background: rgb(63 118 88 / .09);
+  color: #0671d8;
+  background: rgb(10 132 255 / .09);
 }
 .paw-desktop-root .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__kind[data-kind='room'] {
-  color: var(--wayfinder-ochre);
-  background: rgb(166 125 61 / .1);
+  color: #6948dd;
+  background: rgb(122 90 248 / .1);
 }
 
-/* The drawn work-glyph family. One accent variable per art box drives every
- * part: folders mix it into a light back plate and a paler front sheet,
- * conversation files keep a paper page with accent transcript lines, and the
- * attention state simply re-points the variable to clay. The SVG carries the
- * drop shadow so selection can dim the whole art box with one filter. */
+/* The drawn work-glyph family. One accent variable drives the shared tile and
+ * all inner colour cuts. The SVG carries the shadow so selection can dim the
+ * complete identity with one filter. */
 .paw-desktop-root .paw-wayfinder-work__folder-art {
   width: 56px;
   height: 56px;
@@ -1292,78 +1297,19 @@
     transform: none;
   }
 }
-.paw-desktop-root .paw-work-glyph__back {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 68%, #eef4fb);
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 68%, #243044);
-  stroke-width: 1.15;
-  stroke-linejoin: round;
+.paw-desktop-root .paw-work-glyph__tile { fill: var(--paw-work-accent, #f5a623); }
+.paw-desktop-root .paw-work-glyph__tile-sheen { pointer-events: none; }
+.paw-desktop-root .paw-work-glyph__folder-body { fill: rgb(255 255 255 / .96); }
+.paw-desktop-root .paw-work-glyph__folder-divider {
+  fill: var(--paw-work-accent, #f5a623);
+  opacity: .35;
 }
-.paw-desktop-root .paw-work-glyph__front {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 38%, #f7fbff);
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 64%, #243044);
-  stroke-width: 1.15;
-  stroke-linejoin: round;
-}
-.paw-desktop-root .paw-work-glyph__paper {
-  fill: #fdfefe;
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 34%, #9aa8ba);
-  stroke-width: 1;
-  stroke-linejoin: round;
-}
-.paw-desktop-root .paw-work-glyph__folder-sheen {
-  fill: rgb(255 255 255 / .34);
-  mix-blend-mode: screen;
-}
-.paw-desktop-root .paw-work-glyph__folder-edge {
-  fill: none;
-  stroke: rgb(255 255 255 / .74);
-  stroke-linecap: round;
-  stroke-width: 1.25;
-}
-.paw-desktop-root .paw-work-glyph__page,
-.paw-desktop-root .paw-work-glyph__page-back {
-  fill: #fdfcf8;
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 72%, #232b26);
-  stroke-width: 2.3;
-  stroke-linejoin: round;
-}
-.paw-desktop-root .paw-work-glyph__page-back {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 24%, #f4f1e9);
-}
-.paw-desktop-root .paw-work-glyph__fold {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 16%, #f4f1e9);
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 54%, #232b26);
-  stroke-width: 2.2;
-  stroke-linejoin: round;
-}
-.paw-desktop-root .paw-work-glyph__lines {
-  fill: none;
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, #232b26);
-  stroke-width: 2.6;
-  stroke-linecap: round;
-}
-.paw-desktop-root .paw-work-glyph__cursor {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 80%, #232b26);
-}
-.paw-desktop-root .paw-work-glyph__highlight {
-  fill: none;
-  stroke: rgb(255 255 255 / .5);
-  stroke-width: 1;
-  stroke-linecap: round;
-}
-.paw-desktop-root .paw-work-glyph__session-mark {
-  fill: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 12%, #fff);
-  stroke: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 82%, #232b26);
-  stroke-width: 2;
-  stroke-linejoin: round;
-}
-.paw-desktop-root .paw-work-glyph__room-mark { color: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-ochre)) 84%, #232b26); }
-.paw-desktop-root .paw-work-glyph__room-mark circle { fill: currentColor; }
-.paw-desktop-root .paw-work-glyph__room-mark path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-.paw-desktop-root .paw-wayfinder-work__folder-art[data-attention] {
-  --paw-work-accent: var(--wayfinder-clay);
-  color: color-mix(in srgb, var(--wayfinder-clay) 82%, var(--wayfinder-ink));
-}
+.paw-desktop-root .paw-work-glyph__agent-bubble { fill: rgb(255 255 255 / .98); }
+.paw-desktop-root .paw-work-glyph__agent-core { fill: var(--paw-work-accent, #0a84ff); }
+.paw-desktop-root .paw-work-glyph__room-voice { fill: #fff; }
+.paw-desktop-root .paw-work-glyph__room-voice:nth-child(1) { opacity: .96; }
+.paw-desktop-root .paw-work-glyph__room-voice:nth-child(2) { opacity: .78; }
+.paw-desktop-root .paw-work-glyph__room-voice:nth-child(3) { opacity: .62; }
 .paw-desktop-root .paw-wayfinder-work__file-art > svg {
   filter: drop-shadow(0 5px 9px rgb(9 13 22 / .24));
 }
@@ -1377,20 +1323,6 @@
 .paw-desktop-root .paw-wayfinder-work__loose-file[data-activity='attention'] .paw-wayfinder-work__file-art > i {
   background: var(--wayfinder-clay);
 }
-.paw-desktop-root .paw-wayfinder-work__folder-mark {
-  top: auto;
-  right: 9px;
-  bottom: 9px;
-  width: 14px;
-  height: 14px;
-  border: 0;
-  border-radius: 0;
-  color: color-mix(in srgb, var(--paw-work-accent, var(--wayfinder-moss)) 78%, #182334);
-  background: transparent;
-  box-shadow: none;
-  opacity: .76;
-}
-.paw-desktop-root .paw-wayfinder-work__folder-mark svg { width: 13px; height: 13px; stroke-width: 2.35; }
 .paw-desktop-root .paw-wayfinder-work__folder-art > i {
   right: -1px;
   bottom: -1px;
@@ -1421,7 +1353,7 @@
   line-height: 1.25;
   text-align: center;
 }
-.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-pressed='true'], :focus-visible) .paw-wayfinder-work__project-copy strong {
+.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-pressed='true'], [data-selected], :focus-visible) .paw-wayfinder-work__project-copy strong {
   display: block;
   overflow: visible;
   text-overflow: clip;
@@ -1453,7 +1385,7 @@
  * remains in the native title and project window; hover never grows one icon
  * through its neighbours. App and work labels share the same two-line cap. */
 .paw-desktop-root .paw-desktop-shortcuts button strong,
-.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-pressed='true'], :focus-visible) .paw-wayfinder-work__project-copy strong {
+.paw-desktop-root :is(.paw-wayfinder-work__project > summary, .paw-wayfinder-work__loose-file):is(:hover, [aria-pressed='true'], [data-selected], :focus-visible) .paw-wayfinder-work__project-copy strong {
   display: -webkit-box;
   width: 96px;
   max-width: 96px;
@@ -1474,7 +1406,7 @@
   right: auto;
   left: var(--wayfinder-panel-x, 0px);
   width: min(520px, calc(100vw - 24px));
-  height: min(620px, calc(100vh - 140px));
+  height: auto;
   max-height: calc(100vh - 140px);
   overflow: hidden;
 }

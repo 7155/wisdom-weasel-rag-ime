@@ -66,6 +66,7 @@ import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
 import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import { PawContextTrace } from './PawContextTrace';
 /* 星空按钮按下之前，星空代码不进入 Agent 主页/对话的 bundle 路径。 */
 import { LazyPawSessionStarfield } from './PawStarfieldLazy';
@@ -150,6 +151,8 @@ export function PawSessionWorkspace({
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
   const embedded = appearance === 'embedded';
+  const pageVisible = usePageVisibility();
+  const liveActive = active && pageVisible;
   const projectionSlice = useAgentLiveStore(useShallow(
     (state) => sessionWorkspaceProjectionSlice(state, recordId),
   ));
@@ -220,14 +223,17 @@ export function PawSessionWorkspace({
   const pendingApproval = projectionSlice.pendingApproval;
   const imageSupport = selectedModelImageSupport(catalog);
 
-  const loadSnapshot = useCallback(async (quiet = false): Promise<boolean> => {
+  const loadSnapshot = useCallback(async (quiet = false, signal?: AbortSignal): Promise<boolean> => {
+    if ((!liveActive && !signal) || signal?.aborted) return false;
     if (!quiet) setLoading(true);
     try {
       if (quiet) {
         const value = await transport.request({
           pathId: 'agent.session.snapshot',
           params: { sessionId: recordId },
+          ...(signal ? { signal } : {}),
         });
+        if (signal?.aborted) return false;
         useAgentLiveStore.getState().hydrate(recordId, value);
         setContextSnapshotState(undefined);
         setError('');
@@ -239,10 +245,13 @@ export function PawSessionWorkspace({
           pathId: 'agent.session.snapshot',
           params: { sessionId: recordId },
           query: { view: 'recent' },
+          ...(signal ? { signal } : {}),
         });
       } catch {
+        if (signal?.aborted) return false;
         recent = undefined;
       }
+      if (signal?.aborted) return false;
       if (isRecentAgentSnapshot(recent)) {
         const cachedProjection = useAgentLiveStore.getState().projections[recordId];
         const hasCachedConversation = Boolean(cachedProjection?.messageOrder.length);
@@ -265,7 +274,9 @@ export function PawSessionWorkspace({
           const full = await transport.request({
             pathId: 'agent.session.snapshot',
             params: { sessionId: recordId },
+            ...(signal ? { signal } : {}),
           });
+          if (signal?.aborted) return false;
           useAgentLiveStore.getState().hydrate(recordId, full);
           setContextSnapshotState(undefined);
         } catch (reason) {
@@ -276,28 +287,33 @@ export function PawSessionWorkspace({
         const full = recent ?? await transport.request({
           pathId: 'agent.session.snapshot',
           params: { sessionId: recordId },
+          ...(signal ? { signal } : {}),
         });
+        if (signal?.aborted) return false;
         useAgentLiveStore.getState().hydrate(recordId, full);
         setContextSnapshotState(undefined);
       }
       setError('');
       return true;
     } catch (reason) {
+      if (signal?.aborted) return false;
       setError(errorText(reason));
       return false;
     } finally {
-      if (!quiet) setLoading(false);
+      if (!signal?.aborted && !quiet) setLoading(false);
     }
-  }, [recordId, transport]);
+  }, [liveActive, recordId, transport]);
 
-  const loadControlCatalog = useCallback(async () => {
+  const loadControlCatalog = useCallback(async (signal?: AbortSignal) => {
+    if ((!liveActive && !signal) || signal?.aborted) return;
     setToolCatalogStatus('loading');
     const [modelsResult, commandsResult, toolsResult, runtimeResult] = await Promise.allSettled([
-      transport.request({ pathId: 'agent.session.models', params: { sessionId: recordId } }),
-      transport.request({ pathId: 'agent.session.commands', params: { sessionId: recordId } }),
-      transport.request({ pathId: 'agent.tools.list', query: { sessionId: recordId } }),
-      transport.request<Record<string, unknown>>({ pathId: 'agent.runtime.get' }),
+      transport.request({ pathId: 'agent.session.models', params: { sessionId: recordId }, ...(signal ? { signal } : {}) }),
+      transport.request({ pathId: 'agent.session.commands', params: { sessionId: recordId }, ...(signal ? { signal } : {}) }),
+      transport.request({ pathId: 'agent.tools.list', query: { sessionId: recordId }, ...(signal ? { signal } : {}) }),
+      transport.request<Record<string, unknown>>({ pathId: 'agent.runtime.get', ...(signal ? { signal } : {}) }),
     ]);
+    if (signal?.aborted) return;
     if (modelsResult.status === 'fulfilled' && isModelCatalog(modelsResult.value)) setCatalog(modelsResult.value);
     if (commandsResult.status === 'fulfilled') setCommands(commandItems(commandsResult.value));
     if (toolsResult.status === 'fulfilled') {
@@ -325,12 +341,19 @@ export function PawSessionWorkspace({
       setConversationForkAvailable(false);
       setConversationRewriteAvailable(false);
     }
-  }, [recordId, transport]);
+  }, [liveActive, recordId, transport]);
 
   useEffect(() => {
-    let active = true;
+    let mounted = true;
     let unsubscribe: () => void = () => {};
     let terminalSnapshotTimer: number | undefined;
+    const controller = new AbortController();
+    if (!liveActive) {
+      return () => {
+        mounted = false;
+        controller.abort();
+      };
+    }
     useAgentLiveStore.getState().ensure(recordId);
     // Streaming text_delta bursts coalesce into one store commit per batching
     // interval (same contract as the standalone Agent feature). Every
@@ -338,14 +361,14 @@ export function PawSessionWorkspace({
     // visible timeline order never changes — only the per-token React render
     // and layout passes collapse to at most one per frame.
     const batcher = createAgentDeltaBatcher((events) => {
-      if (!active) return;
+      if (!mounted) return;
       const needsSnapshot = useAgentLiveStore.getState().applyEvents(recordId, events);
-      if (needsSnapshot) void loadSnapshot(true);
+      if (needsSnapshot) void loadSnapshot(true, controller.signal);
     });
-    void loadControlCatalog();
+    void loadControlCatalog(controller.signal);
     void (async () => {
-      const loaded = await loadSnapshot();
-      if (!active || !loaded) return;
+      const loaded = await loadSnapshot(false, controller.signal);
+      if (!mounted || !loaded) return;
       unsubscribe = transport.subscribe<UiAgentEvent>(
         {
           pathId: 'agent.session.events',
@@ -354,12 +377,12 @@ export function PawSessionWorkspace({
         },
         {
           next: (event) => {
-            if (!active) return;
+            if (!mounted) return;
             pulsePawCompositionForRuntimeEvent('agent', event.eventType);
             if (event.eventType === 'snapshot_required') {
               batcher.flush();
               useAgentLiveStore.getState().applyEvents(recordId, [event]);
-              void loadSnapshot(true);
+              void loadSnapshot(true, controller.signal);
               return;
             }
             batcher.push(event);
@@ -380,7 +403,7 @@ export function PawSessionWorkspace({
               }
               terminalSnapshotTimer = window.setTimeout(() => {
                 terminalSnapshotTimer = undefined;
-                if (active) void loadSnapshot(true);
+                if (mounted) void loadSnapshot(true, controller.signal);
               }, 350);
             }
             const runtimeWindow = runtimeToolWindow(event);
@@ -396,7 +419,7 @@ export function PawSessionWorkspace({
             }
           },
           error: (reason) => {
-            if (!active) return;
+            if (!mounted) return;
             setContextSnapshotState('partial');
             setError(errorText(reason));
           },
@@ -404,12 +427,13 @@ export function PawSessionWorkspace({
       );
     })();
     return () => {
-      active = false;
+      mounted = false;
+      controller.abort();
       if (terminalSnapshotTimer !== undefined) window.clearTimeout(terminalSnapshotTimer);
       batcher.clear();
       unsubscribe();
     };
-  }, [desktop, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, runtimeToolWindow, transport]);
+  }, [desktop, liveActive, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, runtimeToolWindow, transport]);
 
   /* A prompt that failOptimistic just marked failed already has one recovery
      surface: the timeline's failed-turn card, carrying the same reason plus
@@ -1012,6 +1036,10 @@ export function PawSessionWorkspace({
     if (restoreFocus) toolMenuButtonRef.current?.focus();
     setToolMenuOpen(false);
   }, []);
+  const closeToolPanel = useCallback((): void => {
+    setPanel('none');
+    toolMenuButtonRef.current?.focus();
+  }, []);
 
   const openToolMenu = useCallback((initialFocus: 'first' | 'last' = 'first'): void => {
     toolMenuInitialFocusRef.current = initialFocus;
@@ -1182,18 +1210,21 @@ export function PawSessionWorkspace({
       <div className="paw-session-workspace__body">
         <div className="paw-session-workspace__primary" ref={primaryRef}>
           <div className="paw-session-workspace__viewport">
-            <main
+            <section
               aria-hidden={workspaceView !== 'conversation'}
+              aria-label="Session 对话"
               className="paw-agent-next paw-session-workspace__conversation paw-chatfx"
               data-active={workspaceView === 'conversation' || undefined}
               data-agent-tree="projection"
               data-message-flow="separated"
               inert={workspaceView !== 'conversation'}
+              role="region"
             >
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--top" />
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--bottom" />
               {loading && !projectionSlice.hasTurns ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
               <AgentTimeline
+                active={liveActive}
                 activityPresentation={embedded ? 'hidden' : 'grouped'}
                 failurePresentation={embedded ? 'compact' : 'default'}
                 presentation={embedded ? 'default' : 'fx'}
@@ -1218,22 +1249,24 @@ export function PawSessionWorkspace({
                 onOpenApproval={setRequestedApproval}
                 onRequestPermission={() => setPermissionPickerRequest((value) => value + 1)}
               />
-            </main>
+            </section>
 
-            {embedded ? null : <main
+            {embedded ? null : <section
               aria-hidden={workspaceView !== 'trace'}
+              aria-label="Session Agent 轨迹"
               className="paw-session-workspace__trace"
               data-active={workspaceView === 'trace' || undefined}
               inert={workspaceView !== 'trace'}
+              role="region"
             >
               <SessionContextTrace
                 active={workspaceView === 'trace'}
                 focusNodeId={traceFocusNodeId}
                 sessionId={recordId}
               />
-            </main>}
+            </section>}
 
-            {embedded ? null : <main
+            {embedded ? null : <section
               aria-hidden={workspaceView !== 'starfield'}
               className="paw-session-workspace__starfield"
               data-active={workspaceView === 'starfield' || undefined}
@@ -1261,7 +1294,7 @@ export function PawSessionWorkspace({
                 })}
                 onOpenWorkbench={() => setPanel('subagents')}
               /> : null}
-            </main>}
+            </section>}
           </div>
 
           <div className="paw-session-workspace__composer">
@@ -1358,8 +1391,7 @@ export function PawSessionWorkspace({
           onKeyDown={(event) => {
             if (event.key !== 'Escape') return;
             event.stopPropagation();
-            setPanel('none');
-            toolMenuButtonRef.current?.focus();
+            closeToolPanel();
           }}
         >
           {panel === 'files' ? (
@@ -1367,7 +1399,7 @@ export function PawSessionWorkspace({
               sessionId={recordId}
               workspaceRoots={record?.workspaceRoots ?? []}
               open
-              onClose={() => setPanel('none')}
+              onClose={closeToolPanel}
               onManageRoots={() => void manageWorkspaceRoots()}
             />
           ) : panel === 'subagents' ? (
@@ -1377,7 +1409,7 @@ export function PawSessionWorkspace({
               tools={tools}
               compactEmpty
               open
-              onClose={() => setPanel('none')}
+              onClose={closeToolPanel}
               onOpenRun={(run) => desktop?.openWindow({
                 appId: 'agent',
                 target: {
@@ -1409,7 +1441,7 @@ export function PawSessionWorkspace({
               onCapabilityPolicyRetry={() => capabilityMutation && void changeCapabilityPreference(capabilityMutation.canonicalId, capabilityMutation.preference)}
               onCapabilityCatalogRetry={() => void loadControlCatalog()}
               onOpenBackgroundJob={(job) => desktop?.openWindow(backgroundJobWindowRequest(job))}
-              onClose={() => setPanel('none')}
+              onClose={closeToolPanel}
             />
           )}
         </aside> : null}

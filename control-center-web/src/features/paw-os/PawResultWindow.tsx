@@ -19,7 +19,7 @@ export function PawResultWindow({ target }: { target: ResultTarget }) {
   const isHtml = target.resultKind === 'html' || target.resultKind === 'web' || target.resultKind === 'game' || target.resultKind === 'music';
 
   return (
-    <main className="paw-result-window" data-result-kind={target.resultKind}>
+    <section aria-label={target.title || '结果'} className="paw-result-window" data-result-kind={target.resultKind} role="region">
       <header className="paw-result-window__hero">
         <span className="paw-result-window__icon" aria-hidden="true">
           {isHtml ? <MonitorPlay size={18} /> : target.resultKind === 'image' ? <ImageIcon size={18} /> : target.resultKind === 'audio' ? <AudioLines size={18} /> : <FileOutput size={18} />}
@@ -34,7 +34,7 @@ export function PawResultWindow({ target }: { target: ResultTarget }) {
       {isHtml && !htmlUrl ? <ResultEmpty detail="这个结果没有可渲染的 HTML 内容。" /> : null}
       {(target.resultKind === 'image' || target.resultKind === 'audio') && (!source || failedSource) ? <ResultEmpty detail={source ? '媒体回执暂时无法读取，请重试或打开原始产物。' : '这个结果没有可验证的媒体回执。'} /> : null}
       {target.resultKind === 'artifact' && !source ? <ResultEmpty detail="这个产物没有可验证的文件回执。" /> : null}
-    </main>
+    </section>
   );
 }
 

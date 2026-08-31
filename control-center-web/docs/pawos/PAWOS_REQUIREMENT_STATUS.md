@@ -2,7 +2,7 @@
 
 This document answers “which requirements are complete?” without changing the
 meaning ledger set indexed by [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The
-sixteen requirement volumes own user meaning; this index owns explicit assessment and evidence
+nineteen requirement volumes own user meaning; this index owns explicit assessment and evidence
 links. Runtime, Git, installation, and foreground state remain authoritative in
 their own projections and receipts.
 
@@ -45,13 +45,13 @@ not prove the Runtime path.
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
-| All requirements | `206 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-209` remain unassessed. |
-| Current P0 requirements | 175 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
-| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-209` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
+| All requirements | `208 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-211` remain unassessed. |
+| Current P0 requirements | 177 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
+| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-211` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
 | Install / Runtime / foreground | No E4, E5, or E6 receipt is linked here | Do not claim installed or foreground acceptance from source, tests, builds, or screenshots. |
 
 This conservative baseline is intentional. It does not say that no code exists;
-it says 204 requirements have not yet been individually assessed against fresh,
+it says 208 requirements have not yet been individually assessed against fresh,
 linked evidence in this index. Closing the three documentation/Demo delivery
 requirements does not promote their preview receipts to E4–E6.
 
@@ -385,7 +385,9 @@ not inferred status.
     "UR-206": {},
     "UR-207": {},
     "UR-208": {},
-    "UR-209": {}
+    "UR-209": {},
+    "UR-210": {},
+    "UR-211": {}
   }
 }
 ```

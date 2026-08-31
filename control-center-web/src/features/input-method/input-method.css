@@ -10,7 +10,7 @@
  * 通过回退值沿用同一尺度。
  * ------------------------------------------------------------------------- */
 
-main[data-route-id='input'] {
+:is(main, section)[data-route-id='input'] {
   --input-os-control-h: var(--paw-control-h, 32px);
   --input-os-control-h-sm: var(--paw-control-h-sm, 28px);
   --input-os-control-radius: var(--paw-control-radius, 8px);
@@ -26,7 +26,7 @@ main[data-route-id='input'] {
  * 草稿目标，data-current = 设置推断出的现役模式，两个真相互不冒充。
  * ------------------------------------------------------------------------- */
 
-main[data-route-id='input'] .input-mode-console {
+:is(main, section)[data-route-id='input'] .input-mode-console {
   display: grid;
   min-width: 0;
   gap: var(--space-3);
@@ -34,7 +34,7 @@ main[data-route-id='input'] .input-mode-console {
 
 /* Trace is a small discovery surface, not a second transcript. Keep identity
  * and lane facts scannable while leaving raw input and diagnostic prose out. */
-main[data-route-id='input'] .input-trace-discovery {
+:is(main, section)[data-route-id='input'] .input-trace-discovery {
   display: grid;
   gap: var(--space-2);
   padding: 10px 12px;
@@ -43,7 +43,7 @@ main[data-route-id='input'] .input-trace-discovery {
   background: var(--color-surface);
 }
 
-main[data-route-id='input'] .input-trace-discovery__head {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__head {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -51,39 +51,39 @@ main[data-route-id='input'] .input-trace-discovery__head {
   gap: var(--space-3);
 }
 
-main[data-route-id='input'] .input-trace-discovery__head > div {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__head > div {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='input'] .input-trace-discovery__head span,
-main[data-route-id='input'] .input-trace-discovery__lane small,
-main[data-route-id='input'] .input-trace-discovery > small {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__head span,
+:is(main, section)[data-route-id='input'] .input-trace-discovery__lane small,
+:is(main, section)[data-route-id='input'] .input-trace-discovery > small {
   color: var(--color-text-secondary);
   font-size: 12px;
 }
 
-main[data-route-id='input'] .input-trace-discovery__head span {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__head span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-trace-discovery__head a {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__head a {
   flex: 0 0 auto;
   color: var(--color-accent);
   font-size: 12px;
   font-weight: 600;
 }
 
-main[data-route-id='input'] .input-trace-discovery__lanes {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__lanes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
-main[data-route-id='input'] .input-trace-discovery__lane {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__lane {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -93,38 +93,38 @@ main[data-route-id='input'] .input-trace-discovery__lane {
   border-radius: 8px;
 }
 
-main[data-route-id='input'] .input-trace-discovery__lane > span {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__lane > span {
   overflow: hidden;
   min-width: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-trace-discovery__lane small {
+:is(main, section)[data-route-id='input'] .input-trace-discovery__lane small {
   margin-left: auto;
   white-space: nowrap;
 }
 
 @media (max-width: 640px) {
-  main[data-route-id='input'] .input-trace-discovery__head {
+  :is(main, section)[data-route-id='input'] .input-trace-discovery__head {
     align-items: flex-start;
     flex-direction: column;
     gap: 5px;
   }
 
-  main[data-route-id='input'] .input-trace-discovery__lanes {
+  :is(main, section)[data-route-id='input'] .input-trace-discovery__lanes {
     grid-template-columns: 1fr;
   }
 }
 
-main[data-route-id='input'] .input-mode-deck {
+:is(main, section)[data-route-id='input'] .input-mode-deck {
   display: grid;
   min-width: 0;
   gap: var(--space-2);
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-main[data-route-id='input'] .input-mode-card {
+:is(main, section)[data-route-id='input'] .input-mode-card {
   position: relative;
   display: grid;
   min-width: 0;
@@ -146,30 +146,30 @@ main[data-route-id='input'] .input-mode-card {
     box-shadow var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-mode-card:focus-visible {
+:is(main, section)[data-route-id='input'] .input-mode-card:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
 /* 选中 = 平面双线描边，不透明表面；不用渐变泡泡表达状态。 */
-main[data-route-id='input'] .input-mode-card[data-state='checked'] {
+:is(main, section)[data-route-id='input'] .input-mode-card[data-state='checked'] {
   border-color: var(--color-accent);
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 
-main[data-route-id='input'] .input-mode-card:disabled {
+:is(main, section)[data-route-id='input'] .input-mode-card:disabled {
   cursor: not-allowed;
   opacity: .6;
 }
 
-main[data-route-id='input'] .input-mode-card__head {
+:is(main, section)[data-route-id='input'] .input-mode-card__head {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 7px;
 }
 
-main[data-route-id='input'] .input-mode-card__glyph {
+:is(main, section)[data-route-id='input'] .input-mode-card__glyph {
   display: inline-grid;
   flex: 0 0 auto;
   width: 24px;
@@ -185,13 +185,13 @@ main[data-route-id='input'] .input-mode-card__glyph {
     color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__glyph {
+:is(main, section)[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__glyph {
   border-color: var(--color-accent);
   background: var(--color-accent);
   color: var(--color-accent-text);
 }
 
-main[data-route-id='input'] .input-mode-card__head strong {
+:is(main, section)[data-route-id='input'] .input-mode-card__head strong {
   overflow: hidden;
   font-size: 14px;
   line-height: 1.4;
@@ -200,7 +200,7 @@ main[data-route-id='input'] .input-mode-card__head strong {
 }
 
 /* “当前”标记来自设置推断，不随草稿点击移动。 */
-main[data-route-id='input'] .input-mode-card__current {
+:is(main, section)[data-route-id='input'] .input-mode-card__current {
   flex: 0 0 auto;
   padding: 1px 6px;
   border: 1px solid var(--color-border-strong);
@@ -212,12 +212,12 @@ main[data-route-id='input'] .input-mode-card__current {
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__current {
+:is(main, section)[data-route-id='input'] .input-mode-card[data-state='checked'] .input-mode-card__current {
   border-color: var(--color-accent-border);
   color: var(--color-accent);
 }
 
-main[data-route-id='input'] .input-mode-card__check {
+:is(main, section)[data-route-id='input'] .input-mode-card__check {
   display: inline-grid;
   margin-inline-start: auto;
   width: 17px;
@@ -228,7 +228,7 @@ main[data-route-id='input'] .input-mode-card__check {
   color: var(--color-accent-text);
 }
 
-main[data-route-id='input'] .input-mode-card__note {
+:is(main, section)[data-route-id='input'] .input-mode-card__note {
   display: block;
   overflow: visible;
   color: var(--color-text-secondary);
@@ -238,7 +238,7 @@ main[data-route-id='input'] .input-mode-card__note {
 }
 
 /* 事实签名：一键一枚，标准/记忆增强 的真实分界键高亮。 */
-main[data-route-id='input'] .input-mode-card__facts {
+:is(main, section)[data-route-id='input'] .input-mode-card__facts {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -246,7 +246,7 @@ main[data-route-id='input'] .input-mode-card__facts {
   margin-top: auto;
 }
 
-main[data-route-id='input'] .input-mode-card__facts > span {
+:is(main, section)[data-route-id='input'] .input-mode-card__facts > span {
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
@@ -258,13 +258,13 @@ main[data-route-id='input'] .input-mode-card__facts > span {
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-mode-card__facts > span[data-off] {
+:is(main, section)[data-route-id='input'] .input-mode-card__facts > span[data-off] {
   border-style: dashed;
   background: transparent;
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='input'] .input-mode-card__facts > span[data-highlight] {
+:is(main, section)[data-route-id='input'] .input-mode-card__facts > span[data-highlight] {
   border-color: var(--color-accent-border);
   background: var(--color-accent-subtle);
   color: var(--color-accent);
@@ -272,18 +272,18 @@ main[data-route-id='input'] .input-mode-card__facts > span[data-highlight] {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='input'] .input-mode-card:not(:disabled):hover {
+  :is(main, section)[data-route-id='input'] .input-mode-card:not(:disabled):hover {
     border-color: var(--color-accent-border);
     background: var(--color-surface-subtle);
   }
 }
 
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card,
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-mode-card__glyph { transition: none; }
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-mode-card,
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-mode-card__glyph { transition: none; }
 
 /* 决策条：左侧差异台账（可折叠），右侧保存工作流。两者与卡片同屏，
    保存动作不会被推到折叠内容之下。 */
-main[data-route-id='input'] .input-mode-decision {
+:is(main, section)[data-route-id='input'] .input-mode-decision {
   display: grid;
   min-width: 0;
   align-items: start;
@@ -295,14 +295,14 @@ main[data-route-id='input'] .input-mode-decision {
   grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr);
 }
 
-main[data-route-id='input'] .input-mode-decision > .mgmt-workflow[data-confirmation='direct'] {
+:is(main, section)[data-route-id='input'] .input-mode-decision > .mgmt-workflow[data-confirmation='direct'] {
   padding-block: 2px 0;
   border-top: 0;
 }
 
 /* 差异台账：左侧细规线，逐行“设置：当前 → 目标”，列表内滚动而不是
    把整页推长。 */
-main[data-route-id='input'] .input-mode-delta {
+:is(main, section)[data-route-id='input'] .input-mode-delta {
   display: grid;
   min-width: 0;
   align-content: start;
@@ -314,11 +314,11 @@ main[data-route-id='input'] .input-mode-delta {
   line-height: 1.5;
 }
 
-main[data-route-id='input'] .input-mode-delta:has(> .input-mode-delta__head) {
+:is(main, section)[data-route-id='input'] .input-mode-delta:has(> .input-mode-delta__head) {
   border-left-color: var(--color-accent);
 }
 
-main[data-route-id='input'] .input-mode-delta__head {
+:is(main, section)[data-route-id='input'] .input-mode-delta__head {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -326,13 +326,13 @@ main[data-route-id='input'] .input-mode-delta__head {
   gap: var(--space-2);
 }
 
-main[data-route-id='input'] .input-mode-delta__head strong {
+:is(main, section)[data-route-id='input'] .input-mode-delta__head strong {
   color: var(--color-text-primary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='input'] .input-mode-delta ul {
+:is(main, section)[data-route-id='input'] .input-mode-delta ul {
   display: grid;
   overflow: auto;
   max-height: 148px;
@@ -343,13 +343,13 @@ main[data-route-id='input'] .input-mode-delta ul {
   scrollbar-width: thin;
 }
 
-main[data-route-id='input'] .input-mode-delta li {
+:is(main, section)[data-route-id='input'] .input-mode-delta li {
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
 
 /* 台账开关：paw-os-controls 尺度的安静按钮，展开态箭头翻转。 */
-main[data-route-id='input'] .input-ledger-toggle {
+:is(main, section)[data-route-id='input'] .input-ledger-toggle {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -372,22 +372,22 @@ main[data-route-id='input'] .input-ledger-toggle {
     color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-ledger-toggle:focus-visible {
+:is(main, section)[data-route-id='input'] .input-ledger-toggle:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
 
-main[data-route-id='input'] .input-ledger-toggle svg {
+:is(main, section)[data-route-id='input'] .input-ledger-toggle svg {
   flex: 0 0 auto;
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-ledger-toggle[aria-expanded='true'] svg {
+:is(main, section)[data-route-id='input'] .input-ledger-toggle[aria-expanded='true'] svg {
   transform: rotate(180deg);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='input'] .input-ledger-toggle:hover {
+  :is(main, section)[data-route-id='input'] .input-ledger-toggle:hover {
     border-color: var(--color-border-strong);
     background: var(--color-surface-subtle);
     color: var(--color-text-primary);
@@ -401,7 +401,7 @@ main[data-route-id='input'] .input-ledger-toggle[aria-expanded='true'] svg {
  * 正文。收起时三步状态仍然在场，展开是细看而不是解锁。
  * ------------------------------------------------------------------------- */
 
-main[data-route-id='input'] .input-prediction-facts {
+:is(main, section)[data-route-id='input'] .input-prediction-facts {
   display: grid;
   min-width: 0;
   overflow: clip;
@@ -411,7 +411,7 @@ main[data-route-id='input'] .input-prediction-facts {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-main[data-route-id='input'] .input-prediction-fact {
+:is(main, section)[data-route-id='input'] .input-prediction-fact {
   display: grid;
   min-width: 0;
   align-content: start;
@@ -420,9 +420,9 @@ main[data-route-id='input'] .input-prediction-fact {
   border-right: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-prediction-fact:nth-child(3) { border-right: 0; }
+:is(main, section)[data-route-id='input'] .input-prediction-fact:nth-child(3) { border-right: 0; }
 
-main[data-route-id='input'] .input-prediction-fact__head {
+:is(main, section)[data-route-id='input'] .input-prediction-fact__head {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -430,36 +430,36 @@ main[data-route-id='input'] .input-prediction-fact__head {
   gap: var(--space-2);
 }
 
-main[data-route-id='input'] .input-prediction-fact__head strong {
+:is(main, section)[data-route-id='input'] .input-prediction-fact__head strong {
   min-width: 0;
   font-size: 13px;
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='input'] .input-prediction-fact__head .mgmt-status { flex: 0 0 auto; }
+:is(main, section)[data-route-id='input'] .input-prediction-fact__head .mgmt-status { flex: 0 0 auto; }
 
-main[data-route-id='input'] .input-prediction-fact__copy {
+:is(main, section)[data-route-id='input'] .input-prediction-fact__copy {
   display: grid;
   min-width: 0;
   gap: 2px;
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='input'] .input-prediction-fact__copy > span {
+:is(main, section)[data-route-id='input'] .input-prediction-fact__copy > span {
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: var(--font-weight-semibold);
   line-height: 1.4;
 }
 
-main[data-route-id='input'] .input-prediction-fact__copy small,
-main[data-route-id='input'] .input-prediction-facts__boundary {
+:is(main, section)[data-route-id='input'] .input-prediction-fact__copy small,
+:is(main, section)[data-route-id='input'] .input-prediction-facts__boundary {
   color: var(--color-text-secondary);
   font-size: 12.5px;
   line-height: 1.45;
 }
 
-main[data-route-id='input'] .input-prediction-facts__boundary {
+:is(main, section)[data-route-id='input'] .input-prediction-facts__boundary {
   margin: 0;
   padding: 8px 12px;
   border-top: 1px solid var(--color-border);
@@ -467,7 +467,7 @@ main[data-route-id='input'] .input-prediction-facts__boundary {
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='input'] .input-pipeline {
+:is(main, section)[data-route-id='input'] .input-pipeline {
   min-width: 0;
   overflow: clip;
   border: 1px solid var(--color-border);
@@ -475,7 +475,7 @@ main[data-route-id='input'] .input-pipeline {
   background: var(--color-surface);
 }
 
-main[data-route-id='input'] .input-pipeline__summary {
+:is(main, section)[data-route-id='input'] .input-pipeline__summary {
   display: flex;
   width: 100%;
   min-height: 46px;
@@ -493,26 +493,26 @@ main[data-route-id='input'] .input-pipeline__summary {
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-pipeline__summary:focus-visible {
+:is(main, section)[data-route-id='input'] .input-pipeline__summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
 
-main[data-route-id='input'] .input-pipeline__summary > svg {
+:is(main, section)[data-route-id='input'] .input-pipeline__summary > svg {
   flex: 0 0 auto;
   color: var(--color-text-tertiary);
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-pipeline[data-open='true'] .input-pipeline__summary > svg {
+:is(main, section)[data-route-id='input'] .input-pipeline[data-open='true'] .input-pipeline__summary > svg {
   transform: rotate(180deg);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='input'] .input-pipeline__summary:hover { background: var(--color-surface-subtle); }
+  :is(main, section)[data-route-id='input'] .input-pipeline__summary:hover { background: var(--color-surface-subtle); }
 }
 
-main[data-route-id='input'] .input-pipeline__steps {
+:is(main, section)[data-route-id='input'] .input-pipeline__steps {
   display: flex;
   min-width: 0;
   flex-wrap: nowrap;
@@ -521,7 +521,7 @@ main[data-route-id='input'] .input-pipeline__steps {
 }
 
 /* 每一步一枚状态点 + 一句真实状态；步与步之间的箭头是纯装饰。 */
-main[data-route-id='input'] .input-pipeline__step {
+:is(main, section)[data-route-id='input'] .input-pipeline__step {
   position: relative;
   flex: 1 1 0;
   min-width: 0;
@@ -536,7 +536,7 @@ main[data-route-id='input'] .input-pipeline__step {
   text-overflow: ellipsis;
 }
 
-main[data-route-id='input'] .input-pipeline__step::before {
+:is(main, section)[data-route-id='input'] .input-pipeline__step::before {
   content: '';
   width: 7px;
   height: 7px;
@@ -544,15 +544,15 @@ main[data-route-id='input'] .input-pipeline__step::before {
   background: var(--color-text-tertiary);
 }
 
-main[data-route-id='input'] .input-pipeline__step[data-tone='success']::before { background: var(--color-success); }
-main[data-route-id='input'] .input-pipeline__step[data-tone='warning']::before { background: var(--color-warning); }
-main[data-route-id='input'] .input-pipeline__step[data-tone='danger']::before { background: var(--color-danger); }
+:is(main, section)[data-route-id='input'] .input-pipeline__step[data-tone='success']::before { background: var(--color-success); }
+:is(main, section)[data-route-id='input'] .input-pipeline__step[data-tone='warning']::before { background: var(--color-warning); }
+:is(main, section)[data-route-id='input'] .input-pipeline__step[data-tone='danger']::before { background: var(--color-danger); }
 
-main[data-route-id='input'] .input-pipeline__step[data-off] {
+:is(main, section)[data-route-id='input'] .input-pipeline__step[data-off] {
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='input'] .input-pipeline__step:not(:last-child)::after {
+:is(main, section)[data-route-id='input'] .input-pipeline__step:not(:last-child)::after {
   content: '';
   position: absolute;
   top: 50%;
@@ -564,7 +564,7 @@ main[data-route-id='input'] .input-pipeline__step:not(:last-child)::after {
   transform: translateY(-50%) rotate(45deg);
 }
 
-main[data-route-id='input'] .input-pipeline__detail {
+:is(main, section)[data-route-id='input'] .input-pipeline__detail {
   display: grid;
   min-width: 0;
   gap: var(--space-3);
@@ -572,14 +572,14 @@ main[data-route-id='input'] .input-pipeline__detail {
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-suggest-preview {
+:is(main, section)[data-route-id='input'] .input-suggest-preview {
   display: grid;
   min-width: 0;
   margin: 0;
   gap: var(--space-2);
 }
 
-main[data-route-id='input'] .input-suggest-preview__stage {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__stage {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -592,14 +592,14 @@ main[data-route-id='input'] .input-suggest-preview__stage {
 }
 
 /* 刚上屏的内容：灰色占位条 + 静态光标线，不使用闪烁动画。 */
-main[data-route-id='input'] .input-suggest-preview__committed {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__committed {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-main[data-route-id='input'] .input-suggest-preview__committed i {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__committed i {
   display: inline-block;
   width: 84px;
   height: 10px;
@@ -607,7 +607,7 @@ main[data-route-id='input'] .input-suggest-preview__committed i {
   background: var(--color-border-strong);
 }
 
-main[data-route-id='input'] .input-suggest-preview__committed::after {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__committed::after {
   content: '';
   display: inline-block;
   width: 1.5px;
@@ -616,7 +616,7 @@ main[data-route-id='input'] .input-suggest-preview__committed::after {
   background: var(--color-text-secondary);
 }
 
-main[data-route-id='input'] .input-suggest-preview__committed em {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__committed em {
   order: -1;
   color: var(--color-text-tertiary);
   font-size: 13px;
@@ -625,7 +625,7 @@ main[data-route-id='input'] .input-suggest-preview__committed em {
 }
 
 /* 智能候选区：以强调色边界与"智能候选"角标表达与原生候选的可见区分。 */
-main[data-route-id='input'] .input-suggest-preview__panel {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__panel {
   display: inline-flex;
   min-width: 0;
   align-items: center;
@@ -637,14 +637,14 @@ main[data-route-id='input'] .input-suggest-preview__panel {
   background: var(--color-accent-subtle);
 }
 
-main[data-route-id='input'] .input-suggest-preview__panel--off {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__panel--off {
   border: 1px dashed var(--color-border-strong);
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: 13px;
 }
 
-main[data-route-id='input'] .input-suggest-preview__tag {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__tag {
   display: inline-flex;
   align-items: center;
   padding: 2px 7px;
@@ -657,7 +657,7 @@ main[data-route-id='input'] .input-suggest-preview__tag {
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-suggest-preview__slots {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slots {
   display: inline-flex;
   min-width: 0;
   align-items: stretch;
@@ -665,7 +665,7 @@ main[data-route-id='input'] .input-suggest-preview__slots {
   gap: 6px;
 }
 
-main[data-route-id='input'] .input-suggest-preview__slot {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slot {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -675,14 +675,14 @@ main[data-route-id='input'] .input-suggest-preview__slot {
   background: var(--color-surface);
 }
 
-main[data-route-id='input'] .input-suggest-preview__slot b {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slot b {
   color: var(--color-accent);
   font-size: 12px;
   font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='input'] .input-suggest-preview__slot i {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slot i {
   display: inline-block;
   width: 42px;
   height: 8px;
@@ -691,22 +691,22 @@ main[data-route-id='input'] .input-suggest-preview__slot i {
 }
 
 /* 抽象槽位宽度错落，读起来像真实候选而不是等宽积木。 */
-main[data-route-id='input'] .input-suggest-preview__slot:nth-child(2n) i { width: 58px; }
-main[data-route-id='input'] .input-suggest-preview__slot:nth-child(3n) i { width: 34px; }
-main[data-route-id='input'] .input-suggest-preview__slot:first-child i { width: 66px; }
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slot:nth-child(2n) i { width: 58px; }
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slot:nth-child(3n) i { width: 34px; }
+:is(main, section)[data-route-id='input'] .input-suggest-preview__slot:first-child i { width: 66px; }
 
 /* 展开样式：候选面板变为纵向列表，对应 panelStyle=expanded。 */
-main[data-route-id='input'] .input-suggest-preview[data-panel='expanded'] .input-suggest-preview__slots {
+:is(main, section)[data-route-id='input'] .input-suggest-preview[data-panel='expanded'] .input-suggest-preview__slots {
   flex-direction: column;
   align-items: stretch;
 }
 
-main[data-route-id='input'] .input-suggest-preview[data-panel='expanded'] .input-suggest-preview__slot i {
+:is(main, section)[data-route-id='input'] .input-suggest-preview[data-panel='expanded'] .input-suggest-preview__slot i {
   flex: 1;
   min-width: 64px;
 }
 
-main[data-route-id='input'] .input-suggest-preview figcaption {
+:is(main, section)[data-route-id='input'] .input-suggest-preview figcaption {
   display: flex;
   min-width: 0;
   align-items: baseline;
@@ -714,19 +714,19 @@ main[data-route-id='input'] .input-suggest-preview figcaption {
   gap: 6px 14px;
 }
 
-main[data-route-id='input'] .input-suggest-preview__note {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__note {
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.5;
 }
 
-main[data-route-id='input'] .input-suggest-preview__hints {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__hints {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-main[data-route-id='input'] .input-suggest-preview__hints > span {
+:is(main, section)[data-route-id='input'] .input-suggest-preview__hints > span {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
@@ -739,7 +739,7 @@ main[data-route-id='input'] .input-suggest-preview__hints > span {
 }
 
 /* 三步生成管线：一块表面、内部分隔线加流向箭头，而不是三张漂浮卡片。 */
-main[data-route-id='input'] .input-gen-lanes {
+:is(main, section)[data-route-id='input'] .input-gen-lanes {
   display: grid;
   min-width: 0;
   margin: 0;
@@ -754,7 +754,7 @@ main[data-route-id='input'] .input-gen-lanes {
   list-style: none;
 }
 
-main[data-route-id='input'] .input-gen-lane {
+:is(main, section)[data-route-id='input'] .input-gen-lane {
   counter-increment: input-gen-lane;
   position: relative;
   display: grid;
@@ -765,19 +765,19 @@ main[data-route-id='input'] .input-gen-lane {
   border-right: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-gen-lane:last-child { border-right: 0; }
+:is(main, section)[data-route-id='input'] .input-gen-lane:last-child { border-right: 0; }
 
-main[data-route-id='input'] .input-gen-lane[data-dimmed] {
+:is(main, section)[data-route-id='input'] .input-gen-lane[data-dimmed] {
   background: var(--color-surface-subtle);
 }
 
-main[data-route-id='input'] .input-gen-lane[data-dimmed] > p,
-main[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head strong {
+:is(main, section)[data-route-id='input'] .input-gen-lane[data-dimmed] > p,
+:is(main, section)[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head strong {
   color: var(--color-text-secondary);
 }
 
 /* 分隔线上的流向箭头：底色填充盖住分隔线，读作穿墙的流向。 */
-main[data-route-id='input'] .input-gen-lane:not(:last-child)::after {
+:is(main, section)[data-route-id='input'] .input-gen-lane:not(:last-child)::after {
   content: '';
   position: absolute;
   z-index: 1;
@@ -791,7 +791,7 @@ main[data-route-id='input'] .input-gen-lane:not(:last-child)::after {
   transform: rotate(45deg);
 }
 
-main[data-route-id='input'] .input-gen-lane__head {
+:is(main, section)[data-route-id='input'] .input-gen-lane__head {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -799,7 +799,7 @@ main[data-route-id='input'] .input-gen-lane__head {
   gap: 8px;
 }
 
-main[data-route-id='input'] .input-gen-lane__head::before {
+:is(main, section)[data-route-id='input'] .input-gen-lane__head::before {
   content: counter(input-gen-lane);
   display: inline-grid;
   width: 18px;
@@ -813,19 +813,19 @@ main[data-route-id='input'] .input-gen-lane__head::before {
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head::before {
+:is(main, section)[data-route-id='input'] .input-gen-lane[data-dimmed] .input-gen-lane__head::before {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   color: var(--color-text-tertiary);
 }
 
-main[data-route-id='input'] .input-gen-lane__icon {
+:is(main, section)[data-route-id='input'] .input-gen-lane__icon {
   display: inline-grid;
   place-items: center;
   color: var(--color-text-secondary);
 }
 
-main[data-route-id='input'] .input-gen-lane__head strong {
+:is(main, section)[data-route-id='input'] .input-gen-lane__head strong {
   overflow: hidden;
   font-size: 14px;
   line-height: 1.4;
@@ -833,14 +833,14 @@ main[data-route-id='input'] .input-gen-lane__head strong {
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-gen-lane__badges {
+:is(main, section)[data-route-id='input'] .input-gen-lane__badges {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-inline-start: auto;
 }
 
-main[data-route-id='input'] .input-gen-lane > p {
+:is(main, section)[data-route-id='input'] .input-gen-lane > p {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -848,7 +848,7 @@ main[data-route-id='input'] .input-gen-lane > p {
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='input'] .input-gen-lane > small {
+:is(main, section)[data-route-id='input'] .input-gen-lane > small {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text-tertiary);
@@ -858,7 +858,7 @@ main[data-route-id='input'] .input-gen-lane > small {
   -webkit-line-clamp: 2;
 }
 
-main[data-route-id='input'] .input-gen-lane__facts {
+:is(main, section)[data-route-id='input'] .input-gen-lane__facts {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -868,7 +868,7 @@ main[data-route-id='input'] .input-gen-lane__facts {
   list-style: none;
 }
 
-main[data-route-id='input'] .input-gen-lane__facts > li {
+:is(main, section)[data-route-id='input'] .input-gen-lane__facts > li {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
@@ -884,14 +884,14 @@ main[data-route-id='input'] .input-gen-lane__facts > li {
  * 输入链路：一条紧凑的状态带
  * ------------------------------------------------------------------------- */
 
-main[data-route-id='input'] .input-status-grid {
+:is(main, section)[data-route-id='input'] .input-status-grid {
   display: grid;
   min-width: 0;
   border-block: 1px solid var(--color-border);
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-main[data-route-id='input'] .input-status-item {
+:is(main, section)[data-route-id='input'] .input-status-item {
   display: grid;
   min-width: 0;
   min-height: 62px;
@@ -902,9 +902,9 @@ main[data-route-id='input'] .input-status-item {
   grid-template-columns: 28px minmax(0, 1fr);
 }
 
-main[data-route-id='input'] .input-status-item:last-child { border-right: 0; }
+:is(main, section)[data-route-id='input'] .input-status-item:last-child { border-right: 0; }
 
-main[data-route-id='input'] .input-status-item__icon {
+:is(main, section)[data-route-id='input'] .input-status-item__icon {
   display: inline-grid;
   width: 28px;
   height: 28px;
@@ -917,34 +917,34 @@ main[data-route-id='input'] .input-status-item__icon {
     color var(--duration-enter) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-status-item[data-tone='success'] .input-status-item__icon {
+:is(main, section)[data-route-id='input'] .input-status-item[data-tone='success'] .input-status-item__icon {
   background: var(--color-success-soft);
   color: var(--color-success);
 }
 
-main[data-route-id='input'] .input-status-item[data-tone='warning'] .input-status-item__icon {
+:is(main, section)[data-route-id='input'] .input-status-item[data-tone='warning'] .input-status-item__icon {
   background: var(--color-warning-soft);
   color: var(--color-warning);
 }
 
-main[data-route-id='input'] .input-status-item[data-tone='danger'] .input-status-item__icon {
+:is(main, section)[data-route-id='input'] .input-status-item[data-tone='danger'] .input-status-item__icon {
   background: var(--color-danger-soft);
   color: var(--color-danger);
 }
 
-main[data-route-id='input'] .input-status-item__copy {
+:is(main, section)[data-route-id='input'] .input-status-item__copy {
   display: grid;
   min-width: 0;
   gap: 1px;
 }
 
-main[data-route-id='input'] .input-status-item__copy small {
+:is(main, section)[data-route-id='input'] .input-status-item__copy small {
   color: var(--color-text-tertiary);
   font-size: 12.5px;
   font-weight: 650;
 }
 
-main[data-route-id='input'] .input-status-item__copy strong {
+:is(main, section)[data-route-id='input'] .input-status-item__copy strong {
   overflow: hidden;
   font-size: 14px;
   line-height: 1.35;
@@ -952,7 +952,7 @@ main[data-route-id='input'] .input-status-item__copy strong {
   white-space: nowrap;
 }
 
-main[data-route-id='input'] .input-status-item__copy > span {
+:is(main, section)[data-route-id='input'] .input-status-item__copy > span {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text-secondary);
@@ -962,7 +962,7 @@ main[data-route-id='input'] .input-status-item__copy > span {
   -webkit-line-clamp: 1;
 }
 
-main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action {
+:is(main, section):is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action {
   display: grid;
   align-items: center;
   gap: var(--space-2);
@@ -970,13 +970,13 @@ main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .mgmt-notice { margin: 0; }
+:is(main, section):is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .mgmt-notice { margin: 0; }
 
 /* ---------------------------------------------------------------------------
  * 输入体验设置：台账在前（状态 + 可折叠差异表 + 保存），分组索引在后
  * ------------------------------------------------------------------------- */
 
-main[data-route-id='input'] .input-settings-layout {
+:is(main, section)[data-route-id='input'] .input-settings-layout {
   display: grid;
   min-width: 0;
   gap: var(--space-3);
@@ -984,7 +984,7 @@ main[data-route-id='input'] .input-settings-layout {
   grid-template-columns: minmax(0, 1fr);
 }
 
-main[data-route-id='input'] .input-settings-ledger {
+:is(main, section)[data-route-id='input'] .input-settings-ledger {
   display: grid;
   min-width: 0;
   gap: var(--space-2);
@@ -994,11 +994,11 @@ main[data-route-id='input'] .input-settings-ledger {
   background: var(--color-surface);
 }
 
-main[data-route-id='input'] .input-settings-ledger[data-attention] {
+:is(main, section)[data-route-id='input'] .input-settings-ledger[data-attention] {
   border-color: var(--color-accent-border);
 }
 
-main[data-route-id='input'] .input-settings-ledger__row {
+:is(main, section)[data-route-id='input'] .input-settings-ledger__row {
   display: flex;
   min-width: 0;
   min-height: var(--input-os-control-h);
@@ -1006,16 +1006,16 @@ main[data-route-id='input'] .input-settings-ledger__row {
   gap: var(--space-2);
 }
 
-main[data-route-id='input'] .input-settings-diff-title {
+:is(main, section)[data-route-id='input'] .input-settings-diff-title {
   margin: 0;
   font-size: 14px;
 }
 
-main[data-route-id='input'] .input-settings-ledger__row .input-ledger-toggle {
+:is(main, section)[data-route-id='input'] .input-settings-ledger__row .input-ledger-toggle {
   margin-inline-start: auto;
 }
 
-main[data-route-id='input'] .input-settings-ledger__hint {
+:is(main, section)[data-route-id='input'] .input-settings-ledger__hint {
   overflow: hidden;
   margin-inline-start: auto;
   color: var(--color-text-tertiary);
@@ -1025,15 +1025,15 @@ main[data-route-id='input'] .input-settings-ledger__hint {
 }
 
 /* 差异表在台账内部滚动，保存按钮不会被长表推走。 */
-main[data-route-id='input'] .input-settings-ledger .mgmt-table-wrap {
+:is(main, section)[data-route-id='input'] .input-settings-ledger .mgmt-table-wrap {
   max-height: 220px;
 }
 
-main[data-route-id='input'] .input-settings-ledger > .mgmt-workflow[data-confirmation='direct'] {
+:is(main, section)[data-route-id='input'] .input-settings-ledger > .mgmt-workflow[data-confirmation='direct'] {
   padding-block: var(--space-2) 0;
 }
 
-main[data-route-id='input'] .input-settings-grid {
+:is(main, section)[data-route-id='input'] .input-settings-grid {
   display: grid;
   min-width: 0;
   align-items: start;
@@ -1041,7 +1041,7 @@ main[data-route-id='input'] .input-settings-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-main[data-route-id='input'] .input-settings-group {
+:is(main, section)[data-route-id='input'] .input-settings-group {
   min-width: 0;
   overflow: clip;
   border: 1px solid var(--color-border);
@@ -1049,15 +1049,15 @@ main[data-route-id='input'] .input-settings-group {
   background: var(--color-surface);
 }
 
-main[data-route-id='input'] .input-settings-group[data-attention='true'] {
+:is(main, section)[data-route-id='input'] .input-settings-group[data-attention='true'] {
   border-color: var(--color-accent-border);
 }
 
-main[data-route-id='input'] .input-settings-group[data-open='true'] {
+:is(main, section)[data-route-id='input'] .input-settings-group[data-open='true'] {
   grid-column: 1 / -1;
 }
 
-main[data-route-id='input'] .input-settings-group__summary {
+:is(main, section)[data-route-id='input'] .input-settings-group__summary {
   display: flex;
   width: 100%;
   min-height: 52px;
@@ -1075,32 +1075,32 @@ main[data-route-id='input'] .input-settings-group__summary {
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-group__summary:focus-visible {
+:is(main, section)[data-route-id='input'] .input-settings-group__summary:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
 
-main[data-route-id='input'] .input-settings-group__copy {
+:is(main, section)[data-route-id='input'] .input-settings-group__copy {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-main[data-route-id='input'] .input-settings-group [role='heading'] {
+:is(main, section)[data-route-id='input'] .input-settings-group [role='heading'] {
   margin: 0;
   font-size: 14px;
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0;
 }
 
-main[data-route-id='input'] .input-settings-group__copy small {
+:is(main, section)[data-route-id='input'] .input-settings-group__copy small {
   overflow-wrap: anywhere;
   color: var(--color-text-secondary);
   font-size: 12.5px;
   line-height: 1.4;
 }
 
-main[data-route-id='input'] .input-settings-group__meta {
+:is(main, section)[data-route-id='input'] .input-settings-group__meta {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -1110,19 +1110,19 @@ main[data-route-id='input'] .input-settings-group__meta {
   font-variant-numeric: tabular-nums;
 }
 
-main[data-route-id='input'] .input-settings-group[data-attention='true'] .input-settings-group__meta {
+:is(main, section)[data-route-id='input'] .input-settings-group[data-attention='true'] .input-settings-group__meta {
   color: var(--color-accent);
 }
 
-main[data-route-id='input'] .input-settings-group__meta svg {
+:is(main, section)[data-route-id='input'] .input-settings-group__meta svg {
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-group[data-open='true'] > .input-settings-group__summary .input-settings-group__meta svg {
+:is(main, section)[data-route-id='input'] .input-settings-group[data-open='true'] > .input-settings-group__summary .input-settings-group__meta svg {
   transform: rotate(180deg);
 }
 
-main[data-route-id='input'] .input-settings-disclosure {
+:is(main, section)[data-route-id='input'] .input-settings-disclosure {
   display: grid;
   min-width: 0;
   grid-template-rows: 0fr;
@@ -1133,30 +1133,30 @@ main[data-route-id='input'] .input-settings-disclosure {
     opacity var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-disclosure[data-open='true'] {
+:is(main, section)[data-route-id='input'] .input-settings-disclosure[data-open='true'] {
   grid-template-rows: 1fr;
   opacity: 1;
   pointer-events: auto;
 }
 
-main[data-route-id='input'] .input-settings-disclosure > div {
+:is(main, section)[data-route-id='input'] .input-settings-disclosure > div {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-main[data-route-id='input'] .input-settings-disclosure__content { min-width: 0; }
+:is(main, section)[data-route-id='input'] .input-settings-disclosure__content { min-width: 0; }
 
-main[data-route-id='input'] .input-setting-list {
+:is(main, section)[data-route-id='input'] .input-setting-list {
   margin: 0;
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-settings-advanced {
+:is(main, section)[data-route-id='input'] .input-settings-advanced {
   border-top: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-settings-advanced > button {
+:is(main, section)[data-route-id='input'] .input-settings-advanced > button {
   display: flex;
   width: 100%;
   min-height: 44px;
@@ -1176,50 +1176,50 @@ main[data-route-id='input'] .input-settings-advanced > button {
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-advanced > button:focus-visible {
+:is(main, section)[data-route-id='input'] .input-settings-advanced > button:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
 
-main[data-route-id='input'] .input-settings-advanced > button svg {
+:is(main, section)[data-route-id='input'] .input-settings-advanced > button svg {
   flex: 0 0 auto;
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-settings-advanced[data-open='true'] > button {
+:is(main, section)[data-route-id='input'] .input-settings-advanced[data-open='true'] > button {
   color: var(--color-text-primary);
 }
 
-main[data-route-id='input'] .input-settings-advanced[data-open='true'] > button svg {
+:is(main, section)[data-route-id='input'] .input-settings-advanced[data-open='true'] > button svg {
   transform: rotate(180deg);
 }
 
-main[data-route-id='input'] .input-settings-advanced[data-attention='true'] > button { color: var(--color-accent); }
+:is(main, section)[data-route-id='input'] .input-settings-advanced[data-attention='true'] > button { color: var(--color-accent); }
 
 @media (hover: hover) and (pointer: fine) {
-  main[data-route-id='input'] .input-settings-group__summary:hover,
-  main[data-route-id='input'] .input-settings-advanced > button:hover { background: var(--color-surface-subtle); }
+  :is(main, section)[data-route-id='input'] .input-settings-group__summary:hover,
+  :is(main, section)[data-route-id='input'] .input-settings-advanced > button:hover { background: var(--color-surface-subtle); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  main[data-route-id='input'] .input-status-item__icon,
-  main[data-route-id='input'] .input-settings-group__meta svg,
-  main[data-route-id='input'] .input-ledger-toggle svg,
-  main[data-route-id='input'] .input-pipeline__summary > svg,
-  main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
-  main[data-route-id='input'] .input-settings-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
+  :is(main, section)[data-route-id='input'] .input-status-item__icon,
+  :is(main, section)[data-route-id='input'] .input-settings-group__meta svg,
+  :is(main, section)[data-route-id='input'] .input-ledger-toggle svg,
+  :is(main, section)[data-route-id='input'] .input-pipeline__summary > svg,
+  :is(main, section)[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
+  :is(main, section)[data-route-id='input'] .input-settings-disclosure { transition: opacity var(--duration-fast) var(--ease-standard); }
 }
 
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-group__meta svg,
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-ledger-toggle svg,
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-pipeline__summary > svg,
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-settings-group__meta svg,
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-ledger-toggle svg,
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-pipeline__summary > svg,
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-settings-advanced > button svg { transition: none; }
 
-:root[data-reduce-motion='true'] main[data-route-id='input'] .input-settings-disclosure {
+:root[data-reduce-motion='true'] :is(main, section)[data-route-id='input'] .input-settings-disclosure {
   transition: opacity var(--duration-fast) var(--ease-standard);
 }
 
-main[data-route-id='input'] .input-setting-row {
+:is(main, section)[data-route-id='input'] .input-setting-row {
   display: grid;
   min-width: 0;
   min-height: 58px;
@@ -1230,35 +1230,35 @@ main[data-route-id='input'] .input-setting-row {
   grid-template-columns: minmax(0, 1fr) minmax(112px, 0.42fr);
 }
 
-main[data-route-id='input'] .input-setting-row:last-child { border-bottom: 0; }
-main[data-route-id='input'] .input-setting-row dt,
-main[data-route-id='input'] .input-setting-row dd {
+:is(main, section)[data-route-id='input'] .input-setting-row:last-child { border-bottom: 0; }
+:is(main, section)[data-route-id='input'] .input-setting-row dt,
+:is(main, section)[data-route-id='input'] .input-setting-row dd {
   display: grid;
   min-width: 0;
   gap: 3px;
   margin: 0;
 }
 
-main[data-route-id='input'] .input-setting-row dt strong,
-main[data-route-id='input'] .input-setting-row dd strong {
+:is(main, section)[data-route-id='input'] .input-setting-row dt strong,
+:is(main, section)[data-route-id='input'] .input-setting-row dd strong {
   overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 1.4;
 }
 
-main[data-route-id='input'] .input-setting-row dt span,
-main[data-route-id='input'] .input-setting-row dd span {
+:is(main, section)[data-route-id='input'] .input-setting-row dt span,
+:is(main, section)[data-route-id='input'] .input-setting-row dd span {
   color: var(--color-text-secondary);
   font-size: 13px;
   line-height: 1.45;
 }
 
-main[data-route-id='input'] .input-setting-row dd {
+:is(main, section)[data-route-id='input'] .input-setting-row dd {
   justify-items: end;
   text-align: right;
 }
 
-main[data-route-id='input'] .input-setting-editor-row {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row {
   display: grid;
   min-width: 0;
   min-height: 64px;
@@ -1267,23 +1267,23 @@ main[data-route-id='input'] .input-setting-editor-row {
   border-bottom: 1px solid var(--color-border);
 }
 
-main[data-route-id='input'] .input-setting-editor-row:last-child { border-bottom: 0; }
+:is(main, section)[data-route-id='input'] .input-setting-editor-row:last-child { border-bottom: 0; }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field,
-main[data-route-id='input'] .input-setting-editor-row .ui-switch-field {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field,
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-switch-field {
   margin: 0;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__copy {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-switch-field__copy {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-switch {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-switch {
   flex-shrink: 0;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field {
   display: grid;
   min-width: 0;
   align-items: center;
@@ -1291,62 +1291,62 @@ main[data-route-id='input'] .input-setting-editor-row .ui-field {
   grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field__label,
-main[data-route-id='input'] .input-setting-editor-row .ui-field__description {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field__label,
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field__description {
   min-width: 0;
   grid-column: 1;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field__label,
-main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__label {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field__label,
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-switch-field__label {
   font-size: 13px;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field__description,
-main[data-route-id='input'] .input-setting-editor-row .ui-switch-field__description {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field__description,
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-switch-field__description {
   font-size: 13px;
   line-height: 1.45;
 }
 
-main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input,
-main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input,
+:is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
   width: 100%;
   min-width: 0;
   grid-column: 2;
   grid-row: 1 / span 2;
 }
 
-main[data-route-id='input'] .input-setting-editor-row--readonly {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row--readonly {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
 
-main[data-route-id='input'] .input-setting-editor-row--readonly > span {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row--readonly > span {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='input'] .input-setting-editor-row--readonly strong { font-size: 13px; }
+:is(main, section)[data-route-id='input'] .input-setting-editor-row--readonly strong { font-size: 13px; }
 
-main[data-route-id='input'] .input-setting-editor-row--readonly small {
+:is(main, section)[data-route-id='input'] .input-setting-editor-row--readonly small {
   color: var(--color-text-secondary);
   font-size: 13px;
 }
 
-main[data-route-id='input'] .mgmt-toolbar { justify-content: space-between; }
+:is(main, section)[data-route-id='input'] .mgmt-toolbar { justify-content: space-between; }
 
 /* The system App owns the scroll viewport, while this route owns the reading
    inset. Keeping the first body block below the sticky action strip prevents
    the native chrome from visually cutting into the first section on short
    windows. */
-main:is([data-route-id='input'], [data-route-id='input-lexicon'])[data-paw-os-app] > .mgmt-page__body {
+:is(main, section):is([data-route-id='input'], [data-route-id='input-lexicon'])[data-paw-os-app] > .mgmt-page__body {
   padding-top: clamp(18px, 3vw, 28px);
 }
 
-main[data-route-id='input-lexicon'] label.mgmt-list__row {
+:is(main, section)[data-route-id='input-lexicon'] label.mgmt-list__row {
   min-height: 44px;
   cursor: pointer;
   grid-template-columns: 20px minmax(0, 1fr) max-content;
@@ -1356,7 +1356,7 @@ main[data-route-id='input-lexicon'] label.mgmt-list__row {
    generic title/meta/status rows can breathe. Lexicon review rows have a
    fixed leading control, however; restoring that track keeps the checkbox
    out of the candidate title and leaves the status chip in its own column. */
-main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
+:is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
   grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) max-content;
   grid-template-areas: 'check content status';
   align-items: start;
@@ -1364,17 +1364,17 @@ main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review_
   row-gap: 6px;
 }
 
-main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > input {
+:is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > input {
   grid-area: check;
   margin-top: 3px;
 }
 
-main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-list__content {
+:is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .mgmt-list__content {
   grid-area: content;
   align-self: start;
 }
 
-main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
+:is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
   grid-area: status;
   align-self: start;
   justify-self: start;
@@ -1382,41 +1382,41 @@ main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review_
 
 /* 每条候选带两枚徽章：来源（输入记录/选词反馈）与风险归类。宽窗口里
    纵向叠放占住状态列，窄窗口换到内容下方后再横向排开。 */
-main[data-route-id='input-lexicon'] .input-lexicon-review__badges {
+:is(main, section)[data-route-id='input-lexicon'] .input-lexicon-review__badges {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
 }
 
-main[data-route-id='input-lexicon'] .input-lexicon-review__bulk {
+:is(main, section)[data-route-id='input-lexicon'] .input-lexicon-review__bulk {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-inline-start: auto;
 }
 
-main[data-route-id='input-lexicon'] label.mgmt-list__row > input {
+:is(main, section)[data-route-id='input-lexicon'] label.mgmt-list__row > input {
   width: 16px;
   height: 16px;
   margin: 0;
   accent-color: var(--color-accent);
 }
 
-main[data-route-id='input-lexicon'] .mgmt-list__content {
+:is(main, section)[data-route-id='input-lexicon'] .mgmt-list__content {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-main[data-route-id='input-lexicon'] .mgmt-list__content strong {
+:is(main, section)[data-route-id='input-lexicon'] .mgmt-list__content strong {
   overflow: hidden;
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-main[data-route-id='input-lexicon'] .mgmt-list__content span {
+:is(main, section)[data-route-id='input-lexicon'] .mgmt-list__content span {
   display: -webkit-box;
   overflow: hidden;
   overflow-wrap: anywhere;
@@ -1429,165 +1429,165 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
 }
 
 @media (max-width: 980px) {
-  main[data-route-id='input'] .input-prediction-facts {
+  :is(main, section)[data-route-id='input'] .input-prediction-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  main[data-route-id='input'] .input-prediction-fact:nth-child(2) { border-right: 0; }
-  main[data-route-id='input'] .input-prediction-fact:nth-child(3) {
+  :is(main, section)[data-route-id='input'] .input-prediction-fact:nth-child(2) { border-right: 0; }
+  :is(main, section)[data-route-id='input'] .input-prediction-fact:nth-child(3) {
     border-top: 1px solid var(--color-border);
     border-right: 1px solid var(--color-border);
   }
 
-  main[data-route-id='input'] .input-mode-deck {
+  :is(main, section)[data-route-id='input'] .input-mode-deck {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  main[data-route-id='input'] .input-mode-decision,
-  main[data-route-id='input'] .input-settings-grid {
+  :is(main, section)[data-route-id='input'] .input-mode-decision,
+  :is(main, section)[data-route-id='input'] .input-settings-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-gen-lanes {
+  :is(main, section)[data-route-id='input'] .input-gen-lanes {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-gen-lane {
+  :is(main, section)[data-route-id='input'] .input-gen-lane {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 
-  main[data-route-id='input'] .input-gen-lane:last-child { border-bottom: 0; }
+  :is(main, section)[data-route-id='input'] .input-gen-lane:last-child { border-bottom: 0; }
 
-  main[data-route-id='input'] .input-gen-lane:not(:last-child)::after { content: none; }
+  :is(main, section)[data-route-id='input'] .input-gen-lane:not(:last-child)::after { content: none; }
 }
 
 @media (max-width: 620px) {
-  main[data-route-id='input'] .input-prediction-facts {
+  :is(main, section)[data-route-id='input'] .input-prediction-facts {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-prediction-fact,
-  main[data-route-id='input'] .input-prediction-fact:nth-child(3) {
+  :is(main, section)[data-route-id='input'] .input-prediction-fact,
+  :is(main, section)[data-route-id='input'] .input-prediction-fact:nth-child(3) {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 
-  main[data-route-id='input'] .input-prediction-fact:nth-child(3) { border-top: 0; }
+  :is(main, section)[data-route-id='input'] .input-prediction-fact:nth-child(3) { border-top: 0; }
 
-  main[data-route-id='input'] .input-status-grid,
-  main[data-route-id='input'] .input-mode-deck {
+  :is(main, section)[data-route-id='input'] .input-status-grid,
+  :is(main, section)[data-route-id='input'] .input-mode-deck {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-status-item {
+  :is(main, section)[data-route-id='input'] .input-status-item {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 
-  main[data-route-id='input'] .input-status-item:last-child { border-bottom: 0; }
+  :is(main, section)[data-route-id='input'] .input-status-item:last-child { border-bottom: 0; }
 
-  main[data-route-id='input'] .input-suggest-preview__stage {
+  :is(main, section)[data-route-id='input'] .input-suggest-preview__stage {
     align-items: flex-start;
     flex-direction: column;
   }
-  main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action { grid-template-columns: minmax(0, 1fr); }
-  main:is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .ui-button { justify-self: start; }
-  main[data-route-id='input'] .input-setting-row { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='input'] .input-setting-row dd { justify-items: start; text-align: left; }
+  :is(main, section):is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section):is([data-route-id='input'], [data-route-id='input-lexicon']) .input-inline-action .ui-button { justify-self: start; }
+  :is(main, section)[data-route-id='input'] .input-setting-row { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='input'] .input-setting-row dd { justify-items: start; text-align: left; }
 
-  main[data-route-id='input'] .input-setting-editor-row .ui-field {
+  :is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input,
-  main[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
+  :is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-input,
+  :is(main, section)[data-route-id='input'] .input-setting-editor-row .ui-field > .ui-select__trigger {
     grid-column: 1;
     grid-row: auto;
   }
 
-  main[data-route-id='input'] .input-settings-ledger__row,
-  main[data-route-id='input'] .input-mode-delta__head {
+  :is(main, section)[data-route-id='input'] .input-settings-ledger__row,
+  :is(main, section)[data-route-id='input'] .input-mode-delta__head {
     flex-wrap: wrap;
   }
 
-  main[data-route-id='input'] .input-settings-group__summary {
+  :is(main, section)[data-route-id='input'] .input-settings-group__summary {
     align-items: flex-start;
   }
 
-  main[data-route-id='input'] .input-settings-group__meta {
+  :is(main, section)[data-route-id='input'] .input-settings-group__meta {
     min-height: 40px;
     align-items: center;
   }
 
-  main[data-route-id='input'] .ui-button,
-  main[data-route-id='input'] .ui-input,
-  main[data-route-id='input'] .ui-select__trigger,
-  main[data-route-id='input'] .input-ledger-toggle,
-  main[data-route-id='input'] .input-mode-card {
+  :is(main, section)[data-route-id='input'] .ui-button,
+  :is(main, section)[data-route-id='input'] .ui-input,
+  :is(main, section)[data-route-id='input'] .ui-select__trigger,
+  :is(main, section)[data-route-id='input'] .input-ledger-toggle,
+  :is(main, section)[data-route-id='input'] .input-mode-card {
     min-height: 44px;
   }
 }
 
 @container paw-window (max-width: 900px) {
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(2) { border-right: 0; }
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) {
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(2) { border-right: 0; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) {
     border-top: 1px solid var(--color-border);
     border-right: 1px solid var(--color-border);
   }
 
-  main[data-route-id='input'][data-paw-os-app] .input-mode-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-mode-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-  main[data-route-id='input'][data-paw-os-app] .input-mode-decision,
-  main[data-route-id='input'][data-paw-os-app] .input-settings-layout,
-  main[data-route-id='input'][data-paw-os-app] .input-settings-grid,
-  main[data-route-id='input'][data-paw-os-app] .input-gen-lanes { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-mode-decision,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-settings-layout,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-settings-grid,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-gen-lanes { grid-template-columns: minmax(0, 1fr); }
 
-  main[data-route-id='input'][data-paw-os-app] .input-gen-lane {
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-gen-lane {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
 
-  main[data-route-id='input'][data-paw-os-app] .input-gen-lane:last-child { border-bottom: 0; }
-  main[data-route-id='input'][data-paw-os-app] .input-gen-lane:not(:last-child)::after { content: none; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-gen-lane:last-child { border-bottom: 0; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-gen-lane:not(:last-child)::after { content: none; }
 }
 
 @container paw-window (max-width: 860px) {
-  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
+  :is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
     grid-template-columns: minmax(20px, max-content) minmax(0, 1fr) max-content;
   }
 }
 
 @container paw-window (max-width: 560px) {
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-facts { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact,
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) {
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-facts { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-fact,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
-  main[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) { border-top: 0; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-prediction-fact:nth-child(3) { border-top: 0; }
 
-  main[data-route-id='input'][data-paw-os-app] .input-status-grid,
-  main[data-route-id='input'][data-paw-os-app] .input-inline-action,
-  main[data-route-id='input'][data-paw-os-app] .input-mode-deck,
-  main[data-route-id='input'][data-paw-os-app] .input-setting-row,
-  main[data-route-id='input'][data-paw-os-app] .input-setting-editor-row .ui-field { grid-template-columns: minmax(0, 1fr); }
-  main[data-route-id='input'][data-paw-os-app] .input-status-item { border-right: 0; border-bottom: 1px solid var(--color-border); }
-  main[data-route-id='input'][data-paw-os-app] .input-status-item:last-child { border-bottom: 0; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-status-grid,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-inline-action,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-mode-deck,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-setting-row,
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-setting-editor-row .ui-field { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-status-item { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-status-item:last-child { border-bottom: 0; }
 
-  main[data-route-id='input'][data-paw-os-app] .input-suggest-preview__stage {
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-suggest-preview__stage {
     align-items: flex-start;
     flex-direction: column;
   }
-  main[data-route-id='input'][data-paw-os-app] .input-setting-row dd { justify-items: start; text-align: left; }
-  main[data-route-id='input'][data-paw-os-app] .input-settings-ledger__row { flex-wrap: wrap; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-setting-row dd { justify-items: start; text-align: left; }
+  :is(main, section)[data-route-id='input'][data-paw-os-app] .input-settings-ledger__row { flex-wrap: wrap; }
 
-  main[data-route-id='input-lexicon'][data-paw-os-app] .input-inline-action {
+  :is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] .input-inline-action {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
+  :is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row {
     grid-template-columns: minmax(20px, max-content) minmax(0, 1fr);
     grid-template-areas:
       'check content'
@@ -1595,7 +1595,7 @@ main[data-route-id='input-lexicon'] .mgmt-list__content span {
     min-height: 78px;
   }
 
-  main[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
+  :is(main, section)[data-route-id='input-lexicon'][data-paw-os-app] label.input-lexicon-review__row > .input-lexicon-review__badges {
     flex-direction: row;
     flex-wrap: wrap;
     justify-self: start;

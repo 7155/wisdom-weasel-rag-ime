@@ -933,22 +933,98 @@
   font-size: 14px;
 }
 
-/* Choosing a default model is the same gesture as choosing one mid-Session, so
-   the sheet borrows the composer's option rows wholesale
-   (`agent-model-picker__list` in agent.css) and adds only the frame a settings
-   field needs: a bordered, bounded, opaque well that scrolls its own catalog
-   instead of growing the sheet. */
+/* Choosing a default model is the same gesture as choosing one mid-Session.
+   This lazy native-App entry does not load the full Agent feature stylesheet,
+   so the Settings owner carries the small option-row contract it actually
+   renders instead of paying for the whole conversation CSS chunk. */
 .paw-desktop-root .paw-agent-model__choices {
+  min-height: 0;
   max-height: 268px;
+  padding: 6px 6px 8px;
+  overflow-y: auto;
   border: 1px solid var(--paw-control-line);
   border-radius: var(--paw-panel-radius);
   background: var(--paw-control-bg);
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .paw-desktop-root .paw-agent-model__choices:focus-within {
   border-color: var(--paw-focus-line);
   box-shadow: 0 0 0 3px var(--paw-focus-halo);
+}
+
+.paw-desktop-root .paw-agent-model__choices .agent-model-picker__group + .agent-model-picker__group { margin-top: 6px; }
+.paw-desktop-root .paw-agent-model__choices .agent-model-picker__group-name {
+  position: sticky;
+  z-index: 1;
+  top: -6px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px 4px;
+  background: linear-gradient(var(--paw-control-bg) 76%, transparent);
+  color: var(--paw-system-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+.paw-desktop-root .paw-agent-model__choices .agent-model-picker__group-name small {
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+.paw-desktop-root .paw-agent-model__choices [role='option'] {
+  display: grid;
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: 18px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--paw-system-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.paw-desktop-root .paw-agent-model__choices [role='option']:hover { background: var(--paw-system-fill); }
+.paw-desktop-root .paw-agent-model__choices [role='option']:focus-visible {
+  outline: 2px solid var(--paw-focus-line);
+  outline-offset: 1px;
+}
+.paw-desktop-root .paw-agent-model__choices [role='option'][aria-selected='true'] {
+  background: linear-gradient(90deg, var(--paw-system-accent-soft), transparent 78%);
+  box-shadow: inset 2px 0 0 var(--paw-system-accent);
+  color: var(--paw-system-accent);
+}
+.paw-desktop-root .paw-agent-model__choices [role='option'] > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+.paw-desktop-root .paw-agent-model__choices [role='option'] strong,
+.paw-desktop-root .paw-agent-model__choices [role='option'] small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paw-desktop-root .paw-agent-model__choices [role='option'] strong { font-size: 13px; font-weight: 650; }
+.paw-desktop-root .paw-agent-model__choices [role='option'] small { color: var(--paw-system-muted); font-size: 12px; }
+.paw-desktop-root .paw-agent-model__choices .agent-model-picker__check {
+  opacity: 0;
+  color: var(--paw-system-accent);
+}
+.paw-desktop-root .paw-agent-model__choices [role='option'][aria-selected='true'] .agent-model-picker__check { opacity: 1; }
+.paw-desktop-root .paw-agent-model__choices .agent-model-picker__empty {
+  margin: 0;
+  padding: 24px 12px;
+  color: var(--paw-system-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 /* 自动选择 has no provider, so it holds the mark column open with a quiet
@@ -1130,7 +1206,7 @@
 @container paw-sysapp (max-width: 560px) {
   .paw-desktop-root .paw-system-app__frame { --paw-system-rail-w: 56px; }
 
-  .paw-desktop-root .paw-system-app__nav nav { padding-inline: 7px; }
+  .paw-desktop-root .paw-system-app__nav nav { padding-inline: 6px; }
 
   .paw-desktop-root .paw-system-app__nav nav .paw-system-app__nav-group {
     height: 9px;
@@ -1143,7 +1219,7 @@
   .paw-desktop-root .paw-system-app__nav nav button {
     grid-template-columns: minmax(0, 1fr);
     justify-items: center;
-    min-height: 38px;
+    min-height: 44px;
     padding: 0;
   }
 

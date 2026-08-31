@@ -65,6 +65,8 @@ _EXTENSION_APP_ACCENTS = frozenset(
 _EXTENSION_APP_ICON_SYMBOLS = frozenset(
     {"analytics", "assistant", "document", "commerce"}
 )
+_EXTENSION_APP_SANDBOX_DEFAULTS = frozenset({"required", "optional", "disabled"})
+_EXTENSION_APP_SANDBOX_FIELDS = frozenset({"default", "connectorPackageId", "policyId"})
 BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
 # The legacy @paw/pi-subagent package runs child Sessions inline and blocks the
 # parent turn. Product Sessions use the native agents gateway instead, so this
@@ -1043,6 +1045,15 @@ def _extension_app_manifest(
         raise ManagedPiRuntimeError("Extension App manifest presentation is invalid")
     if app_manifest.get("accent") not in _EXTENSION_APP_ACCENTS:
         raise ManagedPiRuntimeError("Extension App manifest accent is invalid")
+    sandbox_contract = app_manifest.get("sandbox")
+    if sandbox_contract is not None and (
+        not isinstance(sandbox_contract, dict)
+        or set(sandbox_contract) != _EXTENSION_APP_SANDBOX_FIELDS
+        or sandbox_contract.get("default") not in _EXTENSION_APP_SANDBOX_DEFAULTS
+        or sandbox_contract.get("connectorPackageId") != "vertical-agent-sandbox"
+        or sandbox_contract.get("policyId") != "vertical-readonly-v1"
+    ):
+        raise ManagedPiRuntimeError("Extension App manifest sandbox contract is invalid")
     icon = app_manifest.get("icon")
     if (
         not isinstance(icon, dict)
@@ -1163,6 +1174,7 @@ def _extension_app_manifest(
         "skillSha256": skill_sha256,
         "verticalSuiteId": str(app_manifest["verticalSuiteId"]),
         "verticalSuiteRevision": str(app_manifest["verticalSuiteRevision"]),
+        "sandbox": sandbox_contract,
         "manifest": app_manifest,
     }
     for field, expected in expected_extension.items():
@@ -1181,6 +1193,7 @@ def _extension_app_manifest(
         "skillSha256": skill_sha256,
         "verticalSuiteId": str(app_manifest["verticalSuiteId"]),
         "verticalSuiteRevision": str(app_manifest["verticalSuiteRevision"]),
+        "sandbox": sandbox_contract,
         "manifest": app_manifest,
     }
 

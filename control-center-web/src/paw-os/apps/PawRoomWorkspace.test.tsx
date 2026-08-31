@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -160,6 +160,9 @@ describe('PAWOS Room collaboration tools', () => {
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
     expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(4);
+    for (const label of ['任务表', '协同模式', '公开记录', '星空']) {
+      expect(within(primaryNavigation).getByRole('button', { name: label })).toHaveAttribute('aria-label', label);
+    }
     expect(within(primaryNavigation).getByRole('button', { name: '任务表' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(primaryNavigation).getByRole('button', { name: '协同模式' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '公开记录' })).toHaveAttribute('aria-pressed', 'false');
@@ -203,17 +206,49 @@ describe('PAWOS Room collaboration tools', () => {
 
     await user.click(within(tools).getByRole('button', { name: '关闭协作态势' }));
 
-    expect(screen.getByRole('main', { name: /主 Room/ })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /主 Room/ })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'rounds');
     expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(null);
+    expect(within(primaryNavigation).getByRole('button', { name: '协同模式' })).toHaveFocus();
 
     /* Default conversation path pays nothing for the sky: no region, no
      * canvas, and the starfield module itself was never evaluated. */
     expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(starfieldChunk.evaluated).toBe(false);
+  });
+
+  it('moves collaboration tool focus and selection with horizontal tablist keys', async () => {
+    const user = userEvent.setup();
+    renderRoom(900);
+    await screen.findByRole('textbox', { name: '协作消息' });
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+
+    const tablist = screen.getByRole('tablist', { name: '协作工具视图' });
+    const focusTab = within(tablist).getByRole('tab', { name: '态势' });
+    const governanceTab = within(tablist).getByRole('tab', { name: '治理' });
+    focusTab.focus();
+
+    fireEvent.keyDown(focusTab, { key: 'ArrowRight' });
+    expect(governanceTab).toHaveFocus();
+    expect(governanceTab).toHaveAttribute('aria-selected', 'true');
+    expect(focusTab).toHaveAttribute('aria-selected', 'false');
+    expect(governanceTab).toHaveAttribute('tabindex', '0');
+    expect(focusTab).toHaveAttribute('tabindex', '-1');
+
+    fireEvent.keyDown(governanceTab, { key: 'Home' });
+    expect(focusTab).toHaveFocus();
+    expect(focusTab).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(focusTab, { key: 'End' });
+    expect(governanceTab).toHaveFocus();
+    expect(governanceTab).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(governanceTab, { key: 'ArrowLeft' });
+    expect(focusTab).toHaveFocus();
+    expect(focusTab).toHaveAttribute('aria-selected', 'true');
   });
 
   it('opens every active Room planet when collaboration mode is requested', async () => {
@@ -573,6 +608,41 @@ describe('PAWOS Room collaboration tools', () => {
       && (request.body as { collaborationRole?: string }).collaborationRole === 'reviewer'
     ))).toBe(true));
   });
+
+  it('does not initialize an inactive Room surface', async () => {
+    const { transport } = renderRoom(
+      900,
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      undefined,
+      undefined,
+      false,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.snapshot')).toHaveLength(0);
+  });
+
+  it('does not initialize a Room surface while the document is hidden', async () => {
+    setDocumentVisibility('hidden');
+    try {
+      const { transport } = renderRoom(900);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.snapshot')).toHaveLength(0);
+    } finally {
+      setDocumentVisibility('visible');
+    }
+  });
 });
 
 function renderRoom(
@@ -585,6 +655,7 @@ function renderRoom(
   setCollaborationFocusGroup = vi.fn(),
   messageResponse?: Record<string, unknown>,
   initialError?: string,
+  active = true,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
@@ -630,6 +701,7 @@ function renderRoom(
                 zIndex={10}
               >
                 <PawRoomWorkspace
+                  active={active}
                   initialDraft={initialDraft}
                   initialError={initialError}
                   personas={[]}
@@ -645,4 +717,12 @@ function renderRoom(
     ),
     room,
   };
+}
+
+function setDocumentVisibility(state: 'hidden' | 'visible'): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: state,
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
 }

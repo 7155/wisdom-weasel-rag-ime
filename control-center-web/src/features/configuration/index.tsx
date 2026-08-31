@@ -131,12 +131,17 @@ export function ConfigurationFeature() {
   ));
   const rawError = queries.settings.error
     ?? queries.schema.error
-    ?? queries.capabilities.error;
+    ?? queries.capabilities.error
+    ?? (queries.modelCatalogSupported ? queries.modelCatalog.error : null);
   const error = rawError ? new Error(publicErrorText(rawError, '无法读取本机设置，请刷新后重试。')) : null;
   const pending = queries.settings.isPending
     || queries.schema.isPending
     || queries.capabilities.isPending
     || (queries.modelCatalogSupported && queries.modelCatalog.isPending);
+  const refreshing = queries.settings.isFetching
+    || queries.schema.isFetching
+    || queries.capabilities.isFetching
+    || (queries.modelCatalogSupported && queries.modelCatalog.isFetching);
   const refresh = () => {
     const refreshes = [
       queries.settings.refetch(),
@@ -173,7 +178,7 @@ export function ConfigurationFeature() {
       actions={
         <>
           <Switch checked={expertMode} label="显示高级设置" onCheckedChange={setExpertMode} />
-          <Button leadingIcon={<RefreshCw size={15} />} loading={queries.settings.isFetching} onClick={refresh} size="small">刷新</Button>
+          <Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={refresh} size="small">刷新</Button>
         </>
       }
       description="调整称呼、本机模型、上下文和各项功能。普通设置可直接保存；涉及重启、部署或权限的更改会先说明影响。"

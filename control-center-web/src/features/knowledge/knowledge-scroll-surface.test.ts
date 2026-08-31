@@ -12,7 +12,7 @@ describe('knowledge window scroll ownership', () => {
     // `height: 100%` depending on the root keeping an explicit height. As a
     // grid with one minmax(0, 1fr) row the constraint is structural: the
     // library cannot grow past the window and cannot collapse below it.
-    const root = /main\.knowledge-feature\[data-paw-os-app='knowledge'\]\s*\{([^}]*)\}/su.exec(knowledgeCss);
+    const root = /:is\(main, section\)\.knowledge-feature\[data-paw-os-app='knowledge'\]\s*\{([^}]*)\}/su.exec(knowledgeCss);
     expect(root).not.toBeNull();
     expect(root![1]).toMatch(/display:\s*grid;/u);
     expect(root![1]).toMatch(/height:\s*100%;/u);
@@ -119,6 +119,29 @@ describe('knowledge app window layout', () => {
     expect(workspace.some((block) => /\.knowledge-material-workspace,[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\);/u.test(block))).toBe(true);
   });
 
+  it('allocates a real compact list row after the narrow header is removed', () => {
+    // Hiding the 34px column header without replacing the explicit three-row
+    // template leaves the virtualized list in a 0px grid track. Its own
+    // min-height then paints over the document summary that follows it.
+    const compact = containerBlocks('knowledge-workspace').find((block) => block.startsWith('max-width: 460px'));
+    expect(compact).toBeDefined();
+    expect(compact!).toMatch(
+      /\.knowledge-material-list\s*\{[^}]*min-height:\s*224px;[^}]*grid-template-rows:\s*auto minmax\(224px, 1fr\);/su,
+    );
+    expect(compact!).toMatch(/\.knowledge-material-list__body\s*\{[^}]*min-height:\s*224px;/su);
+  });
+
+  it('lets a wrapped compact tablist contribute both rows to layout', () => {
+    // The migrated window normally reserves one 46px tab row. At three tabs
+    // per row, six tabs are 68px tall; keeping 46px makes the active panel
+    // cover the second row even though its labels remain visible.
+    const compact = containerBlocks('knowledge-workspace').find((block) => block.startsWith('max-width: 560px'));
+    expect(compact).toBeDefined();
+    expect(compact!).toMatch(
+      /\.knowledge-library__tabs\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\);/su,
+    );
+  });
+
   it('keeps every viewport breakpoint out of the window frame', () => {
     for (const [, body] of mediaBlocks) {
       const windowScoped = [...body.matchAll(/\[data-paw-os-app(?:='knowledge')?\]/gu)];
@@ -130,7 +153,7 @@ describe('knowledge app window layout', () => {
   });
 
   it('sizes the window graph pane from the window instead of a viewport slice', () => {
-    const pane = /main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-graph\s*\{([^}]*)\}/su.exec(knowledgeCss);
+    const pane = /:is\(main, section\)\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-graph\s*\{([^}]*)\}/su.exec(knowledgeCss);
     expect(pane).not.toBeNull();
     expect(pane![1]).toMatch(/height:\s*100%;/u);
     expect(pane![1]).toMatch(/flex-direction:\s*column;/u);
@@ -138,7 +161,7 @@ describe('knowledge app window layout', () => {
       /\[data-paw-os-app='knowledge'\] \.knowledge-graph__workspace\s*\{[^}]*flex:\s*1 1 auto;[^}]*\}/su,
     );
     expect(knowledgeCss).toMatch(
-      /\[data-paw-os-app='knowledge'\] \.knowledge-graph__canvas,\s*main[^{]*\.knowledge-graph__list\s*\{[^}]*height:\s*auto;[^}]*\}/su,
+      /\[data-paw-os-app='knowledge'\] \.knowledge-graph__canvas,\s*:is\(main, section\)[^{]*\.knowledge-graph__list\s*\{[^}]*height:\s*auto;[^}]*\}/su,
     );
   });
 });

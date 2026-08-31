@@ -1,8 +1,8 @@
 {
   "schemaVersion": "pawos.extension-app.v1",
   "id": "extension:zhanggui-wenshu",
-  "version": "0.1.1",
-  "bindingSha256": "81a3a1f2a178f0fb38df9620212b9c0bc2e85552faa5846f3bf467ee2163b15e",
+  "version": "0.2.0",
+  "bindingSha256": "32c573176111035a65817512202824df3f5c0cff61fcfd4fd5623fa83a8f888f",
   "packageId": "@paw/zhanggui-wenshu",
   "label": "掌柜问数",
   "shortLabel": "问数",
@@ -17,5 +17,10 @@
   "skillRef": "zhanggui-wenshu",
   "skillSha256": "682e2042ed5299ff2e94ea3e63ac6f421eac59e8d66139f76b6a2b91806d60d2",
   "verticalSuiteId": "sgg",
-  "verticalSuiteRevision": "fixture-v2"
+  "verticalSuiteRevision": "fixture-v2",
+  "sandbox": {
+    "default": "optional",
+    "connectorPackageId": "vertical-agent-sandbox",
+    "policyId": "vertical-readonly-v1"
+  }
 }

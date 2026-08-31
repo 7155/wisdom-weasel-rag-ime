@@ -1,8 +1,8 @@
-import { Activity, Archive, ArrowLeft, Bot, ChevronDown, ChevronRight, CircleAlert, FileText, FolderOpen, LoaderCircle, MessagesSquare, Settings2, Users, X } from 'lucide-react';
+import { Activity, Archive, ChevronDown, ChevronRight, CircleAlert, FolderOpen, LoaderCircle, Settings2, Users, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import type { PawWayfinderIconPosition, PawWayfinderState } from '../runtime/desktop-store';
-import { PAW_DESKTOP_GRID, pawDesktopWorkOriginY, pawDesktopWorkPosition, usePawDesktopGridLayout } from './desktop-grid';
+import { PAW_DESKTOP_GRID, pawDesktopGridEntries, pawDesktopMovePosition, pawDesktopOccupiedPositions, pawDesktopResolvePersistedPositions, pawDesktopSnapPosition, pawDesktopWorkOriginY, pawDesktopWorkPosition, usePawDesktopGridLayout } from './desktop-grid';
 import { PAW_WORK_FILE_ACCENT, PawWorkFileIcon, PawWorkFolderIcon, pawWorkProjectAccent } from './PawWorkIcons';
 import {
   projectWayfinderWork,
@@ -46,7 +46,8 @@ function projectCompactActivityLabel(project: Pick<WayfinderWorkProject, 'attent
  * window churn and context menus, re-rendering only when its own directory
  * read, query, expansion or the selection itself changes.
  */
-export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, selectedIcons }: {
+export const PawWayfinderWork = memo(function PawWayfinderWork({ onArchive, onSelectIcon, selectedIcons }: {
+  onArchive?: (iconIds: readonly string[], label: string) => void;
   onSelectIcon?: (iconId: string, additive: boolean) => void;
   selectedIcons?: ReadonlySet<string>;
 }) {
@@ -97,7 +98,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
 
   useEffect(() => {
     if (!contextProject) return;
-    contextSheetRef.current?.querySelector<HTMLButtonElement>('[data-wayfinder-context-back]')?.focus();
+    contextSheetRef.current?.querySelector<HTMLButtonElement>('[data-wayfinder-context-close]')?.focus();
   }, [contextProject]);
 
   useEffect(() => {
@@ -114,6 +115,18 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
     };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [contextProject]);
+
+  useEffect(() => {
+    if (!contextProject) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (contextSheetRef.current?.contains(target) || contextTriggerRef.current?.contains(target)) return;
+      setContextProjectId(null);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
   }, [contextProject]);
 
   const openItem = useCallback((kind: 'session' | 'room', id: string, title: string) => {
@@ -148,6 +161,16 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
     wayfinder.iconPositions[iconId]
       ?? pawDesktopWorkPosition(index, gridLayout.columns, gridLayout.originY)
   ), [gridLayout.columns, gridLayout.originY, wayfinder.iconPositions]);
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    const plane = canvas?.closest<HTMLElement>('.paw-wayfinder') ?? canvas;
+    if (!plane || Object.keys(wayfinder.iconPositions).length === 0) return;
+    api.getState().setWayfinderIconPositions(pawDesktopResolvePersistedPositions(
+      pawDesktopGridEntries(plane),
+      wayfinder.iconPositions,
+      gridLayout.columns,
+    ));
+  }, [api, gridLayout.columns, view.looseItems.length, view.projects.length, wayfinder.iconPositions]);
 
   const startDrag = useCallback((event: DragEvent<HTMLElement>, iconId: string) => {
     event.stopPropagation();
@@ -173,12 +196,18 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left + canvas.scrollLeft - WAYFINDER_ICON_WIDTH / 2;
       const y = event.clientY - rect.top + canvas.scrollTop - WAYFINDER_ICON_HEIGHT / 2;
-      api.getState().setWayfinderIconPosition(iconId, clampWayfinderIconPosition({ x, y }, canvas));
+      const plane = canvas.closest<HTMLElement>('.paw-wayfinder') ?? canvas;
+      const snapped = pawDesktopSnapPosition(
+        { x, y },
+        gridLayout.columns,
+        pawDesktopOccupiedPositions(plane, iconId),
+      );
+      api.getState().setWayfinderIconPosition(iconId, clampWayfinderIconPosition(snapped, canvas));
     }
     if (isDialogueIcon(iconId)) api.getState().setWayfinderProjectAssignment(iconId, null);
     api.getState().setWayfinderArchived(iconId, false);
     setDraggingKey(null);
-  }, [api, dropKey]);
+  }, [api, dropKey, gridLayout.columns]);
 
   const dropOnProject = useCallback((event: DragEvent<HTMLElement>, projectId: string) => {
     const iconId = dropKey(event);
@@ -204,6 +233,23 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
     const current = rows.indexOf(document.activeElement as HTMLElement);
     if (current === -1) return;
     event.preventDefault();
+    if (event.altKey && event.key.startsWith('Arrow')) {
+      const owner = rows[current]!.closest<HTMLElement>('[data-wayfinder-grid-position]');
+      const iconId = owner?.dataset.wayfinderGridPosition;
+      const plane = owner?.closest<HTMLElement>('.paw-wayfinder') ?? canvasRef.current;
+      const entry = plane && iconId
+        ? pawDesktopGridEntries(plane).find((candidate) => candidate.id === iconId)
+        : undefined;
+      if (plane && iconId && entry) {
+        api.getState().setWayfinderIconPosition(iconId, pawDesktopMovePosition(
+          entry.position,
+          event.key as 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight',
+          gridLayout.columns,
+          pawDesktopOccupiedPositions(plane, iconId),
+        ));
+      }
+      return;
+    }
     if (event.key === 'Home' || event.key === 'End') {
       rows[event.key === 'Home' ? 0 : rows.length - 1]?.focus();
       return;
@@ -227,10 +273,8 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
     <section aria-label="最近工作" className="paw-wayfinder-work" data-paw-desktop-work-files>
       <div
         aria-busy={loading || undefined}
-        aria-hidden={contextProject ? true : undefined}
         className="paw-wayfinder-work__list paw-wayfinder-work__canvas"
         data-wayfinder-canvas
-        hidden={Boolean(contextProject)}
         onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }}
         onDrop={dropOnCanvas}
         onKeyDown={walkRows}
@@ -264,6 +308,7 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
               key={project.id}
               onContext={(trigger) => {
                 contextTriggerRef.current = trigger;
+                setExpandedProjectId(null);
                 setContextProjectId(project.id);
               }}
               onDrop={(event) => dropOnProject(event, project.id)}
@@ -299,7 +344,9 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
       {contextProject ? (
         <ProjectContextSheet
           onArchive={() => {
-            api.getState().setWayfinderArchived(projectIconId(contextProject.id), true);
+            const iconId = projectIconId(contextProject.id);
+            if (onArchive) onArchive([iconId], contextProject.label);
+            else api.getState().setWayfinderArchived(iconId, true);
             contextTriggerRef.current = document.querySelector<HTMLElement>('.paw-desktop-viewport');
             setContextProjectId(null);
           }}
@@ -316,26 +363,27 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onSelectIcon, s
   );
 });
 
-function spatialWayfinderTarget(
+export function spatialWayfinderTarget(
   rows: readonly HTMLElement[],
   current: HTMLElement,
   key: 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight',
 ): HTMLElement | null {
-  const currentRect = current.getBoundingClientRect();
-  const currentX = currentRect.left + currentRect.width / 2;
-  const currentY = currentRect.top + currentRect.height / 2;
+  const currentCenter = wayfinderElementCenter(current);
+  if (!currentCenter) return null;
+  const currentX = currentCenter.x;
+  const currentY = currentCenter.y;
   const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
   const direction = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
 
   let best: { row: HTMLElement; score: number } | null = null;
   for (const row of rows) {
     if (row === current) continue;
-    const rect = row.getBoundingClientRect();
-    // Closed folder descendants and other non-rendered rows have no box and
-    // must not intercept navigation from visible desktop files.
-    if (rect.width <= 0 && rect.height <= 0) continue;
-    const deltaX = rect.left + rect.width / 2 - currentX;
-    const deltaY = rect.top + rect.height / 2 - currentY;
+    const center = wayfinderElementCenter(row);
+    // Closed folder descendants and other non-rendered rows have no box or
+    // top-level grid coordinate and must not intercept desktop navigation.
+    if (!center) continue;
+    const deltaX = center.x - currentX;
+    const deltaY = center.y - currentY;
     const primary = horizontal ? deltaX : deltaY;
     if (primary * direction <= 0) continue;
     const cross = horizontal ? deltaY : deltaX;
@@ -345,6 +393,23 @@ function spatialWayfinderTarget(
     if (!best || score < best.score) best = { row, score };
   }
   return best?.row ?? null;
+}
+
+function wayfinderElementCenter(element: HTMLElement): { x: number; y: number } | null {
+  const rect = element.getBoundingClientRect();
+  if (rect.width > 0 || rect.height > 0) {
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+  /* JSDOM and pre-layout keyboard focus have no client rect yet; the desktop
+   * still has an authoritative inline grid coordinate on the positioned
+   * shell, so navigation need not fall back to unrelated DOM order. */
+  const positioned = element.closest<HTMLElement>('[data-wayfinder-grid-position]');
+  if (!positioned) return null;
+  const x = Number.parseFloat(positioned.style.getPropertyValue('--wayfinder-x'));
+  const y = Number.parseFloat(positioned.style.getPropertyValue('--wayfinder-y'));
+  return Number.isFinite(x) && Number.isFinite(y)
+    ? { x: x + WAYFINDER_ICON_WIDTH / 2, y: y + WAYFINDER_ICON_HEIGHT / 2 }
+    : null;
 }
 
 function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPosition, onContext, onDragEnd, onDragStart, onDrop, onOpen, onSelect, onToggle, onToggleBucket, onToggleRepeats, project, searching, selected }: {
@@ -387,7 +452,21 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
       const panelWidth = panel.offsetWidth || panelRect.width;
       const panelHeight = panel.offsetHeight || panelRect.height;
       if (!panelWidth || !panelHeight) return;
-      const next = placeWayfinderProjectPanel({ canvasRect, shellRect, panelWidth, panelHeight });
+      const desktopRoot = shell.closest<HTMLElement>('.paw-desktop-root');
+      const dock = desktopRoot?.querySelector<HTMLElement>('.paw-dock');
+      const dockRect = dock?.getBoundingClientRect();
+      const configuredDockHeight = desktopRoot
+        ? Number.parseFloat(getComputedStyle(desktopRoot).getPropertyValue('--paw-dock-h'))
+        : 0;
+      /* The Dock floats inside the same viewport rather than consuming layout
+       * height. Treat its whole bottom shelf as a reserved placement inset so
+       * an opened project never clamps against the screen edge underneath it.
+       * The token fallback also keeps the placement stable while a maximized
+       * App temporarily unmounts the Dock. */
+      const bottomInset = dockRect && dockRect.height > 0
+        ? Math.max(0, canvasRect.bottom - dockRect.top)
+        : Math.max(0, (Number.isFinite(configuredDockHeight) ? configuredDockHeight : 0) + 12);
+      const next = placeWayfinderProjectPanel({ canvasRect, shellRect, panelWidth, panelHeight, bottomInset });
       setPanelPlacement((current) => (
         current && current.x === next.x && current.y === next.y && current.horizontal === next.horizontal && current.vertical === next.vertical
           ? current
@@ -417,7 +496,7 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
     } : {}),
   } as CSSProperties;
   return (
-    <div className="paw-wayfinder-work__project-shell" ref={shellRef} style={style}>
+    <div className="paw-wayfinder-work__project-shell" data-wayfinder-grid-position={projectIconId(project.id)} ref={shellRef} style={style}>
       <details
         className="paw-wayfinder-work__project"
         data-project-folder
@@ -426,9 +505,10 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
         open={displayedOpen}
       >
         <summary
+          aria-description={selected ? '已选择' : undefined}
           aria-expanded={displayedOpen}
-          aria-keyshortcuts="Shift+F10"
-          aria-pressed={selected || undefined}
+          aria-keyshortcuts="Shift+F10 Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight"
+          data-selected={selected || undefined}
           data-wayfinder-icon={projectIconId(project.id)}
           data-wayfinder-project
           draggable
@@ -465,9 +545,6 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
             style={{ '--paw-work-accent': pawWorkProjectAccent(project.id) } as CSSProperties}
           >
             <PawWorkFolderIcon open={displayedOpen} />
-            <span aria-hidden="true" className="paw-wayfinder-work__folder-mark">
-              {project.roomCount > 0 ? <MessagesSquare size={11} /> : <Bot size={11} />}
-            </span>
             <i aria-hidden="true" />
           </span>
           <span className="paw-wayfinder-work__project-copy">
@@ -555,8 +632,9 @@ function LooseWorkFile({ iconPosition, item, onDragEnd, onDragStart, onOpen, onS
   } as CSSProperties;
   const state = item.activity === 'running' ? 'running' : item.activity === 'attention' ? 'attention' : undefined;
   return (
-    <div className="paw-wayfinder-work__loose-shell" style={style}>
+    <div className="paw-wayfinder-work__loose-shell" data-wayfinder-grid-position={item.key} style={style}>
       <button
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight"
         aria-pressed={selected || undefined}
         className="paw-wayfinder-work__loose-file"
         data-activity={item.activity}
@@ -609,7 +687,7 @@ function ProjectContextSheet({ onArchive, onBack, onOpen, onOpenInFiles, onOpenO
 }) {
   return (
     <aside
-      aria-label={`${project.label} 项目上下文`}
+      aria-label={`${project.label} 项目详情`}
       aria-modal="false"
       className="paw-wayfinder-work__context-sheet"
       data-paw-desktop-ui
@@ -618,13 +696,13 @@ function ProjectContextSheet({ onArchive, onBack, onOpen, onOpenInFiles, onOpenO
       role="dialog"
     >
       <header className="paw-wayfinder-work__context-head">
-        <button aria-label="返回最近工作" className="paw-wayfinder-work__context-back" data-wayfinder-context-back onClick={onBack} type="button">
-          <ArrowLeft aria-hidden="true" size={13} />
-        </button>
         <div>
-          <small>项目上下文</small>
+          <small>项目详情</small>
           <h2>{project.label}</h2>
         </div>
+        <button aria-label={`关闭 ${project.label} 项目详情`} className="paw-wayfinder-work__context-close" data-wayfinder-context-close onClick={onBack} type="button">
+          <X aria-hidden="true" size={14} />
+        </button>
       </header>
 
       <dl className="paw-wayfinder-work__context-stats">
@@ -690,8 +768,8 @@ function ProjectContextSheet({ onArchive, onBack, onOpen, onOpenInFiles, onOpenO
         <button data-wayfinder-context-shortcut="observability" onClick={onOpenObservability} type="button">
           <Activity aria-hidden="true" size={13} />Trace / Eval
         </button>
-        <button aria-label={`归档 ${project.label}`} data-danger data-wayfinder-context-shortcut="archive" onClick={onArchive} type="button">
-          <Archive aria-hidden="true" size={13} />归档
+        <button aria-label={`移到归档 ${project.label}`} data-wayfinder-context-shortcut="archive" onClick={onArchive} type="button">
+          <Archive aria-hidden="true" size={13} />移到归档
         </button>
       </nav>
 
@@ -745,8 +823,9 @@ function WorkBucket({ bucket, expanded, expandedRepeats, onDragEnd, onDragStart,
         />
       )) : null}
       {!collapsedWholeBucket && hiddenCount > 0 ? (
-        <button className="paw-wayfinder-work__more" onClick={onToggle} type="button">
-          还有 {hiddenCount} 段
+        <button aria-expanded={expanded} className="paw-wayfinder-work__more" onClick={onToggle} type="button">
+          <ChevronDown aria-hidden="true" size={13} />
+          <span>显示其余 {hiddenCount} 个对话</span>
         </button>
       ) : null}
     </section>
@@ -779,8 +858,13 @@ function WorkRow({ expandedRepeats, item, onDragEnd, onDragStart, onOpen, onTogg
         title={`${item.title} · ${meta}`}
         type="button"
       >
-        <span aria-hidden="true" className="paw-wayfinder-work__file-icon" data-kind={item.kind}>
-          {item.kind === 'room' ? <MessagesSquare size={22} /> : <FileText size={22} />}
+        <span
+          aria-hidden="true"
+          className="paw-wayfinder-work__file-icon"
+          data-kind={item.kind}
+          style={{ '--paw-work-accent': PAW_WORK_FILE_ACCENT[item.kind] } as CSSProperties}
+        >
+          <PawWorkFileIcon kind={item.kind} />
           <i className="paw-wayfinder-work__dot" />
         </span>
         <span className="paw-wayfinder-work__copy">
@@ -932,6 +1016,7 @@ export function placeWayfinderProjectPanel({
   shellRect,
   panelWidth,
   panelHeight,
+  bottomInset = 0,
   inset = 8,
   gap = 10,
 }: {
@@ -939,16 +1024,18 @@ export function placeWayfinderProjectPanel({
   shellRect: WayfinderProjectPanelRect;
   panelWidth: number;
   panelHeight: number;
+  bottomInset?: number;
   inset?: number;
   gap?: number;
 }): WayfinderProjectPanelPlacement {
   const safeInset = Math.max(0, Number.isFinite(inset) ? inset : 8);
+  const safeBottomInset = Math.max(0, Number.isFinite(bottomInset) ? bottomInset : 0);
   const panelW = Math.max(0, Number.isFinite(panelWidth) ? panelWidth : 0);
   const panelH = Math.max(0, Number.isFinite(panelHeight) ? panelHeight : 0);
   const canvasLeft = canvasRect.left + safeInset;
   const canvasRight = canvasRect.right - safeInset;
   const canvasTop = canvasRect.top + safeInset;
-  const canvasBottom = canvasRect.bottom - safeInset;
+  const canvasBottom = canvasRect.bottom - safeInset - safeBottomInset;
 
   const clampStart = (value: number, size: number, start: number, end: number) => {
     const latestStart = Math.max(start, end - size);
@@ -988,9 +1075,11 @@ export function placeWayfinderProjectPanel({
 export function clampWayfinderIconPosition(position: PawWayfinderIconPosition, canvas: HTMLElement): PawWayfinderIconPosition {
   const width = Math.max(canvas.clientWidth, canvas.scrollWidth);
   const height = Math.max(canvas.clientHeight, canvas.scrollHeight);
+  const x = Number.isFinite(position.x) ? position.x : 8;
+  const y = Number.isFinite(position.y) ? position.y : 8;
   return {
-    x: Math.round(Math.max(8, Math.min(Math.max(8, width - WAYFINDER_ICON_WIDTH - 8), position.x))),
-    y: Math.round(Math.max(8, Math.min(Math.max(8, height - WAYFINDER_ICON_HEIGHT - 8), position.y))),
+    x: Math.round(Math.max(8, Math.min(Math.max(8, width - WAYFINDER_ICON_WIDTH - 8), x))),
+    y: Math.round(Math.max(8, Math.min(Math.max(8, height - WAYFINDER_ICON_HEIGHT - 8), y))),
   };
 }
 

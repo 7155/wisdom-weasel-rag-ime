@@ -1085,6 +1085,34 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                     extension_apps_root=root / "extension-apps",
                 )
 
+    def test_extension_app_builder_rejects_invalid_sandbox_contract(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-extension-sandbox-contract-") as temporary:
+            root = Path(temporary)
+            source = root / "pi-packages"
+            source.mkdir(parents=True)
+            (source / "catalog.json").write_text(
+                json.dumps({"schemaVersion": 1, "packages": []}),
+                encoding="utf-8",
+            )
+            app_root, _package, app_manifest, _package_manifest = (
+                _write_extension_app_fixture(root)
+            )
+            app_manifest["sandbox"] = {
+                "default": "optional",
+                "connectorPackageId": "vertical-agent-sandbox",
+                "policyId": "host-unrestricted",
+            }
+            (app_root / "pawos-app.json").write_text(
+                json.dumps(app_manifest, ensure_ascii=False), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ManagedPiRuntimeError, "sandbox contract"):
+                _copy_bundled_pi_packages(
+                    source,
+                    root / "payload" / "pi-packages",
+                    extension_apps_root=root / "extension-apps",
+                )
+
     def test_extension_app_binding_rejects_skill_drift(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-extension-binding-skill-") as temporary:
             root = Path(temporary)

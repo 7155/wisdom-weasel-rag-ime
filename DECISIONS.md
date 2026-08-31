@@ -1,6 +1,6 @@
 # Project Decisions
 
-Updated: 2026-08-20
+Updated: 2026-08-31
 
 This file records decisions that stay relevant across Outcomes, not
 implementation choices or live status.
@@ -130,44 +130,26 @@ implementation choices or live status.
 ## D-011 — Pi Packages Own Installable Agent Capabilities
 
 - **Status:** accepted
-- **Decision:** installable extensions, Skills, prompts, and themes use Pi's
-  Package resolver and resource loader. PAW provides a product market for npm,
-  Git, local, and catalog sources, staged confirmation, installed-version
-  receipts, update, and rollback. The project `plugin-creator` Skill searches
-  and reuses before creating a minimal missing Package.
-- **Why:** self-hosting needs discoverable and creatable capabilities, but a
-  PAW-specific loader would fork Pi's Session bootstrap and resource semantics.
-- **Consequence:** source preparation and inspection never invoke Luna. The
-  product asks for confirmation only before installation-state mutation. New
-  Sessions receive the active Package resources; running Sessions keep their
-  stable snapshot. An Extension App frontend may compile with PAWOS, but only
-  its installed-and-enabled Pi Package exposes the App and Skill; disable or
-  uninstall removes both. Frontend rollback follows PAWOS, resources follow
-  Pi, and surface-less Packages stay background capabilities.
+- **Decision:** installable Skills, prompts, themes, and extensions use Pi's
+  Package resolver. PAW adds discovery plus confirmed install, update,
+  rollback, and receipts; `plugin-creator` reuses before creating.
+- **Why:** a PAW loader would fork Pi Session bootstrap semantics.
+- **Consequence:** new Sessions load active resources while running Sessions
+  keep their snapshot. An Extension App is visible only while its Package is
+  installed and enabled. PAWOS rolls back frontend code; Pi rolls back Package
+  resources; surface-less Packages remain background capabilities.
 
 ## D-012 — PAW OS Frontend Stays In The PAW Product Repository
 
 - **Status:** accepted
-- **Decision:** `7155/personal-agent-workbench` owns PAW Runtime and PAW OS
-  frontend. `control-center-web` remains a selectable legacy fallback
-  while the PAW OS shell is implemented in the same repository. `7155/tutti` and upstream Tutti are reference sources only, not
-  PAW product or release repositories.
-- **Why:** one product repository keeps contracts, generated types, reducers,
-  Runtime adapters, installation, and frontend acceptance at one revision while
-  PAW learns from proven Tutti window, Dock, Mission Control, and App Center
-  patterns.
-- **Consequence:** PAW OS frontend code and product pushes go only to
-  `7155/personal-agent-workbench`. Tutti mechanisms are reimplemented or
-  adapted behind PAW-owned seams; no absolute-path dependency,
-  cross-repository Runtime state, or wholesale Tutti fork becomes a release
-  dependency. Migrated Apps use `paw.*` identities, layout persistence stores
-  presentation only, and themes switch only in System Settings -> Appearance.
-  Project Field / Wayfinder is the OS home, not an App; route identity stays
-  distinct from App identity so Overview, Tasks, and WorkDocuments share
-  Project Workbench while other Apps keep bounded surfaces. Browser chrome may
-  follow Tutti's interaction grammar, but `deviceId + tabId` selection, the
-  command queue, permissions, traces, and Stop stay PAW-owned so human and
-  Agent operate one visible page.
+- **Decision:** `7155/personal-agent-workbench` owns PAW Runtime and PAWOS;
+  `control-center-web` is the legacy fallback. Tutti is reference-only.
+- **Why:** contracts, adapters, installation, and frontend acceptance need one
+  revision.
+- **Consequence:** product pushes stay in this repository with no Tutti runtime
+  dependency. App identity and presentation persistence remain PAW-owned;
+  Wayfinder is the OS home. Browser selection, commands, permissions, Trace,
+  and Stop stay PAW-owned so human and Agent share one visible page.
 
 ## D-013 — Extension App Conversations Are App-Owned Pi Sessions
 

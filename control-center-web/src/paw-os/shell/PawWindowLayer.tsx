@@ -24,7 +24,7 @@ import { PawAppProcess } from '../apps/PawApps';
 import { PawAppIcon } from './PawAppIcon';
 import { PawWindowChromeProvider } from './PawWindowChrome';
 import { pulsePawComposition } from '../runtime/composition-pulse';
-import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { useRoomProjectionBridge } from '@/features/rooms/state/projection-bridge';
 import { roomActivityFlowKind, roomWorkReviewFlow } from '@/features/rooms/room-flow-projection';
 import type { RoomProjectionState } from '@/contracts/room-reducer';
 
@@ -55,7 +55,7 @@ export function PawWindowLayer() {
     .join('\u0000'));
   const wantsRoomProjections = Boolean(collaborationFocusGroup?.startsWith('room:'))
     || Boolean(participantSignature);
-  const projections = useRoomLiveStore(wantsRoomProjections ? selectRoomProjections : selectNoRoomProjections);
+  const projections = useRoomProjectionBridge(wantsRoomProjections ? selectRoomProjections : selectNoRoomProjections);
   /* Live window geometry is the layer's most expensive input: the whole
    * windows record changes identity on every bounds commit, focus change and
    * runtime title bind. Only collaboration focus frames and Room flow paths
@@ -1232,14 +1232,26 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
    * collaboration satellites carry their own authored choreography and are
    * left to it. */
   const authoredArrival = Boolean(flowState) || collaborationRole === 'satellite';
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (!active || overview || collaborationRole === 'hidden' || !shell || shell.contains(document.activeElement)) return;
+    /* Opening or restoring a window changes the keyboard context too. Focus
+     * the frame itself before child effects run; an App may still promote a
+     * more specific autofocus target, while Tab naturally enters titlebar and
+     * content controls from here. */
+    shell.focus({ preventScroll: true });
+  // The frame only owns the mount transition. Later activation by pointer is
+  // already focused through the pressed descendant and must not be stolen.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (authoredArrival) return;
     const surface = shellRef.current?.querySelector<HTMLElement>('.paw-window');
     if (!surface || typeof surface.animate !== 'function' || pawWindowReducedMotion()) return;
     surface.animate([
-      { opacity: 0, transform: 'translate3d(0, 8px, 0) scale(.96)' },
+      { opacity: .6, transform: 'translate3d(0, 6px, 0) scale(.98)' },
       { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
-    ], { duration: 200, easing: 'cubic-bezier(.2, .85, .25, 1)' });
+    ], { duration: 150, easing: 'cubic-bezier(.2, .85, .25, 1)' });
     // Mount-only by design: re-running on prop drift would re-arrive a window
     // that is already on stage.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1267,7 +1279,7 @@ export function PawWindowFrame({ active, appId, bounds, children, collaborationR
   } as CSSProperties;
   return (
     <PawWindowChromeProvider leading={windowLeadingChromeTarget} trailing={windowChromeTarget}>
-      <section aria-label={`${title}${subtitle ? ` · ${subtitle}` : ''}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle}>
+      <section aria-label={`${title}${subtitle ? ` · ${subtitle}` : ''}窗口`} className="paw-window-shell" data-active={active || undefined} data-app={appId} data-collaboration-role={collaborationRole} data-flow-state={flowState} data-focus-layout={focusFrame ? true : undefined} data-frame-mode={frameMode} data-overview={overview || undefined} data-paw-window-id={windowId} data-placement={placement} data-window-target={targetKind} onPointerDown={() => { if (!overview && !active) onFocus(); }} ref={shellRef} style={shellStyle} tabIndex={-1}>
         {planetFrame ? (
           <div className="paw-planet-surface" data-flow-state={flowState}>
             <header className="paw-planet-identity" onPointerDown={drag}>
@@ -1477,14 +1489,14 @@ function useWindowPlacementFlip(
         transform: `translate3d(${next.bounds.x}px, ${next.bounds.y}px, 0) scale(1, 1)`,
       },
     ], {
-      duration: 240,
+      duration: 180,
       easing: 'cubic-bezier(.23, 1, .32, 1)',
     });
     const clear = () => {
       if (shell.dataset.placementAnimation) delete shell.dataset.placementAnimation;
     };
     const finished = (animation as unknown as { finished?: Promise<Animation> }).finished;
-    const fallbackTimer = finished ? 0 : window.setTimeout(clear, 240);
+    const fallbackTimer = finished ? 0 : window.setTimeout(clear, 180);
     if (finished) void finished.then(clear, clear);
     return () => {
       if (fallbackTimer) window.clearTimeout(fallbackTimer);
@@ -1658,6 +1670,8 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
     const desktopRoot = shell.closest<HTMLElement>('.paw-desktop-root');
     event.currentTarget.setPointerCapture(event.pointerId);
     shell.dataset.interaction = 'resizing';
+    shell.style.transformOrigin = '0 0';
+    shell.style.willChange = 'transform';
     setWindowInteraction(desktopRoot, true);
     const origin = { x: event.clientX, y: event.clientY };
     const area = containToDesktop ? pawWindowArea() : undefined;
@@ -1665,9 +1679,7 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
     let frame = 0;
     const render = () => {
       frame = 0;
-      shell.style.width = `${next.width}px`;
-      shell.style.height = `${next.height}px`;
-      shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
+      shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) scale(${next.width / bounds.width}, ${next.height / bounds.height})`;
     };
     const move = (moveEvent: PointerEvent) => {
       next = resizeWindowBounds(bounds, handle, moveEvent.clientX - origin.x, moveEvent.clientY - origin.y, area);
@@ -1675,7 +1687,14 @@ function useWindowResize(ref: RefObject<HTMLElement | null>, bounds: PawWindowBo
     };
     const finish = () => {
       if (frame) window.cancelAnimationFrame(frame);
-      render();
+      /* The pointer stream only touched a compositor transform. Commit the
+       * final geometry once, then remove the preview scale; this is the sole
+       * live-resize layout pass. */
+      shell.style.width = `${next.width}px`;
+      shell.style.height = `${next.height}px`;
+      shell.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
+      shell.style.transformOrigin = '';
+      shell.style.willChange = '';
       delete shell.dataset.interaction;
       setWindowInteraction(desktopRoot, false);
       window.removeEventListener('pointermove', move);

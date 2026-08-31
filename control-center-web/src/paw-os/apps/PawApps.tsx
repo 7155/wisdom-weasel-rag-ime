@@ -7,9 +7,19 @@ import { PawAppIcon } from '../shell/PawAppIcon';
 // and everything it imports, including paw-apps.css — is still loading.
 import './paw-app-boot.css';
 
+const loadPawAppsRuntime = () => import('./PawAppsRuntime');
 const PawAppBody = lazy(async () => ({
-  default: (await import('./PawAppsRuntime')).PawAppBody,
+  default: (await loadPawAppsRuntime()).PawAppBody,
 }));
+
+/** Start both dynamic boundaries while the pointer is approaching an App (or
+ * the desktop is idle), so the launch click only commits window state. Native
+ * import caching makes repeated hover/focus calls free. */
+export function warmPawAppProcess(appId: PawAppId): void {
+  void loadPawAppsRuntime()
+    .then((runtime) => runtime.warmPawAppBody(appId))
+    .catch(() => undefined);
+}
 
 export const PawAppProcess = memo(function PawAppProcess({ appId, entityId, initialRoute, target }: { appId: PawAppId; entityId?: string; initialRoute?: string; target?: PawOsWindowTarget }) {
   return (

@@ -584,47 +584,49 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   font-size: 11px; cursor: pointer;
 }
 .paw-wayfinder-work__context-sheet {
-  min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 10px;
-  margin: 0 8px 10px; padding: 10px;
+  min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 12px;
+  margin: 0 8px 10px; padding: 14px;
   overflow: hidden; border: 1px solid var(--paw-line); border-radius: var(--paw-radius);
   background: var(--paw-panel); box-shadow: var(--paw-shadow);
 }
 .paw-wayfinder-work__context-head {
-  display: flex; align-items: center; gap: 7px; flex: none;
+  display: flex; align-items: center; gap: 9px; flex: none;
+  padding-bottom: 10px; border-bottom: 1px solid var(--paw-line-soft);
 }
 .paw-wayfinder-work__context-head > div { min-width: 0; }
 .paw-wayfinder-work__context-head small,
 .paw-wayfinder-work__context-note { color: var(--paw-muted); font-size: 10px; }
 .paw-wayfinder-work__context-head h2 { margin: 1px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 1.35; }
-.paw-wayfinder-work__context-back {
-  width: 27px; height: 27px; display: grid; flex: none; place-items: center;
-  border-radius: 7px; color: var(--paw-muted); cursor: pointer;
+.paw-wayfinder-work__context-close {
+  margin-left: auto;
+  width: 32px; height: 32px; display: grid; flex: none; place-items: center;
+  border-radius: 8px; color: var(--paw-muted); cursor: pointer;
 }
-.paw-wayfinder-work__context-back:hover,
-.paw-wayfinder-work__context-back:focus-visible { color: var(--paw-accent-strong); background: var(--paw-accent-soft); outline: 0; }
+.paw-wayfinder-work__context-close:hover,
+.paw-wayfinder-work__context-close:focus-visible { color: var(--paw-accent-strong); background: var(--paw-accent-soft); outline: 0; }
 .paw-wayfinder-work__context-stats {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 16px; margin: 0;
 }
 .paw-wayfinder-work__context-stats > div {
-  min-width: 0; padding: 6px 5px; border-radius: 7px; background: var(--paw-panel-soft);
+  min-width: 0; display: inline-flex; align-items: baseline; gap: 5px;
 }
-.paw-wayfinder-work__context-stats dt { overflow: hidden; color: var(--paw-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.paw-wayfinder-work__context-stats dd { margin: 1px 0 0; font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 650; }
+.paw-wayfinder-work__context-stats dt { color: var(--paw-muted); font-size: 10px; white-space: nowrap; }
+.paw-wayfinder-work__context-stats dd { margin: 0; font-size: 11.5px; font-variant-numeric: tabular-nums; font-weight: 650; }
 .paw-wayfinder-work__context-stats [data-attention] dd { color: var(--paw-danger); }
 .paw-wayfinder-work__context-roots,
 .paw-wayfinder-work__context-conversations { min-height: 0; display: grid; gap: 5px; }
 .paw-wayfinder-work__context-roots h3,
 .paw-wayfinder-work__context-conversations h3 { margin: 0; font-size: 10.5px; font-weight: 650; }
 .paw-wayfinder-work__context-roots code {
-  display: block; overflow: hidden; padding: 3px 5px; border-radius: 5px;
-  color: var(--paw-muted); background: var(--paw-panel-soft); font-size: 10px; text-overflow: ellipsis; white-space: nowrap;
+  display: block; overflow: hidden; padding: 4px 0;
+  color: var(--paw-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap;
 }
 .paw-wayfinder-work__context-root { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .paw-wayfinder-work__context-root code { flex: 1; min-width: 0; }
 .paw-wayfinder-work__context-root button {
   flex: none; display: inline-flex; align-items: center; gap: 4px;
-  min-height: 24px; padding: 0 8px;
-  border: 1px solid var(--paw-line); border-radius: 7px;
+  min-height: 28px; padding: 0 7px;
+  border-radius: 7px;
   color: var(--paw-muted); font-size: 10.5px; cursor: pointer;
 }
 .paw-wayfinder-work__context-root button:hover,
@@ -638,7 +640,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__context-items { min-height: 0; overflow-y: auto; display: grid; gap: 3px; scrollbar-width: thin; }
 .paw-wayfinder-work__context-item {
   width: 100%; min-width: 0; display: flex; align-items: flex-start; gap: 7px;
-  padding: 6px; border-radius: 7px; text-align: left; cursor: pointer;
+  padding: 8px 4px; border-bottom: 1px solid var(--paw-line-soft); border-radius: 0; text-align: left; cursor: pointer;
 }
 .paw-wayfinder-work__context-item:hover,
 .paw-wayfinder-work__context-item:focus-visible { background: var(--paw-identity-wash); outline: 0; }
@@ -649,20 +651,73 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work__context-item small { color: var(--paw-muted); font-size: 10px; }
 .paw-wayfinder-work__context-item[data-activity='attention'] .paw-wayfinder-work__dot { background: var(--paw-danger); }
 .paw-wayfinder-work__context-item[data-activity='running'] .paw-wayfinder-work__dot { background: var(--paw-success); }
-.paw-wayfinder-work__context-shortcuts { display: flex; flex-wrap: wrap; gap: 5px; flex: none; }
+.paw-wayfinder-work__context-shortcuts {
+  display: flex; flex-wrap: wrap; gap: 5px; flex: none;
+  padding-top: 10px; border-top: 1px solid var(--paw-line-soft);
+}
 .paw-wayfinder-work__context-shortcuts button {
   min-height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px;
   border: 1px solid var(--paw-line); border-radius: 7px; color: var(--paw-muted); font-size: 10.5px; cursor: pointer;
 }
 .paw-wayfinder-work__context-shortcuts button:hover,
 .paw-wayfinder-work__context-shortcuts button:focus-visible { border-color: var(--paw-accent); color: var(--paw-accent-strong); background: var(--paw-accent-soft); outline: 0; }
-.paw-wayfinder-work__context-shortcuts button[data-danger] { color: var(--paw-danger); }
-.paw-wayfinder-work__context-shortcuts button[data-danger]:is(:hover, :focus-visible) {
-  border-color: color-mix(in srgb, var(--paw-danger) 52%, var(--paw-line));
-  color: var(--paw-danger);
-  background: color-mix(in srgb, var(--paw-danger) 9%, transparent);
-}
 .paw-wayfinder-work__context-note { margin: 0; line-height: 1.4; }
+
+/* Archive is reversible, so it behaves like a macOS move with an immediate
+   undo receipt instead of a red destructive confirmation. The receipt stays
+   above the resident Dock and never blocks the desktop behind it. */
+.paw-archive-undo {
+  position: absolute;
+  z-index: 94;
+  left: 50%;
+  bottom: calc(12px + var(--paw-dock-h) + 12px);
+  min-height: 44px;
+  max-width: min(520px, calc(100% - 24px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 7px 6px 13px;
+  border: 1px solid rgb(255 255 255 / .16);
+  border-radius: 12px;
+  color: #fff;
+  background: rgb(29 29 31 / .94);
+  box-shadow: 0 16px 36px rgb(9 13 22 / .3), inset 0 1px rgb(255 255 255 / .09);
+  transform: translate3d(-50%, 0, 0);
+  animation: paw-archive-undo-arrive 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+.paw-archive-undo > span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paw-archive-undo > span strong { font-weight: 650; }
+.paw-archive-undo > button {
+  min-width: 44px;
+  min-height: 32px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  padding: 0 9px;
+  border-radius: 8px;
+  color: #8fc5ff;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.paw-archive-undo > button:is(:hover, :focus-visible) { background: rgb(255 255 255 / .12); outline: 0; }
+.paw-archive-undo > button:focus-visible { box-shadow: inset 0 0 0 2px #8fc5ff; }
+.paw-archive-undo > .paw-archive-undo__close { min-width: 32px; width: 32px; padding: 0; color: rgb(255 255 255 / .68); }
+@keyframes paw-archive-undo-arrive {
+  from { opacity: 0; transform: translate3d(-50%, 8px, 0) scale(.98); }
+  to { opacity: 1; transform: translate3d(-50%, 0, 0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .paw-archive-undo { animation-duration: 1ms; }
+}
+:root[data-reduce-motion='true'] .paw-archive-undo { animation-duration: 1ms; }
 
 .paw-selection-lasso {
   position: absolute; z-index: 75; pointer-events: none;
@@ -705,7 +760,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 /* The pointer owns the frame: promote it once for the whole gesture, and
    release the hint at rest so idle windows never hold compositor layers. */
 .paw-window-shell[data-interaction='dragging'] { will-change: transform; }
-.paw-window-shell[data-interaction='resizing'] { will-change: transform, width, height; }
+.paw-window-shell[data-interaction='resizing'] { will-change: transform; }
 /* Idle siblings drop out of hit-testing for the gesture: the captured
    pointer already owns the stream, and skipping their hit regions keeps
    the main thread free under a dense window stack. */
@@ -934,12 +989,12 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-window-resize { position: absolute; z-index: 8; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; touch-action: none; }
 .paw-window-resize:focus-visible { outline: 2px solid var(--paw-app-accent, var(--paw-accent)); outline-offset: -2px; background: color-mix(in srgb, var(--paw-app-accent, var(--paw-accent)) 12%, transparent); }
 .paw-window-resize[data-handle='north'], .paw-window-resize[data-handle='south'] {
-  left: 10px; right: 10px; height: 8px; cursor: ns-resize;
+  left: 24px; right: 24px; height: 24px; cursor: ns-resize;
 }
-.paw-window-resize[data-handle='north'] { top: -4px; }
-.paw-window-resize[data-handle='south'] { bottom: -4px; }
+.paw-window-resize[data-handle='north'] { top: -12px; }
+.paw-window-resize[data-handle='south'] { bottom: -12px; }
 .paw-window-resize[data-handle='east'], .paw-window-resize[data-handle='west'] {
-  top: 10px; bottom: 10px; width: 16px; cursor: ew-resize;
+  top: 24px; bottom: 24px; width: 24px; cursor: ew-resize;
 }
 .paw-window-resize[data-handle='east'] { right: -12px; }
 .paw-window-resize[data-handle='west'] { left: -12px; }
@@ -1323,7 +1378,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   .paw-menu-bar { padding-inline: 8px; gap: 9px; }
   .paw-menu-status > span { display: none; }
   .paw-menu-app { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .paw-window-shell:not([data-overview]):not([data-focus-layout]):not([data-placement='maximized']) { min-width: 0; min-height: 0; width: calc(100% - 12px) !important; height: calc(100% - 70px) !important; transform: translate3d(6px, 6px, 0) !important; }
+  /* The resident Dock starts 74px above the viewport floor. Include the
+     window's 6px top offset plus a 4px air gap so the App scrollport and its
+     last control never sit under the Dock's pointer plane. */
+  .paw-window-shell:not([data-overview]):not([data-focus-layout]):not([data-placement='maximized']) { min-width: 0; min-height: 0; width: calc(100% - 12px) !important; height: calc(100% - var(--paw-dock-h) - 22px) !important; transform: translate3d(6px, 6px, 0) !important; }
   .paw-window-shell:not([data-focus-layout]):not([data-placement='maximized']) .paw-window-resize { display: none; }
   .paw-window-titlebar { grid-template-columns: var(--paw-titlebar-lead, 70px) minmax(0, 1fr) minmax(0, auto); }
   .paw-wayfinder { overflow: auto; padding-bottom: 92px; }
@@ -1628,7 +1686,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 .paw-wayfinder-work {
   pointer-events: none;
 }
-.paw-wayfinder-work > :is(.paw-wayfinder-work__list, .paw-wayfinder-work__context-sheet) {
+.paw-wayfinder-work > .paw-wayfinder-work__context-sheet {
   pointer-events: auto;
 }
 .paw-wayfinder-work__list {
@@ -1832,7 +1890,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 /* Hovering or selecting a cell lifts it above its neighbours so a revealed
    full label never slides under the next row; an open folder window floats
    above every icon. */
-.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project > summary[aria-pressed='true']),
+.paw-wayfinder-work__project-shell:has(.paw-wayfinder-work__project > summary[data-selected]),
 .paw-wayfinder-work__loose-shell:has(.paw-wayfinder-work__loose-file[aria-pressed='true']) { z-index: 9; }
 .paw-wayfinder-work__project-shell:hover,
 .paw-wayfinder-work__loose-shell:hover { z-index: 10; }
@@ -1873,7 +1931,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   right: auto;
   left: var(--wayfinder-panel-x, 0px);
   width: min(520px, calc(100vw - 24px));
-  height: min(620px, calc(100vh - 140px));
+  height: auto;
   max-height: calc(100vh - 140px);
   min-height: 260px;
   display: flex;
@@ -1924,9 +1982,10 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-wayfinder-work__project-content-scroll {
   min-height: 0;
-  flex: 1;
+  max-height: min(532px, calc(100vh - 220px));
+  flex: 0 1 auto;
   overflow-y: auto;
-  padding: 10px 14px 18px;
+  padding: 8px 14px 12px;
   scrollbar-width: thin;
   overscroll-behavior: contain;
 }
@@ -1943,14 +2002,24 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   border-bottom: 1px solid var(--paw-line-soft);
 }
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row {
-  min-height: 66px;
-  grid-template-columns: 36px minmax(0, 1fr);
-  gap: 10px;
-  padding: 9px 8px;
+  min-height: 72px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  justify-items: stretch;
+  gap: 12px;
+  padding: 8px 10px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   box-shadow: none;
+  text-align: left;
+}
+.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__copy {
+  width: auto;
+  align-self: center;
+  justify-items: start;
+  gap: 2px;
+  text-align: left;
 }
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row strong {
   display: block;
@@ -1959,6 +2028,17 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
   overflow-wrap: anywhere;
   white-space: normal;
   text-overflow: clip;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 650;
+  text-align: left;
+}
+.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__copy small {
+  justify-content: flex-start;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  text-align: left;
 }
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__kind,
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__agents {
@@ -1966,7 +2046,24 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
 }
 .paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__copy .paw-wayfinder-work__detail {
   max-width: 100%;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
+  font-size: 11px;
+  line-height: 16px;
+}
+.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__more {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 2px;
+  padding: 0 12px;
+  border: 1px solid var(--paw-line);
+  border-radius: 8px;
+  color: var(--paw-muted);
+  background: var(--paw-panel-soft);
+  font-size: 12px;
 }
 .paw-wayfinder-work__project-copy strong,
 .paw-desktop-shortcuts button strong {
@@ -1992,7 +2089,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
     right: auto;
     left: var(--wayfinder-panel-x, 0px);
     width: min(520px, calc(100vw - 24px));
-    height: min(620px, calc(100vh - 128px));
+    height: auto;
     max-height: calc(100vh - 128px);
     overflow: hidden;
   }
@@ -2003,7 +2100,7 @@ html[data-paw-native-host='macos'] .paw-menu-bar > .paw-menu-status { grid-colum
    folder's native context gesture (right-click / Shift+F10), not a second
    invisible or hanging control. */
 .paw-desktop-root .paw-field-stage { display: none; }
-.paw-wayfinder-work__project-content-actions {
+.paw-wayfinder-work__project-content-head > .paw-wayfinder-work__project-content-actions {
   display: flex;
   align-items: center;
   gap: 3px;

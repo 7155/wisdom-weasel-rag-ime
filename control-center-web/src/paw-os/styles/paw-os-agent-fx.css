@@ -670,11 +670,6 @@
     radial-gradient(circle at 42% 38%, var(--paw-chat-accent) 0 54%, color-mix(in srgb, var(--paw-chat-accent) 50%, #0b1220) 100%);
 }
 
-@keyframes paw-agent-fx-text-sweep {
-  0%, 18% { background-position: 100% 50%; }
-  82%, 100% { background-position: -100% 50%; }
-}
-
 .paw-desktop-root .paw-chatfx .fx-approval {
   position: relative;
   overflow: hidden;
@@ -819,13 +814,15 @@
 }
 
 .paw-desktop-root .paw-chatfx .fx-track .fill {
-  width: 0;
+  width: 100%;
   height: 100%;
   border-radius: inherit;
   /* Real-ratio fills never overshoot: an eager spring would briefly claim
      more progress than the reducer reported. */
   background: var(--paw-chat-accent);
-  transition: width 500ms cubic-bezier(.22, 1, .36, 1);
+  transform: scaleX(var(--fx-progress-scale, 0));
+  transform-origin: left center;
+  transition: transform 500ms cubic-bezier(.22, 1, .36, 1);
 }
 
 .paw-desktop-root .paw-chatfx .fx-runrow { display: flex; align-items: center; gap: 10px; }
@@ -1021,11 +1018,8 @@
   white-space: nowrap;
 }
 
-/* 运行态流光落在字上：行与卡的背景保持干净，进行中的状态文字本身过一道
-   柔和的钴色受光带。base 是各节点原本的墨色（--paw-running-ink），sheen 是
-   钴蓝的受光色；只动 background-position，不触发布局，也不在流式 token
-   路径上加重绘。strong 里的 elapsed <time> 自带不透明墨色，保持静止可读。
-   prefers-reduced-motion 与 data-reduce-motion 下回落为静态墨色（见尾部）。 */
+/* 运行态文字保持稳定墨色。运动由相邻行星/状态环的 transform 与 opacity
+   承担，避免增量 Markdown 最忙时还持续重绘 background-clip:text。 */
 .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__label { --paw-running-ink: var(--paw-chat-text-secondary); }
 .paw-desktop-root .paw-chatfx .paw-activity[data-state='running'] .paw-activity__hint { --paw-running-ink: var(--paw-chat-text-tertiary); }
 .paw-desktop-root .paw-chatfx .fx-progress-card[data-state='running'] .fx-progress-head strong { --paw-running-ink: var(--paw-chat-text); }
@@ -1041,20 +1035,7 @@
   .agent-assistant-pending strong,
   .agent-assistant-pending small
 ) {
-  color: transparent;
-  background:
-    linear-gradient(
-      100deg,
-      var(--paw-running-ink) 10%,
-      var(--paw-running-ink) 36%,
-      color-mix(in srgb, var(--paw-chat-accent) 68%, #fff) 50%,
-      var(--paw-running-ink) 64%,
-      var(--paw-running-ink) 90%
-    );
-  background-clip: text;
-  background-size: 230% 100%;
-  -webkit-background-clip: text;
-  animation: paw-agent-fx-text-sweep 1.85s ease-in-out infinite;
+  color: var(--paw-running-ink);
 }
 
 .paw-desktop-root .paw-chatfx .agent-working-dots b {

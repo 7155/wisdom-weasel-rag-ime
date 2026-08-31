@@ -1,4 +1,4 @@
-import { BarChart3, CircleAlert, FolderOpen, LoaderCircle, MoreHorizontal, PackageOpen, Send } from 'lucide-react';
+import { BarChart3, CircleAlert, CircleCheck, FolderOpen, LoaderCircle, MoreHorizontal, PackageOpen, Send, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 
 import { useControlTransport } from '@/app/control-transport';
@@ -41,6 +41,20 @@ const MODES = [
 
 type ModeId = (typeof MODES)[number]['id'];
 
+type SandboxExperimentReceipt = {
+  schemaVersion: 'rag-ime.extension-sandbox-experiment-receipt.v1';
+  ok: true;
+  sessionId: string;
+  ownerAppId: string;
+  candidateBindingSha256: string;
+  requestedDecision: 'run' | 'skip';
+  executed: boolean;
+  executionStatus: 'completed' | 'skipped';
+  sandboxRunId?: string;
+  traceId?: string;
+  evalRunId?: string;
+};
+
 export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
@@ -50,6 +64,8 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   const [workspaceRoot, setWorkspaceRoot] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [sandboxEnabled, setSandboxEnabled] = useState(manifest.sandbox?.default === 'required');
+  const [sandboxReceipt, setSandboxReceipt] = useState<SandboxExperimentReceipt | null>(null);
   const [error, setError] = useState('');
   const activeMode = MODES.find((mode) => mode.id === modeId)!;
   const activeSession = sessions[modeId];
@@ -120,6 +136,26 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
           codexSkillsEnabled: false,
         },
       });
+      if (manifest.sandbox) {
+        const requestedDecision = manifest.sandbox.default === 'required' || sandboxEnabled ? 'run' : 'skip';
+        const rawReceipt = await transport.request<unknown>({
+          pathId: 'extension.sandbox.experiment.run',
+          body: {
+            sessionId,
+            ownerAppId: manifest.id,
+            experimentId: `experiment:${modeId}:${Date.now()}`,
+            candidateBindingSha256: manifest.bindingSha256,
+            requestedDecision,
+          },
+        });
+        const receipt = requireSandboxExperimentReceipt(rawReceipt, {
+          sessionId,
+          ownerAppId: manifest.id,
+          candidateBindingSha256: manifest.bindingSha256,
+          requestedDecision,
+        });
+        setSandboxReceipt(receipt);
+      }
       const session = sessionSummary(
         raw,
         sessionId,
@@ -175,6 +211,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
     delete next[modeId];
     setSessions(next);
     setDraft('');
+    setSandboxReceipt(null);
   }
 
   return (
@@ -206,7 +243,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             aria-label={mode.label}
             aria-selected={mode.id === modeId}
             key={mode.id}
-            onClick={() => { setModeId(mode.id); setDraft(''); setError(''); }}
+            onClick={() => { setModeId(mode.id); setDraft(''); setError(''); setSandboxReceipt(null); }}
             role="tab"
             type="button"
           >
@@ -217,6 +254,14 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
       </nav>
 
       {error ? <p className="zhanggui-app__error" role="alert"><CircleAlert size={15} />{error}</p> : null}
+      {sandboxReceipt ? (
+        <p className="zhanggui-app__sandbox-receipt" role="status">
+          <CircleCheck aria-hidden="true" size={15} />
+          {sandboxReceipt.executed
+            ? `沙箱自测已完成 · ${sandboxReceipt.sandboxRunId ?? 'SandboxRun 已保存'}`
+            : '本次已明确跳过沙箱自测'}
+        </p>
+      ) : null}
       {loading ? <div className="zhanggui-app__loading" role="status"><LoaderCircle className="ui-spin" size={18} />正在恢复问数记录…</div> : activeSession ? (
         <section className="zhanggui-app__session" aria-label={`${activeMode.label}对话`}>
           <div className="zhanggui-app__session-note">
@@ -252,6 +297,22 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             <button onClick={() => void pickDataWorkspace()} type="button"><FolderOpen size={15} />{workspaceRoot ? '更换数据目录' : '选择数据目录'}</button>
             <span>{workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) : '可选；不选择时只使用当前 Session 已授权的 Knowledge / Tool 来源'}</span>
           </div>
+          {manifest.sandbox ? (
+            <label className="zhanggui-app__sandbox-choice">
+              <input
+                aria-label="启动前运行受管沙箱自测"
+                checked={manifest.sandbox.default === 'required' || sandboxEnabled}
+                disabled={manifest.sandbox.default !== 'optional'}
+                onChange={(event) => setSandboxEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              <ShieldCheck aria-hidden="true" size={16} />
+              <span>
+                <strong>启动前运行受管沙箱自测</strong>
+                <small>{manifest.sandbox.policyId} · 断网、只读、禁止生产写入</small>
+              </span>
+            </label>
+          ) : null}
           <form onSubmit={(event) => { event.preventDefault(); void startConversation(draft); }}>
             <textarea aria-label={`${activeMode.label}问题`} onChange={(event) => setDraft(event.target.value)} placeholder={activeMode.placeholder} rows={3} value={draft} />
             <button aria-label={sending ? '正在创建对话' : '发送'} disabled={sending || !draft.trim()} type="submit">
@@ -307,6 +368,35 @@ function sessionSummary(
 
 function record(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
+}
+
+function requireSandboxExperimentReceipt(
+  value: unknown,
+  expected: {
+    sessionId: string;
+    ownerAppId: string;
+    candidateBindingSha256: string;
+    requestedDecision: 'run' | 'skip';
+  },
+): SandboxExperimentReceipt {
+  const receipt = record(value);
+  const commonValid = receipt.schemaVersion === 'rag-ime.extension-sandbox-experiment-receipt.v1'
+    && receipt.ok === true
+    && receipt.sessionId === expected.sessionId
+    && receipt.ownerAppId === expected.ownerAppId
+    && receipt.candidateBindingSha256 === expected.candidateBindingSha256
+    && receipt.requestedDecision === expected.requestedDecision;
+  const decisionValid = expected.requestedDecision === 'run'
+    ? receipt.executionStatus === 'completed'
+      && receipt.executed === true
+      && Boolean(text(receipt.sandboxRunId))
+      && Boolean(text(receipt.traceId))
+      && Boolean(text(receipt.evalRunId))
+    : receipt.executionStatus === 'skipped' && receipt.executed === false;
+  if (!commonValid || !decisionValid) {
+    throw new Error('沙箱运行回执无效，业务对话未启动。');
+  }
+  return receipt as SandboxExperimentReceipt;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

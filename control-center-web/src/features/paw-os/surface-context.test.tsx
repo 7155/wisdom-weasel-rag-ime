@@ -1,7 +1,11 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
+import { memo, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
   PawOsAppSurfaceProvider,
+  usePawOsAppActive,
+  usePawOsAppCompact,
+  usePawOsAppIdentity,
   usePawOsAppSurface,
 } from './surface-context';
 
@@ -41,5 +45,45 @@ describe('PawOsAppSurfaceProvider', () => {
     );
 
     expect(screen.getByText('agent:900x600:regular')).toHaveAttribute('data-active', 'false');
+  });
+
+  it('keeps identity, activity and compact selectors isolated from ordinary pixel resize', () => {
+    const renders = { active: 0, compact: 0, identity: 0 };
+    let updateSurface: ((next: { active: boolean; width: number; height: number }) => void) | undefined;
+    const IdentityProbe = memo(function IdentityProbe() {
+      renders.identity += 1;
+      return <output>{usePawOsAppIdentity()?.windowId}</output>;
+    });
+    const ActiveProbe = memo(function ActiveProbe() {
+      renders.active += 1;
+      return <output>{String(usePawOsAppActive())}</output>;
+    });
+    const CompactProbe = memo(function CompactProbe() {
+      renders.compact += 1;
+      return <output>{String(usePawOsAppCompact())}</output>;
+    });
+    function Harness() {
+      const [surface, setSurface] = useState({ active: true, width: 900, height: 600 });
+      updateSurface = setSurface;
+      return (
+        <PawOsAppSurfaceProvider appId="agent" active={surface.active} windowId="agent-window" width={surface.width} height={surface.height}>
+          <IdentityProbe />
+          <ActiveProbe />
+          <CompactProbe />
+        </PawOsAppSurfaceProvider>
+      );
+    }
+
+    render(<Harness />);
+    expect(renders).toEqual({ identity: 1, active: 1, compact: 1 });
+
+    act(() => updateSurface?.({ active: true, width: 880, height: 590 }));
+    expect(renders).toEqual({ identity: 1, active: 1, compact: 1 });
+
+    act(() => updateSurface?.({ active: false, width: 880, height: 590 }));
+    expect(renders).toEqual({ identity: 1, active: 2, compact: 1 });
+
+    act(() => updateSurface?.({ active: false, width: 760, height: 590 }));
+    expect(renders).toEqual({ identity: 1, active: 2, compact: 2 });
   });
 });

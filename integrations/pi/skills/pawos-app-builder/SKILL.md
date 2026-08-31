@@ -56,24 +56,48 @@ before creating a new App or changing its manifest.
    generic host capability is proven, add the smallest reusable core seam and
    test it with at least two manifest identities or one generic contract test;
    do not hard-code the current App.
-5. Build and test the candidate without touching the installed App. Validate
-   the App manifest and Skill, run TypeScript/UI tests, then run the registered
-   vertical suite through the Host-owned `vertical-agent-sandbox` Connector.
-   Retain SandboxRun, Trace, EvalRun, exact source revision, and network/write
-   boundary receipts.
-6. If the candidate fails, diagnose the frozen Trace in the read-only Trace
+5. Bind the manifest's sandbox contract before an experiment. `required` runs
+   through the declared Connector and cannot be skipped; `optional` requires a
+   visible `run` or `skip` decision; `disabled` permits static manifest/Skill/
+   build validation only and never a direct Host run. This decision belongs to
+   the candidate binding, not to an unrecorded Agent preference.
+6. Build and test the candidate without touching the installed App. Every
+   installed-App experiment calls `extension.sandbox.experiment.run` with only
+   `sessionId`, `ownerAppId`, `experimentId`, `candidateBindingSha256`, and
+   `requestedDecision`; Runtime derives the suite and policy from the installed
+   binding. A `run` retains SandboxRun, Trace, EvalRun, exact source revision,
+   and network/write boundary receipts. A `skip` retains its explicit receipt;
+   it is never reported as sandbox success.
+7. If the candidate fails, diagnose the frozen Trace in the read-only Trace
    Agent. After the user confirms the candidate repair once, use the separate
    full-automation repair Agent within the one owner workspace, then rerun the
    same sandbox fixture. Do not compare scores when the fixture, manifest
    revision, model/config, or input fingerprint changed.
-7. When the candidate passes, produce one install proposal containing App and
+8. When the candidate passes, produce one install proposal containing App and
    Skill versions, files, permissions, build/test evidence, rollback target,
    and expected desktop identity. Stop before apply unless the user has
    explicitly authorized installation.
-8. After apply, open the installed App from PAWOS and run one real vertical
+9. After apply, open the installed App from PAWOS and run one real vertical
    conversation. Verify its mode-specific UI, Agent/Skill binding, Stop and
    recovery, Trace link, installed version, and rollback. A build, mock page,
    screenshot, or source folder is not this proof.
+
+## Sandbox Selection And Experiment Receipt
+
+- The manifest may declare `sandbox` as `{ default: required | optional |
+  disabled, connectorPackageId: vertical-agent-sandbox,
+  policyId: vertical-readonly-v1 }`. Do not substitute a local command, a
+  guessed policy, or a different Connector ID.
+- The App UI explains the declared default before an experiment. `required`
+  submits `requestedDecision: run`; `optional` exposes both decisions; and
+  `disabled` records only static validation. No branch may run the vertical
+  suite directly on the Host.
+- The client never sends suite IDs, policy IDs, workspace roots, command lines,
+  or fixture paths to the experiment route. Those are Runtime-derived from the
+  installed App binding so a stale or edited UI cannot widen the sandbox.
+- A failed, cancelled, or skipped experiment is a first-class result. Keep its
+  receipt and the candidate binding; do not silently fall through to Host
+  execution or claim a missing SandboxRun/Trace/Eval as success.
 
 ## Conversation-Mode Apps
 

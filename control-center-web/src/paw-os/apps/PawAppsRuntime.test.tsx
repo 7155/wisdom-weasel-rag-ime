@@ -137,4 +137,27 @@ describe('PAWOS App runtime', () => {
     expect(screen.getByRole('tab', { name: '对账' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '解释' })).toBeInTheDocument();
   });
+
+  it('keeps Extension Apps in their own Host even when a generic satellite target is present', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+    } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawOsAppearanceProvider>
+          <QueryClientProvider client={queryClient}>
+            <PawAppBody
+              appId={'extension:zhanggui-wenshu' as never}
+              target={{ kind: 'package', id: '@paw/zhanggui-wenshu', title: '掌柜问数' }}
+            />
+          </QueryClientProvider>
+        </PawOsAppearanceProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: '掌柜问数' }, { timeout: 5_000 })).toBeInTheDocument();
+    expect(screen.queryByTestId('satellite-host')).not.toBeInTheDocument();
+  });
 });

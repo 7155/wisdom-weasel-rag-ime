@@ -36,9 +36,19 @@ control-center-web/extension-apps/<app-id>/
   },
   "skillRef": "<skill-name>",
   "verticalSuiteId": "<suite-id>",
-  "verticalSuiteRevision": "<exact revision>"
+  "verticalSuiteRevision": "<exact revision>",
+  "sandbox": {
+    "default": "optional",
+    "connectorPackageId": "vertical-agent-sandbox",
+    "policyId": "vertical-readonly-v1"
+  }
 }
 ```
+
+`sandbox` is the optional App execution-contract field. When declared, it has
+exactly these keys; `default` is one of `required`, `optional`, or `disabled`.
+The Connector and policy values above are fixed identifiers, not App-authored
+commands or filesystem permissions.
 
 Rules:
 
@@ -66,6 +76,20 @@ Rules:
 - The resolved suite must retain its declared sandbox boundary: network
   blocked and production writes blocked. A suite binding is a test reference,
   not permission to use fixture data as production business truth.
+- For every installed-App experiment, the App calls
+  `extension.sandbox.experiment.run` with exactly `sessionId`, `ownerAppId`,
+  `experimentId`, `candidateBindingSha256`, and `requestedDecision`. Runtime
+  derives the suite and policy from the installed binding; the App must not
+  send a suite ID, policy ID, workspace root, command, or fixture path.
+- `required` always uses `requestedDecision: run` and cannot be skipped.
+  `optional` requires an explicit `run` or `skip` choice. `disabled` permits
+  only static manifest/Skill/build validation and never a Host execution of
+  the vertical suite. A `skip` is an explicit receipt, not a passing sandbox
+  result.
+- A `run` must retain linked SandboxRun, Trace, Eval, candidate binding, and
+  source revision receipts. Failed, cancelled, and skipped decisions remain
+  visible with their own receipts; no branch may silently fall back to a Host
+  run or describe missing receipts as verified.
 - The frontend default export is a React component that uses shared PAW
   primitives and the ordinary control transport. It does not create a second
   Session or Tool runtime.

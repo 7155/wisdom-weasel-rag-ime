@@ -46,6 +46,7 @@ class ControlPathId(str, Enum):
     OBSERVABILITY_EVAL_SCHEDULES_LIST = "observability.evalSchedules.list"
     OBSERVABILITY_EVAL_SCHEDULES_CREATE = "observability.evalSchedules.create"
     OBSERVABILITY_EVAL_SCHEDULE_RUNS = "observability.evalSchedule.runs"
+    EXTENSION_SANDBOX_EXPERIMENT_RUN = "extension.sandbox.experiment.run"
 
     AGENT_RUNTIME_GET = "agent.runtime.get"
     AGENT_RUNTIME_ENSURE = "agent.runtime.ensure"
@@ -778,6 +779,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULES_LIST, ControlMethod.GET, "/api/observability/eval-schedules", None, query={"limit"}),
         _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULES_CREATE, ControlMethod.POST, "/api/observability/eval-schedules", None, body={"scheduleId", "suiteId", "suiteRevision", "recurrenceKind", "recurrenceInterval", "maxRuns", "nextDueAtMs"}, required_body={"suiteId", "suiteRevision", "recurrenceKind", "nextDueAtMs"}),
         _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULE_RUNS, ControlMethod.GET, "/api/observability/eval-schedules/{scheduleId}/runs", None, params=_EVAL_SCHEDULE, query={"limit"}),
+        _route(ControlPathId.EXTENSION_SANDBOX_EXPERIMENT_RUN, ControlMethod.POST, "/api/extensions/sandbox/experiments", None, body={"sessionId", "ownerAppId", "experimentId", "candidateBindingSha256", "requestedDecision"}, required_body={"sessionId", "ownerAppId", "experimentId", "candidateBindingSha256", "requestedDecision"}),
 
         _route(ControlPathId.AGENT_RUNTIME_GET, ControlMethod.GET, "/api/agent/runtime", "/control/v1/agent/runtime", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_RUNTIME_ENSURE, ControlMethod.POST, "/api/agent/runtime/ensure", "/control/v1/agent/runtime/ensure", body={"sessionId"}, required_body={"sessionId"}),

@@ -199,7 +199,7 @@ describe('ObservabilityFeature', () => {
       "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);",
     );
     expect(observabilityStylesheet).toContain(
-      "main[data-route-id='observability'] .observation-sandbox-runs__node code,\nmain[data-route-id='observability'] .observation-sandbox-runs__node a {\n  display: block;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;",
+      ":is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node code,\n:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a {\n  display: block;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;",
     );
   });
 

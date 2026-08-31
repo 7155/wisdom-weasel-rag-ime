@@ -50,26 +50,26 @@ const semanticReceipts: ReadonlyArray<{
   },
   {
     app: 'Memory',
-    blocks: [{ css: memoryCss, marker: 'memory', selectors: ["main[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span"] }],
+    blocks: [{ css: memoryCss, marker: 'memory', selectors: [":is(main, section)[data-route-id='memory'][data-paw-os-app] .memory-preferences__actions > span"] }],
     sizes: [13],
   },
   {
     app: 'App Center',
-    blocks: [{ css: pluginsCss, marker: 'app-center-lifecycle', selectors: ["main[data-route-id='plugins'][data-paw-os-app]", '.plugin-lifecycle__approval', '.capability-disclosure'] }],
+    blocks: [{ css: pluginsCss, marker: 'app-center-lifecycle', selectors: [":is(main, section)[data-route-id='plugins'][data-paw-os-app]", '.plugin-lifecycle__approval', '.capability-disclosure'] }],
     sizes: [13, 14, 15],
   },
   {
     app: 'Monitor',
     blocks: [
-      { css: observabilityCss, marker: 'monitor-observability', selectors: ["main[data-route-id='observability'][data-paw-os-app]"] },
-      { css: contextDebugCss, marker: 'monitor-context', selectors: ["main.context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor']"] },
-      { css: diagnosticsCss, marker: 'monitor-diagnostics', selectors: ["main[data-route-id='diagnostics'][data-paw-os-app]"] },
+      { css: observabilityCss, marker: 'monitor-observability', selectors: [":is(main, section)[data-route-id='observability'][data-paw-os-app]"] },
+      { css: contextDebugCss, marker: 'monitor-context', selectors: [":is(main, section).context-debug-feature[data-route-id='context-debug'][data-paw-os-app='system-monitor']"] },
+      { css: diagnosticsCss, marker: 'monitor-diagnostics', selectors: [":is(main, section)[data-route-id='diagnostics'][data-paw-os-app]"] },
     ],
     sizes: [13, 14, 15],
   },
   {
     app: 'Settings',
-    blocks: [{ css: configurationCss, marker: 'settings-configuration', selectors: ["main[data-route-id='configuration'][data-paw-os-app]", '.configuration-section-nav', '.configuration-subagents__error'] }],
+    blocks: [{ css: configurationCss, marker: 'settings-configuration', selectors: [":is(main, section)[data-route-id='configuration'][data-paw-os-app]", '.configuration-section-nav', '.configuration-subagents__error'] }],
     sizes: [13, 14, 15],
   },
 ];
@@ -326,7 +326,7 @@ describe('PAWOS semantic type roles', () => {
 
   it('keeps Memory as one native surface and gives Role Books a readable list measure', () => {
     expect(memoryCss).toMatch(
-      /main\[data-route-id='memory'\]\[data-paw-os-app='memory'\] \.memory-second-brain \.memory-view-tabs[\s\S]*?border:\s*0;/s,
+      /:is\(main, section\)\[data-route-id='memory'\]\[data-paw-os-app='memory'\] \.memory-second-brain \.memory-view-tabs[\s\S]*?border:\s*0;/s,
     );
     expect(memoryCss).toMatch(
       /\.memory-second-brain \.(?:memory-role-book-workspace)[\s\S]*?grid-template-columns:\s*minmax\(300px, \.82fr\) minmax\(0, 1\.18fr\);/s,
@@ -338,14 +338,14 @@ describe('PAWOS semantic type roles', () => {
 
   it('keeps Knowledge library layout roots full-width and leaves document tabs explicit', () => {
     expect(knowledgeCss).toMatch(
-      /main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-library__tabs,[\s\S]*?width:\s*100%;[\s\S]*?border:\s*0;/s,
+      /:is\(main, section\)\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-library__tabs,[\s\S]*?width:\s*100%;[\s\S]*?border:\s*0;/s,
     );
     expect(knowledgeCss).toMatch(
-      /main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-library__tabs > \[role='tabpanel'\][\s\S]*?display:\s*block;[\s\S]*?flex:\s*none;/s,
+      /:is\(main, section\)\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-library__tabs > \[role='tabpanel'\][\s\S]*?display:\s*block;[\s\S]*?flex:\s*none;/s,
     );
     expect(knowledgeCss).toMatch(/\.knowledge-markdown-preview[\s\S]*?background:\s*#fff;/s);
     expect(knowledgeCss).toMatch(
-      /\.paw-window-shell\[data-app='knowledge'\] main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-document-tabs[\s\S]*?display:\s*grid;[\s\S]*?width:\s*100%;/s,
+      /\.paw-window-shell\[data-app='knowledge'\] :is\(main, section\)\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-document-tabs[\s\S]*?display:\s*grid;[\s\S]*?width:\s*100%;/s,
     );
     expect(knowledgeCss).toMatch(
       /\.knowledge-document-tabs > \[role='tabpanel'\]\[hidden\][\s\S]*?display:\s*none;/s,
@@ -385,6 +385,27 @@ describe('PAWOS semantic type roles', () => {
     expect(systemMigratedCss).not.toContain('animation-duration: .001ms !important');
     expect(systemMigratedCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.paw-system-app \.mgmt-section\s*\{\s*animation:\s*none;/s,
+    );
+  });
+
+  it('owns the Settings Agent model-list geometry without loading the full Agent feature stylesheet', () => {
+    expect(systemMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-agent-model__choices \[role='option'\]\s*\{[^}]*display:\s*grid;[^}]*min-height:\s*44px;[^}]*grid-template-columns:\s*18px minmax\(0, 1fr\) 16px;/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-agent-model__choices \.agent-model-picker__group-name\s*\{[^}]*position:\s*sticky;[^}]*display:\s*flex;/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /\.paw-desktop-root \.paw-agent-model__choices \.agent-model-picker__check\s*\{[^}]*opacity:\s*0;/s,
+    );
+  });
+
+  it('keeps compact native and system navigation targets at least 44px square', () => {
+    expect(appCss).toMatch(
+      /@container paw-window \(max-width: 440px\)[\s\S]*?\.paw-native-nav nav button\s*\{[^}]*width:\s*44px;[^}]*min-width:\s*44px;[^}]*height:\s*44px;/s,
+    );
+    expect(systemMigratedCss).toMatch(
+      /@container paw-sysapp \(max-width: 560px\)[\s\S]*?\.paw-system-app__nav nav\s*\{[^}]*padding-inline:\s*6px;[\s\S]*?\.paw-system-app__nav nav button\s*\{[^}]*min-height:\s*44px;/s,
     );
   });
 
@@ -591,8 +612,8 @@ describe('PAWOS semantic type roles', () => {
     expect(roomMigratedCss).toContain('--paw-chat-spring: cubic-bezier(.34, 1.4, .64, 1);');
   });
 
-  it('runs the running-state shimmer through the status glyphs, never a band over the row', () => {
-    // 流光是字在跑：行/卡背景保持干净，不存在覆盖整行的扫光伪元素。
+  it('keeps running-state motion on composited indicators instead of repainting text backgrounds', () => {
+    // 行/卡背景保持干净，不存在覆盖整行的扫光伪元素。
     expect(agentFxCss).not.toContain('agent-running-sweep');
     expect(agentFeatureCss).not.toContain('agent-running-sweep');
     expect(agentFxCss).not.toMatch(/\.paw-activity\[data-state='running'\][^{]*::before/);
@@ -602,15 +623,17 @@ describe('PAWOS semantic type roles', () => {
     expect(agentFeatureCss).not.toMatch(/\.agent-status-tool\[data-state='running'\][^{]*::before/);
     expect(agentFeatureCss).not.toMatch(/\.agent-assistant-pending[^{]*::before/);
 
-    // The sheen travels through the glyphs themselves: one background-clip:text
-    // gradient shared by the running Tool label/hint, the progress card, and
-    // the pending-reply strip on each surface.
-    expect(agentFxCss).toMatch(/\.paw-activity\[data-state='running'\] \.paw-activity__hint[\s\S]*?background-clip:\s*text/s);
-    expect(agentFxCss).toMatch(/animation:\s*paw-agent-fx-text-sweep 1\.85s/);
-    expect(agentFxCss).toMatch(/\.fx-progress-card\[data-state='running'\] \.fx-progress-head strong/);
-    expect(agentFxCss).toMatch(/\.agent-assistant-pending small/);
-    expect(agentFeatureCss).toMatch(/animation:\s*agent-running-text-sweep 1\.85s/);
-    expect(agentFeatureCss).toMatch(/\.agent-status-tool\[data-state='running'\] > summary small[\s\S]*?background-clip:\s*text/s);
+    // Running copy is stable ink. Motion belongs to the already-composited
+    // planet/pulse and marching-rule layers, never background-position on the
+    // text during incremental Markdown work.
+    expect(agentFxCss).not.toContain('paw-agent-fx-text-sweep');
+    expect(agentFeatureCss).not.toContain('agent-running-text-sweep');
+    expect(agentFxCss).not.toMatch(/background-position/);
+    expect(agentFeatureCss).not.toMatch(/background-position/);
+    expect(agentFxCss).toMatch(/\.agent-assistant-pending small[\s\S]*?color:\s*var\(--paw-running-ink\)/s);
+    expect(agentFeatureCss).toMatch(/\.agent-assistant-pending small[\s\S]*?color:\s*var\(--agent-running-ink\)/s);
+    expect(agentCompositionCss).toMatch(/@keyframes paw-comp8-marching\s*\{[^}]*transform:\s*translate3d/s);
+    expect(agentCompositionCss).not.toMatch(/background-position/);
 
     // Reduced motion turns the sweep off and hands each node its static ink
     // back — no transparent-color trap.
@@ -916,8 +939,8 @@ describe('PAWOS semantic type roles', () => {
 
   it('imports every final Knowledge Markdown owner and keeps readable prose throughout the cascade', () => {
     expect(knowledgeCss).toMatch(/\.knowledge-markdown-body\s*\{[^}]*font-size:\s*14px;/s);
-    expect(knowledgeCss).toMatch(/main\.knowledge-feature\[data-paw-os-app='knowledge'\] \.knowledge-markdown-body,[\s\S]*?font-size:\s*15px;/s);
-    expect(knowledgeCss).toMatch(/main\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-markdown-body\s*\{[^}]*font-size:\s*15px;/s);
+    expect(knowledgeCss).toMatch(/:is\(main, section\)\.knowledge-feature\[data-paw-os-app='knowledge'\] \.knowledge-markdown-body,[\s\S]*?font-size:\s*15px;/s);
+    expect(knowledgeCss).toMatch(/:is\(main, section\)\.knowledge-feature--migrated-v1\[data-paw-os-app='knowledge'\] \.knowledge-markdown-body\s*\{[^}]*font-size:\s*15px;/s);
   });
 
   it('keeps narrow Agent chrome on one row and the shared tool surface inside the window', () => {
@@ -927,6 +950,9 @@ describe('PAWOS semantic type roles', () => {
       /@container paw-window \(max-width: 760px\)[\s\S]*?\.paw-window-titlebar\[data-window-chrome='agent-session'\] \.paw-session-workspace__view-switch button[\s\S]*?width:\s*28px;[\s\S]*?\.paw-session-workspace__view-switch button > span\s*\{[^}]*display:\s*none;/,
     );
     expect(agentMigratedCss).toMatch(/@container paw-window \(max-width: 420px\)[\s\S]*?\.paw-session-workspace__runtime[\s\S]*?display:\s*none;/);
+    expect(agentMigratedCss).toMatch(
+      /@container paw-window \(max-width: 420px\)[\s\S]*?\.paw-window-titlebar\[data-window-chrome='agent-session'\]:has\(\.paw-session-workspace__header\)\s*\{[^}]*grid-template-columns:\s*var\(--paw-titlebar-lead, 68px\) 0 minmax\(0, 1fr\);/,
+    );
     expect(agentMigratedCss).toMatch(/@container paw-session-workspace \(max-width: 520px\)[\s\S]*?\.paw-session-workspace__side[\s\S]*?width:\s*100%;[\s\S]*?height:\s*min\(52%, 340px\);/);
   });
 
@@ -938,7 +964,7 @@ describe('PAWOS semantic type roles', () => {
 
   it('lets every Monitor console section shrink inside a narrow PAW window', () => {
     expect(observabilityCss).toMatch(
-      /main\[data-route-id='observability'\] \.observation-console > \*\s*\{[^}]*min-width:\s*0;/,
+      /:is\(main, section\)\[data-route-id='observability'\] \.observation-console > \*\s*\{[^}]*min-width:\s*0;/,
     );
     expect(observabilityCss).toMatch(
       /@container paw-window \(max-width: 620px\)[\s\S]*?\.observation-schedules__workspace,[\s\S]*?\.observation-schedules__form\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/,

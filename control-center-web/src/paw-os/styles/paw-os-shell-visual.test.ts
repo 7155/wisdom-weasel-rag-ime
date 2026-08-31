@@ -259,16 +259,27 @@ describe('PAWOS shell visual language', () => {
     expect(sheet).toContain('background: var(--paw-panel-strong)');
   });
 
-  it('integrates project-folder depth and identity without a detached white badge', () => {
-    const back = rule(shellCss, '.paw-desktop-root .paw-work-glyph__back');
-    const front = rule(shellCss, '.paw-desktop-root .paw-work-glyph__front');
-    const mark = rule(shellCss, '.paw-desktop-root .paw-wayfinder-work__folder-mark');
-    expect(back).toContain('stroke-width: 1');
-    expect(front).toContain('stroke-width: 1');
-    expect(rule(shellCss, '.paw-desktop-root .paw-work-glyph__folder-sheen')).toContain('mix-blend-mode: screen');
-    expect(mark).toContain('background: transparent');
-    expect(mark).toContain('border: 0');
-    expect(mark).toContain('box-shadow: none');
+  it('keeps narrow windows above the resident Dock instead of under its hit plane', () => {
+    expect(pawOsCss).toMatch(
+      /@media \(max-width: 820px\)[\s\S]*?\.paw-window-shell:not\(\[data-overview\]\):not\(\[data-focus-layout\]\):not\(\[data-placement='maximized'\]\)[^{]*\{[^}]*height:\s*calc\(100% - var\(--paw-dock-h\) - 22px\) !important;/,
+    );
+  });
+
+  it('keeps the transparent recent-work canvas from intercepting App shortcuts', () => {
+    expect(rule(pawOsCss, '.paw-wayfinder-work > .paw-wayfinder-work__context-sheet'))
+      .toContain('pointer-events: auto');
+    expect(pawOsCss).toMatch(/\.paw-wayfinder-work__list\s*\{\s*position:\s*absolute;[^}]*pointer-events:\s*none;/s);
+    expect(rule(pawOsCss, '.paw-wayfinder-work__project-shell,\n.paw-wayfinder-work__loose-shell'))
+      .toContain('pointer-events: auto');
+  });
+
+  it('integrates project folders with the exact Files identity tile without an extra badge', () => {
+    const tile = rule(shellCss, '.paw-desktop-root .paw-work-glyph__tile');
+    const folder = rule(shellCss, '.paw-desktop-root .paw-work-glyph__folder-body');
+    expect(tile).toContain('fill: var(--paw-work-accent, #f5a623)');
+    expect(folder).toContain('rgb(255 255 255 / .96)');
+    expect(rule(shellCss, '.paw-desktop-root .paw-work-glyph__folder-divider')).toContain('opacity: .35');
+    expect(shellCss).not.toContain('.paw-wayfinder-work__folder-mark');
   });
 
   it('clamps desktop project names to two quiet lines and reveals them in context', () => {
@@ -285,7 +296,7 @@ describe('PAWOS shell visual language', () => {
     expect(projectNameRule).toContain('-webkit-line-clamp: 2');
     expect(projectNameRule).toContain('text-overflow: ellipsis');
 
-    const reveal = shellCss.match(/:is\(:hover, \[aria-pressed='true'\], :focus-visible\) \.paw-wayfinder-work__project-copy strong\s*\{([^}]*)\}/s);
+    const reveal = shellCss.match(/:is\(:hover, \[aria-pressed='true'\], \[data-selected\], :focus-visible\) \.paw-wayfinder-work__project-copy strong\s*\{([^}]*)\}/s);
     expect(reveal, 'hover/selected/focus reveal rule').toBeTruthy();
     expect(reveal?.[1]).toContain('-webkit-line-clamp: unset');
     expect(reveal?.[1]).toContain('overflow: visible');
@@ -316,6 +327,7 @@ describe('PAWOS shell visual language', () => {
     expect(desktopProjectWindow).not.toContain('position: fixed');
     expect(narrowProjectWindow).toContain('position: absolute');
     expect(narrowProjectWindow).not.toContain('position: fixed');
+    expect(narrowProjectWindow).toContain('height: auto');
     expect(lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll')).toContain('overflow-y: auto');
 
     for (const [name, css, selector] of [
@@ -327,6 +339,28 @@ describe('PAWOS shell visual language', () => {
       expect(styles, `${name} must not clamp`).not.toContain('line-clamp: 2');
       expect(styles, `${name} must stay visible`).toContain('overflow: visible');
     }
+  });
+
+  it('renders an opened project as a compact left-aligned conversation list', () => {
+    const projectWindow = lastRule(pawOsCss, '.paw-wayfinder-work__project-content');
+    const row = lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row');
+    const copy = lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__copy');
+    const more = lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__more');
+    const actions = lastRule(pawOsCss, '.paw-wayfinder-work__project-content-head > .paw-wayfinder-work__project-content-actions');
+
+    expect(projectWindow).toContain('height: auto');
+    expect(row).toContain('min-height: 72px');
+    expect(row).toContain('grid-template-columns: 32px minmax(0, 1fr)');
+    expect(row).toContain('justify-items: stretch');
+    expect(row).toContain('text-align: left');
+    expect(copy).toContain('justify-items: start');
+    expect(copy).toContain('text-align: left');
+    expect(lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__row strong')).toContain('font-size: 13px');
+    expect(lastRule(pawOsCss, '.paw-wayfinder-work__project-content-scroll .paw-wayfinder-work__copy small')).toContain('font-size: 11px');
+    expect(more).toContain('min-height: 36px');
+    expect(more).toContain('justify-content: center');
+    expect(actions).toContain('display: flex');
+    expect(actions).toContain('gap: 3px');
   });
 
   it('re-pairs the window title ink on the dark Terminal chrome', () => {
@@ -398,6 +432,13 @@ describe('PAWOS shell visual language', () => {
     expect(lights).toMatch(/height:\s*24px/);
     expect(lights).toMatch(/flex:\s*0 0 24px/);
     expect(lights).toContain('padding: 6px');
+  });
+
+  it('keeps every pointer resize edge at least 24px thick', () => {
+    const vertical = rule(pawOsCss, ".paw-window-resize[data-handle='east'], .paw-window-resize[data-handle='west']");
+    const horizontal = rule(pawOsCss, ".paw-window-resize[data-handle='north'], .paw-window-resize[data-handle='south']");
+    expect(vertical).toContain('width: 24px');
+    expect(horizontal).toContain('height: 24px');
   });
 
   it('signs the focused window with a static aurora hairline in its own App key', () => {

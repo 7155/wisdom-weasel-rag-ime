@@ -49,6 +49,8 @@ _ACCENTS = frozenset(
     {"cyan", "blue", "violet", "amber", "green", "rose", "slate"}
 )
 _ICON_SYMBOLS = frozenset({"analytics", "assistant", "document", "commerce"})
+_SANDBOX_DEFAULTS = frozenset({"required", "optional", "disabled"})
+_SANDBOX_FIELDS = frozenset({"default", "connectorPackageId", "policyId"})
 _DISALLOWED_FIXTURE_PATH_PARTS = frozenset(
     {"vertical-agent.json", "examples", "vertical_agents"}
 )
@@ -139,6 +141,23 @@ def _required_text(payload: dict[str, Any], key: str, *, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ExtensionAppValidationError(f"{label}.{key} must be non-empty text")
     return value.strip()
+
+
+def _validate_sandbox_contract(app_manifest: dict[str, Any]) -> dict[str, str] | None:
+    value = app_manifest.get("sandbox")
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != _SANDBOX_FIELDS:
+        raise ExtensionAppValidationError(
+            "Extension App manifest sandbox must contain default, connectorPackageId, and policyId only"
+        )
+    if value.get("default") not in _SANDBOX_DEFAULTS:
+        raise ExtensionAppValidationError("Extension App manifest sandbox default is invalid")
+    if value.get("connectorPackageId") != "vertical-agent-sandbox":
+        raise ExtensionAppValidationError("Extension App manifest sandbox connector is invalid")
+    if value.get("policyId") != "vertical-readonly-v1":
+        raise ExtensionAppValidationError("Extension App manifest sandbox policy is invalid")
+    return {key: str(value[key]) for key in sorted(_SANDBOX_FIELDS)}
 
 
 def _resource_prefix(raw_path: str) -> PurePosixPath:
@@ -306,6 +325,7 @@ def _validate_pi_package(package_root: Path, app_manifest: dict[str, Any]) -> di
         "verticalSuiteRevision": _required_text(
             app_manifest, "verticalSuiteRevision", label="Extension App manifest"
         ),
+        "sandbox": app_manifest.get("sandbox"),
         "manifest": app_manifest,
     }
     for field, expected in expected_extension.items():
@@ -455,6 +475,7 @@ def validate_extension_app(
         raise ExtensionAppValidationError("Extension App presentation is invalid")
     if app_manifest.get("accent") not in _ACCENTS:
         raise ExtensionAppValidationError("Extension App accent is invalid")
+    sandbox_contract = _validate_sandbox_contract(app_manifest)
     icon = app_manifest.get("icon")
     if not isinstance(icon, dict) or icon.get("symbol") not in _ICON_SYMBOLS or not isinstance(icon.get("background"), str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", icon.get("background", "")):
         raise ExtensionAppValidationError("Extension App icon is invalid")
@@ -497,6 +518,7 @@ def validate_extension_app(
             "registry": "rag_ime.vertical_agent_harness",
             "fixtureSource": "registered suite; not copied into Extension App",
             "sandbox": suite["sandbox"],
+            "appPolicy": sandbox_contract,
         },
     }
 

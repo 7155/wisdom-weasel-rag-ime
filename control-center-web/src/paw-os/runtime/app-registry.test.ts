@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { pawExtensionApp } from '../extensions/registry';
 import { pawApp, pawAppForPath, pawApps } from './app-registry';
 
 describe('PAWOS App registry', () => {
@@ -30,6 +31,11 @@ describe('PAWOS App registry', () => {
       label: '掌柜问数',
       route: '/extensions/zhanggui-wenshu',
       kind: 'agent',
+    });
+    expect(pawExtensionApp('extension:zhanggui-wenshu').sandbox).toEqual({
+      default: 'optional',
+      connectorPackageId: 'vertical-agent-sandbox',
+      policyId: 'vertical-readonly-v1',
     });
     expect(pawAppForPath('/extensions/zhanggui-wenshu')?.id).toBe('extension:zhanggui-wenshu');
   });

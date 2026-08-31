@@ -214,10 +214,11 @@
   white-space: nowrap;
   cursor: pointer;
   text-decoration: none;
+  font: inherit;
   transform: translate(-50%, -50%);
 }
 .paw-desktop-root .paw-room-focus-overview__mesh-edge-label:hover,
-.paw-desktop-root .paw-room-focus-overview__mesh-edge-label[aria-current='true'] {
+.paw-desktop-root .paw-room-focus-overview__mesh-edge-label[aria-pressed='true'] {
   border-color: rgb(39 131 222 / .32);
   color: #206fae;
   background: rgb(239 247 255 / .98);

@@ -103,7 +103,9 @@ function sanitizePawDesktopSnapshot(value: unknown): PawDesktopSnapshot | undefi
     activeWindowId,
     ...(dockAppIds !== undefined ? { dockAppIds } : {}),
     wayfinder: {
-      ...(rawWayfinder.layoutVersion === 2 ? { layoutVersion: 2 as const } : {}),
+      ...(rawWayfinder.layoutVersion === 2 || rawWayfinder.layoutVersion === 3
+        ? { layoutVersion: rawWayfinder.layoutVersion as 2 | 3 }
+        : {}),
       iconPositions,
       archived: Array.isArray(rawWayfinder.archived) ? rawWayfinder.archived.filter((id): id is string => typeof id === 'string') : [],
       projectAssignments,

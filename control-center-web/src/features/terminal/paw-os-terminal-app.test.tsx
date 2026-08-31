@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import type { ControlRequest } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
+import { PawOsAppSurfaceProvider } from '@/features/paw-os/surface-context';
 import { PawOsTerminalApp } from './PawOsTerminalApp';
 import { PawWindowFrame } from '@/paw-os/shell/PawWindowLayer';
 import terminalCss from './paw-os-terminal-app.css?raw';
@@ -94,6 +95,26 @@ afterEach(() => {
 });
 
 describe('PawOsTerminalApp', () => {
+  it('does not start list or output polling while its PAWOS window is inactive', async () => {
+    const terminal = terminalSession('terminal-one', 'Terminal');
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [terminal] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+      },
+    });
+
+    renderTerminal(transport, (
+      <PawOsAppSurfaceProvider active={false} appId="terminal" height={700} width={900}>
+        <PawOsTerminalApp />
+      </PawOsAppSurfaceProvider>
+    ));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.sessions.list')).toBe(false);
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.read')).toBe(false);
+  });
+
   it('writes commands to a real system terminal route without wrapping them in an Agent prompt', async () => {
     const user = userEvent.setup();
     let output = '';
@@ -433,6 +454,27 @@ describe('PawOsTerminalApp', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.create')).toBe(false);
   });
 
+  it('applies an exited status from the authoritative read receipt immediately', async () => {
+    const user = userEvent.setup();
+    const running = terminalSession('terminal-fast-exit', 'Terminal');
+    const exited = { ...running, status: 'exited' as const, exitCode: 0 };
+    const transport = new MockControlTransport({
+      routes: {
+        'terminal.sessions.list': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, items: [running] },
+        'terminal.session.read': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminal: exited, cursor: 0, nextCursor: 0, truncated: false, text: '' },
+        'terminal.session.resize': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: running.terminalId },
+        'terminal.session.write': { schemaVersion: 'rag-ime.system-terminal.v1', ok: true, terminalId: running.terminalId, bytesWritten: 1 },
+      },
+    });
+
+    renderApp(transport, <PawOsTerminalApp />);
+
+    expect(await screen.findByRole('tab', { name: /Terminal.*已退出（退出码 0）/ })).toBeInTheDocument();
+    await user.type(await screen.findByRole('textbox', { name: '终端输入' }), 'x');
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    expect(transport.requests.some((call) => call.request.pathId === 'terminal.session.write')).toBe(false);
+  });
+
   it('creates a terminal in a chosen working directory and refuses relative paths locally', async () => {
     const user = userEvent.setup();
     const terminal = terminalSession('terminal-one', 'Terminal');
@@ -472,6 +514,18 @@ describe('PawOsTerminalApp', () => {
     await waitFor(() => expect(createBodies).toHaveLength(1));
     expect(createBodies[0].cwd).toBe('/workspace/other');
     expect(screen.queryByRole('form', { name: '在指定目录新建终端' })).not.toBeInTheDocument();
+    const cwdToggle = screen.getByRole('button', { name: '在指定目录新建终端' });
+    expect(cwdToggle).toHaveFocus();
+
+    await user.click(cwdToggle);
+    const escapeInput = screen.getByRole('textbox', { name: '新终端工作目录' });
+    await user.type(escapeInput, '/tmp{Escape}');
+    expect(screen.queryByRole('form', { name: '在指定目录新建终端' })).not.toBeInTheDocument();
+    expect(cwdToggle).toHaveFocus();
+
+    await user.click(cwdToggle);
+    await user.click(within(screen.getByRole('form', { name: '在指定目录新建终端' })).getByRole('button', { name: '取消' }));
+    expect(cwdToggle).toHaveFocus();
 
     // The plain new-terminal action keeps the backend default directory.
     await user.click(screen.getByRole('button', { name: '新建终端' }));

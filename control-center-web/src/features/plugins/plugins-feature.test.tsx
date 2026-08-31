@@ -19,6 +19,14 @@ afterEach(() => {
 });
 
 describe('PluginsFeature', () => {
+  it('does not query or poll while its PAWOS window is inactive', async () => {
+    const transport = renderPlugins({}, '/plugins', true, false);
+
+    await act(async () => { await Promise.resolve(); });
+
+    expect(transport.requests).toHaveLength(0);
+  });
+
   it('reveals policy guidance smoothly instead of mounting a hidden page of text', async () => {
     const user = userEvent.setup();
     renderPlugins();
@@ -875,6 +883,7 @@ function renderPlugins(
   overrides: Partial<Record<ControlPathId, MockRouteHandler>> = {},
   initialEntry = '/plugins',
   pawOs = false,
+  active = true,
 ) {
   const transport = new MockControlTransport({
     pickedFiles: [{
@@ -928,7 +937,7 @@ function renderPlugins(
       ...overrides,
     },
   });
-  renderPluginsWithTransport(transport, initialEntry, pawOs);
+  renderPluginsWithTransport(transport, initialEntry, pawOs, active);
   return transport;
 }
 
@@ -936,10 +945,11 @@ function renderPluginsWithTransport(
   transport: ControlTransport,
   initialEntry = '/plugins',
   pawOs = false,
+  active = true,
 ): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const feature = <QueryClientProvider client={client}><PluginsFeature /></QueryClientProvider>;
-  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}>{pawOs ? <PawOsAppSurfaceProvider appId="app-center" height={720} width={1_080}>{feature}</PawOsAppSurfaceProvider> : feature}</ControlTransportProvider></TooltipProvider></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}>{pawOs ? <PawOsAppSurfaceProvider active={active} appId="app-center" height={720} width={1_080}>{feature}</PawOsAppSurfaceProvider> : feature}</ControlTransportProvider></TooltipProvider></MemoryRouter>);
 }
 
 function LocationProbe() {
@@ -973,6 +983,7 @@ function extensionCatalogItem(overrides: Record<string, unknown> = {}) {
       skillSha256: extension.skillSha256,
       verticalSuiteId: extension.verticalSuiteId,
       verticalSuiteRevision: extension.verticalSuiteRevision,
+      sandbox: extension.sandbox,
     },
     updateAvailable: false,
     actionable: true,
@@ -1003,6 +1014,7 @@ function extensionInventoryItem(overrides: Record<string, unknown> = {}) {
       skillSha256: extension.skillSha256,
       verticalSuiteId: extension.verticalSuiteId,
       verticalSuiteRevision: extension.verticalSuiteRevision,
+      sandbox: extension.sandbox,
     },
     ...overrides,
   };

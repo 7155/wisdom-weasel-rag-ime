@@ -1,6 +1,6 @@
 # PAWOS 用户逐字证据
 
-> 导航：[UR-209](PAWOS_REQUIREMENTS_209_209.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
+> 导航：[UR-210–UR-211](PAWOS_REQUIREMENTS_210_211.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
 >
 > 本文件保存需求账本引用的逐字来源与来源覆盖。不得用 Agent 转述替代用户原话。
 
@@ -764,6 +764,18 @@ Trace/Eval 自测，不是生产经营数据。安装、停用、卸载和回滚
 
 该条消息映射到 `UR-209`。卸载、归档、删除和恢复是对“移除”的控制语义解释，
 不是追加用户引语。
+
+### 2026-08-31 · RAG 实验 App 与受管沙箱选择
+
+> 本项目如果要做，就是Agent这个rag的沙盒优化，这是一个rag项目。AG怎么让它就是选取最好的参数，就是在同一个，就是它反复冻结嘛，然后来项目实验。那这个是在本项目的话，是建立一个新的APP，还是就在Agent里面就能使用沙盒？
+
+> 我的意思是创建APP，然后它能够选择使用沙箱吗？
+
+第一条映射到 `UR-211`：建立独立 RAG 实验 Extension App，以冻结、可比的实验
+轮次搜索更优参数；不把垂直实验 UI 和业务状态塞进通用 Agent。第二条映射到
+`UR-210`：App 可以显式选择受管沙箱，但隔离、执行、Stop 和收据仍由 PAW/Pi
+Runtime 与已经安装的 Sandbox Connector 负责。冻结字段、profile snapshot、
+promotion 和 rollback 是验收解释，不是追加用户引语。
 
 以下各节覆盖本次继续工作中可直接检索到的新增实质性用户消息。进度查询、
 “好了吗”等消息是状态询问，不新增产品语义；附件图片是视觉证据，不从图片

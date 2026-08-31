@@ -159,6 +159,7 @@ def _extension_app_evidence(
             "skillSha256",
             "verticalSuiteId",
             "verticalSuiteRevision",
+            "sandbox",
         }
     }
     evidence["version"] = resolved_version.strip()
@@ -377,6 +378,17 @@ def _verified_extension_app_source(
                 app_manifest.get("verticalSuiteRevision") or ""
             ),
         }
+        sandbox_contract = app_manifest.get("sandbox")
+        if sandbox_contract is not None:
+            if (
+                not isinstance(sandbox_contract, Mapping)
+                or set(sandbox_contract) != {"default", "connectorPackageId", "policyId"}
+                or sandbox_contract.get("default") not in {"required", "optional", "disabled"}
+                or sandbox_contract.get("connectorPackageId") != "vertical-agent-sandbox"
+                or sandbox_contract.get("policyId") != "vertical-readonly-v1"
+                or extension.get("sandbox") != sandbox_contract
+            ):
+                return None
         if (
             not all(required.values())
             or required["packageId"] != manifest_package_id
@@ -390,6 +402,7 @@ def _verified_extension_app_source(
                 return None
         return {
             **required,
+            **({"sandbox": dict(sandbox_contract)} if isinstance(sandbox_contract, Mapping) else {}),
             "bindingCapability": binding_capability,
             "packageDigest": package_digest,
         }

@@ -72,6 +72,7 @@ from .trace_adapters import envelope_from_browser_trace, envelope_from_predictio
 from .trace_runtime import TraceContractError, TraceEnvelope
 from .trace_repair import TraceRepairConflict, TraceRepairValidationError
 from .vertical_sandbox_connector import VerticalSandboxConnectorService
+from .extension_sandbox_experiment import ExtensionSandboxExperimentService
 from .control_api import (
     AgentKernelControlFacade,
     ControlAccessContext,
@@ -610,6 +611,11 @@ class DebugImeService:
                 if os.environ.get("RAG_IME_ROOT")
                 else Path(__file__).resolve().parents[1]
             ),
+        )
+        self.extension_sandbox_experiments = ExtensionSandboxExperimentService(
+            sessions=self.agent.sessions,
+            extensions=self.agent_extensions,
+            connector=self.vertical_sandbox_connector,
         )
         browser_control_kwargs: dict[str, object] = {}
         if "trace_observer" in inspect.signature(BrowserControlService).parameters:

@@ -2654,16 +2654,8 @@ details.agent-activity--inline > summary[aria-expanded='true'] > svg:last-child 
   to { transform: rotate(360deg); }
 }
 
-/* 运行态流光落在字上：进行中的行背景保持干净，状态文字本身过一道柔和的
-   信息蓝受光带。base 是各节点原本的墨色（--agent-running-ink），sheen 是
-   信息蓝的受光色；只动 background-position，不触发布局。strong 里的
-   elapsed <time> 自带不透明墨色，保持静止可读。prefers-reduced-motion 与
-   data-reduce-motion 下回落为静态墨色（见文件尾部）。 */
-@keyframes agent-running-text-sweep {
-  0%, 18% { background-position: 100% 50%; }
-  82%, 100% { background-position: -100% 50%; }
-}
-
+/* Running copy stays still while the adjacent status glyph owns motion. This
+   keeps incremental Markdown off a continuous background-paint path. */
 details.agent-activity--inline[data-state='running'] > summary > strong { --agent-running-ink: var(--color-text); }
 details.agent-activity--inline[data-state='running'] > summary > .agent-activity__inline-tools { --agent-running-ink: var(--color-text-tertiary); }
 .agent-status-tool[data-state='running'] > summary strong { --agent-running-ink: var(--color-text); }
@@ -2679,19 +2671,7 @@ details.agent-activity--inline[data-state='running'] > summary > .agent-activity
   .agent-assistant-pending strong,
   .agent-assistant-pending small
 ) {
-  color: transparent;
-  background: linear-gradient(
-    100deg,
-    var(--agent-running-ink) 10%,
-    var(--agent-running-ink) 36%,
-    color-mix(in srgb, var(--color-info) 68%, #fff) 50%,
-    var(--agent-running-ink) 64%,
-    var(--agent-running-ink) 90%
-  );
-  background-clip: text;
-  background-size: 230% 100%;
-  -webkit-background-clip: text;
-  animation: agent-running-text-sweep 1.85s ease-in-out infinite;
+  color: var(--agent-running-ink);
 }
 
 @keyframes agent-dot-wave {

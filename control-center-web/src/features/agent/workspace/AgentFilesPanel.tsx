@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
@@ -44,6 +45,12 @@ interface WorkspaceEntry {
   byteSize?: number;
 }
 
+interface VisibleTreeNode {
+  path: string;
+  parentPath: string | null;
+  kind: 'root' | WorkspaceEntry['kind'];
+}
+
 export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(function AgentFilesPanel({
   sessionId,
   workspaceRoots,
@@ -55,21 +62,35 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
   const transport = useControlTransport();
   const cacheRef = useRef(new Map<string, WorkspaceEntry[]>());
   const loadingRef = useRef(new Set<string>());
+  const requestControllersRef = useRef(new Map<string, AbortController>());
   const errorsRef = useRef(new Map<string, string>());
   const generationRef = useRef(0);
+  const treeItemRefs = useRef(new Map<string, HTMLButtonElement>());
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [selectedFile, setSelectedFile] = useState<WorkspaceEntry>();
+  const [treeFocusPath, setTreeFocusPath] = useState('');
   const [revision, setRevision] = useState(0);
   const roots = useMemo(() => workspaceRoots
     .map((path) => path.trim())
     .filter((path, index, values) => path.startsWith('/') && values.indexOf(path) === index), [workspaceRoots]);
   const rootsKey = roots.join('\u0000');
+  const visibleTreeNodes = useMemo(
+    () => flattenVisibleTree(roots, cacheRef.current, expanded),
+    [expanded, revision, roots],
+  );
 
   const redraw = useCallback(() => setRevision((value) => value + 1), []);
   const loadChildren = useCallback(async (path: string, force = false) => {
-    if (!sessionId || loadingRef.current.has(path)) return;
+    if (!sessionId) return;
+    const previousController = requestControllersRef.current.get(path);
+    if (previousController) {
+      if (!force) return;
+      previousController.abort();
+    }
     if (!force && cacheRef.current.has(path)) return;
     const generation = generationRef.current;
+    const controller = new AbortController();
+    requestControllersRef.current.set(path, controller);
     loadingRef.current.add(path);
     errorsRef.current.delete(path);
     redraw();
@@ -78,13 +99,20 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
         pathId: 'agent.session.workspace.list',
         params: { sessionId },
         query: { path, depth: 1, limit: 240 },
+        signal: controller.signal,
       });
-      if (generation !== generationRef.current) return;
+      if (generation !== generationRef.current
+        || controller.signal.aborted
+        || requestControllersRef.current.get(path) !== controller) return;
       cacheRef.current.set(path, workspaceEntries(response));
     } catch (error) {
-      if (generation !== generationRef.current) return;
+      if (generation !== generationRef.current
+        || controller.signal.aborted
+        || requestControllersRef.current.get(path) !== controller) return;
       errorsRef.current.set(path, publicError(error));
     } finally {
+      if (requestControllersRef.current.get(path) !== controller) return;
+      requestControllersRef.current.delete(path);
       if (generation === generationRef.current) {
         loadingRef.current.delete(path);
         redraw();
@@ -94,13 +122,28 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
 
   useEffect(() => {
     generationRef.current += 1;
+    for (const controller of requestControllersRef.current.values()) controller.abort();
+    requestControllersRef.current.clear();
     cacheRef.current.clear();
     loadingRef.current.clear();
     errorsRef.current.clear();
     setExpanded(new Set(roots));
     setSelectedFile(undefined);
+    setTreeFocusPath(roots[0] ?? '');
     setRevision((value) => value + 1);
+    return () => {
+      for (const controller of requestControllersRef.current.values()) controller.abort();
+      requestControllersRef.current.clear();
+    };
   }, [rootsKey, sessionId]);
+
+  useEffect(() => {
+    setTreeFocusPath((current) => (
+      visibleTreeNodes.some((node) => node.path === current)
+        ? current
+        : visibleTreeNodes[0]?.path ?? ''
+    ));
+  }, [visibleTreeNodes]);
 
   useEffect(() => {
     if (!open) return;
@@ -121,9 +164,44 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
   function refresh(): void {
     cacheRef.current.clear();
     errorsRef.current.clear();
-    for (const path of expanded) void loadChildren(path, true);
-    for (const root of roots) void loadChildren(root, true);
+    const paths = new Set([...roots, ...expanded]);
+    for (const path of paths) void loadChildren(path, true);
     redraw();
+  }
+
+  function focusTreeItem(path: string): void {
+    setTreeFocusPath(path);
+    treeItemRefs.current.get(path)?.focus();
+  }
+
+  function onTreeKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, path: string): void {
+    const index = visibleTreeNodes.findIndex((node) => node.path === path);
+    const node = visibleTreeNodes[index];
+    if (!node) return;
+
+    let nextPath = '';
+    if (event.key === 'ArrowDown') nextPath = visibleTreeNodes[Math.min(index + 1, visibleTreeNodes.length - 1)]?.path ?? '';
+    if (event.key === 'ArrowUp') nextPath = visibleTreeNodes[Math.max(index - 1, 0)]?.path ?? '';
+    if (event.key === 'Home') nextPath = visibleTreeNodes[0]?.path ?? '';
+    if (event.key === 'End') nextPath = visibleTreeNodes.at(-1)?.path ?? '';
+    if (event.key === 'ArrowRight' && (node.kind === 'root' || node.kind === 'directory')) {
+      if (!expanded.has(path)) {
+        toggleDirectory(path);
+      } else {
+        nextPath = visibleTreeNodes.find((candidate) => candidate.parentPath === path)?.path ?? '';
+      }
+    }
+    if (event.key === 'ArrowLeft') {
+      if ((node.kind === 'root' || node.kind === 'directory') && expanded.has(path)) {
+        toggleDirectory(path);
+      } else {
+        nextPath = node.parentPath ?? '';
+      }
+    }
+    if (!nextPath && !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (!nextPath && !((node.kind === 'root' || node.kind === 'directory') && ['ArrowLeft', 'ArrowRight'].includes(event.key))) return;
+    event.preventDefault();
+    if (nextPath) focusTreeItem(nextPath);
   }
 
   function renderChildren(parentPath: string, depth: number): ReactNode {
@@ -145,20 +223,32 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
     if (!items?.length) return <div className="agent-files-panel__state">空目录</div>;
     return (
       <ul role="group">
-        {items.map((item) => {
+        {items.map((item, index) => {
           const directory = item.kind === 'directory';
           const isExpanded = directory && expanded.has(item.path);
           const style = { '--agent-file-depth': depth } as CSSProperties;
           return (
-            <li key={item.path} role="treeitem" aria-expanded={directory ? isExpanded : undefined}>
+            <li key={item.path} role="none">
               {directory ? (
                 <button
+                  aria-expanded={isExpanded}
+                  aria-level={depth + 1}
+                  aria-posinset={index + 1}
+                  aria-setsize={items.length}
                   className="agent-files-panel__row"
                   style={style}
                   type="button"
                   title={item.path}
                   aria-label={`${isExpanded ? '收起' : '展开'}目录 ${item.name}`}
+                  onFocus={() => setTreeFocusPath(item.path)}
                   onClick={() => toggleDirectory(item.path)}
+                  onKeyDown={(event) => onTreeKeyDown(event, item.path)}
+                  ref={(node) => {
+                    if (node) treeItemRefs.current.set(item.path, node);
+                    else treeItemRefs.current.delete(item.path);
+                  }}
+                  role="treeitem"
+                  tabIndex={treeFocusPath === item.path ? 0 : -1}
                 >
                   <ChevronRight className="agent-files-panel__chevron" size={13} data-open={isExpanded || undefined} />
                   {isExpanded ? <FolderOpen size={15} /> : <Folder size={15} />}
@@ -166,12 +256,24 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
                 </button>
               ) : (
                 <button
+                  aria-level={depth + 1}
+                  aria-posinset={index + 1}
+                  aria-selected={item.path === selectedFile?.path || undefined}
+                  aria-setsize={items.length}
                   className="agent-files-panel__row"
                   style={style}
                   type="button"
                   title={`预览 ${item.path}`}
                   aria-label={`预览文件 ${item.name}`}
+                  onFocus={() => setTreeFocusPath(item.path)}
                   onClick={() => setSelectedFile(item)}
+                  onKeyDown={(event) => onTreeKeyDown(event, item.path)}
+                  ref={(node) => {
+                    if (node) treeItemRefs.current.set(item.path, node);
+                    else treeItemRefs.current.delete(item.path);
+                  }}
+                  role="treeitem"
+                  tabIndex={treeFocusPath === item.path ? 0 : -1}
                 >
                   <span className="agent-files-panel__file-indent" />
                   {fileIcon(item.name)}
@@ -211,18 +313,29 @@ export const AgentFilesPanel = forwardRef<HTMLElement, AgentFilesPanelProps>(fun
         <div className="agent-files-panel__body" data-revision={revision}>
           {roots.length ? (
             <nav aria-label="工作区文件">
-              <ul role="tree">
-                {roots.map((root) => {
+              <ul aria-label="工作区文件" role="tree">
+                {roots.map((root, index) => {
                   const isExpanded = expanded.has(root);
                   return (
-                    <li className="agent-files-panel__root" key={root} role="treeitem" aria-expanded={isExpanded}>
+                    <li className="agent-files-panel__root" key={root} role="none">
                       <button
+                        aria-level={1}
+                        aria-posinset={index + 1}
+                        aria-setsize={roots.length}
                         className="agent-files-panel__root-toggle"
                         type="button"
                         title={root}
                         aria-expanded={isExpanded}
                         aria-label={`${isExpanded ? '收起' : '展开'}工作区 ${pathName(root)}`}
+                        onFocus={() => setTreeFocusPath(root)}
                         onClick={() => toggleDirectory(root)}
+                        onKeyDown={(event) => onTreeKeyDown(event, root)}
+                        ref={(node) => {
+                          if (node) treeItemRefs.current.set(root, node);
+                          else treeItemRefs.current.delete(root);
+                        }}
+                        role="treeitem"
+                        tabIndex={treeFocusPath === root ? 0 : -1}
                       >
                         <ChevronRight className="agent-files-panel__chevron" size={14} data-open={isExpanded || undefined} />
                         {isExpanded ? <FolderOpen size={16} /> : <Folder size={16} />}
@@ -282,6 +395,25 @@ function formatBytes(value: number): string {
   if (value < 1_024) return `${value} B`;
   if (value < 1_048_576) return `${Math.max(1, Math.round(value / 1_024))} KB`;
   return `${Math.max(1, Math.round(value / 1_048_576))} MB`;
+}
+
+function flattenVisibleTree(
+  roots: string[],
+  entries: Map<string, WorkspaceEntry[]>,
+  expanded: Set<string>,
+): VisibleTreeNode[] {
+  const nodes: VisibleTreeNode[] = [];
+  const appendChildren = (parentPath: string) => {
+    for (const entry of entries.get(parentPath) ?? []) {
+      nodes.push({ path: entry.path, parentPath, kind: entry.kind });
+      if (entry.kind === 'directory' && expanded.has(entry.path)) appendChildren(entry.path);
+    }
+  };
+  for (const root of roots) {
+    nodes.push({ path: root, parentPath: null, kind: 'root' });
+    if (expanded.has(root)) appendChildren(root);
+  }
+  return nodes;
 }
 
 function fileIcon(name: string): ReactNode {

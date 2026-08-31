@@ -64,11 +64,12 @@ import {
 } from './capability-policy';
 import { usePluginCatalog } from './api';
 import { useProductIdentity } from '@/features/identity/product-identity';
-import { openPawOsRoute, usePawOsAppSurface, usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { openPawOsRoute, usePawOsAppActive, usePawOsAppIdentity, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { extensionAppInstallationMatches } from '@/paw-os/extensions/installation';
 import { extensionAppForPackage } from '@/paw-os/extensions/registry';
 import type { PawExtensionAppManifest } from '@/paw-os/extensions/types';
 import { PawAppIcon } from '@/paw-os/shell/PawAppIcon';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import './plugins.css';
 
 type ToolRecord = CapabilityCatalogItem;
@@ -111,7 +112,9 @@ const operationLabels: Record<string, string> = {
 export function PluginsFeature() {
   const navigate = useNavigate();
   const identity = useProductIdentity();
-  const appSurface = usePawOsAppSurface();
+  const appSurface = usePawOsAppIdentity();
+  const surfaceActive = usePawOsAppActive();
+  const pageVisible = usePageVisibility();
   const desktop = usePawOsDesktop();
   const [searchParams] = useSearchParams();
   const sessionContextId = searchParams.get('sessionId')?.trim() ?? '';
@@ -130,7 +133,7 @@ export function PluginsFeature() {
     updateProjectDefaults,
     updateLifecycle,
     refreshAll,
-  } = usePluginCatalog(sessionContextId);
+  } = usePluginCatalog(sessionContextId, (surfaceActive ?? true) && pageVisible);
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');

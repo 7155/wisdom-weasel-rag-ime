@@ -1897,7 +1897,7 @@ describe('MemoryFeature preferences', () => {
     expect(await screen.findByRole('heading', { name: '记忆偏好' })).toBeInTheDocument();
     expect(await screen.findByRole('switch', { name: '启用记忆增强' })).not.toBeChecked();
     expect(screen.queryByRole('tablist', { name: '记忆视图' })).not.toBeInTheDocument();
-    expect(screen.getByRole('main')).toHaveAttribute('data-paw-os-app', 'memory');
+    expect(screen.getByRole('region', { name: '我的记忆' })).toHaveAttribute('data-paw-os-app', 'memory');
     expect(document.querySelector('.mgmt-page__header')).not.toBeInTheDocument();
   });
 

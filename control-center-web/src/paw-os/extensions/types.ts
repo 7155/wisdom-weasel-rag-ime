@@ -17,6 +17,12 @@ export type PawExtensionAppIconSymbol =
   | 'document'
   | 'commerce';
 
+export type PawExtensionAppSandboxContract = {
+  default: 'required' | 'optional' | 'disabled';
+  connectorPackageId: 'vertical-agent-sandbox';
+  policyId: 'vertical-readonly-v1';
+};
+
 export type PawExtensionAppManifest = {
   schemaVersion: 'pawos.extension-app.v1';
   id: PawExtensionAppId;
@@ -37,6 +43,7 @@ export type PawExtensionAppManifest = {
   skillSha256: string;
   verticalSuiteId: string;
   verticalSuiteRevision: string;
+  sandbox?: PawExtensionAppSandboxContract;
 };
 
 export type PawExtensionAppInstallationEvidence = {
@@ -49,6 +56,7 @@ export type PawExtensionAppInstallationEvidence = {
   skillSha256: string;
   verticalSuiteId: string;
   verticalSuiteRevision: string;
+  sandbox?: PawExtensionAppSandboxContract;
 };
 
 export type PawExtensionAppProps = {

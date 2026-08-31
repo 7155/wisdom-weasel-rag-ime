@@ -11,7 +11,15 @@ export type PawOsAppSurface = {
   compact: boolean;
 };
 
+export type PawOsAppSurfaceIdentity = Pick<PawOsAppSurface, 'appId' | 'windowId'>;
+
 const PawOsAppSurfaceContext = createContext<PawOsAppSurface | null>(null);
+/* Window bounds change for every resize frame, while most PAWOS Apps need
+ * only one stable fact. Keep those facts in independent contexts so a live
+ * width/height update cannot re-render polling, routing or chrome consumers. */
+const PawOsAppIdentityContext = createContext<PawOsAppSurfaceIdentity | null>(null);
+const PawOsAppActivityContext = createContext<boolean | null>(null);
+const PawOsAppCompactContext = createContext<boolean | null>(null);
 
 export type PawOsWindowRequest = {
   appId: PawOsDesktopAppId;
@@ -72,20 +80,42 @@ export function PawOsAppSurfaceProvider({
   windowId?: string;
   width: number;
 }) {
+  const identity = useMemo<PawOsAppSurfaceIdentity>(() => ({ appId, windowId }), [appId, windowId]);
+  const compact = width <= 760;
   const value = useMemo<PawOsAppSurface>(() => ({
     active,
     appId,
     windowId,
     width,
     height,
-    compact: width <= 760,
-  }), [active, appId, height, width, windowId]);
+    compact,
+  }), [active, appId, compact, height, width, windowId]);
 
-  return <PawOsAppSurfaceContext.Provider value={value}>{children}</PawOsAppSurfaceContext.Provider>;
+  return (
+    <PawOsAppSurfaceContext.Provider value={value}>
+      <PawOsAppIdentityContext.Provider value={identity}>
+        <PawOsAppActivityContext.Provider value={active}>
+          <PawOsAppCompactContext.Provider value={compact}>{children}</PawOsAppCompactContext.Provider>
+        </PawOsAppActivityContext.Provider>
+      </PawOsAppIdentityContext.Provider>
+    </PawOsAppSurfaceContext.Provider>
+  );
 }
 
 export function usePawOsAppSurface(): PawOsAppSurface | null {
   return useContext(PawOsAppSurfaceContext);
+}
+
+export function usePawOsAppIdentity(): PawOsAppSurfaceIdentity | null {
+  return useContext(PawOsAppIdentityContext);
+}
+
+export function usePawOsAppActive(): boolean | null {
+  return useContext(PawOsAppActivityContext);
+}
+
+export function usePawOsAppCompact(): boolean | null {
+  return useContext(PawOsAppCompactContext);
 }
 
 export function usePawOsDesktop(): PawOsDesktopControls | null {

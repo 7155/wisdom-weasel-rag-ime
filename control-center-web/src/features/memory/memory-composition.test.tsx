@@ -17,6 +17,13 @@ afterEach(() => {
 });
 
 describe('MemoryFeature composition', () => {
+  it('uses a restrained full outline for book rows instead of a decorative side stripe', () => {
+    expect(memoryStylesheet).not.toMatch(/border-left:\s*3px/);
+    expect(memoryStylesheet).toMatch(
+      /\[data-layer='books'\] \.memory-layer-list \.mgmt-list__row\s*\{[^}]*border-color:/s,
+    );
+  });
+
   it('keeps the governed pipeline spine visible across catalog and relations views', async () => {
     renderMemory(catalogTransport());
     const pipeline = await screen.findByRole('list', { name: '记忆内容分类' });
@@ -45,6 +52,15 @@ describe('MemoryFeature composition', () => {
 
     await user.click(toggle);
     expect(screen.queryByText('检索索引')).not.toBeInTheDocument();
+  });
+
+  it('fits all four pipeline stages in one compact row at phone-width windows', () => {
+    expect(memoryStylesheet).toMatch(
+      /@container memory-second-brain \(max-width: 480px\)[\s\S]*?\.memory-pipeline__stages\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);[^}]*overflow-x:\s*hidden;/,
+    );
+    expect(memoryStylesheet).toMatch(
+      /@container memory-second-brain \(max-width: 480px\)[\s\S]*?\.memory-pipeline__flow\s*\{[^}]*display:\s*none;/,
+    );
   });
 
   it('routes between memory layers from the pipeline spine', async () => {
@@ -123,7 +139,7 @@ describe('MemoryFeature composition', () => {
       ".memory-second-brain[data-view='catalog'] .mgmt-section__header p { margin-top: 2px; color: var(--color-text-secondary);",
     );
     expect(memoryStylesheet).not.toContain('color: #7a8493');
-    expect(memoryStylesheet).toContain(":root[data-theme='dark'] main[data-route-id='memory']");
+    expect(memoryStylesheet).toContain(":root[data-theme='dark'] :is(main, section)[data-route-id='memory']");
     expect(memoryStylesheet).toContain('background: var(--color-surface-subtle);');
     expect(memoryStylesheet).toContain('background: var(--color-paper);');
     expect(memoryStylesheet).toContain(

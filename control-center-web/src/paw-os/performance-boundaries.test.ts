@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import appSource from '@/app/App.tsx?raw';
+import structuredRenderersSource from '@/features/agent/timeline/StructuredRenderers.tsx?raw';
+import workDocumentsCss from '@/features/work-documents/work-documents.css?raw';
 import httpTransportSource from '@/platform/http-transport.ts?raw';
 import nativeTransportSource from '@/platform/native-transport.ts?raw';
 import pawOsSource from './PawOsApp.tsx?raw';
+import appDispatcherSource from './apps/PawApps.tsx?raw';
 import runtimeSource from './apps/PawAppsRuntime.tsx?raw';
+import desktopSource from './shell/PawDesktop.tsx?raw';
 import windowLayerSource from './shell/PawWindowLayer.tsx?raw';
+import agentFxCss from './styles/paw-os-agent-fx.css?raw';
 
 describe('PAWOS production loading boundaries', () => {
   it('keeps the legacy router out of the default PAWOS product entry', () => {
@@ -35,6 +40,14 @@ describe('PAWOS production loading boundaries', () => {
     }
   });
 
+  it('warms the primary Agent boundary before the launch click reaches the main thread', () => {
+    expect(appDispatcherSource).toContain('export function warmPawAppProcess');
+    expect(runtimeSource).toContain('export function warmPawAppBody');
+    expect(desktopSource).toContain("warmPawAppProcess('agent')");
+    expect(desktopSource).toContain('onPointerEnter={() => warmPawAppProcess(appId)}');
+    expect(desktopSource).toContain('onFocus={() => warmPawAppProcess(appId)}');
+  });
+
   it('keeps App-only visual layers out of the first PAWOS shell stylesheet', () => {
     for (const appStyle of [
       'paw-os-agent-composition.css',
@@ -57,6 +70,15 @@ describe('PAWOS production loading boundaries', () => {
       expect(transportSource).toContain('loadContractValidationRuntime');
     }
     expect(windowLayerSource).not.toContain("from '@/features/rooms/runtime/use-room-live-session'");
+    expect(windowLayerSource).not.toContain("from '@/features/rooms/state/live-store'");
+    expect(windowLayerSource).toContain("from '@/features/rooms/state/projection-bridge'");
     expect(windowLayerSource).toContain("lazy(() => import('./PawRoomProjectionKeeper'))");
+  });
+
+  it('keeps disclosure spacing and live progress updates off layout properties', () => {
+    expect(workDocumentsCss).not.toMatch(/transition:\s*padding(?:-top)?/);
+    expect(agentFxCss).not.toMatch(/transition:\s*width/);
+    expect(agentFxCss).toMatch(/\.fx-track \.fill\s*\{[^}]*transform:\s*scaleX\(var\(--fx-progress-scale, 0\)\);[^}]*transition:\s*transform/s);
+    expect(structuredRenderersSource).toContain("'--fx-progress-scale': percent / 100");
   });
 });

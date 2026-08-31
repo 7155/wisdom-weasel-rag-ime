@@ -205,6 +205,26 @@
   background: var(--zhanggui-accent-soft);
 }
 .zhanggui-app__source span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__sandbox-choice {
+  display: grid;
+  width: min(720px, 100%);
+  min-height: 48px;
+  grid-template-columns: 18px 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--zhanggui-accent) 22%, var(--color-border-soft));
+  border-radius: 12px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--zhanggui-accent) 4%, var(--color-surface-raised));
+}
+.zhanggui-app__sandbox-choice input { width: 16px; height: 16px; accent-color: var(--zhanggui-accent); }
+.zhanggui-app__sandbox-choice > svg { color: var(--zhanggui-accent); }
+.zhanggui-app__sandbox-choice > span { display: grid; min-width: 0; gap: 1px; }
+.zhanggui-app__sandbox-choice strong,
+.zhanggui-app__sandbox-choice small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__sandbox-choice strong { color: var(--color-text-primary); font-size: 12px; }
+.zhanggui-app__sandbox-choice small { color: var(--color-text-tertiary); font-size: 10px; }
 .zhanggui-app__start form { position: relative; width: min(720px, 100%); }
 .zhanggui-app__start textarea {
   box-sizing: border-box;
@@ -252,6 +272,7 @@
 .zhanggui-app__session-note strong { flex: 0 0 auto; color: var(--zhanggui-accent); }
 
 .zhanggui-app__error { gap: 7px; margin: 8px 12px 0; padding: 8px 10px; border-radius: 9px; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 8%, transparent); font-size: 12px; }
+.zhanggui-app__sandbox-receipt { display: flex; align-items: center; gap: 7px; margin: 8px 12px 0; color: var(--zhanggui-accent); font-size: 11px; }
 .zhanggui-app__loading { justify-content: center; gap: 8px; color: var(--color-text-secondary); }
 
 /* Reuse the ordinary Pi Session without copying the generic Agent workbench.

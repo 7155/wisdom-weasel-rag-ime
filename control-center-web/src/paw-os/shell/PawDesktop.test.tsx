@@ -257,6 +257,7 @@ describe('PAWOS desktop', () => {
             skillSha256: extension.skillSha256,
             verticalSuiteId: extension.verticalSuiteId,
             verticalSuiteRevision: extension.verticalSuiteRevision,
+            sandbox: extension.sandbox,
           },
         }],
       },
@@ -266,7 +267,7 @@ describe('PAWOS desktop', () => {
       stack: [],
       activeWindowId: null,
       dockAppIds: [extension.id],
-      wayfinder: { layoutVersion: 2, iconPositions: {}, archived: [], projectAssignments: {} },
+      wayfinder: { layoutVersion: 3, iconPositions: {}, archived: [], projectAssignments: {} },
     }));
 
     renderDesktop(undefined, transport);
@@ -298,7 +299,7 @@ describe('PAWOS desktop', () => {
       stack: [extension.id],
       activeWindowId: extension.id,
       dockAppIds: [extension.id],
-      wayfinder: { layoutVersion: 2, iconPositions: {}, archived: [], projectAssignments: {} },
+      wayfinder: { layoutVersion: 3, iconPositions: {}, archived: [], projectAssignments: {} },
     }));
 
     renderDesktop(undefined, transport);
@@ -405,6 +406,55 @@ describe('PAWOS desktop', () => {
     }
   });
 
+  it('follows actual icon coordinates after Apps have been rearranged', () => {
+    renderDesktop();
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const agent = within(shortcuts).getByRole('button', { name: 'Agent' });
+    const memory = within(shortcuts).getByRole('button', { name: 'Memory' });
+    const browser = within(shortcuts).getByRole('button', { name: 'Browser' });
+    for (const button of within(shortcuts).getAllByRole('button')) {
+      Object.defineProperty(button, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => domRect(600, 600, 80, 72),
+      });
+    }
+    Object.defineProperty(agent, 'getBoundingClientRect', { configurable: true, value: () => domRect(160, 80, 80, 72) });
+    Object.defineProperty(memory, 'getBoundingClientRect', { configurable: true, value: () => domRect(40, 80, 80, 72) });
+    Object.defineProperty(browser, 'getBoundingClientRect', { configurable: true, value: () => domRect(280, 80, 80, 72) });
+
+    agent.focus();
+    fireEvent.keyDown(shortcuts, { key: 'ArrowLeft' });
+    expect(memory).toHaveFocus();
+    agent.focus();
+    fireEvent.keyDown(shortcuts, { key: 'ArrowRight' });
+    expect(browser).toHaveFocus();
+  });
+
+  it('moves a focused App by one free grid cell with Alt+Arrow', async () => {
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows: {}, stack: [], activeWindowId: null,
+      wayfinder: {
+        layoutVersion: 3,
+        iconPositions: { 'app:agent': { x: 24, y: 720 } },
+        archived: [], projectAssignments: {},
+      },
+    }));
+    renderDesktop();
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const agent = within(shortcuts).getByRole('button', { name: 'Agent' });
+    agent.focus();
+
+    fireEvent.keyDown(shortcuts, { key: 'ArrowRight', altKey: true });
+
+    expect(agent).toHaveFocus();
+    await waitFor(() => {
+      const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+        wayfinder?: { iconPositions?: Record<string, { x: number; y: number }> };
+      };
+      expect(snapshot.wayfinder?.iconPositions?.['app:agent']).toEqual({ x: 136, y: 720 });
+    });
+  });
+
   it('opens System Settings from the advertised keyboard shortcut', () => {
     renderDesktop();
     fireEvent.keyDown(window, { key: ',', metaKey: true });
@@ -427,6 +477,27 @@ describe('PAWOS desktop', () => {
     fireEvent.contextMenu(within(shortcuts).getByRole('button', { name: 'Agent' }), { clientX: 240, clientY: 180 });
     expect(screen.getByRole('menu', { name: 'Agent 菜单' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: '打开 Agent' })).toBeInTheDocument();
+  });
+
+  it('removes an App shortcut from the desktop without uninstalling it and restores it from the desktop menu', async () => {
+    renderDesktop();
+
+    const shortcuts = screen.getByLabelText('桌面 App');
+    const agent = within(shortcuts).getByRole('button', { name: 'Agent' });
+    fireEvent.contextMenu(agent, { clientX: 240, clientY: 180 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '从桌面移除 Agent' }));
+
+    await waitFor(() => expect(within(shortcuts).queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument());
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}').wayfinder?.archived).toContain('app:agent'));
+
+    fireEvent.click(screen.getByRole('button', { name: '打开全部 App' }));
+    const launchpad = screen.getByRole('dialog', { name: '全部 App' });
+    expect(within(launchpad).getByRole('button', { name: /Agent/ })).toBeInTheDocument();
+    fireEvent.click(within(launchpad).getByRole('button', { name: '完成' }));
+
+    fireEvent.contextMenu(screen.getByRole('main'), { clientX: 120, clientY: 90 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '恢复 1 个桌面图标' }));
+    await waitFor(() => expect(within(shortcuts).getByRole('button', { name: 'Agent' })).toBeInTheDocument());
   });
 
   it('returns focus to the context-menu opener after Escape', async () => {
@@ -469,7 +540,7 @@ describe('PAWOS desktop', () => {
       stack: [],
       activeWindowId: null,
       wayfinder: {
-        layoutVersion: 2,
+        layoutVersion: 3,
         iconPositions: { 'app:agent': { x: 731, y: 418 } },
         archived: [],
         projectAssignments: {},
@@ -488,7 +559,58 @@ describe('PAWOS desktop', () => {
     });
   });
 
-  it('gives a project one context sheet, archives it there, and restores it from the desktop menu', async () => {
+  it('repairs persisted desktop coordinates onto visible non-overlapping grid cells', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 420 });
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows: {},
+      stack: [],
+      activeWindowId: null,
+      wayfinder: {
+        layoutVersion: 3,
+        iconPositions: {
+          'app:agent': { x: 731, y: 418 },
+          'app:memory': { x: 731, y: 418 },
+        },
+        archived: [],
+        projectAssignments: {},
+      },
+    }));
+    try {
+      renderDesktop();
+      await waitFor(() => {
+        const snapshot = JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}') as {
+          wayfinder?: { iconPositions?: Record<string, { x: number; y: number }> };
+        };
+        const agent = snapshot.wayfinder?.iconPositions?.['app:agent'];
+        const memory = snapshot.wayfinder?.iconPositions?.['app:memory'];
+        expect(agent).toBeTruthy();
+        expect(memory).toBeTruthy();
+        expect(agent).not.toEqual(memory);
+        expect(agent!.x + 96).toBeLessThanOrEqual(420);
+        expect(memory!.x + 96).toBeLessThanOrEqual(420);
+        expect((agent!.x - 24) % 112).toBe(0);
+        expect((memory!.x - 24) % 112).toBe(0);
+      });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    }
+  });
+
+  it('clears the Dock drop target when a non-App desktop file is rejected', () => {
+    renderDesktop();
+    const dock = screen.getByRole('navigation', { name: 'PAWOS 工具架' });
+    const transfer = dragTransfer();
+    transfer.setData('application/x-paw-wayfinder-icon', 'session:s1');
+    transfer.setData('text/plain', 'session:s1');
+
+    fireEvent.dragOver(dock, { dataTransfer: transfer });
+    expect(dock).toHaveAttribute('data-drop-target');
+    fireEvent.drop(dock, { dataTransfer: transfer });
+    expect(dock).not.toHaveAttribute('data-drop-target');
+  });
+
+  it('keeps the desktop visible while inspecting a project and offers immediate archive undo', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.sessions.list': { ok: true, items: [{
         id: 'session-archive',
@@ -512,15 +634,21 @@ describe('PAWOS desktop', () => {
     });
 
     fireEvent.contextMenu(folder, { clientX: 220, clientY: 160 });
-    const sheet = screen.getByRole('dialog', { name: /paw.*项目上下文/i });
+    const sheet = screen.getByRole('dialog', { name: /paw.*项目详情/i });
     expect(screen.queryByRole('menu', { name: /paw.*菜单/i })).not.toBeInTheDocument();
-    fireEvent.click(within(sheet).getByRole('button', { name: /归档 paw/ }));
+    expect(folder).toBeVisible();
+    expect(folder.closest('[data-wayfinder-canvas]')).not.toHaveAttribute('hidden');
+    fireEvent.click(within(sheet).getByRole('button', { name: /移到归档 paw/ }));
     await waitFor(() => expect(document.querySelector('[data-wayfinder-project]')).toBeNull());
     expect(screen.getByRole('main')).toHaveFocus();
+    expect(screen.getByRole('status', { name: '桌面移除结果' })).toHaveTextContent('已移到归档：paw');
+    expect(screen.getByRole('button', { name: '撤销移除 paw' })).toHaveAttribute('aria-keyshortcuts', 'Meta+Z Control+Z');
+    fireEvent.click(screen.getByRole('button', { name: '关闭移除提示' }));
+    expect(screen.queryByRole('status', { name: '桌面移除结果' })).not.toBeInTheDocument();
 
-    fireEvent.contextMenu(screen.getByRole('main'), { clientX: 120, clientY: 90 });
-    fireEvent.click(screen.getByRole('menuitem', { name: '恢复 1 个归档图标' }));
+    fireEvent.keyDown(document, { key: 'z', metaKey: true });
     await waitFor(() => expect(document.querySelector('[data-wayfinder-project]')).toBeInTheDocument());
+    expect(screen.queryByRole('status', { name: '桌面移除结果' })).not.toBeInTheDocument();
   });
 
   it('routes Dock right-click to the App menu and closes every window for that App', () => {
@@ -559,7 +687,7 @@ describe('PAWOS desktop', () => {
     fireEvent.contextMenu(row, { clientX: 260, clientY: 210 });
 
     expect(screen.getByRole('menu', { name: /行内对话.*菜单/ })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /归档 行内对话/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /移到归档 行内对话/ })).toBeInTheDocument();
   });
 
   it('marks a Dock App that only has minimized windows and restores it on click', () => {
