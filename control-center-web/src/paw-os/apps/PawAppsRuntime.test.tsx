@@ -150,7 +150,13 @@ describe('PAWOS App runtime', () => {
           <QueryClientProvider client={queryClient}>
             <PawAppBody
               appId={'extension:zhanggui-wenshu' as never}
-              target={{ kind: 'package', id: '@paw/zhanggui-wenshu', title: '掌柜问数' }}
+              target={{
+                kind: 'package',
+                id: '@paw/zhanggui-wenshu',
+                title: '掌柜问数',
+                version: '0.2.0',
+                resourceCount: 1,
+              }}
             />
           </QueryClientProvider>
         </PawOsAppearanceProvider>

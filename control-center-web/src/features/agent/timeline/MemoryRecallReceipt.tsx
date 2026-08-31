@@ -101,6 +101,7 @@ export function useMemoryRecallReceipts(
   sessionId: string,
   turnIds: string[],
   hasActiveTurn: boolean,
+  active = true,
 ): Record<string, MemoryRecallReceiptView> {
   const transport = useOptionalControlTransport();
   const [receipts, setReceipts] = useState<Record<string, MemoryRecallReceiptView>>({});
@@ -113,7 +114,7 @@ export function useMemoryRecallReceipts(
   }, [sessionId]);
 
   useEffect(() => {
-    if (!transport || !sessionId || turnIds.length === 0) return undefined;
+    if (!active || !transport || !sessionId || turnIds.length === 0) return undefined;
     const controller = new AbortController();
     let loading = false;
     const load = async () => {
@@ -138,12 +139,12 @@ export function useMemoryRecallReceipts(
       }
     };
     void load();
-    const interval = hasActiveTurn ? window.setInterval(() => void load(), 3_000) : 0;
+    const interval = active && hasActiveTurn ? window.setInterval(() => void load(), 3_000) : 0;
     return () => {
       controller.abort();
       if (interval) window.clearInterval(interval);
     };
-  }, [hasActiveTurn, sessionId, transport, turnIdsKey]);
+  }, [active, hasActiveTurn, sessionId, transport, turnIdsKey]);
   return receipts;
 }
 

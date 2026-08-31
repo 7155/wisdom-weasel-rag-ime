@@ -1,15 +1,59 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, renderHook, screen, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
+import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
+import { StubControlTransport } from '@/test/stub-control-transport';
 import {
   MemoryRecallReceipt,
   memoryRecallReceiptFromTrace,
+  useMemoryRecallReceipts,
 } from './MemoryRecallReceipt';
 
 describe('MemoryRecallReceipt', () => {
+  it('pauses context-trace polling while inactive and resumes one poll on activation', async () => {
+    vi.useFakeTimers();
+    const transport = new StubControlTransport('mock', {
+      'agent.session.contextTraces.list': { items: [] },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControlTransportProvider transport={transport}>{children}</ControlTransportProvider>
+    );
+    const { rerender, unmount } = renderHook(
+      ({ active }: { active: boolean }) => useMemoryRecallReceipts('session-memory', ['turn-memory'], true, active),
+      { initialProps: { active: false }, wrapper },
+    );
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(transport.requests).toHaveLength(0);
+
+      rerender({ active: true });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(transport.requests).toHaveLength(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(transport.requests).toHaveLength(2);
+
+      rerender({ active: false });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(transport.requests).toHaveLength(2);
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('projects only an included per-turn memory trace and starts folded', async () => {
     const receipt = memoryRecallReceiptFromTrace(memoryTrace());
     expect(receipt).toMatchObject({

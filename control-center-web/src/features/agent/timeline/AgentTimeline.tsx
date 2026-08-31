@@ -364,6 +364,7 @@ function renderedTurnGeometry(
 }
 
 export function AgentTimeline({
+  active = true,
   sessionId,
   persona,
   loading = false,
@@ -390,6 +391,7 @@ export function AgentTimeline({
   leadingContent,
 }: {
   assistantName?: string;
+  active?: boolean;
   sessionId: string;
   persona?: AgentPersonaV1;
   loading?: boolean;
@@ -472,7 +474,7 @@ export function AgentTimeline({
     const status = state.projections[sessionId]?.turnsById[turnId]?.status;
     return status === 'queued' || status === 'running' || status === 'waiting';
   }));
-  const memoryRecallReceipts = useMemoryRecallReceipts(sessionId, turnOrder, hasActiveTurn);
+  const memoryRecallReceipts = useMemoryRecallReceipts(sessionId, turnOrder, hasActiveTurn, active);
   const activeTurnIndex = Math.floor(
     (visibleRange.startIndex + visibleRange.endIndex) / 2,
   );
