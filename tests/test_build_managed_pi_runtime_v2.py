@@ -353,7 +353,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         )
         self.assertEqual(
             REQUIRED_PI_RUNTIME_BASE_COMMIT,
-            "59a71b235dadb4ad0d67557a8abb0aaa093e68b4",
+            "9c3f93c8b1c409e82e14d458510c146088c44561",
         )
 
     def test_builder_requires_an_explicit_pi_worktree(self) -> None:
@@ -400,6 +400,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ManagedPiRuntimeError, "clean"):
                 _source_revision(root)
+
+    def test_builder_requires_the_provider_safe_pi_commit_without_an_evaluation_escape_hatch(self) -> None:
+        self.assertEqual(
+            "9c3f93c8b1c409e82e14d458510c146088c44561",
+            REQUIRED_PI_RUNTIME_BASE_COMMIT,
+        )
+        builder_source = (
+            ROOT / "scripts" / "build_managed_pi_runtime_v2.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("--evaluation-provider-compat", builder_source)
+        self.assertNotIn("evaluationProviderCompatSha256", builder_source)
 
     def test_builder_requires_reviewed_runtime_ancestry(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-unrelated-pi-") as temporary:

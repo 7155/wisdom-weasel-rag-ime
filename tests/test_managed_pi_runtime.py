@@ -35,6 +35,7 @@ from rag_ime.managed_pi_runtime import (
     read_managed_pi_runtime_retention_plan,
     rollback_managed_pi_runtime,
     snapshot_managed_pi_runtime,
+    snapshot_managed_pi_runtime_payload,
     write_managed_pi_runtime_manifest,
     write_managed_pi_runtime_retention_report,
 )
@@ -66,6 +67,20 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertNotIn("workDocuments", discovered.tools)
         self.assertTrue((self.app_support / "PiRuntime" / POINTER_NAME).is_file())
 
+    def test_install_rejects_evaluation_only_runtime_before_touching_app_support(self) -> None:
+        payload, manifest = self._payload("runtime-evaluation-only")
+        manifest["source"] = {
+            **dict(manifest["source"]),
+            "evaluationOnly": True,
+            "evaluationProviderCompatSha256": "a" * 64,
+        }
+        write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
+
+        with self.assertRaisesRegex(ManagedPiRuntimeError, "evaluation-only"):
+            install_managed_pi_runtime(payload, self.app_support)
+
+        self.assertFalse((self.app_support / "PiRuntime" / POINTER_NAME).exists())
+
     def test_read_only_snapshot_verifies_runtime_without_lifecycle_lock(self) -> None:
         payload, _ = self._payload("runtime-read-only")
         installed = install_managed_pi_runtime(payload, self.app_support)
@@ -82,6 +97,25 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot.runtime_version, installed.runtime_version)
         self.assertEqual(snapshot.manifest_sha256, installed.manifest_sha256)
         self.assertEqual(snapshot.executable, installed.executable)
+
+    def test_direct_payload_snapshot_verifies_without_installing_or_pointer(self) -> None:
+        payload, _ = self._payload("runtime-direct-payload")
+
+        snapshot = snapshot_managed_pi_runtime_payload(
+            payload,
+            expected_pi_version="0.80.7",
+        )
+
+        self.assertEqual("runtime-direct-payload", snapshot.runtime_version)
+        self.assertEqual(payload.resolve(), snapshot.runtime_dir)
+        self.assertFalse((self.app_support / "PiRuntime" / POINTER_NAME).exists())
+
+        snapshot.executable.write_text("tampered\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            ManagedPiRuntimeError,
+            "size mismatch|digest mismatch",
+        ):
+            snapshot_managed_pi_runtime_payload(payload)
 
     def test_read_only_snapshot_still_rejects_runtime_tampering(self) -> None:
         payload, _ = self._payload("runtime-read-only-tampered")

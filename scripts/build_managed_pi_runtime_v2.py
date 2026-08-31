@@ -85,7 +85,7 @@ PROJECT_ROUTING_SKILLS = frozenset(
 ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
 MAX_ROUTING_CARD_CHARS = 200
 SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "59a71b235dadb4ad0d67557a8abb0aaa093e68b4"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "9c3f93c8b1c409e82e14d458510c146088c44561"
 REQUIRED_RUNTIME_METHODS = (
     "hello",
     "health",
@@ -334,14 +334,10 @@ def _verify_pi_worktree(pi_root: Path) -> str:
     return commit
 
 
-def _source_revision(pi_root: Path) -> tuple[str, str]:
-    """Return a clean, ancestry-verified source revision.
+def _source_revision(pi_root: Path) -> str:
+    """Return a clean, ancestry-verified source revision."""
 
-    ``dirty_digest`` remains in the tuple for callers that consume the old
-    shape, but production builds never encode or accept a dirty source.
-    """
-
-    return _verify_pi_worktree(pi_root), ""
+    return _verify_pi_worktree(pi_root)
 
 
 def _verified_session_runtime_contract(pi_root: Path) -> tuple[dict[str, object], str]:
@@ -1611,7 +1607,7 @@ def main(argv: list[str] | None = None) -> int:
     package_json = pi_root / "packages" / "coding-agent" / "package.json"
     esbuild = pi_root / "node_modules" / ".bin" / "esbuild"
     try:
-        source_commit, dirty_digest = _source_revision(pi_root)
+        source_commit = _source_revision(pi_root)
         if args.preflight:
             if not package_json.is_file() or not esbuild.is_file():
                 raise ManagedPiRuntimeError(
@@ -1691,8 +1687,7 @@ def main(argv: list[str] | None = None) -> int:
             + product_commit.encode("ascii")
         ).hexdigest()[:10]
         commit_prefix = source_commit.split("+", 1)[0][:12]
-        dirty_suffix = f"-d{dirty_digest[:8]}" if dirty_digest else ""
-        runtime_version = f"pi-{pi_version}-{commit_prefix}{dirty_suffix}-raghost-{packager_digest}"
+        runtime_version = f"pi-{pi_version}-{commit_prefix}-raghost-{packager_digest}"
         destination = (
             Path(args.output).expanduser().resolve()
             if args.output

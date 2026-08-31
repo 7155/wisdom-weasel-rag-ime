@@ -177,6 +177,42 @@ def snapshot_managed_pi_runtime(
     )
 
 
+def snapshot_managed_pi_runtime_payload(
+    payload: str | Path,
+    *,
+    expected_pi_version: str = "",
+) -> ManagedPiRuntimeInstallation:
+    """Verify one explicit immutable payload without installing or reading Current.json."""
+
+    payload_input = Path(payload).expanduser()
+    if payload_input.is_symlink():
+        raise ManagedPiRuntimeError("managed Pi runtime payload must not be a symlink")
+    try:
+        payload_root = payload_input.resolve(strict=True)
+    except OSError as exc:
+        raise ManagedPiRuntimeError("managed Pi runtime payload is missing") from exc
+    if not payload_root.is_dir():
+        raise ManagedPiRuntimeError("managed Pi runtime payload must be a real directory")
+    manifest_path = payload_root / MANIFEST_NAME
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise ManagedPiRuntimeError("managed Pi runtime manifest is missing")
+    manifest_bytes = _read_limited_bytes(manifest_path)
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    manifest = _parse_json_object(manifest_bytes, manifest_path)
+    runtime_version = _safe_version(
+        manifest.get("runtimeVersion"),
+        label="runtime version",
+    )
+    return _load_installation(
+        runtime_root=payload_root.parent,
+        runtime_dir=payload_root,
+        expected_manifest_sha256=manifest_sha256,
+        expected_pi_version=expected_pi_version,
+        verify_all_files=True,
+        expected_runtime_version=runtime_version,
+    )
+
+
 def inspect_managed_pi_runtime(
     app_support: str | Path,
     *,
@@ -258,6 +294,14 @@ def install_managed_pi_runtime(
     manifest_bytes = _read_limited_bytes(source_manifest)
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
     manifest = _parse_json_object(manifest_bytes, source_manifest)
+    source_provenance = manifest.get("source")
+    if (
+        isinstance(source_provenance, Mapping)
+        and source_provenance.get("evaluationOnly") is True
+    ):
+        raise ManagedPiRuntimeError(
+            "evaluation-only managed Pi runtime cannot be installed"
+        )
     version = _safe_version(manifest.get("runtimeVersion"), label="runtime version")
 
     # Verify the complete payload before the application support tree changes.
