@@ -13,6 +13,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ControlCenterCutoverTests(unittest.TestCase):
+    def test_fresh_web_install_authorizes_electron_runtime(self) -> None:
+        workspace = (
+            ROOT / "control-center-web" / "pnpm-workspace.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("allowBuilds:\n", workspace)
+        self.assertIn("  electron: true\n", workspace)
+
     def test_web_suite_uses_the_proven_bounded_worker_count(self) -> None:
         package = json.loads(
             (ROOT / "control-center-web" / "package.json").read_text(
