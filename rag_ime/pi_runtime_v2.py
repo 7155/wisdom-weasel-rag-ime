@@ -2651,14 +2651,34 @@ class PiRuntimeHostManager:
         )
         return result.get("cancelled") is True
 
-    def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
+    def set_model(
+        self,
+        session_id: str,
+        *,
+        provider: str,
+        model_id: str,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]:
         normalized_provider = model_reference_part(provider, field="provider", maximum=80)
         normalized_model = model_reference_part(model_id, field="modelId", maximum=160)
+        if max_tokens is not None and (
+            isinstance(max_tokens, bool)
+            or int(max_tokens) < 16
+            or int(max_tokens) > 262_144
+        ):
+            raise ValueError("Pi model output budget must be between 16 and 262144")
         self.ensure(session_id)
+        params: dict[str, object] = {
+            "sessionId": session_id,
+            "provider": normalized_provider,
+            "modelId": normalized_model,
+        }
+        if max_tokens is not None:
+            params["maxTokens"] = int(max_tokens)
         selected = public_pi_model(
             self._require_client().send(
                 "session.model.set",
-                {"sessionId": session_id, "provider": normalized_provider, "modelId": normalized_model},
+                params,
             )
         )
         if not selected:

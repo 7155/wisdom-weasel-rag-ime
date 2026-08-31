@@ -134,6 +134,7 @@ class AgentRuntimeDriver(Protocol):
         *,
         provider: str,
         model_id: str,
+        max_tokens: int | None = None,
     ) -> dict[str, object]: ...
 
     def set_thinking_level(self, session_id: str, *, level: str) -> dict[str, object]: ...

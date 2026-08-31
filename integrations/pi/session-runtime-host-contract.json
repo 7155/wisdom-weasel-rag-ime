@@ -108,7 +108,7 @@
       "async dispatchRoom(options:",
       "abort(): Promise<PiSessionAbortReceipt>",
       "async compact(customInstructions?: string)",
-      "async setModel(provider: string, modelId: string)",
+      "async setModel(provider: string, modelId: string, maxTokens?: number)",
       "setThinkingLevel(level:"
     ],
     "pluginManager": [

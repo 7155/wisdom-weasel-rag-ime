@@ -44,7 +44,7 @@ class FakeMemoryRuntime:
             }
         ]
         self.prompts: list[dict[str, object]] = []
-        self.model_requests: list[dict[str, str]] = []
+        self.model_requests: list[dict[str, object]] = []
         self.thinking_requests: list[dict[str, str]] = []
         self.aborted: list[str] = []
         self.closed: list[str] = []
@@ -61,9 +61,15 @@ class FakeMemoryRuntime:
         *,
         provider: str,
         model_id: str,
+        max_tokens: int | None = None,
     ) -> dict[str, object]:
         self.model_requests.append(
-            {"sessionId": session_id, "provider": provider, "modelId": model_id}
+            {
+                "sessionId": session_id,
+                "provider": provider,
+                "modelId": model_id,
+                "maxTokens": max_tokens,
+            }
         )
         self.sessions.set_model_profile(session_id, f"{provider}/{model_id}")
         return {
@@ -72,7 +78,7 @@ class FakeMemoryRuntime:
                 "id": model_id,
                 "thinkingLevels": ["off", "high", "max"],
                 "contextWindow": 372_000,
-                "maxTokens": 128_000,
+                "maxTokens": max_tokens or 128_000,
             }
         }
 
@@ -263,6 +269,7 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         self.assertFalse(session["codexSkillsEnabled"])
         self.assertEqual(runtime.model_requests[0]["provider"], "openai-codex")
         self.assertEqual(runtime.model_requests[0]["modelId"], "gpt-5.6-luna")
+        self.assertEqual(runtime.model_requests[0]["maxTokens"], 16_384)
         self.assertEqual(runtime.thinking_requests[0]["level"], "max")
         self.assertEqual(response["profile"], MEMORY_CURATION_PROFILE)
         self.assertEqual(response["thinkingLevel"], "max")
@@ -271,7 +278,35 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
             "gateway_internal_session",
         )
         self.assertEqual(response["receipt"]["contextWindow"], 372_000)
+        self.assertEqual(response["receipt"]["maxTokens"], 16_384)
+        self.assertEqual(response["receipt"]["catalogMaxTokens"], 128_000)
         self.assertNotIn('"messages"', str(runtime.prompts[0]["message"])[:300])
+
+    def test_provider_output_budget_is_capped_by_catalog_and_runtime_protocol(self) -> None:
+        runtime = FakeMemoryRuntime(
+            self.sessions,
+            self.events,
+            models=[
+                {
+                    "provider": "openai-codex",
+                    "id": "gpt-5.6-luna",
+                    "thinkingLevels": ["max"],
+                    "contextWindow": 372_000,
+                    "maxTokens": 500_000,
+                }
+            ],
+        )
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_protocol_budget")
+
+        response = executor.complete(
+            messages=[{"role": "user", "content": '{"v":2,"e":[]}'}],
+            max_tokens=500_000,
+        )
+
+        self.assertEqual(runtime.model_requests[0]["maxTokens"], 262_144)
+        self.assertEqual(response["receipt"]["maxTokens"], 262_144)
+        self.assertEqual(response["receipt"]["catalogMaxTokens"], 500_000)
 
     def test_authoritative_settlement_completes_when_product_terminal_events_are_lost(
         self,
@@ -872,6 +907,29 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(MemoryModelUnavailable, "below 272000"):
+            self._executor(runtime)
+
+        self.assertEqual(
+            self.sessions.list(include_internal=True, include_archived=True),
+            [],
+        )
+
+    def test_model_with_too_small_output_budget_fails_closed_without_session(self) -> None:
+        runtime = FakeMemoryRuntime(
+            self.sessions,
+            self.events,
+            models=[
+                {
+                    "provider": "openai-codex",
+                    "id": "gpt-5.6-luna",
+                    "thinkingLevels": ["max"],
+                    "contextWindow": 372_000,
+                    "maxTokens": 8_192,
+                }
+            ],
+        )
+
+        with self.assertRaisesRegex(MemoryModelUnavailable, "below 16384"):
             self._executor(runtime)
 
         self.assertEqual(

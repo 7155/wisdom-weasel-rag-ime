@@ -23,6 +23,9 @@ REQUIRED_MEMORY_THINKING_LEVEL = "max"
 MINIMUM_MEMORY_CONTEXT_TOKENS = 272_000
 MAXIMUM_MEMORY_PROMPT_CHARS = 1_000_000
 DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS = 1_200.0
+MINIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS = 16_384
+DEFAULT_MEMORY_PROVIDER_OUTPUT_TOKENS = 24_000
+MAXIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS = 262_144
 
 
 class MemoryModelUnavailable(RuntimeError):
@@ -44,6 +47,7 @@ class MemorySessionRuntime(Protocol):
         *,
         provider: str,
         model_id: str,
+        max_tokens: int | None = None,
     ) -> dict[str, object]: ...
 
     def set_thinking_level(
@@ -328,6 +332,11 @@ class GovernedMemoryModelExecutor:
 
             model_receipt: dict[str, object] = {}
             thinking_receipt: dict[str, object] = {}
+            catalog_max_tokens = int(self.selected_model.get("maxTokens") or 0)
+            provider_max_tokens = _memory_provider_max_tokens(
+                max_tokens,
+                catalog_max_tokens=catalog_max_tokens,
+            )
             started = time.monotonic()
             try:
                 model_receipt = dict(
@@ -335,6 +344,7 @@ class GovernedMemoryModelExecutor:
                         session_id,
                         provider=self.provider,
                         model_id=self.model_id,
+                        max_tokens=provider_max_tokens,
                     )
                 )
                 thinking_receipt = dict(
@@ -349,6 +359,7 @@ class GovernedMemoryModelExecutor:
                     provider=self.provider,
                     model_id=self.model_id,
                     thinking_level=self.thinking_level,
+                    max_tokens=provider_max_tokens,
                 )
                 self._mark_request_running(
                     request_id=str(request["request_id"]),
@@ -402,7 +413,8 @@ class GovernedMemoryModelExecutor:
                     "modelId": self.model_id,
                     "thinkingLevel": self.thinking_level,
                     "contextWindow": int(self.selected_model.get("contextWindow") or 0),
-                    "maxTokens": int(self.selected_model.get("maxTokens") or 0),
+                    "maxTokens": provider_max_tokens,
+                    "catalogMaxTokens": catalog_max_tokens,
                     "inputSha256": input_sha256,
                     "inputChars": len(prompt),
                     "elapsedMs": elapsed_ms,
@@ -624,6 +636,12 @@ class GovernedMemoryModelExecutor:
             raise MemoryModelUnavailable(
                 f"selected memory model context window is below "
                 f"{MINIMUM_MEMORY_CONTEXT_TOKENS}: {context_window}"
+            )
+        catalog_max_tokens = int(selected.get("maxTokens") or 0)
+        if catalog_max_tokens < MINIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS:
+            raise MemoryModelUnavailable(
+                "selected memory model output budget is below "
+                f"{MINIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS}: {catalog_max_tokens}"
             )
         return selected
 
@@ -1198,6 +1216,19 @@ def _session_prompt(
     return "".join(parts)
 
 
+def _memory_provider_max_tokens(
+    requested: int | None,
+    *,
+    catalog_max_tokens: int,
+) -> int:
+    requested_tokens = int(requested or DEFAULT_MEMORY_PROVIDER_OUTPUT_TOKENS)
+    return min(
+        max(MINIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS, requested_tokens),
+        catalog_max_tokens,
+        MAXIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS,
+    )
+
+
 def _verify_runtime_receipts(
     model_receipt: Mapping[str, object],
     thinking_receipt: Mapping[str, object],
@@ -1205,6 +1236,7 @@ def _verify_runtime_receipts(
     provider: str,
     model_id: str,
     thinking_level: str,
+    max_tokens: int,
 ) -> None:
     selected = model_receipt.get("selected")
     if not isinstance(selected, Mapping):
@@ -1214,6 +1246,8 @@ def _verify_runtime_receipts(
         or str(selected.get("id") or selected.get("modelId") or "") != model_id
     ):
         raise MemoryModelUnavailable("Pi selected a different Memory model")
+    if int(selected.get("maxTokens") or 0) != max_tokens:
+        raise MemoryModelUnavailable("Pi did not apply the Memory output budget")
     if str(thinking_receipt.get("thinkingLevel") or "") != thinking_level:
         raise MemoryModelUnavailable("Pi selected a different Memory thinking level")
 

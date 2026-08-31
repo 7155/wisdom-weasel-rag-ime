@@ -1810,7 +1810,18 @@ class PiRuntimeManager:
         del request_id
         return False
 
-    def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
+    def set_model(
+        self,
+        session_id: str,
+        *,
+        provider: str,
+        model_id: str,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]:
+        if max_tokens is not None:
+            raise PiRuntimeError(
+                "bounded model output selection requires Pi Runtime Host protocol v2"
+            )
         normalized_provider = model_reference_part(provider, field="provider", maximum=80)
         normalized_model = model_reference_part(model_id, field="modelId", maximum=160)
         self.ensure(session_id)

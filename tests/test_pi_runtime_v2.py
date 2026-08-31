@@ -712,6 +712,43 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
+    def test_model_selection_forwards_a_bounded_output_budget(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        selected = self.runtime.available_models()[0]
+        client = self.runtime._require_client()
+        original_send = client.send
+        captured: dict[str, object] = {}
+
+        def send(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method == "session.model.set":
+                captured.update(dict(params or {}))
+                return {**selected, "maxTokens": int(params["maxTokens"])}
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=send):
+            receipt = self.runtime.set_model(
+                session_id,
+                provider=str(selected["provider"]),
+                model_id=str(selected["id"]),
+                max_tokens=16_384,
+            )
+
+        self.assertEqual(captured["sessionId"], session_id)
+        self.assertEqual(captured["maxTokens"], 16_384)
+        self.assertEqual(receipt["selected"]["maxTokens"], 16_384)
+
     def test_stateless_completion_timeout_cancels_only_that_request(self) -> None:
         first_client = self.runtime._host()
         first_host_identity = first_client.host_identity

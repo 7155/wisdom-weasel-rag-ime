@@ -272,6 +272,21 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("plugins.catalog", serialized)
         self.assertIn("plugins.package.prepare", serialized)
         self.assertIn("plugins.uninstall", serialized)
+
+    def test_session_contract_accepts_provider_output_budget_parameter(self) -> None:
+        contract = json.loads(
+            SESSION_RUNTIME_CONTRACT.read_text(encoding="utf-8")
+        )
+
+        session_markers = contract["requiredSourceMarkers"]["session"]
+        self.assertIn(
+            "async setModel(provider: string, modelId: string, maxTokens?: number)",
+            session_markers,
+        )
+        self.assertNotIn(
+            "async setModel(provider: string, modelId: string)",
+            session_markers,
+        )
         self.assertEqual(
             contract["handlerSources"],
             {
