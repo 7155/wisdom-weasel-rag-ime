@@ -421,6 +421,11 @@ wait_for_gateway_port_release
 launchctl enable "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
 sleep 0.2
 bootstrap_launch_agent
+if ! launchctl kickstart "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+  echo "launchctl could not start $DOMAIN/$LABEL after bootstrap" >&2
+  launchctl print "$DOMAIN/$LABEL" >&2 || true
+  exit 1
+fi
 
 deadline=$((SECONDS + 45))
 while (( SECONDS < deadline )); do

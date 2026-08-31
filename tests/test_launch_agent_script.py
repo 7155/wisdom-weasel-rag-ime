@@ -321,6 +321,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("expected_prompt_mode", script_source)
         self.assertIn("expected_max_tokens", script_source)
         self.assertNotIn("for _attempt in {1..20}", script_source)
+        self.assertIn('launchctl kickstart "$DOMAIN/$LABEL"', script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
 
     def test_sidecar_installer_resolves_active_hot_model_without_previous_plist(self) -> None:
@@ -1232,6 +1233,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn('model_profile.get("maxTokens")', script_source)
         self.assertIn("runtime_fingerprint = str(payload.get(\"modelFingerprint\")", script_source)
         self.assertIn("matching_sha256", script_source)
+        self.assertIn('launchctl kickstart "$DOMAIN/$LABEL"', script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
 
     def test_mlx_installer_ignores_checkout_python_from_existing_launch_agent(self) -> None:

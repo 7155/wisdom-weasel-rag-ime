@@ -348,6 +348,8 @@ class ControlCenterCutoverTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("wait_for_gateway_port_release", gateway_installer)
         self.assertIn("bootstrap_launch_agent", gateway_installer)
+        self.assertIn('launchctl kickstart "$DOMAIN/$LABEL"', gateway_installer)
+        self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', gateway_installer)
         self.assertIn("restore_web_source_dist", gateway_installer)
         self.assertIn("trap cleanup_web_install_state EXIT", gateway_installer)
         self.assertIn('ditto "$WEB_SOURCE_DIR/." "$WEB_INSTALL_TEMP"', gateway_installer)
