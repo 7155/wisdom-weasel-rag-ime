@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-08-31T09:58:09Z",
+  "generatedAt": "2026-09-01T03:15:00+08:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 907
+      "pathCount": 912
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 511
+      "pathCount": 540
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 38
+      "pathCount": 43
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 1538,
+    "pathCount": 1577,
     "dispositionCounts": {
       "delete_old_implementation": 38,
-      "keep_release": 1500
+      "keep_release": 1539
     },
     "groupCounts": {
-      "control_center_release_ui": 907,
+      "control_center_release_ui": 912,
       "desktop_semantic_accessibility": 19,
       "installation_reliability": 18,
-      "memory_curation": 38,
+      "memory_curation": 43,
       "project_harness": 40,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 511
+      "session_room_skill_flow": 540
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -78,7 +78,7 @@
     }
   ],
   "verification": {
-    "projectHarness": "bounded docs and exact 1538-path inventory prepared from the candidate index; final HEAD check follows the exact commit",
+    "projectHarness": "bounded docs and exact 1577-path inventory prepared from the candidate index; final HEAD check follows the exact commit",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
@@ -92,7 +92,7 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1538/1538 candidate paths classified; 1500 retained and 38 old implementations deleted",
+    "releaseScopeCoverage": "1577/1577 candidate paths classified; 1539 retained and 38 old implementations deleted",
     "repositoryPublicAudit": "Current 2026-08-31 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
@@ -105,6 +105,279 @@
     "pluginLifecycleProposalFocusedTests": "2/2 focused Tool lifecycle tests passed; all five lifecycle operations stop at a bound preview and expose no apply operation"
   },
   "items": [
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-agent-validation-reject-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the privacy-safe RAG Agent recovery, cost comparison, and Reject receipt used by the metrics ledger."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-validation-failure-20260831.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the bounded failed answer-validation setup receipt instead of hiding a non-green run."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-validation-20260831.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the privacy-safe frozen Enterprise RAG retrieval Validation receipt."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-tag-reranker-readiness-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the privacy-safe readiness receipt that blocks an invalid Graph+Tag versus Qwen3 comparison before scoring."
+    },
+    {
+      "path": "eval/interview-metrics/runs/trace-agent-provider-bootstrap-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the privacy-safe candidate Runtime receipt for the Trace Agent Provider bootstrap diagnosis."
+    },
+    {
+      "path": "integrations/pi/skills/rag-retrieval-optimization/SKILL.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the label-blind RAG coverage plan, bounded critic, and no-Tool synthesis audit contract."
+    },
+    {
+      "path": "rag_ime/rag_agent_ablation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep answer-only RAG Agent selection, independent denominators, citation resolution, and scoring."
+    },
+    {
+      "path": "rag_ime/rag_benchmark_agent.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep source-loop identity in the isolated RAG benchmark Tool contract."
+    },
+    {
+      "path": "scripts/aggregate_rag_agent_ablation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Validation-only nonformal RAG Agent aggregation with explicit metric denominators."
+    },
+    {
+      "path": "scripts/canary_rag_agent_ablation_checkpoint.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep deterministic checkpoint/resume and lane-reuse canary coverage."
+    },
+    {
+      "path": "scripts/promote_rag_agent_validation.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep strict Validation Keep/Reject authority and one-shot held-out gate production."
+    },
+    {
+      "path": "scripts/run_rag_agent_ablation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the pinned Sol RAG Agent runner, frozen identities, atomic held-out authority, and private orphan recovery."
+    },
+    {
+      "path": "scripts/run_rag_retrieval_experiment.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the frozen strong naive dense candidate in retrieval selection."
+    },
+    {
+      "path": "tests/test_aggregate_rag_agent_ablation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep nonformal aggregation, identity drift, overlap, and denominator regressions."
+    },
+    {
+      "path": "tests/test_canary_rag_agent_ablation_checkpoint.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep deterministic checkpoint canary regression coverage."
+    },
+    {
+      "path": "tests/test_canary_rag_benchmark_agent.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep pinned Pi payload and RAG benchmark canary regressions."
+    },
+    {
+      "path": "tests/test_promote_rag_agent_validation.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep strict Keep/Reject, identity, runtime, and held-out gate authority regressions."
+    },
+    {
+      "path": "tests/test_rag_agent_ablation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep answer-case selection and separated scoring denominator regressions."
+    },
+    {
+      "path": "tests/test_rag_benchmark_agent.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep source-loop and isolated Tool gateway contract regressions."
+    },
+    {
+      "path": "tests/test_run_rag_agent_ablation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep frozen Runner, copied-gate one-shot, resume, orphan recovery, privacy, and report identity regressions."
+    },
+    {
+      "path": "tests/test_run_rag_retrieval_experiment.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep frozen retrieval candidate-set regression coverage."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-replay-case.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the immutable same-case Trace replay contract used by Runtime and generated frontend types."
+    },
+    {
+      "path": "rag_ime/contracts/json/trace-verification-receipt.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the authoritative Trace before/after verification receipt contract."
+    },
+    {
+      "path": "rag_ime/db/migrations/0179_trace_replay_verification.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the append-only persistence migration for Trace replay cases and verification receipts."
+    },
+    {
+      "path": "rag_ime/trace_replay_verification.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep frozen same-case replay verification with sandbox and identity gates."
+    },
+    {
+      "path": "tests/test_trace_replay_http.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep local-only HTTP regression coverage for Trace replay and verification receipts."
+    },
+    {
+      "path": "tests/test_trace_replay_verification.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep deterministic same-case Trace replay authority and comparison regressions."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_212_212.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted Extension App self-build and vertical evaluation requirement ledger."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-replay-case.v1.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated immutable Trace replay contract consumed by the Control Center."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/trace-verification-receipt.v1.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated same-case Trace verification receipt contract."
+    },
+    {
+      "path": "control-center-web/src/features/observability/vertical-app-eval-projection.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the vertical Extension App evaluation projection regression coverage."
+    },
+    {
+      "path": "control-center-web/src/features/observability/vertical-app-eval-projection.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the user-visible multi-stage Extension App evaluation projection."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/assets/frontend-template/App.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the source-isolated Extension App frontend template regression."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/assets/frontend-template/App.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the minimal App-owned conversation template instead of embedding the full Agent UI."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/assets/frontend-template/app.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the responsive Extension App frontend template styling."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/assets/frontend-template/message-identity.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App message identity regression that prevents stale send acknowledgements."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/assets/frontend-template/message-identity.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the App-owned message identity contract used by generated frontends."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/references/frontend-contract.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the required frontend ownership, interaction, responsive and verification contract for self-built Apps."
+    },
+    {
+      "path": "integrations/pi/skills/pawos-app-builder/references/lifecycle-and-verification.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the sandbox, install, retry, Trace and Eval lifecycle contract for self-built Apps."
+    },
     {
       "path": ".gitignore",
       "status": "modified",

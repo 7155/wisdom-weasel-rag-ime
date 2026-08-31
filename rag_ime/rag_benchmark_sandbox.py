@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
@@ -923,7 +924,24 @@ class RagBenchmarkSandbox:
             service = self._services.pop(clean_run_id, None)
             if service is not None:
                 service.close()
-            shutil.rmtree(run_path)
+            cleanup_error: OSError | None = None
+            for attempt in range(3):
+                try:
+                    shutil.rmtree(run_path)
+                except FileNotFoundError:
+                    break
+                except OSError as exc:
+                    cleanup_error = exc
+                    if exc.errno != errno.ENOTEMPTY or attempt == 2:
+                        raise
+                    time.sleep(0.01)
+                else:
+                    break
+            if run_path.exists():
+                raise RagBenchmarkSandboxError(
+                    "benchmark run cleanup did not remove its marker-bound directory",
+                    code="cleanup_failed",
+                ) from cleanup_error
             return {
                 "schemaVersion": RAG_BENCHMARK_SANDBOX_SCHEMA_VERSION,
                 "runId": clean_run_id,

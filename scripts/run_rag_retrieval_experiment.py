@@ -162,6 +162,7 @@ GRAPH_CANDIDATES: tuple[dict[str, object], ...] = (
 )
 
 RERANK_BASE_CANDIDATES: tuple[dict[str, object], ...] = (
+    DEFAULT_CANDIDATES[2],
     DEFAULT_CANDIDATES[1],
     DEFAULT_CANDIDATES[4],
     DEFAULT_CANDIDATES[5],

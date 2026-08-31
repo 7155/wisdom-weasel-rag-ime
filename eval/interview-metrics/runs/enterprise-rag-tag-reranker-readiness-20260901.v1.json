@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "paw.enterprise-rag-tag-reranker-readiness.v1",
+  "runId": "enterprise-rag-tag-reranker-readiness-20260901-v1",
+  "status": "blocked_missing_enterprise_graph",
+  "evaluationScope": "validation-only",
+  "heldOutEvaluated": false,
+  "qrelsReadByReadinessAudit": false,
+  "memoryMutationPerformed": false,
+  "sample": {
+    "validationQueryCount": 16,
+    "corpusDocumentCount": 5101,
+    "corpusChunkCount": 29846
+  },
+  "observedEnterpriseGraph": {
+    "knowledgeGraphNodes": 0,
+    "knowledgeGraphEdges": 0,
+    "knowledgeGraphExtractions": 0,
+    "knowledgeGraphJobs": 0,
+    "knowledgeGraphStateRows": 0,
+    "candidateTagFieldsPresent": false,
+    "candidateGraphFieldsPresent": false
+  },
+  "compatibility": {
+    "memoryTagCandidateIdentity": "memory_item_id",
+    "enterpriseCandidateIdentity": "document_id+chunk_id",
+    "directlyCompatible": false
+  },
+  "measuredQwen3Reference": {
+    "model": "mlx-community/Qwen3-Reranker-0.6B-4bit@5f324548f1d20c2b5a450f126fc6ef2fb1126524",
+    "candidateDepth": 40,
+    "finalDepth": 10,
+    "mrr": 0.8671875,
+    "ndcgAt10": 0.8872028251913067,
+    "recallAt10": 0.9553571428571429
+  },
+  "decision": {
+    "tagMetrics": null,
+    "currentMeasuredStage": "qwen3_reranker",
+    "reason": "The frozen enterprise Knowledge corpus has no source-bound Tag or Graph projection. A keyword-derived tag heuristic would not be the governed PAW Tag system and cannot support a fair replacement claim.",
+    "nextGate": "Build an enterprise graph whose active nodes and edges bind sourceChunkId, evidenceSpan, contentHash and revision; then compare no-rerank, Qwen3 and Graph+Tag on the same candidate pool and final depth."
+  },
+  "hashes": {
+    "privateReportFileSha256": "8c68beadaf73ea050d67ae1a956ce6b4437bcc03ac8ae504cd18cf7d06a14aea",
+    "privateReportSemanticSha256": "8ec6f720b6a36604acb51fe7892cc7c23cf110e02e5180f272a77cb7f7f3963b",
+    "privateReceiptFileSha256": "85d549bb9f61e3b12a7bc451c4fd0d3327b761d650a981f35c5c05b7cd6d57f2",
+    "validationCorpusSha256": "dcd9409a8f08b312c6acf95ff58ec097a85eb20bb04952374c467efe456cc7a9",
+    "validationQueriesSha256": "b4d0b4465e75a1d993478cf8675e62e77f9b87b80e979f9e005c3532613f8556",
+    "qwenWinnerReportSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+    "knowledgeSqliteSha256": "5a9e1d3d3d88025292ebbcb763bd86bea7fb578a6ba1f36e21142252aaa042a9"
+  },
+  "claim": {
+    "allowed": "A source-grounded Validation readiness audit found zero enterprise Knowledge graph rows and no Tag identity on 5,101 documents and 29,846 chunks, so Graph+Tag was not scored against Qwen3. The measured Qwen3 reference remains MRR 0.867, nDCG@10 0.887 and Recall@10 0.955 on 16 Validation queries.",
+    "forbidden": "Graph+Tag is slower, worse, better, or equivalent to Qwen3; Held-out passed; the existing Memory Tag graph can directly rank enterprise chunks; or a blocked readiness audit is a completed A/B."
+  }
+}

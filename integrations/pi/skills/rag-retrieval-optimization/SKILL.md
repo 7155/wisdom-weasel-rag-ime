@@ -85,7 +85,14 @@ copying a tutorial's chunk size, weights, threshold or top K.
     Before synthesis, build a compact claim-to-source evidence ledger: split
     every requested sub-item into atomic facts, preserve source names, values,
     dates, comparison directions and actions, and attach each fact only to
-    directly supporting source IDs. Query only uncovered facts. The final
+    directly supporting source IDs. Before the first retrieval, derive a
+    label-blind coverage plan from the question syntax: preserve the named
+    subject and every requested open noun or multi-part slot in the query,
+    without inserting guessed answers. Query only uncovered facts when the
+    declared retrieval budget permits another round. When the execution
+    profile permits only one retrieval, cover all planned slots in that single
+    query and use the no-Tool post-synthesis audit below instead of violating
+    the budget. The final
     answer covers every requested sub-item without lossy summarization, and
     its citations are the deduplicated union of the sources actually used.
     Treat open noun slots such as goals, measures, services, reasons, trends,
@@ -107,13 +114,21 @@ copying a tutorial's chunk size, weights, threshold or top K.
     contradict the premise, answer those supported fields. Abstain or attach a
     conflict note only when the source explicitly conflicts or a core requested
     field lacks direct evidence.
-    In an explicit high-quality Agentic mode, two independent retrieval roles
-    may inspect every case before one parent verifier search. After the first
-    synthesis, run exactly one fixed same-session coverage audit for every real
-    case. It reuses the existing evidence, calls no Tool, performs no repeat
-    delegation, never sees labels, references, qrels, or metrics, and preserves
-    a complete answer unchanged when no slot is empty. Freeze and report this
-    policy and retain both synthesis receipts. This is a deterministic
+    In every Skill-enabled answer-synthesis mode, after the first complete
+    synthesis run exactly one fixed same-session coverage audit for every real
+    case. It reuses the existing evidence, calls no Tool, never sees labels,
+    references, qrels, metrics, or scorer feedback, and preserves a complete
+    answer unchanged when no slot is empty. This audit must re-read coordinated
+    items and directly responsive neighboring sentences, check cross-document
+    evidence, and return the entire answer protocol rather than a patch.
+    In an explicit high-quality Agentic mode, one no-Tool coverage critic may
+    inspect the parent's first-pass evidence and propose a label-blind query
+    for each uncovered slot before one bounded parent supplemental retrieval.
+    The critic is not a retrieval role and its completion contract must require
+    zero child Tool calls. After the first synthesis, the same fixed audit runs
+    after the parent has consumed both retrieval rounds; it performs no repeat
+    delegation. Freeze and report this policy and retain both synthesis
+    receipts. This is a deterministic
     degradation guard, not best-of-N answer selection.
 
 ## Optimization Loop

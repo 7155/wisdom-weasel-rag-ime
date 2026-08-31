@@ -21,7 +21,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.agent_service import AgentService  # noqa: E402
-from rag_ime.managed_pi_runtime import snapshot_managed_pi_runtime  # noqa: E402
+from rag_ime.managed_pi_runtime import (  # noqa: E402
+    snapshot_managed_pi_runtime,
+    snapshot_managed_pi_runtime_payload,
+)
 from rag_ime.pi_runtime import PiRuntimeConfig  # noqa: E402
 from rag_ime.rag_benchmark_agent import (  # noqa: E402
     RagBenchmarkAgentGateway,
@@ -360,14 +363,23 @@ def _isolated_runtime_config(
     run_root: Path,
     *,
     agent_config: Path,
+    runtime_payload: Path | None = None,
 ) -> PiRuntimeConfig:
     source_app_support = Path(
         os.environ.get("RAG_IME_APP_SUPPORT_DIR")
         or Path.home() / "Library" / "Application Support" / "RagIme"
     ).expanduser()
-    installation = snapshot_managed_pi_runtime(
-        source_app_support,
-        expected_pi_version=os.environ.get("RAG_IME_PI_VERSION", "").strip(),
+    expected_pi_version = os.environ.get("RAG_IME_PI_VERSION", "").strip()
+    installation = (
+        snapshot_managed_pi_runtime_payload(
+            runtime_payload,
+            expected_pi_version=expected_pi_version,
+        )
+        if runtime_payload is not None
+        else snapshot_managed_pi_runtime(
+            source_app_support,
+            expected_pi_version=expected_pi_version,
+        )
     )
     overrides = {
         "RAG_IME_APP_SUPPORT_DIR": str(run_root / "runtime-support"),
@@ -406,11 +418,8 @@ def _isolated_runtime_config(
                 spool_dir
             ),
             "RAG_IME_BENCHMARK_RUNTIME_ENTRYPOINT": str(installation.executable),
-            "RAG_IME_PI_SKILL_PATHS": str(
-                ROOT / "integrations" / "pi" / "skills" / "rag-retrieval-optimization"
-            ),
-            "RAG_IME_PI_SKILL_ROUTING_CARDS": str(
-                ROOT / "integrations" / "pi" / "skill-routing-cards.json"
+            "RAG_IME_BENCHMARK_PINNED_RUNTIME_MANIFEST_SHA256": (
+                installation.manifest_sha256 if runtime_payload is not None else ""
             ),
         }
     )

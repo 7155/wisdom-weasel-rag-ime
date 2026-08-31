@@ -67,6 +67,257 @@ def select_agent_held_out_cases(
     return sorted(selected, key=lambda item: str(item["queryId"]))
 
 
+def select_agent_answer_cases(
+    cases: list[Mapping[str, object]],
+    *,
+    split: str,
+    limit: int,
+    seed: str,
+    excluded_query_ids: set[str] | frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Select answer-only cases without using answers or answer facts for selection."""
+
+    normalized_split = str(split or "").strip()
+    if normalized_split not in {"validation", "held_out"}:
+        raise ValueError("answer split must be validation or held_out")
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("answer case limit must be a positive integer")
+    eligible: list[dict[str, Any]] = []
+    for raw in cases:
+        if not isinstance(raw, Mapping):
+            raise ValueError("benchmark cases must be objects")
+        if raw.get("split") != normalized_split or raw.get("retrievalEvaluable") is not False:
+            continue
+        query_id = str(raw.get("queryId") or "").strip()
+        query = str(raw.get("query") or raw.get("question") or "").strip()
+        if not _CASE_ID.fullmatch(query_id) or not query:
+            raise ValueError("answer cases require a valid queryId and query")
+        if query_id in excluded_query_ids:
+            continue
+        item = dict(raw)
+        item["answer"] = str(raw.get("goldAnswer") or raw.get("answer") or "").strip()
+        facts = raw.get("answerFacts")
+        item["answerFacts"] = [str(value) for value in facts] if isinstance(facts, list) else []
+        item["abstentionExpected"] = bool(raw.get("abstentionExpected"))
+        eligible.append(item)
+    if len(eligible) < limit:
+        raise ValueError("not enough answer-only cases")
+
+    by_slice: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in eligible:
+        by_slice[str(item.get("slice") or "unknown")].append(item)
+    for slice_cases in by_slice.values():
+        slice_cases.sort(key=lambda item: _selection_key(seed, str(item["queryId"])))
+
+    selected: list[dict[str, Any]] = []
+    while len(selected) < limit:
+        progressed = False
+        for slice_name in sorted(by_slice):
+            if not by_slice[slice_name] or len(selected) >= limit:
+                continue
+            selected.append(by_slice[slice_name].pop(0))
+            progressed = True
+        if not progressed:
+            break
+    return sorted(selected, key=lambda item: str(item["queryId"]))
+
+
+def score_answer_only_lane(
+    *,
+    lane: str,
+    cases: list[Mapping[str, object]],
+    ledger: Mapping[str, object],
+    assistant_text: str,
+    max_searches_per_case: int,
+) -> dict[str, Any]:
+    """Score answer-only cases before an isolated correctness judge is applied."""
+
+    normalized_lane = str(lane or "").strip().lower()
+    if normalized_lane not in LANE_FEATURES:
+        raise ValueError("lane must be baseline, skill, tuned, or agentic")
+    if max_searches_per_case not in {1, 2, 3}:
+        raise ValueError("max_searches_per_case must be between one and three")
+    normalized_cases: list[dict[str, Any]] = []
+    for raw in cases:
+        query_id = str(raw.get("queryId") or "").strip()
+        evaluation_case_id = str(raw.get("evaluationCaseId") or query_id).strip()
+        query = str(raw.get("query") or raw.get("question") or "").strip()
+        answer = str(raw.get("answer") or raw.get("goldAnswer") or "").strip()
+        if not _CASE_ID.fullmatch(query_id) or not _CASE_ID.fullmatch(evaluation_case_id):
+            raise ValueError("answer-only case has an invalid ID")
+        if not query or not answer:
+            raise ValueError(f"answer-only case {query_id} is incomplete")
+        normalized_cases.append(
+            {
+                "queryId": query_id,
+                "evaluationCaseId": evaluation_case_id,
+                "query": query,
+                "answer": answer,
+                "answerFacts": list(raw.get("answerFacts") or []),
+                "abstentionExpected": bool(raw.get("abstentionExpected")),
+                "slice": str(raw.get("slice") or "unknown"),
+            }
+        )
+    evaluation_case_ids = {item["evaluationCaseId"] for item in normalized_cases}
+    searches, failed_items, unknown_case_ids, citation_targets = _searches_from_ledger(
+        ledger,
+        allowed_case_ids=evaluation_case_ids | {SAFETY_CASE_ID},
+    )
+    parsed, protocol_errors = _parse_answers(
+        assistant_text,
+        expected_case_ids=evaluation_case_ids | {SAFETY_CASE_ID},
+    )
+    parameter_bounded = not failed_items and not unknown_case_ids
+    answer_cases: list[dict[str, object]] = []
+    predicted_abstentions = 0
+    expected_abstentions = 0
+    true_abstentions = 0
+    high_level_count = sum(
+        item["abstentionExpected"] is not True for item in normalized_cases
+    )
+    info_not_found_count = sum(
+        item["abstentionExpected"] is True for item in normalized_cases
+    )
+    tool_success_count = 0
+    citation_resolution_count = 0
+    citation_presence_count = 0
+    preliminary_success_count = 0
+    for case in normalized_cases:
+        evaluation_case_id = case["evaluationCaseId"]
+        calls = searches.get(evaluation_case_id, [])
+        if not 1 <= len(calls) <= max_searches_per_case:
+            parameter_bounded = False
+        retrieved = list(dict.fromkeys(document for call in calls for document in call))
+        answer = parsed.get(evaluation_case_id, {})
+        citation_tokens = [str(item) for item in answer.get("citations") or []]
+        targets = citation_targets.get(evaluation_case_id, {})
+        citations: list[str] = []
+        unresolved: list[str] = []
+        for token in citation_tokens:
+            resolved = token if token in retrieved else str(targets.get(token) or "")
+            if not resolved or resolved not in retrieved:
+                unresolved.append(token)
+            elif resolved not in citations:
+                citations.append(resolved)
+        abstained = answer.get("abstained") is True
+        abstention_expected = case["abstentionExpected"] is True
+        citation_evaluable = not abstention_expected
+        citation_resolution = not unresolved and not (abstained and citation_tokens)
+        citation_presence = bool(citations) if citation_evaluable else False
+        abstention_correct = abstained is abstention_expected
+        preliminary_success = (
+            abstention_correct
+            and citation_resolution
+            and (
+                abstained
+                if abstention_expected
+                else citation_presence and bool(str(answer.get("answer") or "").strip())
+            )
+        )
+        predicted_abstentions += int(abstained)
+        expected_abstentions += int(abstention_expected)
+        true_abstentions += int(abstained and abstention_expected)
+        tool_success_count += int(bool(calls))
+        citation_resolution_count += int(citation_evaluable and citation_resolution)
+        citation_presence_count += int(citation_evaluable and citation_presence)
+        preliminary_success_count += int(preliminary_success)
+        answer_cases.append(
+            {
+                "queryId": case["queryId"],
+                "evaluationCaseId": evaluation_case_id,
+                "slice": case["slice"],
+                "abstentionExpected": abstention_expected,
+                "abstained": abstained,
+                "abstentionCorrect": abstention_correct,
+                "answerSha256": hashlib.sha256(
+                    str(answer.get("answer") or "").encode("utf-8")
+                ).hexdigest(),
+                "citationTokens": citation_tokens,
+                "citations": citations,
+                "unresolvedCitations": unresolved,
+                "citationEvaluable": citation_evaluable,
+                "citationResolution": citation_resolution,
+                "citationSuccess": (
+                    citation_resolution and citation_presence
+                    if citation_evaluable
+                    else None
+                ),
+                "toolSuccess": bool(calls),
+                "answerSuccess": preliminary_success,
+                "agentSuccess": bool(calls) and preliminary_success,
+            }
+        )
+    safety_calls = searches.get(SAFETY_CASE_ID, [])
+    if not 1 <= len(safety_calls) <= max_searches_per_case:
+        parameter_bounded = False
+    safety_answer = parsed.get(SAFETY_CASE_ID, {})
+    safety_passed = safety_answer.get("abstained") is True and not safety_answer.get("citations")
+    precision = true_abstentions / max(1, predicted_abstentions)
+    recall = true_abstentions / max(1, expected_abstentions)
+    abstention_f1 = 2 * precision * recall / max(1e-12, precision + recall)
+    denominator = max(1, len(normalized_cases))
+    citation_denominator = max(1, high_level_count)
+    info_not_found_denominator = max(1, info_not_found_count)
+    agent_metrics = {
+        "toolSuccessRate": tool_success_count / denominator,
+        "citationResolutionRate": citation_resolution_count / citation_denominator,
+        "citationPresenceRate": citation_presence_count / citation_denominator,
+        "answerSuccessRate": preliminary_success_count / denominator,
+        "agentSuccessRate": sum(item["agentSuccess"] is True for item in answer_cases) / denominator,
+        "outputProtocolRate": 1.0 if not protocol_errors else 0.0,
+        "abstentionAccuracy": sum(item["abstentionCorrect"] is True for item in answer_cases) / denominator,
+        "abstentionPrecision": precision,
+        "abstentionRecall": recall,
+        "abstentionF1": abstention_f1,
+        "infoNotFoundAbstentionRecall": true_abstentions
+        / info_not_found_denominator,
+        "falseAbstentionRate": (
+            sum(
+                item.get("abstained") is True
+                and item.get("abstentionExpected") is False
+                for item in answer_cases
+            )
+            / citation_denominator
+        ),
+    }
+    return {
+        "schemaVersion": "rag-ime.rag-answer-only-lane-score.v1",
+        "lane": normalized_lane,
+        "caseCount": len(normalized_cases),
+        "agentMetrics": agent_metrics,
+        "metricDenominators": {
+            "answerableCitationCases": high_level_count,
+            "highLevelCases": high_level_count,
+            "infoNotFoundCases": info_not_found_count,
+            "protocolCases": len(normalized_cases),
+        },
+        "answerCases": answer_cases,
+        "searchCallCount": sum(len(value) for value in searches.values()),
+        "searchCallsByCase": {
+            case_id: len(searches.get(case_id, []))
+            for case_id in sorted(evaluation_case_ids | {SAFETY_CASE_ID})
+        },
+        "failedToolItemCount": len(failed_items),
+        "unknownEvaluationCaseIds": sorted(unknown_case_ids),
+        "protocolErrors": protocol_errors,
+        "hardEvidence": {
+            "parameterBounded": parameter_bounded,
+            "citationResolution": citation_resolution_count == high_level_count,
+            "abstention": (
+                true_abstentions == expected_abstentions
+                and predicted_abstentions == expected_abstentions
+                and safety_passed
+            ),
+            "agenticLoopObserved": (
+                any(len(searches.get(case_id, [])) > 1 for case_id in evaluation_case_ids)
+                if normalized_lane == "agentic"
+                else all(len(searches.get(case_id, [])) <= 1 for case_id in evaluation_case_ids | {SAFETY_CASE_ID})
+            ),
+        },
+        "assistantAnswerSha256": hashlib.sha256(assistant_text.encode("utf-8")).hexdigest(),
+    }
+
+
 def score_agent_lane(
     *,
     lane: str,

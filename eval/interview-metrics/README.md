@@ -36,6 +36,34 @@
    确认后交给普通可写 Agent，最后由新 Trace 权威复检；`121` 是测试数，不是
    修复的 bug 数。
 
+2026-08-31 另新增一条 **validation-only 诊断数据**：在冻结的 16 个
+Enterprise RAG 检索问题上比较 14 个候选后，选出的混合检索加重排配置相对词法
+floor 将 nDCG@10 从 `0.6128` 提到 `0.8872`、MRR 从 `0.6042` 提到
+`0.8672`、Recall@10 从 `0.6719` 提到 `0.9554`。held-out 尚未打开，因此这条
+数据不进入上面的正式 headline，也不能称为已 Keep 或生产提升。
+
+同一套企业语料上的 `Graph + Tag → shortlist` 目前不能和 Qwen3 reranker 做公平
+A/B：2026-09-01 的只读 readiness 审计确认，5,101 篇文档与 29,846 个 chunk
+对应的 Knowledge graph node、edge、extraction 均为 `0`，语料也没有可连接
+`document_id + chunk_id` 的受治理 Tag。PAW 现有 Tag 图属于 Personal Memory，输出
+的是 `memory_item_id` 分数；直接拿关键词造 Tag 会换掉被测系统。因此这项结果记为
+`blocked_missing_enterprise_graph`，而不是编一个比 reranker 更快或更准的数字。
+
+2026-09-01 的冻结 answer-only Validation 又验证了恢复与淘汰链：人为硬中断
+后，Runner 收口了 `1/1` 个私有 orphan Session/Knowledge sandbox，并在恢复跑中
+复用 `1/4` 条 Agent lane（`25%` lane 复用，不是端到端提速）。同一 4 题切片上，
+Agentic lane 相对 baseline 的延迟从 `71.1s` 增到 `242.6s`（`+241.05%`）、
+Tool 调用从 `6` 增到 `11`（`+83.33%`），AI Judge 正确率从 `0.5` 降到 `0`，
+因此生成了严格 `Reject` 回执，未创建 held-out gate。
+
+同日还记录了一次 Trace Agent 的 **bootstrap 边界**：安装态 Pi 在 Provider
+请求阶段因不支持的 `max_output_tokens` 字段失败，Trace Agent 尚未调用 Skill 或
+Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用同 OAuth、同模型、
+同基础 payload 做 HTTP/WS A/B，定位 Pi wire contract 后构建未安装 candidate；
+相同两个失败 Session 在 candidate 中由 Trace Agent 完成 `skill_load + inspect`，
+独立给出 `unsupported-max-output-tokens` finding。这里能说的是“诊断链恢复并生成
+未应用候选修复”，不能说安装态已修复或 Trace Agent 已完成自安装。
+
 完整数值、命令、来源和限制在
 [`evidence-ledger.v1.json`](evidence-ledger.v1.json)。账本是当前唯一的机器可读
 指标入口。
@@ -61,6 +89,9 @@
   90.96%–91.16%），且改变前缀的对照组命中为 0。
 - 建立 Trace“诊断报告 → 用户确认 → 普通可写 Agent 修复 → 新 Trace 权威复检”
   闭环；当前聚焦回归后端 41/41、前端 80/80，并明确测试数不冒充 bug 数。
+- 用 4 组同 OAuth、模型和基础请求的 HTTP/WebSocket A/B 将一次 Trace 启动失败
+  定位到 Pi Codex wire field；隔离修复候选让同一只读诊断从 0 次 Tool 调用推进到
+  `skill_load + trace_diagnostics.inspect` 和完整报告，候选安装态仍单独验收。
 
 ### 面试展开时应主动补充
 
@@ -74,7 +105,10 @@
 - Prompt cache 的 `90.96%–91.16%` 是两次热轮“未缓存输入 token”降幅，不是
   账单节省、总 token 节省或所有真实 Session 的平均值。
 - Trace 的 `41 + 80` 是聚焦回归测试，不是 121 个线上故障，也不替代安装态和
-  前台真实修复验收。
+  前台真实修复验收；当前还没有同一 Replay Case 的 before/after Ground Truth
+  Verification Receipt，因此不能计算“Trace 修复率”或效果 delta。
+- Trace Provider bootstrap 的 4-case A/B 与 `0 → 2` Tool 调用来自隔离候选 Runtime；
+  在正式安装并用新 Trace/Eval 复检前，不能说当前安装态已修好。
 
 ## 禁止当正向 headline 的数字
 
@@ -84,6 +118,9 @@
 | MiniMind 语义基线 | 后端 p50/p95 `117/251 ms`，但人工 Top-1/Top-3 都是 `0` | 返回三个候选和低延迟不等于候选有效 |
 | Memory cache 临时探针 | 热缓存约 `0.02 ms`，但 projection backlog `941`、retrieval docs `0` | 走的是不新鲜的合成/legacy 路径，不能声称生产 Memory 亚毫秒召回 |
 | Agent 四档消融 | `pending_formal_run` | 没有正式 Luna 四档报告，不能拿旧回放或失败报告补分 |
+| Enterprise RAG validation | nDCG@10 `0.6128 → 0.8872`、MRR `0.6042 → 0.8672`、Recall@10 `0.6719 → 0.9554` | 仅 16 个 validation query；held-out 未运行，不能称泛化、正式 Keep 或生产提升 |
+| Enterprise RAG Agent Validation | baseline → agentic：延迟 `71.1s → 242.6s`、Tool `6 → 11`、Judge 正确率 `0.5 → 0`；恢复复用 `1/4` lane | 4 个 answer case，结论是 `Reject`；25% 仅指 lane 复用，索引仍重建，held-out 未运行 |
+| Graph+Tag reranker readiness | 企业投影为 `0` node、`0` edge、`0` extraction，Memory Tag 身份不能直接对应 Knowledge chunk | 这是正确阻断伪 A/B 的 readiness 审计，不是 Graph+Tag 与 Qwen3 的性能比较 |
 | 产品发行 | 当前安装开发版与公开发行是两条证据；`releaseStatus` 仍为 `blocked` | 单测、build 或安装开发版都不等于签名、公证、干净机或完整前台验收 |
 
 ## 证据等级

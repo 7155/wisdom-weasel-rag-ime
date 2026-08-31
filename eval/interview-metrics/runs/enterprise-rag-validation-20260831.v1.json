@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "paw.enterprise-rag-validation-receipt.v1",
+  "runId": "enterprise-rag-validation-20260831-v1",
+  "status": "evaluated_not_promoted",
+  "evaluationScope": "validation-only",
+  "heldOutEvaluated": false,
+  "localOnly": true,
+  "uploaded": false,
+  "measuredAt": "2026-08-31T19:11:04+08:00",
+  "elapsedMs": 1536352,
+  "objective": "ndcgAtK.10",
+  "decision": "candidate_selected_not_promoted",
+  "sourceObservation": {
+    "repositoryRevision": "17bcf08ca3bd4a7780960ffa1ac230698fe80717",
+    "workingTreeDirty": true,
+    "runnerSha256": "e2e4be2d9f69cc7f6f2cbcd3c2644ad0ff51e6012347b9d35c55479106383b94",
+    "boundary": "The raw report did not persist source revision or dirty state. Revision, dirty state and runner hash were observed immediately after completion and are not promoted to start-time provenance."
+  },
+  "hashes": {
+    "rawFileSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+    "reportSha256": "7eb90244fecb40163142a877dd21e86e3dba01d22f0e4a93019c5ca6930df511",
+    "selectionReceiptSha256": "81399c366bec631ce3b99630dd6ec4cc29ad9fc80ffd897f03577af9a1c266f4",
+    "sourcePreparedSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "datasetSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb",
+    "validationSplitSha256": "b030721445f14df0bc5b69dd046a99687c5d846aa42d7c2f318e33f44d6fa6a3",
+    "winnerConfigSha256": "11d259402bbf92d8961aeaa6fc77d846be7af9ef336af7bd380f21d9bf428c39"
+  },
+  "dataset": {
+    "benchmarkId": "enterprise-rag-smoke-04256c7b5b46-local-slice-6e4ebaf07f",
+    "source": "EnterpriseRAG-Bench",
+    "revision": "hf:69916e31c68aa5963c00248fd7f0bc12d04fd235; repository:d36685e273713975ee20299bbf1ab64165575b3c",
+    "split": "validation",
+    "corpusDocumentCount": 5101,
+    "sourceBytes": 24856736,
+    "corpusIncluded": false
+  },
+  "sample": {
+    "validationQueryCount": 16,
+    "candidateCount": 14,
+    "unit": "frozen validation retrieval queries"
+  },
+  "configuration": {
+    "chunking": {
+      "strategy": "general",
+      "size": 1200,
+      "overlap": 160
+    },
+    "embedding": {
+      "provider": "mlx-bert",
+      "fingerprint": "mlx-bert:PAW-bge-small-en-v1.5-mlx-q8-g32-5c38ec7:cfg-d8b05bad520d",
+      "dimensions": 384,
+      "bits": 8,
+      "groupSize": 32,
+      "vectorCount": 29846,
+      "vectorCoverage": 1.0,
+      "backend": "sqlite-exact"
+    },
+    "reranker": {
+      "provider": "mlx-qwen3-reranker",
+      "modelReference": "mlx-community/Qwen3-Reranker-0.6B-4bit@5f324548f1d20c2b5a450f126fc6ef2fb1126524",
+      "fingerprint": "mlx-qwen3-reranker:sha256:6bf8d4df70374b0ed0b592ade3c76bf6e3d2a1826e50f13eb2e8632e886dca44",
+      "candidateDepth": 40,
+      "finalDepth": 10,
+      "scoredPairs": 935,
+      "fallbackCount": 0,
+      "errorCount": 0,
+      "elapsedMs": 255121
+    }
+  },
+  "metrics": {
+    "lexicalFloor": {
+      "mrr": 0.6041666666666666,
+      "ndcgAt10": 0.6128006234377468,
+      "recallAt10": 0.671875
+    },
+    "strongNaiveDense": {
+      "mrr": 0.6770833333333334,
+      "ndcgAt10": 0.6705101783930602,
+      "recallAt10": 0.7135416666666666
+    },
+    "winner": {
+      "mrr": 0.8671875,
+      "ndcgAt10": 0.8872028251913067,
+      "recallAt10": 0.9553571428571429
+    }
+  },
+  "hardGates": {
+    "corpusFrozenBeforeCandidateEvaluation": true,
+    "heldOutLabelsHiddenDuringSelection": true,
+    "heldOutMetricsSuppressedDuringChunkSelection": true,
+    "independentRerankerReady": true,
+    "knowledgeGraphReady": true,
+    "lunaKnowledgeGraphExtractionPassed": true,
+    "memoryMutationNotPerformed": true,
+    "qrelsNotPassedToRetriever": true
+  },
+  "environment": {
+    "os": "macOS 27.0",
+    "arch": "arm64",
+    "cpu": "Apple M4",
+    "logicalCpuCount": 10,
+    "experimentPython": "3.12.8"
+  },
+  "provenanceGaps": [
+    "The raw report did not persist sourceRevision, workingTreeDirty or dirtyDiffSha256.",
+    "The raw report did not persist an exact command receipt or dependency lock hash.",
+    "No per-query p50 or p95 latency distribution was recorded.",
+    "The selected validation candidate has not consumed the one-shot held-out gate."
+  ],
+  "claim": {
+    "allowed": "On a frozen 16-query Enterprise RAG validation slice, 14 retrieval candidates were compared and one hybrid plus reranking configuration was selected; nDCG@10 moved from 0.612801 to 0.887203, MRR from 0.604167 to 0.867188 and Recall@10 from 0.671875 to 0.955357 against the lexical floor.",
+    "forbidden": "Held-out passed, production improved, official leaderboard score, a promoted Keep decision, or generalization to every enterprise corpus."
+  }
+}

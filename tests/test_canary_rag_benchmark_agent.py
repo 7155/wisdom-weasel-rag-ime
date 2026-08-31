@@ -3,8 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from rag_ime.pi_runtime import PiRuntimeConfig
 from rag_ime.rag_benchmark_agent import RagBenchmarkAgentGateway
 from rag_ime.rag_benchmark_sandbox import RagBenchmarkSandbox, RagBenchmarkSandboxTool
 
@@ -13,6 +15,7 @@ from scripts.canary_rag_benchmark_agent import (
     CANARY_VALIDATION_SUITES,
     REQUIRED_OPERATIONS,
     _canary_prompt,
+    _isolated_runtime_config,
     _last_assistant_text,
     _public_tool_diagnostics,
     _start_rag_benchmark_gateway,
@@ -21,6 +24,60 @@ from scripts.canary_rag_benchmark_agent import (
 
 
 class RagBenchmarkAgentCanaryTests(unittest.TestCase):
+    def test_isolated_runtime_does_not_reinject_a_bundled_skill(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-canary-runtime-") as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime-host" / "cli.mjs"
+            extension = root / "runtime-host" / "extension-placeholder.mjs"
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text("", encoding="utf-8")
+            extension.write_text("", encoding="utf-8")
+            discovered = PiRuntimeConfig(
+                enabled=True,
+                executable=runtime,
+                extension_path=extension,
+                agent_dir=root / "source-agent",
+                session_dir=root / "source-sessions",
+                logs_dir=root / "source-logs",
+                node_executable="node",
+                provider_environment={"EXISTING_PROVIDER_VALUE": "kept"},
+                tools=("agents",),
+                pi_version="0.84.2",
+                protocol_version="2",
+            )
+            installation = SimpleNamespace(
+                executable=runtime,
+                extension_path=extension,
+                node_executable="node",
+                pi_version="0.84.2",
+                protocol_version="2",
+                tools=("agents",),
+            )
+
+            with (
+                patch(
+                    "scripts.canary_rag_benchmark_agent.snapshot_managed_pi_runtime",
+                    return_value=installation,
+                ),
+                patch(
+                    "scripts.canary_rag_benchmark_agent.PiRuntimeConfig.from_environment",
+                    return_value=discovered,
+                ),
+            ):
+                config = _isolated_runtime_config(
+                    root / "run",
+                    agent_config=root / "run" / "agent" / "config",
+                )
+
+        self.assertEqual(
+            "kept",
+            config.provider_environment["EXISTING_PROVIDER_VALUE"],
+        )
+        self.assertNotIn("RAG_IME_PI_SKILL_PATHS", config.provider_environment)
+        self.assertNotIn(
+            "RAG_IME_PI_SKILL_ROUTING_CARDS",
+            config.provider_environment,
+        )
     def test_canary_requires_blind_validation_before_and_after_rebuild(self) -> None:
         prompt = _canary_prompt(include_skill=True)
 

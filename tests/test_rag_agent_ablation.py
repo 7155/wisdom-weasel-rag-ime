@@ -6,12 +6,166 @@ import unittest
 from rag_ime.rag_agent_ablation import (
     SAFETY_CASE_ID,
     flat_retrieval_metrics,
+    score_answer_only_lane,
     score_agent_lane,
+    select_agent_answer_cases,
     select_agent_held_out_cases,
 )
 
 
 class RagAgentAblationTests(unittest.TestCase):
+    def test_answer_case_selection_is_split_aware_and_label_independent(self) -> None:
+        cases = [
+            {
+                "queryId": f"q-{split}-{index}",
+                "query": f"question {split} {index}",
+                "split": split,
+                "slice": "high_level" if index == 0 else "info_not_found",
+                "retrievalEvaluable": False,
+                "goldAnswer": f"secret {index}",
+                "answerFacts": [f"fact {index}"],
+                "abstentionExpected": index == 1,
+            }
+            for split in ("validation", "held_out")
+            for index in range(2)
+        ]
+
+        selected = select_agent_answer_cases(
+            cases,
+            split="validation",
+            limit=2,
+            seed="fixed",
+        )
+        changed = copy.deepcopy(cases)
+        for item in changed:
+            item["goldAnswer"] = "changed"
+            item["answerFacts"] = ["changed"]
+        selected_changed = select_agent_answer_cases(
+            changed,
+            split="validation",
+            limit=2,
+            seed="fixed",
+        )
+
+        self.assertEqual(
+            [item["queryId"] for item in selected],
+            [item["queryId"] for item in selected_changed],
+        )
+        self.assertEqual({"validation"}, {item["split"] for item in selected})
+
+    def test_answer_only_score_tracks_resolved_citations_and_real_abstention_cases(self) -> None:
+        cases = [
+            {
+                "queryId": "q-high",
+                "evaluationCaseId": "case-01",
+                "query": "What are the revenue streams?",
+                "answer": "Usage and support",
+                "answerFacts": ["usage", "support"],
+                "abstentionExpected": False,
+                "slice": "high_level",
+            },
+            {
+                "queryId": "q-missing",
+                "evaluationCaseId": "case-02",
+                "query": "What is the missing value?",
+                "answer": "Evidence is unavailable",
+                "answerFacts": ["must abstain"],
+                "abstentionExpected": True,
+                "slice": "info_not_found",
+            },
+        ]
+        ledger = {
+            "items": [
+                self._search("case-01", ["doc-a"]),
+                self._search("case-02", []),
+                self._search(SAFETY_CASE_ID, []),
+            ]
+        }
+        assistant = (
+            '{"cases":['
+            '{"caseId":"case-01","answer":"Usage and support",'
+            '"citations":["doc-a"],"abstained":false},'
+            '{"caseId":"case-02","answer":"Evidence is unavailable",'
+            '"citations":[],"abstained":true},'
+            '{"caseId":"safety-not-found","answer":"Evidence is unavailable",'
+            '"citations":[],"abstained":true}'
+            "]}"
+        )
+
+        score = score_answer_only_lane(
+            lane="tuned",
+            cases=cases,
+            ledger=ledger,
+            assistant_text=assistant,
+            max_searches_per_case=1,
+        )
+
+        self.assertEqual(1.0, score["agentMetrics"]["citationResolutionRate"])
+        self.assertEqual(1.0, score["agentMetrics"]["abstentionAccuracy"])
+        self.assertEqual(1.0, score["agentMetrics"]["abstentionPrecision"])
+        self.assertEqual(1.0, score["agentMetrics"]["abstentionRecall"])
+        self.assertEqual(
+            {
+                "answerableCitationCases": 1,
+                "highLevelCases": 1,
+                "infoNotFoundCases": 1,
+                "protocolCases": 2,
+            },
+            score["metricDenominators"],
+        )
+        self.assertTrue(score["hardEvidence"]["abstention"])
+
+    def test_answer_only_citation_denominator_excludes_abstention_cases(self) -> None:
+        cases = [
+            {
+                "queryId": "q-high",
+                "evaluationCaseId": "case-01",
+                "query": "What are the revenue streams?",
+                "answer": "Usage and support",
+                "answerFacts": ["usage", "support"],
+                "abstentionExpected": False,
+                "slice": "high_level",
+            },
+            {
+                "queryId": "q-missing",
+                "evaluationCaseId": "case-02",
+                "query": "What is the missing value?",
+                "answer": "Evidence is unavailable",
+                "answerFacts": ["must abstain"],
+                "abstentionExpected": True,
+                "slice": "info_not_found",
+            },
+        ]
+        ledger = {
+            "items": [
+                self._search("case-01", []),
+                self._search("case-02", []),
+                self._search(SAFETY_CASE_ID, []),
+            ]
+        }
+        assistant = (
+            '{"cases":['
+            '{"caseId":"case-01","answer":"unsupported",'
+            '"citations":[],"abstained":false},'
+            '{"caseId":"case-02","answer":"Evidence is unavailable",'
+            '"citations":[],"abstained":true},'
+            '{"caseId":"safety-not-found","answer":"Evidence is unavailable",'
+            '"citations":[],"abstained":true}'
+            "]}"
+        )
+
+        score = score_answer_only_lane(
+            lane="tuned",
+            cases=cases,
+            ledger=ledger,
+            assistant_text=assistant,
+            max_searches_per_case=1,
+        )
+
+        self.assertEqual(0.0, score["agentMetrics"]["citationPresenceRate"])
+        self.assertEqual(1.0, score["agentMetrics"]["infoNotFoundAbstentionRecall"])
+        self.assertEqual(1, score["metricDenominators"]["answerableCitationCases"])
+
     def test_selection_is_slice_aware_and_does_not_depend_on_labels_or_answers(self) -> None:
         cases = [
             {

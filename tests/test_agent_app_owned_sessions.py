@@ -493,7 +493,7 @@ class AgentAppOwnedSessionMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, (177, 178))
+                self.assertEqual(upgraded.applied_versions, (177, 178, 179))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -568,7 +568,7 @@ class AgentAppOwnedSessionMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, (178,))
+                self.assertEqual(upgraded.applied_versions, (178, 179))
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 self.assertEqual(
                     conn.execute(

@@ -8,13 +8,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.run_rag_retrieval_experiment import _reranker_acceptance_passes
+from scripts.run_rag_retrieval_experiment import (
+    DEFAULT_CANDIDATES,
+    RERANK_BASE_CANDIDATES,
+    _reranker_acceptance_passes,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class RunRagRetrievalExperimentTests(unittest.TestCase):
+    def test_reranker_matrix_includes_the_current_equal_weight_hybrid_winner(self) -> None:
+        current_winner = DEFAULT_CANDIDATES[2]
+
+        self.assertIn(current_winner, RERANK_BASE_CANDIDATES)
+
     def test_reranker_gate_accepts_used_fingerprint_bound_persistent_cache(self) -> None:
         cached = {
             "configured": True,

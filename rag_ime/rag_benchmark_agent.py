@@ -46,6 +46,7 @@ _TOOL_CALL_FIELDS = frozenset(
         "sessionId",
         "tool",
         "toolCallId",
+        "sourceLoopId",
         "args",
         "loadReceiptId",
     }
@@ -477,6 +478,9 @@ class RagBenchmarkAgentGateway:
                 sandbox_owner_id.encode("utf-8")
             ).hexdigest(),
             "toolCallId": str(request["toolCallId"]),
+            "sourceLoopIdSha256": hashlib.sha256(
+                str(request.get("sourceLoopId") or "").encode("utf-8")
+            ).hexdigest(),
             "loadReceiptId": runtime_load_receipt_id,
             "authorizationReceiptId": authorization_receipt_id,
             "authorizationSource": (
@@ -819,6 +823,11 @@ def _benchmark_tool_call(payload: Mapping[str, object]) -> dict[str, object]:
         "sessionId": session_id,
         "tool": "rag_benchmark",
         "toolCallId": tool_call_id,
+        "sourceLoopId": (
+            _text(payload.get("sourceLoopId"), "sourceLoopId", maximum=240)
+            if payload.get("sourceLoopId") is not None
+            else ""
+        ),
         "args": dict(args),
         "loadReceiptId": load_receipt_id,
     }

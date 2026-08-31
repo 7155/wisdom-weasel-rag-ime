@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import errno
 import json
 import math
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -170,6 +172,36 @@ class RagBenchmarkSandboxTests(unittest.TestCase):
         self.assertTrue(cleaned["deleted"])
         self.assertFalse((self.root / f"run-{run_id}").exists())
         self.assertEqual("must survive sandbox cleanup\n", self.outside.read_text(encoding="utf-8"))
+
+    def test_cleanup_retries_partial_directory_not_empty_race(self) -> None:
+        run_id = self.sandbox.create_run("session-retry")["runId"]
+        run_path = self.root / f"run-{run_id}"
+        original_rmtree = shutil.rmtree
+        calls = 0
+
+        def flaky_rmtree(path: Path) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                original_rmtree(path)
+                Path(path).mkdir(mode=0o700)
+                (Path(path) / ".DS_Store").write_bytes(b"finder race")
+                raise OSError(errno.ENOTEMPTY, "Directory not empty", str(path))
+            original_rmtree(path)
+
+        with patch(
+            "rag_ime.rag_benchmark_sandbox.shutil.rmtree",
+            side_effect=flaky_rmtree,
+        ):
+            cleaned = self.sandbox.cleanup(
+                "session-retry",
+                run_id,
+                confirm_text="DELETE_BENCHMARK_RUN",
+            )
+
+        self.assertTrue(cleaned["deleted"])
+        self.assertEqual(2, calls)
+        self.assertFalse(run_path.exists())
 
     def test_search_projection_preserves_score_tristate_and_rejects_invalid_measurements(self) -> None:
         run_id = self.sandbox.create_run("session-score")["runId"]

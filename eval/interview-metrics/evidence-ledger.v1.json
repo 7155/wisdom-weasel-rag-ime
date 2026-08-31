@@ -1,18 +1,18 @@
 {
   "schemaVersion": "paw.interview-metrics-ledger.v1",
-  "generatedAt": "2026-08-30",
-  "sourceRevision": "3bc250f01fb27af0f7aa5e459ab9e9382a6d12e3",
+  "generatedAt": "2026-09-01",
+  "sourceRevision": "17bcf08ca3bd4a7780960ffa1ac230698fe80717",
   "workingTreeSnapshot": {
     "dirty": true,
-    "scope": "The product source was clean at sourceRevision; only this metrics lane and its privacy-safe receipts were dirty while the 2026-08-30 measurements ran.",
+    "scope": "The 2026-08-31 workspace contains concurrent PAWOS, Trace and RAG experiment changes. The Enterprise RAG receipt records the exact runner hash observed immediately after completion and does not pretend that the raw report captured a clean source revision.",
     "releaseStatus": "blocked",
     "productStatus": "installed_development"
   },
   "validation": {
-    "lastValidatedAt": "2026-08-30",
-    "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
+    "lastValidatedAt": "2026-09-01",
+    "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests.test_promote_rag_agent_validation tests.test_aggregate_rag_agent_ablation tests.test_rag_agent_ablation tests.test_rag_benchmark_agent tests.test_rag_benchmark_sandbox tests.test_canary_rag_benchmark_agent tests.test_run_rag_agent_ablation tests.test_run_rag_retrieval_experiment tests.test_canary_rag_agent_ablation_checkpoint tests.test_interview_metrics tests.test_rag_interview_scorecard tests.test_session_recall_effect_eval tests.test_trace_runtime tests.test_trace_adapters tests.test_vertical_agent_harness tests.test_rag_retrieval_optimization_skill",
     "ledgerValid": true,
-    "testsPassed": 64
+    "testsPassed": 178
   },
   "evidenceLevels": [
     "E1",
@@ -98,6 +98,166 @@
         "qrels are product-derived rather than an official CRUD-RAG retrieval leaderboard",
         "the current checkout contains the scorecard and hashes but not the ignored private source report",
         "latency and resource cost are not present in the public scorecard"
+      ]
+    },
+    {
+      "id": "knowledge.enterprise.validation.selection.20260831",
+      "domain": "knowledge",
+      "title": "Enterprise RAG validation-only retrieval selection",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-08-31",
+      "values": {
+        "validationQueryCount": 16,
+        "candidateCount": 14,
+        "winnerConfigSha256": "11d259402bbf92d8961aeaa6fc77d846be7af9ef336af7bd380f21d9bf428c39",
+        "lexicalFloor": {
+          "mrr": 0.604167,
+          "ndcgAt10": 0.612801,
+          "recallAt10": 0.671875
+        },
+        "strongNaiveDense": {
+          "mrr": 0.677083,
+          "ndcgAt10": 0.67051,
+          "recallAt10": 0.713542
+        },
+        "winner": {
+          "mrr": 0.867188,
+          "ndcgAt10": 0.887203,
+          "recallAt10": 0.955357
+        }
+      },
+      "sample": {
+        "count": 16,
+        "unit": "frozen Enterprise RAG validation retrieval queries",
+        "candidateConfigurations": 14
+      },
+      "reproduction": {
+        "command": "cd \"$ENTERPRISE_RAG_LAB\" && \"$EXPERIMENT_PYTHON\" \"$PAW_REPO/scripts/run_rag_retrieval_experiment.py\" --prepared artifacts/smoke-v1/host/prepared.json --sandbox-root runs/validation-bge-qwen3-rerank-v1 --output results/validation-bge-qwen3-rerank-v1.json --evaluation-scope validation-only --embedding-provider mlx-bert --embedding-model \"$BGE_MODEL\" --embedding-dimensions 384 --embedding-query-prefix \"Represent this sentence for searching relevant passages: \" --embedding-bits 8 --embedding-group-size 32 --dense-backend sqlite-exact --chunk-strategy general --chunk-size 1200 --chunk-overlap 160 --reranker mlx-qwen3 --reranker-model \"$QWEN3_RERANKER_MODEL\" --reranker-revision 5f324548f1d20c2b5a450f126fc6ef2fb1126524 --reranker-cache cache/qwen3-reranker-v1.json --rerank-candidate-depth 20 --rerank-candidate-depth 40 --rerank-final-depth 10",
+        "status": "completed validation-only; held-out gate remains locked"
+      },
+      "receiptCalculation": {
+        "kind": "rag_validation_selection",
+        "refs": [
+          "eval/interview-metrics/runs/enterprise-rag-validation-20260831.v1.json"
+        ]
+      },
+      "evidenceRefs": [
+        "scripts/run_rag_retrieval_experiment.py",
+        "eval/interview-metrics/runs/enterprise-rag-validation-20260831.v1.json"
+      ],
+      "claim": {
+        "allowed": "在冻结的 16 题 Enterprise RAG validation 切片上比较 14 个检索候选，选出的混合检索加重排配置相对词法 floor 将 nDCG@10 从 0.613 提至 0.887、MRR 从 0.604 提至 0.867、Recall@10 从 0.672 提至 0.955。",
+        "forbidden": "held-out 已通过、生产质量提升、官方排行榜成绩、已经正式 Keep 或上线、13 个 non-winner 等于 13 次独立实验、或该结果对所有企业语料泛化。"
+      },
+      "limitations": [
+        "validation-only smoke slice with 16 retrieval queries",
+        "the raw report did not persist source revision, dirty diff hash, exact command receipt or dependency lock hash",
+        "the current source tree was dirty and the tracked receipt records an immediate post-run observation rather than start-time provenance",
+        "held-out was not evaluated and no production or foreground path was exercised",
+        "the 14 configurations are candidates over one shared validation set, not 14 independent experiments"
+      ]
+    },
+    {
+      "id": "knowledge.enterprise.tag_reranker.readiness.20260901",
+      "domain": "knowledge",
+      "title": "Enterprise Graph+Tag versus Qwen3 reranker readiness audit",
+      "status": "blocked",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "validationQueryCount": 16,
+        "corpusDocumentCount": 5101,
+        "corpusChunkCount": 29846,
+        "knowledgeGraphNodes": 0,
+        "knowledgeGraphEdges": 0,
+        "knowledgeGraphExtractions": 0,
+        "tagMetricsAvailable": false,
+        "qwenReferenceMrr": 0.867188,
+        "qwenReferenceNdcgAt10": 0.887203,
+        "qwenReferenceRecallAt10": 0.955357
+      },
+      "sample": {
+        "count": 16,
+        "unit": "frozen Enterprise RAG Validation queries",
+        "corpusDocuments": 5101,
+        "corpusChunks": 29846
+      },
+      "reproduction": {
+        "command": "cd \"$ENTERPRISE_RAG_LAB\" && .venv/bin/python scripts/inspect_tag_reranker_readiness.py",
+        "status": "completed readiness audit; A/B correctly blocked before Tag scoring"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterprise-rag-tag-reranker-readiness-20260901.v1.json",
+        "rag_ime/memory_tag_graph.py"
+      ],
+      "claim": {
+        "allowed": "对 5,101 篇文档、29,846 个 chunk 和 16 个冻结 Validation query 做只读 readiness 审计后，确认企业 Knowledge 图的 node、edge、extraction 均为 0，且 Memory Tag 的 memory_item_id 不能直接排序 document_id+chunk_id；因此没有伪造 Graph+Tag 分数，当前只保留 Qwen3 的已测 Validation 参照。",
+        "forbidden": "Graph+Tag 已优于、劣于或等价于 Qwen3，A/B 已完成，Memory Tag 可直接替代 Knowledge reranker，或 Held-out 已运行。"
+      },
+      "limitations": [
+        "readiness result rather than a ranking A/B",
+        "the enterprise source-bound graph projection has not been built",
+        "Qwen3 values are the existing 16-query Validation reference, not a new Held-out result"
+      ]
+    },
+    {
+      "id": "knowledge.enterprise.agent.validation.reject.20260901",
+      "domain": "knowledge",
+      "title": "Enterprise RAG Agent validation recovery and Reject decision",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "answerCaseCount": 4,
+        "laneCount": 4,
+        "reusedLaneCount": 1,
+        "reusedLanePercent": 25.0,
+        "recoveredOrphanCount": 1,
+        "blockedOrphanCount": 0,
+        "baselineLatencyMs": 71141.445,
+        "agenticLatencyMs": 242624.393,
+        "agenticLatencyIncreasePercent": 241.05,
+        "baselineToolCalls": 6,
+        "agenticToolCalls": 11,
+        "agenticToolCallIncreasePercent": 83.33,
+        "baselineAnswerJudgeCorrectnessRate": 0.5,
+        "agenticAnswerJudgeCorrectnessRate": 0.0,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 4,
+        "unit": "frozen Enterprise RAG validation answer cases",
+        "laneConfigurations": 4
+      },
+      "reproduction": {
+        "command": "python3 scripts/run_rag_agent_ablation.py --answer-only --evaluation-split validation --checkpoint \"$PRIVATE_CHECKPOINT\" --private-root \"$PRIVATE_ROOT\" --pi-runtime-payload \"$PINNED_SOL_RUNTIME\" ...; terminate the exact isolated Python and Pi PIDs after baseline; rerun with --resume-checkpoint; python3 scripts/promote_rag_agent_validation.py --decision reject ...",
+        "status": "completed validation-only with one hard-kill recovery; held-out gate was not created"
+      },
+      "receiptCalculation": {
+        "kind": "rag_agent_validation_reject",
+        "refs": [
+          "eval/interview-metrics/runs/enterprise-rag-agent-validation-reject-20260901.v1.json"
+        ]
+      },
+      "evidenceRefs": [
+        "scripts/run_rag_agent_ablation.py",
+        "scripts/promote_rag_agent_validation.py",
+        "eval/interview-metrics/runs/enterprise-rag-agent-validation-reject-20260901.v1.json"
+      ],
+      "claim": {
+        "allowed": "在冻结的 4 题 Validation answer 切片上，Runner 从一次真实硬中断中恢复 1/1 个私有 Session/Knowledge orphan，并复用 1/4 条 Agent lane；Agentic 候选相对 baseline 延迟增加 241.05%、Tool 调用增加 83.33%，AI Judge 正确率从 0.5 降至 0，因此被严格 Reject。",
+        "forbidden": "held-out 已通过、Agentic RAG 一定更差、端到端提速 25%、正式/生产验收、或失败候选已经安装。"
+      },
+      "limitations": [
+        "four validation answer cases are too small for a general quality conclusion",
+        "AI Judge correctness is model-dependent and is reported as mixed evidence rather than deterministic ground truth",
+        "25 percent is resumed Agent-lane reuse; the isolated Knowledge corpus was rebuilt and end-to-end wall-clock savings were not measured",
+        "the run used a calibration profile, remained non-formal, and never consumed held-out",
+        "the result is a valid Reject receipt, not a positive quality headline"
       ]
     },
     {
@@ -731,6 +891,52 @@
       ]
     },
     {
+      "id": "trace_eval.provider_bootstrap.20260901",
+      "domain": "trace-eval",
+      "title": "Trace Agent bootstrap failure diagnosis on a repaired candidate Runtime",
+      "status": "diagnostic",
+      "evidenceLevel": "E5",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "providerABCases": 4,
+        "piFocusedTestsBeforePassed": 37,
+        "piFocusedTestsBeforeFailed": 1,
+        "piFocusedTestsAfterPassed": 38,
+        "piFocusedTestsAfterFailed": 0,
+        "targetSessionCount": 2,
+        "installedTraceAgentToolCalls": 0,
+        "candidateTraceAgentToolCalls": 2,
+        "candidateProviderRequests": 3,
+        "candidateProviderRequestsWithRejectedField": 0,
+        "candidateReportCompleted": true,
+        "candidateInstalled": false,
+        "repairApplied": false
+      },
+      "sample": {
+        "count": 2,
+        "unit": "the same failed PAW Sessions inspected before and after the isolated Pi candidate"
+      },
+      "reproduction": {
+        "command": "Build the exact Pi source candidate, run the same-payload HTTP/WS field A/B, then inject the candidate PiRuntimeConfig and loopback ControlToolGateway into an isolated AgentService Trace diagnostic Session.",
+        "status": "completed in an isolated candidate Runtime; installation intentionally not performed"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/trace-agent-provider-bootstrap-20260901.v1.json",
+        "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
+        "rag_ime/trace_diagnostics.py"
+      ],
+      "claim": {
+        "allowed": "同一 OAuth、模型和基础请求的 HTTP/WS A/B 将故障定位到 Pi Codex wire field；两文件 TDD 修复与未安装 candidate 构建后，同一只读 Trace Agent 路径从 0 次 Tool 调用、turn_failed 变为完成 skill_load、trace_diagnostics.inspect 和一份独立诊断报告。",
+        "forbidden": "安装态已经修好、Trace Agent 自己安装了修复、候选已通过前台验收，或 candidate repair 已通过安装后新 Trace/Eval 验证。"
+      },
+      "limitations": [
+        "the candidate Runtime was source-local and not installed",
+        "the Trace Agent produced an unapplied candidate repair only",
+        "a Provider bootstrap failure still requires an outer supervisor because the broken Agent cannot reach its own tools"
+      ]
+    },
+    {
       "id": "trace_eval.unified_platform",
       "domain": "trace-eval",
       "title": "Unified Session/Room/Tool/Browser/Memory/Knowledge/Input Trace and Eval",
@@ -1030,6 +1236,76 @@
       "command": "python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
       "outcome": "passed",
       "summary": "The final ledger, RAG scorecard, Session recall, Trace contracts/adapters, and vertical harness selection passed 64/64 in 0.076 seconds; this rerun after strict empty-calculation rejection is the authoritative count."
+    },
+    {
+      "id": "RUN-20260831-001",
+      "measuredAt": "2026-08-31",
+      "command": "cd \"$ENTERPRISE_RAG_LAB\" && \"$EXPERIMENT_PYTHON\" \"$PAW_REPO/scripts/run_rag_retrieval_experiment.py\" --prepared artifacts/smoke-v1/host/prepared.json --sandbox-root runs/validation-bge-qwen3-rerank-v1 --output results/validation-bge-qwen3-rerank-v1.json --evaluation-scope validation-only --embedding-provider mlx-bert --embedding-model \"$BGE_MODEL\" --embedding-dimensions 384 --embedding-query-prefix \"Represent this sentence for searching relevant passages: \" --embedding-bits 8 --embedding-group-size 32 --dense-backend sqlite-exact --chunk-strategy general --chunk-size 1200 --chunk-overlap 160 --reranker mlx-qwen3 --reranker-model \"$QWEN3_RERANKER_MODEL\" --reranker-revision 5f324548f1d20c2b5a450f126fc6ef2fb1126524 --reranker-cache cache/qwen3-reranker-v1.json --rerank-candidate-depth 20 --rerank-candidate-depth 40 --rerank-final-depth 10",
+      "outcome": "passed",
+      "summary": "Validation-only retrieval completed in 1,536.352 seconds over 16 queries and 14 candidate configurations. The selected candidate reached nDCG@10 0.887203, MRR 0.867188 and Recall@10 0.955357; held-out was not evaluated and the candidate was not promoted."
+    },
+    {
+      "id": "RUN-20260831-002",
+      "measuredAt": "2026-08-31",
+      "command": "python3 scripts/run_rag_agent_ablation.py --answer-only --evaluation-split validation --answer-cases \"$ENTERPRISE_RAG_ANSWER_CASES\" --prepared \"$ENTERPRISE_RAG_PREPARED\" --retrieval-report \"$ENTERPRISE_RAG_VALIDATION_REPORT\" --output \"$PRIVATE_RESULT\"",
+      "outcome": "failed",
+      "summary": "The first answer/citation/abstention validation attempt failed after 3.076 seconds during Runtime setup because the runner referenced the removed AgentService.room_skill_policy interface. No model-quality result is claimed; the privacy-safe failure receipt is retained."
+    },
+    {
+      "id": "RUN-20260831-003",
+      "measuredAt": "2026-08-31",
+      "command": "python3 -m unittest tests.test_interview_metrics.InterviewMetricsLedgerTests.test_rag_validation_receipt_recomputes_selection_without_opening_held_out",
+      "outcome": "failed",
+      "summary": "Expected red phase: the metrics validator rejected the new rag_validation_selection receipt kind as unsupported before its receipt-derived checks were implemented."
+    },
+    {
+      "id": "RUN-20260831-004",
+      "measuredAt": "2026-08-31",
+      "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests.test_interview_metrics",
+      "outcome": "passed",
+      "summary": "The privacy-safe Enterprise RAG validation receipt was recomputed successfully; the ledger validated with 20 metrics, 38 recorded runs and 11 datasets, and the full focused metric/RAG/Trace harness passed 65/65 in 0.074 seconds."
+    },
+    {
+      "id": "RUN-20260831-005",
+      "measuredAt": "2026-08-31",
+      "command": "python3 -m unittest tests/test_interview_metrics.py tests/test_rag_interview_scorecard.py tests/test_session_recall_effect_eval.py tests/test_trace_runtime.py tests/test_trace_adapters.py tests/test_vertical_agent_harness.py",
+      "outcome": "failed",
+      "summary": "The slash-plus-.py invocation was parsed as an attribute named py; 59 tests ran before one unittest loader error. This was a command-shape error, not a product regression."
+    },
+    {
+      "id": "RUN-20260831-006",
+      "measuredAt": "2026-08-31",
+      "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests.test_interview_metrics tests.test_rag_interview_scorecard tests.test_session_recall_effect_eval tests.test_trace_runtime tests.test_trace_adapters tests.test_vertical_agent_harness && python3 -m py_compile scripts/check_interview_metrics.py tests/test_interview_metrics.py && git diff --check -- eval/interview-metrics scripts/check_interview_metrics.py tests/test_interview_metrics.py",
+      "outcome": "passed",
+      "summary": "Correct module-name invocation validated 20 metrics, 40 recorded runs and 11 datasets; 65/65 focused metric/RAG/Trace tests passed in 0.082 seconds, compilation passed, and the scoped diff check was clean."
+    },
+    {
+      "id": "RUN-20260901-001",
+      "measuredAt": "2026-09-01",
+      "command": "python3 scripts/run_rag_agent_ablation.py --answer-only --evaluation-split validation --checkpoint \"$PRIVATE_CHECKPOINT\" --private-root \"$PRIVATE_ROOT\" --pi-runtime-payload \"$PINNED_SOL_RUNTIME\" ...; kill -KILL \"$EXACT_PI_PID\" \"$EXACT_RUNNER_PID\" after the baseline terminal receipt",
+      "outcome": "interrupted",
+      "summary": "The exact isolated Runner and Pi PIDs were hard-killed after baseline completed. The checkpoint retained baseline terminal plus a started skill attempt; the private DB showed skill busy and the marker-bound Knowledge run active, creating a real orphan-recovery case."
+    },
+    {
+      "id": "RUN-20260901-002",
+      "measuredAt": "2026-09-01",
+      "command": "python3 scripts/run_rag_agent_ablation.py --answer-only --evaluation-split validation --resume-checkpoint \"$PRIVATE_CHECKPOINT\" --private-root \"$PRIVATE_ROOT\" --pi-runtime-payload \"$PINNED_SOL_RUNTIME\" ...",
+      "outcome": "failed",
+      "summary": "The resumed Validation run recovered 1/1 orphan, blocked 0, reused baseline without another model turn, completed skill and tuned, then rejected agentic after 242.624 seconds without a terminal answer. Exit 1 represents failed quality gates, not a runner crash."
+    },
+    {
+      "id": "RUN-20260901-003",
+      "measuredAt": "2026-09-01",
+      "command": "python3 scripts/promote_rag_agent_validation.py --validation-agent-report \"$PRIVATE_RESULT\" --retrieval-report \"$ENTERPRISE_RAG_VALIDATION_REPORT\" --decision reject --output-promotion \"$PRIVATE_REJECT_RECEIPT\"",
+      "outcome": "passed",
+      "summary": "The promotion authority verified all frozen identities and emitted Reject receipt 9e10fc47a963e6ac7d36f5f7dd391d65d0b630f61cc4d47b5a95607a5b84b6dd; heldOutObserved remained false and no one-shot held-out gate was produced."
+    },
+    {
+      "id": "RUN-20260901-004",
+      "measuredAt": "2026-09-01",
+      "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests.test_promote_rag_agent_validation tests.test_aggregate_rag_agent_ablation tests.test_rag_agent_ablation tests.test_rag_benchmark_agent tests.test_rag_benchmark_sandbox tests.test_canary_rag_benchmark_agent tests.test_run_rag_agent_ablation tests.test_run_rag_retrieval_experiment tests.test_canary_rag_agent_ablation_checkpoint tests.test_interview_metrics tests.test_rag_interview_scorecard tests.test_session_recall_effect_eval tests.test_trace_runtime tests.test_trace_adapters tests.test_vertical_agent_harness tests.test_rag_retrieval_optimization_skill",
+      "outcome": "passed",
+      "summary": "The final integrated RAG promotion, aggregation, runner, sandbox, checkpoint, evidence-qrels, Skill, interview-metric, Trace and vertical-harness regression passed 178/178; the metrics ledger recomputed 23 metrics from 44 run receipts across 11 datasets."
     }
   ],
   "datasets": [

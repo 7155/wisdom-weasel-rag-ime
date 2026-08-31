@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "paw.enterprise-rag-agent-validation-reject.v1",
+  "runId": "enterprise-rag-agent-validation-v14-20260901",
+  "status": "rejected",
+  "evaluationScope": "validation-only",
+  "evaluationMode": "answer-only",
+  "heldOutEvaluated": false,
+  "decision": "reject",
+  "formalAcceptanceEligible": false,
+  "heldOutGateProduced": false,
+  "cleanupPassed": true,
+  "localOnly": true,
+  "uploaded": false,
+  "startedAt": "2026-09-01T02:08:48.574000+08:00",
+  "completedAt": "2026-09-01T02:19:22.406000+08:00",
+  "elapsedMs": 633832,
+  "sourceObservation": {
+    "repositoryRevision": "b1b9598c4844db5cff1c708c81b3aade4c3c2603",
+    "workingTreeDirty": true,
+    "boundary": "The frozen report binds the exact runtime contract, prompt, case set, Pi payload and model-route hashes. Its elapsedMs covers the successful resume phase, not the deliberately hard-killed first phase.",
+    "answerEvidenceBoundary": "This historical diagnostic predates the host-private exact-source evidence-qrels contract now required by the runner. It remains a Reject/recovery receipt and is not eligible for formal answer-quality promotion."
+  },
+  "hashes": {
+    "rawFileSha256": "9c90cbdcc1062819a03f47ed94876b058ae65c19c43d66fb0a661cf9a48eb57c",
+    "reportSha256": "dae2283a652da9779cf602dd0049d4007ce383cc541395be47c1e282a63a3b39",
+    "promotionFileSha256": "14bb787495789350b6e132f79692a6d9adf70126717abb53d3942542c5ed21c3",
+    "promotionReceiptSha256": "9e10fc47a963e6ac7d36f5f7dd391d65d0b630f61cc4d47b5a95607a5b84b6dd",
+    "runtimeContractSha256": "e5d8efea5ac0e8f4e86db351d8350fe036a0828899c7d774e15acaea7d35d1e9",
+    "piRuntimeIdentitySha256": "27dd3749d40dd0ac8c629fad4ff7b5a2f0a3f55a7eb963e947621301a7b66378",
+    "modelRouteIdentitySha256": "a66648c4d40b1a19c547fea4236dd12fa5899d3ebf27f063a71e18afb9dc5017",
+    "caseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+    "answerCaseManifestSha256": "5b0f7ef0be74be706a3a57f3a889484f23801f53bc8685c1dc03fcc399977098",
+    "promptConfigSha256": "67ffaca62d51946df8adf17057c260907325c4e9064c3c8532d755617059c598"
+  },
+  "sample": {
+    "answerCaseCount": 4,
+    "laneCount": 4,
+    "lanes": [
+      "baseline",
+      "skill",
+      "tuned",
+      "agentic"
+    ],
+    "unit": "frozen validation answer cases"
+  },
+  "runtime": {
+    "model": "openai-codex/gpt-5.6-sol",
+    "thinking": "max",
+    "piSourceCommit": "920e42b9c19f341ff398dd8211a9a57962b003c1",
+    "piSourceAccess": "explicit-verified-payload-v1"
+  },
+  "resume": {
+    "resumed": true,
+    "attemptCount": 5,
+    "completedLaneCount": 3,
+    "reusedLaneCount": 1,
+    "freshLaneCount": 3,
+    "reusedLanePercent": 25.0,
+    "historicalAttemptCount": 2,
+    "interruptedAttemptCount": 1,
+    "retryAttemptCount": 1,
+    "recoveredOrphanCount": 1,
+    "blockedOrphanCount": 0,
+    "recoveryFailClosed": false,
+    "reusedLanes": [
+      "baseline"
+    ],
+    "boundary": "One of four planned Agent lanes was reused without another model turn. The isolated Knowledge corpus was rebuilt in a new sandbox, so 25% is lane reuse rather than end-to-end wall-clock or indexing savings."
+  },
+  "comparison": {
+    "fromLane": "baseline",
+    "toLane": "agentic",
+    "latencyMs": {
+      "baseline": 71141.445,
+      "agentic": 242624.393,
+      "increasePercent": 241.05
+    },
+    "toolCalls": {
+      "baseline": 6,
+      "agentic": 11,
+      "increasePercent": 83.33
+    },
+    "answerJudgeCorrectnessRate": {
+      "baseline": 0.5,
+      "agentic": 0.0
+    },
+    "answerSuccessRate": {
+      "baseline": 0.5,
+      "agentic": 0.0
+    },
+    "agentSuccessRate": {
+      "baseline": 0.75,
+      "agentic": 0.0
+    },
+    "answerableCitationSupportRate": {
+      "baseline": 0.5,
+      "agentic": 0.0
+    }
+  },
+  "failedHardGates": {
+    "skill": [
+      "abstention"
+    ],
+    "tuned": [
+      "abstention",
+      "independentReranker"
+    ],
+    "agentic": [
+      "abstention",
+      "agenticPolicy",
+      "independentReranker",
+      "terminalCompletion",
+      "toolContract"
+    ]
+  },
+  "claim": {
+    "allowed": "A real frozen Validation run recovered one hard-killed private Session and marker-bound Knowledge sandbox, reused one of four Agent lanes, and rejected the Agentic candidate after it increased lane latency by 241.05% and tool calls by 83.33% while answer-judge correctness fell from 0.5 to 0.0.",
+    "forbidden": "Held-out passed, Agentic retrieval is always worse, end-to-end runtime improved by 25%, the result is formal or production acceptance, or the rejected candidate was installed."
+  }
+}

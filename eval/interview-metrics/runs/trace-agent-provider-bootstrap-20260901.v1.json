@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "paw.trace-agent-provider-bootstrap-evaluation.v1",
+  "runId": "trace-agent-provider-bootstrap-20260901-v1",
+  "status": "candidate_diagnosed_not_installed",
+  "measuredAt": "2026-09-01",
+  "sourceCommit": "920e42b9c19f341ff398dd8211a9a57962b003c1",
+  "providerContractAB": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "samePrivateOAuthAndBasePayload": true,
+    "caseCount": 4,
+    "withMaxOutputTokens": {
+      "httpSse": "400_unsupported_parameter",
+      "websocket": "400_unsupported_parameter"
+    },
+    "withoutMaxOutputTokens": {
+      "httpSse": "response.completed",
+      "websocket": "response.completed"
+    },
+    "receiptFileSha256": "1ffdd4750b3c17f21c1836a53f7bfffccb3f3f6bc8c9c5e5f9a5705f0ab16f5f"
+  },
+  "candidate": {
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-a1bb684fe6",
+    "manifestSha256": "4ff63aa5b77d620b70f9e430a009d93450a8a297e9602d3bcc96820fe7b29211",
+    "installedStateChanged": false,
+    "focusedPiTestsBefore": {"passed": 37, "failed": 1},
+    "focusedPiTestsAfter": {"passed": 38, "failed": 0},
+    "realProviderSmoke": ["gpt-5.6-luna", "gpt-5.6-sol"],
+    "stagedSessionAcceptancePassed": true
+  },
+  "traceAgentComparison": {
+    "targetSessionCount": 2,
+    "installedRuntime": {
+      "terminal": "turn_failed",
+      "toolCallCount": 0,
+      "failureBeforeSkillOrTool": true
+    },
+    "candidateRuntime": {
+      "terminal": "turn_completed",
+      "toolCallCount": 2,
+      "providerRequestCount": 3,
+      "maxOutputTokensPresentCount": 0,
+      "reportStatus": "completed",
+      "findingId": "unsupported-max-output-tokens",
+      "candidateRepairProduced": true,
+      "repairAuthorizationAttempted": false,
+      "repairApplied": false
+    },
+    "publicEvidenceFileSha256": "606b06c8fc45ce6806c4c967ad2445c0fdda820479137f7dd9b6e93f9eb01df7"
+  },
+  "installedRollbackTarget": {
+    "version": "pi-0.84.2-920e42b9c19f-raghost-183cf14a56",
+    "manifestSha256": "6462b270cb6fb9fc4bc7adb6d74698b1987fa2d3d940be7118a610bb22d92ce0",
+    "unchanged": true
+  },
+  "claim": {
+    "allowed": "A same-payload HTTP/WebSocket A/B isolated the Pi Codex request field as the failure owner. After a two-file TDD repair and non-installed candidate build, the same read-only Trace Agent path moved from zero Tool calls and turn_failed to a completed report using skill_load and trace_diagnostics.inspect, independently naming the unsupported field and proposing an unapplied Runtime-owner repair.",
+    "forbidden": "The installed PAW Runtime is repaired, Trace Agent installed its own bootstrap fix, the candidate passed foreground acceptance, or a proposed repair has been verified by a new installed Trace/Eval."
+  }
+}

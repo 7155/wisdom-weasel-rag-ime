@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -225,6 +226,25 @@ class RagBenchmarkAgentGatewayTests(unittest.TestCase):
             "runtime_load_receipt",
             ledger["items"][2]["authorizationSource"],
         )
+
+    def test_runtime_source_loop_id_is_accepted_and_hashed_in_ledger(self) -> None:
+        self.gateway.bind_session("session-a")
+        request = self._call(
+            "session-a",
+            "call-create-source-loop",
+            {"op": "create_run", "label": "source-loop"},
+        )
+        request["sourceLoopId"] = "pi:message:assistant:101"
+
+        result = self.gateway.execute(request)
+
+        self.assertTrue(result["ok"])
+        ledger_item = self.gateway.ledger(session_id="session-a")["items"][0]
+        self.assertEqual(
+            hashlib.sha256(request["sourceLoopId"].encode("utf-8")).hexdigest(),
+            ledger_item["sourceLoopIdSha256"],
+        )
+        self.assertNotIn(request["sourceLoopId"], json.dumps(ledger_item))
 
     def test_import_ledger_hashes_inline_text_instead_of_copying_it(self) -> None:
         self.gateway.bind_session("session-a")

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-validation-attempt.v1",
+  "runId": "enterprise-rag-answer-validation-20260831-v1",
+  "status": "failed",
+  "evaluationScope": "validation-only",
+  "heldOutEvaluated": false,
+  "startedAtMs": 1788174913256,
+  "completedAtMs": 1788174916332,
+  "elapsedMs": 3076,
+  "hashes": {
+    "rawFileSha256": "405b8ac11a90db3c0c99e6421cd9b25ccaadb0f79091ee9d119e6a149f7b1461",
+    "reportSha256": "8a95f24e6f48c785ca150812b1089571173fba06282029506981c7ec0d86d7a1"
+  },
+  "failure": {
+    "stage": "runtime_setup",
+    "category": "interface_contract_drift",
+    "message": "AgentService no longer exposes room_skill_policy to the benchmark gateway."
+  },
+  "decision": "rejected_and_repaired",
+  "repair": {
+    "summary": "The benchmark gateway now uses no parallel governed Skill registry at this boundary; managed Pi remains the Skill owner.",
+    "verificationState": "follow-up validation run started separately"
+  },
+  "claimBoundary": {
+    "allowed": "The first answer-validation attempt failed before any model-quality measurement because the isolated runner referenced a removed AgentService interface.",
+    "forbidden": "The Agent failed the benchmark, the model produced a wrong answer, or the follow-up run passed."
+  }
+}

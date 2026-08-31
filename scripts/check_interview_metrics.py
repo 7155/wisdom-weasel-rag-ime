@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -16,6 +17,7 @@ ALLOWED_MEASUREMENT_KINDS = frozenset(
     {"deterministic", "ai_estimate", "mixed", "status"}
 )
 ALLOWED_RUN_OUTCOMES = frozenset({"passed", "failed", "interrupted", "blocked"})
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _mapping(value: object) -> Mapping[str, object]:
@@ -240,6 +242,294 @@ def _validate_pi_context_cache(
     return errors
 
 
+def _validate_rag_validation_selection(
+    metric_id: str,
+    values: Mapping[str, object],
+    receipts: Sequence[tuple[str, Mapping[str, object]]],
+) -> list[str]:
+    errors: list[str] = []
+    if len(receipts) != 1:
+        return [
+            f"{metric_id}: rag_validation_selection requires exactly one valid receipt"
+        ]
+    ref, receipt = receipts[0]
+    if receipt.get("schemaVersion") != "paw.enterprise-rag-validation-receipt.v1":
+        return [f"{metric_id}: unexpected RAG validation receipt schema: {ref}"]
+    if receipt.get("status") != "evaluated_not_promoted":
+        errors.append(f"{metric_id}: validation receipt is not diagnostic-only")
+    if receipt.get("evaluationScope") != "validation-only":
+        errors.append(f"{metric_id}: validation receipt scope must be validation-only")
+    if receipt.get("heldOutEvaluated") is not False:
+        errors.append(
+            f"{metric_id}: validation receipt must not contain held-out evaluation"
+        )
+    if receipt.get("objective") != "ndcgAtK.10":
+        errors.append(f"{metric_id}: validation receipt objective must be ndcgAtK.10")
+    if receipt.get("decision") != "candidate_selected_not_promoted":
+        errors.append(f"{metric_id}: validation receipt must remain unpromoted")
+
+    hashes = _mapping(receipt.get("hashes"))
+    required_hashes = (
+        "rawFileSha256",
+        "reportSha256",
+        "selectionReceiptSha256",
+        "validationSplitSha256",
+        "winnerConfigSha256",
+    )
+    for field in required_hashes:
+        value = hashes.get(field)
+        if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+            errors.append(f"{metric_id}: hashes.{field} must be a lowercase SHA-256")
+
+    hard_gates = receipt.get("hardGates")
+    if (
+        not isinstance(hard_gates, Mapping)
+        or not hard_gates
+        or any(value is not True for value in hard_gates.values())
+    ):
+        errors.append(f"{metric_id}: every validation hard gate must pass")
+
+    sample = _mapping(receipt.get("sample"))
+    query_count = sample.get("validationQueryCount")
+    candidate_count = sample.get("candidateCount")
+    if (
+        not isinstance(query_count, int)
+        or isinstance(query_count, bool)
+        or query_count < 1
+    ):
+        errors.append(f"{metric_id}: validationQueryCount must be positive")
+    if (
+        not isinstance(candidate_count, int)
+        or isinstance(candidate_count, bool)
+        or candidate_count < 2
+    ):
+        errors.append(f"{metric_id}: candidateCount must be at least two")
+
+    derived: dict[str, object] = {
+        "validationQueryCount": query_count,
+        "candidateCount": candidate_count,
+        "winnerConfigSha256": hashes.get("winnerConfigSha256"),
+    }
+    receipt_metrics = _mapping(receipt.get("metrics"))
+    for group in ("lexicalFloor", "strongNaiveDense", "winner"):
+        observed = _mapping(receipt_metrics.get(group))
+        derived_group: dict[str, float] = {}
+        for field in ("mrr", "ndcgAt10", "recallAt10"):
+            raw_value = observed.get(field)
+            if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
+                errors.append(f"{metric_id}: metrics.{group}.{field} must be numeric")
+                continue
+            derived_group[field] = round(float(raw_value), 6)
+        derived[group] = derived_group
+
+    for field in ("validationQueryCount", "candidateCount", "winnerConfigSha256"):
+        errors.extend(
+            _compare_receipt_value(
+                metric_id=metric_id,
+                field=field,
+                expected=derived.get(field),
+                actual=values.get(field),
+            )
+        )
+    for group in ("lexicalFloor", "strongNaiveDense", "winner"):
+        claimed = _mapping(values.get(group))
+        for field, expected in _mapping(derived.get(group)).items():
+            errors.extend(
+                _compare_receipt_value(
+                    metric_id=metric_id,
+                    field=f"{group}.{field}",
+                    expected=expected,
+                    actual=claimed.get(field),
+                )
+            )
+    return errors
+
+
+def _validate_rag_agent_validation_reject(
+    metric_id: str,
+    values: Mapping[str, object],
+    receipts: Sequence[tuple[str, Mapping[str, object]]],
+) -> list[str]:
+    errors: list[str] = []
+    if len(receipts) != 1:
+        return [
+            f"{metric_id}: rag_agent_validation_reject requires exactly one valid receipt"
+        ]
+    ref, receipt = receipts[0]
+    if receipt.get("schemaVersion") != "paw.enterprise-rag-agent-validation-reject.v1":
+        return [f"{metric_id}: unexpected RAG Agent reject receipt schema: {ref}"]
+    expected_boundary = {
+        "status": "rejected",
+        "evaluationScope": "validation-only",
+        "evaluationMode": "answer-only",
+        "heldOutEvaluated": False,
+        "decision": "reject",
+        "formalAcceptanceEligible": False,
+        "heldOutGateProduced": False,
+        "cleanupPassed": True,
+    }
+    for field, expected in expected_boundary.items():
+        if receipt.get(field) != expected:
+            errors.append(
+                f"{metric_id}: receipt {field} must equal {expected!r}"
+            )
+
+    hashes = _mapping(receipt.get("hashes"))
+    for field in (
+        "rawFileSha256",
+        "reportSha256",
+        "promotionFileSha256",
+        "promotionReceiptSha256",
+        "runtimeContractSha256",
+        "caseSetSha256",
+    ):
+        value = hashes.get(field)
+        if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+            errors.append(f"{metric_id}: hashes.{field} must be a lowercase SHA-256")
+
+    sample = _mapping(receipt.get("sample"))
+    answer_case_count = sample.get("answerCaseCount")
+    lane_count = sample.get("laneCount")
+    if (
+        not isinstance(answer_case_count, int)
+        or isinstance(answer_case_count, bool)
+        or answer_case_count < 1
+    ):
+        errors.append(f"{metric_id}: answerCaseCount must be positive")
+    if (
+        not isinstance(lane_count, int)
+        or isinstance(lane_count, bool)
+        or lane_count < 1
+    ):
+        errors.append(f"{metric_id}: laneCount must be positive")
+
+    resume = _mapping(receipt.get("resume"))
+    if resume.get("resumed") is not True:
+        errors.append(f"{metric_id}: receipt must prove a resumed run")
+    if resume.get("recoveryFailClosed") is not False:
+        errors.append(f"{metric_id}: recovery must complete without a blocked gate")
+    integer_fields = (
+        "reusedLaneCount",
+        "freshLaneCount",
+        "interruptedAttemptCount",
+        "retryAttemptCount",
+        "recoveredOrphanCount",
+        "blockedOrphanCount",
+    )
+    resume_counts: dict[str, int] = {}
+    for field in integer_fields:
+        value = resume.get(field)
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+        ):
+            errors.append(f"{metric_id}: resume.{field} must be non-negative")
+        else:
+            resume_counts[field] = value
+    if isinstance(lane_count, int) and not isinstance(lane_count, bool) and lane_count > 0:
+        if (
+            resume_counts.get("reusedLaneCount", -1)
+            + resume_counts.get("freshLaneCount", -1)
+            != lane_count
+        ):
+            errors.append(f"{metric_id}: reused plus fresh lanes must equal laneCount")
+        reused_percent = round(
+            resume_counts.get("reusedLaneCount", 0) / lane_count * 100,
+            2,
+        )
+    else:
+        reused_percent = None
+    if (
+        resume_counts.get("recoveredOrphanCount", 0)
+        + resume_counts.get("blockedOrphanCount", 0)
+        != resume_counts.get("interruptedAttemptCount", -1)
+    ):
+        errors.append(
+            f"{metric_id}: recovered plus blocked orphans must equal interrupted attempts"
+        )
+    errors.extend(
+        _compare_receipt_value(
+            metric_id=metric_id,
+            field="resume.reusedLanePercent",
+            expected=reused_percent,
+            actual=resume.get("reusedLanePercent"),
+        )
+    )
+
+    comparison = _mapping(receipt.get("comparison"))
+    if comparison.get("fromLane") != "baseline" or comparison.get("toLane") != "agentic":
+        errors.append(f"{metric_id}: comparison must be baseline to agentic")
+    latency = _mapping(comparison.get("latencyMs"))
+    tools = _mapping(comparison.get("toolCalls"))
+    correctness = _mapping(comparison.get("answerJudgeCorrectnessRate"))
+    baseline_latency = latency.get("baseline")
+    agentic_latency = latency.get("agentic")
+    baseline_tools = tools.get("baseline")
+    agentic_tools = tools.get("agentic")
+    if not isinstance(baseline_latency, (int, float)) or baseline_latency <= 0:
+        errors.append(f"{metric_id}: baseline latency must be positive")
+        latency_increase = None
+    elif not isinstance(agentic_latency, (int, float)) or agentic_latency < 0:
+        errors.append(f"{metric_id}: agentic latency must be non-negative")
+        latency_increase = None
+    else:
+        latency_increase = round(
+            (float(agentic_latency) - float(baseline_latency))
+            / float(baseline_latency)
+            * 100,
+            2,
+        )
+    if not isinstance(baseline_tools, int) or isinstance(baseline_tools, bool) or baseline_tools <= 0:
+        errors.append(f"{metric_id}: baseline tool calls must be positive")
+        tool_increase = None
+    elif not isinstance(agentic_tools, int) or isinstance(agentic_tools, bool) or agentic_tools < 0:
+        errors.append(f"{metric_id}: agentic tool calls must be non-negative")
+        tool_increase = None
+    else:
+        tool_increase = round((agentic_tools - baseline_tools) / baseline_tools * 100, 2)
+    for field, expected, actual in (
+        ("comparison.latencyMs.increasePercent", latency_increase, latency.get("increasePercent")),
+        ("comparison.toolCalls.increasePercent", tool_increase, tools.get("increasePercent")),
+    ):
+        errors.extend(
+            _compare_receipt_value(
+                metric_id=metric_id,
+                field=field,
+                expected=expected,
+                actual=actual,
+            )
+        )
+
+    derived = {
+        "answerCaseCount": answer_case_count,
+        "laneCount": lane_count,
+        "reusedLaneCount": resume_counts.get("reusedLaneCount"),
+        "reusedLanePercent": reused_percent,
+        "recoveredOrphanCount": resume_counts.get("recoveredOrphanCount"),
+        "blockedOrphanCount": resume_counts.get("blockedOrphanCount"),
+        "baselineLatencyMs": baseline_latency,
+        "agenticLatencyMs": agentic_latency,
+        "agenticLatencyIncreasePercent": latency_increase,
+        "baselineToolCalls": baseline_tools,
+        "agenticToolCalls": agentic_tools,
+        "agenticToolCallIncreasePercent": tool_increase,
+        "baselineAnswerJudgeCorrectnessRate": correctness.get("baseline"),
+        "agenticAnswerJudgeCorrectnessRate": correctness.get("agentic"),
+        "decision": receipt.get("decision"),
+    }
+    for field, expected in derived.items():
+        errors.extend(
+            _compare_receipt_value(
+                metric_id=metric_id,
+                field=field,
+                expected=expected,
+                actual=values.get(field),
+            )
+        )
+    return errors
+
+
 def validate_metric_receipt_calculation(
     metric: Mapping[str, object], *, repo_root: Path
 ) -> list[str]:
@@ -263,6 +553,22 @@ def validate_metric_receipt_calculation(
         return _validate_workspace_speedup_range(metric_id, values, receipts)
     if kind == "pi_context_cache":
         return _validate_pi_context_cache(metric_id, values, receipts)
+    if kind == "rag_validation_selection":
+        rag_errors = _validate_rag_validation_selection(metric_id, values, receipts)
+        if metric.get("status") == "headline":
+            rag_errors.append(
+                f"{metric_id}: validation-only receipt cannot support headline status"
+            )
+        return rag_errors
+    if kind == "rag_agent_validation_reject":
+        rag_errors = _validate_rag_agent_validation_reject(
+            metric_id, values, receipts
+        )
+        if metric.get("status") == "headline":
+            rag_errors.append(
+                f"{metric_id}: rejected validation receipt cannot support headline status"
+            )
+        return rag_errors
     return [f"{metric_id}: unsupported receiptCalculation kind: {kind}"]
 
 
