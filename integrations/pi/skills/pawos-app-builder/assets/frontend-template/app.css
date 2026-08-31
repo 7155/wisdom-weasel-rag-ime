@@ -1,0 +1,116 @@
+.extension-app-template {
+  --extension-app-accent: var(--paw-app-accent, #087f68);
+  --extension-app-accent-soft: color-mix(in srgb, var(--extension-app-accent) 12%, transparent);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 100%;
+  overflow: hidden;
+  color: var(--color-text-primary, var(--paw-ink, #17211e));
+  background: var(--color-surface, var(--paw-app-canvas, #f8fbfa));
+}
+
+.extension-app-template button,
+.extension-app-template textarea {
+  font: inherit;
+}
+
+.extension-app-template button {
+  min-block-size: 44px;
+  min-inline-size: 44px;
+}
+
+.extension-app-template :is(button, textarea):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--extension-app-accent) 65%, white);
+  outline-offset: 2px;
+}
+
+.extension-app-template > header,
+.extension-app-template > nav,
+.extension-app-template > section,
+.extension-app-template__error,
+.extension-app-template__retry {
+  padding-inline: clamp(1rem, 3vw, 2rem);
+}
+
+.extension-app-template > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 1rem;
+}
+
+.extension-app-template h1,
+.extension-app-template h2,
+.extension-app-template p {
+  margin: 0;
+}
+
+.extension-app-template > nav {
+  display: flex;
+  gap: .5rem;
+  overflow-x: auto;
+  padding-block-end: .75rem;
+}
+
+.extension-app-template > nav button[aria-selected='true'] {
+  background: var(--extension-app-accent-soft);
+  color: var(--extension-app-accent);
+}
+
+.extension-app-template > section {
+  min-block-size: 0;
+  overflow: auto;
+  padding-block: 1rem;
+}
+
+.extension-app-template form {
+  display: grid;
+  gap: .75rem;
+  max-inline-size: 48rem;
+}
+
+.extension-app-template textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: 7rem;
+  resize: vertical;
+}
+
+.extension-app-template__error,
+.extension-app-template__retry {
+  padding-block: .75rem;
+}
+
+.extension-app-template__error {
+  color: var(--color-danger, var(--paw-danger, #b42318));
+}
+
+.extension-app-template__retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .75rem;
+}
+
+@media (max-width: 36rem), (max-height: 34rem) {
+  .extension-app-template > header {
+    align-items: flex-start;
+  }
+
+  .extension-app-template__version {
+    flex: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .extension-app-template *,
+  .extension-app-template *::before,
+  .extension-app-template *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}

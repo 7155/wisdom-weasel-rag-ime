@@ -125,16 +125,16 @@
     {
       "name": "pawos-app-builder",
       "when": [
-        "制作或安装 PAWOS 垂直 App",
-        "为垂直 App 创建专属 Skill"
+        "自举、安装或升级 PAWOS 垂直 App",
+        "创建 App 专属前端与 Skill"
       ],
       "notFor": [
         "内建 App 小改",
         "绕过安装确认"
       ],
-      "does": "生成隔离 App、Skill 与 Trace/Eval。",
-      "input": "场景、模式、验收。",
-      "output": "候选、证据、安装回执。"
+      "does": "生成隔离 App、前端、Skill 与测试。",
+      "input": "场景、模式、数据、验收。",
+      "output": "候选、沙箱与安装回执。"
     },
     {
       "name": "review-agent",

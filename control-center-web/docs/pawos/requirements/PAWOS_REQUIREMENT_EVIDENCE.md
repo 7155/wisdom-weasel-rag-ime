@@ -1,6 +1,6 @@
 # PAWOS 用户逐字证据
 
-> 导航：[UR-210–UR-211](PAWOS_REQUIREMENTS_210_211.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
+> 导航：[UR-212](PAWOS_REQUIREMENTS_212_212.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
 >
 > 本文件保存需求账本引用的逐字来源与来源覆盖。不得用 Agent 转述替代用户原话。
 
@@ -776,6 +776,15 @@ Trace/Eval 自测，不是生产经营数据。安装、停用、卸载和回滚
 `UR-210`：App 可以显式选择受管沙箱，但隔离、执行、Stop 和收据仍由 PAW/Pi
 Runtime 与已经安装的 Sandbox Connector 负责。冻结字段、profile snapshot、
 promotion 和 rollback 是验收解释，不是追加用户引语。
+
+### 2026-08-31 · App Builder 配套前端代码、改法与测试合同
+
+> 技能得加上配套的前端代码或者指明前端怎么改，怎么做app，需要测试哪些
+
+该条消息映射到 `UR-212`：`pawos-app-builder` 必须提供可复制的 App 专属前端代码
+或明确的前端 owner 与修改方法，并列出从前端交互、普通 Pi Session、Retry、
+Stop/Steer、Trace/Eval、响应式/可访问性到安装态前台验收的测试边界。当前 Codex
+文档环境未暴露稳定 message/turn ID，来源仅记录为当前任务和日期，不伪造。
 
 以下各节覆盖本次继续工作中可直接检索到的新增实质性用户消息。进度查询、
 “好了吗”等消息是状态询问，不新增产品语义；附件图片是视觉证据，不从图片

@@ -1161,8 +1161,8 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
-  it('does not submit a sibling retry when the failed row is clicked twice', async () => {
-    const sessionId = 'session-retry-sibling-guard';
+  it('retries a durably accepted failed turn without command-receipt lineage', async () => {
+    const sessionId = 'session-accepted-turn-retry';
     const promptRequests: ControlRequest[] = [];
     const transport = new StubControlTransport('mock', {
       'agent.session.snapshot': {
@@ -1173,13 +1173,13 @@ describe('PAWOS Agent Session structural migration', () => {
           turnId: 'turn-failed',
           role: 'user',
           status: 'completed',
-          clientMessageId: 'client-failed-root',
+          clientMessageId: 'client-accepted-root',
           blocks: [{
             id: `${sessionId}:user:text`,
             type: 'text',
             status: 'completed',
             presentationKind: 'markdown',
-            data: { text: '只允许一个重试后继' },
+            data: { text: '查询本月经营数据' },
           }],
           attachments: [],
           citations: [],
@@ -1197,6 +1197,22 @@ describe('PAWOS Agent Session structural migration', () => {
       'agent.runtime.get': {},
       'agent.session.prompt': (request: ControlRequest) => {
         promptRequests.push(request);
+        const body = request.body as Record<string, unknown>;
+        if (body.retryOfClientMessageId) {
+          throw new ControlTransportHttpError(
+            'agent.session.prompt',
+            409,
+            'only a durably failed command may have a successor',
+            {
+              ok: false,
+              code: 'AGENT_COMMAND_CONFLICT',
+              commandReceipt: {
+                state: 'conflict',
+                clientMessageId: body.clientMessageId,
+              },
+            },
+          );
+        }
         return new Promise(() => undefined);
       },
     });
@@ -1221,9 +1237,9 @@ describe('PAWOS Agent Session structural migration', () => {
 
     await waitFor(() => expect(promptRequests).toHaveLength(1));
     expect(promptRequests[0]?.body).toMatchObject({
-      message: '只允许一个重试后继',
-      retryOfClientMessageId: 'client-failed-root',
+      message: '查询本月经营数据',
     });
+    expect(promptRequests[0]?.body).not.toHaveProperty('retryOfClientMessageId');
     useAgentLiveStore.getState().clear(sessionId);
   });
 

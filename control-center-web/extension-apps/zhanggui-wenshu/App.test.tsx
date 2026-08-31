@@ -40,6 +40,62 @@ describe('掌柜问数 Extension App', () => {
     expect(screen.getByText(/SGG 仅用于沙盒自测/)).toBeInTheDocument();
   });
 
+  it('binds the installed App managed source without opening a directory picker', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+    } });
+
+    renderApp(transport);
+
+    expect(await screen.findByText('掌柜问数受控数据')).toBeInTheDocument();
+    expect(screen.getByText('受控数据已连接')).toBeInTheDocument();
+    expect(screen.getByText(/默认绑定掌柜问数受控数据.*SGG.*fixture-v2.*只读沙箱/)).toBeInTheDocument();
+    expect(transport.filePickCalls).toEqual([]);
+  });
+
+  it('keeps the managed source usable when the current host cannot migrate to a directory', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+    } });
+    Object.defineProperty(transport, 'pickFiles', { configurable: true, value: undefined });
+
+    renderApp(transport);
+
+    const source = await screen.findByRole('button', { name: /当前数据源.*当前宿主不支持更换/ });
+    expect(source).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: '问数问题' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('opens the directory picker only after an explicit source migration', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      pickedFiles: [{
+        id: 'workspace:sales-data',
+        name: 'sales-data',
+        mimeType: 'inode/directory',
+        byteSize: 0,
+        path: '/work/sales-data',
+      }],
+      routes: {
+        'agent.sessions.list': { ok: true, items: [] },
+      },
+    });
+
+    renderApp(transport);
+
+    expect(await screen.findByText('掌柜问数受控数据')).toBeInTheDocument();
+    expect(transport.filePickCalls).toEqual([]);
+    await user.click(screen.getByRole('button', { name: '迁移到数据目录' }));
+
+    expect(transport.filePickCalls).toEqual([expect.objectContaining({
+      purpose: 'workspace-root',
+      selection: 'directory',
+    })]);
+    expect(await screen.findByText('sales-data')).toBeInTheDocument();
+    expect(screen.getByText('数据目录已连接')).toBeInTheDocument();
+  });
+
   it('creates one ordinary Pi Session, enables the App Skill, and sends the selected mode contract', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({ routes: {
@@ -111,6 +167,7 @@ describe('掌柜问数 Extension App', () => {
     expect(prompt.body).toMatchObject({ delivery: 'prompt' });
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('`zhanggui-wenshu` Skill');
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('当前掌柜问数模式：对账');
+    expect(String((prompt.body as Record<string, unknown>).message)).toContain('默认绑定受控数据源：掌柜问数受控数据 · SGG fixture-v2');
     expect(String((prompt.body as Record<string, unknown>).message)).toContain('核对销售台账与回款表');
     expect(window.localStorage.length).toBe(0);
     expect(screen.queryByRole('button', { name: '打开运行详情' })).not.toBeInTheDocument();
@@ -227,6 +284,8 @@ describe('掌柜问数 Extension App', () => {
       surfaceKind: 'extension_app',
       ownerAppId: manifest.id,
     });
+    expect(screen.getByText('受控数据已连接')).toBeInTheDocument();
+    expect(screen.queryByText('对话已连接')).not.toBeInTheDocument();
   });
 });
 

@@ -173,15 +173,16 @@ describe('ObservabilityFeature', () => {
     renderFeature(transport);
 
     const panel = await screen.findByRole('region', { name: '垂直 Agent SandboxRun 链路' });
-    expect(within(panel).getByText('sgg')).toBeInTheDocument();
-    expect(within(panel).getByText('sandbox:sgg:demo')).toBeInTheDocument();
-    expect(within(panel).getByText('已完成')).toBeInTheDocument();
-    const policy = within(panel).getByLabelText('SandboxRun 策略');
+    const detail = within(panel).getByRole('tabpanel');
+    expect(within(detail).getByText('sgg')).toBeInTheDocument();
+    expect(within(detail).getByText('sandbox:sgg:demo')).toBeInTheDocument();
+    expect(within(detail).getAllByText('已完成')).toHaveLength(2);
+    const policy = within(detail).getByLabelText('SandboxRun 策略');
     expect(policy).toHaveTextContent('network blocked');
     expect(policy).toHaveTextContent('mutation read_only');
     expect(policy).toHaveTextContent('productionWriteBlocked true');
-    expect(within(panel).getByText('eval:sgg:demo')).toBeInTheDocument();
-    expect(within(panel).getByRole('link', { name: 'trace:sgg:demo' })).toHaveAttribute(
+    expect(within(detail).getByText('eval:sgg:demo')).toBeInTheDocument();
+    expect(within(detail).getByRole('link', { name: 'trace:sgg:demo' })).toHaveAttribute(
       'href', '#/observability?traceId=trace%3Asgg%3Ademo',
     );
     await waitFor(() => expect(transport.requests.some(({ request }) => (
@@ -194,12 +195,125 @@ describe('ObservabilityFeature', () => {
     });
   });
 
-  it('keeps SandboxRun chain identifiers inside their grid cells with ellipsis', () => {
+  it('projects a vertical App through frozen candidate, Host sandbox, multiple Eval receipts, and a truthful pending decision', async () => {
+    const run = sandboxRun();
+    run.evalRunIds = ['eval:ground-truth', 'eval:judge'];
+    const transport = observationTransport({
+      sandboxRuns: sandboxRunListResponse([run]),
+      evals: (request: ControlRequest) => request.query?.traceId === 'trace:sgg:demo' ? {
+        schemaVersion: 'rag-ime.observability-eval-list.v1',
+        traceId: 'trace:sgg:demo',
+        total: 2,
+        truncated: false,
+        items: [
+          {
+            evalRunId: 'eval:ground-truth', mode: 'ground_truth', metricAuthority: 'ground_truth',
+            truthStatus: 'frozen', datasetId: 'sgg:fixture-v2', labelRevision: 'labels:1',
+            evaluatorDisplayName: '确定性 Eval', suiteBinding: { suiteId: 'sgg', suiteRevision: 'fixture-v2' },
+            metrics: { evidenceRecall: 0.92 }, status: 'completed', createdAtMs: 3, updatedAtMs: 3,
+          },
+          {
+            evalRunId: 'eval:judge', mode: 'ai_judge', metricAuthority: 'ai_judge_estimate',
+            truthStatus: 'none', datasetId: 'sgg:fixture-v2', labelRevision: 'rubric:1',
+            evaluatorDisplayName: 'AI Judge', suiteBinding: { suiteId: 'sgg', suiteRevision: 'fixture-v2' },
+            metrics: { qualityEstimate: 0.81 }, status: 'completed', createdAtMs: 4, updatedAtMs: 4,
+          },
+        ],
+      } : evalListResponse(),
+    });
+    renderFeature(transport);
+
+    const panel = await screen.findByRole('region', { name: '垂直 Agent SandboxRun 链路' });
+    expect(within(panel).getByText('垂直 App 多重 Eval 试验场')).toBeInTheDocument();
+    expect(within(panel).getByText('候选配置')).toBeInTheDocument();
+    expect(within(panel).getByText('Host 沙盒测试')).toBeInTheDocument();
+    expect(within(panel).getByText('多重 Eval')).toBeInTheDocument();
+    expect(within(panel).getByText('Keep / Reject')).toBeInTheDocument();
+    expect(await within(panel).findByText('2 / 2 份回执')).toBeInTheDocument();
+    expect(within(panel).getByText('evidenceRecall')).toBeInTheDocument();
+    expect(within(panel).getByText('0.92')).toBeInTheDocument();
+    expect(within(panel).getByText('qualityEstimate')).toBeInTheDocument();
+    expect(within(panel).getByText(/AI Judge · AI 估计/)).toBeInTheDocument();
+    expect(within(panel).getByText('等待 verification / promotion 回执')).toBeInTheDocument();
+    expect(within(panel).getByText(/晋升回执前不会 Keep/)).toBeInTheDocument();
+    expect(within(panel).queryByText('Keep 当前候选')).not.toBeInTheDocument();
+    expect(within(panel).queryByText('Trace → 修复 → 复验')).not.toBeInTheDocument();
+  });
+
+  it('reveals the Trace repair recheck branch only after a SandboxRun failure', async () => {
+    const failedRun = { ...sandboxRun(), status: 'failed' as const, evalRunIds: [] };
+    const transport = observationTransport({ sandboxRuns: sandboxRunListResponse([failedRun]) });
+    renderFeature(transport);
+
+    const panel = await screen.findByRole('region', { name: '垂直 Agent SandboxRun 链路' });
+    expect(await within(panel).findByText('候选失败，等待 Trace / 评价回执')).toBeInTheDocument();
+    expect(within(panel).getByText('等待 verification / promotion 回执')).toBeInTheDocument();
+    expect(within(panel).queryByText('Reject 当前候选')).not.toBeInTheDocument();
+    expect(within(panel).getByText('Trace → 修复 → 复验')).toBeInTheDocument();
+    expect(within(panel).getByRole('link', { name: '查看 trace:sgg:demo' })).toHaveAttribute(
+      'href', '#/observability?traceId=trace%3Asgg%3Ademo',
+    );
+  });
+
+  it('loads Eval only for the selected latest experiment and switches it with keyboard tabs', async () => {
+    const user = userEvent.setup();
+    const older = {
+      ...sandboxRun(),
+      sandboxRunId: 'sandbox:sgg:older',
+      traceIds: ['trace:sgg:older'],
+      evalRunIds: ['eval:sgg:older'],
+      updatedAtMs: 20,
+    };
+    const latest = {
+      ...sandboxRun(),
+      sandboxRunId: 'sandbox:sgg:latest',
+      traceIds: ['trace:sgg:latest'],
+      evalRunIds: ['eval:sgg:latest'],
+      updatedAtMs: 40,
+    };
+    const transport = observationTransport({
+      sandboxRuns: sandboxRunListResponse([older, latest]),
+      evals: (request: ControlRequest) => ({
+        ...evalListResponse(),
+        traceId: String(request.query?.traceId ?? ''),
+        items: [],
+        total: 0,
+      }),
+    });
+    renderFeature(transport);
+
+    const panel = await screen.findByRole('region', { name: '垂直 Agent SandboxRun 链路' });
+    const tabs = within(panel).getAllByRole('tab');
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]).toHaveTextContent('sandbox:sgg:latest');
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'observability.evals.list' && request.query?.traceId === 'trace:sgg:latest'
+    ))).toBe(true));
+    expect(transport.requests.some(({ request }) => (
+      request.pathId === 'observability.evals.list' && request.query?.traceId === 'trace:sgg:older'
+    ))).toBe(false);
+
+    tabs[0].focus();
+    await user.keyboard('{ArrowRight}');
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'observability.evals.list' && request.query?.traceId === 'trace:sgg:older'
+    ))).toBe(true));
+    expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps experiment identities inside a responsive selected-detail layout', () => {
     expect(observabilityStylesheet).toContain(
-      "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);",
+      "grid-template-columns: minmax(180px, .34fr) minmax(0, 1.66fr);",
     );
     expect(observabilityStylesheet).toContain(
-      ":is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node code,\n:is(main, section)[data-route-id='observability'] .observation-sandbox-runs__node a {\n  display: block;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;",
+      ".observation-sandbox-runs__picker small {\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;",
+    );
+    expect(observabilityStylesheet).toContain(
+      "grid-template-columns: repeat(4, minmax(0, 1fr));",
+    );
+    expect(observabilityStylesheet).toContain(
+      ".observation-app-eval__flow { grid-template-columns: minmax(0, 1fr); }",
     );
   });
 
@@ -553,7 +667,7 @@ describe('ObservabilityFeature', () => {
 
     const panel = await screen.findByRole('region', { name: '周期 Eval' });
     expect(within(panel).queryByRole('button', { name: '立即自测' })).not.toBeInTheDocument();
-    expect(within(panel).getByText('垂直 Agent · SandboxRun → Trace → EvalRun')).toBeInTheDocument();
+    expect(within(panel).getByText('垂直 App 多重 Eval 试验场')).toBeInTheDocument();
     expect(transport.requests.filter(({ request }) => (
       request.pathId === 'observability.evalSchedules.create'
     ))).toHaveLength(0);

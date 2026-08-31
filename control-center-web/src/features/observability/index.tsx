@@ -24,7 +24,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Disclosure, EmptyState, IconButton } from '@/components/primitives';
 import type { ObservationEventV1 } from '@/contracts/generated/observation-event.v1';
@@ -57,6 +57,10 @@ import {
   type ObservationConnectionState,
   type ObservationFilters,
 } from './api';
+import {
+  projectVerticalAppEval,
+  type VerticalAppEvalState,
+} from './vertical-app-eval-projection';
 import './observability.css';
 
 const CATEGORY_FILTERS = [
@@ -580,14 +584,45 @@ function EvalSchedulesPanel() {
 
 function SandboxRunsPanel() {
   const sandboxRuns = useSandboxRuns();
-  const items = sandboxRuns.data?.items ?? [];
+  const items = useMemo(
+    () => [...(sandboxRuns.data?.items ?? [])].sort((left, right) => right.updatedAtMs - left.updatedAtMs),
+    [sandboxRuns.data?.items],
+  );
+  const [selectedRunId, setSelectedRunId] = useState('');
+  const selectedRun = items.find((item) => item.sandboxRunId === selectedRunId) ?? items[0];
+
+  useEffect(() => {
+    if (!items.length) {
+      setSelectedRunId('');
+      return;
+    }
+    if (!items.some((item) => item.sandboxRunId === selectedRunId)) {
+      setSelectedRunId(items[0].sandboxRunId);
+    }
+  }, [items, selectedRunId]);
+
+  function selectRunFromKeyboard(event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void {
+    let nextIndex = index;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (index + 1) % items.length;
+    else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (index - 1 + items.length) % items.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = items.length - 1;
+    else return;
+    event.preventDefault();
+    const next = items[nextIndex];
+    setSelectedRunId(next.sandboxRunId);
+    document.getElementById(sandboxRunTabId(next.sandboxRunId))?.focus();
+  }
 
   return (
     <section aria-label="垂直 Agent SandboxRun 链路" className="observation-sandbox-runs">
       <header className="observation-sandbox-runs__heading">
-        <span><ShieldCheck aria-hidden="true" size={15} /><strong>垂直 Agent · SandboxRun → Trace → EvalRun</strong></span>
+        <span><ShieldCheck aria-hidden="true" size={15} /><strong>垂直 App 多重 Eval 试验场</strong></span>
         <small>{sandboxRuns.data?.total ?? 0} 次 SandboxRun</small>
       </header>
+      <p className="observation-sandbox-runs__hint">
+        候选配置 → Host 沙盒测试 → 多重 Eval → Keep / Reject。失败时才进入 Trace、修复与同条件复验；没有 verification / promotion 回执不会晋升。
+      </p>
       {sandboxRuns.error ? (
         <InlineNotice title="SandboxRun 暂时不可用" tone="warning">
           Trace 与 Eval 仍可查看；请刷新重试。
@@ -603,43 +638,142 @@ function SandboxRunsPanel() {
         />
       ) : null}
       {items.length ? (
-        <ol aria-label="SandboxRun 到 Trace 与 EvalRun" className="observation-sandbox-runs__list">
-          {items.map((item) => <SandboxRunRow item={item} key={item.sandboxRunId} />)}
-        </ol>
+        <div className="observation-sandbox-runs__workspace">
+          <div aria-label="垂直 App 实验" className="observation-sandbox-runs__picker" role="tablist">
+            {items.map((item, index) => {
+              const selected = item.sandboxRunId === selectedRun?.sandboxRunId;
+              const tabId = sandboxRunTabId(item.sandboxRunId);
+              return (
+                <button
+                  aria-controls={selected ? `${tabId}-panel` : undefined}
+                  aria-selected={selected}
+                  id={tabId}
+                  key={item.sandboxRunId}
+                  onClick={() => setSelectedRunId(item.sandboxRunId)}
+                  onKeyDown={(event) => selectRunFromKeyboard(event, index)}
+                  role="tab"
+                  tabIndex={selected ? 0 : -1}
+                  type="button"
+                >
+                  <span><strong>{item.appId}</strong><small>{item.sandboxRunId}</small></span>
+                  <StatusBadge label={sandboxRunStatusLabel(item.status)} tone={sandboxRunStatusTone(item.status)} />
+                </button>
+              );
+            })}
+          </div>
+          {selectedRun ? <SandboxRunDetail item={selectedRun} key={selectedRun.sandboxRunId} /> : null}
+        </div>
       ) : null}
     </section>
   );
 }
 
-function SandboxRunRow({ item }: { item: SandboxRunV1 }) {
+function SandboxRunDetail({ item }: { item: SandboxRunV1 }) {
+  const primaryTraceId = item.traceIds[0] ?? '';
+  const evals = useObservationEvals(primaryTraceId);
+  const projection = projectVerticalAppEval(item, evals.data?.items ?? []);
+  const tabId = sandboxRunTabId(item.sandboxRunId);
+
   return (
-    <li className="observation-sandbox-runs__row" data-status={item.status}>
-      <div className="observation-sandbox-runs__identity">
-        <strong>{item.appId}</strong>
+    <article
+      aria-labelledby={tabId}
+      className="observation-sandbox-runs__row"
+      data-status={item.status}
+      id={`${tabId}-panel`}
+      role="tabpanel"
+    >
+      <header className="observation-sandbox-runs__identity">
+        <span><strong>{item.appId}</strong><code title={item.sandboxRunId}>{item.sandboxRunId}</code></span>
         <StatusBadge label={sandboxRunStatusLabel(item.status)} tone={sandboxRunStatusTone(item.status)} />
+      </header>
+
+      <div aria-label={`${item.appId} 候选试验流程`} className="observation-app-eval__flow">
+        <section className="observation-app-eval__stage" data-state={projection.candidate.state}>
+          <header><span>候选配置</span><StageStateBadge state={projection.candidate.state} /></header>
+          <strong>{projection.candidate.label}</strong>
+          {projection.candidate.cohortLabel ? <small>{projection.candidate.cohortLabel}</small> : <small>当前 SandboxRun 列表没有冻结配置回执。</small>}
+          {projection.candidate.configFingerprint ? <code title={projection.candidate.configFingerprint}>{projection.candidate.configFingerprint}</code> : null}
+        </section>
+
+        <section className="observation-app-eval__stage" data-state={projection.sandbox.state}>
+          <header><span>Host 沙盒测试</span><StageStateBadge state={projection.sandbox.state} /></header>
+          <strong>{projection.sandbox.label}</strong>
+          <div className="observation-sandbox-runs__policy" aria-label="SandboxRun 策略">
+            <span><code>network</code> {item.policy.network}</span>
+            <span><code>mutation</code> {item.policy.mutationMode}</span>
+            <span><code>productionWriteBlocked</code> {String(item.policy.productionWriteBlocked)}</span>
+          </div>
+        </section>
+
+        <section className="observation-app-eval__stage observation-app-eval__stage--evals" data-state={projection.evals.state}>
+          <header><span>多重 Eval</span><StageStateBadge state={projection.evals.state} /></header>
+          <strong>{projection.evals.receivedCount} / {projection.evals.expectedCount} 份回执</strong>
+          {evals.isPending ? <small role="status">正在读取 Eval 回执…</small> : null}
+          {evals.error ? <small data-tone="danger">Eval 回执暂时不可用；已保留 SandboxRun。</small> : null}
+          {!evals.isPending && !evals.error ? (
+            <small>{projection.evals.suiteAlignmentReason}</small>
+          ) : null}
+          {projection.evals.items.length ? (
+            <ul aria-label={`${item.appId} 多重 Eval 回执`} className="observation-app-eval__receipts">
+              {projection.evals.items.map((evalItem) => (
+                <li data-status={evalItem.status} key={evalItem.evalRunId}>
+                  <div>
+                    <code title={evalItem.evalRunId}>{evalItem.evalRunId}</code>
+                    <span>{evalItem.evaluatorDisplayName} · {evalItem.authority === 'ground_truth' ? '真值' : 'AI 估计'}</span>
+                  </div>
+                  {evalItem.metrics.length ? (
+                    <dl>
+                      {evalItem.metrics.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{formatScore(value)}</dd></div>)}
+                    </dl>
+                  ) : <small>{evalItem.status === 'completed' ? '回执没有指标' : evalStatusLabel(evalItem.status)}</small>}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {projection.evals.missingEvalRunIds.length ? (
+            <div className="observation-app-eval__missing">
+              <small>等待 EvalRun</small>
+              {projection.evals.missingEvalRunIds.map((evalRunId) => <code key={evalRunId}>{evalRunId}</code>)}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="observation-app-eval__stage" data-state={projection.decision.state}>
+          <header><span>Keep / Reject</span><StageStateBadge state={projection.decision.state} /></header>
+          <strong>{projection.decision.label}</strong>
+          <small>{projection.decision.detail}</small>
+        </section>
       </div>
-      <div aria-label={`SandboxRun ${item.sandboxRunId} 的 Trace 与 EvalRun`} className="observation-sandbox-runs__chain">
-        <span className="observation-sandbox-runs__node"><small>SandboxRun</small><code>{item.sandboxRunId}</code></span>
-        <span aria-hidden="true" className="observation-sandbox-runs__arrow">→</span>
-        <span className="observation-sandbox-runs__node"><small>Trace</small>
-          {item.traceIds.length ? item.traceIds.map((traceId) => (
+
+      {projection.failureBranch ? (
+        <aside className="observation-app-eval__failure" role="status">
+          <span><TriangleAlert aria-hidden="true" size={15} /><strong>候选失败，等待 Trace / 评价回执</strong></span>
+          <p>Trace → 修复 → 复验</p>
+          <nav aria-label="失败候选 Trace">
+            {projection.traceIds.map((traceId) => (
+              <a aria-label={`查看 ${traceId}`} href={`#/observability?traceId=${encodeURIComponent(traceId)}`} key={traceId}>{traceId}</a>
+            ))}
+          </nav>
+        </aside>
+      ) : projection.traceIds.length ? (
+        <nav aria-label="候选 Trace" className="observation-app-eval__trace-links">
+          {projection.traceIds.map((traceId) => (
             <a href={`#/observability?traceId=${encodeURIComponent(traceId)}`} key={traceId}>{traceId}</a>
-          )) : <code>未产出</code>}
-        </span>
-        <span aria-hidden="true" className="observation-sandbox-runs__arrow">→</span>
-        <span className="observation-sandbox-runs__node"><small>EvalRun</small>
-          {item.evalRunIds.length ? item.evalRunIds.map((evalRunId) => (
-            <code key={evalRunId}>{evalRunId}</code>
-          )) : <code>未产出</code>}
-        </span>
-      </div>
-      <div className="observation-sandbox-runs__policy" aria-label="SandboxRun 策略">
-        <span><code>network</code> {item.policy.network}</span>
-        <span><code>mutation</code> {item.policy.mutationMode}</span>
-        <span><code>productionWriteBlocked</code> {String(item.policy.productionWriteBlocked)}</span>
-      </div>
-    </li>
+          ))}
+        </nav>
+      ) : null}
+    </article>
   );
+}
+
+function sandboxRunTabId(sandboxRunId: string): string {
+  return `sandbox-run-${sandboxRunId.replace(/[^a-zA-Z0-9_-]/gu, '-')}`;
+}
+
+function StageStateBadge({ state }: { state: VerticalAppEvalState | 'waiting' }) {
+  const label = ({ waiting: '等待', active: '进行中', passed: '已完成', failed: '失败' })[state];
+  const tone = state === 'passed' ? 'success' : state === 'failed' ? 'danger' : state === 'active' ? 'info' : 'neutral';
+  return <StatusBadge label={label} tone={tone} />;
 }
 
 function recurrenceLabel(schedule: EvalScheduleListV1['items'][number]): string {

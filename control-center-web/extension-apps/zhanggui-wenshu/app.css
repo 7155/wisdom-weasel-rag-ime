@@ -66,6 +66,17 @@
   border-color: color-mix(in srgb, var(--zhanggui-accent) 28%, var(--color-border-soft));
   background: var(--zhanggui-accent-soft);
 }
+.zhanggui-app__header-actions > button:disabled,
+.zhanggui-app__source button:disabled {
+  cursor: not-allowed;
+  opacity: .62;
+}
+.zhanggui-app__header-actions > button:disabled:hover,
+.zhanggui-app__source button:disabled:hover {
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-surface-raised) 94%, transparent);
+}
 .zhanggui-app__data-button > span {
   max-width: 180px;
   overflow: hidden;

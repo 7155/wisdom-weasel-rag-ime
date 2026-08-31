@@ -737,7 +737,13 @@ export function PawSessionWorkspace({
     onAdmissionRolledBack?: () => void,
   ): boolean {
     const current = agentProjection(recordId);
-    const hasRetrySuccessor = Boolean(userMessage.clientMessageId) && current.messageOrder.some((messageId) => {
+    // A durable Runtime message proves the original command was accepted; a
+    // later Provider/Tool turn failure is a new execution attempt, not a
+    // successor to a failed command receipt. Only the local optimistic row
+    // retained after a pre-accept rejection may use receipt retry lineage.
+    const mayRetryFailedReceipt = userMessage.id.startsWith('local:')
+      && Boolean(userMessage.clientMessageId);
+    const hasRetrySuccessor = mayRetryFailedReceipt && current.messageOrder.some((messageId) => {
       const candidate = current.messagesById[messageId];
       return candidate?.role === 'user'
         && candidate.retryOfClientMessageId === userMessage.clientMessageId;
@@ -754,7 +760,9 @@ export function PawSessionWorkspace({
     const clientMessageId = replayAmbiguousAdmission
       ? userMessage.clientMessageId!
       : `paw-retry-${crypto.randomUUID()}`;
-    const retryOfClientMessageId = replayAmbiguousAdmission ? '' : userMessage.clientMessageId ?? '';
+    const retryOfClientMessageId = replayAmbiguousAdmission || !mayRetryFailedReceipt
+      ? ''
+      : userMessage.clientMessageId ?? '';
     setSending(true);
     setError('');
     if (replayAmbiguousAdmission) {

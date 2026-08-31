@@ -69,6 +69,10 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   const [error, setError] = useState('');
   const activeMode = MODES.find((mode) => mode.id === modeId)!;
   const activeSession = sessions[modeId];
+  const managedDataSourceLabel = `${manifest.label}受控数据`;
+  const selectedWorkspaceName = workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+  const dataSourceLabel = selectedWorkspaceName || managedDataSourceLabel;
+  const canPickDataWorkspace = typeof transport.pickFiles === 'function';
 
   useEffect(() => {
     let active = true;
@@ -172,7 +176,15 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
         pathId: 'agent.session.prompt',
         params: { sessionId },
         body: {
-          message: bootstrapPrompt(manifest.skillRef, activeMode, userMessage, workspaceRoot),
+          message: bootstrapPrompt(
+            manifest.skillRef,
+            activeMode,
+            userMessage,
+            workspaceRoot,
+            managedDataSourceLabel,
+            manifest.verticalSuiteId,
+            manifest.verticalSuiteRevision,
+          ),
           clientMessageId: `extension:${manifest.id}:${modeId}:${Date.now()}`,
           delivery: 'prompt',
         },
@@ -185,10 +197,7 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   }
 
   async function pickDataWorkspace(): Promise<void> {
-    if (!transport.pickFiles) {
-      setError('当前运行环境不能选择数据工作目录。');
-      return;
-    }
+    if (!transport.pickFiles) return;
     try {
       const selection = await transport.pickFiles({
         purpose: 'workspace-root',
@@ -222,11 +231,20 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
           <span><small>{activeMode.eyebrow}</small><h1>{manifest.label}</h1></span>
         </span>
         <span className="zhanggui-app__header-actions">
-          <button className="zhanggui-app__data-button" onClick={() => void pickDataWorkspace()} type="button">
+          <button
+            aria-label={canPickDataWorkspace
+              ? `更换数据源，当前 ${dataSourceLabel}`
+              : `当前数据源 ${dataSourceLabel}；当前宿主不支持更换`}
+            className="zhanggui-app__data-button"
+            disabled={!canPickDataWorkspace}
+            onClick={() => void pickDataWorkspace()}
+            title={canPickDataWorkspace ? '更换或迁移数据目录' : '当前宿主不支持目录迁移，继续使用 App 受控数据'}
+            type="button"
+          >
             <FolderOpen size={15} />
-            <span>{workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) : '连接数据'}</span>
+            <span>{dataSourceLabel}</span>
           </button>
-          {activeSession ? <span className="zhanggui-app__status" data-status={activeSession.status}><i />{activeSession.status === 'busy' || activeSession.status === 'active' ? '处理中' : '对话已连接'}</span> : null}
+          <span className="zhanggui-app__status" data-status="connected"><i />{workspaceRoot ? '数据目录已连接' : '受控数据已连接'}</span>
           <details className="zhanggui-app__more">
             <summary aria-label="掌柜问数更多操作"><MoreHorizontal size={18} /></summary>
             <div>
@@ -294,8 +312,18 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
             {activeMode.suggestions.map((suggestion) => <button key={suggestion} onClick={() => setDraft(suggestion)} type="button">{suggestion}</button>)}
           </div>
           <div className="zhanggui-app__source">
-            <button onClick={() => void pickDataWorkspace()} type="button"><FolderOpen size={15} />{workspaceRoot ? '更换数据目录' : '选择数据目录'}</button>
-            <span>{workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) : '可选；不选择时只使用当前 Session 已授权的 Knowledge / Tool 来源'}</span>
+            <button
+              aria-label={canPickDataWorkspace ? undefined : '迁移到数据目录（当前宿主不支持）'}
+              disabled={!canPickDataWorkspace}
+              onClick={() => void pickDataWorkspace()}
+              title={canPickDataWorkspace ? undefined : '当前宿主不支持目录迁移'}
+              type="button"
+            >
+              <FolderOpen size={15} />{workspaceRoot ? '更换数据目录' : '迁移到数据目录'}
+            </button>
+            <span>{workspaceRoot
+              ? workspaceRoot
+              : `默认绑定${managedDataSourceLabel} · ${manifest.verticalSuiteId.toUpperCase()} ${manifest.verticalSuiteRevision} · 只读沙箱，不作为真实经营数据${canPickDataWorkspace ? '' : '；当前宿主不支持目录迁移'}`}</span>
           </div>
           {manifest.sandbox ? (
             <label className="zhanggui-app__sandbox-choice">
@@ -326,13 +354,23 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
   );
 }
 
-function bootstrapPrompt(skillRef: string, mode: (typeof MODES)[number], userMessage: string, workspaceRoot: string): string {
+function bootstrapPrompt(
+  skillRef: string,
+  mode: (typeof MODES)[number],
+  userMessage: string,
+  workspaceRoot: string,
+  managedDataSourceLabel: string,
+  verticalSuiteId: string,
+  verticalSuiteRevision: string,
+): string {
   return [
     `请加载并严格遵循 \`${skillRef}\` Skill。`,
     `当前掌柜问数模式：${mode.label}（${mode.eyebrow}）。`,
     mode.description,
     '只使用当前 Session 中真实可访问的来源；缺少来源时明确指出，不要用 SGG fixture 代替真实经营数据。',
-    workspaceRoot ? `用户已显式绑定数据工作目录：${workspaceRoot}` : '用户未绑定数据工作目录；不得假定本机存在某个数据库或项目。',
+    workspaceRoot
+      ? `用户已显式迁移到数据工作目录：${workspaceRoot}`
+      : `默认绑定受控数据源：${managedDataSourceLabel} · ${verticalSuiteId.toUpperCase()} ${verticalSuiteRevision}；该绑定只用于受管只读沙箱自测，不得冒充生产经营数据。`,
     '',
     `用户请求：${userMessage}`,
   ].join('\n');
