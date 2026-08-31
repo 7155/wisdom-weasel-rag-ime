@@ -16,6 +16,32 @@
         "productionWriteBlocked": {"const": true}
       }
     },
+    "replayCohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suiteId",
+        "suiteRevision",
+        "caseId",
+        "inputFingerprint",
+        "environmentFingerprint",
+        "configFingerprint",
+        "modelProfileFingerprint",
+        "toolProfileFingerprint",
+        "skillProfileFingerprint"
+      ],
+      "properties": {
+        "suiteId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "suiteRevision": {"type": "string", "minLength": 1, "maxLength": 160},
+        "caseId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "inputFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "environmentFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "configFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "modelProfileFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "toolProfileFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "skillProfileFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    },
     "traceIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "evalRunIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "createdAtMs": {"type": "integer", "minimum": 0}, "updatedAtMs": {"type": "integer", "minimum": 0}

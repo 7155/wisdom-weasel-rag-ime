@@ -178,6 +178,53 @@ describe('PawContextTrace evidence access', () => {
 });
 
 describe('PawContextTrace', () => {
+  it('supports roving keyboard focus and an explicit tabpanel for trace modes', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.debugContext.get': debugContextResponse(),
+        'agent.session.contextTraces.list': {
+          ok: true,
+          items: [{ traceId: 'trace-a', sessionId: 'session-a', turnId: 'turn-a' }],
+        },
+        'agent.session.contextTrace.get': contextTraceResponse(),
+      },
+    });
+
+    render(
+      <ControlTransportProvider transport={transport}>
+        <PawContextTrace active sessionId="session-a" />
+      </ControlTransportProvider>,
+    );
+
+    const tablist = await screen.findByRole('tablist', { name: '轨迹模式' });
+    const assemblyTab = within(tablist).getByRole('tab', { name: '上下文装配' });
+    const eventsTab = within(tablist).getByRole('tab', { name: '事件流' });
+    expect(eventsTab).toHaveAttribute('tabindex', '0');
+    expect(assemblyTab).toHaveAttribute('tabindex', '-1');
+    expect(eventsTab).toHaveAttribute('aria-controls');
+
+    await userEvent.setup().click(assemblyTab);
+    expect(assemblyTab).toHaveAttribute('aria-selected', 'true');
+    const panelId = assemblyTab.getAttribute('aria-controls');
+    expect(panelId).toBeTruthy();
+    const panel = document.getElementById(panelId!);
+    expect(panel).toHaveAttribute('role', 'tabpanel');
+    expect(panel).toHaveAttribute('aria-labelledby', assemblyTab.id);
+
+    assemblyTab.focus();
+    fireEvent.keyDown(assemblyTab, { key: 'ArrowRight' });
+    expect(eventsTab).toHaveFocus();
+    expect(eventsTab).toHaveAttribute('aria-selected', 'true');
+    expect(eventsTab).toHaveAttribute('tabindex', '0');
+
+    fireEvent.keyDown(eventsTab, { key: 'Home' });
+    expect(assemblyTab).toHaveFocus();
+    fireEvent.keyDown(assemblyTab, { key: 'End' });
+    expect(eventsTab).toHaveFocus();
+    fireEvent.keyDown(eventsTab, { key: 'ArrowLeft' });
+    expect(assemblyTab).toHaveFocus();
+  });
+
   it('renders the turn-grouped projection trace and keeps real context assembly available', async () => {
     const transport = new MockControlTransport({
       routes: {

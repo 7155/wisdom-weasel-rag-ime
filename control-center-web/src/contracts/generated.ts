@@ -153,6 +153,8 @@ import type { TraceDiagnosticReportV1 } from './generated/trace-diagnostic-repor
 import type { TraceDiagnosticResultV1 } from './generated/trace-diagnostic-result.v1';
 import type { TraceEnvelopeV1 } from './generated/trace-envelope.v1';
 import type { TraceRepairReceiptV1 } from './generated/trace-repair-receipt.v1';
+import type { TraceReplayCaseV1 } from './generated/trace-replay-case.v1';
+import type { TraceVerificationReceiptV1 } from './generated/trace-verification-receipt.v1';
 import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 import type { VerticalAgentSelfTestSuiteV1 } from './generated/vertical-agent-self-test-suite.v1';
@@ -314,6 +316,8 @@ export type {
   TraceDiagnosticResultV1,
   TraceEnvelopeV1,
   TraceRepairReceiptV1,
+  TraceReplayCaseV1,
+  TraceVerificationReceiptV1,
   TypedVerificationReceiptV1,
   UserMemoryDraftV1,
   VerticalAgentSelfTestSuiteV1,
@@ -476,6 +480,8 @@ export interface ContractTypeMap {
   'trace-diagnostic-result.v1': TraceDiagnosticResultV1;
   'trace-envelope.v1': TraceEnvelopeV1;
   'trace-repair-receipt.v1': TraceRepairReceiptV1;
+  'trace-replay-case.v1': TraceReplayCaseV1;
+  'trace-verification-receipt.v1': TraceVerificationReceiptV1;
   'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
   'vertical-agent-self-test-suite.v1': VerticalAgentSelfTestSuiteV1;

@@ -46,6 +46,7 @@ from .agent_routes import (
     agent_context_trace_route,
     observability_trace_route,
     observability_trace_repair_route,
+    observability_trace_replay_route,
     observability_trace_diagnostic_report_route,
     agent_media_route,
     agent_room_route,
@@ -71,6 +72,10 @@ from .contracts.json_schema import validate_contract
 from .trace_adapters import envelope_from_browser_trace, envelope_from_prediction_frame
 from .trace_runtime import TraceContractError, TraceEnvelope
 from .trace_repair import TraceRepairConflict, TraceRepairValidationError
+from .trace_replay_verification import (
+    TraceVerificationConflict,
+    TraceVerificationValidationError,
+)
 from .vertical_sandbox_connector import VerticalSandboxConnectorService
 from .extension_sandbox_experiment import ExtensionSandboxExperimentService
 from .control_api import (
@@ -7429,6 +7434,51 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     },
                 )
             return
+        trace_replay_id, trace_replay_action = observability_trace_replay_route(
+            parsed.path
+        )
+        if trace_replay_action in {"case-get", "verification-get"}:
+            if not self._trace_repair_loopback_allowed():
+                self._write_json(
+                    HTTPStatus.FORBIDDEN,
+                    {
+                        "schemaVersion": "rag-ime.trace-verification-error.v1",
+                        "ok": False,
+                        "errorCode": "trace_replay_loopback_only",
+                        "error": "Trace replay is available only from the local machine",
+                    },
+                )
+                return
+            try:
+                response = (
+                    self.service.agent.get_trace_replay_case(trace_replay_id)
+                    if trace_replay_action == "case-get"
+                    else self.service.agent.get_trace_verification_receipt(
+                        trace_replay_id
+                    )
+                )
+                self._write_json(HTTPStatus.OK, response)
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schemaVersion": "rag-ime.trace-verification-error.v1",
+                        "ok": False,
+                        "errorCode": "trace_replay_record_not_found",
+                        "error": "Trace replay record not found",
+                    },
+                )
+            except TraceVerificationValidationError:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "schemaVersion": "rag-ime.trace-verification-error.v1",
+                        "ok": False,
+                        "errorCode": "invalid_trace_replay_id",
+                        "error": "Invalid Trace replay record ID",
+                    },
+                )
+            return
         trace_id = observability_trace_route(parsed.path)
         if trace_id is not None:
             try:
@@ -8750,6 +8800,59 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                             "ok": False,
                             "errorCode": "trace_repair_unavailable",
                             "error": "Trace repair service is unavailable",
+                        },
+                    )
+                return
+            trace_replay_id, trace_replay_action = observability_trace_replay_route(
+                path
+            )
+            if trace_replay_action in {"case-create", "verify"}:
+                if not self._trace_repair_loopback_allowed():
+                    self._write_json(
+                        HTTPStatus.FORBIDDEN,
+                        {
+                            "schemaVersion": "rag-ime.trace-verification-error.v1",
+                            "ok": False,
+                            "errorCode": "trace_replay_loopback_only",
+                            "error": "Trace replay is available only from the local machine",
+                        },
+                    )
+                    return
+                try:
+                    response = (
+                        self.service.agent.create_trace_replay_case(payload)
+                        if trace_replay_action == "case-create"
+                        else self.service.agent.verify_trace_replay_case(payload)
+                    )
+                    self._write_json(HTTPStatus.CREATED, response)
+                except KeyError:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND,
+                        {
+                            "schemaVersion": "rag-ime.trace-verification-error.v1",
+                            "ok": False,
+                            "errorCode": "trace_replay_record_not_found",
+                            "error": "Trace replay authority record not found",
+                        },
+                    )
+                except TraceVerificationConflict:
+                    self._write_json(
+                        HTTPStatus.CONFLICT,
+                        {
+                            "schemaVersion": "rag-ime.trace-verification-error.v1",
+                            "ok": False,
+                            "errorCode": "trace_replay_identity_conflict",
+                            "error": "Trace replay identity is already bound to different content",
+                        },
+                    )
+                except TraceVerificationValidationError:
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "schemaVersion": "rag-ime.trace-verification-error.v1",
+                            "ok": False,
+                            "errorCode": "invalid_trace_replay_request",
+                            "error": "Invalid Trace replay request",
                         },
                     )
                 return

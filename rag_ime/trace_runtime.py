@@ -255,6 +255,19 @@ _SANDBOX_POLICY_KEYS = frozenset(
         "productionWriteBlocked",
     }
 )
+_SANDBOX_REPLAY_COHORT_KEYS = frozenset(
+    {
+        "suiteId",
+        "suiteRevision",
+        "caseId",
+        "inputFingerprint",
+        "environmentFingerprint",
+        "configFingerprint",
+        "modelProfileFingerprint",
+        "toolProfileFingerprint",
+        "skillProfileFingerprint",
+    }
+)
 _MAX_EVIDENCE_SCORES = 16
 
 
@@ -1399,8 +1412,25 @@ def _validate_eval_provenance(payload: Mapping[str, object], *, mode: str) -> No
         "testStatus",
     }
     present = provenance_keys.intersection(payload)
-    if mode == "ground_truth" and present:
-        raise TraceContractError("ground truth eval cannot carry AI Judge provenance")
+    if mode == "ground_truth":
+        judge_only_keys = {
+            "requestedEvaluator",
+            "promptVersion",
+            "rubricVersion",
+            "failureCode",
+            "sourceTraceId",
+            "repairTraceId",
+            "sourceScope",
+            "failureRef",
+            "repairReceiptId",
+            "changeReceiptId",
+            "testEvidenceId",
+            "testStatus",
+        }
+        if present.intersection(judge_only_keys):
+            raise TraceContractError(
+                "ground truth eval cannot carry AI Judge repair provenance"
+            )
     if "requestedEvaluator" in payload:
         _validated_evaluator(payload.get("requestedEvaluator"))
     for key in ("promptVersion", "rubricVersion"):
@@ -1739,6 +1769,9 @@ def _freeze_sandbox_payload(value: Mapping[str, object]) -> Mapping[str, object]
     policy = result.get("policy")
     if isinstance(policy, Mapping):
         result["policy"] = _FrozenDict(policy)
+    replay_cohort = result.get("replayCohort")
+    if isinstance(replay_cohort, Mapping):
+        result["replayCohort"] = _FrozenDict(replay_cohort)
     for key in ("traceIds", "evalRunIds"):
         identifiers = result.get(key)
         if isinstance(identifiers, Sequence) and not isinstance(identifiers, (str, bytes)):
@@ -1756,6 +1789,7 @@ def build_sandbox_run(
     network: str = "blocked",
     trace_ids: Sequence[str] = (),
     eval_run_ids: Sequence[str] = (),
+    replay_cohort: Mapping[str, str] | None = None,
     status: str = "completed",
     now_ms: int | None = None,
 ) -> SandboxRun:
@@ -1779,6 +1813,8 @@ def build_sandbox_run(
         "createdAtMs": timestamp,
         "updatedAtMs": timestamp,
     }
+    if replay_cohort is not None:
+        payload["replayCohort"] = _validated_sandbox_replay_cohort(replay_cohort)
     validate_sandbox_run(payload)
     return SandboxRun(payload)
 
@@ -1810,6 +1846,9 @@ def validate_sandbox_run(payload: Mapping[str, object]) -> None:
     _safe_status(policy.get("network"), "sandbox network", _SANDBOX_NETWORK_MODES)
     if policy.get("productionWriteBlocked") is not True:
         raise TraceContractError("sandbox production writes must remain blocked")
+    replay_cohort = payload.get("replayCohort")
+    if replay_cohort is not None:
+        _validated_sandbox_replay_cohort(replay_cohort)
     for key, label in (("traceIds", "traceId"), ("evalRunIds", "evalRunId")):
         values = payload.get(key)
         if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
@@ -1821,3 +1860,35 @@ def validate_sandbox_run(payload: Mapping[str, object]) -> None:
     updated_at = _safe_non_negative_int(payload.get("updatedAtMs"), "sandbox updatedAtMs")
     if updated_at < created_at:
         raise TraceContractError("sandbox updatedAtMs must not precede createdAtMs")
+
+
+def _validated_sandbox_replay_cohort(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping) or set(value) != _SANDBOX_REPLAY_COHORT_KEYS:
+        raise TraceContractError(
+            "sandbox replayCohort must carry the complete frozen cohort"
+        )
+    result = {
+        "suiteId": _safe_token(value.get("suiteId"), "replayCohort suiteId"),
+        "suiteRevision": _safe_token(
+            value.get("suiteRevision"), "replayCohort suiteRevision"
+        ),
+        "caseId": _safe_token(value.get("caseId"), "replayCohort caseId"),
+    }
+    for field in (
+        "inputFingerprint",
+        "environmentFingerprint",
+        "configFingerprint",
+        "modelProfileFingerprint",
+        "toolProfileFingerprint",
+        "skillProfileFingerprint",
+    ):
+        fingerprint = value.get(field)
+        if (
+            not isinstance(fingerprint, str)
+            or _SHA256_FINGERPRINT_PATTERN.fullmatch(fingerprint) is None
+        ):
+            raise TraceContractError(
+                f"replayCohort {field} must be a SHA-256 fingerprint"
+            )
+        result[field] = fingerprint
+    return result

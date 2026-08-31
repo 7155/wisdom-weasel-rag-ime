@@ -16,6 +16,7 @@ import {
   TraceAgentFeature,
 } from './index';
 import { buildTraceAgentHandoffRoute } from './handoff';
+import traceAgentCss from './trace-agent.css?raw';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -23,6 +24,10 @@ afterEach(() => {
 });
 
 describe('TraceAgentFeature', () => {
+  it('keeps inline transcript expansion targets at least 24px high', () => {
+    expect(traceAgentCss).toMatch(/\.trace-agent-timeline__title > button\s*\{[^}]*min-height:\s*24px;/s);
+  });
+
   it('preselects an incoming failure handoff and includes its exact envelope in the diagnostic prompt', async () => {
     const user = userEvent.setup();
     const transport = traceAgentTransport();
@@ -512,8 +517,17 @@ describe('TraceAgentFeature', () => {
 
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
     const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
-    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
-    expect(screen.getByTestId('trace-agent-repair-confirmation')).toHaveTextContent('修复 owner');
+    const repairTrigger = within(report).getByRole('button', { name: '交给 Agent 修复' });
+    await user.click(repairTrigger);
+    const confirmation = screen.getByTestId('trace-agent-repair-confirmation');
+    expect(confirmation).toHaveTextContent('修复 owner');
+    expect(confirmation).toHaveAttribute('aria-modal', 'true');
+    expect(within(confirmation).getByRole('button', { name: '取消' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('trace-agent-repair-confirmation')).not.toBeInTheDocument();
+    expect(repairTrigger).toHaveFocus();
+
+    await user.click(repairTrigger);
     expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create')).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
 

@@ -18,7 +18,17 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, EmptyState } from '@/components/primitives';
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  EmptyState,
+} from '@/components/primitives';
 import type { EvalRunV1 } from '@/contracts/generated/eval-run.v1';
 import type { TraceRepairReceiptV1 } from '@/contracts/generated/trace-repair-receipt.v1';
 import type { ObservationSnapshotV1 } from '@/contracts/generated/observation-snapshot.v1';
@@ -1166,22 +1176,22 @@ function TraceAgentReport({
             {report.traceId ? '回到 Trace 重跑诊断' : '回到原记录重跑诊断'}
           </Button>
         </div>
-        {repairConfirmationOpen && !repairHandoff ? (
-          <div aria-label="确认候选修复" className="trace-agent-repair-confirmation" data-testid="trace-agent-repair-confirmation" role="dialog">
-            <div>
-              <strong>确认交给普通 Agent 修复？</strong>
-              <p>
+        <Dialog open={repairConfirmationOpen && !repairHandoff} onOpenChange={setRepairConfirmationOpen}>
+          <DialogContent aria-modal="true" className="trace-agent-repair-confirmation" data-testid="trace-agent-repair-confirmation" hideClose>
+            <DialogHeader>
+              <DialogTitle>确认交给普通 Agent 修复？</DialogTitle>
+              <DialogDescription>
                 修复 owner：{report.primaryTarget.title || report.primaryTarget.id}（{report.primaryTarget.kind} · {report.primaryTarget.id}）。
                 只有这个 primary target 可以进入可写的全自动修复 Session；其余 {Math.max(0, report.targets.length - 1)} 个对象仅作为比较证据，不会获得写入权限。
                 确认后不再逐 Tool 询问；工作目录、停止/取消、哈希复验和硬安全边界继续有效，待审批操作由独立 Luna Max 判定。
-              </p>
-            </div>
-            <div className="trace-agent-report-links">
-              <Button onClick={() => setRepairConfirmationOpen(false)} size="small" variant="quiet">取消</Button>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose asChild><Button size="small" variant="quiet">取消</Button></DialogClose>
               <Button onClick={() => { setRepairConfirmationOpen(false); onRepair(); }} size="small" variant="primary">确认交给 Agent 修复</Button>
-            </div>
-          </div>
-        ) : null}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <TraceSourceTimeline
           ariaLabel="诊断 Agent 对话与报告"
           description="这里直接读取诊断 Session 的权威时间线；工具过程、报告正文与失败状态都留在同一 Trace 页面。"

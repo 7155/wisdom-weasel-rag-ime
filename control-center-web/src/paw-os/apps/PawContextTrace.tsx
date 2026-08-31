@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
   type Dispatch,
+  type KeyboardEvent as ReactKeyboardEvent,
   type SetStateAction,
 } from 'react';
 import { useControlTransport } from '@/app/control-transport';
@@ -73,6 +74,7 @@ import {
 
 type TraceMode = 'assembly' | 'events';
 type TraceFilter = 'all' | 'msg' | 'tool' | 'appr' | 'sub' | 'state';
+const traceModes: TraceMode[] = ['assembly', 'events'];
 type TraceUnavailable = {
   message: string;
   retryable: boolean;
@@ -141,6 +143,22 @@ export function PawContextTrace({
   const [error, setError] = useState('');
   const [unavailable, setUnavailable] = useState<TraceUnavailable>();
   const requestGeneration = useRef(0);
+  const traceModeId = `paw-trace-mode-${useId().replaceAll(':', '')}`;
+  const traceModeTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const moveTraceModeFocus = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, current: TraceMode) => {
+    const currentIndex = traceModes.indexOf(current);
+    if (currentIndex < 0) return;
+    let nextIndex: number;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % traceModes.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + traceModes.length) % traceModes.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = traceModes.length - 1;
+    else return;
+    event.preventDefault();
+    const nextMode = traceModes[nextIndex];
+    setMode(nextMode);
+    traceModeTabRefs.current[nextIndex]?.focus();
+  }, []);
 
   /* A historical Session can have a complete persisted event projection while
      its Pi runtime is no longer resident. Keep the event-derived rounds as a
@@ -338,9 +356,29 @@ export function PawContextTrace({
               {description ? `${description.label} · ${shortId(selectedTurnId)}` : loading ? '读取中…' : '无数据'}
             </div>
           </div>
-          <span className="an-seg" role="tablist" aria-label="轨迹模式">
-            <button aria-selected={mode === 'assembly'} onClick={() => setMode('assembly')} role="tab" type="button">上下文装配</button>
-            <button aria-selected={mode === 'events'} onClick={() => setMode('events')} role="tab" type="button">事件流</button>
+          <span aria-label="轨迹模式" aria-orientation="horizontal" className="an-seg" role="tablist">
+            <button
+              aria-controls={`${traceModeId}-panel`}
+              aria-selected={mode === 'assembly'}
+              id={`${traceModeId}-assembly-tab`}
+              onClick={() => setMode('assembly')}
+              onKeyDown={(event) => moveTraceModeFocus(event, 'assembly')}
+              ref={(node) => { traceModeTabRefs.current[0] = node; }}
+              role="tab"
+              tabIndex={mode === 'assembly' ? 0 : -1}
+              type="button"
+            >上下文装配</button>
+            <button
+              aria-controls={`${traceModeId}-panel`}
+              aria-selected={mode === 'events'}
+              id={`${traceModeId}-events-tab`}
+              onClick={() => setMode('events')}
+              onKeyDown={(event) => moveTraceModeFocus(event, 'events')}
+              ref={(node) => { traceModeTabRefs.current[1] = node; }}
+              role="tab"
+              tabIndex={mode === 'events' ? 0 : -1}
+              type="button"
+            >事件流</button>
           </span>
         </div>
 
@@ -388,10 +426,18 @@ export function PawContextTrace({
             filter={filter}
             onFilterChange={setFilter}
             onShowAssembly={() => setMode('assembly')}
+            panelId={`${traceModeId}-panel`}
+            panelLabelledBy={`${traceModeId}-events-tab`}
             turns={traceTurns}
           />
         ) : context ? (
-          <div className="an-trace-body">
+          <div
+            aria-labelledby={`${traceModeId}-assembly-tab`}
+            className="an-trace-body"
+            id={`${traceModeId}-panel`}
+            role="tabpanel"
+            tabIndex={0}
+          >
             <div className="an-trace-center">
               <div className="an-assembly">
                 <div className="ah-top">
@@ -516,7 +562,13 @@ export function PawContextTrace({
             </div>
           </div>
         ) : (
-          <div className="an-trace-body"><div className="an-trace-empty">{loading ? '正在读取上下文装配记录…' : '选择左侧轮次查看真实上下文。'}</div></div>
+          <div
+            aria-labelledby={`${traceModeId}-assembly-tab`}
+            className="an-trace-body"
+            id={`${traceModeId}-panel`}
+            role="tabpanel"
+            tabIndex={0}
+          ><div className="an-trace-empty">{loading ? '正在读取上下文装配记录…' : '选择左侧轮次查看真实上下文。'}</div></div>
         )}
       </div>
     </section>
@@ -765,6 +817,8 @@ function SessionEventTrace({
   filter,
   onFilterChange,
   onShowAssembly,
+  panelId,
+  panelLabelledBy,
   turns,
 }: {
   assemblyAvailable: boolean;
@@ -773,6 +827,8 @@ function SessionEventTrace({
   filter: TraceFilter;
   onFilterChange: (filter: TraceFilter) => void;
   onShowAssembly: () => void;
+  panelId: string;
+  panelLabelledBy: string;
   turns: ProjectedTraceTurn[];
 }) {
   const filters: Array<{ id: TraceFilter; label: string }> = [
@@ -789,7 +845,7 @@ function SessionEventTrace({
   });
   const tail = sessionTraceTail(turns);
   return (
-    <div className="paw-agent-trace-v1">
+    <div aria-labelledby={panelLabelledBy} className="paw-agent-trace-v1" id={panelId} role="tabpanel" tabIndex={0}>
       <nav aria-label="Agent 轨迹筛选" className="paw-agent-trace-v1__filters">
         {filters.map((item) => (
           <button

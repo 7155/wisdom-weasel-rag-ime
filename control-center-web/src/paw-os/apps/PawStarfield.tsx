@@ -87,12 +87,13 @@ import {
 /* Small shared hooks                                                  */
 /* ------------------------------------------------------------------ */
 
-function useNowMs(): number {
+function useNowMs(enabled = true): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
+    if (!enabled) return undefined;
     const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [enabled]);
   return nowMs;
 }
 
@@ -661,7 +662,7 @@ export function PawSessionStarfield({
 }) {
   const transport = useControlTransport();
   const pageVisible = usePageVisibility();
-  const nowMs = useNowMs();
+  const nowMs = useNowMs(active && pageVisible);
   const runsQuery = useQuery({
     queryKey: ['paw-starfield', 'session-subagents', sessionId],
     queryFn: ({ signal }) => transport.request({
@@ -806,7 +807,8 @@ export function PawRoomStarfield({
   onExit?: () => void;
   onOpenParticipant?: (participantId: string) => void;
 }) {
-  const nowMs = useNowMs();
+  const pageVisible = usePageVisibility();
+  const nowMs = useNowMs(active && pageVisible);
   const model = useMemo(() => buildRoomStarfield(focus), [focus]);
   const sceneModel = useMemo(() => buildRoomSceneModel(model, roomId), [model, roomId]);
   // Sol belongs to the facilitator. With nobody hosting, the scene model

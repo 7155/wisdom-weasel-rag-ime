@@ -43,6 +43,10 @@ class ControlPathId(str, Enum):
     OBSERVABILITY_TRACE_REPAIR_RECEIPT_CREATE = "observability.traceRepair.receipt.create"
     OBSERVABILITY_TRACE_REPAIR_RECEIPT_GET = "observability.traceRepair.receipt.get"
     OBSERVABILITY_TRACE_REPAIR_RECHECK = "observability.traceRepair.recheck"
+    OBSERVABILITY_TRACE_REPLAY_CASE_CREATE = "observability.traceReplay.case.create"
+    OBSERVABILITY_TRACE_REPLAY_CASE_GET = "observability.traceReplay.case.get"
+    OBSERVABILITY_TRACE_REPLAY_VERIFY = "observability.traceReplay.verify"
+    OBSERVABILITY_TRACE_VERIFICATION_GET = "observability.traceReplay.verification.get"
     OBSERVABILITY_EVAL_SCHEDULES_LIST = "observability.evalSchedules.list"
     OBSERVABILITY_EVAL_SCHEDULES_CREATE = "observability.evalSchedules.create"
     OBSERVABILITY_EVAL_SCHEDULE_RUNS = "observability.evalSchedule.runs"
@@ -711,6 +715,8 @@ _OBSERVABILITY_TRACE = {"traceId"}
 _OBSERVABILITY_TRACE_DIAGNOSTIC_REPORT = {"reportId"}
 _OBSERVABILITY_SANDBOX_RUN = {"sandboxRunId"}
 _OBSERVABILITY_TRACE_REPAIR_RECEIPT = {"repairReceiptId"}
+_OBSERVABILITY_TRACE_REPLAY_CASE = {"replayCaseId"}
+_OBSERVABILITY_TRACE_VERIFICATION_RECEIPT = {"verificationReceiptId"}
 _EVAL_SCHEDULE = {"scheduleId"}
 _SUBAGENT_DELEGATION_BODY = {
     "sessionId",
@@ -774,6 +780,10 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_RECEIPT_CREATE, ControlMethod.POST, "/api/observability/trace-repair/receipts", None, body={"schemaVersion", "sourceScope", "sourceTraceId", "failureRef", "changeReceiptId", "testEvidenceId", "repairTraceId", "repairSessionId"}, required_body={"schemaVersion", "sourceScope", "sourceTraceId", "failureRef", "changeReceiptId", "testEvidenceId", "repairTraceId", "repairSessionId"}),
         _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_RECEIPT_GET, ControlMethod.GET, "/api/observability/trace-repair/receipts/{repairReceiptId}", None, params=_OBSERVABILITY_TRACE_REPAIR_RECEIPT),
         _route(ControlPathId.OBSERVABILITY_TRACE_REPAIR_RECHECK, ControlMethod.POST, "/api/observability/trace-repair/recheck", None, body={"schemaVersion", "repairReceiptId"}, required_body={"schemaVersion", "repairReceiptId"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPLAY_CASE_CREATE, ControlMethod.POST, "/api/observability/trace-replay/cases", None, body={"schemaVersion", "sourceScope", "failureRef", "sourceTraceId", "baselineEvalRunId", "baselineSandboxRunId", "successMetric", "successThreshold", "rollbackTarget"}, required_body={"schemaVersion", "sourceScope", "failureRef", "sourceTraceId", "baselineEvalRunId", "baselineSandboxRunId", "successMetric", "successThreshold", "rollbackTarget"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPLAY_CASE_GET, ControlMethod.GET, "/api/observability/trace-replay/cases/{replayCaseId}", None, params=_OBSERVABILITY_TRACE_REPLAY_CASE),
+        _route(ControlPathId.OBSERVABILITY_TRACE_REPLAY_VERIFY, ControlMethod.POST, "/api/observability/trace-replay/verify", None, body={"schemaVersion", "replayCaseId", "repairReceiptId", "repairEvalRunId", "repairSandboxRunId", "regressionEvalRunIds"}, required_body={"schemaVersion", "replayCaseId", "repairReceiptId", "repairEvalRunId", "repairSandboxRunId", "regressionEvalRunIds"}),
+        _route(ControlPathId.OBSERVABILITY_TRACE_VERIFICATION_GET, ControlMethod.GET, "/api/observability/trace-replay/verifications/{verificationReceiptId}", None, params=_OBSERVABILITY_TRACE_VERIFICATION_RECEIPT),
         # Eval schedules are a local ledger.  Their lease token and evaluator
         # remain runtime-owned, so neither schedule route is gateway-safe.
         _route(ControlPathId.OBSERVABILITY_EVAL_SCHEDULES_LIST, ControlMethod.GET, "/api/observability/eval-schedules", None, query={"limit"}),

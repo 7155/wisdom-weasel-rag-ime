@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.trace-replay-case.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "replayCaseId",
+    "sourceScope",
+    "failureRef",
+    "sourceTraceId",
+    "baselineEvalRunId",
+    "baselineSandboxRunId",
+    "replayCohort",
+    "successCriterion",
+    "baselineMetricValue",
+    "rollbackTarget",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.trace-replay-case.v1"},
+    "replayCaseId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceScope": {"type": "string", "minLength": 1, "maxLength": 160},
+    "failureRef": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceTraceId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "baselineEvalRunId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "baselineSandboxRunId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "replayCohort": {"$ref": "#/$defs/replayCohort"},
+    "successCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "threshold", "direction"],
+      "properties": {
+        "metric": {"type": "string", "minLength": 1, "maxLength": 80},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "direction": {"const": "at_least"}
+      }
+    },
+    "baselineMetricValue": {"type": "number", "minimum": 0, "maximum": 1},
+    "rollbackTarget": {"type": "string", "minLength": 1, "maxLength": 160},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "replayCohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suiteId",
+        "suiteRevision",
+        "caseId",
+        "inputFingerprint",
+        "environmentFingerprint",
+        "configFingerprint",
+        "modelProfileFingerprint",
+        "toolProfileFingerprint",
+        "skillProfileFingerprint"
+      ],
+      "properties": {
+        "suiteId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "suiteRevision": {"type": "string", "minLength": 1, "maxLength": 160},
+        "caseId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "inputFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "environmentFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "configFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "modelProfileFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "toolProfileFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "skillProfileFingerprint": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    }
+  }
+}

@@ -581,8 +581,10 @@
 
 .trace-agent-timeline__title > button {
   flex: 0 0 auto;
-  padding: 0;
+  min-height: 24px;
+  padding: 2px 4px;
   border: 0;
+  border-radius: 5px;
   color: var(--color-accent);
   background: transparent;
   cursor: pointer;

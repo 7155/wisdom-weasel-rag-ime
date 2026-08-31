@@ -16,6 +16,17 @@ export interface SandboxRunV1 {
     network: 'blocked' | 'allowlisted';
     productionWriteBlocked: true;
   };
+  replayCohort?: {
+    suiteId: string;
+    suiteRevision: string;
+    caseId: string;
+    inputFingerprint: string;
+    environmentFingerprint: string;
+    configFingerprint: string;
+    modelProfileFingerprint: string;
+    toolProfileFingerprint: string;
+    skillProfileFingerprint: string;
+  };
   traceIds: string[];
   evalRunIds: string[];
   createdAtMs: number;

@@ -159,6 +159,29 @@ def observability_trace_repair_route(path: str) -> tuple[str, str]:
     return "", ""
 
 
+def observability_trace_replay_route(path: str) -> tuple[str, str]:
+    """Parse loopback-only same-case replay and verification routes."""
+
+    prefix = "/api/observability/trace-replay/"
+    if not path.startswith(prefix):
+        return "", ""
+    remainder = path[len(prefix):]
+    if not remainder or remainder.endswith("/") or "//" in remainder:
+        return "", ""
+    parts = [unquote(part).strip() for part in remainder.split("/")]
+    if any(not part for part in parts):
+        return "", ""
+    if parts == ["cases"]:
+        return "", "case-create"
+    if len(parts) == 2 and parts[0] == "cases":
+        return parts[1], "case-get"
+    if parts == ["verify"]:
+        return "", "verify"
+    if len(parts) == 2 and parts[0] == "verifications":
+        return parts[1], "verification-get"
+    return "", ""
+
+
 def observability_trace_diagnostic_report_route(path: str) -> tuple[str, str]:
     """Parse local Trace report and append-only follow-up routes."""
 

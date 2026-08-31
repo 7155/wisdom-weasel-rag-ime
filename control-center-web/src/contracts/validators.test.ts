@@ -31,7 +31,7 @@ describe('generated JSON contracts', () => {
   });
 
   it('builds a stable schema index for every source contract', () => {
-    expect(Object.keys(contractSchemas)).toHaveLength(159);
+    expect(Object.keys(contractSchemas)).toHaveLength(161);
     expect(contractSchemas['agent-event.v1'].$id).toBe('rag-ime.contract.agent-event.v1');
     expect(contractSchemas['agent-background-job.v1'].$id).toBe(
       'rag-ime.contract.agent-background-job.v1',
@@ -69,6 +69,12 @@ describe('generated JSON contracts', () => {
     );
     expect(contractSchemas['trace-repair-receipt.v1'].$id).toBe(
       'rag-ime.contract.trace-repair-receipt.v1',
+    );
+    expect(contractSchemas['trace-replay-case.v1'].$id).toBe(
+      'rag-ime.contract.trace-replay-case.v1',
+    );
+    expect(contractSchemas['trace-verification-receipt.v1'].$id).toBe(
+      'rag-ime.contract.trace-verification-receipt.v1',
     );
     expect(contractSchemas['activity-timeline-context.v1'].$id).toBe(
       'rag-ime.contract.activity-timeline-context.v1',

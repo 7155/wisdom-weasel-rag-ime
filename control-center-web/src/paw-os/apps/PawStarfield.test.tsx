@@ -65,10 +65,16 @@ describe('PAWOS 星空 v2 immersive visualization', () => {
   it('unmounts the immersive Room portal while its owning window is inactive', () => {
     const room = previewRoomSnapshot('room-inactive').room as unknown as RoomSummary;
     const focus = buildRoomFocusProjection(room);
+    const setInterval = vi.spyOn(window, 'setInterval');
 
-    render(<PawRoomStarfield active={false} focus={focus} roomId={room.id} />);
+    try {
+      render(<PawRoomStarfield active={false} focus={focus} roomId={room.id} />);
 
-    expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
+      expect(setInterval).not.toHaveBeenCalledWith(expect.any(Function), 30_000);
+    } finally {
+      setInterval.mockRestore();
+    }
   });
 
   it('renders the Session as an immersive fullscreen sky with honest per-run motion', async () => {

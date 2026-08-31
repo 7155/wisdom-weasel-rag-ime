@@ -154,6 +154,10 @@ from .trace_repair import (
     derive_repair_evidence,
     run_ai_judge_recheck,
 )
+from .trace_replay_verification import (
+    TraceReplayVerificationStore,
+    TraceVerificationValidationError,
+)
 from .sandbox_run_store import SandboxRunStore
 from .vertical_agent_suite import (
     BuiltinVerticalSuiteError,
@@ -323,6 +327,8 @@ class AgentService:
         self._trace_repair_recheck_lock = RLock()
         self.sandbox_runs = sandbox_run_store or SandboxRunStore(db_path)
         self.sandbox_runs.initialize()
+        self.trace_replay_verifications = TraceReplayVerificationStore(db_path)
+        self.trace_replay_verifications.initialize()
         if self._eval_schedule_executor is None:
             self._eval_schedule_executor = self._run_builtin_eval_schedule
         self.room_events = AgentRoomEventHub(self.rooms)
@@ -4877,6 +4883,113 @@ class AgentService:
             raise TraceRepairValidationError("persisted source trace is invalid")
         return trace
 
+    def create_trace_replay_case(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Freeze one failing ground-truth case before a repair is evaluated."""
+
+        values = _trace_replay_request(
+            payload,
+            schema_version="rag-ime.trace-replay-case-create.v1",
+            required={
+                "sourceScope",
+                "failureRef",
+                "sourceTraceId",
+                "baselineEvalRunId",
+                "baselineSandboxRunId",
+                "successMetric",
+                "successThreshold",
+                "rollbackTarget",
+            },
+        )
+        replay_case = self.trace_replay_verifications.freeze_case(
+            source_scope=_required_trace_verification_text(values, "sourceScope"),
+            failure_ref=_required_trace_verification_text(values, "failureRef"),
+            source_trace_id=_required_trace_verification_text(values, "sourceTraceId"),
+            baseline_eval_run_id=_required_trace_verification_text(
+                values, "baselineEvalRunId"
+            ),
+            baseline_sandbox_run_id=_required_trace_verification_text(
+                values, "baselineSandboxRunId"
+            ),
+            success_metric=_required_trace_verification_text(values, "successMetric"),
+            success_threshold=values["successThreshold"],
+            rollback_target=_required_trace_verification_text(values, "rollbackTarget"),
+            created_at_ms=int(time.time() * 1000),
+        )
+        return {
+            "schemaVersion": "rag-ime.trace-replay-case-create.v1",
+            "ok": True,
+            "replayCase": replay_case,
+        }
+
+    def get_trace_replay_case(self, replay_case_id: str) -> dict[str, object]:
+        replay_case = self.trace_replay_verifications.get_case(replay_case_id)
+        if replay_case is None:
+            raise KeyError(replay_case_id)
+        return {
+            "schemaVersion": "rag-ime.trace-replay-case-get.v1",
+            "ok": True,
+            "replayCase": replay_case,
+        }
+
+    def verify_trace_replay_case(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Persist a comparison only after same-cohort GT replay and regressions."""
+
+        values = _trace_replay_request(
+            payload,
+            schema_version="rag-ime.trace-verification-request.v1",
+            required={
+                "replayCaseId",
+                "repairReceiptId",
+                "repairEvalRunId",
+                "repairSandboxRunId",
+                "regressionEvalRunIds",
+            },
+        )
+        regression_ids = values.get("regressionEvalRunIds")
+        if not isinstance(regression_ids, list):
+            raise TraceVerificationValidationError(
+                "regressionEvalRunIds must be an array"
+            )
+        receipt = self.trace_replay_verifications.verify_repair(
+            replay_case_id=_required_trace_verification_text(values, "replayCaseId"),
+            repair_receipt_id=_required_trace_verification_text(
+                values, "repairReceiptId"
+            ),
+            repair_eval_run_id=_required_trace_verification_text(
+                values, "repairEvalRunId"
+            ),
+            repair_sandbox_run_id=_required_trace_verification_text(
+                values, "repairSandboxRunId"
+            ),
+            regression_eval_run_ids=regression_ids,
+            verified_at_ms=int(time.time() * 1000),
+        )
+        return {
+            "schemaVersion": "rag-ime.trace-verification-receipt-create.v1",
+            "ok": True,
+            "verificationReceipt": receipt,
+        }
+
+    def get_trace_verification_receipt(
+        self, verification_receipt_id: str
+    ) -> dict[str, object]:
+        receipt = self.trace_replay_verifications.get_verification(
+            verification_receipt_id
+        )
+        if receipt is None:
+            raise KeyError(verification_receipt_id)
+        return {
+            "schemaVersion": "rag-ime.trace-verification-receipt-get.v1",
+            "ok": True,
+            "verificationReceipt": receipt,
+        }
+
     def _derive_trace_repair_evidence(
         self,
         *,
@@ -5964,6 +6077,47 @@ def _trace_repair_recheck_payload(
         schema_version="rag-ime.trace-repair-recheck-request.v1",
         required={"repairReceiptId"},
     )
+
+
+def _trace_replay_request(
+    payload: Mapping[str, object],
+    *,
+    schema_version: str,
+    required: set[str],
+) -> dict[str, object]:
+    if not isinstance(payload, Mapping):
+        raise TraceVerificationValidationError(
+            "Trace replay request must be an object"
+        )
+    values = dict(payload)
+    if values.get("schemaVersion") != schema_version:
+        raise TraceVerificationValidationError(
+            f"schemaVersion must be {schema_version}"
+        )
+    allowed = required | {"schemaVersion"}
+    unknown = sorted(set(values) - allowed)
+    if unknown:
+        raise TraceVerificationValidationError(
+            "Trace replay request contains unsupported fields: "
+            + ", ".join(unknown)
+        )
+    missing = sorted(required - set(values))
+    if missing:
+        raise TraceVerificationValidationError(
+            "Trace replay request is missing fields: " + ", ".join(missing)
+        )
+    return values
+
+
+def _required_trace_verification_text(
+    payload: Mapping[str, object], key: str
+) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise TraceVerificationValidationError(
+            f"{key} must be a non-empty string"
+        )
+    return value.strip()
 
 
 def _observation_trace_id(payload: Mapping[str, object]) -> str:

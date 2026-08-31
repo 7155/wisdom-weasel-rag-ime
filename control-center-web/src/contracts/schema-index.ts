@@ -21433,6 +21433,62 @@ export const contractSchemas = {
           }
         }
       },
+      "replayCohort": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suiteId",
+          "suiteRevision",
+          "caseId",
+          "inputFingerprint",
+          "environmentFingerprint",
+          "configFingerprint",
+          "modelProfileFingerprint",
+          "toolProfileFingerprint",
+          "skillProfileFingerprint"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "inputFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "environmentFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "configFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "modelProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "toolProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "skillProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      },
       "traceIds": {
         "type": "array",
         "uniqueItems": true,
@@ -24124,6 +24180,467 @@ export const contractSchemas = {
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
+      }
+    }
+  },
+  "trace-replay-case.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-replay-case.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "replayCaseId",
+      "sourceScope",
+      "failureRef",
+      "sourceTraceId",
+      "baselineEvalRunId",
+      "baselineSandboxRunId",
+      "replayCohort",
+      "successCriterion",
+      "baselineMetricValue",
+      "rollbackTarget",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-replay-case.v1"
+      },
+      "replayCaseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceScope": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "failureRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "baselineEvalRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "baselineSandboxRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "replayCohort": {
+        "$ref": "#/$defs/replayCohort"
+      },
+      "successCriterion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metric",
+          "threshold",
+          "direction"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "direction": {
+            "const": "at_least"
+          }
+        }
+      },
+      "baselineMetricValue": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "rollbackTarget": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "replayCohort": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suiteId",
+          "suiteRevision",
+          "caseId",
+          "inputFingerprint",
+          "environmentFingerprint",
+          "configFingerprint",
+          "modelProfileFingerprint",
+          "toolProfileFingerprint",
+          "skillProfileFingerprint"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "inputFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "environmentFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "configFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "modelProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "toolProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "skillProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    }
+  },
+  "trace-verification-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.trace-verification-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "verificationReceiptId",
+      "replayCaseId",
+      "repairReceiptId",
+      "sourceTraceId",
+      "repairTraceId",
+      "baselineEvalRunId",
+      "repairEvalRunId",
+      "baselineSandboxRunId",
+      "repairSandboxRunId",
+      "regressionEvalRunIds",
+      "replayCohort",
+      "successCriterion",
+      "repairPassed",
+      "regression",
+      "comparison",
+      "efficiency",
+      "decision",
+      "rollbackTarget",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.trace-verification-receipt.v1"
+      },
+      "verificationReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "replayCaseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairReceiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "sourceTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairTraceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "baselineEvalRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairEvalRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "baselineSandboxRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "repairSandboxRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "regressionEvalRunIds": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 256,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "replayCohort": {
+        "$ref": "#/$defs/replayCohort"
+      },
+      "successCriterion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metric",
+          "threshold",
+          "direction"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "direction": {
+            "const": "at_least"
+          }
+        }
+      },
+      "repairPassed": {
+        "type": "boolean"
+      },
+      "regression": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "passed",
+          "failedEvalRunIds"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "failedEvalRunIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          }
+        }
+      },
+      "comparison": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "metric",
+          "before",
+          "after",
+          "absoluteDelta",
+          "relativeDelta"
+        ],
+        "properties": {
+          "status": {
+            "const": "available"
+          },
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "before": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "after": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "absoluteDelta": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "relativeDelta": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "efficiency": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "latencyMs",
+          "totalTokens"
+        ],
+        "properties": {
+          "latencyMs": {
+            "$ref": "#/$defs/nullableDelta"
+          },
+          "totalTokens": {
+            "$ref": "#/$defs/nullableDelta"
+          }
+        }
+      },
+      "decision": {
+        "enum": [
+          "kept",
+          "rejected"
+        ]
+      },
+      "rollbackTarget": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "replayCohort": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "suiteId",
+          "suiteRevision",
+          "caseId",
+          "inputFingerprint",
+          "environmentFingerprint",
+          "configFingerprint",
+          "modelProfileFingerprint",
+          "toolProfileFingerprint",
+          "skillProfileFingerprint"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "suiteRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "inputFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "environmentFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "configFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "modelProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "toolProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "skillProfileFingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      },
+      "nullableDelta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "before",
+          "after",
+          "delta"
+        ],
+        "properties": {
+          "before": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "after": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "delta": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
       }
     }
   },
