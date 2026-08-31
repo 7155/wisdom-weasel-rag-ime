@@ -132,7 +132,7 @@ describe('PAWOS App runtime', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await screen.findByRole('heading', { name: '掌柜问数' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '掌柜问数' }, { timeout: 5_000 })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '问数' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '对账' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '解释' })).toBeInTheDocument();

@@ -2281,7 +2281,16 @@ async function reconcileStoppedSession({
       if (monotonicNow() >= checkpointAt) continue;
       await waitUntil(Math.min(checkpointAt, deadlineAt));
     }
-    if (monotonicNow() >= deadlineAt) break;
+    if (monotonicNow() >= deadlineAt) {
+      if (checkpointMs === 0) {
+        // React can finish the immediate "stopping" paint after the visible
+        // deadline.  The UI must still fall back on time, but an accepted Pi
+        // abort always earns one authoritative snapshot request so recovery
+        // is not skipped solely because the browser thread was busy.
+        void requestSnapshot().then(onSnapshot, () => undefined);
+      }
+      break;
+    }
     const result = await settleBeforeDeadline(requestSnapshot(), deadlineAt);
     if (result.kind === 'timeout') break;
     if (result.kind === 'rejected') continue;
