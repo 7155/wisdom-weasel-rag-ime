@@ -1,0 +1,493 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from rag_ime.agent_artifacts import AgentArtifactStore
+from rag_ime.cloudops_benchmark_agent import CloudOpsBenchmarkGateway, CloudOpsBlindSuite
+from rag_ime.eval_run_store import EvalRunStore
+from rag_ime.pi_runtime import _tools_for_session
+from rag_ime.sandbox_run_store import SandboxRunStore
+from rag_ime.trace_store import TraceStore
+from scripts.run_cloudops_agent_eval import (
+    _assert_expected_runtime,
+    _batch_prompt,
+    _candidate_runtime_config,
+    _normalize_trial_id,
+    _public_host_invocation,
+    _sum_usage,
+    _token_usage,
+    _validated_score,
+    run_cloudops_agent_eval,
+)
+from tests.test_cloudops_benchmark_agent import _answer, _write_fixture
+
+
+@dataclass
+class _Event:
+    event_type: str
+    turn_id: str
+    payload: dict[str, object]
+
+    def to_payload(self) -> dict[str, object]:
+        return {"eventType": self.event_type, "turnId": self.turn_id, **self.payload}
+
+
+class _Events:
+    def __init__(self, owner: "_FakeAgentService") -> None:
+        self.owner = owner
+
+    def replay(self, session_id: str):
+        return list(self.owner.event_rows.get(session_id, [])), False
+
+
+class _FakeAgentService:
+    def __init__(self, gateway: CloudOpsBenchmarkGateway) -> None:
+        self.gateway = gateway
+        self.events = _Events(self)
+        self.created: list[str] = []
+        self.updated: list[tuple[str, dict[str, object]]] = []
+        self.event_rows: dict[str, list[_Event]] = {}
+        self.manifest_provider = None
+
+    def bind_tool_manifest_provider(self, provider) -> None:
+        self.manifest_provider = provider
+
+    def create_session(self, payload: dict[str, object]) -> dict[str, object]:
+        session_id = f"agent:cloudops:{len(self.created) + 1}"
+        self.created.append(session_id)
+        return {"session": {"id": session_id, **payload}}
+
+    def update_session(self, session_id: str, payload: dict[str, object]) -> None:
+        self.updated.append((session_id, dict(payload)))
+
+    def ensure_runtime(self, payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "ok": True,
+            "sessionId": payload["sessionId"],
+            "state": {
+                "model": {"provider": "openai-codex", "id": "gpt-5.6-sol"},
+                "thinkingLevel": "max",
+            },
+        }
+
+    def prompt(self, session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        turn_id = f"turn:{session_id.rsplit(':', 1)[-1]}"
+        indexed = self._call(session_id, turn_id, "index")["result"]
+        answers = []
+        for case in indexed["cases"]:
+            case_id = str(case["caseId"])
+            listed = self._call(session_id, turn_id, "list", caseId=case_id, limit=1)["result"]
+            self._call(
+                session_id,
+                turn_id,
+                "read",
+                caseId=case_id,
+                cacheKey=listed["items"][0]["cacheKey"],
+            )
+            answers.append(_answer(case_id))
+        self._call(session_id, turn_id, "submit", answers=answers)
+        self.event_rows[session_id] = [
+            _Event("turn_started", turn_id, {"createdAtMs": 100}),
+            _Event(
+                "turn_completed",
+                turn_id,
+                {"createdAtMs": 200, "usage": {"input": 10, "output": 5, "totalTokens": 15}},
+            ),
+        ]
+        return {"ok": True, "turnId": turn_id}
+
+    def abort(self, session_id: str) -> None:
+        raise AssertionError(f"unexpected abort: {session_id}")
+
+    def _call(self, session_id: str, turn_id: str, operation: str, **args: object):
+        return self.gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": session_id,
+                "tool": "cloudops_benchmark",
+                "toolCallId": f"tool:{session_id}:{operation}:{len(self.gateway.ledger(session_id=session_id)['items'])}",
+                "sourceLoopId": turn_id,
+                "args": {"op": operation, **args},
+            }
+        )
+
+
+class _NoSubmissionService(_FakeAgentService):
+    def prompt(self, session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        turn_id = "turn:no-submit"
+        self.event_rows[session_id] = [_Event("turn_completed", turn_id, {"createdAtMs": 200})]
+        return {"ok": True, "turnId": turn_id}
+
+
+class RunCloudOpsAgentEvalTests(unittest.TestCase):
+    def test_evidence_search_profile_requires_network_counterevidence_for_performance_cases(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="evidence-search-v1",
+        )
+
+        self.assertIn("search", prompt)
+        self.assertIn("network evidence", prompt)
+        self.assertIn("Empty application logs", prompt)
+        self.assertIn("do not distinguish", prompt)
+
+    def test_trial_id_is_a_bounded_basename_not_a_path(self) -> None:
+        self.assertEqual("cloudops-run.v1", _normalize_trial_id("cloudops-run.v1"))
+        for value in ("", "../escape", "/absolute", "nested/path", "bad value"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "trial id"):
+                _normalize_trial_id(value)
+
+    def test_eval_session_exposes_no_ordinary_runtime_tools(self) -> None:
+        session = {
+            "mode": "assistant",
+            "executionMode": "read_only",
+            "toolProfileVersion": "subagent-readonly-v1",
+            "toolAllowlistMode": "explicit",
+            "allowedTools": [],
+            "workspaceRoots": [],
+        }
+        self.assertEqual(
+            (),
+            _tools_for_session(
+                (
+                    "overview",
+                    "memory",
+                    "knowledge",
+                    "runtime",
+                    "agents",
+                    "workspace_read",
+                    "workspace_search",
+                    "workspace_shell",
+                ),
+                session,
+            ),
+        )
+
+    def test_runtime_identity_gate_rejects_model_route_drift(self) -> None:
+        receipt = {
+            "state": {
+                "model": {"provider": "openai-codex", "id": "gpt-5.6-luna"},
+                "thinkingLevel": "max",
+            }
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "model route drifted"):
+            _assert_expected_runtime(
+                receipt,
+                provider="openai-codex",
+                model="gpt-5.6-sol",
+                thinking_level="max",
+            )
+
+    def test_public_host_invocation_redacts_every_host_path(self) -> None:
+        args = SimpleNamespace(
+            trial_id="cloudops-public-1",
+            provider="openai-codex",
+            model="gpt-5.6-sol",
+            thinking="max",
+            transport="spool",
+            timeout_seconds=900.0,
+            max_reads_per_case=40,
+            workflow_profile="evidence-search-v1",
+            runtime_candidate=Path("/private/runtime-candidate"),
+            blind_root=Path("/private/blind"),
+            gold=Path("/private/host/gold.json"),
+            scorer=Path("/private/host/score_answers.py"),
+            source_agent_config=Path("/private/agent/config"),
+            private_root=Path("/private/run"),
+            output=Path("/private/run/report.json"),
+        )
+
+        invocation = _public_host_invocation(args, transport="spool-file-v1")
+        encoded = json.dumps(invocation, sort_keys=True)
+
+        self.assertEqual("paw.cloudops-host-invocation.v1", invocation["schemaVersion"])
+        self.assertEqual("cloudops-public-1", invocation["trialId"])
+        self.assertEqual("spool-file-v1", invocation["transport"])
+        self.assertEqual("evidence-search-v1", invocation["workflowProfile"])
+        self.assertEqual(64, len(invocation["commandSha256"]))
+        self.assertNotIn("argv", invocation)
+        self.assertNotIn("/private", encoded)
+        self.assertNotIn("gold.json", encoded)
+        self.assertNotIn("score_answers.py", encoded)
+
+    def test_cli_help_is_directly_executable_from_repository_root(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "scripts/run_cloudops_agent_eval.py", "--help"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("--runtime-candidate", completed.stdout)
+
+    def test_candidate_runtime_factory_is_explicit_isolated_and_hash_bound(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cloudops-runtime-config-") as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            executable = candidate / "runtime-host" / "cli.mjs"
+            executable.parent.mkdir()
+            executable.write_text("export {};", encoding="utf-8")
+            extension = candidate / "runtime-host" / "extension-placeholder.mjs"
+            extension.write_text("export {};", encoding="utf-8")
+            node = candidate / "bin" / "node"
+            node.parent.mkdir()
+            node.write_text("node", encoding="utf-8")
+            source_config = root / "source-config"
+            source_config.mkdir()
+            for name in ("auth.json", "models.json", "models-store.json", "settings.json"):
+                (source_config / name).write_text("{}", encoding="utf-8")
+            installation = SimpleNamespace(
+                executable=executable,
+                extension_path=extension,
+                node_executable=str(node),
+                pi_version="0.84.2",
+                protocol_version="2",
+                tools=("overview", "workspace_read"),
+                runtime_version="candidate-v1",
+                manifest_sha256="a" * 64,
+            )
+            with patch(
+                "scripts.run_cloudops_agent_eval.snapshot_managed_pi_runtime_payload",
+                return_value=installation,
+            ):
+                config, identity = _candidate_runtime_config(
+                    candidate,
+                    run_root=root / "run",
+                    source_agent_config=source_config,
+                    provider="openai-codex",
+                    model="gpt-5.6-sol",
+                    tool_gateway_url="http://127.0.0.1:1234/api/agent/tool/execute",
+                    tool_gateway_token="token",
+                )
+
+            self.assertEqual(executable, config.executable)
+            self.assertEqual("openai-codex", config.provider)
+            self.assertEqual("gpt-5.6-sol", config.model)
+            self.assertEqual("2", config.protocol_version)
+            self.assertEqual("a" * 64, identity["manifestSha256"])
+            self.assertEqual("candidate-v1", identity["runtimeVersion"])
+            self.assertFalse(identity["installActionPerformed"])
+            self.assertNotIn("installedStateChanged", identity)
+            self.assertEqual(
+                {"auth.json", "models.json", "models-store.json", "settings.json"},
+                {path.name for path in config.agent_dir.iterdir()},
+            )
+
+    def test_three_by_four_real_session_orchestration_persists_receipt_chain(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cloudops-runner-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 13)]
+            _write_fixture(root, case_ids)
+            batches = {
+                "batch-1": case_ids[0:4],
+                "batch-2": case_ids[4:8],
+                "batch-3": case_ids[8:12],
+            }
+            suite = CloudOpsBlindSuite(root / "blind", batches=batches)
+            gateway = CloudOpsBenchmarkGateway(suite)
+            service = _FakeAgentService(gateway)
+            database = root / "observability.sqlite"
+            trace_store = TraceStore(database)
+            eval_store = EvalRunStore(database)
+            sandbox_store = SandboxRunStore(database)
+            artifacts = AgentArtifactStore(database, root=root / "artifacts")
+            scorer_calls: list[tuple[Path, list[dict[str, object]]]] = []
+            gold_path = root / "host" / "gold.json"
+            gold_path.parent.mkdir()
+            gold_path.write_text("host only", encoding="utf-8")
+
+            def score_host_only(path: Path, answers: list[dict[str, object]]) -> dict[str, object]:
+                self.assertEqual(gold_path.resolve(), path)
+                self.assertEqual([], [item for item in gateway.ledger()["items"] if str(path) in json.dumps(item)])
+                scorer_calls.append((path, answers))
+                return {
+                    "aggregate": {
+                        "cases": 12,
+                        "answered": 12,
+                        "AnswerCoverage": 1.0,
+                        "CA": 1.0,
+                        "FA": 0.9166666666666666,
+                        "JRA": 0.9166666666666666,
+                        "Top3JRA": 1.0,
+                    },
+                    "perCase": [
+                        {"case_id": case_id, "JRA": 0 if case_id == case_ids[4] else 1}
+                        for case_id in case_ids
+                    ],
+                    "process": {"MC": 0.8, "EOC": 0.7, "EE": 0.6, "authority": "diagnostic"},
+                }
+
+            report = run_cloudops_agent_eval(
+                suite=suite,
+                gateway=gateway,
+                service=service,
+                trial_id="cloudops-test-1",
+                gold_path=gold_path,
+                score_host_only=score_host_only,
+                trace_store=trace_store,
+                eval_store=eval_store,
+                sandbox_store=sandbox_store,
+                artifact_store=artifacts,
+                now_ms=lambda: 1_700_000_000_000,
+                timeout_seconds=1,
+            )
+
+            self.assertEqual(3, len(service.created))
+            self.assertEqual(1, len(scorer_calls))
+            self.assertEqual("completed", report["status"])
+            self.assertEqual(0.9166666666666666, report["metrics"]["JRA"])
+            self.assertEqual(4, len(report["traceIds"]))
+            self.assertEqual(4, len(report["evalRunIds"]))
+            self.assertEqual(3, report["signals"]["batchCount"])
+            self.assertEqual(30, report["signals"]["toolCalls"])
+            self.assertEqual(0, report["signals"]["searchCalls"])
+            self.assertEqual(3, len(report["batches"]))
+            self.assertEqual(
+                ["turn_completed", "turn_completed", "turn_completed"],
+                [item["terminalEvent"] for item in report["batches"]],
+            )
+            self.assertTrue(all(item["answerCount"] == 4 for item in report["batches"]))
+            self.assertTrue(all(item["toolCalls"] == 10 for item in report["batches"]))
+            self.assertTrue(all("assignedCaseIds" not in item for item in report["batches"]))
+            self.assertEqual(64, len(report["batchPlanSha256"]))
+            self.assertTrue(str(report["replayCohort"]["configFingerprint"]).startswith("sha256:"))
+            self.assertEqual(0.8, report["processSignals"]["MC"])
+            self.assertTrue(report["usage"]["available"])
+            self.assertEqual("baseline-v1", report["workflowProfile"])
+            self.assertIsNotNone(sandbox_store.get(report["sandboxRunId"]))
+            self.assertTrue(all(not gateway.runtime_manifests({"id": session}) for session in service.created))
+            self.assertTrue(
+                all(
+                    payload["toolAllowlistMode"] == "explicit"
+                    and payload["allowedTools"] == []
+                    for _session_id, payload in service.updated
+                )
+            )
+
+            aggregate_eval = eval_store.get(report["aggregateEvalRunId"])
+            self.assertEqual({"accuracy": 0.9166666666666666}, aggregate_eval["metrics"])
+            aggregate_trace = trace_store.get(report["aggregateTraceId"])
+            sandbox = sandbox_store.get(report["sandboxRunId"])
+            self.assertEqual("allowlisted", sandbox["policy"]["network"])
+            self.assertEqual(
+                aggregate_trace["input"]["fingerprint"],
+                sandbox["replayCohort"]["inputFingerprint"],
+            )
+            records = artifacts.lifecycle_records(
+                owner_kind="connector_run",
+                owner_id="cloudops-test-1",
+                artifact_kind="cloudops_eval",
+            )
+            event_types = [record["eventType"] for record in records]
+            self.assertEqual(3, event_types.count("batch_started"))
+            self.assertEqual(3, event_types.count("batch_completed"))
+            self.assertIn("trial_completed", event_types)
+            terminal_record = next(record for record in records if record["eventType"] == "trial_completed")
+            self.assertEqual(12, len(terminal_record["payload"]["answers"]))
+
+            public = json.dumps(report, sort_keys=True)
+            self.assertNotIn(str(root), public)
+            self.assertNotIn("gold.json", public)
+            self.assertNotIn("host only", public)
+
+    def test_failed_batch_unbinds_session_and_persists_failed_sandbox_receipt(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cloudops-runner-fail-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 13)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(
+                root / "blind",
+                batches={
+                    "batch-1": case_ids[0:4],
+                    "batch-2": case_ids[4:8],
+                    "batch-3": case_ids[8:12],
+                },
+            )
+            gateway = CloudOpsBenchmarkGateway(suite)
+            service = _NoSubmissionService(gateway)
+            database = root / "observability.sqlite"
+            gold_path = root / "host" / "gold.json"
+            gold_path.parent.mkdir()
+            gold_path.write_text("host only", encoding="utf-8")
+            sandbox_store = SandboxRunStore(database)
+
+            with self.assertRaisesRegex(RuntimeError, "canonical submission"):
+                run_cloudops_agent_eval(
+                    suite=suite,
+                    gateway=gateway,
+                    service=service,
+                    trial_id="cloudops-failed-1",
+                    gold_path=gold_path,
+                    score_host_only=lambda _path, _answers: self.fail("scorer must not run"),
+                    trace_store=TraceStore(database),
+                    eval_store=EvalRunStore(database),
+                    sandbox_store=sandbox_store,
+                    artifact_store=AgentArtifactStore(database, root=root / "artifacts"),
+                    now_ms=lambda: 1_700_000_000_000,
+                    timeout_seconds=1,
+                )
+
+            self.assertFalse(gateway.runtime_manifests({"id": service.created[0]}))
+            failed = sandbox_store.get("sandbox:cloudops:cloudops-failed-1")
+            self.assertEqual("failed", failed["status"])
+            self.assertEqual("allowlisted", failed["policy"]["network"])
+
+    def test_score_contract_rejects_missing_nonfinite_and_duplicate_case_metrics(self) -> None:
+        cases = ("demo/runtime/1", "demo/runtime/2")
+        valid = {
+            "aggregate": {
+                "AnswerCoverage": 1.0,
+                "CA": 1.0,
+                "FA": 0.5,
+                "JRA": 0.5,
+                "Top3JRA": 1.0,
+            },
+            "perCase": [
+                {"case_id": "demo/runtime/1", "JRA": 1.0},
+                {"case_id": "demo/runtime/2", "JRA": 0.0},
+            ],
+        }
+        metrics, per_case = _validated_score(valid, case_ids=cases)
+        self.assertEqual(0.5, metrics["JRA"])
+        self.assertEqual(set(cases), set(per_case))
+
+        for bad in (
+            {**valid, "aggregate": {key: value for key, value in valid["aggregate"].items() if key != "JRA"}},
+            {**valid, "aggregate": {**valid["aggregate"], "JRA": float("nan")}},
+            {**valid, "perCase": [valid["perCase"][0], valid["perCase"][0]]},
+        ):
+            with self.subTest(bad=bad), self.assertRaisesRegex(RuntimeError, "scorer"):
+                _validated_score(bad, case_ids=cases)
+
+    def test_usage_absence_stays_unknown_instead_of_becoming_zero(self) -> None:
+        self.assertEqual({"available": False}, _token_usage([]))
+        self.assertEqual(
+            {"available": False},
+            _sum_usage([{"usage": {"available": False}}]),
+        )
+        projected = _token_usage(
+            [{"usage": {"input": 3, "output": 2, "cacheRead": 5, "totalTokens": 10}}]
+        )
+        self.assertTrue(projected["available"])
+        self.assertEqual(10, projected["totalTokens"])
+
+
+if __name__ == "__main__":
+    unittest.main()

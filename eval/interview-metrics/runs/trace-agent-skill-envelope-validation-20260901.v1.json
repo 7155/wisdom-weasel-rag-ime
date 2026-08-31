@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "paw.trace-agent-skill-envelope-validation.v1",
+  "runId": "trace-agent-skill-envelope-validation-20260901-v1",
+  "status": "source_local_validation_completed_not_installed",
+  "measuredAt": "2026-09-01",
+  "target": {
+    "runId": "cloudops-paw-baseline-root-20260901-v3",
+    "traceCount": 4,
+    "evidenceCount": 148,
+    "sourceAvailable": false,
+    "timelineCount": 0,
+    "usageProjection": "incomplete_or_unknown"
+  },
+  "preSkillAttempts": {
+    "contractRejectedCount": 2,
+    "attempts": [
+      {
+        "attempt": 1,
+        "reportId": "trace-report:d801b8173ca6698ed97069e4fdc918d3",
+        "status": "failed",
+        "failureClass": "generic_structured_report_contract_rejection"
+      },
+      {
+        "attempt": 2,
+        "reportId": "trace-report:781713b992ed462d66538ce1c1567342",
+        "status": "failed",
+        "failureClass": "finding_confidence_invalid"
+      },
+      {
+        "attempt": 3,
+        "reportId": "trace-report:dc5fe2f31f742ea021db0eed9cef64da",
+        "status": "completed_prompt_specific",
+        "publicReceiptWritten": false
+      }
+    ]
+  },
+  "skillRepair": {
+    "path": "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
+    "repair": "mandatory_exact_envelope_checklist",
+    "topLevelAllowlistPinned": true,
+    "additionalPropertiesForbidden": true,
+    "confidenceEnumPinned": true,
+    "unknownEvidenceBoundaryPinned": true,
+    "focusedTestPath": "tests/test_trace_agent_diagnostics_skill.py",
+    "focusedTestsPassed": 22,
+    "focusedTestsFailed": 0
+  },
+  "candidate": {
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-be4e21f6d3",
+    "manifestSha256": "0e454dfb87b92cd4e3fe3e602c17cb5ef6fe536fd8ef82f09f196ad082b9e740",
+    "skillSha256": "c8bb76df717f2e34168a8b0538d39ba6873a7595c129d28cf1a4837654069976",
+    "derivedFromPriorCandidate": true,
+    "productSourceClean": false,
+    "installedStateChangedByRun": false,
+    "stagedAcceptance": "passed_not_installed",
+    "stagedAcceptanceReceiptSha256": "7a54bb322036a809a205ea21ea20465af8b8dbeefff12a943dbe757d0463b76e"
+  },
+  "postSkillTraceAgent": {
+    "sessionId": "agent:57d1efb9-c848-4865-a951-a516a6a73c90",
+    "turnId": "497d3368-1d59-40fa-ba60-0e72ad22d222",
+    "reportId": "trace-report:9232482c5d7841d5be78dc128e6743e1",
+    "reportStatus": "completed",
+    "reportRevision": 2,
+    "promptContainsKnownRootCause": false,
+    "executionMode": "read_only",
+    "toolOrder": [
+      "skill_load",
+      "trace_diagnostics.inspect"
+    ],
+    "inspectHttpStatus": 200,
+    "findingCount": 0,
+    "taskCompletionGate": "unknown",
+    "unsupportedCompletionClaimGate": "unknown",
+    "usageMissingMeansUnknown": true,
+    "publicEvidenceReceiptSha256": "3316812f28c8d97b2aedab60ed7a1c0f76cfb3f805eb9dc7dc8225f8d6aa4a88"
+  },
+  "installedStateObservation": {
+    "changedByThisRun": false,
+    "differsFromPriorRecordedRollbackTarget": true,
+    "observedVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-d2f57653bc",
+    "observedManifestSha256": "74c51698e900f915a88de5acd9ac0308780ac0099edf6a63b810fd25fed50a3a",
+    "attribution": "unknown_external_change"
+  },
+  "repairBoundary": {
+    "repairAuthorizationAttempted": false,
+    "runtimeRepairApplied": false,
+    "fullTrustSessionCreated": false,
+    "heldOutObserved": false,
+    "foregroundAcceptance": false
+  },
+  "claim": {
+    "allowed": "Two retained Trace report contract failures exposed schema drift, including an invalid numeric confidence. After a TDD change to the diagnostic Skill and a derived non-installed candidate build, a fresh neutral read-only Trace Agent Session completed skill_load plus inspect, produced a valid persisted report, kept missing usage as unknown, and emitted no unsupported findings.",
+    "forbidden": "Trace Agent rewrote or installed itself, the dirty-source candidate is a canonical release, the currently installed Runtime changed because of this run, the CloudOps workflow has complete observability, or a Runtime repair passed foreground acceptance."
+  }
+}

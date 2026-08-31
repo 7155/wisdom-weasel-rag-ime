@@ -261,6 +261,65 @@
       ]
     },
     {
+      "id": "knowledge.enterprise.answer_evidence.validation.reject.20260901",
+      "domain": "knowledge",
+      "title": "Enterprise RAG exact fact-to-citation Validation Reject",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "answerCaseCount": 4,
+        "laneCount": 4,
+        "verifiedRequiredFacts": 9,
+        "evidenceSupportGroups": 11,
+        "sourceChunkQuoteBindings": 13,
+        "unavailableRequiredFacts": 0,
+        "baselineCitationFactCoverage": 0.2222222222222222,
+        "skillCitationFactCoverage": 0.2222222222222222,
+        "tunedCitationFactCoverage": 0.2222222222222222,
+        "agenticCitationFactCoverage": 0.0,
+        "baselineAnswerableCitationSupportRate": 0.0,
+        "skillAnswerableCitationSupportRate": 0.0,
+        "tunedAnswerableCitationSupportRate": 0.0,
+        "agenticAnswerableCitationSupportRate": 0.0,
+        "baselineAnswerJudgeCorrectnessRate": 0.5,
+        "skillAnswerJudgeCorrectnessRate": 0.5,
+        "tunedAnswerJudgeCorrectnessRate": 0.5,
+        "agenticAnswerJudgeCorrectnessRate": 0.0,
+        "baselineLatencyMs": 63693.186,
+        "agenticLatencyMs": 600604.956,
+        "baselineToolCalls": 6,
+        "agenticToolCalls": 13,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 4,
+        "unit": "the same frozen Validation answer cases across baseline, Skill, tuned and Agentic lanes",
+        "requiredFacts": 9
+      },
+      "reproduction": {
+        "command": "python3 scripts/run_rag_agent_ablation.py --answer-only --evaluation-split validation --answer-evidence-qrels <host-private-exact-source-manifest> --slice-cases-per-split 16 --distractor-limit 5000 --checkpoint <private-checkpoint> --pi-runtime-payload <pinned-sol-runtime> ...",
+        "status": "completed with a Reject report; process exit is non-zero because no lane passed all hard gates"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterprise-rag-answer-evidence-validation-reject-20260901.v1.json",
+        "scripts/run_rag_agent_ablation.py",
+        "tests/test_run_rag_agent_ablation.py"
+      ],
+      "claim": {
+        "allowed": "在同一 4 题 Validation 上，以 host-private 的逐事实 source/chunk/quote 合同先证明 9/9 必要事实都有证据，再评分回答引用；baseline、Skill、tuned 均只覆盖 2/9 引用事实且 answerable citation support 为 0，Agentic 又未完成终态，因此四条 lane 全部 Reject。",
+        "forbidden": "held-out 已运行、检索 winner 无效、Skill 或 tuned 改善了最终答案、Agentic 使用 0 token、v16 可直接与旧 token-overlap 合同算提升，或任一 lane 可上线。"
+      },
+      "limitations": [
+        "four Validation answer cases are too small for a general quality conclusion",
+        "answer Judge correctness remains model-dependent; exact fact and citation coverage is the deterministic portion",
+        "the evidence contract changed from earlier token-overlap receipts, so pre-v16 and v16 answer-quality values are not a valid before/after delta",
+        "the Agentic token field is incomplete because the lane failed before a complete usage receipt",
+        "Held-out stayed closed and no production or foreground path was exercised"
+      ]
+    },
+    {
       "id": "memory.longmemeval.heldout82",
       "domain": "memory",
       "title": "Personal Memory retrieval on the frozen LongMemEval-S cleaned slice",
@@ -891,11 +950,108 @@
       ]
     },
     {
+      "id": "agent.cloudops_validation.20260901",
+      "domain": "agent",
+      "title": "CloudOps 3x4 PAW Agent Validation baseline",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "caseCount": 12,
+        "batchCount": 3,
+        "answerCoverage": 1.0,
+        "ca": 1.0,
+        "fa": 0.8333333333333334,
+        "jra": 0.8333333333333334,
+        "top3Jra": 0.8333333333333334,
+        "toolCalls": 98,
+        "successfulToolCalls": 98,
+        "failedToolCalls": 0,
+        "elapsedMs": 1356582,
+        "retainedFailedTrials": 3,
+        "installActionPerformed": false,
+        "providerUsageProjectionAvailable": false
+      },
+      "sample": {
+        "count": 12,
+        "unit": "frozen CloudOps Validation cases executed as three sequential four-case PAW Sessions"
+      },
+      "reproduction": {
+        "command": "python3 scripts/run_cloudops_agent_eval.py --runtime-candidate <candidate> --blind-root <blind-suite> --gold <host-gold> --scorer <host-scorer> --source-agent-config <private-config> --private-root <private-root> --output <report> --trial-id cloudops-paw-baseline-root-20260901-v3 --provider openai-codex --model gpt-5.6-sol --thinking max --transport loopback --timeout-seconds 900",
+        "status": "completed on a source-local candidate Runtime; this runner performed no install action"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json",
+        "scripts/run_cloudops_agent_eval.py",
+        "rag_ime/cloudops_benchmark_agent.py",
+        "tests/test_cloudops_benchmark_agent.py",
+        "tests/test_run_cloudops_agent_eval.py"
+      ],
+      "claim": {
+        "allowed": "冻结的 12 题 CloudOps Validation 由 3 个真实 Sol PAW Session 分 3x4 执行，12/12 作答、98/98 Tool 调用成功，CA 为 1.00，FA/JRA/Top3JRA 为 0.8333，并保留前三次失败试跑及 Trace/Eval/Sandbox/Artifact 标识。",
+        "forbidden": "本 runner 安装或改变了当前 Runtime、结果是 Held-out 或生产验收、Token 成本为零、流程效率已完整测量，或三次失败可以从证据链删除。"
+      },
+      "limitations": [
+        "the candidate Pi Runtime was source-local and the runner performed no install action; this receipt alone does not prove the active installed identity",
+        "Provider token usage was not projected into the aggregate report, so zero-valued usage fields are placeholders rather than a cost result",
+        "process-level signals were unavailable and the score is Validation-only"
+      ]
+    },
+    {
+      "id": "agent.zhanggui_extension_candidate.sandbox.20260901",
+      "domain": "agent",
+      "title": "掌柜问数 Extension App source binding and offline sandbox receipt",
+      "status": "supporting",
+      "evidenceLevel": "E3",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "fixtureCount": 1,
+        "importedDocumentCount": 1,
+        "retrievalHitCount": 1,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "providerCalls": 0,
+        "productionWriteBlocked": true,
+        "traceVerified": true,
+        "intentionalBindingFaultRejected": true,
+        "frontendFocusedTestsPassed": 8,
+        "productionBuildPassed": true,
+        "installActionPerformed": false,
+        "foregroundAccepted": false
+      },
+      "sample": {
+        "count": 1,
+        "unit": "checked-in SGG fixture-v2 deterministic sandbox case"
+      },
+      "reproduction": {
+        "command": "python3 scripts/run_extension_app_candidate_eval.py --app-directory control-center-web/extension-apps/zhanggui-wenshu --workspace-root <temporary-workspace> --output <private-report>",
+        "status": "source binding, registered suite, offline SandboxRun, Trace and Eval receipts completed; no install action was performed"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/zhanggui-extension-app-sandbox-20260901.v1.json",
+        "scripts/run_extension_app_candidate_eval.py",
+        "tests/test_run_extension_app_candidate_eval.py",
+        "control-center-web/extension-apps/zhanggui-wenshu/pawos-app.json"
+      ],
+      "claim": {
+        "allowed": "掌柜问数的 App/Package/Skill 共版本绑定通过源码校验，并在一个离线 fixture 上产出相互关联的 SandboxRun、Trace 和 ground-truth Eval；生产写入被阻断，Provider 调用为 0。",
+        "forbidden": "真实 Text-to-SQL 准确率为 100%、真实业务数据已测、App 已安装、前台对话已验收，或单 fixture 可以证明生产质量。"
+      },
+      "limitations": [
+        "the score covers one checked-in deterministic fixture, not real business data",
+        "the runner performs no install action and does not prove installed or foreground behavior",
+        "Provider and AI Judge paths are intentionally absent from this source-contract gate"
+      ]
+    },
+    {
       "id": "trace_eval.provider_bootstrap.20260901",
       "domain": "trace-eval",
       "title": "Trace Agent bootstrap failure diagnosis on a repaired candidate Runtime",
       "status": "diagnostic",
-      "evidenceLevel": "E5",
+      "evidenceLevel": "E2",
       "measurementKind": "deterministic",
       "measuredAt": "2026-09-01",
       "values": {
@@ -934,6 +1090,94 @@
         "the candidate Runtime was source-local and not installed",
         "the Trace Agent produced an unapplied candidate repair only",
         "a Provider bootstrap failure still requires an outer supervisor because the broken Agent cannot reach its own tools"
+      ]
+    },
+    {
+      "id": "trace_eval.skill_envelope_validation.20260901",
+      "domain": "trace-eval",
+      "title": "Trace Agent Skill exact-envelope repair and fresh source-local validation",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "preSkillContractRejectedReports": 2,
+        "promptSpecificCompletedReports": 1,
+        "postSkillNeutralCompletedReports": 1,
+        "focusedTestsPassed": 22,
+        "focusedTestsFailed": 0,
+        "postSkillToolCalls": 2,
+        "postSkillEvidenceCount": 148,
+        "postSkillTimelineCount": 0,
+        "postSkillFindingCount": 0,
+        "usageMissingPreservedAsUnknown": true,
+        "candidateInstalled": false,
+        "runtimeRepairApplied": false,
+        "heldOutObserved": false
+      },
+      "sample": {
+        "count": 4,
+        "unit": "retained source-local Trace Agent report attempts against the same CloudOps v3 target"
+      },
+      "reproduction": {
+        "command": "Run the same read-only CloudOps v3 Trace diagnostic before and after the exact-envelope Skill checklist, then require skill_load -> trace_diagnostics.inspect and a persisted schema-valid report from a derived non-installed candidate.",
+        "status": "completed on a dirty-source derived candidate; installation intentionally not performed"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/trace-agent-skill-envelope-validation-20260901.v1.json",
+        "integrations/pi/skills/trace-agent-diagnostics/SKILL.md",
+        "tests/test_trace_agent_diagnostics_skill.py"
+      ],
+      "claim": {
+        "allowed": "两次保留的 Trace 报告合同失败暴露了 Skill 输出漂移；增加 exact-envelope 自检并通过 22 项聚焦回归后，新建的未安装 derived candidate 用普通提示词完成 skill_load、inspect 和合法报告，在 source/timeline/usage 证据不足时保持 unknown 且不生成无依据 finding。",
+        "forbidden": "Trace Agent 绕过授权改写或安装了自己、dirty-source candidate 是正式发布、当前安装态由本次运行改变、CloudOps 已具备完整 Trace/usage 投影，或零 finding 等于系统没有问题。"
+      },
+      "limitations": [
+        "the post-Skill candidate was derived from dirty product source and is not installable or releaseable evidence",
+        "the read-only Trace Agent did not apply a Runtime repair or open a full-trust Session",
+        "sourceAvailable=false and an empty public timeline constrain the result to contract reliability and evidence-boundary behavior"
+      ]
+    },
+    {
+      "id": "trace_eval.closed_loop_defect_inventory.20260901",
+      "domain": "trace-eval",
+      "title": "Trace/Eval closed-loop defect and improvement inventory",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "closedLoopDefects": 8,
+        "mainRepositoryValidationBacked": 3,
+        "sourceLocalCandidateBacked": 5,
+        "additionalSourceTestOnlyRepairs": 3,
+        "skillIssuesFound": 3,
+        "skillIssuesStructurallyFixed": 2,
+        "skillIssuesDiagnosedOnly": 1,
+        "workflowImprovements": 5,
+        "toolRuntimeContractImprovements": 6,
+        "overlappingCategoriesMayNotBeSummed": true
+      },
+      "sample": {
+        "count": 8,
+        "unit": "unique root causes with retained failure or rejection evidence plus a repair and verification boundary"
+      },
+      "reproduction": {
+        "command": "python3 -m unittest tests.test_trace_defect_ledger",
+        "status": "the counting policy and evidence classes passed 3/3 focused tests"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/trace-defect-ledger.v1.json",
+        "tests/test_trace_defect_ledger.py"
+      ],
+      "claim": {
+        "allowed": "Across the PAW Trace/Eval, Enterprise RAG and CloudOps validation chains, eight unique contract defects have retained failure evidence plus a repair and verification boundary; three are backed by main-repository Validation/control-plane evidence and five by non-installed source-local candidate replay. The inventory also records three Skill issues, five workflow improvements and six Tool/Runtime contract improvements, but these categories overlap and are not added together.",
+        "forbidden": "Trace Agent autonomously found and fixed all eight defects, tests or retry counts equal defect counts, source-local candidates were installed, or 8 + 3 + 5 + 6 is a valid total."
+      },
+      "limitations": [
+        "five closed-loop defects are verified only on non-installed source-local candidates",
+        "three additional repairs remain source/test-only and are excluded from the eight-defect headline",
+        "the defect, Skill, workflow and Tool/Runtime categories overlap"
       ]
     },
     {
@@ -1306,6 +1550,20 @@
       "command": "python3 scripts/check_interview_metrics.py --json && python3 -m unittest tests.test_promote_rag_agent_validation tests.test_aggregate_rag_agent_ablation tests.test_rag_agent_ablation tests.test_rag_benchmark_agent tests.test_rag_benchmark_sandbox tests.test_canary_rag_benchmark_agent tests.test_run_rag_agent_ablation tests.test_run_rag_retrieval_experiment tests.test_canary_rag_agent_ablation_checkpoint tests.test_interview_metrics tests.test_rag_interview_scorecard tests.test_session_recall_effect_eval tests.test_trace_runtime tests.test_trace_adapters tests.test_vertical_agent_harness tests.test_rag_retrieval_optimization_skill",
       "outcome": "passed",
       "summary": "The final integrated RAG promotion, aggregation, runner, sandbox, checkpoint, evidence-qrels, Skill, interview-metric, Trace and vertical-harness regression passed 178/178; the metrics ledger recomputed 23 metrics from 44 run receipts across 11 datasets."
+    },
+    {
+      "id": "RUN-20260901-005",
+      "measuredAt": "2026-09-01",
+      "command": "python3 -m unittest tests.test_trace_agent_diagnostics_skill tests.test_trace_diagnostics tests.test_trace_diagnostic_http",
+      "outcome": "passed",
+      "summary": "The exact-envelope Skill checklist, diagnostic schema and HTTP persistence/access contract passed 22/22 before a fresh neutral read-only Trace Agent Session produced a completed report on the derived non-installed candidate."
+    },
+    {
+      "id": "RUN-20260901-006",
+      "measuredAt": "2026-09-01",
+      "command": "python3 scripts/run_extension_app_candidate_eval.py --app-directory control-center-web/extension-apps/zhanggui-wenshu --workspace-root <temporary-workspace> --output <private-report> && python3 -m unittest tests.test_run_extension_app_candidate_eval",
+      "outcome": "passed",
+      "summary": "The 掌柜问数 Extension App candidate passed its source binding and one deterministic offline fixture with linked SandboxRun, Trace and Eval receipts; 3/3 runner tests passed, Provider calls were 0, production writes were blocked, and no install action was performed."
     }
   ],
   "datasets": [
@@ -1398,6 +1656,15 @@
       "localStatus": "not imported",
       "fit": "enterprise Text-to-SQL for 掌柜问数-style vertical Agent development",
       "nextAction": "start with a sandboxed local database slice and deterministic execution accuracy before AI Judge scoring"
+    },
+    {
+      "id": "sgg-fixture-v2",
+      "domain": "data-agent",
+      "priority": "A-current-contract",
+      "sourceUrl": "local://examples/vertical_agents/sgg.json",
+      "localStatus": "one checked-in deterministic fixture with source-bound App/Package/Skill and linked SandboxRun, Trace and Eval receipt",
+      "fit": "offline source-contract and lifecycle smoke for 掌柜问数 before any real Text-to-SQL or business-data evaluation",
+      "nextAction": "add human-authored validation questions with exact answers and evidence, then keep a one-shot held-out split for final promotion"
     },
     {
       "id": "webarena",

@@ -1,0 +1,153 @@
+{
+  "schemaVersion": "paw.trace-defect-ledger.v1",
+  "generatedAt": "2026-09-01",
+  "countingPolicy": {
+    "headlineEligibility": "One unique root cause with a retained failure or rejection artifact plus repair and verification evidence.",
+    "attemptsAreNotDefects": true,
+    "testsAreNotDefects": true,
+    "overlappingCategoriesMayNotBeSummed": true
+  },
+  "summary": {
+    "closedLoopDefects": 8,
+    "mainRepositoryValidationBacked": 3,
+    "sourceLocalCandidateBacked": 5,
+    "additionalSourceTestOnlyRepairs": 3,
+    "skillIssuesFound": 3,
+    "skillIssuesStructurallyFixed": 2,
+    "skillIssuesDiagnosedOnly": 1,
+    "workflowImprovements": 5,
+    "toolRuntimeContractImprovements": 6
+  },
+  "defects": [
+    {
+      "id": "RAG-IFACE-001",
+      "headlineEligible": true,
+      "evidenceClass": "main_repository_validation",
+      "status": "fixed_and_validation_advanced",
+      "owner": "enterprise_rag_runner_gateway_contract",
+      "rootCause": "The evaluation runner referenced the removed AgentService.room_skill_policy interface.",
+      "evidenceRefs": ["eval/interview-metrics/runs/enterprise-rag-answer-validation-failure-20260831.v1.json"]
+    },
+    {
+      "id": "RAG-ATTEMPT-001",
+      "headlineEligible": true,
+      "evidenceClass": "main_repository_validation",
+      "status": "control_plane_fixed_cross_db_cleanup_partial",
+      "owner": "evaluation_attempt_lifecycle",
+      "rootCause": "Interrupted answer runs lacked an authoritative attempt-start, Session/turn, budget and orphan lifecycle contract.",
+      "evidenceRefs": ["eval/interview-metrics/runs/enterprise-rag-agent-validation-reject-20260901.v1.json"]
+    },
+    {
+      "id": "RAG-EVIDENCE-001",
+      "headlineEligible": true,
+      "evidenceClass": "main_repository_validation",
+      "status": "scoring_contract_fixed_quality_still_rejected",
+      "owner": "answer_evidence_evaluator",
+      "rootCause": "Answer evaluation treated token overlap or citation presence as evidence support instead of scoring required facts against exact host-private source/chunk/quote bindings.",
+      "evidenceRefs": ["eval/interview-metrics/runs/enterprise-rag-answer-evidence-validation-reject-20260901.v1.json"]
+    },
+    {
+      "id": "PI-CODEX-WIRE-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "candidate_verified_not_installed",
+      "owner": "pi_openai_codex_provider_adapter",
+      "rootCause": "The Pi Codex request included an unsupported max_output_tokens field.",
+      "evidenceRefs": ["eval/interview-metrics/runs/trace-agent-provider-bootstrap-20260901.v1.json"]
+    },
+    {
+      "id": "TRACE-SKILL-ENV-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "skill_candidate_verified_not_installed",
+      "owner": "trace_agent_diagnostics_skill",
+      "rootCause": "The diagnostic Skill did not pin the exact report envelope and confidence enum, producing rejected top-level fields and numeric confidence.",
+      "evidenceRefs": ["eval/interview-metrics/runs/trace-agent-skill-envelope-validation-20260901.v1.json"]
+    },
+    {
+      "id": "CLOUDOPS-TRANSPORT-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "candidate_verified_not_installed",
+      "owner": "cloudops_tool_transport",
+      "rootCause": "The first private Tool transport could not operate inside the restricted evaluation environment.",
+      "evidenceRefs": ["eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json"]
+    },
+    {
+      "id": "EVAL-MODEL-ID-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "fail_closed_identity_gate_verified",
+      "owner": "evaluation_runtime_identity",
+      "rootCause": "A requested evaluation model was not fail-closed against the Session's effective provider/model/thinking identity.",
+      "evidenceRefs": ["eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json"]
+    },
+    {
+      "id": "CLOUDOPS-HASH-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "candidate_verified_not_installed",
+      "owner": "cloudops_observation_contract",
+      "rootCause": "Structured observations used different JSON serialization in the blind index and read path, so equal values produced different hashes.",
+      "evidenceRefs": ["eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json"]
+    },
+    {
+      "id": "RAG-SOURCELOOP-001",
+      "headlineEligible": false,
+      "evidenceClass": "source_test_only",
+      "status": "source_test_fixed",
+      "owner": "rag_tool_envelope",
+      "rootCause": "The Runtime emitted sourceLoopId but the RAG gateway envelope did not accept and safely retain its hash.",
+      "evidenceRefs": ["rag_ime/rag_benchmark_agent.py", "tests/test_rag_benchmark_agent.py"]
+    },
+    {
+      "id": "RAG-SKILL-COVERAGE-001",
+      "headlineEligible": false,
+      "evidenceClass": "source_test_only",
+      "status": "structure_fixed_answer_quality_unproven",
+      "owner": "rag_skill_execution_profile",
+      "rootCause": "The Skill asked for uncovered-fact retrieval while the lane budget allowed only one retrieval and had no bounded post-synthesis coverage audit.",
+      "evidenceRefs": ["integrations/pi/skills/rag-retrieval-optimization/SKILL.md", "tests/test_run_rag_agent_ablation.py"]
+    },
+    {
+      "id": "RAG-AGENTIC-CRITIC-001",
+      "headlineEligible": false,
+      "evidenceClass": "source_test_only",
+      "status": "contract_aligned_live_agentic_still_incomplete",
+      "owner": "rag_agentic_critic_contract",
+      "rootCause": "The declared no-Tool critic contract conflicted with a hard gate that expected child retrieval receipts.",
+      "evidenceRefs": ["scripts/run_rag_agent_ablation.py", "tests/test_run_rag_agent_ablation.py"]
+    }
+  ],
+  "skillIssues": [
+    {"id": "TRACE-SKILL-ENV-001", "status": "structurally_fixed"},
+    {"id": "RAG-SKILL-COVERAGE-001", "status": "structurally_fixed"},
+    {"id": "RAG-SKILL-ABSTAIN-001", "status": "diagnosed_only", "boundary": "A single later run changed the rate but did not isolate causality."}
+  ],
+  "workflowImprovements": [
+    "append_only_attempt_resume_orphan_lifecycle",
+    "host_private_fact_qrels_citation_gate",
+    "label_blind_coverage_plan_and_same_session_audit",
+    "no_tool_critic_and_bounded_parent_supplemental_retrieval",
+    "cloudops_blind_3x4_runner_with_retained_failure_trace_eval_sandbox_artifacts"
+  ],
+  "toolRuntimeContractImprovements": [
+    "source_loop_id_hash_only_envelope",
+    "evaluation_model_identity_fail_closed_gate",
+    "remove_unsupported_codex_max_output_tokens",
+    "cloudops_capability_token_loopback_transport",
+    "structured_observation_canonical_serialization",
+    "checkpoint_private_hash_bound_search_trace_and_public_redaction"
+  ],
+  "unresolved": [
+    "RAG-SKILL-ABSTAIN-001",
+    "RAG-AGENTIC-TERM-001",
+    "TRACE-OBS-001",
+    "RUNTIME-CROSSDB-CANCEL-001",
+    "RAG-GRAPHTAG-001"
+  ],
+  "claim": {
+    "allowed": "Across the PAW Trace/Eval, Enterprise RAG and CloudOps validation chains, eight unique contract defects have retained failure evidence plus a repair and verification boundary; three are backed by main-repository Validation/control-plane evidence and five by non-installed source-local candidate replay. Three additional repairs are source/test-only. The same evidence inventory contains three Skill issues, five workflow improvements and six Tool/Runtime contract improvements; these categories overlap and may not be added together.",
+    "forbidden": "Trace Agent autonomously found and fixed all eight defects, eleven production bugs were fixed, tests or retry counts equal defect counts, source-local validation receipts themselves prove installation, or unresolved/blocked items are repaired."
+  }
+}

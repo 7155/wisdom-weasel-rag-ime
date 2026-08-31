@@ -162,6 +162,35 @@ user authorizes that second phase.
 
 ## Report Contract
 
+### Mandatory Exact-Envelope Checklist
+
+Immediately before emitting the final envelope, validate the JSON itself against
+this checklist. This check is mandatory even when the diagnosis prose is
+correct:
+
+1. Allowed top-level keys (complete allowlist): `["schemaVersion","summary","hardGates","judgeScores","requirementAssessments","causalLinks","findings"]`
+2. Required top-level keys: `["schemaVersion","summary","hardGates","judgeScores","findings"]`
+   `requirementAssessments` and `causalLinks` are optional; no other top-level
+   key is permitted. Do not add convenient aliases such as `target`,
+   `observations`, `hypotheses`, `conclusions`, or `repairCandidate`.
+3. Treat the top-level result and every nested result object as
+   `additionalProperties=false`: use only the fields shown in
+   `references/report-contract.md`. Never rename a field, add a prose-only
+   companion field, or move a finding field to the top level.
+4. Every finding or causal-link `confidence` MUST be a JSON string: `"high"`, `"medium"`, `"low"`, or `"unknown"`.
+   Numeric confidence values such as `1` or `0.95` are invalid; never emit them
+   and never rely on Runtime to coerce them.
+5. When frozen evidence is absent, use `"evidenceIds": []` and never invent an
+   ID. For an emitted evidence-gap finding use `"confidence": "unknown"`; for
+   an unverified hard gate use `"status": "unknown"`; for an unjudgeable
+   active score use `"score": null`; and for a frozen requirement without
+   proof use `"status": "unverified"`. Do not emit a causal link unless both
+   endpoint evidence IDs exist in the inspection.
+6. Empty supported collections remain arrays, not substitute objects or prose:
+   emit `"hardGates": []`, `"judgeScores": []`, and `"findings": []` when
+   there are no valid entries. Optional `requirementAssessments` and
+   `causalLinks` may be omitted or emitted as `[]`.
+
 End the diagnostic Session with exactly one machine-readable result envelope:
 
 ```markdown

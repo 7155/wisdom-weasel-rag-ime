@@ -23,7 +23,7 @@
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 542
+      "pathCount": 549
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 43
+      "pathCount": 49
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 1581,
+    "pathCount": 1594,
     "dispositionCounts": {
       "delete_old_implementation": 38,
-      "keep_release": 1543
+      "keep_release": 1556
     },
     "groupCounts": {
       "control_center_release_ui": 914,
       "desktop_semantic_accessibility": 19,
       "installation_reliability": 18,
-      "memory_curation": 43,
+      "memory_curation": 49,
       "project_harness": 40,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 542
+      "session_room_skill_flow": 549
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -11171,6 +11171,97 @@
       "disposition": "keep_release",
       "group": "installation_reliability",
       "reason": "Keep the reproducible dependency and installed Gateway reliability changes."
+    },
+    {
+      "path": "eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the privacy-safe CloudOps Agent Validation result and its explicit non-production claim boundary."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-validation-reject-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the exact fact-to-citation Validation Reject receipt without publishing host-private qrels."
+    },
+    {
+      "path": "eval/interview-metrics/runs/trace-agent-skill-envelope-validation-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the bounded Trace Skill contract failure and source-local verification receipt."
+    },
+    {
+      "path": "eval/interview-metrics/runs/zhanggui-extension-app-sandbox-20260901.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the source-bound 掌柜问数 App fault-injection, build, Sandbox, Trace and Eval receipt."
+    },
+    {
+      "path": "eval/interview-metrics/trace-defect-ledger.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep the non-overlapping, evidence-linked defect and workflow improvement count used for interview claims."
+    },
+    {
+      "path": "rag_ime/cloudops_benchmark_agent.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Session-bound, label-blind CloudOps evaluation Tool gateway and strict evidence surface."
+    },
+    {
+      "path": "scripts/run_cloudops_agent_eval.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the frozen Sol CloudOps Validation runner with linked Trace, Eval, Sandbox and artifact receipts."
+    },
+    {
+      "path": "scripts/run_extension_app_candidate_eval.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the no-install Extension App source binding and deterministic sandbox evaluation entrypoint."
+    },
+    {
+      "path": "tests/test_cloudops_benchmark_agent.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep CloudOps Tool isolation, privacy, profile and one-shot submission regression coverage."
+    },
+    {
+      "path": "tests/test_run_cloudops_agent_eval.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep CloudOps runner identity, scoring, usage, sandbox and receipt regression coverage."
+    },
+    {
+      "path": "tests/test_run_extension_app_candidate_eval.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep Extension App binding, fault, sandbox and symlink-isolation regression coverage."
+    },
+    {
+      "path": "tests/test_trace_agent_diagnostics_skill.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep the Trace Agent exact-envelope Skill contract regression."
+    },
+    {
+      "path": "tests/test_trace_defect_ledger.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_curation",
+      "reason": "Keep defect-count uniqueness, category boundary and evidence-reference checks."
     }
   ]
 }

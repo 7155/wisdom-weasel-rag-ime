@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "paw.cloudops-agent-validation.v1",
+  "runId": "cloudops-agent-validation-20260901-v1",
+  "status": "validation_completed_source_local_candidate",
+  "measuredAt": "2026-09-01",
+  "task": {
+    "suiteId": "cloudops-smoke-v1",
+    "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+    "caseCount": 12,
+    "batchPlan": "3x4-sequential",
+    "goldVisibleToAgent": false
+  },
+  "runtime": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-a1bb684fe6",
+    "runtimeManifestSha256": "4ff63aa5b77d620b70f9e430a009d93450a8a297e9602d3bcc96820fe7b29211",
+    "runtimeIdentitySha256": "bdbb266ed64d43fb33914da764c2a2004fa89cb6b8a9f5510282f47fe61e4f0e",
+    "transport": "loopback-http-v1",
+    "installActionPerformed": false
+  },
+  "retainedTrials": [
+    {
+      "trialId": "cloudops-paw-baseline-20260901",
+      "status": "failed_before_first_batch_completion",
+      "diagnosticClass": "network_restricted_private_tool_transport",
+      "artifactSha256": "3bbe0bbd453b16ebd9eb232596e8df9732f6c4d3489b0c84601837b71018a21b",
+      "formalScoreProduced": false
+    },
+    {
+      "trialId": "cloudops-paw-baseline-root-20260901-v1",
+      "status": "failed_batch_1",
+      "diagnosticClass": "session_model_route_drift_and_tool_transport_failure",
+      "failureReportSha256": "8b1b8acf001ec010816cd4a67aa05d28fd753c0a817b094eadcf724cb7245bbe",
+      "artifactSha256": "fa39d16a2d3ea8ed79ff0c9814969d7a18d90bad493ebac1e67ef9a3f277eccb",
+      "formalScoreProduced": false
+    },
+    {
+      "trialId": "cloudops-paw-baseline-root-20260901-v2",
+      "status": "failed_batch_2_after_batch_1_completed",
+      "diagnosticClass": "structured_observation_hash_contract_mismatch",
+      "failureReportSha256": "1d36ee21a2b3897dc70c8e0b1ad8ddd848b986aeb4f32e538207cad397bc7794",
+      "artifactSha256": "7894954fb7805d93e370fe81ef56c1f9f20833e701995016a6a6f75a7576eed8",
+      "formalScoreProduced": false
+    },
+    {
+      "trialId": "cloudops-paw-baseline-root-20260901-v3",
+      "status": "completed",
+      "diagnosticClass": "accepted_validation_baseline",
+      "reportSha256": "55b50b570dbf889e93faa6b0ad70aa3527407573376b9b9d43327337f908dd3b",
+      "artifactSha256": "1c5e2c81b4df30263b40f675932420e994d79313978c5cc990aa9250ab233538",
+      "formalScoreProduced": true
+    }
+  ],
+  "result": {
+    "answerCoverage": 1.0,
+    "ca": 1.0,
+    "fa": 0.8333333333333334,
+    "jra": 0.8333333333333334,
+    "top3Jra": 0.8333333333333334,
+    "batchCount": 3,
+    "toolCalls": 98,
+    "successfulToolCalls": 98,
+    "failedToolCalls": 0,
+    "listCalls": 52,
+    "readCalls": 40,
+    "elapsedMs": 1356582,
+    "firstToolLatencyMs": 13605,
+    "batches": [
+      {
+        "batchId": "batch-1",
+        "answerCount": 4,
+        "toolCalls": 18,
+        "successfulToolCalls": 18,
+        "failedToolCalls": 0,
+        "elapsedMs": 474321,
+        "terminalStatus": "completed"
+      },
+      {
+        "batchId": "batch-2",
+        "answerCount": 4,
+        "toolCalls": 30,
+        "successfulToolCalls": 30,
+        "failedToolCalls": 0,
+        "elapsedMs": 328303,
+        "terminalStatus": "completed"
+      },
+      {
+        "batchId": "batch-3",
+        "answerCount": 4,
+        "toolCalls": 50,
+        "successfulToolCalls": 50,
+        "failedToolCalls": 0,
+        "elapsedMs": 461873,
+        "terminalStatus": "completed"
+      }
+    ]
+  },
+  "receipts": {
+    "aggregateTraceId": "trace:cloudops:cloudops-paw-baseline-root-20260901-v3:aggregate",
+    "aggregateEvalRunId": "eval:cloudops:cloudops-paw-baseline-root-20260901-v3:aggregate",
+    "sandboxRunId": "sandbox:cloudops:cloudops-paw-baseline-root-20260901-v3",
+    "artifactId": "artifact:01750f506277fe0f73159a35af014f57db39f8d7",
+    "gatewayBindingsRemoved": true,
+    "hostPathsPublished": false
+  },
+  "observabilityLimit": {
+    "providerUsageProjectionAvailable": false,
+    "reportedTokenFieldsAreZeroPlaceholders": true,
+    "costClaimAllowed": false,
+    "processSignalsAvailable": false
+  },
+  "claim": {
+    "allowed": "On the frozen 12-case CloudOps Validation suite, three real GPT-5.6 Sol PAW Sessions completed a 3x4 plan with 12 answers, 98 successful Tool calls, CA 1.00 and FA/JRA/Top3JRA 0.8333. The run emitted Trace, Eval, Sandbox and artifact receipts, while three earlier failed trials were retained as diagnostic evidence.",
+    "forbidden": "This runner installed or changed the active Runtime, the workflow is production accepted, the score represents Held-out performance, the system achieved zero token cost, or process-level efficiency was measured."
+  }
+}

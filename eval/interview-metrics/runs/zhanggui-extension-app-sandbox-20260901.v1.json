@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "paw.zhanggui-extension-app-sandbox-validation.v1",
+  "runId": "zhanggui-extension-app-sandbox-20260901-v1",
+  "status": "sandbox_verified_source_candidate",
+  "measuredAt": "2026-09-01",
+  "candidate": {
+    "appId": "extension:zhanggui-wenshu",
+    "version": "0.2.0",
+    "packageId": "@paw/zhanggui-wenshu",
+    "bindingSha256": "32c573176111035a65817512202824df3f5c0cff61fcfd4fd5623fa83a8f888f",
+    "skillSha256": "682e2042ed5299ff2e94ea3e63ac6f421eac59e8d66139f76b6a2b91806d60d2",
+    "sourceTreeSha256": "d5932fac28c7b2e29b4eef0ae31e7419cf280bdefa9ddd5a1195ba54daf6f6b1",
+    "installActionPerformed": false
+  },
+  "faultInjection": {
+    "kind": "binding_digest_mismatch",
+    "intentional": true,
+    "candidateVersionChanged": false,
+    "suiteRevisionChanged": false,
+    "status": "source_validation_failed",
+    "sandboxExecuted": false,
+    "failureReceiptSha256": "b35a70a031a26d16992cd40d7d300486ca4e663385b50edf8d9651a58245308a"
+  },
+  "repair": {
+    "action": "restore_exact_manifest_binding_digest",
+    "sameVersion": true,
+    "sameSuiteRevision": true,
+    "postRepairStatus": "sandbox_verified",
+    "sandboxReceiptSha256": "244856249ba7e5be60322ceac81b96ad52dace76c2aa22f8a32a790f6df4fbc2"
+  },
+  "sourceAndBuild": {
+    "sourceValidation": "valid",
+    "frontendFocusedTestsPassed": 8,
+    "frontendFocusedTestsFailed": 0,
+    "productionBuildPassed": true,
+    "buildMarkerSha256": "0ed7af02924ce1b9b85e6132cb16b58781b4f0f1cf2aa028abdb843f2db3ac72",
+    "buildIndexSha256": "44c0c726c4e6ad5018822fbe1f6c9f37e8605b348fb7d812d5bdcba6bf577a20"
+  },
+  "sandbox": {
+    "suiteId": "sgg",
+    "suiteRevision": "fixture-v2",
+    "fixtureCount": 1,
+    "importedDocumentCount": 1,
+    "retrievalHitCount": 1,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "providerCalls": 0,
+    "network": "blocked",
+    "productionWriteBlocked": true,
+    "truthVisibleToProvider": false,
+    "traceVerified": true
+  },
+  "receipts": {
+    "traceId": "trace:sgg:self-test:sales-ledger-answer",
+    "evalRunId": "eval:evidence-ground-truth:a71035fd9ae887038aeac34d12b43aa054a583c207bb804272d60df7a183995b",
+    "sandboxRunId": "sandbox:sgg:self-test:sales-ledger-answer",
+    "workspaceFingerprint": "sha256:cfdf9fdb5c9e41e321df28344b1cc4e32d8332c4fcc09aa06dc9b5b6da68dd63"
+  },
+  "textToSqlFrontier": {
+    "dataset": "Spider 2.0-Lite",
+    "localSourceAvailable": true,
+    "questionCount": 547,
+    "goldSqlCount": 256,
+    "executionDatabaseAvailable": false,
+    "formalScoreProduced": false
+  },
+  "claim": {
+    "allowed": "The source-isolated 掌柜问数 App, co-versioned Pi Package and Skill passed source validation, 8 focused frontend tests and a production build. An intentional binding-digest fault failed closed before sandbox execution; restoring the exact binding and rerunning the same SGG fixture-v2 produced linked Trace, Eval and Sandbox receipts with network and production writes blocked.",
+    "forbidden": "The 1-case fixture F1 is production Text-to-SQL accuracy, Spider 2.0 was evaluated, real business data was used, the App is installed, or foreground behavior was accepted."
+  }
+}

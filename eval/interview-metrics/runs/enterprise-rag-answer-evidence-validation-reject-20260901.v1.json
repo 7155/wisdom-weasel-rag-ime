@@ -1,0 +1,117 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-validation-reject.v1",
+  "runId": "enterprise-rag-answer-validation-v16-20260901",
+  "status": "rejected",
+  "evaluationScope": "validation-only",
+  "evaluationMode": "answer-only",
+  "heldOutEvaluated": false,
+  "decision": "reject",
+  "formalAcceptanceEligible": false,
+  "formalAcceptancePassed": false,
+  "heldOutGateProduced": false,
+  "cleanupPassed": true,
+  "startedAtMs": 1788207704230,
+  "completedAtMs": 1788209584618,
+  "elapsedMs": 1880388,
+  "sourceObservation": {
+    "repositoryRevisionAfterRun": "a2c84d1a92cd73b4811feb8c1bce2025a3ce77c0",
+    "workingTreeDirtyAfterRun": true,
+    "boundary": "The repository revision and dirty state were observed immediately after completion, not persisted as start-time provenance. The frozen report itself binds the exact model route, Pi payload, case set, prompt, retrieval winner and host-private evidence manifest hashes."
+  },
+  "hashes": {
+    "rawFileSha256": "c076602279c53c5aedee93bdb8f1fa6cb235b9c94064b90efb4f0c1cee366556",
+    "reportSha256": "490c6663228ac85e2ff886d58648b0f92fc921e03dc08adca9b69704c8a36810",
+    "checkpointFileSha256": "d72373de7a113850c5dc53e28f653709fd626bb0ebd0d3275cb8a65663423d9e",
+    "checkpointSha256": "a039999fe9f9372a7d4d324fbe6a3878636afd02f8547cada7c6c87ba2f05b6a",
+    "evidenceManifestSha256": "9ce7930d9ad93324725654742ff73e4ba6f4dbc015c0be187288451426e0ebff",
+    "answerCaseManifestSha256": "f154bbc55dba2733e10e0ebac91da6af50493565e688b19e80327bc028f21c96",
+    "caseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+    "promptConfigSha256": "4c9f547c3bca4ff16f94944838a2370552dad1d070be05275e31d21e3bf40b80",
+    "piRuntimeIdentitySha256": "27dd3749d40dd0ac8c629fad4ff7b5a2f0a3f55a7eb963e947621301a7b66378",
+    "modelRouteIdentitySha256": "a66648c4d40b1a19c547fea4236dd12fa5899d3ebf27f063a71e18afb9dc5017"
+  },
+  "evidenceContract": {
+    "name": "host-private-fact-qrels-exact-source-chunk-v1",
+    "highLevelCaseCount": 2,
+    "verifiedHighLevelFactCount": 9,
+    "unavailableHighLevelFactCount": 0,
+    "supportGroupCount": 11,
+    "sourceChunkQuoteBindingCount": 13,
+    "qrelsVisibleToAgentOrJudge": false
+  },
+  "sample": {
+    "answerCaseCount": 4,
+    "laneCount": 4,
+    "lanes": ["baseline", "skill", "tuned", "agentic"],
+    "unit": "frozen Validation answer cases"
+  },
+  "runtime": {
+    "model": "openai-codex/gpt-5.6-sol",
+    "thinking": "max",
+    "piVersion": "0.84.2",
+    "piSourceCommit": "920e42b9c19f341ff398dd8211a9a57962b003c1",
+    "piSourceAccess": "explicit-verified-payload-v1"
+  },
+  "lanes": {
+    "baseline": {
+      "answerJudgeCorrectnessRate": 0.5,
+      "highLevelFactCoverage": 0.6666666666666666,
+      "citationFactCoverage": 0.2222222222222222,
+      "answerableCitationSupportRate": 0.0,
+      "infoNotFoundAbstentionRecall": 1.0,
+      "latencyMs": 63693.186,
+      "tokens": 25384,
+      "toolCalls": 6,
+      "citationHardGatePassed": false
+    },
+    "skill": {
+      "answerJudgeCorrectnessRate": 0.5,
+      "highLevelFactCoverage": 0.6666666666666666,
+      "citationFactCoverage": 0.2222222222222222,
+      "answerableCitationSupportRate": 0.0,
+      "infoNotFoundAbstentionRecall": 1.0,
+      "latencyMs": 224479.982,
+      "tokens": 68404,
+      "toolCalls": 7,
+      "citationHardGatePassed": false
+    },
+    "tuned": {
+      "answerJudgeCorrectnessRate": 0.5,
+      "highLevelFactCoverage": 0.6666666666666666,
+      "citationFactCoverage": 0.2222222222222222,
+      "answerableCitationSupportRate": 0.0,
+      "infoNotFoundAbstentionRecall": 1.0,
+      "latencyMs": 210666.32,
+      "tokens": 82471,
+      "toolCalls": 7,
+      "citationHardGatePassed": false
+    },
+    "agentic": {
+      "answerJudgeCorrectnessRate": 0.0,
+      "highLevelFactCoverage": 0.0,
+      "citationFactCoverage": 0.0,
+      "answerableCitationSupportRate": 0.0,
+      "infoNotFoundAbstentionRecall": 0.0,
+      "latencyMs": 600604.956,
+      "tokens": 0,
+      "tokenValueIsIncompleteFailurePlaceholder": true,
+      "toolCalls": 13,
+      "terminalCompletionPassed": false,
+      "citationHardGatePassed": false
+    }
+  },
+  "failedHardGates": [
+    "baseline:citationResolution",
+    "skill:citationResolution",
+    "tuned:citationResolution",
+    "agentic:abstention",
+    "agentic:agenticPolicy",
+    "agentic:citationResolution",
+    "agentic:terminalCompletion",
+    "agentic:toolContract"
+  ],
+  "claim": {
+    "allowed": "A fresh four-lane GPT-5.6 Sol Validation run used an exact host-private fact-to-source contract covering 9/9 required facts and rejected every lane: baseline, Skill and tuned each covered only 2/9 cited facts and had zero answerable citation support, while Agentic failed terminal completion after 600.6 seconds and 13 Tool calls.",
+    "forbidden": "Held-out passed, the retrieval winner is invalid, Skill or tuned improved final answer quality, Agentic used zero tokens, the evidence contract score is directly comparable to pre-v16 token-overlap receipts, or any rejected lane is production ready."
+  }
+}

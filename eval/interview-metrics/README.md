@@ -36,6 +36,21 @@
    确认后交给普通可写 Agent，最后由新 Trace 权威复检；`121` 是测试数，不是
    修复的 bug 数。
 
+2026-09-01 的 CloudOps 垂直 Validation 进一步跑通了真实 PAW Agent 路径：冻结的
+12 个故障定位 case 被拆成 3 个顺序批次、每批 4 题，由 GPT-5.6 Sol Session
+通过受限 `cloudops_benchmark` Tool 自主索引、读取并提交答案。最终 12/12 作答，
+98/98 Tool 调用成功，CA 为 `1.00`，FA/JRA/Top3JRA 均为 `0.8333`，并产生
+Trace、Eval、Sandbox 与 Artifact 标识。前三次失败试跑均保留：它们依次暴露网络
+受限传输、模型路由漂移和结构化 observation hash 合同不一致。该结果来自
+source-local candidate，runner 本身没有执行安装动作；Provider token 尚未进入聚合
+投影，因此不能说生产验收、安装态身份、Held-out 泛化或“零 Token 成本”。
+
+掌柜问数现在也有独立的 Extension App candidate 测评入口：它先校验
+App/Package/Skill 的绑定与摘要，再解析已注册的 `sgg/fixture-v2`，在新临时工作区运行
+离线自测并产出相互关联的 SandboxRun、Trace 和 ground-truth Eval。当前只覆盖 1 个
+fixture，precision/recall/F1 均为 `1.0`、Provider 调用 `0`、生产写入被阻断；这证明
+自举源码与沙盒合同能跑通，不代表真实 Text-to-SQL、真实业务数据、安装态或前台验收。
+
 2026-08-31 另新增一条 **validation-only 诊断数据**：在冻结的 16 个
 Enterprise RAG 检索问题上比较 14 个候选后，选出的混合检索加重排配置相对词法
 floor 将 nDCG@10 从 `0.6128` 提到 `0.8872`、MRR 从 `0.6042` 提到
@@ -56,6 +71,14 @@ Agentic lane 相对 baseline 的延迟从 `71.1s` 增到 `242.6s`（`+241.05%`�
 Tool 调用从 `6` 增到 `11`（`+83.33%`），AI Judge 正确率从 `0.5` 降到 `0`，
 因此生成了严格 `Reject` 回执，未创建 held-out gate。
 
+随后 v16 把旧的 token-overlap “证据可用”判定换成 host-private 的逐事实
+source/chunk/quote 合同：先离线验证两道 high-level 题的 `9/9` 个必要事实都确有
+来源，再把 `11` 个 support group、`13` 个精确绑定留在 host 侧，既不进入 Agent
+Prompt，也不进入 Judge Prompt。新合同下，baseline、Skill、tuned 的逐事实引用覆盖
+都只有 `2/9 = 0.2222`，可回答问题的 citation support 均为 `0`；Agentic 又在
+`600.6s`、`13` 次 Tool call 后未完成终态。因此 v16 仍是四 lane 全部 `Reject`，
+而且不能把一般回答成功率或“引用存在”冒充“引用支持了答案”。
+
 同日还记录了一次 Trace Agent 的 **bootstrap 边界**：安装态 Pi 在 Provider
 请求阶段因不支持的 `max_output_tokens` 字段失败，Trace Agent 尚未调用 Skill 或
 Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用同 OAuth、同模型、
@@ -63,6 +86,15 @@ Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用
 相同两个失败 Session 在 candidate 中由 Trace Agent 完成 `skill_load + inspect`，
 独立给出 `unsupported-max-output-tokens` finding。这里能说的是“诊断链恢复并生成
 未应用候选修复”，不能说安装态已修复或 Trace Agent 已完成自安装。
+
+随后对 CloudOps v3 的四条 Trace 做 source-local 复诊时，又暴露了第二层问题：
+前两次 Agent 都完成 `skill_load + inspect`，却因结构化报告合同漂移被拒绝，其中一次
+可确定为把 `confidence` 输出成数字。第三次只有在提示词显式复述 schema 时才成功，
+不算 Skill 已经可靠。为此给 `trace-agent-diagnostics` 增加 exact-envelope 自检并以
+测试锁定；新建的 dirty-source derived candidate 未安装，普通提示词下的新只读 Session
+成功生成合法报告，并在 `sourceAvailable=false`、timeline 为空、usage 未投影时保留
+`unknown`、不编造 finding。这里验证的是 **Skill 输出合同修复**，不是 Runtime 已安装、
+CloudOps 已有完整可观测性，或 Trace Agent 可以绕过授权改写自己。
 
 完整数值、命令、来源和限制在
 [`evidence-ledger.v1.json`](evidence-ledger.v1.json)。账本是当前唯一的机器可读
@@ -92,6 +124,10 @@ Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用
 - 用 4 组同 OAuth、模型和基础请求的 HTTP/WebSocket A/B 将一次 Trace 启动失败
   定位到 Pi Codex wire field；隔离修复候选让同一只读诊断从 0 次 Tool 调用推进到
   `skill_load + trace_diagnostics.inspect` 和完整报告，候选安装态仍单独验收。
+- 为 CloudOps 故障定位构建受限 Tool 与 host-only scorer；在冻结的 12 题
+  Validation 上用 3 个 Sol Session 完成 3x4 工作流，12/12 作答、98/98 Tool 调用
+  成功，CA `1.00`、FA/JRA/Top3JRA `0.8333`，并保留三次失败 Trace 作为 OS 合同
+  修复证据；candidate 尚未安装且 Token 投影仍待修。
 
 ### 面试展开时应主动补充
 
@@ -109,6 +145,9 @@ Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用
   Verification Receipt，因此不能计算“Trace 修复率”或效果 delta。
 - Trace Provider bootstrap 的 4-case A/B 与 `0 → 2` Tool 调用来自隔离候选 Runtime；
   在正式安装并用新 Trace/Eval 复检前，不能说当前安装态已修好。
+- Enterprise RAG v16 的 `2/9` 是逐事实引用覆盖，不是检索 Recall；它说明检索
+  winner 仍未被可靠地转化成最终带证据答案。v16 与旧 token-overlap 合同不能直接
+  计算前后提升，Agentic 失败后的 `0 token` 也只是缺失 usage，不是零成本。
 
 ## 禁止当正向 headline 的数字
 
@@ -120,7 +159,10 @@ Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用
 | Agent 四档消融 | `pending_formal_run` | 没有正式 Luna 四档报告，不能拿旧回放或失败报告补分 |
 | Enterprise RAG validation | nDCG@10 `0.6128 → 0.8872`、MRR `0.6042 → 0.8672`、Recall@10 `0.6719 → 0.9554` | 仅 16 个 validation query；held-out 未运行，不能称泛化、正式 Keep 或生产提升 |
 | Enterprise RAG Agent Validation | baseline → agentic：延迟 `71.1s → 242.6s`、Tool `6 → 11`、Judge 正确率 `0.5 → 0`；恢复复用 `1/4` lane | 4 个 answer case，结论是 `Reject`；25% 仅指 lane 复用，索引仍重建，held-out 未运行 |
+| Enterprise RAG exact citation v16 | 9/9 事实有 host 证据；baseline/Skill/tuned 仅覆盖 2/9 引用事实，四 lane citation support 均为 0 | 新证据合同下的 4 题 Validation Reject；不能与旧 token-overlap 分数算提升，held-out 未运行 |
 | Graph+Tag reranker readiness | 企业投影为 `0` node、`0` edge、`0` extraction，Memory Tag 身份不能直接对应 Knowledge chunk | 这是正确阻断伪 A/B 的 readiness 审计，不是 Graph+Tag 与 Qwen3 的性能比较 |
+| CloudOps Agent Validation | 12/12 作答、CA `1.00`、FA/JRA/Top3JRA `0.8333`、98/98 Tool 调用成功 | source-local candidate 的 Validation，runner 未执行安装；Provider token 与 process signals 不可用，不能称生产验收、Held-out 或零成本 |
+| 掌柜问数 App candidate | 1 个离线 fixture，precision/recall/F1 `1.0`，Provider `0`，Trace/Eval/Sandbox 已关联 | 仅源码绑定与确定性沙盒合同；不能称真实 Text-to-SQL 100%、真实数据、安装或前台验收 |
 | 产品发行 | 当前安装开发版与公开发行是两条证据；`releaseStatus` 仍为 `blocked` | 单测、build 或安装开发版都不等于签名、公证、干净机或完整前台验收 |
 
 ## 证据等级
