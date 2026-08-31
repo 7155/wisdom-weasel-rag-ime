@@ -96,6 +96,13 @@ Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用
 `unknown`、不编造 finding。这里验证的是 **Skill 输出合同修复**，不是 Runtime 已安装、
 CloudOps 已有完整可观测性，或 Trace Agent 可以绕过授权改写自己。
 
+按“一个独立根因 + 保留的失败/拒绝证据 + 修复 + 验证边界”去重后，当前可审计
+清单共有 **8 个闭环合同缺陷**：3 个有主仓 Validation/控制面证据，5 个只在未安装
+的 source-local candidate 上复验；另有 3 个 source/test-only 修复不计入这 8 个。
+同一清单还记录了 3 个 Skill 问题（2 个结构修复、1 个仅诊断）、5 项流程改进和
+6 项 Tool/Runtime 合同改进。四组分类有重叠，不能相加，也不能表述为“Trace Agent
+自主发现并修复了全部 8 个问题”。
+
 完整数值、命令、来源和限制在
 [`evidence-ledger.v1.json`](evidence-ledger.v1.json)。账本是当前唯一的机器可读
 指标入口。
@@ -124,6 +131,9 @@ CloudOps 已有完整可观测性，或 Trace Agent 可以绕过授权改写自�
 - 用 4 组同 OAuth、模型和基础请求的 HTTP/WebSocket A/B 将一次 Trace 启动失败
   定位到 Pi Codex wire field；隔离修复候选让同一只读诊断从 0 次 Tool 调用推进到
   `skill_load + trace_diagnostics.inspect` 和完整报告，候选安装态仍单独验收。
+- 建立 Trace/Eval 缺陷去重账本，以“失败证据 + 修复 + 复验边界”为计数门槛，
+  审计出 8 个闭环合同缺陷、3 个 Skill 问题、5 项流程改进与 6 项 Tool/Runtime
+  合同改进；分类重叠不相加，并区分主仓 Validation 与未安装 candidate 证据。
 - 为 CloudOps 故障定位构建受限 Tool 与 host-only scorer；在冻结的 12 题
   Validation 上用 3 个 Sol Session 完成 3x4 工作流，12/12 作答、98/98 Tool 调用
   成功，CA `1.00`、FA/JRA/Top3JRA `0.8333`，并保留三次失败 Trace 作为 OS 合同
