@@ -22,10 +22,10 @@ export interface AgentSessionV1 {
   title: string;
   mode: 'assistant' | 'coordinator';
   status: 'idle' | 'active' | 'busy' | 'faulted' | 'archived';
-  sessionKind: 'conversation' | 'subagent_runtime';
-  surfaceKind: 'agent' | 'extension_app';
-  ownerAppId: string;
-  surfaceKey: string;
+  sessionKind?: 'conversation' | 'subagent_runtime';
+  surfaceKind?: 'agent' | 'extension_app';
+  ownerAppId?: string;
+  surfaceKey?: string;
   roomParticipant?: {
     roomId: string;
     participantId: string;

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.agent-session.v1",
   "type": "object",
-  "required": ["schemaVersion", "id", "title", "mode", "status", "sessionKind", "surfaceKind", "ownerAppId", "surfaceKey", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "executionMode", "workspaceScopeGranted", "workspaceScopeSha256", "workspaceScopeGrantedAtMs", "capabilityDisclosurePreferences", "policyRevision", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
+  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "executionMode", "workspaceScopeGranted", "workspaceScopeSha256", "workspaceScopeGrantedAtMs", "capabilityDisclosurePreferences", "policyRevision", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-session.v1"},
     "id": {"type": "string", "minLength": 1},
