@@ -223,6 +223,44 @@ describe('AgentComposer macOS input methods', () => {
     expect(onJumpLatest).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps an embedded vertical App composer focused on data, attachment and send', () => {
+    const { container } = render(
+      <TooltipProvider>
+        <AgentComposer
+          minimal
+          placeholder="继续追问经营数据…"
+          draft=""
+          attachments={[]}
+          session={previewSessions[0]}
+          commands={[]}
+          tools={[]}
+          toolCatalogStatus="ready"
+          busy={false}
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={() => {}}
+          onStop={() => {}}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const view = within(container);
+    expect(container.querySelector('.agent-composer-wrap')).toHaveAttribute('data-minimal', 'true');
+    expect(view.getByRole('textbox', { name: '消息' })).toHaveAttribute('placeholder', '继续追问经营数据…');
+    expect(view.getByRole('button', { name: '添加附件' })).toBeInTheDocument();
+    expect(view.queryByRole('button', { name: /对话权限/ })).not.toBeInTheDocument();
+    expect(view.queryByRole('button', { name: /这段对话可用工具/ })).not.toBeInTheDocument();
+    expect(view.getByRole('button', { name: /发送/ })).toBeInTheDocument();
+  });
+
   it('explains why send is unavailable instead of leaving a silently disabled button', () => {
     function harness(overrides: Partial<Parameters<typeof AgentComposer>[0]> = {}) {
       return (

@@ -275,18 +275,30 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
       return windowId;
     },
     setExtensionAppGate(status, enabledExtensionIds) {
-      const nextEnabledIds = status === 'ready'
-        ? new Set([...enabledExtensionIds].filter(isPawExtensionAppId))
-        : EMPTY_EXTENSION_IDS;
       set((state) => {
+        /* Inventory polling enters `loading` every time it refreshes. That is
+         * not an uninstall receipt and must not tear down a running App. Keep
+         * the last authoritative enabled set and mounted windows until the
+         * refresh produces either a new ready projection or an explicit
+         * unavailable result. */
+        if (status === 'loading') {
+          if (state.extensionAppGate.status === 'loading') return state;
+          return {
+            extensionAppGate: {
+              status,
+              enabledExtensionIds: state.extensionAppGate.enabledExtensionIds,
+            },
+          };
+        }
+        const nextEnabledIds = status === 'ready'
+          ? new Set([...enabledExtensionIds].filter(isPawExtensionAppId))
+          : EMPTY_EXTENSION_IDS;
         const gateUnchanged = state.extensionAppGate.status === status
           && sameExtensionIds(state.extensionAppGate.enabledExtensionIds, nextEnabledIds);
         const windows = extensionGatedWindows(state.windows, nextEnabledIds);
-        const dockAppIds = status === 'loading'
-          ? state.dockAppIds
-          : state.dockAppIds.filter((appId) => (
-              !isPawExtensionAppId(appId) || nextEnabledIds.has(appId)
-            ));
+        const dockAppIds = state.dockAppIds.filter((appId) => (
+          !isPawExtensionAppId(appId) || nextEnabledIds.has(appId)
+        ));
         const windowsUnchanged = Object.keys(windows).length === Object.keys(state.windows).length;
         const dockUnchanged = dockAppIds.length === state.dockAppIds.length;
         if (gateUnchanged && windowsUnchanged && dockUnchanged) return state;

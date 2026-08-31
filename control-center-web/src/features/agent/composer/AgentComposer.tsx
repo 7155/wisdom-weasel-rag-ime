@@ -148,6 +148,8 @@ export function AgentComposer({
   onJumpLatest,
   contextUsage,
   onQueue,
+  minimal = false,
+  placeholder,
 }: {
   assistantName?: string;
   draft: string;
@@ -197,6 +199,10 @@ export function AgentComposer({
   /** Hold this draft until the running turn settles. `false` means the cap
    *  refused it, so the text has to stay in the composer. */
   onQueue?: (value: string) => boolean;
+  /** Embedded vertical Apps keep the ordinary Session but omit generic model,
+   * permission, Tool and command controls from their focused composer. */
+  minimal?: boolean;
+  placeholder?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandPanelRef = useRef<HTMLDivElement>(null);
@@ -216,8 +222,10 @@ export function AgentComposer({
   const [stopRequested, setStopRequested] = useState(false);
   const wasStoppingRef = useRef(stopping);
   const commandCatalog = useMemo(
-    () => buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
-    [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
+    () => minimal
+      ? []
+      : buildCommandCatalog({ session, catalog, piCommands, tools, toolCatalogStatus, busy, sending }),
+    [busy, catalog, minimal, piCommands, sending, session, toolCatalogStatus, tools],
   );
   const commands = useMemo(() => commandCatalog.filter((command) => {
     const value = composerDraft.toLowerCase();
@@ -439,7 +447,7 @@ export function AgentComposer({
     else onPasteFromClipboard?.();
   }
   return (
-    <div className="agent-composer-wrap">
+    <div className="agent-composer-wrap" data-minimal={minimal || undefined}>
       {commandPanelVisible ? (
         <div ref={commandPanelRef} id="agent-command-palette" className="agent-command-palette" role="listbox" aria-label="命令面板">
           <header>
@@ -524,7 +532,7 @@ export function AgentComposer({
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
-            placeholder={composerPlaceholder(imageSupport)}
+            placeholder={placeholder ?? composerPlaceholder(imageSupport)}
             aria-label="消息"
             role={commandPanelVisible ? 'combobox' : undefined}
             aria-autocomplete={commandPanelVisible ? 'list' : undefined}
@@ -546,34 +554,38 @@ export function AgentComposer({
               disabled={!session || sending}
               tooltip
             />
-            <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
-            <ToolPicker
-              adjustmentDisabled={busy || sending}
-              capabilityCatalog={capabilityCatalog}
-              capabilityPolicyPending={capabilityPolicyPending}
-              disabled={!session}
-              requestOpen={toolPickerRequest}
-              session={session}
-              status={toolCatalogStatus}
-              tools={tools}
-              onCapabilityPreferenceChange={onCapabilityPreferenceChange}
-              onSelect={(tool) => {
-                onToolSelect(tool);
-                window.requestAnimationFrame(() => textareaRef.current?.focus());
-              }}
-            />
-            <ModelPicker
-              catalog={catalog}
-              disabled={busy || sending}
-              pending={modelChanging}
-              requestOpen={modelPickerRequest}
-              thinkingRequestOpen={thinkingPickerRequest}
-              onChange={onModelChange}
-            />
-            <ContextUsagePopover
-              sessionId={session?.id}
-              telemetry={contextUsage}
-            />
+            {minimal ? null : (
+              <>
+                <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
+                <ToolPicker
+                  adjustmentDisabled={busy || sending}
+                  capabilityCatalog={capabilityCatalog}
+                  capabilityPolicyPending={capabilityPolicyPending}
+                  disabled={!session}
+                  requestOpen={toolPickerRequest}
+                  session={session}
+                  status={toolCatalogStatus}
+                  tools={tools}
+                  onCapabilityPreferenceChange={onCapabilityPreferenceChange}
+                  onSelect={(tool) => {
+                    onToolSelect(tool);
+                    window.requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                />
+                <ModelPicker
+                  catalog={catalog}
+                  disabled={busy || sending}
+                  pending={modelChanging}
+                  requestOpen={modelPickerRequest}
+                  thinkingRequestOpen={thinkingPickerRequest}
+                  onChange={onModelChange}
+                />
+                <ContextUsagePopover
+                  sessionId={session?.id}
+                  telemetry={contextUsage}
+                />
+              </>
+            )}
           </>
         )}
         actions={(

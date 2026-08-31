@@ -33,6 +33,25 @@ describe('PAWOS desktop store', () => {
     expect(store.getState().openApp(extension.id)).toBe('');
   });
 
+  it('keeps a running Extension App mounted while its installation inventory refreshes', () => {
+    const extension = pawExtensionApps[0]!;
+    const store = createPawDesktopStore();
+
+    store.getState().setExtensionAppGate('ready', new Set([extension.id]));
+    const windowId = store.getState().openApp(extension.id);
+    const runningWindow = store.getState().windows[windowId];
+
+    store.getState().setExtensionAppGate('loading', new Set());
+
+    expect(store.getState().windows[windowId]).toBe(runningWindow);
+    expect(store.getState().extensionAppGate.enabledExtensionIds.has(extension.id)).toBe(true);
+    expect(store.getState().extensionAppGate.status).toBe('loading');
+
+    store.getState().setExtensionAppGate('ready', new Set([extension.id]));
+
+    expect(store.getState().windows[windowId]).toBe(runningWindow);
+  });
+
   it('migrates pre-grid scattered icon coordinates once while preserving filing choices', () => {
     const store = createPawDesktopStore(undefined, undefined, {
       windows: {},

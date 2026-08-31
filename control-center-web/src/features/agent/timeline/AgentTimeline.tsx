@@ -66,6 +66,52 @@ function isRenderableAssistantMessage(message: AgentMessageProjection): boolean 
   ));
 }
 
+function isProviderFailurePlaceholder(message: AgentMessageProjection): boolean {
+  if (!message.blocks.some((block) => block.type === 'error')) return false;
+  const visibleText = message.blocks
+    .filter((block) => block.type === 'text')
+    .map((block) => text(block.data.text))
+    .join('\n')
+    .trim();
+  return visibleText === '模型服务未能生成最终回复。请继续当前对话，或切换模型后继续。';
+}
+
+export function visibleAssistantMessages(
+  messages: AgentMessageProjection[],
+): AgentMessageProjection[] {
+  return messages.filter((message) => (
+    isRenderableAssistantMessage(message)
+    && !isProviderFailurePlaceholder(message)
+  ));
+}
+
+export type AgentUserMessagePresentation = 'full' | 'request-tail';
+
+/** Vertical Apps send a governed instruction envelope to Pi, but their
+ * customer-facing transcript should only repeat the request the customer
+ * actually typed. The persisted message remains untouched; this is a display
+ * projection scoped explicitly by the embedding App. */
+export function projectUserMessageBlocks(
+  blocks: AgentMessageProjection['blocks'],
+  presentation: AgentUserMessagePresentation,
+): AgentMessageProjection['blocks'] {
+  if (presentation === 'full') return blocks;
+  return blocks.map((block) => {
+    if (block.type !== 'text') return block;
+    const data = { ...block.data };
+    let changed = false;
+    for (const field of ['text', 'markdown'] as const) {
+      const value = data[field];
+      if (typeof value !== 'string') continue;
+      const match = value.match(/(?:^|\n)\s*用户请求：\s*([\s\S]+)$/u);
+      if (!match?.[1]?.trim()) continue;
+      data[field] = match[1].trim();
+      changed = true;
+    }
+    return changed ? { ...block, data } : block;
+  });
+}
+
 export function agentTurnMarkerKind(
   projection: AgentProjectionState | undefined,
   turnId: string | undefined,
@@ -337,6 +383,8 @@ export function AgentTimeline({
   onForkFromMessage,
   onEditMessage,
   activityPresentation = 'grouped',
+  userMessagePresentation = 'full',
+  failurePresentation = 'default',
   presentation = 'default',
   showConversationNavigation = true,
   leadingContent,
@@ -365,7 +413,9 @@ export function AgentTimeline({
   onFollowStateChange?: (state: { following: boolean; unseenUpdates: number }) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
-  activityPresentation?: 'grouped' | 'atomic';
+  activityPresentation?: 'grouped' | 'atomic' | 'hidden';
+  userMessagePresentation?: AgentUserMessagePresentation;
+  failurePresentation?: 'default' | 'compact';
   presentation?: 'default' | 'fx';
   showConversationNavigation?: boolean;
   /** Conversation lead-in (e.g. Session context chips) rendered once above the
@@ -791,6 +841,8 @@ export function AgentTimeline({
             onForkFromMessage={onForkFromMessage}
             onEditMessage={onEditMessage}
             activityPresentation={activityPresentation}
+            userMessagePresentation={userMessagePresentation}
+            failurePresentation={failurePresentation}
             dayStartLabel={dayStartLabels[turnId] ?? ''}
             presentation={presentation}
             memoryRecallReceipt={memoryRecallReceipts[turnId]}
@@ -913,6 +965,8 @@ export const AgentTurn = memo(function AgentTurn({
   onForkFromMessage,
   onEditMessage,
   activityPresentation = 'grouped',
+  userMessagePresentation = 'full',
+  failurePresentation = 'default',
   dayStartLabel = '',
   presentation = 'default',
   memoryRecallReceipt,
@@ -937,7 +991,9 @@ export const AgentTurn = memo(function AgentTurn({
   activeTargetId?: string;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
-  activityPresentation?: 'grouped' | 'atomic';
+  activityPresentation?: 'grouped' | 'atomic' | 'hidden';
+  userMessagePresentation?: AgentUserMessagePresentation;
+  failurePresentation?: 'default' | 'compact';
   dayStartLabel?: string;
   presentation?: 'default' | 'fx';
   memoryRecallReceipt?: MemoryRecallReceiptView;
@@ -954,11 +1010,11 @@ export const AgentTurn = memo(function AgentTurn({
   }));
   const assistantMessages = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
-    return (projection?.turnsById[turnId]?.messageIds ?? [])
+    return visibleAssistantMessages((projection?.turnsById[turnId]?.messageIds ?? [])
       .map((id) => projection?.messagesById[id])
       .filter((message): message is AgentMessageProjection => (
-        Boolean(message && isRenderableAssistantMessage(message))
-      ));
+        Boolean(message)
+      )));
   }));
   const inlineUserMessages = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
@@ -1069,6 +1125,7 @@ export const AgentTurn = memo(function AgentTurn({
         sessionId={sessionId}
         messageId={entry.message.id}
         presentation={presentation}
+        userMessagePresentation={userMessagePresentation}
         user={entry.message.role === 'user'}
         forkAvailable={forkAvailable}
         rewriteAvailable={rewriteAvailable}
@@ -1103,7 +1160,7 @@ export const AgentTurn = memo(function AgentTurn({
   return (
     <article className="agent-turn" data-agent-turn-id={turnId} data-turn-status={turn.status}>
       {dayStartLabel ? <div aria-hidden="true" className="agent-fx-day"><span>{dayStartLabel}</span></div> : null}
-      {userIds.slice(0, 1).map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
+      {userIds.slice(0, 1).map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} userMessagePresentation={userMessagePresentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || inlineUserMessages.length > 0 || activities.length > 0 || memoryRecallReceipt || failure || showWorking ? (
         <div className="agent-assistant-turn">
           <div className="agent-assistant-turn__body">
@@ -1138,8 +1195,9 @@ export const AgentTurn = memo(function AgentTurn({
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
-                <div className="agent-turn__failure-actions">
-                  <TraceAgentHandoffButton
+                {failurePresentation === 'default' || (onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId) ? (
+                  <div className="agent-turn__failure-actions">
+                  {failurePresentation === 'default' ? <TraceAgentHandoffButton
                     handoff={{
                       kind: 'session',
                       entityId: `turn:${turnId}`,
@@ -1156,7 +1214,7 @@ export const AgentTurn = memo(function AgentTurn({
                         providerRetryAttempts,
                       },
                     }}
-                  />
+                  /> : null}
                   {onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
                     <>
                     {safeContinuation ? (
@@ -1172,7 +1230,7 @@ export const AgentTurn = memo(function AgentTurn({
                             }
                           }}
                         >
-                          {retryRequested ? '已提交继续' : '继续'}
+                          {retryRequested ? '已提交继续' : failurePresentation === 'compact' ? '继续问数' : '继续'}
                         </Button>
                       ) : null
                     ) : onRetryTurn ? (
@@ -1187,13 +1245,14 @@ export const AgentTurn = memo(function AgentTurn({
                           }
                         }}
                       >
-                        {retryRequested ? '已提交重试' : '重试本轮'}
+                        {retryRequested ? '已提交重试' : failurePresentation === 'compact' ? '重新问数' : '重试本轮'}
                       </Button>
                     ) : null}
-                    <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
+                    {failurePresentation === 'default' ? <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button> : null}
                     </>
                   ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1222,7 +1281,7 @@ export type InterleavedTurnEntry = AgentTurnSequenceEntry;
 export function interleavedTurnEntries(
   messages: AgentMessageProjection[],
   activities: AgentActivityProjection[],
-  activityPresentation: 'grouped' | 'atomic' = 'grouped',
+  activityPresentation: 'grouped' | 'atomic' | 'hidden' = 'grouped',
 ): InterleavedTurnEntry[] {
   const historicalReasoningSequenceByMessage = new Map<string, number>();
   for (const activity of activities) {
@@ -1268,6 +1327,7 @@ export function interleavedTurnEntries(
       entries.push({ kind: 'message', message: item.message });
       return entries;
     }
+    if (activityPresentation === 'hidden') return entries;
     const previous = entries[entries.length - 1];
     if (activityPresentation === 'grouped' && previous?.kind === 'activity-group') {
       previous.activities.push(item.activity);
@@ -1359,6 +1419,7 @@ function MessageView({
   onApprovalDecision,
   onForkFromMessage,
   onEditMessage,
+  userMessagePresentation = 'full',
   presentation = 'default',
 }: {
   sessionId: string;
@@ -1374,11 +1435,14 @@ function MessageView({
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
+  userMessagePresentation?: AgentUserMessagePresentation;
   presentation?: 'default' | 'fx';
 }) {
   const message = useAgentLiveStore((state) => state.projections[sessionId]?.messagesById[messageId]);
   if (!message) return null;
-  const visibleBlocks = user ? message.blocks : message.blocks.filter((block) => block.type !== 'error');
+  const visibleBlocks = user
+    ? projectUserMessageBlocks(message.blocks, userMessagePresentation)
+    : message.blocks.filter((block) => block.type !== 'error');
   const delivery = user
     ? text(message.blocks.find((block) => block.type === 'text')?.data.delivery)
     : '';

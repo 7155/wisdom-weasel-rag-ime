@@ -129,6 +129,8 @@ export function PawSessionWorkspace({
   onSessionActivity,
   onSessionUpdated,
   traceFocusNodeId = '',
+  appearance = 'full',
+  composerPlaceholder,
 }: {
   active?: boolean;
   persona?: AgentPersonaV1;
@@ -141,10 +143,13 @@ export function PawSessionWorkspace({
   onSessionCreated: (session: SessionSummary, draft: string) => void;
   onSessionActivity?: () => void;
   onSessionUpdated: (session: SessionSummary) => void;
+  appearance?: 'full' | 'embedded';
+  composerPlaceholder?: string;
 }) {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
+  const embedded = appearance === 'embedded';
   const projectionSlice = useAgentLiveStore(useShallow(
     (state) => sessionWorkspaceProjectionSlice(state, recordId),
   ));
@@ -164,7 +169,7 @@ export function PawSessionWorkspace({
   const [panel, setPanel] = useState<WorkbenchPanel>('none');
   const [statusPanelVisited, setStatusPanelVisited] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
-  const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(traceFocusNodeId ? 'trace' : 'conversation');
+  const [workspaceView, setWorkspaceView] = useState<SessionWorkspaceView>(embedded ? 'conversation' : traceFocusNodeId ? 'trace' : 'conversation');
   const [error, setError] = useState('');
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [thinkingPickerRequest, setThinkingPickerRequest] = useState(0);
@@ -194,11 +199,11 @@ export function PawSessionWorkspace({
   const runtimeToolWindow = useMemo(() => createRuntimeToolWindowProjector(), [recordId]);
 
   useEffect(() => {
-    setWorkspaceView(traceFocusNodeId ? 'trace' : 'conversation');
+    setWorkspaceView(embedded ? 'conversation' : traceFocusNodeId ? 'trace' : 'conversation');
     setPanel('none');
     setStatusPanelVisited(false);
     setToolMenuOpen(false);
-  }, [recordId, traceFocusNodeId]);
+  }, [embedded, recordId, traceFocusNodeId]);
 
   const busy = Boolean(projectionSlice.activeTurnId);
   /* A held follow-up is the composer's own queue, not a Runtime delivery.
@@ -1164,14 +1169,15 @@ export function PawSessionWorkspace({
   );
   return (
     <>
-      {windowChromeTarget ? <PawWindowChromePortal>{sessionChrome}</PawWindowChromePortal> : null}
+      {!embedded && windowChromeTarget ? <PawWindowChromePortal>{sessionChrome}</PawWindowChromePortal> : null}
       <section
         className="paw-session-workspace paw-chatfx"
         data-chrome-in-window={windowChromeTarget ? true : undefined}
+        data-appearance={appearance}
         data-panel={panel}
         data-status={stopping ? 'stopping' : busy ? 'busy' : 'idle'}
       >
-      {windowChromeTarget ? null : sessionChrome}
+      {embedded || windowChromeTarget ? null : sessionChrome}
 
       <div className="paw-session-workspace__body">
         <div className="paw-session-workspace__primary" ref={primaryRef}>
@@ -1188,16 +1194,18 @@ export function PawSessionWorkspace({
               <div aria-hidden="true" className="agent-fx-fade agent-fx-fade--bottom" />
               {loading && !projectionSlice.hasTurns ? <div className="paw-session-workspace__loading"><LoaderCircle className="ui-spin" size={18} />正在恢复完整 Session</div> : null}
               <AgentTimeline
-                activityPresentation="grouped"
-                presentation="fx"
-                showConversationNavigation
+                activityPresentation={embedded ? 'hidden' : 'grouped'}
+                failurePresentation={embedded ? 'compact' : 'default'}
+                presentation={embedded ? 'default' : 'fx'}
+                showConversationNavigation={!embedded}
+                userMessagePresentation={embedded ? 'request-tail' : 'full'}
                 sessionId={recordId}
                 persona={persona}
                 loading={loading}
                 modelSelectionAvailable={Boolean(catalog)}
                 turnRecoveryDisabled={busy || sending || stopping || modelChanging}
-                forkAvailable={conversationForkAvailable && !busy && !sending && !record?.roomParticipant}
-                rewriteAvailable={conversationRewriteAvailable && !busy && !sending && !record?.roomParticipant}
+                forkAvailable={!embedded && conversationForkAvailable && !busy && !sending && !record?.roomParticipant}
+                rewriteAvailable={!embedded && conversationRewriteAvailable && !busy && !sending && !record?.roomParticipant}
                 jumpRequest={jumpRequest}
                 scrollToLatestRequest={scrollToLatestRequest}
                 onFollowStateChange={setTimelineFollow}
@@ -1212,7 +1220,7 @@ export function PawSessionWorkspace({
               />
             </main>
 
-            <main
+            {embedded ? null : <main
               aria-hidden={workspaceView !== 'trace'}
               className="paw-session-workspace__trace"
               data-active={workspaceView === 'trace' || undefined}
@@ -1223,9 +1231,9 @@ export function PawSessionWorkspace({
                 focusNodeId={traceFocusNodeId}
                 sessionId={recordId}
               />
-            </main>
+            </main>}
 
-            <main
+            {embedded ? null : <main
               aria-hidden={workspaceView !== 'starfield'}
               className="paw-session-workspace__starfield"
               data-active={workspaceView === 'starfield' || undefined}
@@ -1253,7 +1261,7 @@ export function PawSessionWorkspace({
                 })}
                 onOpenWorkbench={() => setPanel('subagents')}
               /> : null}
-            </main>
+            </main>}
           </div>
 
           <div className="paw-session-workspace__composer">
@@ -1311,6 +1319,8 @@ export function PawSessionWorkspace({
                 toolCatalogStatus={toolCatalogStatus}
                 toolPickerRequest={toolPickerRequest}
                 tools={tools}
+                minimal={embedded}
+                placeholder={composerPlaceholder}
                 onAttachmentsChange={setAttachments}
                 onCapabilityPreferenceChange={(id, preference) => void changeCapabilityPreference(id, preference)}
                 onDraftChange={setDraft}
@@ -1338,7 +1348,7 @@ export function PawSessionWorkspace({
 
         {/* 工具侧栏是一层浮卡：只覆盖在消息流之上，绝不挤压对话列。
             在浮层内按 Esc 关闭并把焦点还给“Session 工具”触发钮。 */}
-        {panel !== 'none' || statusPanelVisited ? <aside
+        {!embedded && (panel !== 'none' || statusPanelVisited) ? <aside
           aria-hidden={panel === 'none' || undefined}
           className="paw-session-workspace__side"
           aria-label="Session 工具侧栏"

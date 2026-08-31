@@ -1,8 +1,8 @@
 {
   "schemaVersion": "pawos.extension-app.v1",
   "id": "extension:zhanggui-wenshu",
-  "version": "0.1.0",
-  "bindingSha256": "ecf96b93c4fe61cfa94fe994b5826f2fa2fd0a657f35461b34963cd4b12eb16d",
+  "version": "0.1.1",
+  "bindingSha256": "81a3a1f2a178f0fb38df9620212b9c0bc2e85552faa5846f3bf467ee2163b15e",
   "packageId": "@paw/zhanggui-wenshu",
   "label": "掌柜问数",
   "shortLabel": "问数",

@@ -1137,6 +1137,60 @@ describe('AgentEventReducer', () => {
     expect(recovered.activitiesById['tool-stop'].status).toBe('failed');
   });
 
+  it('treats a later successful provider retry as the terminal result of one turn', () => {
+    const failedAttempt = {
+      ...serverMessage('assistant-network-failure', 'assistant', 'turn-retry', '模型服务未能生成最终回复。'),
+      status: 'failed',
+      blocks: [
+        ...serverMessage('assistant-network-failure', 'assistant', 'turn-retry', '模型服务未能生成最终回复。').blocks,
+        {
+          id: 'assistant-network-failure:error',
+          type: 'error',
+          status: 'failed',
+          presentationKind: 'error',
+          data: { message: 'fetch failed' },
+        },
+      ],
+    };
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage('user-retry', 'user', 'turn-retry', '本月销售额和上月相比怎样？'),
+        failedAttempt,
+        serverMessage('assistant-final', 'assistant', 'turn-retry', '目前缺少可访问的经营数据源。'),
+      ],
+      liveEvents: [],
+      lastSequence: 206,
+      resumeToken: 'session-1:206',
+      status: 'idle',
+    });
+
+    expect(recovered.turnsById['turn-retry']).toMatchObject({ status: 'completed' });
+    expect(recovered.turnsById['turn-retry'].failure).toBeUndefined();
+  });
+
+  it('reopens a provisionally failed turn when later Tool work proves the retry is active', () => {
+    const failedAttempt = {
+      ...serverMessage('assistant-network-failure', 'assistant', 'turn-1', '模型服务未能生成最终回复。'),
+      status: 'failed',
+    };
+    const failed = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'message_completed', { message: failedAttempt }),
+    ).state;
+    expect(failed.turnsById['turn-1']?.status).toBe('failed');
+
+    const resumed = reduceAgentEvent(
+      failed,
+      agentEvent(2, 'tool_started', {
+        toolCallId: 'retry-tool',
+        toolName: 'knowledge',
+        summary: '继续核对经营数据源',
+      }),
+    ).state;
+
+    expect(resumed.turnsById['turn-1']?.status).toBe('running');
+  });
+
   it('does not reopen the last completed transcript turn when Pi marks the Session active', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [

@@ -8,13 +8,21 @@ import type { ControlRequest } from '@/platform/transport';
 import manifest from './pawos-app.json';
 import ZhangguiWenshuApp from './App';
 
+const { sessionWorkspaceProps } = vi.hoisted(() => ({
+  sessionWorkspaceProps: vi.fn(),
+}));
+
 vi.mock('@/paw-os/apps/PawSessionWorkspace', () => ({
-  PawSessionWorkspace: ({ recordId }: { recordId: string }) => <section data-testid="shared-session">Session {recordId}</section>,
+  PawSessionWorkspace: (props: { recordId: string; appearance?: string; composerPlaceholder?: string }) => {
+    sessionWorkspaceProps(props);
+    return <section data-testid="shared-session">Session {props.recordId}</section>;
+  },
 }));
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  sessionWorkspaceProps.mockClear();
 });
 
 describe('掌柜问数 Extension App', () => {
@@ -50,6 +58,10 @@ describe('掌柜问数 Extension App', () => {
     await user.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByTestId('shared-session')).toHaveTextContent('session-zhanggui');
+    expect(sessionWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      appearance: 'embedded',
+      composerPlaceholder: expect.stringContaining('核对'),
+    }));
     const calls = transport.requests.map(({ request }) => request.pathId);
     expect(calls).toEqual([
       'agent.sessions.list',

@@ -1,4 +1,4 @@
-import { ArrowUpRight, BarChart3, CircleAlert, FolderOpen, LoaderCircle, PackageOpen, Send } from 'lucide-react';
+import { Activity, ArrowUpRight, BarChart3, CircleAlert, FolderOpen, LoaderCircle, MoreHorizontal, PackageOpen, Send } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { useControlTransport } from '@/app/control-transport';
@@ -171,9 +171,18 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
           <span><small>{activeMode.eyebrow}</small><h1>{manifest.label}</h1></span>
         </span>
         <span className="zhanggui-app__header-actions">
-          <span className="zhanggui-app__suite">SGG · {manifest.verticalSuiteRevision}</span>
-          <button onClick={() => openPawOsRoute(desktop, `/plugins?packageId=${encodeURIComponent(manifest.packageId)}`)} type="button"><PackageOpen size={15} />管理与卸载</button>
-          {activeSession ? <button onClick={() => openPawOsRoute(desktop, `/agent?session=${encodeURIComponent(activeSession.id)}`)} type="button">完整 Session<ArrowUpRight size={14} /></button> : null}
+          <button className="zhanggui-app__data-button" onClick={() => void pickDataWorkspace()} type="button">
+            <FolderOpen size={15} />
+            <span>{workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) : '连接数据'}</span>
+          </button>
+          {activeSession ? <button aria-label="打开运行详情" onClick={() => openPawOsRoute(desktop, `/agent?session=${encodeURIComponent(activeSession.id)}`)} type="button"><Activity size={15} /><span>运行详情</span><ArrowUpRight size={13} /></button> : null}
+          <details className="zhanggui-app__more">
+            <summary aria-label="掌柜问数更多操作"><MoreHorizontal size={18} /></summary>
+            <div>
+              <small>沙箱套件 · SGG {manifest.verticalSuiteRevision}</small>
+              <button onClick={() => openPawOsRoute(desktop, `/plugins?packageId=${encodeURIComponent(manifest.packageId)}`)} type="button"><PackageOpen size={15} />管理与卸载</button>
+            </div>
+          </details>
         </span>
       </header>
 
@@ -197,11 +206,13 @@ export default function ZhangguiWenshuApp({ manifest }: PawExtensionAppProps) {
       {loading ? <div className="zhanggui-app__loading" role="status"><LoaderCircle className="ui-spin" size={18} />正在恢复问数记录…</div> : activeSession ? (
         <section className="zhanggui-app__session" aria-label={`${activeMode.label}对话`}>
           <div className="zhanggui-app__session-note">
-            <span><strong>{activeMode.label}</strong>{activeMode.description}</span>
-            <button onClick={resetMode} type="button">新建本模式对话</button>
+            <span><strong>{activeMode.label}</strong><span>{activeMode.description}</span></span>
+            <button onClick={resetMode} type="button">新对话</button>
           </div>
           <PawSessionWorkspace
             active
+            appearance="embedded"
+            composerPlaceholder={`${activeMode.placeholder.replace('例如：', '')}，或继续追问…`}
             onNewWork={resetMode}
             onSessionCreated={(session) => {
               const next = { ...sessions, [modeId]: session };

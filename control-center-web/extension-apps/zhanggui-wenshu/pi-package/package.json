@@ -1,7 +1,7 @@
 {
   "name": "@paw/zhanggui-wenshu",
   "displayName": "掌柜问数",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "掌柜问数 PAWOS App 的经营问答 Skill 与 SGG 沙盒绑定。",
   "private": true,
   "type": "module",
@@ -12,13 +12,13 @@
   "paw": {
     "capabilities": [
       "pawos.extension.zhanggui-wenshu",
-      "pawos.extension.binding.ecf96b93c4fe61cfa94fe994b5826f2fa2fd0a65"
+      "pawos.extension.binding.81a3a1f2a178f0fb38df9620212b9c0bc2e85552"
     ],
     "extensionApp": {
       "id": "extension:zhanggui-wenshu",
       "packageId": "@paw/zhanggui-wenshu",
-      "version": "0.1.0",
-      "bindingSha256": "ecf96b93c4fe61cfa94fe994b5826f2fa2fd0a657f35461b34963cd4b12eb16d",
+      "version": "0.1.1",
+      "bindingSha256": "81a3a1f2a178f0fb38df9620212b9c0bc2e85552faa5846f3bf467ee2163b15e",
       "skillRef": "zhanggui-wenshu",
       "skillSha256": "682e2042ed5299ff2e94ea3e63ac6f421eac59e8d66139f76b6a2b91806d60d2",
       "verticalSuiteId": "sgg",
@@ -26,8 +26,8 @@
       "manifest": {
         "schemaVersion": "pawos.extension-app.v1",
         "id": "extension:zhanggui-wenshu",
-        "version": "0.1.0",
-        "bindingSha256": "ecf96b93c4fe61cfa94fe994b5826f2fa2fd0a657f35461b34963cd4b12eb16d",
+        "version": "0.1.1",
+        "bindingSha256": "81a3a1f2a178f0fb38df9620212b9c0bc2e85552faa5846f3bf467ee2163b15e",
         "packageId": "@paw/zhanggui-wenshu",
         "label": "掌柜问数",
         "shortLabel": "问数",

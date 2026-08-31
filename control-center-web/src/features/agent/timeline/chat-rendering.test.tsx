@@ -16,6 +16,8 @@ import {
   agentTurnMarkerKind,
   estimatedStreamingTokens,
   interleavedTurnEntries,
+  projectUserMessageBlocks,
+  visibleAssistantMessages,
   visibleAgentTurnIds,
 } from './AgentTimeline';
 import { AgentBlock, AgentBlocks, MarkdownBody } from './BlockRenderer';
@@ -54,6 +56,48 @@ describe('Agent chat rendering', () => {
   it('estimates streamed CJK and Latin text for the visible token-rate indicator', () => {
     expect(estimatedStreamingTokens([{ id: 'empty', type: 'text', status: 'running', presentationKind: 'markdown', data: {} }])).toBe(0);
     expect(estimatedStreamingTokens([{ id: 'mixed', type: 'text', status: 'running', presentationKind: 'markdown', data: { text: '你好abcdefgh' } }])).toBe(4);
+  });
+
+  it('keeps a Provider attempt failure in evidence without rendering it as a second answer', () => {
+    const failed = {
+      ...assistantMessage('session-1', 'turn-1', '模型服务未能生成最终回复。请继续当前对话，或切换模型后继续。', 1),
+      id: 'attempt-failed',
+      status: 'failed' as const,
+      blocks: [
+        ...assistantMessage('session-1', 'turn-1', '模型服务未能生成最终回复。请继续当前对话，或切换模型后继续。', 1).blocks,
+        {
+          id: 'attempt-failed:error',
+          type: 'error' as const,
+          status: 'failed' as const,
+          presentationKind: 'error' as const,
+          data: { message: 'fetch failed' },
+        },
+      ],
+    };
+    const final = assistantMessage('session-1', 'turn-1', '目前缺少可访问的经营数据源。', 2);
+
+    expect(visibleAssistantMessages([failed, final]).map((message) => message.id)).toEqual([final.id]);
+  });
+
+  it('projects only the customer request from a vertical App instruction envelope', () => {
+    const original = userMessage('session-1', 'turn-1').blocks.map((block) => ({
+      ...block,
+      data: {
+        ...block.data,
+        text: [
+          '请加载并严格遵循 `zhanggui-wenshu` Skill。',
+          '不得假定本机存在某个数据库或项目。',
+          '',
+          '用户请求：本月销售额和上月相比怎样？',
+        ].join('\n'),
+      },
+    }));
+
+    const projected = projectUserMessageBlocks(original, 'request-tail');
+
+    expect(projected[0]?.data.text).toBe('本月销售额和上月相比怎样？');
+    expect(original[0]?.data.text).toContain('请加载并严格遵循');
+    expect(projectUserMessageBlocks(original, 'full')).toBe(original);
   });
 
   it('shows the live token-rate indicator on an actually streaming assistant message', () => {
@@ -1639,7 +1683,7 @@ describe('Agent chat rendering', () => {
     const continueTurn = vi.fn(() => true);
     const retryTurn = vi.fn(() => true);
 
-    render(
+    const { unmount } = render(
       <TooltipProvider>
         <AgentTurn
           sessionId={sessionId}
@@ -1659,6 +1703,25 @@ describe('Agent chat rendering', () => {
     expect(continueTurn).toHaveBeenCalledWith(turnId);
     expect(retryTurn).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+
+    unmount();
+    render(
+      <TooltipProvider>
+        <AgentTurn
+          failurePresentation="compact"
+          sessionId={sessionId}
+          turnId={turnId}
+          onApprovalDecision={() => {}}
+          onContinueTurn={continueTurn}
+          onRetryTurn={retryTurn}
+          onSwitchModel={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: '继续问数' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '切换模型' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Trace Agent/ })).not.toBeInTheDocument();
   });
 
   it('offers one safe continuation after a Runtime host restart instead of replaying the failed turn', () => {

@@ -297,6 +297,9 @@ export function reduceAgentEvent(
           ? 'failed'
           : 'completed';
       upsertActivity(next, event, payload, reasoningStatus);
+      if (reasoningStatus !== 'failed') {
+        reopenProvisionalTurn(next, event.turnId, event.createdAtMs);
+      }
       if (reasoningStatus === 'running') next.status = 'analyzing';
       break;
     }
@@ -314,6 +317,9 @@ export function reduceAgentEvent(
         && text(payload.toolCallId).startsWith('subagent:')
       ) break;
       upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'running');
+      if (payload.isError !== true) {
+        reopenProvisionalTurn(next, event.turnId, event.createdAtMs);
+      }
       next.status = payload.isError === true ? 'failed' : 'working';
       break;
     case 'tool_finished': {
@@ -1238,7 +1244,7 @@ function applyTextDelta(
         timelineSequence: sourceTimelineSequence(event),
       };
   upsertMessage(state, message);
-  touchTurn(state, event.turnId, 'running', event.createdAtMs);
+  reopenProvisionalTurn(state, event.turnId, event.createdAtMs);
   state.status = 'responding';
 }
 
@@ -1294,16 +1300,16 @@ function applyCompletedMessage(
       : completedMessage,
     inferredClientMessageId,
   );
-  touchTurn(
-    state,
-    parsed.value.turnId,
-    parsed.value.status === 'failed'
-      ? 'failed'
-      : parsed.value.status === 'aborted'
-        ? 'aborted'
-        : 'running',
-    event.createdAtMs,
-  );
+  if (parsed.value.status === 'failed' || parsed.value.status === 'aborted') {
+    touchTurn(
+      state,
+      parsed.value.turnId,
+      parsed.value.status === 'failed' ? 'failed' : 'aborted',
+      event.createdAtMs,
+    );
+  } else {
+    reopenProvisionalTurn(state, parsed.value.turnId, event.createdAtMs);
+  }
 }
 
 function matchingHomeOptimisticClientMessageId(
@@ -1846,6 +1852,27 @@ function touchTurn(
   const turn = ensureTurn(state, turnId, nowMs);
   turn.status = status;
   turn.updatedAtMs = nowMs;
+}
+
+/** A Provider transport failure can be persisted as a failed assistant
+ * message before Pi's retry continues the same logical turn. Later reasoning,
+ * text or Tool work proves that message was an attempt failure, not the turn's
+ * terminal fence. Reopen only failures without an authoritative turn_failed
+ * activity so a genuinely terminal turn cannot be revived by a late receipt. */
+function reopenProvisionalTurn(
+  state: AgentProjectionState,
+  turnId: string,
+  nowMs: number,
+): void {
+  if (!turnId) return;
+  const turn = ensureTurn(state, turnId, nowMs);
+  const hasTerminalFailure = turn.activityIds.some(
+    (activityId) => state.activitiesById[activityId]?.kind === 'turn_failed',
+  );
+  if (turn.status === 'failed' && hasTerminalFailure) return;
+  turn.status = 'running';
+  turn.updatedAtMs = nowMs;
+  delete turn.failure;
 }
 
 function completeTurn(

@@ -1,5 +1,6 @@
 .zhanggui-app {
   --zhanggui-accent: #087f68;
+  --zhanggui-accent-soft: color-mix(in srgb, var(--zhanggui-accent) 9%, transparent);
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   width: 100%;
@@ -7,106 +8,312 @@
   min-height: 0;
   overflow: hidden;
   color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-surface-base) 95%, #d9f5eb);
+  background: color-mix(in srgb, var(--color-surface-base) 97%, #d8eee8);
 }
+
+.zhanggui-app button,
+.zhanggui-app summary { font: inherit; }
 
 .zhanggui-app__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 66px;
-  padding: 10px 18px;
+  min-height: 58px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--color-border-soft);
-  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+  background: color-mix(in srgb, var(--color-surface-raised) 96%, transparent);
 }
 
 .zhanggui-app__identity,
 .zhanggui-app__header-actions,
 .zhanggui-app__session-note,
 .zhanggui-app__error,
-.zhanggui-app__loading {
-  display: flex;
-  align-items: center;
-}
+.zhanggui-app__loading { display: flex; align-items: center; }
 
 .zhanggui-app__identity { min-width: 0; gap: 10px; }
 .zhanggui-app__identity > span:last-child { display: grid; min-width: 0; }
-.zhanggui-app__identity small { color: var(--color-text-secondary); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.zhanggui-app h1 { margin: 0; font-size: 19px; line-height: 1.15; }
-.zhanggui-app__header-actions { gap: 7px; }
-.zhanggui-app__header-actions button,
-.zhanggui-app__session-note button {
+.zhanggui-app__identity small {
+  color: var(--zhanggui-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+.zhanggui-app h1 { margin: 0; font-size: 18px; line-height: 1.12; letter-spacing: -.02em; }
+
+.zhanggui-app__header-actions { gap: 6px; }
+.zhanggui-app__header-actions > button,
+.zhanggui-app__session-note button,
+.zhanggui-app__more summary,
+.zhanggui-app__more button {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 6px;
   min-height: 32px;
   padding: 0 10px;
   border: 1px solid var(--color-border-soft);
   border-radius: 9px;
   color: var(--color-text-secondary);
-  background: var(--color-surface-raised);
+  background: color-mix(in srgb, var(--color-surface-raised) 94%, transparent);
 }
-.zhanggui-app__suite { padding: 5px 8px; border-radius: 999px; color: var(--zhanggui-accent); background: color-mix(in srgb, var(--zhanggui-accent) 11%, transparent); font-size: 11px; font-weight: 650; }
+.zhanggui-app__header-actions > button:hover,
+.zhanggui-app__session-note button:hover,
+.zhanggui-app__more summary:hover,
+.zhanggui-app__more button:hover {
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--zhanggui-accent) 28%, var(--color-border-soft));
+  background: var(--zhanggui-accent-soft);
+}
+.zhanggui-app__data-button > span {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zhanggui-app__more { position: relative; }
+.zhanggui-app__more summary {
+  width: 34px;
+  padding: 0;
+  cursor: pointer;
+  list-style: none;
+}
+.zhanggui-app__more summary::-webkit-details-marker { display: none; }
+.zhanggui-app__more > div {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  gap: 6px;
+  width: 190px;
+  padding: 8px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 12px;
+  background: var(--color-surface-raised);
+  box-shadow: 0 18px 46px rgb(15 35 30 / 15%);
+}
+.zhanggui-app__more small { padding: 5px 6px; color: var(--color-text-tertiary); }
+.zhanggui-app__more button { justify-content: flex-start; width: 100%; border: 0; }
 
 .zhanggui-app__modes {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
-  padding: 7px 12px;
+  min-height: 54px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-surface-raised) 72%, transparent);
 }
-.zhanggui-app__modes button { display: grid; gap: 1px; min-width: 0; padding: 8px 11px; border: 0; border-radius: 10px; text-align: left; color: var(--color-text-secondary); background: transparent; }
-.zhanggui-app__modes button[aria-selected='true'] { color: var(--zhanggui-accent); background: color-mix(in srgb, var(--zhanggui-accent) 10%, var(--color-surface-raised)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--zhanggui-accent) 30%, transparent); }
-.zhanggui-app__modes span { overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
-.zhanggui-app__modes small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__modes button {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 7px 12px;
+  border: 0;
+  color: var(--color-text-secondary);
+  text-align: left;
+  background: transparent;
+}
+.zhanggui-app__modes button::after {
+  position: absolute;
+  right: 12px;
+  bottom: -1px;
+  left: 12px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  content: '';
+}
+.zhanggui-app__modes button[aria-selected='true'] { color: var(--zhanggui-accent); }
+.zhanggui-app__modes button[aria-selected='true']::after { background: var(--zhanggui-accent); }
+.zhanggui-app__modes button:hover { background: color-mix(in srgb, var(--zhanggui-accent) 4%, transparent); }
+.zhanggui-app__modes span { overflow: hidden; font-size: 13px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__modes small { overflow: hidden; color: var(--color-text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 
 .zhanggui-app__start {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 16px;
+  gap: 15px;
   min-height: 0;
-  padding: 30px clamp(18px, 6vw, 80px);
+  padding: 28px clamp(18px, 6vw, 88px);
   overflow: auto;
 }
-.zhanggui-app__mark { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: white; background: var(--zhanggui-accent); box-shadow: 0 14px 28px color-mix(in srgb, var(--zhanggui-accent) 22%, transparent); }
-.zhanggui-app__start-copy { max-width: 580px; text-align: center; }
+.zhanggui-app__mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  color: white;
+  background: linear-gradient(145deg, #0a9277, #076a58);
+  box-shadow: 0 13px 28px color-mix(in srgb, var(--zhanggui-accent) 20%, transparent);
+}
+.zhanggui-app__start-copy { max-width: 620px; text-align: center; }
 .zhanggui-app__start-copy small { color: var(--zhanggui-accent); font-weight: 700; }
-.zhanggui-app__start-copy h2 { margin: 4px 0 7px; font-size: clamp(22px, 4vw, 34px); letter-spacing: -.035em; }
+.zhanggui-app__start-copy h2 { margin: 4px 0 7px; font-size: clamp(23px, 4vw, 34px); letter-spacing: -.04em; }
 .zhanggui-app__start-copy p,
-.zhanggui-app__start > p { margin: 0; color: var(--color-text-secondary); line-height: 1.6; }
-.zhanggui-app__start > p { max-width: 660px; font-size: 11px; text-align: center; }
+.zhanggui-app__start > p { margin: 0; color: var(--color-text-secondary); line-height: 1.55; }
+.zhanggui-app__start > p { max-width: 680px; font-size: 11px; text-align: center; }
 .zhanggui-app__suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; }
-.zhanggui-app__suggestions button { padding: 7px 10px; border: 1px solid var(--color-border-soft); border-radius: 999px; color: var(--color-text-secondary); background: var(--color-surface-raised); font-size: 11px; }
-.zhanggui-app__source { display: flex; width: min(680px, 100%); align-items: center; justify-content: center; gap: 9px; color: var(--color-text-secondary); font-size: 11px; }
-.zhanggui-app__source button { display: inline-flex; flex: 0 0 auto; min-height: 31px; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--color-border-soft); border-radius: 9px; color: var(--zhanggui-accent); background: var(--color-surface-raised); }
+.zhanggui-app__suggestions button {
+  padding: 7px 11px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+  font-size: 11px;
+}
+.zhanggui-app__suggestions button:hover { color: var(--zhanggui-accent); border-color: color-mix(in srgb, var(--zhanggui-accent) 32%, transparent); }
+.zhanggui-app__source {
+  display: flex;
+  width: min(720px, 100%);
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+.zhanggui-app__source button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--zhanggui-accent) 32%, var(--color-border-soft));
+  border-radius: 9px;
+  color: var(--zhanggui-accent);
+  background: var(--zhanggui-accent-soft);
+}
 .zhanggui-app__source span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.zhanggui-app__start form { position: relative; width: min(680px, 100%); }
-.zhanggui-app__start textarea { box-sizing: border-box; width: 100%; min-height: 104px; padding: 15px 54px 15px 16px; resize: none; border: 1px solid color-mix(in srgb, var(--zhanggui-accent) 38%, var(--color-border-soft)); border-radius: 18px; outline: 0; color: var(--color-text-primary); background: var(--color-surface-raised); box-shadow: 0 16px 40px color-mix(in srgb, var(--zhanggui-accent) 8%, transparent); font: inherit; line-height: 1.55; }
-.zhanggui-app__start textarea:focus { border-color: var(--zhanggui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--zhanggui-accent) 14%, transparent), 0 16px 40px color-mix(in srgb, var(--zhanggui-accent) 8%, transparent); }
-.zhanggui-app__start form > button { position: absolute; right: 12px; bottom: 12px; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; color: white; background: var(--zhanggui-accent); }
+.zhanggui-app__start form { position: relative; width: min(720px, 100%); }
+.zhanggui-app__start textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 102px;
+  padding: 15px 54px 15px 16px;
+  resize: none;
+  border: 1px solid color-mix(in srgb, var(--zhanggui-accent) 32%, var(--color-border-soft));
+  border-radius: 18px;
+  outline: 0;
+  color: var(--color-text-primary);
+  background: var(--color-surface-raised);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--zhanggui-accent) 7%, transparent);
+  font: inherit;
+  line-height: 1.55;
+}
+.zhanggui-app__start textarea:focus { border-color: var(--zhanggui-accent); box-shadow: 0 0 0 3px var(--zhanggui-accent-soft), 0 14px 36px color-mix(in srgb, var(--zhanggui-accent) 7%, transparent); }
+.zhanggui-app__start form > button {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  color: white;
+  background: var(--zhanggui-accent);
+}
 .zhanggui-app__start form > button:disabled { opacity: .42; }
 
-.zhanggui-app__session { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
-.zhanggui-app__session-note { justify-content: space-between; gap: 12px; padding: 6px 14px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--zhanggui-accent) 5%, transparent); font-size: 11px; }
-.zhanggui-app__session-note span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.zhanggui-app__session-note strong { margin-right: 8px; color: var(--zhanggui-accent); }
-.zhanggui-app__session > .paw-session-workspace { min-height: 0; }
+.zhanggui-app__session { display: grid; grid-template-rows: 42px minmax(0, 1fr); min-height: 0; }
+.zhanggui-app__session-note {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--color-border-soft);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--zhanggui-accent) 3%, transparent);
+  font-size: 11px;
+}
+.zhanggui-app__session-note > span { display: flex; min-width: 0; gap: 8px; }
+.zhanggui-app__session-note > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zhanggui-app__session-note strong { flex: 0 0 auto; color: var(--zhanggui-accent); }
+
 .zhanggui-app__error { gap: 7px; margin: 8px 12px 0; padding: 8px 10px; border-radius: 9px; color: var(--color-danger); background: color-mix(in srgb, var(--color-danger) 8%, transparent); font-size: 12px; }
 .zhanggui-app__loading { justify-content: center; gap: 8px; color: var(--color-text-secondary); }
+
+/* Reuse the ordinary Pi Session without copying the generic Agent workbench.
+   Trace, model and permission controls remain in the explicit run-detail view. */
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] {
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  border: 0;
+  background: transparent;
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__body,
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__primary,
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__viewport,
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__conversation {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: transparent;
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__body { grid-template-columns: minmax(0, 1fr); }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__primary { grid-template-rows: minmax(0, 1fr); }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__viewport { grid-area: 1 / 1; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__conversation { background: transparent; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-timeline {
+  width: min(900px, 100%);
+  margin-inline: auto;
+  padding-inline: clamp(18px, 5vw, 72px);
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-timeline::before,
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-fx-fade,
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-message-usage { display: none; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-turn { padding-block: 14px; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-user-message-shell { max-width: min(680px, 88%); margin-left: auto; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-user-message {
+  border: 0;
+  border-radius: 16px 16px 5px 16px;
+  background: color-mix(in srgb, var(--zhanggui-accent) 10%, var(--color-surface-raised));
+  box-shadow: none;
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-assistant-turn { max-width: 760px; border: 0; background: transparent; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-assistant-turn__body { padding-inline: 0; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-assistant-turn__body > header { display: none; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-assistant-message { padding-inline: 0; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__composer {
+  grid-area: 1 / 1;
+  align-self: end;
+  padding: 10px clamp(16px, 5vw, 64px) 14px;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--color-surface-base) 96%, #d8eee8) 22%);
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__composer > * { width: min(820px, 100%); margin-inline: auto; }
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-composer-wrap[data-minimal] .agent-composer {
+  border-color: color-mix(in srgb, var(--zhanggui-accent) 26%, var(--color-border-soft));
+  border-radius: 16px;
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--zhanggui-accent) 7%, transparent);
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-composer-wrap[data-minimal] .agent-composer:focus-within {
+  border-color: var(--zhanggui-accent);
+  box-shadow: 0 0 0 3px var(--zhanggui-accent-soft), 0 12px 30px color-mix(in srgb, var(--zhanggui-accent) 7%, transparent);
+}
+.zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-composer-wrap[data-minimal] .agent-composer__send:not(:disabled) { background: var(--zhanggui-accent); }
 
 .paw-extension-app-state { display: grid; place-content: center; justify-items: center; gap: 9px; width: 100%; height: 100%; padding: 24px; color: var(--color-text-secondary); text-align: center; }
 .paw-extension-app-state[role='alert'] { color: var(--color-danger); }
 
 @media (max-width: 700px) {
-  .zhanggui-app__header { align-items: flex-start; padding: 9px 11px; }
-  .zhanggui-app__header-actions { justify-content: flex-end; flex-wrap: wrap; }
-  .zhanggui-app__suite { display: none; }
-  .zhanggui-app__header-actions button { padding: 0 8px; font-size: 10px; }
-  .zhanggui-app__modes { padding-inline: 8px; }
+  .zhanggui-app__header { align-items: center; padding-inline: 10px; }
+  .zhanggui-app__identity small { display: none; }
+  .zhanggui-app__header-actions > button > span { display: none; }
+  .zhanggui-app__header-actions > button { width: 34px; padding: 0; }
+  .zhanggui-app__modes { padding-inline: 4px; }
+  .zhanggui-app__modes button { padding-inline: 8px; }
   .zhanggui-app__start { padding-inline: 14px; }
   .zhanggui-app__source { align-items: stretch; flex-direction: column; text-align: center; }
+  .zhanggui-app__session-note > span > span { display: none; }
+  .zhanggui-app .paw-session-workspace[data-appearance='embedded'] .agent-timeline { padding-inline: 10px; }
+  .zhanggui-app .paw-session-workspace[data-appearance='embedded'] .paw-session-workspace__composer { padding-inline: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
