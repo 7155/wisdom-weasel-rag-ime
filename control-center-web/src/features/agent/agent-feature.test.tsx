@@ -2773,7 +2773,7 @@ describe('Agent experience', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
 
-    const stopping = await screen.findByRole('button', { name: '正在停止本轮' });
+    const stopping = screen.getByRole('button', { name: '正在停止本轮' });
     expect(stopping).toBeDisabled();
     expect(stopping).toHaveAttribute('aria-busy', 'true');
     expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('busy');
