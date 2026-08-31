@@ -389,6 +389,18 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn('if [[ "$SOURCE_BRANCH" != "main" ]]', build)
         self.assertIn('if [[ "$SOURCE_DIRTY" == "true" ]]', build)
 
+    def test_electron_release_hydrates_the_pinned_runtime(self) -> None:
+        build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('ELECTRON_INSTALLER="$WEB/node_modules/electron/install.js"', build)
+        self.assertIn('node "$ELECTRON_INSTALLER"', build)
+        self.assertLess(
+            build.index('node "$ELECTRON_INSTALLER"'),
+            build.rindex('[[ -d "$ELECTRON_APP" ]]'),
+        )
+
     def test_database_maintenance_stop_and_reinstall_cover_voice_and_maintenance_jobs(self) -> None:
         stop = (ROOT / "scripts" / "stop_rag_ime_runtime.sh").read_text(encoding="utf-8")
         installer = (ROOT / "scripts" / "install_product_stack.sh").read_text(encoding="utf-8")

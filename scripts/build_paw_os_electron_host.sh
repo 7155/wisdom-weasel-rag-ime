@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/control-center-web"
 ELECTRON_APP="$WEB/node_modules/electron/dist/Electron.app"
+ELECTRON_INSTALLER="$WEB/node_modules/electron/install.js"
 ACTION="${1:-build}"
 
 case "$ACTION" in
@@ -31,8 +32,16 @@ case "$ACTION" in
     ;;
 esac
 
+if [[ ! -d "$ELECTRON_APP" ]]; then
+  [[ -f "$ELECTRON_INSTALLER" ]] || {
+    echo "Electron package is unavailable; run pnpm install in control-center-web" >&2
+    exit 1
+  }
+  echo "Hydrating the pinned Electron runtime..." >&2
+  node "$ELECTRON_INSTALLER"
+fi
 [[ -d "$ELECTRON_APP" ]] || {
-  echo "Electron runtime is unavailable; run pnpm install in control-center-web" >&2
+  echo "Electron runtime hydration did not produce Electron.app" >&2
   exit 1
 }
 
