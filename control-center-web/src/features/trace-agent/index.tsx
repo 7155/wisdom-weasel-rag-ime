@@ -1787,6 +1787,7 @@ function observationStatusLabel(status: ObservationSnapshotV1['items'][number]['
     completed: '已完成',
     failed: '失败',
     cancelled: '已取消',
+    expired: '已过期',
     info: '记录',
   } as const)[status];
 }
@@ -2663,12 +2664,12 @@ function openFiles(desktop: ReturnType<typeof usePawOsDesktop>, sessionId: strin
 }
 
 function statusLabel(value: string): string {
-  return ({ active: '进行中', running: '运行中', idle: '已结束', completed: '已完成', archived: '已归档', failed: '失败', stopped: '已停止' } as Record<string, string>)[value] ?? value;
+  return ({ active: '进行中', running: '运行中', idle: '已结束', completed: '已完成', archived: '已归档', failed: '失败', stopped: '已停止', expired: '已过期' } as Record<string, string>)[value] ?? value;
 }
 
 function statusTone(value: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (['active', 'running'].includes(value)) return 'info';
-  if (['failed', 'stopped'].includes(value)) return 'danger';
+  if (['failed', 'stopped', 'expired'].includes(value)) return 'danger';
   if (['completed', 'idle'].includes(value)) return 'success';
   return 'neutral';
 }

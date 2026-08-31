@@ -140,6 +140,24 @@ describe('ObservabilityFeature', () => {
     expect(within(timeline).getByText('伙伴 正在分析')).toBeInTheDocument();
   });
 
+  it('renders an expired observation as an explicit terminal failure state', async () => {
+    const transport = observationTransport({
+      items: [observationEvent({
+        sequence: 4,
+        category: 'memory',
+        phase: 'expired',
+        status: 'expired',
+        summary: '记忆整理租约已过期',
+      })],
+    });
+
+    renderFeature(transport, '/observability?traceId=trace%3Aturn%3Atest');
+
+    const timeline = await screen.findByRole('list', { name: '运行记录事件' });
+    expect(within(timeline).getByText('记忆整理租约已过期')).toBeInTheDocument();
+    expect(within(timeline).getByText('已过期')).toHaveAttribute('data-tone', 'danger');
+  });
+
   it('labels a truncated canonical trace as a degraded local window', async () => {
     const transport = observationTransport({
       trace: canonicalTraceResponse({ truncated: true }),

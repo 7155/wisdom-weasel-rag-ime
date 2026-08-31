@@ -30,7 +30,8 @@ export interface ObservationEventV1 {
     | 'system';
   phase: string;
   name: string;
-  status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'info';
+  status:
+    'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | 'expired' | 'info';
   summary: string;
   createdAtMs: number;
   startedAtMs: number;

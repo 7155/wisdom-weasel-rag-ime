@@ -4091,6 +4091,13 @@ class DebugManagementApiTests(unittest.TestCase):
             run_id="memory-run-http",
             metrics={"changeCount": 3},
         )
+        self.service.agent.observations.emit_memory_event(
+            phase="expired",
+            status="expired",
+            summary="记忆整理租约已过期",
+            run_id="memory-run-http",
+            metrics={},
+        )
 
         class Handler(DebugRequestHandler):
             pass
@@ -4118,9 +4125,14 @@ class DebugManagementApiTests(unittest.TestCase):
 
         for payload in payloads:
             self.assertEqual(payload["schemaVersion"], "rag-ime.observation-snapshot.v1")
-            self.assertEqual(payload["counts"]["total"], 1)
-            self.assertEqual(payload["items"][0]["runId"], "memory-run-http")
-            self.assertNotIn("text", payload["items"][0]["attributes"])
+            self.assertEqual(payload["counts"]["total"], 2)
+            self.assertEqual(
+                {"expired": 1, "waiting": 1},
+                payload["counts"]["byStatus"],
+            )
+            for item in payload["items"]:
+                self.assertEqual(item["runId"], "memory-run-http")
+                self.assertNotIn("text", item["attributes"])
 
     def test_api_root_names_the_single_native_control_center(self) -> None:
         class Handler(DebugRequestHandler):

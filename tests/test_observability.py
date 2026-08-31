@@ -21,6 +21,32 @@ class ObservationHubTests(unittest.TestCase):
         self.hub.close()
         self.temporary.cleanup()
 
+    def test_snapshot_accepts_expired_terminal_observations(self) -> None:
+        self.hub.emit(
+            eventId="observation:expired-memory-run",
+            traceId="trace:expired-memory-run",
+            spanId="span:expired-memory-run",
+            category="memory",
+            phase="expired",
+            name="memory_maintenance",
+            status="expired",
+            summary="Memory maintenance lease expired",
+            createdAtMs=10,
+            startedAtMs=10,
+            endedAtMs=20,
+            durationMs=10,
+            privacyClass="metadata",
+            metrics={},
+            attributes={},
+            refs=[],
+        )
+
+        snapshot = self.hub.snapshot({"status": "expired"})
+
+        self.assertEqual(1, snapshot["counts"]["total"])
+        self.assertEqual({"expired": 1}, snapshot["counts"]["byStatus"])
+        self.assertEqual("expired", snapshot["items"][0]["status"])
+
     def test_explicit_event_id_exact_replay_is_idempotent_at_store_and_hub(self) -> None:
         values = {
             "eventId": "observation:exact-replay-store",

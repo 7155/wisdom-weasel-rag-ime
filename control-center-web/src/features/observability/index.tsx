@@ -1535,6 +1535,7 @@ function statusLabel(status: ObservationEventV1['status']): string {
     completed: '已完成',
     failed: '失败',
     cancelled: '已取消',
+    expired: '已过期',
     info: '信息',
   }[status];
 }
@@ -1546,7 +1547,7 @@ function statusLabel(status: ObservationEventV1['status']): string {
  */
 function statusTone(status: ObservationEventV1['status']): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
   if (status === 'completed') return 'success';
-  if (status === 'failed') return 'danger';
+  if (status === 'failed' || status === 'expired') return 'danger';
   if (status === 'running') return 'info';
   if (status === 'waiting') return 'warning';
   return 'neutral';

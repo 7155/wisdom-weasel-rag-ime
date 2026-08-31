@@ -16787,6 +16787,7 @@ export const contractSchemas = {
           "completed",
           "failed",
           "cancelled",
+          "expired",
           "info"
         ]
       },
@@ -17037,6 +17038,7 @@ export const contractSchemas = {
               "completed",
               "failed",
               "cancelled",
+              "expired",
               "info"
             ]
           },

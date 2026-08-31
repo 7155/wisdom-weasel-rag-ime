@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 912
+      "pathCount": 914
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 540
+      "pathCount": 542
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 1577,
+    "pathCount": 1581,
     "dispositionCounts": {
       "delete_old_implementation": 38,
-      "keep_release": 1539
+      "keep_release": 1543
     },
     "groupCounts": {
-      "control_center_release_ui": 912,
+      "control_center_release_ui": 914,
       "desktop_semantic_accessibility": 19,
       "installation_reliability": 18,
       "memory_curation": 43,
       "project_harness": 40,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 540
+      "session_room_skill_flow": 542
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -78,7 +78,7 @@
     }
   ],
   "verification": {
-    "projectHarness": "bounded docs and exact 1577-path inventory prepared from the candidate index; final HEAD check follows the exact commit",
+    "projectHarness": "bounded docs and exact 1581-path inventory prepared from the candidate index; final HEAD check follows the exact commit",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
@@ -92,7 +92,7 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1577/1577 candidate paths classified; 1539 retained and 38 old implementations deleted",
+    "releaseScopeCoverage": "1581/1581 candidate paths classified; 1543 retained and 38 old implementations deleted",
     "repositoryPublicAudit": "Current 2026-08-31 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
@@ -105,6 +105,34 @@
     "pluginLifecycleProposalFocusedTests": "2/2 focused Tool lifecycle tests passed; all five lifecycle operations stop at a bound preview and expose no apply operation"
   },
   "items": [
+    {
+      "path": "control-center-web/src/contracts/generated/observation-event.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated frontend observation event type aligned with the authoritative expired terminal status."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/observation-snapshot.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the generated frontend observation snapshot type aligned with the authoritative expired terminal status."
+    },
+    {
+      "path": "rag_ime/contracts/json/observation-event.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep expired as an authoritative raw observation terminal state instead of rejecting persisted Runtime evidence."
+    },
+    {
+      "path": "rag_ime/contracts/json/observation-snapshot.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Keep observation snapshots readable when a persisted Runtime event has expired."
+    },
     {
       "path": "eval/interview-metrics/runs/enterprise-rag-agent-validation-reject-20260901.v1.json",
       "status": "added",
