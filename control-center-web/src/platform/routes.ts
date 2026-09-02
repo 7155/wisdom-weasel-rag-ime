@@ -405,6 +405,11 @@ export const CONTROL_ROUTES = {
       'workspaceRoots',
       'workspaceScopeConfirmation',
       'dangerousModeConfirmation',
+      'toolAllowlistMode',
+      'allowedTools',
+      'projectContextEnabled',
+      'piSkillsEnabled',
+      'codexSkillsEnabled',
       'surfaceKind',
       'ownerAppId',
       'surfaceKey',
@@ -996,6 +1001,16 @@ export const CONTROL_ROUTES = {
     query: ['packageId', 'resourceKind', 'sessionId', 'sinceMs', 'limit'],
   },
   'agent.extensions.catalog': { method: 'GET', path: '/api/agent/extensions/catalog' },
+  'agent.extensions.skills.list': {
+    method: 'GET',
+    path: '/api/agent/extensions/skills',
+  },
+  'agent.extensions.skills.get': {
+    method: 'GET',
+    path: '/api/agent/extensions/skills/detail',
+    query: ['skillId'],
+    requiredQuery: ['skillId'],
+  },
   'agent.extensions.create': {
     method: 'POST',
     path: '/api/agent/extensions/drafts',

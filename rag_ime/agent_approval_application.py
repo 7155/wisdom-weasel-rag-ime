@@ -5,7 +5,12 @@ from contextlib import closing
 import sqlite3
 from typing import Any, Protocol
 
-from .agent_execution_policy import APPROVAL_AUTO, APPROVAL_MODEL, approval_strategy
+from .agent_execution_policy import (
+    APPROVAL_AUTO,
+    APPROVAL_MODEL,
+    approval_strategy,
+    unrestricted_workspace_policy_active,
+)
 from .agent_external_approval import ExternalApprovalFinalizer
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
@@ -455,8 +460,11 @@ class AgentApprovalApplicationService:
         )
         if current.get("state") != "pending":
             return self._automatic_terminal_result(current)
-        if str(approval.get("payloadSha256") or "") != str(
-            current.get("payloadSha256") or ""
+        if (
+            not unrestricted_workspace_policy_active(session)
+            and str(approval.get("payloadSha256") or "") != str(
+                current.get("payloadSha256") or ""
+            )
         ):
             raise ValueError(
                 "unattended approval payload no longer matches its preview"

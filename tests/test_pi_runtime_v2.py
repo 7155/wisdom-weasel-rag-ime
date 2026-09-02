@@ -1628,6 +1628,74 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ["历史仍然存在", "Host 暂时不可用，但历史不能消失"],
         )
 
+    def test_evaluation_snapshot_reads_managed_transcript_without_opening_runtime_host(self) -> None:
+        session = self.store.create(
+            title="EnterpriseOps CSM · Task 1 · 通过",
+            model_profile="openai-codex/gpt-5.6-sol",
+            thinking_level="high",
+            tool_profile_version="subagent-readonly-v1",
+            execution_mode="read_only",
+            evaluation_snapshot=True,
+        )
+        session_id = str(session["id"])
+        transcript = self.root / "sessions" / "evaluation-snapshot.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(
+            "".join(
+                json.dumps(entry, ensure_ascii=False) + "\n"
+                for entry in (
+                    {"type": "session", "id": "pi-evaluation-snapshot"},
+                    {
+                        "type": "message",
+                        "id": "snapshot-user",
+                        "parentId": "",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "真实评测任务"}],
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "id": "snapshot-answer",
+                        "parentId": "snapshot-user",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "真实评测结果"}],
+                        },
+                    },
+                )
+            ),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-evaluation-snapshot",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="snapshot-answer",
+            binding_state="prepared",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        with patch.object(
+            self.runtime,
+            "_inspection_snapshot",
+            side_effect=AssertionError("evaluation snapshot must not open Runtime Host"),
+        ):
+            snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [
+                block["data"]["text"]
+                for message in snapshot["messages"]
+                for block in message["blocks"]
+                if block["type"] == "text"
+            ],
+            ["真实评测任务", "真实评测结果"],
+        )
+
     def test_durable_snapshot_uses_transcript_append_time_for_timeline_order(self) -> None:
         session_id = str(self.first["id"])
         transcript = self.root / "sessions" / "timeline-order.jsonl"

@@ -14,7 +14,7 @@
     "compileState",
     "draftCoverage",
     "automation",
-    "pendingDraftCount",
+    "catalogConsolidation",
     "ownerCuration",
     "modelCuration",
     "bookProjection",
@@ -89,6 +89,67 @@
         "maximumSourceCount": {"type": "integer", "minimum": 1},
         "maximumInputTokens": {"type": "integer", "minimum": 1},
         "reservedContextTokens": {"type": "integer", "minimum": 1}
+      }
+    },
+    "catalogConsolidation": {
+      "type": "object",
+      "required": [
+        "schemaVersion", "project", "receiptId", "state",
+        "lastAttemptAtMs", "lastCompletionAtMs", "nextDueAtMs",
+        "catalogDigest", "lastSuccessfulCatalogDigest",
+        "lastSuccessfulCatalogCommittedAtMs", "attemptCatalogDigest",
+        "curationRunId", "attemptCount", "retryCount",
+        "result", "error", "createdAtMs", "updatedAtMs",
+        "leaseExpiresAtMs", "due", "dueReason", "observedAtMs",
+        "enabled", "automaticOrganizationEnabled", "cadenceDays"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "rag-ime.memory-catalog-consolidation.v1"
+        },
+        "project": {"type": "string"},
+        "enabled": {"type": "boolean"},
+        "automaticOrganizationEnabled": {"type": "boolean"},
+        "cadenceDays": {"type": "integer", "minimum": 1},
+        "receiptId": {"type": "string"},
+        "state": {
+          "type": "string",
+          "enum": ["never", "running", "completed", "failed"]
+        },
+        "lastAttemptAtMs": {"type": "integer", "minimum": 0},
+        "lastCompletionAtMs": {"type": "integer", "minimum": 0},
+        "nextDueAtMs": {"type": "integer", "minimum": 0},
+        "catalogDigest": {"type": "string"},
+        "lastSuccessfulCatalogDigest": {"type": "string"},
+        "lastSuccessfulCatalogCommittedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attemptCatalogDigest": {"type": "string"},
+        "curationRunId": {"type": "string"},
+        "attemptCount": {"type": "integer", "minimum": 0},
+        "retryCount": {"type": "integer", "minimum": 0},
+        "result": {"type": "object"},
+        "error": {"type": "string"},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0},
+        "leaseExpiresAtMs": {"type": "integer", "minimum": 0},
+        "due": {"type": "boolean"},
+        "dueReason": {
+          "type": "string",
+          "enum": [
+            "first_run",
+            "scheduled",
+            "retry_backoff",
+            "running",
+            "lease_expired",
+            "catalog_consolidation_disabled",
+            "automatic_organization_disabled",
+            "not_due"
+          ]
+        },
+        "observedAtMs": {"type": "integer", "minimum": 0}
       }
     },
     "pendingDraftCount": {"type": "integer", "minimum": 0},
@@ -195,7 +256,7 @@
           "sourceCursor": {"type": "object"},
           "ownerKind": {"type": "string", "enum": ["user", "shared", "agent", "session", "room"]},
           "ownerId": {"type": "string", "minLength": 1},
-          "runKind": {"type": "string", "enum": ["legacy", "daily_curation", "manual_curation", "dream_insight"]}
+          "runKind": {"type": "string", "enum": ["legacy", "daily_curation", "manual_curation", "dream_insight", "catalog_consolidation"]}
         }
       }
     }

@@ -24,7 +24,9 @@ export function toolAvailableForCurrentSession(
     ? 'subagent-readonly-v1'
     : session.toolProfileVersion === 'control-center-auto-approve-v1'
       ? 'control-center-auto-approve-v1'
-      : 'control-center-v1';
+      : session.toolProfileVersion === 'control-center-full-access-v1'
+        ? 'control-center-full-access-v1'
+        : 'control-center-v1';
   return toolAvailableForPolicy(tool, session.mode, profile) && tool.enabled !== false;
 }
 

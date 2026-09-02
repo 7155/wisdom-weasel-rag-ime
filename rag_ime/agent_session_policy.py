@@ -6,6 +6,7 @@ from typing import Any
 from .agent_runtime_driver import AgentRuntimeError
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
+    PER_ACTION_EXECUTION_MODE,
     WORKSPACE_MANAGED_EXECUTION_MODE,
     WORKSPACE_SCOPE_CONFIRMATION,
     canonical_tool_profile,
@@ -17,9 +18,13 @@ from .agent_tool_ids import (
     CONTROL_TOOL_IDS,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
     DANGEROUS_MODE_CONFIRMATION,
+    FULL_ACCESS_TOOL_PROFILE,
     READONLY_TOOL_PROFILE,
 )
-from .agent_workspace_roots import existing_workspace_roots
+from .agent_workspace_roots import (
+    existing_workspace_roots,
+    system_wide_workspace_roots,
+)
 from .contracts.json_schema import validate_contract
 
 
@@ -42,6 +47,9 @@ class AgentSessionPolicyService:
         self.events = events
         self.runtime_status = runtime_status
         self.probe_memory_maintenance = probe_memory_maintenance
+        self._extension_app_skill_owners_provider: (
+            Callable[[], Mapping[str, str]] | None
+        ) = None
 
     @property
     def runtime(self) -> Any:
@@ -101,13 +109,23 @@ class AgentSessionPolicyService:
         return response
 
     def command_catalog(self, session_id: str) -> dict[str, object]:
-        self.sessions.get(session_id)
+        session = self.sessions.get(session_id)
         runtime_available = True
         try:
             commands = self.runtime.command_catalog(session_id)
         except AgentRuntimeError:
             runtime_available = False
             commands = []
+        owners = self._extension_app_skill_owners()
+        commands = [
+            command
+            for command in commands
+            if self._command_allowed_for_session(
+                command,
+                session=session,
+                owners=owners,
+            )
+        ]
         return {
             "schemaVersion": "rag-ime.agent-command-catalog.v1",
             "ok": True,
@@ -121,8 +139,16 @@ class AgentSessionPolicyService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        self.sessions.get(session_id)
+        session = self.sessions.get(session_id)
         command = _required_text(payload, "command")
+        if not self._command_allowed_for_session(
+            {"name": command.removeprefix("/").split(maxsplit=1)[0], "source": "skill"},
+            session=session,
+            owners=self._extension_app_skill_owners(),
+        ):
+            raise ValueError(
+                "Pi Skill belongs to Extension App and is unavailable in this Session"
+            )
         result = self.runtime.invoke_command(session_id, command)
         self.events.publish(
             session_id,
@@ -143,6 +169,50 @@ class AgentSessionPolicyService:
             "result": result.get("result"),
             "leafId": result.get("leafId"),
         }
+
+    def bind_extension_app_skill_owners(
+        self,
+        provider: Callable[[], Mapping[str, str]],
+    ) -> None:
+        if not callable(provider):
+            raise TypeError("extension App Skill owner provider must be callable")
+        self._extension_app_skill_owners_provider = provider
+
+    def _extension_app_skill_owners(self) -> dict[str, str]:
+        provider = self._extension_app_skill_owners_provider
+        if provider is None:
+            return {}
+        try:
+            values = provider()
+        except Exception:
+            return {}
+        if not isinstance(values, Mapping):
+            return {}
+        return {
+            str(skill_ref).strip(): str(owner_app_id).strip()
+            for skill_ref, owner_app_id in values.items()
+            if str(skill_ref).strip() and str(owner_app_id).strip()
+        }
+
+    @staticmethod
+    def _command_allowed_for_session(
+        command: Mapping[str, object],
+        *,
+        session: Mapping[str, object],
+        owners: Mapping[str, str],
+    ) -> bool:
+        if str(command.get("source") or "") != "skill":
+            return True
+        name = str(command.get("name") or "").strip().removeprefix("/")
+        if not name.startswith("skill:"):
+            return True
+        owner_app_id = str(owners.get(name.removeprefix("skill:")) or "")
+        if not owner_app_id:
+            return True
+        return (
+            str(session.get("surfaceKind") or "agent") == "extension_app"
+            and str(session.get("ownerAppId") or "") == owner_app_id
+        )
 
     def select_model(
         self,
@@ -369,19 +439,29 @@ class AgentSessionPolicyService:
         self._validate_tool_profile(
             requested_profile,
             requested_mode=requested_mode,
-            current_profile=str(
-                session.get("toolProfileVersion") or ""
-            ),
-            confirmation=str(
-                payload.get("dangerousModeConfirmation") or ""
-            ),
+            requested_execution_mode=requested_execution_mode,
         )
         effective_roots = (
             [str(value) for value in roots]
             if isinstance(roots, list)
             else [str(value) for value in session.get("workspaceRoots") or []]
         )
-        if isinstance(roots, list) and requested_mode == "coordinator":
+        if requested_profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }:
+            effective_roots = list(
+                system_wide_workspace_roots(effective_roots)
+            )
+        if (
+            isinstance(roots, list)
+            and requested_mode == "coordinator"
+            and requested_profile
+            not in {
+                DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+                FULL_ACCESS_TOOL_PROFILE,
+            }
+        ):
             effective_roots = list(
                 existing_workspace_roots(effective_roots)
             )
@@ -405,8 +485,13 @@ class AgentSessionPolicyService:
                     "workspace-managed execution requires an explicit workspace scope confirmation"
                 )
             grant_workspace_scope = True
-        if requested_execution_mode == FULL_TRUST_EXECUTION_MODE and (
-            entering_execution_mode or scope_changed
+        if (
+            requested_execution_mode == FULL_TRUST_EXECUTION_MODE
+            and (
+                entering_execution_mode
+                or scope_changed
+            )
+            and requested_profile != DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
         ):
             if (
                 str(payload.get("dangerousModeConfirmation") or "")
@@ -434,6 +519,10 @@ class AgentSessionPolicyService:
                 raise ValueError(
                     f"{boolean_key} must be a boolean"
                 )
+        unrestricted_profile = requested_profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }
         updated = self.sessions.set_runtime_policy(
             session_id,
             mode=requested_mode,
@@ -442,23 +531,35 @@ class AgentSessionPolicyService:
             grant_workspace_scope=grant_workspace_scope,
             allowed_tools=allowed_tools,
             project_context_enabled=(
-                bool(payload["projectContextEnabled"])
-                if "projectContextEnabled" in payload
-                else None
+                True
+                if unrestricted_profile
+                else (
+                    bool(payload["projectContextEnabled"])
+                    if "projectContextEnabled" in payload
+                    else None
+                )
             ),
             pi_skills_enabled=(
-                bool(payload["piSkillsEnabled"])
-                if "piSkillsEnabled" in payload
-                else None
+                True
+                if unrestricted_profile
+                else (
+                    bool(payload["piSkillsEnabled"])
+                    if "piSkillsEnabled" in payload
+                    else None
+                )
             ),
             codex_skills_enabled=(
-                bool(payload["codexSkillsEnabled"])
-                if "codexSkillsEnabled" in payload
-                else None
+                True
+                if unrestricted_profile
+                else (
+                    bool(payload["codexSkillsEnabled"])
+                    if "codexSkillsEnabled" in payload
+                    else None
+                )
             ),
             workspace_roots=(
                 effective_roots
-                if isinstance(roots, list)
+                if unrestricted_profile or isinstance(roots, list)
                 else None
             ),
         )
@@ -477,41 +578,33 @@ class AgentSessionPolicyService:
             },
         )
         return updated
-
     @staticmethod
     def _validate_tool_profile(
         requested_profile: str,
         *,
         requested_mode: str,
-        current_profile: str,
-        confirmation: str,
+        requested_execution_mode: str,
     ) -> None:
         if requested_profile not in {
             CONTROL_CENTER_TOOL_PROFILE,
             READONLY_TOOL_PROFILE,
             DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
         }:
             raise ValueError("unsupported Agent tool profile")
-        entering_dangerous = (
-            requested_profile
-            == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
-            and current_profile
-            != DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
-        )
-        if (
-            requested_profile
-            == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
-            and requested_mode != "coordinator"
+        if requested_profile == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE and (
+            requested_mode != "coordinator"
+            or requested_execution_mode != FULL_TRUST_EXECUTION_MODE
         ):
             raise ValueError(
-                "automatic approval requires coordinator mode"
+                "automatic approval requires coordinator mode and full-trust execution"
             )
-        if (
-            entering_dangerous
-            and confirmation != DANGEROUS_MODE_CONFIRMATION
+        if requested_profile == FULL_ACCESS_TOOL_PROFILE and (
+            requested_mode != "coordinator"
+            or requested_execution_mode != PER_ACTION_EXECUTION_MODE
         ):
             raise ValueError(
-                "automatic approval mode requires an explicit native confirmation"
+                "full access requires coordinator mode and per-action execution"
             )
 
     @staticmethod
@@ -522,6 +615,11 @@ class AgentSessionPolicyService:
         requested_mode: str,
         requested_profile: str,
     ) -> list[str] | None:
+        if requested_profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }:
+            return None
         requested_allowlist_mode = str(
             payload.get("toolAllowlistMode")
             or (

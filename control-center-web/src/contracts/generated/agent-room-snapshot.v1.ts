@@ -37,10 +37,15 @@ export interface Room {
   activeTopicId?: string;
   configRevision?: number;
   /**
-   * @maxItems 4
+   * @maxItems 5
    */
   workspaceRoots:
-    [] | [string] | [string, string] | [string, string, string] | [string, string, string, string];
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string];
   createdAtMs: number;
   updatedAtMs: number;
   lastEventSequence: number;

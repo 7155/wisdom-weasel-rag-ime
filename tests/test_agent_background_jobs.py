@@ -225,6 +225,39 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
         self.assertEqual(durable_text, self.harness.redact_output(text))
         self.assertNotIn(secret[8:], durable_text)
 
+    def test_unrestricted_profiles_preserve_raw_background_output(self) -> None:
+        secret = "abcdefghijklmnop"
+        for profile, execution_mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                session = self.sessions.create(
+                    title=f"raw output {profile}",
+                    mode="coordinator",
+                    tool_profile_version=profile,
+                    execution_mode=execution_mode,
+                    workspace_roots=["/"],
+                )
+                log_path = Path(self.temporary.name) / f"{execution_mode}.log"
+                log_path.touch()
+                live = _LiveJob(
+                    launched=object(),
+                    log_path=log_path,
+                    max_run_seconds=60,
+                    session_id=str(session["id"]),
+                )
+
+                self.service._append_redacted_text(
+                    live,
+                    f"api_key={secret}\n",
+                )
+
+                self.assertEqual(
+                    log_path.read_text(encoding="utf-8"),
+                    f"api_key={secret}\n",
+                )
+
     def test_log_pages_extend_limit_to_complete_utf8_characters(self) -> None:
         job_id = "bg_" + "b" * 32
         text = "你A🙂"

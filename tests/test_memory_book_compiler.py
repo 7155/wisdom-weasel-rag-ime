@@ -12,7 +12,12 @@ from unittest.mock import patch
 import rag_ime.cli as cli_module
 from rag_ime.cli import main
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
+from rag_ime.memory_curation import (
+    build_memory_curation_model_bundle,
+    curation_decisions_to_compile_output,
+)
 from rag_ime.memory_book_compiler import (
+    _catalog_supersede_graph_errors,
     apply_memory_book_plan,
     apply_stored_memory_book_run,
     build_memory_book_source_bundle,
@@ -24,6 +29,7 @@ from rag_ime.memory_book_compiler import (
     memory_book_plan_from_compile_output,
     memory_book_plan_from_stored_run,
     rollback_memory_book_run,
+    seal_global_memory_book_plan,
     store_memory_book_plan,
     update_stored_memory_book_diff,
 )
@@ -295,6 +301,73 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(statuses[first_plan["runId"]], "superseded")
         self.assertEqual(statuses[second_plan["runId"]], "draft")
         self.assertGreater(rejected, 0)
+
+    def test_catalog_draft_does_not_supersede_incremental_draft(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                since_days=7,
+                limit=80,
+            )
+            incremental = memory_book_plan_from_compile_output(
+                sample_compile_output(self.event_id),
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+                source_bundle=bundle,
+            )
+            incremental["runId"] = "memory_book_incremental_draft"
+            store_memory_book_plan(
+                conn,
+                incremental,
+                supersede_project_drafts=True,
+            )
+            catalog = json.loads(json.dumps(incremental))
+            catalog["runId"] = "memory_book_catalog_draft"
+            catalog["metadata"]["runKind"] = "catalog_consolidation"
+            catalog["metadata"]["bundleHash"] = "sha256:catalog-draft"
+            store_memory_book_plan(
+                conn,
+                catalog,
+                supersede_project_drafts=True,
+            )
+            statuses = {
+                str(row["run_id"]): str(row["status"])
+                for row in conn.execute(
+                    "SELECT run_id, status FROM memory_cleanup_runs "
+                    "WHERE run_id IN (?, ?)",
+                    (incremental["runId"], catalog["runId"]),
+                ).fetchall()
+            }
+
+        self.assertEqual(statuses[incremental["runId"]], "draft")
+        self.assertEqual(statuses[catalog["runId"]], "draft")
+
+    def test_catalog_supersede_graph_rejects_non_root_targets_in_any_order(
+        self,
+    ) -> None:
+        atoms = {
+            atom_id: {"atomId": atom_id}
+            for atom_id in ("atom:a", "atom:b", "atom:c")
+        }
+        accepted_upserts = {
+            "atom:b": (0, {}),
+            "atom:c": (1, {}),
+        }
+        forward = [
+            (0, {}, "atom:a", "atom:b"),
+            (1, {}, "atom:b", "atom:c"),
+        ]
+        for edges in (forward, list(reversed(forward))):
+            with self.subTest(edges=edges):
+                errors = _catalog_supersede_graph_errors(
+                    edges,
+                    atoms_by_id=atoms,
+                    accepted_upserts=accepted_upserts,
+                )
+                self.assertIn("non_root_target:atom:b", errors)
+
 
     def test_stale_memory_book_draft_cannot_apply_or_be_reused(self) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
@@ -1405,8 +1478,442 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(len(bundle["existingTagEdges"]), 1)
         self.assertEqual(bundle["existingTagEdges"][0]["src"], "BM25")
         self.assertEqual(bundle["existingTagEdges"][0]["dst"], "混合召回")
+        self.assertEqual(bundle["existingTagEdges"][0]["srcTagId"], first)
+        self.assertEqual(bundle["existingTagEdges"][0]["dstTagId"], second)
         bm25 = next(item for item in bundle["existingSemanticTags"] if item["name"] == "BM25")
         self.assertEqual(bm25["degree"], 1)
+
+    def test_global_catalog_source_bundle_is_uncapped_and_digest_sealed(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.executemany(
+                "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                "description, source, status, metadata_json) VALUES (?, ?, 'concept', 0.8, 1, 1, "
+                "'catalog test tag', 'dsv4', 'active', '{}')",
+                [
+                    (f"catalog-tag-{index}", f"catalog-tag-{index}")
+                    for index in range(170)
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, source_event_ids_json,
+                    scope_project, language, confidence, quality_score,
+                    privacy_level, status, created_at_ms, updated_at_ms
+                ) VALUES (
+                    'atom:second-project', 'project_fact', '第二项目事实',
+                    '第二项目事实', ?, 'other-project', 'zh', 0.9, 0.9,
+                    'local', 'active', 1, 1
+                )
+                """,
+                (json.dumps([self.event_id]),),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary, project,
+                    status, created_at_ms, updated_at_ms
+                ) VALUES (
+                    'book:second-project', 'topic', 'second-project',
+                    '第二项目书', '第二项目摘要', 'other-project',
+                    'active', 1, 1
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_semantic_groups(
+                    group_id, title, description, project, status,
+                    created_at_ms, updated_at_ms
+                ) VALUES (
+                    'group:second-project', '第二项目组', '第二项目主题',
+                    'other-project', 'active', 1, 1
+                )
+                """
+            )
+            curated_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('curated-import-tag', 'curated-import-tag', "
+                    "'concept', 0.95, 1, 1, 'curated catalog tag', 'curated_import', 'active', '{}')"
+                ).lastrowid
+            )
+            catalog_tag_id = int(
+                conn.execute(
+                    "SELECT id FROM memory_tags WHERE tag = 'catalog-tag-0'"
+                ).fetchone()[0]
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, "
+                "evidence_count, updated_at_ms, metadata_json) VALUES (?, ?, 'imported_relation', 0.91, 0, 2, 1, '{}')",
+                (curated_id, catalog_tag_id),
+            )
+            incremental = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+            catalog = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                curation_scope="global",
+                catalog_only=True,
+            )
+
+        self.assertEqual(len(incremental["existingSemanticTags"]), 160)
+        self.assertFalse(any(item["atomId"] == "atom:second-project" for item in incremental["existingMemoryAtoms"]))
+        self.assertFalse(any(item["bookId"] == "book:second-project" for item in incremental["existingMemoryBooks"]))
+        self.assertFalse(any(item["groupId"] == "group:second-project" for item in incremental["existingSemanticGroups"]))
+        self.assertNotIn(
+            "curated-import-tag",
+            {item["name"] for item in incremental["existingSemanticTags"]},
+        )
+        self.assertTrue(any(item["atomId"] == "atom:second-project" and item["project"] == "other-project" for item in catalog["existingMemoryAtoms"]))
+        self.assertTrue(any(item["bookId"] == "book:second-project" and item["project"] == "other-project" for item in catalog["existingMemoryBooks"]))
+        self.assertTrue(any(item["groupId"] == "group:second-project" and item["project"] == "other-project" for item in catalog["existingSemanticGroups"]))
+        self.assertIn(
+            "curated-import-tag",
+            {item["name"] for item in catalog["existingSemanticTags"]},
+        )
+        self.assertTrue(
+            any(
+                item["src"] == "curated-import-tag"
+                and item["dst"] == "catalog-tag-0"
+                for item in catalog["existingTagEdges"]
+            )
+        )
+        self.assertFalse(
+            any(item["src"] == "curated-import-tag" for item in incremental["existingTagEdges"])
+        )
+        self.assertGreaterEqual(len(catalog["existingSemanticTags"]), 170)
+        self.assertEqual(catalog["recentEvents"], [])
+        self.assertEqual(catalog["curationScope"], "global")
+        self.assertTrue(catalog["catalogAudit"])
+        self.assertEqual(catalog["evidenceOrder"], "catalog_only")
+        self.assertTrue(catalog["catalogComplete"])
+        self.assertFalse(any(catalog["catalogTruncated"].values()))
+        self.assertTrue(catalog["catalogDigest"])
+
+    def test_global_catalog_apply_rejects_a_changed_frozen_digest(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                curation_scope="global",
+                catalog_only=True,
+            )
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "schemaVersion": "rag-ime.memory-book-compile.v1",
+                    "curationArchitecture": "atom-first-v2",
+                    "semanticGroups": [],
+                    "semanticTags": [],
+                    "tagMerges": [],
+                    "tagEdges": [],
+                    "memoryAtoms": [],
+                    "supersedes": [],
+                },
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+                source_bundle=bundle,
+            )
+            self.assertEqual(
+                plan["metadata"]["runKind"],
+                "catalog_consolidation",
+            )
+            conn.execute(
+                "INSERT INTO memory_tags("
+                "tag, normalized_tag, tag_type, quality_score, "
+                "created_at_ms, updated_at_ms, description, source, status, metadata_json"
+                ") VALUES ('changed-after-freeze', 'changed-after-freeze', "
+                "'concept', 0.8, 1, 1, 'changed', 'user', 'active', '{}')"
+            )
+            conn.commit()
+
+            with self.assertRaisesRegex(ValueError, "catalog digest changed"):
+                apply_memory_book_plan(conn, plan)
+            persisted = conn.execute(
+                "SELECT COUNT(*) FROM memory_cleanup_runs WHERE run_id = ?",
+                (plan["runId"],),
+            ).fetchone()[0]
+
+        self.assertEqual(persisted, 0)
+    def test_global_catalog_store_rejects_a_changed_digest_for_no_diff_plan(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                curation_scope="global",
+                catalog_only=True,
+            )
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "schemaVersion": "rag-ime.memory-book-compile.v1",
+                    "curationArchitecture": "atom-first-v2",
+                    "curationOutcome": "no_changes",
+                    "semanticGroups": [],
+                    "semanticTags": [],
+                    "tagMerges": [],
+                    "tagEdges": [],
+                    "memoryAtoms": [],
+                    "supersedes": [],
+                },
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+                source_bundle=bundle,
+                run_id="memory_book_catalog_no_diff_stale",
+            )
+            conn.execute(
+                "INSERT INTO memory_tags("
+                "tag, normalized_tag, tag_type, quality_score, "
+                "created_at_ms, updated_at_ms, description, source, status, metadata_json"
+                ") VALUES ('changed-before-no-diff-store', 'changed-before-no-diff-store', "
+                "'concept', 0.8, 1, 1, 'changed', 'user', 'active', '{}')"
+            )
+            conn.commit()
+            with self.assertRaisesRegex(ValueError, "catalog digest changed"):
+                store_memory_book_plan(conn, plan)
+            persisted = conn.execute(
+                "SELECT COUNT(*) FROM memory_cleanup_runs WHERE run_id = ?",
+                (plan["runId"],),
+            ).fetchone()[0]
+        self.assertEqual(persisted, 0)
+
+
+    def test_global_tag_merge_chain_targets_terminal_canonical_tag(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.row_factory = sqlite3.Row
+            tag_ids: dict[str, int] = {}
+            for name in ("A", "B", "C"):
+                tag_ids[name] = int(
+                    conn.execute(
+                        "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                        "description, source, status, metadata_json) VALUES (?, ?, 'concept', ?, 1, 1, ?, 'dsv4', 'active', '{}')",
+                        (name, name.lower(), 1.0 - 0.1 * ("A", "B", "C").index(name), f"{name} tag"),
+                    ).lastrowid
+                )
+            conn.execute(
+                "INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms) VALUES (?, 'blue', ?, 1)",
+                (tag_ids["A"], json.dumps(["B"], ensure_ascii=False)),
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms) VALUES (?, 'blue', ?, 1)",
+                (tag_ids["B"], json.dumps(["C"], ensure_ascii=False)),
+            )
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                curation_scope="global",
+                catalog_only=True,
+            )
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "schemaVersion": "rag-ime.memory-book-compile.v1",
+                    "tagMerges": [
+                        {
+                            "source": "C",
+                            "target": "B",
+                            "sourceTagId": tag_ids["C"],
+                            "targetTagId": tag_ids["B"],
+                            "reason": "链式别名",
+                            "evidenceEventIds": [self.event_id],
+                        },
+                        {
+                            "source": "B",
+                            "target": "A",
+                            "sourceTagId": tag_ids["B"],
+                            "targetTagId": tag_ids["A"],
+                            "reason": "链式别名",
+                            "evidenceEventIds": [self.event_id],
+                        },
+                    ],
+                },
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+                source_bundle=bundle,
+            )
+            merges = {
+                str(item["payload"]["source"]): item["payload"]
+                for item in plan["diffs"]
+                if item["op"] == "merge_semantic_tag"
+            }
+            self.assertEqual(merges["C"]["target"], "A")
+            self.assertEqual(merges["C"]["targetTagId"], tag_ids["A"])
+            self.assertEqual(merges["B"]["target"], "A")
+            self.assertTrue(inspect_memory_book_plan(plan)["ok"])
+            applied = apply_memory_book_plan(conn, plan)
+            self.assertTrue(applied["sealedCatalogDigest"])
+            self.assertIsNotNone(
+                conn.execute("SELECT id FROM memory_tags WHERE id = ?", (tag_ids["A"],)).fetchone()
+            )
+            self.assertIsNone(
+                conn.execute("SELECT id FROM memory_tags WHERE id = ?", (tag_ids["B"],)).fetchone()
+            )
+            self.assertIsNone(
+                conn.execute("SELECT id FROM memory_tags WHERE id = ?", (tag_ids["C"],)).fetchone()
+            )
+            rollback_rows = conn.execute(
+                "SELECT rollback_json FROM memory_cleanup_diffs WHERE run_id = ? ORDER BY id",
+                (plan["runId"],),
+            ).fetchall()
+            self.assertTrue(rollback_rows)
+            self.assertTrue(all(not json.loads(row["rollback_json"]).get("noOp") for row in rollback_rows))
+
+    def test_global_atom_merge_preserves_complete_relation_payloads(self) -> None:
+        initial = {
+            "schemaVersion": "rag-ime.memory-book-compile.v1",
+            "semanticGroups": [
+                {
+                    "groupId": group_id,
+                    "title": group_id,
+                    "description": group_id,
+                    "sourceEventIds": [self.event_id],
+                }
+                for group_id in ("group:target", "group:source")
+            ],
+            "memoryAtoms": [
+                {
+                    "atomId": "atom:merge-target",
+                    "kind": "project_fact",
+                    "claimKey": "claim:exact-merge",
+                    "lineageId": "lineage:exact-merge",
+                    "claimState": "current",
+                    "canonicalText": "Exact catalog duplicate",
+                    "aliases": ["target-alias"],
+                    "surfaceHints": ["target-surface"],
+                    "queryExpansions": ["target-query"],
+                    "sourceMemoryIds": ["memory:target"],
+                    "sourceEventIds": [self.event_id],
+                    "tags": ["target-tag"],
+                    "semanticGroupIds": ["group:target"],
+                },
+                {
+                    "atomId": "atom:merge-source",
+                    "kind": "project_fact",
+                    "claimKey": "claim:exact-merge",
+                    "lineageId": "lineage:exact-merge",
+                    "claimState": "current",
+                    "canonicalText": "Exact catalog duplicate",
+                    "aliases": ["source-alias"],
+                    "surfaceHints": ["source-surface"],
+                    "queryExpansions": ["source-query"],
+                    "sourceMemoryIds": ["memory:source"],
+                    "sourceEventIds": [self.event_id],
+                    "tags": ["source-tag"],
+                    "semanticGroupIds": ["group:source"],
+                },
+            ],
+        }
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    initial,
+                    project="wisdom-weasel-rag-ime",
+                    provider="test",
+                    model="test",
+                    run_id="memory_book_relation_seed",
+                ),
+            )
+            conn.execute(
+                "UPDATE memory_atoms "
+                "SET status = 'superseded', claim_state = 'superseded', "
+                "valid_from_ms = 1, valid_to_ms = 123456789, supersedes_id = NULL "
+                "WHERE id IN ('atom:merge-target', 'atom:merge-source')"
+            )
+            conn.execute(
+                "DELETE FROM memory_supersessions "
+                "WHERE old_memory_id IN ('atom:merge-target', 'atom:merge-source') "
+                "OR new_memory_id IN ('atom:merge-target', 'atom:merge-source')"
+            )
+            conn.commit()
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                curation_scope="global",
+                catalog_only=True,
+            )
+            model_bundle = build_memory_curation_model_bundle(bundle)
+            refs = {
+                str(item["atomId"]): str(item["ref"])
+                for item in model_bundle["existingAtoms"]
+            }
+            compiled = curation_decisions_to_compile_output(
+                {
+                    "merge": [
+                        [
+                            refs["atom:merge-source"],
+                            refs["atom:merge-target"],
+                        ]
+                    ]
+                },
+                source_bundle=bundle,
+                project="wisdom-weasel-rag-ime",
+            )
+            plan = memory_book_plan_from_compile_output(
+                compiled,
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+                source_bundle=bundle,
+                run_id="memory_book_relation_merge",
+            )
+            validation = inspect_memory_book_plan(plan)
+            self.assertTrue(validation["ok"], validation)
+            apply_memory_book_plan(conn, plan)
+
+            target = conn.execute(
+                "SELECT source_event_ids_json, source_memory_ids_json "
+                "FROM memory_atoms WHERE id = 'atom:merge-target'"
+            ).fetchone()
+            source = conn.execute(
+                "SELECT status FROM memory_atoms WHERE id = 'atom:merge-source'"
+            ).fetchone()
+            aliases = {
+                (str(row["alias_type"]), str(row["alias"]))
+                for row in conn.execute(
+                    "SELECT alias_type, alias FROM memory_aliases "
+                    "WHERE memory_atom_id = 'atom:merge-target'"
+                ).fetchall()
+            }
+            tags = {
+                str(row["tag"])
+                for row in conn.execute(
+                    "SELECT mt.tag FROM memory_atom_tags mat "
+                    "JOIN memory_tags mt ON CAST(mt.id AS TEXT) = mat.tag_id "
+                    "WHERE mat.memory_atom_id = 'atom:merge-target'"
+                ).fetchall()
+            }
+            groups = {
+                str(row["group_id"])
+                for row in conn.execute(
+                    "SELECT group_id FROM memory_semantic_group_members "
+                    "WHERE member_type = 'atom' "
+                    "AND member_id = 'atom:merge-target'"
+                ).fetchall()
+            }
+
+        self.assertEqual(json.loads(target["source_event_ids_json"]), [self.event_id])
+        self.assertEqual(
+            set(json.loads(target["source_memory_ids_json"])),
+            {"memory:target", "memory:source"},
+        )
+        self.assertEqual(source["status"], "superseded")
+        self.assertTrue(
+            {
+                ("alias", "target-alias"),
+                ("alias", "source-alias"),
+                ("surface_hint", "target-surface"),
+                ("surface_hint", "source-surface"),
+                ("query_expansion", "target-query"),
+                ("query_expansion", "source-query"),
+            }.issubset(aliases)
+        )
+        self.assertEqual(tags, {"target-tag", "source-tag"})
+        self.assertEqual(groups, {"group:target", "group:source"})
 
     def test_reviewed_tag_merge_moves_graph_and_rolls_back(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -1438,8 +1945,13 @@ class MemoryBookCompilerTests(unittest.TestCase):
             )
             conn.execute(
                 "INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, "
-                "updated_at_ms, metadata_json) VALUES (?, ?, 'part_of', 0.8, 0, 2, 1, '{}')",
+                "updated_at_ms, metadata_json) VALUES (?, ?, 'part_of', 0.8, 0.7, 2, 1, '{\"source\":\"duplicate\"}')",
                 (duplicate_id, related_id),
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, "
+                "updated_at_ms, metadata_json) VALUES (?, ?, 'part_of', 0.9, -0.25, 3, 1, '{\"source\":\"canonical\"}')",
+                (canonical_id, related_id),
             )
             bundle = build_memory_book_source_bundle(conn, project="wisdom-weasel-rag-ime")
 
@@ -1475,10 +1987,18 @@ class MemoryBookCompilerTests(unittest.TestCase):
             self.assertEqual(applied["status"], "applied")
             self.assertIsNone(conn.execute("SELECT id FROM memory_tags WHERE id = ?", (duplicate_id,)).fetchone())
             moved = conn.execute(
-                "SELECT 1 FROM memory_tag_edges WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = 'part_of'",
+                "SELECT weight, direction_bias, evidence_count, metadata_json "
+                "FROM memory_tag_edges "
+                "WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = 'part_of'",
                 (canonical_id, related_id),
             ).fetchone()
             self.assertIsNotNone(moved)
+            self.assertEqual(moved["weight"], 0.9)
+            self.assertEqual(moved["direction_bias"], -0.25)
+            self.assertEqual(moved["evidence_count"], 5)
+            self.assertIn("duplicate", moved["metadata_json"])
+            self.assertIn("canonical", moved["metadata_json"])
+            self.assertIn("directionBias", moved["metadata_json"])
             aliases = json.loads(
                 conn.execute("SELECT aliases_json FROM memory_tag_profiles WHERE tag_id = ?", (canonical_id,)).fetchone()[0]
             )
@@ -1490,6 +2010,133 @@ class MemoryBookCompilerTests(unittest.TestCase):
                 (duplicate_id, related_id),
             ).fetchone()
             self.assertIsNotNone(restored)
+
+    def test_equal_name_tag_merge_uses_physical_ids(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            canonical_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('Agent', 'agent', 'concept', 0.9, 1, 1, "
+                    "'canonical Agent tag', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            duplicate_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('agent', 'agent', 'concept', 0.8, 1, 1, "
+                    "'duplicate Agent tag', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+
+        plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "tagMerges": [
+                    {
+                        "source": "agent",
+                        "target": "Agent",
+                        "sourceTagId": duplicate_id,
+                        "targetTagId": canonical_id,
+                        "reason": "normalized duplicate",
+                        "evidenceEventIds": [self.event_id],
+                    }
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        report = inspect_memory_book_plan(plan)
+        self.assertTrue(report["ok"], report)
+        merge = next(
+            item for item in plan["diffs"] if item["op"] == "merge_semantic_tag"
+        )
+        self.assertEqual(merge["payload"]["sourceTagId"], duplicate_id)
+        self.assertEqual(merge["payload"]["targetTagId"], canonical_id)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            applied = apply_memory_book_plan(conn, plan)
+            self.assertEqual(applied["status"], "applied")
+            self.assertIsNone(
+                conn.execute(
+                    "SELECT id FROM memory_tags WHERE id = ?",
+                    (duplicate_id,),
+                ).fetchone()
+            )
+            self.assertIsNotNone(
+                conn.execute(
+                    "SELECT id FROM memory_tags WHERE id = ?",
+                    (canonical_id,),
+                ).fetchone()
+            )
+            rollback_memory_book_run(conn, run_id=plan["runId"])
+            self.assertIsNotNone(
+                conn.execute(
+                    "SELECT id FROM memory_tags WHERE id = ?",
+                    (duplicate_id,),
+                ).fetchone()
+            )
+
+    def test_physical_tag_merge_rejects_self_edge_before_deletion(self) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            source_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('source-tag', 'source-tag', 'concept', 0.8, 1, 1, "
+                    "'source', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            target_id = int(
+                conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, tag_type, quality_score, created_at_ms, updated_at_ms, "
+                    "description, source, status, metadata_json) VALUES ('target-tag', 'target-tag', 'concept', 0.9, 1, 1, "
+                    "'target', 'dsv4', 'active', '{}')"
+                ).lastrowid
+            )
+            conn.execute(
+                "INSERT INTO memory_tag_edges(src_tag_id, dst_tag_id, edge_type, weight, direction_bias, evidence_count, "
+                "updated_at_ms, metadata_json) VALUES (?, ?, 'related_to', 0.8, 0, 1, 1, '{}')",
+                (source_id, target_id),
+            )
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+        plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "tagMerges": [
+                    {
+                        "source": "source-tag",
+                        "target": "target-tag",
+                        "sourceTagId": source_id,
+                        "targetTagId": target_id,
+                        "reason": "test",
+                    }
+                ],
+            },
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            source_bundle=bundle,
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            with self.assertRaisesRegex(ValueError, "self edge"):
+                apply_memory_book_plan(conn, plan)
+            self.assertIsNotNone(
+                conn.execute(
+                    "SELECT id FROM memory_tags WHERE id = ?",
+                    (source_id,),
+                ).fetchone()
+            )
 
     def test_virtual_tag_merge_canonicalizes_without_creating_an_unapplicable_diff(self) -> None:
         output = {

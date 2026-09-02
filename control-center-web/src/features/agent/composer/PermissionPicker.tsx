@@ -1,11 +1,9 @@
 import {
   Check,
-  FolderOpen,
   LockKeyhole,
   ShieldCheck,
   TriangleAlert,
 } from 'lucide-react';
-import * as Checkbox from '@radix-ui/react-checkbox';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useState } from 'react';
 
@@ -31,6 +29,7 @@ import type {
 import {
   PERMISSION_PRESETS,
   permissionPreset,
+  unrestrictedWorkspaceRoots,
 } from './permission-policy';
 import { toolAvailableForPolicy } from './tool-policy';
 
@@ -41,7 +40,6 @@ export function PermissionPicker({
   disabled,
   requestOpen,
   onChange,
-  onWorkspaceRootsChange,
 }: {
   session?: SessionSummary;
   persona?: AgentPersonaV1;
@@ -53,14 +51,11 @@ export function PermissionPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [dangerousOpen, setDangerousOpen] = useState(false);
-  const [dangerousAcknowledged, setDangerousAcknowledged] = useState(false);
   const profile = session?.toolProfileVersion ?? 'control-center-v1';
   const current = permissionPreset(session?.executionMode, profile);
-  const sessionMode = session?.mode ?? 'assistant';
-  const workspaceRoots = session?.workspaceRoots ?? [];
-  // Session ownership and the runtime policy decide whether a user
-  // conversation can enter coordinator mode. Persona is optional metadata and
-  // must never grant or withhold execution permissions.
+  // Session ownership decides whether a user conversation can enter the
+  // coordinator profiles. Persona is optional metadata and never grants or
+  // withholds execution permissions.
   const canCoordinate = Boolean(session && !session.roomParticipant);
 
   useEffect(() => {
@@ -104,41 +99,34 @@ export function PermissionPicker({
             onValueChange={(presetId) => {
               const preset = PERMISSION_PRESETS.find((item) => item.id === presetId);
               if (!preset) return;
-              if (preset.id === 'dangerous') {
+              if (preset.id === 'full-auto') {
                 setOpen(false);
-                setDangerousAcknowledged(false);
                 setDangerousOpen(true);
                 return;
               }
-              const mode = preset.executionMode === 'workspace_managed'
-                ? 'coordinator'
-                : sessionMode;
               onChange({
-                mode,
+                mode: 'coordinator',
                 toolProfileVersion: preset.toolProfileVersion,
                 executionMode: preset.executionMode,
-                workspaceScopeConfirmed: preset.executionMode === 'workspace_managed',
+                workspaceRoots: unrestrictedWorkspaceRoots(...(session?.workspaceRoots ?? [])),
               });
               setOpen(false);
             }}
           >
             {PERMISSION_PRESETS.map((preset) => {
               const selected = current.id === preset.id;
-              const requiresCoordinator = preset.executionMode === 'workspace_managed'
-                || preset.executionMode === 'full_trust';
-              const available = !requiresCoordinator || canCoordinate;
-              const effectiveMode = requiresCoordinator ? 'coordinator' : sessionMode;
+              const available = canCoordinate;
               const toolCount = tools.filter(
                 (tool) => toolAvailableForPolicy(
                   tool,
-                  effectiveMode,
+                  'coordinator',
                   preset.toolProfileVersion,
                 ),
               ).length;
               return (
                 <RadioGroup.Item
                   className="agent-picker-popover__option"
-                  data-danger={preset.id === 'dangerous' || undefined}
+                  data-danger={preset.id === 'full-auto' || undefined}
                   value={preset.id}
                   key={preset.id}
                   disabled={disabled || !available}
@@ -157,40 +145,21 @@ export function PermissionPicker({
               );
             })}
           </RadioGroup.Root>
-          {canCoordinate ? (
-            <section className="agent-picker-popover__workspace" aria-label="授权工作区">
-              <FolderOpen size={16} />
-              <span>
-                <strong>授权工作区</strong>
-                <small title={workspaceRoots.join('\n')}>
-                  {workspaceRoots.length > 0
-                    ? `${workspaceRoots.length} 个目录 · ${workspaceRoots.map(shortPath).join('、')}`
-                    : '尚未授权目录，工作区工具无法运行'}
-                </small>
-              </span>
-              <Button
-                size="small"
-                variant="quiet"
-                disabled={disabled}
-                onClick={onWorkspaceRootsChange}
-              >
-                {workspaceRoots.length > 0 ? '更改目录' : '选择目录'}
-              </Button>
-            </section>
+          {!PERMISSION_PRESETS.some((preset) => preset.id === current.id) ? (
+            <p className="agent-picker-popover__note">
+              当前 Session 使用旧版权限策略；上方选项仅提供新的全权限或全自动策略。
+            </p>
           ) : null}
           {session?.toolAllowlistMode === 'explicit' ? (
             <p className="agent-picker-popover__note">
-              当前会话还受 {session.allowedTools?.length ?? 0} 项自定义工具上限约束；选择预设后恢复该预设的完整工具范围。
+              当前会话还受 {session.allowedTools?.length ?? 0} 项自定义工具上限约束；选择新预设后恢复完整工具范围。
             </p>
           ) : null}
         </PopoverContent>
       </Popover>
       <Dialog
         open={dangerousOpen}
-        onOpenChange={(nextOpen) => {
-          setDangerousOpen(nextOpen);
-          if (!nextOpen) setDangerousAcknowledged(false);
-        }}
+        onOpenChange={setDangerousOpen}
       >
         <DialogContent className="agent-dangerous-permission-dialog">
           <DialogHeader>
@@ -199,45 +168,36 @@ export function PermissionPicker({
             </span>
             <DialogTitle>启用全自动模式？</DialogTitle>
             <DialogDescription>
-              读取等无需审批的操作会直接进行；所有原本需要审批的操作都由独立审批 Agent（Luna Max）自动判定。
+              当前 Session 将拥有整个系统与所有 Tool，并自动批准后续动作。
             </DialogDescription>
           </DialogHeader>
           <div className="agent-dangerous-permission-dialog__limits">
             <p>
               <ShieldCheck size={16} />
-              <span><strong>审批上下文相互隔离</strong> Luna Max 只读取用户请求、当前任务与结构化审批历史，不读取当前 Agent 的输出或推理</span>
-            </p>
-            <p>
-              <ShieldCheck size={16} />
-              <span><strong>模型不能扩大权限</strong> 工作区边界、取消栅栏、哈希复验与审计回执始终有效；删库、灾难性破坏和敏感数据外传仍由代码阻止</span>
+              <span><strong>全磁盘与全 Tool</strong> Agent 可访问整个系统与所有 Tool，不受项目目录限制。</span>
             </p>
             <p>
               <TriangleAlert size={16} />
-              <span><strong>不会再等待你逐项确认</strong> Luna Max 拒绝或不可用时原操作不执行，Agent 会尝试更安全的替代方案</span>
+              <span><strong>自动批准每个动作</strong> 不再等待 Tool、路径或审批确认；请只对可信任务启用。</span>
+            </p>
+            <p>
+              <ShieldCheck size={16} />
+              <span><strong>仍有 OS 边界</strong> macOS 权限、系统安全策略和底层不可用资源仍可能拒绝操作。</span>
             </p>
           </div>
-          <label className="agent-dangerous-permission-dialog__check">
-            <Checkbox.Root
-              checked={dangerousAcknowledged}
-              onCheckedChange={(checked) => setDangerousAcknowledged(checked === true)}
-            >
-              <Checkbox.Indicator><Check size={14} /></Checkbox.Indicator>
-            </Checkbox.Root>
-            <span>我确认让此对话全自动执行，并由独立审批 Agent（Luna Max）判定所有待审批操作</span>
-          </label>
           <DialogFooter>
             <Button variant="quiet" onClick={() => setDangerousOpen(false)}>
               取消
             </Button>
             <Button
               variant="danger"
-              disabled={!dangerousAcknowledged}
               leadingIcon={<TriangleAlert size={15} />}
               onClick={() => {
                 onChange({
                   mode: 'coordinator',
-                  toolProfileVersion: 'control-center-v1',
+                  toolProfileVersion: 'control-center-auto-approve-v1',
                   executionMode: 'full_trust',
+                  workspaceRoots: unrestrictedWorkspaceRoots(...(session?.workspaceRoots ?? [])),
                   dangerousModeConfirmed: true,
                 });
                 setDangerousOpen(false);
@@ -250,9 +210,4 @@ export function PermissionPicker({
       </Dialog>
     </>
   );
-}
-
-function shortPath(path: string): string {
-  const parts = path.split('/').filter(Boolean);
-  return parts.at(-1) || path;
 }

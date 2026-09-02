@@ -75,7 +75,8 @@ export interface RepairLifecycle {
 export interface RepairAuthorization {
   state: 'authorized' | 'declined' | 'blocked' | 'expired';
   authorizationKind: 'repair_handoff';
-  writeAuthority: 'per_action_required' | 'model_arbitrated_full_trust';
+  writeAuthority:
+    'per_action_required' | 'model_arbitrated_full_trust' | 'auto_approved_full_trust';
   authorizationId: string;
   findingId: string;
   sourceScope: string;
@@ -90,7 +91,7 @@ export interface RepairVerification {
   repairTraceId: string;
   evalRunId: string;
   testStatus: '' | 'passed' | 'failed' | 'blocked';
-  sandboxStatus: '' | 'passed' | 'blocked';
+  sandboxStatus: '' | 'passed' | 'not_required' | 'blocked';
   sandboxedTestCount: number;
   verifiedAtMs: number;
   comparison: Comparison;

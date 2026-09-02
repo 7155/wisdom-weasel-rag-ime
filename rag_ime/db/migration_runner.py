@@ -633,6 +633,92 @@ def _migrate_agent_room_work_proposed_verdicts(
         columns.add(name)
 
 
+def _migrate_memory_catalog_run_kind(
+    conn: sqlite3.Connection,
+    _timestamp: int,
+) -> None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'memory_cleanup_runs'"
+    ).fetchone()
+    if row is None or "catalog_consolidation" in str(row[0] or ""):
+        return
+
+    if conn.in_transaction:
+        conn.commit()
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "ALTER TABLE memory_cleanup_runs "
+            "RENAME TO memory_cleanup_runs_before_catalog"
+        )
+        conn.execute(
+            """
+            CREATE TABLE memory_cleanup_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT UNIQUE NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                provider TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft',
+                summary TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                owner_kind TEXT NOT NULL DEFAULT 'user'
+                    CHECK (owner_kind IN ('user', 'shared', 'agent', 'session', 'room')),
+                owner_id TEXT NOT NULL DEFAULT 'default',
+                run_kind TEXT NOT NULL DEFAULT 'legacy'
+                    CHECK (run_kind IN (
+                        'legacy',
+                        'daily_curation',
+                        'manual_curation',
+                        'dream_insight',
+                        'catalog_consolidation'
+                    ))
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_cleanup_runs(
+                id, run_id, created_at_ms, provider, model, status, summary,
+                metadata_json, owner_kind, owner_id, run_kind
+            )
+            SELECT
+                id, run_id, created_at_ms, provider, model, status, summary,
+                metadata_json, owner_kind, owner_id, run_kind
+            FROM memory_cleanup_runs_before_catalog
+            """
+        )
+        conn.execute("DROP TABLE memory_cleanup_runs_before_catalog")
+        conn.execute(
+            """
+            CREATE INDEX idx_memory_cleanup_runs_owner_recent
+            ON memory_cleanup_runs(
+                owner_kind,
+                owner_id,
+                run_kind,
+                created_at_ms DESC
+            )
+            """
+        )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                "memory_cleanup_runs migration introduced foreign-key violations"
+            )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        if foreign_keys_enabled:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+
 _MIGRATION_HOOKS: dict[int, MigrationHook] = {
     1: _canonicalize_memory_feedback_events,
     3: _migrate_context_group_columns,
@@ -641,4 +727,5 @@ _MIGRATION_HOOKS: dict[int, MigrationHook] = {
     118: _migrate_project_tool_ids,
     160: _migrate_agent_room_work_review_columns,
     162: _migrate_agent_room_work_proposed_verdicts,
+    185: _migrate_memory_catalog_run_kind,
 }

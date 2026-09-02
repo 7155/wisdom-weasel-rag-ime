@@ -154,6 +154,41 @@ class AgentServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_evaluation_snapshot_rejects_all_conversation_mutations(self) -> None:
+        snapshot = self.service.sessions.create(
+            title="EnterpriseOps CSM · Task 1 · 通过",
+            model_profile="openai-codex/gpt-5.6-sol",
+            thinking_level="high",
+            tool_profile_version="subagent-readonly-v1",
+            execution_mode="read_only",
+            evaluation_snapshot=True,
+        )
+        session_id = str(snapshot["id"])
+
+        mutations = (
+            lambda: self.service.prompt(session_id, {"message": "继续"}),
+            lambda: self.service.update_session(session_id, {"title": "改名"}),
+            lambda: self.service.select_model(
+                session_id,
+                {"provider": "openai-codex", "modelId": "gpt-5.6-sol"},
+            ),
+            lambda: self.service.select_thinking_level(session_id, {"level": "max"}),
+            lambda: self.service.invoke_command(session_id, {"command": "/compact"}),
+            lambda: self.service.fork_session(session_id, {"entryId": "entry-1"}),
+            lambda: self.service.rewrite_session(
+                session_id,
+                {"entryId": "entry-1", "message": "改写"},
+            ),
+            lambda: self.service.compact(session_id, {}),
+            lambda: self.service.delete_session(session_id),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                with self.assertRaisesRegex(ValueError, "evaluation snapshot is read-only"):
+                    mutation()
+
+        self.assertTrue(self.service.sessions.get(session_id)["evaluationSnapshot"])
+
     def test_trace_diagnostic_report_freezes_read_only_session_and_finalizes_structured_result(self) -> None:
         session = self.service.create_session(
             {
@@ -175,6 +210,35 @@ class AgentServiceTests(unittest.TestCase):
             ],
             "judgeScores": [],
             "findings": [],
+            "presentation": {
+                "headline": "证据不足，无法归因。",
+                "impact": "任务完成状态保持未知。",
+                "primaryFindingId": "",
+                "knownFacts": [],
+                "evidenceGaps": [
+                    {
+                        "gap": "缺少权威完成回执。",
+                        "consequence": "无法判断任务是否完成。",
+                        "howToObtain": "重新执行并冻结终态回执。",
+                    }
+                ],
+                "causalNodes": [],
+                "expectedStageCount": 0,
+                "recordedStageReceiptEvidenceIds": [],
+                "failureAttribution": {
+                    "primaryLayer": "unknown",
+                    "summary": "五层归因均缺少足够证据。",
+                    "layers": [
+                        {
+                            "layer": layer,
+                            "verdict": "unknown",
+                            "explanation": "缺少冻结证据。",
+                            "evidenceIds": [],
+                        }
+                        for layer in ("tool", "skill", "template", "workflow", "model")
+                    ],
+                },
+            },
         }
         public_snapshot = {
             "ok": True,
@@ -563,26 +627,23 @@ class AgentServiceTests(unittest.TestCase):
                 session_id,
                 {"mode": "assistant", "codexSkillsEnabled": "true"},
             )
-        with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
-            self.service.update_session(
-                session_id,
-                {
-                    "mode": "coordinator",
-                    "workspaceRoots": [self.root.as_posix()],
-                    "toolProfileVersion": "control-center-auto-approve-v1",
-                },
-            )
         dangerous = self.service.update_session(
             session_id,
             {
                 "mode": "coordinator",
                 "workspaceRoots": [self.root.as_posix()],
                 "toolProfileVersion": "control-center-auto-approve-v1",
-                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         )["session"]
         self.assertEqual(dangerous["executionMode"], "full_trust")
-        self.assertEqual(dangerous["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(
+            dangerous["toolProfileVersion"],
+            "control-center-auto-approve-v1",
+        )
+        self.assertEqual(
+            dangerous["workspaceRoots"],
+            [str(self.root.resolve()), "/"],
+        )
         self.service.update_session(
             session_id,
             {
@@ -938,7 +999,76 @@ class AgentServiceTests(unittest.TestCase):
 
 
 
-    def test_full_automation_model_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
+    def test_unrestricted_profiles_discard_legacy_allowlists_and_missing_roots(self) -> None:
+        for profile, execution_mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                session = self.service.create_session(
+                    {"title": f"Unrestricted {execution_mode}"}
+                )["session"]
+                session_id = str(session["id"])
+                self.service.update_session(
+                    session_id,
+                    {
+                        "mode": "assistant",
+                        "toolProfileVersion": "subagent-readonly-v1",
+                        "allowedTools": ["overview"],
+                    },
+                )
+                missing_root = self.root / f"missing-{execution_mode}"
+                payload: dict[str, object] = {
+                    "mode": "coordinator",
+                    "executionMode": execution_mode,
+                    "toolProfileVersion": profile,
+                    "toolAllowlistMode": "explicit",
+                    "allowedTools": ["overview"],
+                    "workspaceRoots": [str(missing_root)],
+                }
+                if execution_mode == "full_trust":
+                    self.assertNotIn("dangerousModeConfirmation", payload)
+
+                unrestricted = self.service.update_session(
+                    session_id,
+                    payload,
+                )["session"]
+
+                self.assertEqual(unrestricted["toolProfileVersion"], profile)
+                self.assertEqual(unrestricted["toolAllowlistMode"], "profile")
+                self.assertEqual(unrestricted["allowedTools"], [])
+                self.assertEqual(
+                    unrestricted["workspaceRoots"],
+                    [str(missing_root.resolve()), "/"],
+                )
+                self.assertTrue(unrestricted["workspaceScopeGranted"])
+                self.assertTrue(unrestricted["projectContextEnabled"])
+                self.assertTrue(unrestricted["piSkillsEnabled"])
+                self.assertTrue(unrestricted["codexSkillsEnabled"])
+
+    def test_unrestricted_profiles_persist_system_root_when_update_omits_roots(self) -> None:
+        for profile, execution_mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                session_id = str(
+                    self.service.create_session(
+                        {"title": f"System root {execution_mode}"}
+                    )["session"]["id"]
+                )
+                unrestricted = self.service.update_session(
+                    session_id,
+                    {
+                        "mode": "coordinator",
+                        "executionMode": execution_mode,
+                        "toolProfileVersion": profile,
+                    },
+                )["session"]
+
+                self.assertEqual(unrestricted["workspaceRoots"], ["/"])
+
+    def test_auto_approve_profile_ignores_hash_and_skips_model_arbiter(self) -> None:
         session = self.service.create_session({"title": "完全信任测试"})["session"]
         session_id = str(session["id"])
         self.service.update_session(
@@ -972,18 +1102,19 @@ class AgentServiceTests(unittest.TestCase):
         with patch.object(
             self.service.approval_model,
             "decide",
-            return_value={
-                "receiptId": "approval-model-decision:test",
-                "decision": "approve",
-                "rationaleSummary": "操作预览已绑定且位于授权范围。",
-            },
-        ):
-            result = self.service.auto_approve_pending(approval)
+            side_effect=AssertionError(
+                "unrestricted automatic approval reached model arbitration"
+            ),
+        ) as decide:
+            result = self.service.auto_approve_pending(
+                {**approval, "payloadSha256": "b" * 64}
+            )
+        decide.assert_not_called()
 
         self.assertTrue(result["autoApproved"])
         self.assertFalse(result["approvalRequired"])
         self.assertEqual(result["approval"]["state"], "applied")
-        self.assertEqual(result["decisionMode"], "model")
+        self.assertEqual(result["decisionMode"], "policy")
         self.assertIsNotNone(
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
@@ -1183,7 +1314,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(result["approval"]["state"], "applied")
         self.assertEqual(target.read_text(encoding="utf-8"), "status = 'new'\n")
 
-    def test_full_automation_model_rejection_is_terminal_without_human_approval(self) -> None:
+    def test_legacy_full_trust_model_rejection_is_terminal_without_human_approval(self) -> None:
         session = self.service.create_session(
             {"title": "模型拒绝测试"}
         )["session"]
@@ -1193,7 +1324,8 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "mode": "coordinator",
                 "workspaceRoots": [self.root.as_posix()],
-                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "toolProfileVersion": "control-center-v1",
                 "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         )
@@ -1248,7 +1380,7 @@ class AgentServiceTests(unittest.TestCase):
             "tool:approval-rejection",
         )
 
-    def test_full_automation_expiry_race_closes_the_pending_pi_tool_call(self) -> None:
+    def test_legacy_full_trust_expiry_race_closes_the_pending_pi_tool_call(self) -> None:
         session = self.service.create_session(
             {"title": "自动审批过期竞态"}
         )["session"]
@@ -1258,7 +1390,8 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "mode": "coordinator",
                 "workspaceRoots": [self.root.as_posix()],
-                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "toolProfileVersion": "control-center-v1",
                 "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         )
@@ -4525,6 +4658,80 @@ class AgentServiceTests(unittest.TestCase):
         self.assertFalse(unavailable["runtimeAvailable"])
         self.assertEqual(unavailable["items"], [])
         self.assertNotIn("private runtime path", json.dumps(unavailable))
+
+    def test_extension_app_skill_commands_are_scoped_to_the_owning_surface(self) -> None:
+        ordinary = self.service.create_session({"title": "普通 Agent"})["session"]
+        app = self.service.create_session(
+            {
+                "title": "掌柜问数 · 问数",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:zhanggui-wenshu",
+                "surfaceKey": "ask",
+            }
+        )["session"]
+        commands = [
+            {
+                "name": "skill:systematic-debugging",
+                "invocation": "/skill:systematic-debugging",
+                "description": "通用调试",
+                "source": "skill",
+            },
+            {
+                "name": "skill:zhanggui-wenshu",
+                "invocation": "/skill:zhanggui-wenshu",
+                "description": "掌柜问数专用能力",
+                "source": "skill",
+            },
+            {
+                "name": "skill:other-app",
+                "invocation": "/skill:other-app",
+                "description": "其他 App 专用能力",
+                "source": "skill",
+            },
+        ]
+        self.service.bind_extension_app_skill_owners(
+            lambda: {
+                "zhanggui-wenshu": "extension:zhanggui-wenshu",
+                "other-app": "extension:other-app",
+            }
+        )
+
+        with patch.object(self.service.runtime, "command_catalog", return_value=commands):
+            ordinary_catalog = self.service.command_catalog(str(ordinary["id"]))
+            app_catalog = self.service.command_catalog(str(app["id"]))
+
+        self.assertEqual(
+            [item["name"] for item in ordinary_catalog["items"]],
+            ["skill:systematic-debugging"],
+        )
+        self.assertEqual(
+            [item["name"] for item in app_catalog["items"]],
+            ["skill:systematic-debugging", "skill:zhanggui-wenshu"],
+        )
+
+        with patch.object(
+            self.service.runtime,
+            "invoke_command",
+            return_value={
+                "command": "/skill:zhanggui-wenshu",
+                "name": "skill:zhanggui-wenshu",
+                "handled": True,
+                "result": {},
+                "leafId": "leaf:app-skill",
+            },
+        ) as invoke:
+            with self.assertRaisesRegex(ValueError, "belongs to Extension App"):
+                self.service.invoke_command(
+                    str(ordinary["id"]),
+                    {"command": "/skill:zhanggui-wenshu"},
+                )
+            allowed = self.service.invoke_command(
+                str(app["id"]),
+                {"command": "/skill:zhanggui-wenshu"},
+            )
+
+        self.assertTrue(allowed["handled"])
+        invoke.assert_called_once()
 
     def test_session_lifecycle_probes_memory_due_without_running_the_organizer(self) -> None:
         session = self.service.create_session({"title": "生命周期"})["session"]

@@ -15,6 +15,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .agent_execution_policy import unrestricted_workspace_policy_active
+from .agent_sessions import AgentSessionStore
 from .agent_workspace import (
     PreparedWorkspaceCommand,
     SpawnedWorkspaceCommand,
@@ -46,6 +48,7 @@ class _LiveJob:
     launched: SpawnedWorkspaceCommand | object | None
     log_path: Path
     max_run_seconds: int
+    session_id: str = ""
     raw_output_path: Path | None = None
     exit_status_path: Path | None = None
     temporary_path: Path | None = None
@@ -74,10 +77,12 @@ class AgentBackgroundJobService:
         workspace_harness: WorkspaceHarness | None = None,
         log_root: str | Path | None = None,
         execution_owner: bool = True,
+        sessions: AgentSessionStore | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.events = events
         self.workspace_harness = workspace_harness or WorkspaceHarness()
+        self.sessions = sessions or AgentSessionStore(self.db_path)
         self.log_root = Path(log_root) if log_root is not None else self.db_path.parent / "BackgroundJobs"
         self.execution_owner = bool(execution_owner)
         self._lock = threading.RLock()
@@ -165,6 +170,7 @@ class AgentBackgroundJobService:
             launched=detached_launch,
             log_path=log_path,
             max_run_seconds=int(row["max_run_seconds"]),
+            session_id=str(row["session_id"] or ""),
             raw_output_path=raw_output_path if resumable else None,
             exit_status_path=exit_status_path if resumable else None,
             temporary_path=temporary_path,
@@ -307,6 +313,7 @@ class AgentBackgroundJobService:
         live = _LiveJob(
             launched=launched,
             log_path=log_path,
+            session_id=session,
             max_run_seconds=prepared.timeout_seconds,
             raw_output_path=raw_output_path,
             exit_status_path=exit_status_path,
@@ -515,6 +522,8 @@ class AgentBackgroundJobService:
                 data = b""
                 decoded_text = ""
                 has_more = False
+        if not self._session_allows_raw_output(session):
+            decoded_text = self.workspace_harness.redact_output(decoded_text)
         next_cursor = actual_cursor + len(data)
         return {
             "schemaVersion": "rag-ime.agent-background-job-log.v1",
@@ -1255,6 +1264,15 @@ class AgentBackgroundJobService:
         if live.exit_status_path is not None:
             live.exit_status_path.unlink(missing_ok=True)
 
+    def _session_allows_raw_output(self, session_id: str) -> bool:
+        if not session_id:
+            return False
+        try:
+            session = self.sessions.get(session_id)
+        except Exception:
+            return False
+        return unrestricted_workspace_policy_active(session)
+
     def _flush_complete_lines(self, live: _LiveJob, text: str) -> str:
         last_newline = max(text.rfind("\n"), text.rfind("\r"))
         if last_newline >= 0:
@@ -1262,6 +1280,9 @@ class AgentBackgroundJobService:
             text = text[last_newline + 1 :]
         if len(text) > 65_536:
             retain_from = len(text) - 1_024
+            if self._session_allows_raw_output(live.session_id):
+                self._append_redacted_text(live, text[:retain_from])
+                return text[retain_from:]
             redacted = self.workspace_harness.redact_output(text)
             context_size = 1_024
             while retain_from > 0:
@@ -1276,8 +1297,12 @@ class AgentBackgroundJobService:
         return text
 
     def _append_redacted_text(self, live: _LiveJob, text: str) -> None:
-        redacted = self.workspace_harness.redact_output(text)
-        data = redacted.encode("utf-8")
+        output_text = (
+            text
+            if self._session_allows_raw_output(live.session_id)
+            else self.workspace_harness.redact_output(text)
+        )
+        data = output_text.encode("utf-8")
         if not data:
             return
         with self._lock:

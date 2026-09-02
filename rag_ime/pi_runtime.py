@@ -18,6 +18,7 @@ from urllib.request import getproxies
 
 from .agent_core_policy import base_agent_safety_policy_prompt, core_agent_policy_prompt
 from .agent_events import AgentEventHub
+from .agent_execution_policy import unrestricted_workspace_policy_active
 from .agent_blocks import extract_completed_agent_blocks, normalize_trusted_agent_blocks
 from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_tool_ids import (
@@ -201,11 +202,17 @@ def _project_context_bootstrap_prompt(
     roots = session.get("workspaceRoots")
     if not isinstance(roots, list) or not roots:
         return ""
-    try:
-        root = Path(str(roots[0])).expanduser().resolve(strict=True)
-    except (OSError, RuntimeError):
-        return ""
-    if not root.is_dir() or root.is_symlink():
+    root: Path | None = None
+    for value in roots:
+        try:
+            candidate = Path(str(value)).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if candidate == Path("/") or not candidate.is_dir() or candidate.is_symlink():
+            continue
+        root = candidate
+        break
+    if root is None:
         return ""
     guide = root / "AGENTS.md"
     if guide.is_file() and not guide.is_symlink():
@@ -232,7 +239,10 @@ def _tools_for_session(
     selected = tuple(
         tool for tool in available if tool not in PI_PACKAGE_OWNED_CONTROL_TOOL_IDS
     )
-    if str(session.get("toolAllowlistMode") or "profile") == "explicit":
+    if (
+        str(session.get("toolAllowlistMode") or "profile") == "explicit"
+        and not unrestricted_workspace_policy_active(session)
+    ):
         explicit = {str(value) for value in session.get("allowedTools") or []}
         selected = tuple(tool for tool in selected if tool in explicit)
     if str(session.get("executionMode") or "").strip().lower() == "read_only":
@@ -1402,6 +1412,50 @@ class PiRuntimeManager:
             )
         return result
 
+    def session_snapshot(self, session_id: str) -> dict[str, object]:
+        """Return a durable snapshot without starting Pi for frozen eval evidence."""
+
+        session = self.sessions.get(session_id)
+        if session.get("evaluationSnapshot") is not True:
+            return {
+                "messages": self.messages(session_id),
+                "toolHistoryEvents": [],
+                "telemetry": None,
+                "messageQueue": None,
+            }
+        found, messages = self._persisted_messages(session_id)
+        if not found:
+            raise PiRuntimeError("evaluation snapshot transcript is unavailable")
+        entries = self._persisted_transcript_entries(session_id)
+        if entries is None:
+            raise PiRuntimeError("evaluation snapshot transcript is unavailable")
+        # These are pure transcript projection helpers.  The import is local
+        # because the v2 Runtime module itself imports this compatibility
+        # manager during module initialization.
+        from .pi_runtime_v2 import (  # pylint: disable=import-outside-toplevel
+            durable_branch_messages,
+            durable_tool_history_events,
+        )
+
+        binding = self.sessions.runtime_binding(session_id) or {}
+        raw_messages, selected_entries = durable_branch_messages(
+            entries,
+            leaf_id=str(binding.get("branchAnchor") or ""),
+        )
+        return {
+            "messages": messages,
+            "entries": selected_entries,
+            "toolHistoryEvents": durable_tool_history_events(
+                raw_messages,
+                session_id=session_id,
+                raw_entries=selected_entries,
+                maximum_tools=None,
+                maximum_public_chars=None,
+            ),
+            "telemetry": None,
+            "messageQueue": None,
+        }
+
     def fork_candidates(self, session_id: str) -> list[dict[str, object]]:
         """List Pi-owned user-message anchors without inventing product checkpoints."""
 
@@ -1690,6 +1744,62 @@ class PiRuntimeManager:
                 ).to_payload()
             )
         return True, public_messages
+
+    def _persisted_transcript_entries(
+        self,
+        session_id: str,
+    ) -> list[dict[str, object]] | None:
+        session = self.sessions.get(session_id)
+        binding = self.sessions.runtime_binding(session_id) or {}
+        raw_path = str(
+            binding.get("transcriptRef")
+            or session.get("sessionFile")
+            or ""
+        ).strip()
+        if not raw_path:
+            return None
+        candidate = Path(raw_path).expanduser()
+        if candidate.is_symlink():
+            return None
+        try:
+            transcript = candidate.resolve(strict=True)
+        except OSError:
+            return None
+        session_root = self.config.session_dir.expanduser().resolve(strict=False)
+        if not path_is_within(transcript, session_root):
+            return None
+        try:
+            stat = transcript.stat()
+        except OSError:
+            return None
+        if not transcript.is_file() or stat.st_size > _MAX_PERSISTED_TRANSCRIPT_BYTES:
+            return None
+        entries: list[dict[str, object]] = []
+        try:
+            with transcript.open("rb") as handle:
+                for raw_line in handle:
+                    if len(raw_line) > _MAX_PERSISTED_TRANSCRIPT_LINE_BYTES:
+                        return None
+                    if len(entries) >= _MAX_PERSISTED_TRANSCRIPT_ENTRIES:
+                        return None
+                    try:
+                        parsed = json.loads(raw_line)
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if isinstance(parsed, Mapping):
+                        entries.append(dict(parsed))
+        except OSError:
+            return None
+        if not entries or str(entries[0].get("type") or "") != "session":
+            return None
+        external_session_id = str(
+            binding.get("externalSessionId")
+            or session.get("piSessionId")
+            or ""
+        )
+        if external_session_id and str(entries[0].get("id") or "") != external_session_id:
+            return None
+        return entries
 
     def rewind_session(self, session_id: str, *, entry_id: str) -> dict[str, object]:
         del session_id, entry_id

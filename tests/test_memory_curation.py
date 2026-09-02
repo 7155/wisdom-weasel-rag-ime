@@ -13,6 +13,10 @@ from rag_ime.memory_curation import (
     build_memory_curation_model_bundle,
     curation_decisions_to_compile_output,
 )
+from rag_ime.memory_book_compiler import (
+    inspect_memory_book_plan,
+    memory_book_plan_from_compile_output,
+)
 
 
 class MemoryCurationTests(unittest.TestCase):
@@ -412,6 +416,414 @@ class MemoryCurationTests(unittest.TestCase):
             {"输入法", "上下文治理"},
         )
 
+    def test_global_catalog_bundle_is_complete_uncapped_and_order_stable(self) -> None:
+        bundle = _global_catalog_bundle()
+        bundle["existingMemoryAtoms"] = [
+            {
+                "atomId": f"atom:{index}",
+                "kind": "project_fact",
+                "canonicalText": f"catalog fact {index}",
+                "claimKey": f"claim:{index}",
+                "lineageId": f"lineage:{index}",
+                "claimState": "current",
+                "validFromMs": index,
+                "validToMs": None,
+                "supersedesId": "",
+                "sourceEventIds": [index + 1],
+                "sourceMemoryIds": [f"memory:{value}" for value in range(70)],
+                "app": "com.openai.codex",
+                "project": "ime",
+                "tags": [f"tag-{value}" for value in range(20)],
+                "semanticGroupIds": [f"group:{value}" for value in range(10)],
+                "aliases": [f"alias-{value}" for value in range(60)],
+                "surfaceHints": [f"surface-{value}" for value in range(40)],
+                "queryExpansions": [f"query-{value}" for value in range(50)],
+                "status": "active",
+            }
+            for index in range(501)
+        ]
+        bundle["existingSemanticGroups"] = [
+            {
+                "groupId": f"group:{index}",
+                "title": f"Group {index}",
+                "description": f"Group description {index}",
+                "aliases": [],
+                "tags": [],
+            }
+            for index in range(25)
+        ]
+        bundle["existingSemanticTags"] = [
+            {
+                "tagId": index + 1,
+                "name": f"Tag {index}",
+                "description": f"Tag description {index}",
+                "aliases": [],
+                "semanticGroupIds": [],
+            }
+            for index in range(161)
+        ]
+        bundle["existingTagEdges"] = [
+            {
+                "srcTagId": (index % 161) + 1,
+                "dstTagId": ((index + 1) % 161) + 1,
+                "edgeType": "related_to",
+                "weight": 0.5,
+                "evidenceCount": 1,
+            }
+            for index in range(241)
+        ]
+        bundle["existingMemoryBooks"] = [
+            {
+                "bookId": f"book:{index}",
+                "title": f"Book {index}",
+                "summary": f"Book summary {index}",
+                "tags": [],
+                "semanticGroupIds": [],
+                "memoryAtomIds": [f"atom:{index}"],
+                "status": "active",
+            }
+            for index in range(49)
+        ]
+
+        result = build_memory_curation_model_bundle(bundle)
+        reordered = dict(bundle)
+        for key in (
+            "existingMemoryAtoms",
+            "existingSemanticGroups",
+            "existingSemanticTags",
+            "existingTagEdges",
+            "existingMemoryBooks",
+        ):
+            reordered[key] = list(reversed(bundle[key]))
+        reordered_result = build_memory_curation_model_bundle(reordered)
+
+        self.assertEqual(len(result["existingAtoms"]), 501)
+        self.assertEqual(len(result["existingGroups"]), 25)
+        self.assertEqual(len(result["existingTags"]), 161)
+        self.assertEqual(len(result["existingTagEdges"]), 241)
+        self.assertEqual(len(result["existingBooks"]), 49)
+        self.assertEqual(len(result["existingAtoms"][0]["tags"]), 20)
+        self.assertEqual(len(result["existingAtoms"][0]["sourceMemoryIds"]), 70)
+        self.assertTrue(result["catalogComplete"])
+        self.assertFalse(any(result["catalogTruncated"].values()))
+        self.assertEqual(result["catalogDigest"], reordered_result["catalogDigest"])
+
+    def test_global_catalog_digest_ignores_only_maintenance_timestamps(self) -> None:
+        bundle = _global_catalog_bundle()
+        for key in (
+            "existingMemoryAtoms",
+            "existingSemanticGroups",
+            "existingSemanticTags",
+            "existingTagEdges",
+            "existingMemoryBooks",
+        ):
+            for item in bundle[key]:
+                item["updatedAtMs"] = 10
+                item["lastActiveAtMs"] = 11
+        baseline = build_memory_curation_model_bundle(bundle)["catalogDigest"]
+        timestamp_only = json.loads(json.dumps(bundle))
+        for key in (
+            "existingMemoryAtoms",
+            "existingSemanticGroups",
+            "existingSemanticTags",
+            "existingTagEdges",
+            "existingMemoryBooks",
+        ):
+            for item in timestamp_only[key]:
+                item["updatedAtMs"] = 999
+                item["lastActiveAtMs"] = 1_000
+        self.assertEqual(
+            build_memory_curation_model_bundle(timestamp_only)["catalogDigest"],
+            baseline,
+        )
+
+        semantic_change = json.loads(json.dumps(timestamp_only))
+        semantic_change["existingMemoryBooks"][0]["summary"] = "Changed meaning"
+        self.assertNotEqual(
+            build_memory_curation_model_bundle(semantic_change)["catalogDigest"],
+            baseline,
+        )
+
+    def test_global_catalog_rejects_every_atom_authority_mismatch(self) -> None:
+        authority_cases = {
+            "ownerKind": ("user", "agent"),
+            "ownerId": ("default", "other"),
+            "privacyLevel": ("local", "private"),
+            "knowledgeDomain": ("legacy", "personal_memory"),
+            "scopeKind": ("project", "user"),
+            "scopeId": ("ime", "default"),
+            "visibility": ("shared", "private"),
+            "authorizationRevision": ("auth:1", "auth:2"),
+            "bindingId": ("binding:1", "binding:2"),
+            "scopeMode": ("advisory", "authoritative"),
+        }
+        for field, (left, right) in authority_cases.items():
+            with self.subTest(field=field):
+                bundle = _global_catalog_bundle()
+                bundle["existingMemoryAtoms"][0][field] = left
+                bundle["existingMemoryAtoms"][1][field] = right
+                rejected = curation_decisions_to_compile_output(
+                    {"merge": [["P2", "P1"]]},
+                    source_bundle=bundle,
+                    project="ime",
+                )
+                self.assertEqual(rejected["supersedes"], [])
+                self.assertTrue(
+                    any(
+                        warning.startswith(
+                            "global_catalog_non_equivalent_atom_merge_ignored:"
+                        )
+                        for warning in rejected["warnings"]
+                    )
+                )
+
+
+    def test_global_catalog_accepts_only_exact_atom_and_physical_tag_merges(self) -> None:
+        bundle = _global_catalog_bundle()
+        result = curation_decisions_to_compile_output(
+            {
+                "atomDecisions": [
+                    {
+                        "action": "merge",
+                        "sourceRef": "P2",
+                        "targetRef": "P1",
+                        "reason": "exact duplicate",
+                    },
+                    {
+                        "action": "create",
+                        "canonicalText": "global audit must not create",
+                    },
+                ],
+                "tagMerges": [
+                    {
+                        "source": "T2",
+                        "target": "T1",
+                        "reason": "normalized duplicate",
+                    }
+                ],
+            },
+            source_bundle=bundle,
+            project="ime",
+        )
+
+        self.assertEqual(
+            [(item["oldId"], item["newId"]) for item in result["supersedes"]],
+            [("atom:duplicate:2", "atom:duplicate:1")],
+        )
+        self.assertEqual(
+            result["tagMerges"],
+            [
+                {
+                    "source": "Agent",
+                    "target": "Agent",
+                    "sourceTagId": 12,
+                    "targetTagId": 11,
+                    "reason": "normalized duplicate",
+                    "evidenceEventIds": [],
+                    "confidence": 0.8,
+                }
+            ],
+        )
+        self.assertIn(
+            "catalog_audit_disallowed_fact_action_ignored",
+            result["warnings"],
+        )
+        plan = memory_book_plan_from_compile_output(
+            result,
+            project="ime",
+            provider="openai-codex",
+            model="gpt-5.6-luna",
+            source_bundle=bundle,
+        )
+        validation = inspect_memory_book_plan(plan)
+        self.assertTrue(validation["ok"], validation)
+        self.assertEqual(validation["counts"]["memoryAtoms"], 1)
+        self.assertEqual(validation["counts"]["supersedes"], 1)
+        self.assertEqual(validation["counts"]["tagMerges"], 1)
+        planned_tag_merge = next(
+            item
+            for item in plan["diffs"]
+            if item["op"] == "merge_semantic_tag"
+        )
+        self.assertEqual(planned_tag_merge["payload"]["sourceTagId"], 12)
+        self.assertEqual(planned_tag_merge["payload"]["targetTagId"], 11)
+        no_model_tag_merge = dict(result)
+        no_model_tag_merge["tagMerges"] = []
+        deterministic_plan = memory_book_plan_from_compile_output(
+            no_model_tag_merge,
+            project="ime",
+            provider="openai-codex",
+            model="gpt-5.6-luna",
+            source_bundle=bundle,
+        )
+        deterministic_tag_merges = [
+            item
+            for item in deterministic_plan["diffs"]
+            if item["op"] == "merge_semantic_tag"
+        ]
+        self.assertEqual(len(deterministic_tag_merges), 1)
+        self.assertEqual(
+            deterministic_tag_merges[0]["payload"]["sourceTagId"],
+            12,
+        )
+        self.assertEqual(
+            deterministic_tag_merges[0]["payload"]["targetTagId"],
+            11,
+        )
+
+        mismatched = json.loads(json.dumps(bundle))
+        mismatched["existingMemoryAtoms"][1]["project"] = "another-project"
+        rejected = curation_decisions_to_compile_output(
+            {
+                "merge": [["P2", "P1"]],
+            },
+            source_bundle=mismatched,
+            project="ime",
+        )
+        self.assertEqual(rejected["supersedes"], [])
+        self.assertTrue(
+            any(
+                warning.startswith(
+                    "global_catalog_non_equivalent_atom_merge_ignored:"
+                )
+                for warning in rejected["warnings"]
+            )
+        )
+
+    def test_global_catalog_organizer_is_dedicated_merge_only_and_fail_closed(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        class CatalogExecutor:
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del max_tokens
+                captured.append(
+                    {
+                        "messages": messages,
+                        "phase": phase,
+                        "isolated": isolated,
+                    }
+                )
+                if phase == "memory-catalog-consolidation-verifier":
+                    packet = json.loads(messages[1]["content"])
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps(
+                                        {
+                                            "v": 1,
+                                            "ok": 1,
+                                            "coveredEvidenceRefs": [],
+                                            "checkedActionCount": packet[
+                                                "expectedActionCount"
+                                            ],
+                                            "decisionDigest": packet[
+                                                "decisionDigest"
+                                            ],
+                                            "findings": [],
+                                            "errors": [],
+                                        }
+                                    )
+                                }
+                            }
+                        ]
+                    }
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "atomDecisions": [
+                                            {
+                                                "action": "merge",
+                                                "sourceRef": "P2",
+                                                "targetRef": "P1",
+                                            },
+                                            {
+                                                "action": "create",
+                                                "canonicalText": "not allowed",
+                                            },
+                                        ],
+                                        "create": [
+                                            {
+                                                "canonicalText": "also not allowed",
+                                            }
+                                        ],
+                                        "tagMerges": [
+                                            {
+                                                "source": "T2",
+                                                "target": "T1",
+                                                "reason": "same normalized name",
+                                            }
+                                        ],
+                                        "warnings": [],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+
+        organizer = DeepSeekMemoryOrganizer(
+            load_deepseek_config(
+                env={
+                    "DEEPSEEK_API_KEY": "secret",
+                    "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                }
+            ),
+            completion_executor=CatalogExecutor(),
+        )
+        result = organizer.compile_memory_curation(
+            bundle=_global_catalog_bundle(),
+            project="ime",
+        )
+
+        self.assertEqual(
+            [item["phase"] for item in captured],
+            [
+                "memory-catalog-consolidation",
+                "memory-catalog-consolidation-verifier",
+            ],
+        )
+        self.assertFalse(captured[0]["isolated"])
+        self.assertTrue(captured[1]["isolated"])
+        self.assertEqual(len(result["merge"]), 1)
+        self.assertEqual(result["create"], [])
+        self.assertIn(
+            "global_catalog_direct_actions_discarded",
+            result["warnings"],
+        )
+        snapshot = json.loads(captured[0]["messages"][1]["content"])["snapshot"]
+        self.assertTrue(snapshot["catalogComplete"])
+        self.assertTrue(snapshot["catalogDigest"])
+        self.assertEqual(snapshot["existingTags"][0]["tagId"], 11)
+        self.assertEqual(
+            snapshot["existingAtoms"][0]["claimKey"],
+            "claim:duplicate",
+        )
+        self.assertIn("normalized name", captured[0]["messages"][0]["content"])
+
+        incomplete = _global_catalog_bundle()
+        incomplete["catalogComplete"] = False
+        calls_before = len(captured)
+        with self.assertRaisesRegex(
+            DeepSeekMemoryOrganizerError,
+            "requires a complete catalog snapshot",
+        ):
+            organizer.compile_memory_curation(
+                bundle=incomplete,
+                project="ime",
+            )
+        self.assertEqual(len(captured), calls_before)
+
     def test_deepseek_curation_prompt_requests_only_compact_atom_decisions(self) -> None:
         config = load_deepseek_config(
             env={
@@ -496,6 +908,98 @@ class MemoryCurationTests(unittest.TestCase):
         user_payload = json.loads(request["messages"][1]["content"])
         self.assertEqual(user_payload["snapshot"]["existingAtoms"][0]["ref"], "P1")
         self.assertNotIn("rimeRankFeedback", user_payload["snapshot"])
+
+
+def _global_catalog_bundle() -> dict[str, object]:
+    bundle = _source_bundle(include_feedback=False)
+    common_atom = {
+        "kind": "project_fact",
+        "canonicalText": "The catalog keeps one exact duplicate.",
+        "claimKey": "claim:duplicate",
+        "lineageId": "lineage:duplicate",
+        "claimState": "current",
+        "validFromMs": 10,
+        "validToMs": None,
+        "supersedesId": "",
+        "app": "com.openai.codex",
+        "project": "ime",
+        "tags": ["Agent"],
+        "semanticGroupIds": ["group:input-method"],
+        "aliases": [],
+        "surfaceHints": [],
+        "queryExpansions": [],
+        "sourceMemoryIds": [],
+        "status": "active",
+        "confidence": 0.9,
+        "qualityScore": 0.9,
+    }
+    bundle.update(
+        {
+            "curationScope": "global",
+            "catalogAudit": True,
+            "catalogOnly": True,
+            "catalogComplete": True,
+            "catalogTruncated": {},
+            "recentEvents": [],
+            "existingMemoryAtoms": [
+                {
+                    **common_atom,
+                    "atomId": "atom:duplicate:1",
+                    "sourceEventIds": [1],
+                },
+                {
+                    **common_atom,
+                    "atomId": "atom:duplicate:2",
+                    "sourceEventIds": [2],
+                },
+            ],
+            "existingSemanticTags": [
+                {
+                    "tagId": 11,
+                    "name": "Agent",
+                    "description": "Agent concept",
+                    "aliases": [],
+                    "semanticGroupIds": ["group:input-method"],
+                    "sourceEventIds": [1],
+                    "qualityScore": 0.9,
+                },
+                {
+                    "tagId": 12,
+                    "name": "Agent",
+                    "description": "Duplicate Agent concept",
+                    "aliases": [],
+                    "semanticGroupIds": ["group:input-method"],
+                    "sourceEventIds": [2],
+                    "qualityScore": 0.8,
+                },
+            ],
+            "existingTagEdges": [
+                {
+                    "srcTagId": 11,
+                    "dstTagId": 12,
+                    "edgeType": "related_to",
+                    "weight": 0.5,
+                    "evidenceCount": 1,
+                }
+            ],
+            "existingMemoryBooks": [
+                {
+                    "bookId": "book:topic:catalog",
+                    "title": "Catalog",
+                    "summary": "Derived view over exact duplicate atoms.",
+                    "tags": ["Agent"],
+                    "sourceEventIds": [1, 2],
+                    "memoryAtomIds": [
+                        "atom:duplicate:1",
+                        "atom:duplicate:2",
+                    ],
+                    "semanticGroupIds": ["group:input-method"],
+                    "status": "active",
+                }
+            ],
+        }
+    )
+    return bundle
 
 
 def _source_bundle(*, include_feedback: bool = True) -> dict[str, object]:

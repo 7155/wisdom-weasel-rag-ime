@@ -119,9 +119,17 @@ def _canonical_signal(
     operation: object = "",
     failed: bool,
     sandboxed: bool = False,
+    executed: bool = False,
+    order: int = 0,
 ) -> dict[str, object] | None:
-    if not isinstance(identity, str) or _SAFE_CANONICAL_ID_RE.fullmatch(identity) is None:
+    if not isinstance(identity, str) or not identity.strip():
         return None
+    raw_identity = identity.strip()
+    canonical_identity = (
+        raw_identity
+        if _SAFE_CANONICAL_ID_RE.fullmatch(raw_identity) is not None
+        else f"signal:{hashlib.sha256(raw_identity.encode('utf-8')).hexdigest()[:32]}"
+    )
     if not isinstance(tool_name, str) or not tool_name.strip():
         return None
     normalized_name = tool_name.strip()
@@ -132,12 +140,14 @@ def _canonical_signal(
     if not is_change and not is_test:
         return None
     return {
-        "id": identity,
+        "id": canonical_identity,
         "toolName": _public_tool_name(normalized_name),
         "isChange": is_change,
         "isTest": is_test,
         "failed": failed,
         "sandboxed": sandboxed if is_test else False,
+        "executed": executed if is_test else False,
+        "order": max(0, int(order)),
     }
 
 
@@ -147,16 +157,29 @@ def _session_tool_signal(event: Mapping[str, object]) -> dict[str, object] | Non
         return None
     payload = _mapping(event.get("payload"))
     args = _mapping(payload.get("args"))
-    result = _mapping(payload.get("result"))
+    payload_result = _mapping(payload.get("result"))
+    nested_receipt = _mapping(payload_result.get("receipt"))
+    result = nested_receipt or payload_result
     exit_code = result.get("exitCode")
-    failed = payload.get("isError") is True or (
-        isinstance(exit_code, int)
-        and not isinstance(exit_code, bool)
-        and exit_code != 0
+    workspace_receipt = (
+        result.get("schemaVersion") == "rag-ime.workspace-command-receipt.v1"
     )
+    has_exit_code = isinstance(exit_code, int) and not isinstance(exit_code, bool)
+    receipt_failed = bool(
+        workspace_receipt
+        and (
+            result.get("timedOut") is True
+            or result.get("outputLimited") is True
+            or result.get("ok") is False
+            or result.get("validationSucceeded") is False
+        )
+    )
+    failed = payload.get("isError") is True or (
+        has_exit_code and exit_code != 0
+    ) or receipt_failed
     command_sha256 = result.get("commandSha256")
     sandboxed = bool(
-        result.get("schemaVersion") == "rag-ime.workspace-command-receipt.v1"
+        workspace_receipt
         and isinstance(command_sha256, str)
         and re.fullmatch(r"[a-f0-9]{64}", command_sha256) is not None
         and result.get("networkAllowed") is False
@@ -165,12 +188,15 @@ def _session_tool_signal(event: Mapping[str, object]) -> dict[str, object] | Non
         and isinstance(result.get("sourceReadOnly"), bool)
         and isinstance(result.get("temporaryWritesDiscarded"), bool)
     )
+    executed = bool(workspace_receipt and has_exit_code)
     return _canonical_signal(
         identity=payload.get("toolCallId") or event.get("eventId"),
         tool_name=payload.get("toolName"),
         command=args.get("command"),
         failed=failed,
         sandboxed=sandboxed,
+        executed=executed,
+        order=event.get("sequence") if isinstance(event.get("sequence"), int) else 0,
     )
 
 
@@ -192,6 +218,12 @@ def _trace_tool_signal(span: Mapping[str, object]) -> dict[str, object] | None:
         command=attributes.get("command"),
         operation=span.get("name"),
         failed=failed,
+        executed=isinstance(exit_code, int) and not isinstance(exit_code, bool),
+        order=(
+            int(span.get("endedAtMs"))
+            if isinstance(span.get("endedAtMs"), int)
+            else 0
+        ),
     )
 
 
@@ -199,25 +231,64 @@ def _snapshot_records(
     session_snapshot: Mapping[str, object],
     repair_trace: Mapping[str, object],
 ) -> list[dict[str, object]]:
-    """Extract only the two canonical Runtime containers."""
+    """Extract and correlate only the two canonical Runtime containers."""
 
     candidates: list[dict[str, object]] = []
-
-    live_events = session_snapshot.get("liveEvents")
-    if isinstance(live_events, list):
-        for event in live_events:
-            if isinstance(event, Mapping):
-                signal = _session_tool_signal(event)
-                if signal is not None:
-                    candidates.append(signal)
+    trace_order_by_identity: dict[str, int] = {}
 
     spans = repair_trace.get("spans")
     if isinstance(spans, list):
         for span in spans:
-            if isinstance(span, Mapping):
-                signal = _trace_tool_signal(span)
-                if signal is not None:
-                    candidates.append(signal)
+            if not isinstance(span, Mapping):
+                continue
+            span_id = span.get("spanId")
+            ended_at_ms = span.get("endedAtMs")
+            if (
+                isinstance(span_id, str)
+                and span_id
+                and isinstance(ended_at_ms, int)
+                and not isinstance(ended_at_ms, bool)
+            ):
+                trace_order_by_identity[span_id] = max(0, ended_at_ms)
+            signal = _trace_tool_signal(span)
+            if signal is not None:
+                candidates.append(signal)
+
+    live_events = session_snapshot.get("liveEvents")
+    if isinstance(live_events, list):
+        started_by_call: dict[str, Mapping[str, object]] = {}
+        for event in live_events:
+            if not isinstance(event, Mapping):
+                continue
+            payload = _mapping(event.get("payload"))
+            tool_call_id = payload.get("toolCallId")
+            event_type = str(event.get("eventType") or "").lower()
+            if event_type == "tool_started":
+                if isinstance(tool_call_id, str) and tool_call_id:
+                    started_by_call[tool_call_id] = payload
+                continue
+            started = (
+                started_by_call.get(tool_call_id)
+                if isinstance(tool_call_id, str)
+                else None
+            )
+            candidate_event = event
+            if started is not None:
+                terminal_args = _mapping(payload.get("args"))
+                candidate_event = {
+                    **event,
+                    "payload": {
+                        **started,
+                        **payload,
+                        "args": dict(terminal_args or _mapping(started.get("args"))),
+                    },
+                }
+            signal = _session_tool_signal(candidate_event)
+            if signal is not None:
+                trace_order = trace_order_by_identity.get(str(signal["id"]))
+                if trace_order is not None:
+                    signal["order"] = trace_order
+                candidates.append(signal)
     return candidates
 
 
@@ -282,14 +353,36 @@ def derive_repair_evidence(
             current["sandboxed"] = bool(current.get("sandboxed")) or bool(
                 signal.get("sandboxed")
             )
+            current["executed"] = bool(current.get("executed")) or bool(
+                signal.get("executed")
+            )
+            current["order"] = max(
+                int(current.get("order") or 0),
+                int(signal.get("order") or 0),
+            )
             if str(current.get("toolName") or "tool") == "tool":
                 current["toolName"] = signal.get("toolName")
     signals = list(by_identity.values())
-
     changes = [item for item in signals if item.get("isChange") and not item.get("failed")]
-    tests = [item for item in signals if item.get("isTest")]
+    executed_tests = [
+        item for item in signals if item.get("isTest") and item.get("executed")
+    ]
+    latest_change_order = max(
+        (int(item.get("order") or 0) for item in changes),
+        default=0,
+    )
+    tests = (
+        [
+            item
+            for item in executed_tests
+            if int(item.get("order") or 0) > latest_change_order
+        ]
+        if latest_change_order > 0
+        else executed_tests
+    )
     successful_tests = [item for item in tests if not item.get("failed")]
-    passed_tests = [item for item in successful_tests if item.get("sandboxed")]
+    sandboxed_tests = [item for item in successful_tests if item.get("sandboxed")]
+    passed_tests = successful_tests
     failed_tests = [item for item in tests if item.get("failed")]
     test_status = "failed" if failed_tests else ("passed" if passed_tests else "blocked")
 
@@ -315,8 +408,10 @@ def derive_repair_evidence(
                     "testCount": len(tests),
                     "passedCount": len(passed_tests),
                     "failedCount": len(failed_tests),
-                    "sandboxRequired": True,
-                    "sandboxedCount": len(passed_tests),
+                    "sandboxRequired": False,
+                    "sandboxedCount": len(sandboxed_tests),
+                    "sessionTerminalRequired": True,
+                    "sessionTerminalCount": len(passed_tests),
                     "status": test_status,
                 }
             )
@@ -517,9 +612,20 @@ class TraceRepairStore:
             if test_status != "passed" or test_payload.get("status") != "passed":
                 raise TraceRepairValidationError("test evidence is not passed")
             sandboxed_test_count = int(test_payload.get("sandboxedCount") or 0)
-            if test_payload.get("sandboxRequired") is not True or sandboxed_test_count < 1:
+            session_terminal_count = int(
+                test_payload.get("sessionTerminalCount") or 0
+            )
+            has_host_sandbox = (
+                test_payload.get("sandboxRequired") is True
+                and sandboxed_test_count >= 1
+            )
+            has_server_terminal = (
+                test_payload.get("sessionTerminalRequired") is True
+                and session_terminal_count >= 1
+            )
+            if not has_host_sandbox and not has_server_terminal:
                 raise TraceRepairValidationError(
-                    "test evidence has no Host-owned sandbox execution"
+                    "test evidence has no authoritative completed execution"
                 )
             payload = {
                 "schemaVersion": TRACE_REPAIR_RECEIPT_SCHEMA_VERSION,
@@ -530,7 +636,9 @@ class TraceRepairStore:
                 "changeReceiptId": change_id,
                 "testEvidenceId": test_id,
                 "testStatus": test_status,
-                "sandboxStatus": "passed",
+                "sandboxStatus": (
+                    "passed" if sandboxed_test_count >= 1 else "not_required"
+                ),
                 "sandboxedTestCount": sandboxed_test_count,
                 "repairTraceId": repair,
                 "repairSessionId": repair_session,

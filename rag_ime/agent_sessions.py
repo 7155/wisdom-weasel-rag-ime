@@ -27,7 +27,12 @@ from .agent_execution_policy import (
     workspace_scope_is_granted,
     workspace_scope_sha256,
 )
-from .agent_tool_ids import SUPPORTED_AGENT_TOOL_PROFILES
+from .agent_tool_ids import (
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
+    SUPPORTED_AGENT_TOOL_PROFILES,
+)
+from .agent_workspace_roots import system_wide_workspace_roots
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 
@@ -105,6 +110,7 @@ class AgentSessionStore:
         workspace_roots: Iterable[str] = (),
         shell_policy_version: str | None = None,
         session_kind: str = "conversation",
+        evaluation_snapshot: bool = False,
         surface_kind: str = "agent",
         owner_app_id: str = "",
         surface_key: str = "",
@@ -123,6 +129,8 @@ class AgentSessionStore:
         normalized_kind = str(session_kind or "").strip()
         if normalized_kind not in {"conversation", "subagent_runtime"}:
             raise ValueError("agent session kind must be conversation or subagent_runtime")
+        if evaluation_snapshot and normalized_kind != "conversation":
+            raise ValueError("evaluation snapshots must use the conversation session kind")
         normalized_surface, normalized_owner_app_id, normalized_surface_key = (
             _surface_ownership(
                 surface_kind,
@@ -156,15 +164,27 @@ class AgentSessionStore:
             tool_profile_version,
             execution_mode=normalized_execution_mode,
         )
+        unrestricted_profile = normalized_tool_profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }
+        if unrestricted_profile:
+            roots = list(system_wide_workspace_roots(roots))
+            project_context_enabled = True
+            pi_skills_enabled = True
+            codex_skills_enabled = True
         if normalized_tool_profile not in SUPPORTED_AGENT_TOOL_PROFILES:
             raise ValueError("unsupported Agent tool profile")
         read_only_subagent = (
             normalized_kind == "subagent_runtime"
             and mode == "assistant"
             and normalized_tool_profile == "subagent-readonly-v1"
+            and normalized_execution_mode == "read_only"
         )
         if mode == "assistant" and roots and not read_only_subagent:
-            raise ValueError("assistant conversation sessions cannot carry workspace roots")
+            raise ValueError(
+                "assistant conversation sessions cannot carry workspace roots"
+            )
         if normalized_execution_mode in {
             WORKSPACE_MANAGED_EXECUTION_MODE,
             FULL_TRUST_EXECUTION_MODE,
@@ -213,6 +233,7 @@ class AgentSessionStore:
             json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
             shell_policy,
             normalized_kind,
+            1 if evaluation_snapshot else 0,
             normalized_surface,
             normalized_owner_app_id,
             normalized_surface_key,
@@ -231,11 +252,11 @@ class AgentSessionStore:
                     workspace_scope_sha256, workspace_scope_granted_at_ms,
                     project_context_enabled,
                     pi_skills_enabled, codex_skills_enabled, workspace_roots_json,
-                    shell_policy_version, session_kind,
+                    shell_policy_version, session_kind, evaluation_snapshot,
                     surface_kind, owner_app_id, surface_key,
                     created_at_ms, updated_at_ms,
                     last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 values,
             )
@@ -1013,6 +1034,7 @@ class AgentSessionStore:
                     "control-center-v1",
                     "subagent-readonly-v1",
                     "control-center-auto-approve-v1",
+                    "control-center-full-access-v1",
                 }
                 else current.get("executionMode")
             )
@@ -1026,9 +1048,32 @@ class AgentSessionStore:
         )
         if profile not in SUPPORTED_AGENT_TOOL_PROFILES:
             raise ValueError("unsupported Agent tool profile")
+        if profile == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE and (
+            normalized_mode != "coordinator"
+            or normalized_execution_mode != FULL_TRUST_EXECUTION_MODE
+        ):
+            raise ValueError(
+                "automatic approval requires coordinator mode and full-trust execution"
+            )
+        if profile == FULL_ACCESS_TOOL_PROFILE and (
+            normalized_mode != "coordinator"
+            or normalized_execution_mode != PER_ACTION_EXECUTION_MODE
+        ):
+            raise ValueError(
+                "full access requires coordinator mode and per-action execution"
+            )
+        unrestricted_profile = profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }
         roots = _workspace_roots(
             current.get("workspaceRoots", []) if workspace_roots is None else workspace_roots
         )
+        if unrestricted_profile:
+            roots = list(system_wide_workspace_roots(roots))
+            project_context_enabled = True
+            pi_skills_enabled = True
+            codex_skills_enabled = True
         read_only_subagent = (
             str(current.get("sessionKind") or "conversation") == "subagent_runtime"
             and normalized_mode == "assistant"
@@ -1068,7 +1113,11 @@ class AgentSessionStore:
             if scope_sha256 and preserve_scope
             else 0
         )
-        normalized_tools = _allowed_tools(allowed_tools)
+        normalized_tools = (
+            None
+            if unrestricted_profile
+            else _allowed_tools(allowed_tools)
+        )
         context_enabled = (
             bool(current.get("projectContextEnabled", False))
             if project_context_enabled is None
@@ -3046,11 +3095,35 @@ def _session_payload(
         "mode": str(row["session_mode"]),
         "status": str(row["status"]),
         "sessionKind": str(row["session_kind"]),
+        "evaluationSnapshot": bool(row["evaluation_snapshot"]),
         "surfaceKind": str(row["surface_kind"]),
         "ownerAppId": str(row["owner_app_id"]),
         "surfaceKey": str(row["surface_key"]),
         "roleId": canonical_agent_role_id(row["role_id"]),
         "roleVersion": str(row["role_version"]),
+        "modelProfile": str(row["model_profile"] or "").strip() or "pi/default",
+        "thinkingLevel": str(row["thinking_level"] or ""),
+        "toolProfileVersion": str(row["tool_profile_version"]),
+        "executionMode": normalize_execution_mode(
+            row["execution_mode"],
+            tool_profile_version=row["tool_profile_version"],
+        ),
+        "roomExecutionMode": _normalize_room_execution_mode(row["room_execution_mode"]),
+        "workspaceScopeGranted": workspace_scope_is_granted(
+            {
+                "workspaceRoots": [str(value) for value in roots if str(value).strip()],
+                "toolProfileVersion": str(row["tool_profile_version"]),
+                "executionMode": normalize_execution_mode(
+                    row["execution_mode"],
+                    tool_profile_version=row["tool_profile_version"],
+                ),
+                "workspaceScopeSha256": str(row["workspace_scope_sha256"] or ""),
+                "workspaceScopeGrantedAtMs": int(row["workspace_scope_granted_at_ms"] or 0),
+            }
+        ),
+        "projectContextEnabled": bool(row["project_context_enabled"]),
+        "piSkillsEnabled": bool(row["pi_skills_enabled"]),
+        "codexSkillsEnabled": bool(row["codex_skills_enabled"]),
         "roleBookRevisionId": canonical_role_book_revision_id(
             row["role_book_revision_id"]
         ),
@@ -3070,6 +3143,11 @@ def _session_payload(
         "workspaceScopeGranted": workspace_scope_is_granted(
             {
                 "workspaceRoots": [str(value) for value in roots if str(value).strip()],
+                "toolProfileVersion": str(row["tool_profile_version"]),
+                "executionMode": normalize_execution_mode(
+                    row["execution_mode"],
+                    tool_profile_version=row["tool_profile_version"],
+                ),
                 "workspaceScopeSha256": str(row["workspace_scope_sha256"] or ""),
                 "workspaceScopeGrantedAtMs": int(
                     row["workspace_scope_granted_at_ms"] or 0

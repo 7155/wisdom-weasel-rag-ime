@@ -11,7 +11,28 @@ export type PermissionPreset = AgentPermissionSelection & {
   description: string;
 };
 
+/** These are the only policies exposed by new user-facing controls. */
 export const PERMISSION_PRESETS: PermissionPreset[] = [
+  {
+    id: 'full-access',
+    label: '全权限',
+    description: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认',
+    mode: 'coordinator',
+    toolProfileVersion: 'control-center-full-access-v1',
+    executionMode: 'per_action',
+  },
+  {
+    id: 'full-auto',
+    label: '全自动',
+    description: '整个系统与所有 Tool 可用；每个动作自动批准，仍受操作系统边界约束',
+    mode: 'coordinator',
+    toolProfileVersion: 'control-center-auto-approve-v1',
+    executionMode: 'full_trust',
+  },
+];
+
+/** Old/system Sessions remain readable without making their policies selectable. */
+const LEGACY_PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'controlled',
     label: '写入与命令确认',
@@ -39,7 +60,7 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'dangerous',
     label: '全自动',
-    description: '所有待审批操作由独立审批 Agent（Luna Max）自动判定',
+    description: '旧版全自动策略；仅用于显示现有 Session',
     mode: 'coordinator',
     toolProfileVersion: 'control-center-v1',
     executionMode: 'full_trust',
@@ -50,14 +71,14 @@ export function permissionPreset(
   executionMode: SessionSummary['executionMode'] | undefined,
   profile: string,
 ): PermissionPreset {
+  if (profile === 'control-center-full-access-v1') return PERMISSION_PRESETS[0]!;
+  if (profile === 'control-center-auto-approve-v1') return PERMISSION_PRESETS[1]!;
   const legacyMode = executionMode
-    ?? (profile === 'control-center-auto-approve-v1'
-      ? 'full_trust'
-      : profile === 'subagent-readonly-v1'
-        ? 'read_only'
-        : 'per_action');
-  return PERMISSION_PRESETS.find((item) => item.executionMode === legacyMode)
-    ?? PERMISSION_PRESETS[0]!;
+    ?? (profile === 'subagent-readonly-v1'
+      ? 'read_only'
+      : 'per_action');
+  return LEGACY_PERMISSION_PRESETS.find((item) => item.executionMode === legacyMode)
+    ?? LEGACY_PERMISSION_PRESETS[0]!;
 }
 
 export function permissionLabel(session: SessionSummary): string {
@@ -65,4 +86,8 @@ export function permissionLabel(session: SessionSummary): string {
     session.executionMode,
     session.toolProfileVersion ?? 'control-center-v1',
   ).label;
+}
+
+export function unrestrictedWorkspaceRoots(...roots: string[]): string[] {
+  return [...new Set(roots.map((root) => root.trim()).filter(Boolean).concat('/'))];
 }

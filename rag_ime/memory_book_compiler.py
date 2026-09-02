@@ -23,7 +23,12 @@ from .input_quality import (
     source_context_enabled,
 )
 from .memory_ingest import normalize_text, upsert_memory_item
-from .memory_curation import MEMORY_CURATION_ARCHITECTURE
+from .memory_curation import (
+    MEMORY_CURATION_ARCHITECTURE,
+    memory_atom_authority_hash,
+    memory_atom_identity_hash,
+    memory_catalog_digest,
+)
 from .memory_evidence_admission import (
     admitted_personal_evidence_sql,
     rollback_evidence_admissions_for_run,
@@ -41,8 +46,22 @@ from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_term
 MEMORY_BOOK_RUN_SCHEMA_VERSION = "rag-ime.memory-book-run.v1"
 MEMORY_BOOK_PREVIEW_SCHEMA_VERSION = "rag-ime.memory-book-preview.v1"
 MEMORY_BOOK_VALIDATE_SCHEMA_VERSION = "rag-ime.memory-book-validate.v1"
+MEMORY_CATALOG_RUN_KIND = "catalog_consolidation"
 MEMORY_BOOK_APPLY_SCHEMA_VERSION = "rag-ime.memory-book-apply.v1"
 MEMORY_BOOK_ROLLBACK_SCHEMA_VERSION = "rag-ime.memory-book-rollback.v1"
+
+# Incremental curation intentionally keeps the historical DSV4/user graph
+# boundary. A complete catalog snapshot must also include curated imports, and
+# these are the only sources admitted as governed retrieval tags.
+_DEFAULT_TAG_SOURCES = ("dsv4", "user")
+_GOVERNED_TAG_SOURCES = ("curated_import", "dsv4", "user")
+
+
+def _tag_source_predicate(alias: str, *, catalog_only: bool) -> str:
+    """Return the fixed SQL source boundary for a tag catalog query."""
+    sources = _GOVERNED_TAG_SOURCES if catalog_only else _DEFAULT_TAG_SOURCES
+    return f"{alias}.source IN ({', '.join(repr(source) for source in sources)})"
+
 
 _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----.*?-----END(?: [A-Z0-9]+)? PRIVATE KEY-----",
@@ -113,6 +132,10 @@ def build_memory_book_source_bundle(
     curation_scope: str = "incremental",
     catalog_only: bool = False,
 ) -> dict[str, object]:
+    global_catalog = (
+        compact_whitespace(curation_scope).lower() == "global"
+        and bool(catalog_only)
+    )
     state = memory_compile_state(conn, project=project)
     applied_cursor = int(state["lastCompiledEventId"])
     cursor = (
@@ -199,11 +222,48 @@ def build_memory_book_source_bundle(
     )
     _merge_counts(redaction_stats, feedback_redactions)
     _merge_counts(redaction_stats, rime_feedback_redactions)
-    existing_books = _existing_book_summaries(conn, project=project)
-    existing_atoms = _existing_memory_atoms(conn, project=project)
-    existing_groups = _existing_semantic_groups(conn, project=project)
-    existing_tags = _existing_semantic_tags(conn)
-    existing_tag_edges = _existing_semantic_tag_edges(conn)
+    existing_books = _existing_book_summaries(
+        conn,
+        project=project,
+        catalog_only=global_catalog,
+    )
+    existing_atoms = _existing_memory_atoms(
+        conn,
+        project=project,
+        catalog_only=global_catalog,
+    )
+    existing_groups = _existing_semantic_groups(
+        conn,
+        project=project,
+        catalog_only=global_catalog,
+    )
+    existing_tags = _existing_semantic_tags(conn, catalog_only=global_catalog)
+    existing_tag_edges = _existing_semantic_tag_edges(
+        conn,
+        catalog_only=global_catalog,
+    )
+    catalog_truncated = _catalog_truncation_flags(
+        existing_books=existing_books,
+        existing_atoms=existing_atoms,
+        existing_groups=existing_groups,
+        existing_tags=existing_tags,
+        existing_tag_edges=existing_tag_edges,
+        catalog_only=global_catalog,
+    )
+    catalog_complete = not any(catalog_truncated.values())
+    catalog_digest = (
+        memory_catalog_digest(
+            {
+                "existingMemoryBooks": existing_books,
+                "existingMemoryAtoms": existing_atoms,
+                "existingSemanticGroups": existing_groups,
+                "existingSemanticTags": existing_tags,
+                "existingTagEdges": existing_tag_edges,
+            }
+        )
+        if global_catalog and catalog_complete
+        else ""
+    )
     legal_groups = sorted({str(item.get("contextGroupId") or "") for item in events if item.get("contextGroupId")})
     max_event_id = max(raw_event_ids, default=cursor)
     pending_count = int(
@@ -221,7 +281,10 @@ def build_memory_book_source_bundle(
         "curationScope": (
             "global" if compact_whitespace(curation_scope).lower() == "global" else "incremental"
         ),
-        "catalogAudit": bool(catalog_only),
+        "catalogAudit": global_catalog,
+        "catalogDigest": catalog_digest,
+        "catalogComplete": catalog_complete,
+        "catalogTruncated": catalog_truncated,
         "evidenceOrder": (
             "catalog_only"
             if catalog_only
@@ -624,6 +687,411 @@ def memory_compile_due(
     return False, "not_due", state
 
 
+def _global_catalog_atoms_equivalent(
+    left: Mapping[str, object] | None,
+    right: Mapping[str, object] | None,
+) -> bool:
+    """Compare the complete DB-owned Atom identity, never a redacted projection."""
+    if left is None or right is None:
+        return False
+    left_identity = compact_whitespace(str(left.get("identityHash") or ""))
+    right_identity = compact_whitespace(str(right.get("identityHash") or ""))
+    if left_identity and right_identity:
+        if left_identity != right_identity:
+            return False
+    elif left_identity:
+        if left_identity != memory_atom_identity_hash(right):
+            return False
+    elif right_identity:
+        if right_identity != memory_atom_identity_hash(left):
+            return False
+    elif memory_atom_identity_hash(left) != memory_atom_identity_hash(right):
+        return False
+    left_authority = compact_whitespace(str(left.get("authorityHash") or ""))
+    right_authority = compact_whitespace(str(right.get("authorityHash") or ""))
+    if left_authority and right_authority:
+        return left_authority == right_authority
+    if left_authority:
+        return left_authority == memory_atom_authority_hash(right)
+    if right_authority:
+        return right_authority == memory_atom_authority_hash(left)
+    return memory_atom_authority_hash(left) == memory_atom_authority_hash(right)
+
+
+def _global_catalog_tag_synonym(
+    source: str,
+    target: str,
+    *,
+    source_tag_id: object = 0,
+    target_tag_id: object = 0,
+    tags: list[dict[str, object]],
+) -> bool:
+    by_id = {
+        _optional_int(item.get("tagId")): item
+        for item in tags
+        if _optional_int(item.get("tagId")) > 0
+    }
+    by_name: dict[str, dict[str, object]] = {}
+    for item in tags:
+        name = compact_whitespace(str(item.get("name") or ""))
+        normalized_name = normalize_text(name)
+        if not normalized_name:
+            continue
+        by_name.setdefault(normalized_name, item)
+        for alias in _strings(item.get("aliases")):
+            normalized_alias = normalize_text(alias)
+            if normalized_alias:
+                by_name.setdefault(normalized_alias, item)
+    source_id = _optional_int(source_tag_id)
+    target_id = _optional_int(target_tag_id)
+    source_item = by_id.get(source_id) if source_id > 0 else by_name.get(
+        normalize_text(source)
+    )
+    target_item = by_id.get(target_id) if target_id > 0 else by_name.get(
+        normalize_text(target)
+    )
+    if source_item is None or target_item is None:
+        return False
+    resolved_source_id = _optional_int(source_item.get("tagId"))
+    resolved_target_id = _optional_int(target_item.get("tagId"))
+    if source_item is target_item or (
+        resolved_source_id > 0
+        and resolved_target_id > 0
+        and resolved_source_id == resolved_target_id
+    ):
+        return False
+    source_name = normalize_text(str(source_item.get("name") or source))
+    target_name = normalize_text(str(target_item.get("name") or target))
+    if not source_name or not target_name:
+        return False
+    if source_name == target_name:
+        return (
+            resolved_source_id > 0
+            and resolved_target_id > 0
+            and resolved_source_id != resolved_target_id
+        )
+    source_aliases = {
+        normalize_text(alias)
+        for alias in _strings(source_item.get("aliases"))
+        if normalize_text(alias)
+    }
+    target_aliases = {
+        normalize_text(alias)
+        for alias in _strings(target_item.get("aliases"))
+        if normalize_text(alias)
+    }
+    if source_name in target_aliases or target_name in source_aliases:
+        return True
+    # A chain such as C -> B -> A is still an exact synonym relation once the
+    # intermediate aliases are resolved to A. Follow only declared alias
+    # links; fuzzy and semantic relationships remain disallowed.
+    alias_graph: dict[str, set[str]] = {}
+    for item in tags:
+        item_name = normalize_text(str(item.get("name") or ""))
+        if not item_name:
+            continue
+        alias_graph.setdefault(item_name, set())
+        for alias in _strings(item.get("aliases")):
+            alias_name = normalize_text(alias)
+            if not alias_name:
+                continue
+            alias_graph.setdefault(item_name, set()).add(alias_name)
+            alias_graph.setdefault(alias_name, set()).add(item_name)
+    reachable = {source_name}
+    frontier = [source_name]
+    while frontier:
+        current = frontier.pop()
+        for neighbour in alias_graph.get(current, ()):
+            if neighbour not in reachable:
+                reachable.add(neighbour)
+                frontier.append(neighbour)
+    return target_name in reachable
+
+
+def _catalog_atom_union_values(
+    atoms: list[Mapping[str, object]],
+    key: str,
+) -> list[str]:
+    return _unique_strings(
+        [
+            value
+            for atom in atoms
+            for value in _strings(atom.get(key))
+        ],
+        limit=None,
+    )
+
+
+def _catalog_atom_union_ints(
+    atoms: list[Mapping[str, object]],
+    key: str,
+) -> list[int]:
+    result: list[int] = []
+    seen: set[int] = set()
+    for atom in atoms:
+        for value in _positive_ints(atom.get(key)):
+            if value not in seen:
+                seen.add(value)
+                result.append(value)
+    return result
+
+
+def _catalog_atom_merge_payload(
+    target: Mapping[str, object],
+    sources: list[Mapping[str, object]],
+    *,
+    target_id: str,
+) -> dict[str, object]:
+    """Rebuild a merge payload from complete DB-owned catalog rows."""
+    members = [target, *sources]
+    payload = dict(target)
+    payload["atomId"] = target_id
+    payload["operation"] = "merge"
+    payload["globalCatalogMerge"] = True
+    for key in (
+        "aliases",
+        "surfaceHints",
+        "queryExpansions",
+        "sourceMemoryIds",
+        "tags",
+        "semanticGroupIds",
+    ):
+        payload[key] = _catalog_atom_union_values(members, key)
+    payload["sourceEventIds"] = _catalog_atom_union_ints(members, "sourceEventIds")
+    payload["mergeSourceIds"] = [
+        compact_whitespace(str(atom.get("atomId") or atom.get("id") or ""))
+        for atom in sources
+        if compact_whitespace(str(atom.get("atomId") or atom.get("id") or ""))
+    ]
+    if payload["mergeSourceIds"]:
+        payload["mergeSourceId"] = payload["mergeSourceIds"][0]
+    # The target's scalar identity, authority, privacy, and binding fields are
+    # intentionally retained verbatim; source rows only contribute evidence.
+    payload["identityHash"] = compact_whitespace(
+        str(target.get("identityHash") or "")
+    ) or memory_atom_identity_hash(target)
+    payload["authorityHash"] = compact_whitespace(
+        str(target.get("authorityHash") or "")
+    ) or memory_atom_authority_hash(target)
+
+    return payload
+
+def _catalog_supersede_graph_errors(
+    supersedes: list[tuple[int, dict[str, object], str, str]],
+    *,
+    atoms_by_id: Mapping[str, Mapping[str, object]],
+    accepted_upserts: Mapping[str, tuple[int, dict[str, object]]],
+) -> list[str]:
+    outgoing: dict[str, str] = {}
+    incoming: dict[str, list[str]] = {}
+    errors: list[str] = []
+    for _index, _diff, old_id, new_id in supersedes:
+        if old_id in outgoing and outgoing[old_id] != new_id:
+            errors.append(f"duplicate_source:{old_id}")
+            continue
+        if old_id in outgoing:
+            errors.append(f"duplicate_edge:{old_id}->{new_id}")
+            continue
+        outgoing[old_id] = new_id
+        incoming.setdefault(new_id, []).append(old_id)
+        if new_id in outgoing:
+            errors.append(f"non_root_target:{new_id}")
+        if new_id not in accepted_upserts:
+            errors.append(f"missing_target_upsert:{new_id}")
+        if old_id not in atoms_by_id or new_id not in atoms_by_id:
+            errors.append(f"missing_atom:{old_id}->{new_id}")
+    for target_id in sorted(set(outgoing.values()) & set(outgoing)):
+        errors.append(f"non_root_target:{target_id}")
+    state: dict[str, int] = {}
+    for start in outgoing:
+        node = start
+        path: list[str] = []
+        while node in outgoing:
+            if state.get(node) == 1 or node in path:
+                errors.append("cycle:" + "->".join([*path, node]))
+                break
+            if state.get(node) == 2:
+                break
+            state[node] = 1
+            path.append(node)
+            node = outgoing[node]
+        for item in path:
+            state[item] = 2
+    nodes = set(outgoing) | set(incoming)
+    unseen: set[str] = set(nodes)
+    while unseen:
+        root = unseen.pop()
+        component = {root}
+        frontier = [root]
+        while frontier:
+            item = frontier.pop()
+            neighbours = set()
+            if item in outgoing:
+                neighbours.add(outgoing[item])
+            neighbours.update(incoming.get(item, []))
+            for neighbour in neighbours:
+                if neighbour in unseen:
+                    unseen.remove(neighbour)
+                    component.add(neighbour)
+                    frontier.append(neighbour)
+        sinks = sorted(item for item in component if item not in outgoing)
+        if len(sinks) != 1:
+            errors.append(
+                "root_count:" + ",".join(sinks or sorted(component))
+            )
+    return sorted(set(errors))
+
+
+def _filter_global_catalog_diffs(
+    diffs: list[dict[str, object]],
+    *,
+    source_bundle: Mapping[str, object] | None,
+) -> tuple[list[dict[str, object]], list[str]]:
+    """Keep only locally verified, complete catalog consolidation diffs."""
+    source = source_bundle or {}
+    atoms = _list_of_dicts(source.get("existingMemoryAtoms"))
+    atoms_by_id = {
+        compact_whitespace(str(item.get("atomId") or item.get("id") or "")): item
+        for item in atoms
+        if compact_whitespace(str(item.get("atomId") or item.get("id") or ""))
+    }
+    tags = _list_of_dicts(source.get("existingSemanticTags"))
+    accepted_upserts: dict[str, tuple[int, dict[str, object]]] = {}
+    supersedes: list[tuple[int, dict[str, object], str, str]] = []
+    accepted_tag_merges: set[int] = set()
+    warnings: list[str] = []
+    for index, diff in enumerate(diffs):
+        op = compact_whitespace(str(diff.get("op") or ""))
+        payload = diff.get("payload")
+        if op == "upsert_memory_atom":
+            if not isinstance(payload, dict):
+                warnings.append(f"global_catalog_disallowed_diff:{index}:upsert_memory_atom")
+                continue
+            if compact_whitespace(str(payload.get("operation") or "")).lower() != "merge":
+                warnings.append(f"global_catalog_disallowed_diff:{index}:upsert_memory_atom")
+                continue
+            atom_id = compact_whitespace(
+                str(diff.get("targetId") or payload.get("atomId") or "")
+            )
+            payload_atom_id = compact_whitespace(str(payload.get("atomId") or ""))
+            existing = atoms_by_id.get(atom_id)
+            if (
+                not atom_id
+                or (payload_atom_id and payload_atom_id != atom_id)
+                or existing is None
+                or not _global_catalog_atoms_equivalent(existing, payload)
+            ):
+                warnings.append(f"global_catalog_unsafe_atom_merge:{index}")
+                continue
+            accepted_upserts[atom_id] = (index, diff)
+        elif op == "supersede_memory":
+            if not isinstance(payload, dict):
+                warnings.append(f"global_catalog_disallowed_diff:{index}:supersede_memory")
+                continue
+            old_id = compact_whitespace(
+                str(payload.get("oldId") or diff.get("targetId") or "")
+            )
+            new_id = compact_whitespace(str(payload.get("newId") or ""))
+            if (
+                not old_id
+                or not new_id
+                or old_id == new_id
+                or old_id not in atoms_by_id
+                or new_id not in atoms_by_id
+                or not _global_catalog_atoms_equivalent(
+                    atoms_by_id.get(old_id),
+                    atoms_by_id.get(new_id),
+                )
+            ):
+                warnings.append(f"global_catalog_unsafe_atom_merge:{index}")
+                continue
+            supersedes.append((index, diff, old_id, new_id))
+        elif op == "merge_semantic_tag":
+            if not isinstance(payload, dict):
+                warnings.append(f"global_catalog_disallowed_diff:{index}:merge_semantic_tag")
+                continue
+            source_name = compact_whitespace(str(payload.get("source") or ""))
+            target_name = compact_whitespace(str(payload.get("target") or ""))
+            if (
+                not source_name
+                or not target_name
+                or not _global_catalog_tag_synonym(
+                    source_name,
+                    target_name,
+                    source_tag_id=payload.get("sourceTagId"),
+                    target_tag_id=payload.get("targetTagId"),
+                    tags=tags,
+                )
+            ):
+                warnings.append(f"global_catalog_unsafe_tag_merge:{index}")
+                continue
+            accepted_tag_merges.add(index)
+        else:
+            warnings.append(f"global_catalog_disallowed_diff:{index}:{op or 'empty'}")
+
+    graph_errors = _catalog_supersede_graph_errors(
+        supersedes,
+        atoms_by_id=atoms_by_id,
+        accepted_upserts=accepted_upserts,
+    )
+    if graph_errors:
+        warnings.append(
+            "global_catalog_supersede_graph_invalid:" + "|".join(graph_errors)
+        )
+        return [], warnings
+
+    accepted_indexes = set(accepted_tag_merges)
+    paired_upserts: set[str] = set()
+    source_ids_by_target: dict[str, list[str]] = {}
+    for index, _diff, old_id, new_id in supersedes:
+        upsert = accepted_upserts.get(new_id)
+        if upsert is None:
+            warnings.append(f"global_catalog_unpaired_atom_merge:{index}")
+            continue
+        if not _global_catalog_atoms_equivalent(
+            atoms_by_id.get(new_id),
+            upsert[1].get("payload")
+            if isinstance(upsert[1].get("payload"), dict)
+            else None,
+        ):
+            warnings.append(f"global_catalog_unsafe_atom_merge:{index}")
+            continue
+        accepted_indexes.update({index, upsert[0]})
+        paired_upserts.add(new_id)
+        source_ids_by_target.setdefault(new_id, []).append(old_id)
+    for atom_id, (index, _diff) in accepted_upserts.items():
+        if atom_id not in paired_upserts:
+            warnings.append(f"global_catalog_unpaired_atom_merge:{index}")
+
+    rewritten: list[dict[str, object]] = []
+    for index, diff in enumerate(diffs):
+        if index not in accepted_indexes:
+            continue
+        if diff.get("op") != "upsert_memory_atom":
+            rewritten.append(diff)
+            continue
+        target_id = compact_whitespace(str(diff.get("targetId") or ""))
+        target = atoms_by_id.get(target_id)
+        source_atoms = [
+            atoms_by_id[source_id]
+            for source_id in source_ids_by_target.get(target_id, [])
+            if source_id in atoms_by_id
+        ]
+        if target is None or len(source_atoms) != len(
+            source_ids_by_target.get(target_id, [])
+        ):
+            warnings.append(f"global_catalog_unsafe_atom_merge:{index}")
+            continue
+        rewritten_diff = dict(diff)
+        rewritten_diff["payload"] = _catalog_atom_merge_payload(
+            target,
+            source_atoms,
+            target_id=target_id,
+        )
+        rewritten.append(rewritten_diff)
+    return rewritten, warnings
+
+
 def memory_book_plan_from_compile_output(
     compile_output: dict[str, object],
     *,
@@ -639,6 +1107,30 @@ def memory_book_plan_from_compile_output(
     normalized_owner_kind, normalized_owner_id = _memory_owner(owner_kind, owner_id)
     diffs: list[dict[str, object]] = []
     warnings = list(compile_output.get("warnings") or [])
+    source_data = source_bundle or {}
+    source_scope = compact_whitespace(
+        str(source_data.get("curationScope") or compile_output.get("curationScope") or "incremental")
+    ).lower()
+    curation_scope = "global" if source_scope == "global" else "incremental"
+    global_scope = curation_scope == "global"
+    catalog_audit = bool(
+        source_data.get("catalogAudit")
+        if "catalogAudit" in source_data
+        else compile_output.get("catalogAudit")
+    )
+    catalog_truncated = dict(
+        source_data.get("catalogTruncated")
+        or compile_output.get("catalogTruncated")
+        or {}
+    )
+    catalog_complete = bool(
+        source_data.get("catalogComplete")
+        if "catalogComplete" in source_data
+        else compile_output.get(
+            "catalogComplete",
+            not global_scope and not any(catalog_truncated.values()),
+        )
+    )
     tag_merges = _planned_tag_merges(compile_output, source_bundle=source_bundle)
     tag_name_map = {
         normalize_text(str(item["source"])): str(item["target"])
@@ -855,8 +1347,26 @@ def memory_book_plan_from_compile_output(
             )
         payload = {
             "atomId": atom_id,
+            "identityHash": compact_whitespace(str(item.get("identityHash") or "")),
+            "authorityHash": compact_whitespace(str(item.get("authorityHash") or "")),
+            "tagRelationsHash": compact_whitespace(
+                str(item.get("tagRelationsHash") or "")
+            ),
+            "groupMembershipsHash": compact_whitespace(
+                str(item.get("groupMembershipsHash") or "")
+            ),
+            "aliasRecordsHash": compact_whitespace(
+                str(item.get("aliasRecordsHash") or "")
+            ),
+            "mergeSourceId": compact_whitespace(
+                str(item.get("mergeSourceId") or "")
+            ),
+            "mergeSourceIds": _strings(item.get("mergeSourceIds")),
+            "globalCatalogMerge": bool(item.get("globalCatalogMerge")),
             "kind": atom_kind,
+            "language": compact_whitespace(str(item.get("language") or "zh")) or "zh",
             "canonicalText": canonical,
+            "text": compact_whitespace(str(item.get("text") or canonical)),
             "summary": compact_whitespace(str(item.get("summary") or "")),
             "tags": _canonical_tag_names(_strings(item.get("tags")), tag_name_map),
             "aliases": _strings(item.get("aliases")),
@@ -889,8 +1399,12 @@ def memory_book_plan_from_compile_output(
             "qualityScore": _bounded_float(item.get("qualityScore"), default=0.5),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
             "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
-            "ownerKind": normalized_owner_kind,
-            "ownerId": normalized_owner_id,
+            "ownerKind": compact_whitespace(
+                str(item.get("ownerKind") or normalized_owner_kind)
+            ),
+            "ownerId": compact_whitespace(
+                str(item.get("ownerId") or normalized_owner_id)
+            ),
             "evidenceIds": _strings(item.get("evidenceIds")),
             "curationRunId": compact_whitespace(
                 str(item.get("curationRunId") or "")
@@ -912,6 +1426,9 @@ def memory_book_plan_from_compile_output(
             "bindingId": compact_whitespace(str(item.get("bindingId") or "")),
             "scopeMode": compact_whitespace(
                 str(item.get("scopeMode") or "legacy")
+            ),
+            "privacyLevel": compact_whitespace(
+                str(item.get("privacyLevel") or "")
             ),
             "curationArchitecture": compact_whitespace(
                 str(item.get("curationArchitecture") or "")
@@ -975,7 +1492,9 @@ def memory_book_plan_from_compile_output(
                     "text": text,
                     "pinyin": pinyin,
                     "reviewSource": review_source if pinyin else "memory",
-                    "reviewReason": compact_whitespace(str(item.get("reason") or "")),
+                    "reviewReason": compact_whitespace(
+                        str(item.get("reason") or "")
+                    ),
                     "tags": _strings(item.get("tags")),
                     "semanticGroupIds": _resolved_semantic_group_ids(
                         item,
@@ -984,31 +1503,39 @@ def memory_book_plan_from_compile_output(
                     ),
                     "sourceEventIds": source_ids,
                     "weight": _bounded_float(item.get("weight"), default=0.6),
-                    "project": compact_whitespace(str(item.get("project") or project)),
-                    "contextGroupId": _group_for_source_ids(source_ids, source_bundle=source_bundle),
+                    "project": compact_whitespace(
+                        str(item.get("project") or project)
+                    ),
+                    "contextGroupId": _group_for_source_ids(
+                        source_ids,
+                        source_bundle=source_bundle,
+                    ),
                 },
                 "status": "pending",
             }
         )
-    for raw_item in compile_output.get("negativePhrases", []) if isinstance(compile_output.get("negativePhrases"), list) else []:
-        item = raw_item if isinstance(raw_item, dict) else {"text": raw_item}
+    for item in _list_of_dicts(compile_output.get("negativePhrases")):
         text = compact_whitespace(str(item.get("text") or ""))
-        if not 2 <= len(text) <= 18:
+        if len(text) < 2 or len(text) > 48:
             continue
         source_ids = _positive_ints(item.get("sourceEventIds")) or _infer_source_event_ids(
-            [text],
+            [text, compact_whitespace(str(item.get("reason") or ""))],
             source_bundle=source_bundle,
         )
-        target = f"negative:{stable_text_hash(text)[:16]}"
+        suppression_id = compact_whitespace(
+            str(item.get("suppressionId") or f"negative:{normalize_text(text)}")
+        )
         diffs.append(
             {
                 "op": "add_negative_phrase",
-                "targetId": target,
+                "targetId": suppression_id,
                 "payload": {
-                    "suppressionId": target,
+                    "suppressionId": suppression_id,
                     "text": text,
+                    "reason": compact_whitespace(
+                        str(item.get("reason") or "memory_compiler_negative_phrase")
+                    ),
                     "sourceEventIds": source_ids,
-                    "reason": compact_whitespace(str(item.get("reason") or "memory_compiler_negative_phrase")),
                 },
                 "status": "pending",
             }
@@ -1094,25 +1621,53 @@ def memory_book_plan_from_compile_output(
     for item in tag_merges:
         source = compact_whitespace(str(item.get("source") or ""))
         target = compact_whitespace(str(item.get("target") or ""))
-        if not source or not target or normalize_text(source) == normalize_text(target):
+        source_tag_id = _optional_int(item.get("sourceTagId"))
+        target_tag_id = _optional_int(item.get("targetTagId"))
+        same_tag = (
+            source_tag_id == target_tag_id
+            if source_tag_id > 0 and target_tag_id > 0
+            else normalize_text(source) == normalize_text(target)
+        )
+        if not source or not target or same_tag:
             continue
         if not bool(item.get("requiresApply", True)):
             warnings.append(f"virtual_tag_merge_canonicalized:{source}->{target}")
             continue
-        evidence_ids = _positive_ints(item.get("evidenceEventIds")) or _infer_source_event_ids(
+        evidence_ids = _positive_ints(
+            item.get("evidenceEventIds")
+        ) or _infer_source_event_ids(
             [source, target, compact_whitespace(str(item.get("reason") or ""))],
             source_bundle=source_bundle,
         )
         diffs.append(
             {
                 "op": "merge_semantic_tag",
-                "targetId": f"tag-merge:{source}->{target}",
+                "targetId": (
+                    f"tag-merge:{source_tag_id}->{target_tag_id}"
+                    if source_tag_id > 0 and target_tag_id > 0
+                    else f"tag-merge:{source}->{target}"
+                ),
                 "payload": {
                     "source": source,
                     "target": target,
-                    "reason": compact_whitespace(str(item.get("reason") or "同义标签规范化")),
+                    **(
+                        {"sourceTagId": source_tag_id}
+                        if source_tag_id > 0
+                        else {}
+                    ),
+                    **(
+                        {"targetTagId": target_tag_id}
+                        if target_tag_id > 0
+                        else {}
+                    ),
+                    "reason": compact_whitespace(
+                        str(item.get("reason") or "同义标签规范化")
+                    ),
                     "evidenceEventIds": evidence_ids,
-                    "confidence": _bounded_float(item.get("confidence"), default=0.8),
+                    "confidence": _bounded_float(
+                        item.get("confidence"),
+                        default=0.8,
+                    ),
                 },
                 "status": "pending",
             }
@@ -1132,17 +1687,44 @@ def memory_book_plan_from_compile_output(
     if len(proposed_tag_names) > 1 and isolated_proposed_tags:
         warnings.append(f"isolated_semantic_tags_in_draft:{len(isolated_proposed_tags)}")
     run_id = compact_whitespace(str(run_id or "")) or f"memory_book_{now_ms()}"
+    resolved_run_kind = (
+        MEMORY_CATALOG_RUN_KIND
+        if global_scope
+        else compact_whitespace(run_kind) or "legacy"
+    )
+    catalog_graph_valid = True
     if (
-        compact_whitespace(run_kind) in {"", "legacy"}
+        resolved_run_kind == "legacy"
         and source_bundle
         and not any(diff.get("op") == "upsert_memory_book" for diff in diffs)
     ):
-        daily_book = _synthesize_daily_book_diff_from_diffs(diffs, project=project, source_bundle=source_bundle)
+        daily_book = _synthesize_daily_book_diff_from_diffs(
+            diffs,
+            project=project,
+            source_bundle=source_bundle,
+        )
         if daily_book:
             diffs.insert(0, daily_book)
             warnings.append("daily_book_synthesized_from_atoms")
+    if global_scope:
+        if not catalog_audit or not catalog_complete:
+            diffs = []
+            catalog_graph_valid = False
+            warnings.append("global_catalog_incomplete")
+        else:
+            diffs, global_warnings = _filter_global_catalog_diffs(
+                diffs,
+                source_bundle=source_bundle,
+            )
+            warnings.extend(global_warnings)
+            catalog_graph_valid = not any(
+                warning.startswith("global_catalog_supersede_graph_invalid:")
+                for warning in global_warnings
+            )
     for diff in diffs:
         if diff.get("op") not in {"upsert_memory_book", "upsert_memory_atom"}:
+            continue
+        if global_scope and diff.get("op") == "upsert_memory_atom":
             continue
         payload = diff.get("payload")
         if isinstance(payload, dict):
@@ -1156,8 +1738,8 @@ def memory_book_plan_from_compile_output(
     )
     if curation_architecture.startswith("atom-first"):
         # The plan is the authoritative write surface. A native lexicon
-        # candidate can be filtered out after model-independent validation, so
-        # the raw compiler arrays must not claim a review is still required.
+        # projection, so the raw compiler arrays must not claim a review is
+        # still required.
         curation_outcome = "changes" if diffs else "no_changes"
     if not diffs and source_bundle and curation_outcome == "no_changes":
         warnings.append("curation_review_found_no_changes")
@@ -1184,6 +1766,16 @@ def memory_book_plan_from_compile_output(
             "instruction": _sanitize_text(str(compile_output.get("instruction") or ""), max_chars=600)[0],
             "curationArchitecture": curation_architecture,
             "curationOutcome": curation_outcome,
+            "curationScope": curation_scope,
+            "catalogDigest": compact_whitespace(
+                str(
+                    source_data.get("catalogDigest")
+                    or compile_output.get("catalogDigest")
+                    or ""
+                )
+            ),
+            "catalogAudit": catalog_audit,
+            "catalogTruncated": catalog_truncated,
             "curationDiagnostics": dict(compile_output.get("curationDiagnostics") or {}),
             "lexiconDiagnostics": dict(compile_output.get("lexiconDiagnostics") or {}),
             "tagGraphDiagnostics": {
@@ -1197,7 +1789,9 @@ def memory_book_plan_from_compile_output(
             "project": project,
             "ownerKind": normalized_owner_kind,
             "ownerId": normalized_owner_id,
-            "runKind": compact_whitespace(run_kind) or "legacy",
+            "runKind": resolved_run_kind,
+            "catalogComplete": catalog_complete,
+            "catalogGraphValid": catalog_graph_valid,
             "bundleHash": str((source_bundle or {}).get("bundleHash") or ""),
             "sourceCursor": dict((source_bundle or {}).get("cursor") or {}),
             "legalContextGroupIds": list((source_bundle or {}).get("legalContextGroupIds") or []),
@@ -1208,6 +1802,16 @@ def memory_book_plan_from_compile_output(
                 for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
                 if compact_whitespace(str(item.get("groupId") or ""))
             ],
+            "globalCatalogAtoms": (
+                _list_of_dicts(source_data.get("existingMemoryAtoms"))
+                if global_scope
+                else []
+            ),
+            "globalCatalogTags": (
+                _list_of_dicts(source_data.get("existingSemanticTags"))
+                if global_scope
+                else []
+            ),
             **(
                 purpose_audit_fields(
                     dict((source_bundle or {}).get("purposeProfile") or {})
@@ -1260,6 +1864,33 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         for item in metadata.get("existingSemanticGroupIds", [])
         if compact_whitespace(str(item))
     }
+    global_scope = (
+        compact_whitespace(str(metadata.get("curationScope") or "")).lower()
+        == "global"
+    )
+    global_catalog_audit = global_scope and bool(metadata.get("catalogAudit"))
+    global_catalog_atoms = _list_of_dicts(metadata.get("globalCatalogAtoms"))
+    global_catalog_atoms_by_id = {
+        compact_whitespace(str(item.get("atomId") or item.get("id") or "")): item
+        for item in global_catalog_atoms
+        if compact_whitespace(str(item.get("atomId") or item.get("id") or ""))
+    }
+    global_catalog_tags = _list_of_dicts(metadata.get("globalCatalogTags"))
+    global_atom_upsert_targets: set[str] = set()
+    global_atom_pairs: list[tuple[str, str]] = []
+    if global_scope and (
+        compact_whitespace(str(metadata.get("runKind") or ""))
+        != MEMORY_CATALOG_RUN_KIND
+        or not global_catalog_audit
+        or not bool(metadata.get("catalogComplete"))
+        or not bool(metadata.get("catalogGraphValid", True))
+        or not compact_whitespace(str(metadata.get("catalogDigest") or ""))
+        or "globalCatalogAtoms" not in metadata
+        or "globalCatalogTags" not in metadata
+    ):
+        errors.append(_issue(0, "", "catalog", "global_catalog_snapshot_missing"))
+    if global_scope and global_catalog_audit and not bool(metadata.get("catalogComplete", True)):
+        errors.append(_issue(0, "", "catalog", "global_catalog_incomplete"))
     if compact_whitespace(str(plan.get("schemaVersion") or "")) != MEMORY_BOOK_RUN_SCHEMA_VERSION:
         errors.append(_issue(0, "", "schemaVersion", "unsupported_schema_version"))
     source_cursor = dict(metadata.get("sourceCursor") or {})
@@ -1274,6 +1905,70 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
     for index, diff in enumerate(diffs, start=1):
         op = compact_whitespace(str(diff.get("op") or ""))
         payload = diff.get("payload") if isinstance(diff.get("payload"), dict) else {}
+        if global_scope:
+            if op not in {
+                "upsert_memory_atom",
+                "supersede_memory",
+                "merge_semantic_tag",
+            }:
+                errors.append(_issue(index, op, "op", "global_catalog_disallowed_op"))
+                continue
+            if op == "upsert_memory_atom":
+                counts["memoryAtoms"] += 1
+                _validate_required_text(errors, index, op, payload, "atomId")
+                _validate_required_text(errors, index, op, payload, "canonicalText")
+                _validate_required_text(errors, index, op, payload, "claimKey")
+                if compact_whitespace(str(payload.get("operation") or "")).lower() != "merge":
+                    errors.append(_issue(index, op, "operation", "global_catalog_requires_merge"))
+                atom_id = compact_whitespace(str(payload.get("atomId") or ""))
+                existing = global_catalog_atoms_by_id.get(atom_id)
+                if existing is None:
+                    errors.append(_issue(index, op, "atomId", "global_catalog_atom_not_found"))
+                elif not _global_catalog_atoms_equivalent(existing, payload):
+                    errors.append(_issue(index, op, "canonicalText", "global_catalog_atom_not_equivalent"))
+                if bool(payload.get("directCandidateAllowed")):
+                    errors.append(
+                        _issue(
+                            index,
+                            op,
+                            "directCandidateAllowed",
+                            "canonical_text_must_not_be_direct_candidate",
+                        )
+                    )
+                global_atom_upsert_targets.add(atom_id)
+            elif op == "supersede_memory":
+                counts["supersedes"] += 1
+                _validate_required_text(errors, index, op, payload, "oldId")
+                _validate_required_text(errors, index, op, payload, "newId")
+                old_id = compact_whitespace(str(payload.get("oldId") or ""))
+                new_id = compact_whitespace(str(payload.get("newId") or ""))
+                if (
+                    old_id == new_id
+                    or old_id not in global_catalog_atoms_by_id
+                    or new_id not in global_catalog_atoms_by_id
+                    or not _global_catalog_atoms_equivalent(
+                        global_catalog_atoms_by_id.get(old_id),
+                        global_catalog_atoms_by_id.get(new_id),
+                    )
+                ):
+                    errors.append(_issue(index, op, "newId", "global_catalog_atom_not_equivalent"))
+                global_atom_pairs.append((old_id, new_id))
+            else:
+                counts["tagMerges"] += 1
+                _validate_required_text(errors, index, op, payload, "source")
+                _validate_required_text(errors, index, op, payload, "target")
+                _validate_required_text(errors, index, op, payload, "reason")
+                source_name = compact_whitespace(str(payload.get("source") or ""))
+                target_name = compact_whitespace(str(payload.get("target") or ""))
+                if not _global_catalog_tag_synonym(
+                    source_name,
+                    target_name,
+                    source_tag_id=payload.get("sourceTagId"),
+                    target_tag_id=payload.get("targetTagId"),
+                    tags=global_catalog_tags,
+                ):
+                    errors.append(_issue(index, op, "target", "global_catalog_tag_not_exact_synonym"))
+            continue
         if op == "upsert_semantic_group":
             counts["semanticGroups"] += 1
             _validate_required_text(errors, index, op, payload, "groupId")
@@ -1348,8 +2043,20 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
                 field="evidenceEventIds",
                 legal_source_event_ids=legal_source_event_ids,
             )
-            if normalize_text(str(payload.get("source") or "")) == normalize_text(str(payload.get("target") or "")):
-                errors.append(_issue(index, op, "target", "tag_merge_source_equals_target"))
+            source_tag_id = _optional_int(payload.get("sourceTagId"))
+            target_tag_id = _optional_int(payload.get("targetTagId"))
+            if (
+                normalize_text(str(payload.get("source") or ""))
+                == normalize_text(str(payload.get("target") or ""))
+                and (
+                    source_tag_id <= 0
+                    or target_tag_id <= 0
+                    or source_tag_id == target_tag_id
+                )
+            ):
+                errors.append(
+                    _issue(index, op, "target", "tag_merge_source_equals_target")
+                )
             _validate_secret_free(errors, index, op, payload, ("source", "target", "reason"))
         elif op == "add_phrase_candidate":
             counts["phraseCandidates"] += 1
@@ -1402,6 +2109,103 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
                 errors.append(
                     _issue(index, op, "semanticGroupIds", "semantic_group_not_in_plan", preview=semantic_group_id)
                 )
+    if global_scope:
+        paired_targets = {new_id for _old_id, new_id in global_atom_pairs}
+        plan_supersedes: list[tuple[int, dict[str, object], str, str]] = []
+        planned_upserts: dict[str, tuple[int, dict[str, object]]] = {}
+        for index, diff in enumerate(diffs, start=1):
+            payload = diff.get("payload")
+            if diff.get("op") == "supersede_memory" and isinstance(payload, dict):
+                plan_supersedes.append(
+                    (
+                        index,
+                        diff,
+                        compact_whitespace(str(payload.get("oldId") or "")),
+                        compact_whitespace(str(payload.get("newId") or "")),
+                    )
+                )
+            elif diff.get("op") == "upsert_memory_atom" and isinstance(payload, dict):
+                atom_id = compact_whitespace(str(payload.get("atomId") or ""))
+                planned_upserts[atom_id] = (index, diff)
+                if not bool(payload.get("globalCatalogMerge")):
+                    errors.append(
+                        _issue(index, "upsert_memory_atom", "globalCatalogMerge", "global_catalog_merge_marker_missing")
+                    )
+                target = global_catalog_atoms_by_id.get(atom_id)
+                source_ids = [
+                    old_id
+                    for old_id, new_id in global_atom_pairs
+                    if new_id == atom_id
+                ]
+                source_atoms = [
+                    global_catalog_atoms_by_id[source_id]
+                    for source_id in source_ids
+                    if source_id in global_catalog_atoms_by_id
+                ]
+                if target is not None and len(source_atoms) == len(source_ids):
+                    expected = _catalog_atom_merge_payload(
+                        target,
+                        source_atoms,
+                        target_id=atom_id,
+                    )
+                    for key in (
+                        "aliases",
+                        "surfaceHints",
+                        "queryExpansions",
+                        "sourceMemoryIds",
+                        "tags",
+                        "semanticGroupIds",
+                    ):
+                        if _strings(payload.get(key)) != _strings(expected.get(key)):
+                            errors.append(
+                                _issue(index, "upsert_memory_atom", key, "global_catalog_payload_not_lossless")
+                            )
+                    if _positive_ints(payload.get("sourceEventIds")) != _positive_ints(
+                        expected.get("sourceEventIds")
+                    ):
+                        errors.append(
+                            _issue(index, "upsert_memory_atom", "sourceEventIds", "global_catalog_payload_not_lossless")
+                        )
+                    if _strings(payload.get("mergeSourceIds")) != source_ids:
+                        errors.append(
+                            _issue(index, "upsert_memory_atom", "mergeSourceIds", "global_catalog_merge_sources_mismatch")
+                        )
+        graph_errors = _catalog_supersede_graph_errors(
+            plan_supersedes,
+            atoms_by_id=global_catalog_atoms_by_id,
+            accepted_upserts=planned_upserts,
+        )
+        for graph_error in graph_errors:
+            errors.append(
+                _issue(
+                    0,
+                    "supersede_memory",
+                    "catalogGraph",
+                    "global_catalog_supersede_graph_invalid",
+                    preview=graph_error,
+                )
+            )
+        for old_id, new_id in sorted(global_atom_pairs):
+            if new_id not in global_atom_upsert_targets:
+                errors.append(
+                    _issue(
+                        0,
+                        "supersede_memory",
+                        "newId",
+                        "global_catalog_atom_merge_missing_target_upsert",
+                        preview=f"{old_id}->{new_id}",
+                    )
+                )
+        for atom_id in sorted(global_atom_upsert_targets - paired_targets):
+            errors.append(
+                _issue(
+                    0,
+                    "upsert_memory_atom",
+                    "atomId",
+                    "global_catalog_atom_merge_missing_supersede",
+                    preview=atom_id,
+                )
+            )
     return {
         "schemaVersion": MEMORY_BOOK_VALIDATE_SCHEMA_VERSION,
         "ok": not errors,
@@ -1416,6 +2220,87 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _is_global_catalog_plan(plan: Mapping[str, object]) -> bool:
+    metadata = dict(plan.get("metadata") or {})
+    return compact_whitespace(str(metadata.get("curationScope") or "")).lower() == "global"
+
+
+def _reserve_global_catalog_write(
+    conn: sqlite3.Connection,
+    plan: Mapping[str, object],
+) -> None:
+    """Acquire a RESERVED lock before taking a global catalog snapshot."""
+    if not _is_global_catalog_plan(plan):
+        return
+    if conn.in_transaction:
+        # A caller-owned deferred transaction cannot be upgraded with
+        # ``BEGIN IMMEDIATE``. Any real-table UPDATE upgrades it to the same
+        # RESERVED state without changing a value.
+        project = compact_whitespace(
+            str(dict(plan.get("metadata") or {}).get("project") or "")
+        )
+        conn.execute(
+            """
+            UPDATE memory_compile_state
+            SET last_compiled_event_id = last_compiled_event_id
+            WHERE project = ?
+            """,
+            (project,),
+        )
+    else:
+        conn.execute("BEGIN IMMEDIATE")
+
+
+def _current_global_catalog_digest(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+) -> str:
+    current = build_memory_book_source_bundle(
+        conn,
+        project=project,
+        curation_scope="global",
+        catalog_only=True,
+    )
+    current_digest = compact_whitespace(str(current.get("catalogDigest") or ""))
+    if not bool(current.get("catalogComplete")) or not current_digest:
+        raise ValueError("global catalog digest changed")
+    return current_digest
+
+
+def _assert_global_catalog_plan_fresh(
+    conn: sqlite3.Connection,
+    plan: Mapping[str, object],
+) -> str:
+    metadata = dict(plan.get("metadata") or {})
+    if not _is_global_catalog_plan(plan):
+        return ""
+    if compact_whitespace(str(metadata.get("runKind") or "")) != MEMORY_CATALOG_RUN_KIND:
+        raise ValueError("global catalog run kind is invalid")
+    frozen_digest = compact_whitespace(str(metadata.get("catalogDigest") or ""))
+    project = compact_whitespace(str(metadata.get("project") or ""))
+    current_digest = _current_global_catalog_digest(conn, project=project)
+    if not frozen_digest or current_digest != frozen_digest:
+        raise ValueError("global catalog digest changed")
+    return current_digest
+
+
+def seal_global_memory_book_plan(
+    conn: sqlite3.Connection,
+    plan: Mapping[str, object],
+) -> str:
+    """Reserve and verify a global catalog plan, leaving the lock held.
+
+    Callers that do not already own a transaction must commit or roll back the
+    transaction opened here. Store/apply paths invoke this inside their
+    transaction so the reservation covers the complete write.
+    """
+    if not _is_global_catalog_plan(plan):
+        return ""
+    _reserve_global_catalog_write(conn, plan)
+    return _assert_global_catalog_plan_fresh(conn, plan)
+
+
 def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) -> dict[str, object]:
     validation = inspect_memory_book_plan(plan)
     if not validation.get("ok"):
@@ -1423,7 +2308,9 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     if not run_id:
         raise ValueError("memory book runId is required")
+    sealed_catalog_digest = ""
     with conn:
+        sealed_catalog_digest = seal_global_memory_book_plan(conn, plan)
         _persist_memory_book_run(conn, plan)
         rows = conn.execute(
             """
@@ -1458,7 +2345,17 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
                 ),
                 payload={"runId": run_id, "diffCount": len(rows)},
             )
-    return memory_book_run_payload(conn, run_id=run_id)
+        if sealed_catalog_digest:
+            sealed_catalog_digest = _current_global_catalog_digest(
+                conn,
+                project=compact_whitespace(
+                    str(dict(plan.get("metadata") or {}).get("project") or "")
+                ),
+            )
+    result = memory_book_run_payload(conn, run_id=run_id)
+    if sealed_catalog_digest:
+        result["sealedCatalogDigest"] = sealed_catalog_digest
+    return result
 
 
 def find_memory_book_draft_for_bundle(
@@ -1561,7 +2458,11 @@ def store_memory_book_plan(
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     if not run_id:
         raise ValueError("memory book runId is required")
+    sealed_catalog_digest = ""
     with conn:
+        # This runs for no-diff plans too: a clean empty review must not be
+        # able to acknowledge a catalog snapshot that changed after drafting.
+        sealed_catalog_digest = seal_global_memory_book_plan(conn, plan)
         if supersede_project_drafts:
             _supersede_project_memory_book_drafts(conn, plan=plan)
         _persist_memory_book_run(conn, plan)
@@ -1573,7 +2474,17 @@ def store_memory_book_plan(
             # must advance or the scheduler would call the model forever.
             _sync_run_status(conn, run_id)
             _advance_compile_state(conn, plan=plan)
-    return memory_book_run_payload(conn, run_id=run_id)
+        if sealed_catalog_digest:
+            sealed_catalog_digest = _current_global_catalog_digest(
+                conn,
+                project=compact_whitespace(
+                    str(dict(plan.get("metadata") or {}).get("project") or "")
+                ),
+            )
+    result = memory_book_run_payload(conn, run_id=run_id)
+    if sealed_catalog_digest:
+        result["sealedCatalogDigest"] = sealed_catalog_digest
+    return result
 
 
 def _supersede_project_memory_book_drafts(
@@ -1584,6 +2495,7 @@ def _supersede_project_memory_book_drafts(
     run_id = compact_whitespace(str(plan.get("runId") or ""))
     metadata = dict(plan.get("metadata") or {})
     project = compact_whitespace(str(metadata.get("project") or ""))
+    current_run_kind = compact_whitespace(str(metadata.get("runKind") or "")) or "legacy"
     owner_kind, owner_id = _memory_owner(
         metadata.get("ownerKind") or "user",
         metadata.get("ownerId") or "default",
@@ -1607,7 +2519,13 @@ def _supersede_project_memory_book_drafts(
             continue
         if not isinstance(previous_metadata, dict):
             continue
-        if compact_whitespace(str(previous_metadata.get("project") or "")) == project:
+        previous_run_kind = compact_whitespace(
+            str(previous_metadata.get("runKind") or "")
+        ) or "legacy"
+        if (
+            compact_whitespace(str(previous_metadata.get("project") or "")) == project
+            and previous_run_kind == current_run_kind
+        ):
             superseded.append(str(row["run_id"]))
     for previous_run_id in superseded:
         conn.execute(
@@ -1707,9 +2625,15 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
     status = compact_whitespace(str(current.get("status") or ""))
     if status not in {"draft", "partial"}:
         raise ValueError(f"memory book run is not reviewable: {run_id} ({status or 'unknown'})")
-    if memory_book_run_is_stale(conn, run=current):
-        raise ValueError(f"memory book draft is stale: {run_id}")
+    stored_plan = memory_book_plan_from_stored_run(current)
+    sealed_catalog_digest = ""
     with conn:
+        # Global freshness must be checked after reserving the writer slot,
+        # otherwise another catalog mutation can land between the check and
+        # the first applied diff.
+        sealed_catalog_digest = seal_global_memory_book_plan(conn, stored_plan)
+        if memory_book_run_is_stale(conn, run=current):
+            raise ValueError(f"memory book draft is stale: {run_id}")
         rows = conn.execute(
             """
             SELECT id, op, target_memory_id, payload_json
@@ -1760,7 +2684,17 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
                 run=current,
             )
         project_personal_memory_books(conn)
-    return memory_book_run_payload(conn, run_id=run_id)
+        if sealed_catalog_digest:
+            sealed_catalog_digest = _current_global_catalog_digest(
+                conn,
+                project=compact_whitespace(
+                    str(dict(current.get("metadata") or {}).get("project") or "")
+                ),
+            )
+    result = memory_book_run_payload(conn, run_id=run_id)
+    if sealed_catalog_digest:
+        result["sealedCatalogDigest"] = sealed_catalog_digest
+    return result
 
 
 def rollback_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> dict[str, object]:
@@ -2182,7 +3116,13 @@ def _persist_memory_book_run(conn: sqlite3.Connection, plan: dict[str, object]) 
         metadata.get("ownerId") or "default",
     )
     run_kind = compact_whitespace(str(metadata.get("runKind") or "legacy"))
-    if run_kind not in {"legacy", "daily_curation", "manual_curation", "dream_insight"}:
+    if run_kind not in {
+        "legacy",
+        "daily_curation",
+        "manual_curation",
+        "dream_insight",
+        MEMORY_CATALOG_RUN_KIND,
+    }:
         raise ValueError("unsupported memory curation run kind")
     conn.execute(
         """
@@ -2567,6 +3507,262 @@ def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> 
     return {"table": "memory_books", "pk": "book_id", "pkValue": book_id, "previous": previous, **memberships}
 
 
+def _memory_atom_row_identity_projection(
+    row: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        "text": row.get("text"),
+        "canonicalText": row.get("canonical_text") or row.get("text"),
+        "kind": row.get("kind"),
+        "language": row.get("language"),
+        "project": row.get("scope_project"),
+        "app": row.get("scope_app"),
+        "claimKey": row.get("claim_key"),
+        "lineageId": row.get("lineage_id"),
+        "claimState": row.get("claim_state"),
+        "validFromMs": row.get("valid_from_ms"),
+        "validToMs": row.get("valid_to_ms"),
+        "supersedesId": row.get("supersedes_id"),
+        "status": row.get("status"),
+        "ownerKind": row.get("owner_kind"),
+        "ownerId": row.get("owner_id"),
+        "privacyLevel": row.get("privacy_level"),
+        "knowledgeDomain": row.get("knowledge_domain"),
+        "scopeKind": row.get("scope_kind"),
+        "scopeId": row.get("scope_id"),
+        "visibility": row.get("visibility"),
+        "authorizationRevision": row.get("authorization_revision"),
+        "bindingId": row.get("binding_id"),
+        "scopeMode": row.get("scope_mode"),
+    }
+
+
+def _global_atom_relation_snapshot(
+    conn: sqlite3.Connection,
+    atom_id: str,
+) -> dict[str, list[dict[str, object]]]:
+    return {
+        "aliases": [
+            _row_dict(row)
+            for row in conn.execute(
+                "SELECT * FROM memory_aliases WHERE memory_atom_id = ? ORDER BY id",
+                (atom_id,),
+            ).fetchall()
+        ],
+        "tags": [
+            _row_dict(row)
+            for row in conn.execute(
+                "SELECT * FROM memory_atom_tags WHERE memory_atom_id = ? ORDER BY tag_id",
+                (atom_id,),
+            ).fetchall()
+        ],
+        "groups": [
+            _row_dict(row)
+            for row in conn.execute(
+                """
+                SELECT * FROM memory_semantic_group_members
+                WHERE member_type = 'atom' AND member_id = ?
+                ORDER BY group_id
+                """,
+                (atom_id,),
+            ).fetchall()
+        ],
+    }
+
+
+def _lossless_relation_scalar(values: list[object]) -> str:
+    normalized = [
+        str(value)
+        for value in values
+        if value is not None and str(value)
+    ]
+    unique = list(dict.fromkeys(normalized))
+    if not unique:
+        return ""
+    if len(unique) == 1:
+        return unique[0]
+    return json.dumps(unique, ensure_ascii=False, sort_keys=False)
+
+
+def _prepare_global_atom_merge(
+    conn: sqlite3.Connection,
+    *,
+    atom_id: str,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    source_ids = _strings(payload.get("mergeSourceIds"))
+    if not source_ids:
+        source_id = compact_whitespace(str(payload.get("mergeSourceId") or ""))
+        source_ids = [source_id] if source_id else []
+    source_ids = list(dict.fromkeys(source_ids))
+    if not source_ids or atom_id in source_ids:
+        raise ValueError("global Atom merge sources are incomplete")
+    target_row = conn.execute(
+        "SELECT * FROM memory_atoms WHERE id = ?",
+        (atom_id,),
+    ).fetchone()
+    if target_row is None:
+        raise ValueError("global Atom merge target is missing")
+    target_projection = _memory_atom_row_identity_projection(_row_dict(target_row))
+    target_identity = memory_atom_identity_hash(target_projection)
+    target_authority = memory_atom_authority_hash(target_projection)
+    payload_identity = compact_whitespace(str(payload.get("identityHash") or ""))
+    payload_authority = compact_whitespace(str(payload.get("authorityHash") or ""))
+    if payload_identity and payload_identity != target_identity:
+        raise ValueError("global Atom merge target identity changed")
+    if payload_authority and payload_authority != target_authority:
+        raise ValueError("global Atom merge target authority changed")
+    source_rows: list[dict[str, object]] = []
+    for source_id in source_ids:
+        row = conn.execute(
+            "SELECT * FROM memory_atoms WHERE id = ?",
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("global Atom merge source is missing")
+        source = _row_dict(row)
+        source_projection = _memory_atom_row_identity_projection(source)
+        if memory_atom_identity_hash(source_projection) != target_identity:
+            raise ValueError("global Atom merge source identity conflicts")
+        if memory_atom_authority_hash(source_projection) != target_authority:
+            raise ValueError("global Atom merge source authority conflicts")
+        source_rows.append(source)
+    snapshots = {
+        atom_id: _global_atom_relation_snapshot(conn, atom_id),
+        **{
+            source_id: _global_atom_relation_snapshot(conn, source_id)
+            for source_id in source_ids
+        },
+    }
+    aliases = [
+        alias
+        for snapshot in snapshots.values()
+        for alias in snapshot["aliases"]
+    ]
+    alias_metadata: dict[tuple[str, str], set[str]] = {}
+    for alias in aliases:
+        key = (
+            str(alias.get("alias_type") or "alias"),
+            str(alias.get("alias") or ""),
+        )
+        pinyin = compact_whitespace(str(alias.get("pinyin") or ""))
+        if pinyin:
+            alias_metadata.setdefault(key, set()).add(pinyin)
+    if any(len(values) > 1 for values in alias_metadata.values()):
+        raise ValueError("global Atom alias metadata conflict")
+    return {
+        "sourceIds": source_ids,
+        "sourceRows": source_rows,
+        "snapshots": snapshots,
+        "targetIdentity": target_identity,
+        "targetAuthority": target_authority,
+    }
+
+
+def _apply_global_atom_merge_relations(
+    conn: sqlite3.Connection,
+    *,
+    atom_id: str,
+    merge: Mapping[str, object],
+) -> None:
+    snapshots = merge.get("snapshots")
+    if not isinstance(snapshots, dict):
+        raise ValueError("global Atom merge relation snapshot is missing")
+    all_snapshots = [
+        value for value in snapshots.values() if isinstance(value, dict)
+    ]
+    aliases_by_key: dict[tuple[str, str], dict[str, object]] = {}
+    for snapshot in all_snapshots:
+        for alias in snapshot.get("aliases", []):
+            if not isinstance(alias, dict):
+                continue
+            key = (
+                str(alias.get("alias_type") or "alias"),
+                str(alias.get("alias") or ""),
+            )
+            if not key[1]:
+                continue
+            existing = aliases_by_key.get(key)
+            if existing is None or float(alias.get("weight") or 0.0) > float(
+                existing.get("weight") or 0.0
+            ):
+                aliases_by_key[key] = dict(alias)
+            elif existing.get("pinyin") in (None, "") and alias.get("pinyin"):
+                existing["pinyin"] = alias.get("pinyin")
+            existing = aliases_by_key[key]
+            existing["created_at_ms"] = min(
+                int(existing.get("created_at_ms") or now_ms()),
+                int(alias.get("created_at_ms") or now_ms()),
+            )
+    for (alias_type, alias_value), alias in aliases_by_key.items():
+        alias_id = f"alias:{stable_text_hash(f'{atom_id}:{alias_type}:{alias_value}')[:20]}"
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO memory_aliases(
+                id, memory_atom_id, alias, alias_type, pinyin, weight, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                alias_id,
+                atom_id,
+                alias_value,
+                alias_type,
+                str(alias.get("pinyin") or ""),
+                float(alias.get("weight") or 0.0),
+                int(alias.get("created_at_ms") or now_ms()),
+            ),
+        )
+
+    tags_by_id: dict[str, list[dict[str, object]]] = {}
+    for snapshot in all_snapshots:
+        for tag in snapshot.get("tags", []):
+            if isinstance(tag, dict) and str(tag.get("tag_id") or ""):
+                tags_by_id.setdefault(str(tag["tag_id"]), []).append(tag)
+    for tag_id, rows in tags_by_id.items():
+        weights = [float(row.get("weight") or 0.0) for row in rows]
+        sources = [row.get("source") for row in rows]
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO memory_atom_tags(
+                memory_atom_id, tag_id, weight, source
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                atom_id,
+                tag_id,
+                max(weights, default=0.0),
+                _lossless_relation_scalar(sources),
+            ),
+        )
+
+    groups_by_id: dict[str, list[dict[str, object]]] = {}
+    for snapshot in all_snapshots:
+        for group in snapshot.get("groups", []):
+            if isinstance(group, dict) and str(group.get("group_id") or ""):
+                groups_by_id.setdefault(str(group["group_id"]), []).append(group)
+    for group_id, rows in groups_by_id.items():
+        weights = [float(row.get("weight") or 0.0) for row in rows]
+        sources = [row.get("source") for row in rows]
+        updated = [
+            int(row.get("updated_at_ms") or 0)
+            for row in rows
+        ]
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO memory_semantic_group_members(
+                group_id, member_type, member_id, weight, source, updated_at_ms
+            ) VALUES (?, 'atom', ?, ?, ?, ?)
+            """,
+            (
+                group_id,
+                atom_id,
+                max(weights, default=0.0),
+                _lossless_relation_scalar(sources),
+                max(updated, default=now_ms()),
+            ),
+        )
+
+
 def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
     atom_id = str(payload["atomId"])
     previous = _row_dict(conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (atom_id,)).fetchone())
@@ -2584,9 +3780,148 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             (atom_id,),
         ).fetchall()
     ]
+    global_merge = (
+        _prepare_global_atom_merge(
+            conn,
+            atom_id=atom_id,
+            payload=payload,
+        )
+        if bool(payload.get("globalCatalogMerge"))
+        else None
+    )
     _assert_memory_owner_unchanged(previous, payload, target_kind="atom")
+    if global_merge is not None:
+        target_row = dict(previous)
+        source_rows = [
+            dict(item)
+            for item in global_merge.get("sourceRows", [])
+            if isinstance(item, dict)
+        ]
+        members = [target_row, *source_rows]
+        for field in (
+            "text",
+            "canonical_text",
+            "kind",
+            "language",
+            "scope_app",
+            "scope_project",
+            "confidence",
+            "quality_score",
+            "privacy_level",
+            "owner_kind",
+            "owner_id",
+            "status",
+            "knowledge_domain",
+            "scope_kind",
+            "scope_id",
+            "visibility",
+            "authorization_revision",
+            "binding_id",
+            "scope_mode",
+            "claim_key",
+            "lineage_id",
+            "claim_state",
+            "valid_from_ms",
+            "valid_to_ms",
+            "supersedes_id",
+        ):
+            payload[field] = target_row.get(field)
+        payload["canonicalText"] = target_row.get("canonical_text") or target_row.get("text")
+        payload["project"] = target_row.get("scope_project") or ""
+        payload["app"] = target_row.get("scope_app") or ""
+        payload["kind"] = target_row.get("kind") or "project_fact"
+        payload["language"] = target_row.get("language") or "zh"
+        payload["ownerKind"] = target_row.get("owner_kind") or "user"
+        payload["ownerId"] = target_row.get("owner_id") or "default"
+        payload["status"] = target_row.get("status") or "active"
+        payload["knowledgeDomain"] = target_row.get("knowledge_domain") or "legacy"
+        payload["scopeKind"] = target_row.get("scope_kind") or "legacy"
+        payload["scopeId"] = target_row.get("scope_id") or ""
+        payload["visibility"] = target_row.get("visibility") or "legacy"
+        payload["authorizationRevision"] = target_row.get("authorization_revision") or ""
+        payload["bindingId"] = target_row.get("binding_id") or ""
+        payload["scopeMode"] = target_row.get("scope_mode") or "legacy"
+        payload["claimKey"] = target_row.get("claim_key") or ""
+        payload["lineageId"] = target_row.get("lineage_id") or ""
+        payload["claimState"] = target_row.get("claim_state") or "current"
+        payload["validFromMs"] = target_row.get("valid_from_ms")
+        payload["validToMs"] = target_row.get("valid_to_ms")
+        payload["supersedesId"] = target_row.get("supersedes_id") or ""
+        payload["sourceEventIds"] = _catalog_atom_union_ints(
+            [
+                {
+                    "sourceEventIds": _json_list(row.get("source_event_ids_json"))
+                }
+                for row in members
+            ],
+            "sourceEventIds",
+        )
+        payload["sourceMemoryIds"] = _catalog_atom_union_values(
+            [
+                {
+                    "sourceMemoryIds": _json_list(row.get("source_memory_ids_json"))
+                }
+                for row in members
+            ],
+            "sourceMemoryIds",
+        )
+        snapshots = global_merge.get("snapshots")
+        all_snapshots = (
+            [value for value in snapshots.values() if isinstance(value, dict)]
+            if isinstance(snapshots, dict)
+            else []
+        )
+        alias_values: dict[str, list[str]] = {
+            "alias": [],
+            "surface_hint": [],
+            "query_expansion": [],
+        }
+        for snapshot in all_snapshots:
+            for alias in snapshot.get("aliases", []):
+                if isinstance(alias, dict):
+                    alias_values.setdefault(
+                        str(alias.get("alias_type") or "alias"),
+                        [],
+                    ).append(str(alias.get("alias") or ""))
+        payload["aliases"] = _unique_strings(alias_values["alias"], limit=None)
+        payload["surfaceHints"] = _unique_strings(
+            alias_values["surface_hint"],
+            limit=None,
+        )
+        payload["queryExpansions"] = _unique_strings(
+            alias_values["query_expansion"],
+            limit=None,
+        )
+        tag_ids: list[str] = []
+        group_ids: list[str] = []
+        for snapshot in all_snapshots:
+            for tag in snapshot.get("tags", []):
+                if isinstance(tag, dict):
+                    tag_id = compact_whitespace(str(tag.get("tag_id") or ""))
+                    if tag_id and tag_id not in tag_ids:
+                        tag_ids.append(tag_id)
+            for group in snapshot.get("groups", []):
+                if isinstance(group, dict):
+                    group_id = compact_whitespace(str(group.get("group_id") or ""))
+                    if group_id and group_id not in group_ids:
+                        group_ids.append(group_id)
+        payload["tags"] = [
+            str(row["tag"])
+            for tag_id in tag_ids
+            for row in [
+                conn.execute("SELECT tag FROM memory_tags WHERE id = ?", (tag_id,)).fetchone()
+            ]
+            if row is not None and str(row["tag"] or "")
+        ]
+        payload["semanticGroupIds"] = group_ids
+        payload["text"] = target_row.get("text") or payload["canonicalText"]
+        payload["confidence"] = target_row.get("confidence")
+        payload["qualityScore"] = target_row.get("quality_score")
+        payload["privacyLevel"] = target_row.get("privacy_level") or "local"
     timestamp = now_ms()
-    canonical = str(payload.get("canonicalText") or "")
+    atom_text = str(payload.get("text") or payload.get("canonicalText") or "")
+    language = compact_whitespace(str(payload.get("language") or "zh")) or "zh"
+    canonical = str(payload.get("canonicalText") or atom_text)
     kind = str(payload.get("kind") or "project_fact")
     app = str(payload.get("app") or "")
     project = str(payload.get("project") or "")
@@ -2629,6 +3964,9 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
     claim_key = _normalized_claim_key(payload.get("claimKey"))
     if not claim_key:
         raise ValueError("memory atom claimKey is required")
+    privacy_level = compact_whitespace(
+        str(payload.get("privacyLevel") or "local")
+    ) or "local"
     lineage_id = compact_whitespace(str(payload.get("lineageId") or ""))
     if not lineage_id:
         lineage_id = (
@@ -2730,7 +4068,7 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             authorization_revision, binding_id, scope_mode,
             claim_key, lineage_id, claim_state, valid_from_ms, valid_to_ms, supersedes_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'zh', ?, ?, 0.0, 'local', ?, ?, ?, ?, ?, NULL,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, ?, ?, NULL,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             kind = excluded.kind,
@@ -2766,14 +4104,16 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         (
             atom_id,
             kind,
-            canonical,
+            atom_text,
             canonical,
             json.dumps(_positive_ints(payload.get("sourceEventIds")), ensure_ascii=False),
             json.dumps(_strings(payload.get("sourceMemoryIds")), ensure_ascii=False),
             app,
             project,
+            language,
             _bounded_float(payload.get("confidence"), default=0.5),
             _bounded_float(payload.get("qualityScore"), default=0.5),
+            privacy_level,
             owner_kind,
             owner_id,
             stored_status,
@@ -2828,6 +4168,12 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         member_id=atom_id,
         group_ids=_strings(payload.get("semanticGroupIds")),
     )
+    if global_merge is not None:
+        _apply_global_atom_merge_relations(
+            conn,
+            atom_id=atom_id,
+            merge=global_merge,
+        )
     dependency_invalidation = (
         invalidate_superseded_atom_dependencies(
             conn,
@@ -3255,19 +4601,78 @@ def _apply_tag_edge(conn: sqlite3.Connection, payload: dict[str, object]) -> dic
     }
 
 
+def _lossless_json_blob(values: list[object]) -> str:
+    raw_values = [
+        str(value)
+        for value in values
+        if value is not None and str(value)
+    ]
+    if not raw_values:
+        return "{}"
+    parsed: list[object] = []
+    for raw in raw_values:
+        try:
+            parsed.append(json.loads(raw))
+        except json.JSONDecodeError:
+            parsed.append(raw)
+    if all(item == parsed[0] for item in parsed[1:]):
+        return raw_values[0]
+    return json.dumps({"merged": parsed}, ensure_ascii=False, sort_keys=True)
+def _lossless_edge_metadata(
+    existing: Mapping[str, object],
+    source: Mapping[str, object],
+) -> str:
+    existing_fields = dict(existing)
+    source_fields = dict(source)
+    metadata = _lossless_json_blob(
+        [existing_fields.get("metadata_json"), source_fields.get("metadata_json")]
+    )
+    try:
+        existing_bias = float(existing_fields.get("direction_bias") or 0.0)
+        source_bias = float(source_fields.get("direction_bias") or 0.0)
+    except (TypeError, ValueError):
+        existing_bias = source_bias = 0.0
+    if existing_bias == source_bias:
+        return metadata
+    return json.dumps(
+        {
+            "mergedMetadata": metadata,
+            "directionBias": [existing_bias, source_bias],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
     source_name = compact_whitespace(str(payload.get("source") or ""))
     target_name = compact_whitespace(str(payload.get("target") or ""))
-    source = conn.execute(
-        "SELECT * FROM memory_tags WHERE tag = ? OR normalized_tag = ? "
-        "ORDER BY CASE WHEN tag = ? THEN 0 ELSE 1 END, quality_score DESC LIMIT 1",
-        (source_name, normalize_text(source_name), source_name),
-    ).fetchone()
-    target = conn.execute(
-        "SELECT * FROM memory_tags WHERE tag = ? OR normalized_tag = ? "
-        "ORDER BY CASE WHEN tag = ? THEN 0 ELSE 1 END, quality_score DESC LIMIT 1",
-        (target_name, normalize_text(target_name), target_name),
-    ).fetchone()
+    source_tag_id = _optional_int(payload.get("sourceTagId"))
+    target_tag_id = _optional_int(payload.get("targetTagId"))
+    source = (
+        conn.execute(
+            "SELECT * FROM memory_tags WHERE id = ?",
+            (source_tag_id,),
+        ).fetchone()
+        if source_tag_id > 0
+        else conn.execute(
+            "SELECT * FROM memory_tags WHERE tag = ? OR normalized_tag = ? "
+            "ORDER BY CASE WHEN tag = ? THEN 0 ELSE 1 END, quality_score DESC LIMIT 1",
+            (source_name, normalize_text(source_name), source_name),
+        ).fetchone()
+    )
+    target = (
+        conn.execute(
+            "SELECT * FROM memory_tags WHERE id = ?",
+            (target_tag_id,),
+        ).fetchone()
+        if target_tag_id > 0
+        else conn.execute(
+            "SELECT * FROM memory_tags WHERE tag = ? OR normalized_tag = ? "
+            "ORDER BY CASE WHEN tag = ? THEN 0 ELSE 1 END, quality_score DESC LIMIT 1",
+            (target_name, normalize_text(target_name), target_name),
+        ).fetchone()
+    )
     if source is None or target is None:
         # Older stored drafts could contain a model-proposed merge whose
         # source only existed in the same compile output. The compiler already
@@ -3284,7 +4689,7 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
     source_id = int(source["id"])
     target_id = int(target["id"])
     if source_id == target_id:
-        return {"noOp": True, "sourceTagId": source_id, "targetTagId": target_id}
+        raise ValueError("semantic Tag merge resolves to the same physical tag")
 
     snapshot = {
         "sourceTagId": source_id,
@@ -3332,7 +4737,23 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
             if source_name in _json_list(row["tags_json"])
         ],
     }
+    for edge in snapshot["edges"]:
+        mapped_src = target_id if int(edge["src_tag_id"]) == source_id else int(edge["src_tag_id"])
+        mapped_dst = target_id if int(edge["dst_tag_id"]) == source_id else int(edge["dst_tag_id"])
+        if mapped_src == mapped_dst:
+            raise ValueError("semantic Tag merge would create a self edge")
     timestamp = now_ms()
+    source_tag = snapshot["tags"][0]
+    target_tag = snapshot["tags"][1]
+    conn.execute(
+        "UPDATE memory_tags SET metadata_json = ? WHERE id = ?",
+        (
+            _lossless_json_blob(
+                [target_tag.get("metadata_json"), source_tag.get("metadata_json")]
+            ),
+            target_id,
+        ),
+    )
 
     for row in conn.execute(
         "SELECT memory_item_id, weight, position, evidence FROM memory_item_tags WHERE tag_id = ?",
@@ -3354,7 +4775,9 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
                 (
                     row["weight"],
                     row["position"],
-                    str(existing["evidence"] or row["evidence"] or ""),
+                    _lossless_relation_scalar(
+                        [existing["evidence"], row["evidence"]]
+                    ),
                     row["memory_item_id"],
                     target_id,
                 ),
@@ -3366,7 +4789,7 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
         (source_id,),
     ).fetchall():
         existing = conn.execute(
-            "SELECT weight FROM memory_atom_tags WHERE memory_atom_id = ? AND CAST(tag_id AS INTEGER) = ?",
+            "SELECT weight, source FROM memory_atom_tags WHERE memory_atom_id = ? AND CAST(tag_id AS INTEGER) = ?",
             (row["memory_atom_id"], target_id),
         ).fetchone()
         if existing is None:
@@ -3376,9 +4799,14 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
             )
         else:
             conn.execute(
-                "UPDATE memory_atom_tags SET weight = MAX(weight, ?), source = 'dsv4_merge' "
+                "UPDATE memory_atom_tags SET weight = MAX(weight, ?), source = ? "
                 "WHERE memory_atom_id = ? AND CAST(tag_id AS INTEGER) = ?",
-                (row["weight"], row["memory_atom_id"], target_id),
+                (
+                    row["weight"],
+                    _lossless_relation_scalar([existing["source"], row["source"]]),
+                    row["memory_atom_id"],
+                    target_id,
+                ),
             )
     conn.execute("DELETE FROM memory_atom_tags WHERE CAST(tag_id AS INTEGER) = ?", (source_id,))
 
@@ -3391,9 +4819,9 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
         src_id = target_id if int(row["src_tag_id"]) == source_id else int(row["src_tag_id"])
         dst_id = target_id if int(row["dst_tag_id"]) == source_id else int(row["dst_tag_id"])
         if src_id == dst_id:
-            continue
+            raise ValueError("semantic Tag merge would create a self edge")
         existing = conn.execute(
-            "SELECT weight, evidence_count FROM memory_tag_edges "
+            "SELECT weight, direction_bias, evidence_count, metadata_json FROM memory_tag_edges "
             "WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
             (src_id, dst_id, row["edge_type"]),
         ).fetchone()
@@ -3414,12 +4842,16 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
             )
         else:
             conn.execute(
-                "UPDATE memory_tag_edges SET weight = MAX(weight, ?), evidence_count = evidence_count + ?, "
-                "updated_at_ms = ? WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
+                "UPDATE memory_tag_edges SET weight = MAX(weight, ?), "
+                "direction_bias = ?, evidence_count = evidence_count + ?, "
+                "updated_at_ms = ?, metadata_json = ? "
+                "WHERE src_tag_id = ? AND dst_tag_id = ? AND edge_type = ?",
                 (
                     row["weight"],
+                    existing["direction_bias"],
                     row["evidence_count"],
                     timestamp,
+                    _lossless_edge_metadata(existing, row),
                     src_id,
                     dst_id,
                     row["edge_type"],
@@ -3431,12 +4863,30 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
         "WHERE member_type = 'tag' AND member_id = ?",
         (str(source_id),),
     ).fetchall():
-        conn.execute(
-            "INSERT INTO memory_semantic_group_members(group_id, member_type, member_id, weight, source, updated_at_ms) "
-            "VALUES (?, 'tag', ?, ?, ?, ?) ON CONFLICT(group_id, member_type, member_id) DO UPDATE SET "
-            "weight = MAX(weight, excluded.weight), source = 'dsv4_merge', updated_at_ms = excluded.updated_at_ms",
-            (row["group_id"], str(target_id), row["weight"], row["source"], timestamp),
-        )
+        existing = conn.execute(
+            "SELECT weight, source FROM memory_semantic_group_members "
+            "WHERE group_id = ? AND member_type = 'tag' AND member_id = ?",
+            (row["group_id"], str(target_id)),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO memory_semantic_group_members(group_id, member_type, member_id, weight, source, updated_at_ms) "
+                "VALUES (?, 'tag', ?, ?, ?, ?)",
+                (row["group_id"], str(target_id), row["weight"], row["source"], timestamp),
+            )
+        else:
+            conn.execute(
+                "UPDATE memory_semantic_group_members SET weight = MAX(weight, ?), "
+                "source = ?, updated_at_ms = ? "
+                "WHERE group_id = ? AND member_type = 'tag' AND member_id = ?",
+                (
+                    row["weight"],
+                    _lossless_relation_scalar([existing["source"], row["source"]]),
+                    timestamp,
+                    row["group_id"],
+                    str(target_id),
+                ),
+            )
     conn.execute(
         "DELETE FROM memory_semantic_group_members WHERE member_type = 'tag' AND member_id = ?",
         (str(source_id),),
@@ -3450,7 +4900,7 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
             source_name,
             *_json_list(source_profile.get("aliases_json")),
         ],
-        limit=48,
+        limit=None,
     )
     conn.execute(
         "INSERT INTO memory_tag_profiles(tag_id, color_token, aliases_json, updated_at_ms) VALUES (?, ?, ?, ?) "
@@ -3467,7 +4917,7 @@ def _apply_semantic_tag_merge(conn: sqlite3.Connection, payload: dict[str, objec
         tags = [target_name if tag == source_name else tag for tag in _json_list(row["tags_json"])]
         conn.execute(
             "UPDATE memory_books SET tags_json = ?, updated_at_ms = ? WHERE book_id = ?",
-            (json.dumps(_unique_strings(tags, limit=48), ensure_ascii=False), timestamp, row["book_id"]),
+            (json.dumps(_unique_strings(tags, limit=None), ensure_ascii=False), timestamp, row["book_id"]),
         )
     conn.execute("DELETE FROM memory_tags WHERE id = ?", (source_id,))
     return snapshot
@@ -4061,7 +5511,7 @@ def _synthesize_daily_book_diff_from_diffs(
     return {"op": "upsert_memory_book", "targetId": book_id, "payload": payload, "status": "pending"}
 
 
-def _unique_strings(values: list[str], *, limit: int) -> list[str]:
+def _unique_strings(values: list[str], *, limit: int | None) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -4069,7 +5519,7 @@ def _unique_strings(values: list[str], *, limit: int) -> list[str]:
         if text and text not in seen:
             result.append(text)
             seen.add(text)
-        if len(result) >= limit:
+        if limit is not None and len(result) >= limit:
             break
     return result
 
@@ -4191,6 +5641,18 @@ def _memory_book_summary(diffs: list[dict[str, object]]) -> str:
     return "；".join(visible) if visible else "没有生成可入库的高置信变更"
 
 
+
+def _sanitize_catalog_text(
+    value: object,
+    *,
+    max_chars: int,
+    uncapped: bool,
+) -> str:
+    return _sanitize_text(
+        str(value or ""),
+        max_chars=1_000_000 if uncapped else max_chars,
+    )[0]
+
 def _sanitize_text(text: str, *, max_chars: int) -> tuple[str, dict[str, int]]:
     counts = _empty_redaction_counts()
     value = text or ""
@@ -4298,15 +5760,28 @@ def _planned_tag_merges(
     source_bundle: dict[str, object] | None,
 ) -> list[dict[str, object]]:
     existing = _list_of_dicts((source_bundle or {}).get("existingSemanticTags"))
+    global_catalog = (
+        compact_whitespace(
+            str((source_bundle or {}).get("curationScope") or "")
+        ).lower()
+        == "global"
+        and bool((source_bundle or {}).get("catalogAudit"))
+        and bool((source_bundle or {}).get("catalogComplete"))
+    )
+    tags_by_id = {
+        _optional_int(item.get("tagId")): item
+        for item in existing
+        if _optional_int(item.get("tagId")) > 0
+    }
+    tags_by_normalized_name: dict[str, list[dict[str, object]]] = {}
     canonical_by_name: dict[str, str] = {}
-    aliases_by_name: dict[str, list[str]] = {}
     for item in existing:
         name = compact_whitespace(str(item.get("name") or ""))
         normalized = normalize_text(name)
         if not normalized:
             continue
+        tags_by_normalized_name.setdefault(normalized, []).append(item)
         canonical_by_name.setdefault(normalized, name)
-        aliases_by_name[name] = _strings(item.get("aliases"))
     proposed_names = {
         normalize_text(str(item.get("name") or item.get("tag") or ""))
         for item in _list_of_dicts(compile_output.get("semanticTags"))
@@ -4322,38 +5797,82 @@ def _planned_tag_merges(
         target: object,
         *,
         reason: object,
+        source_tag_id: object = 0,
+        target_tag_id: object = 0,
         evidence_event_ids: object = None,
         confidence: object = 0.8,
     ) -> None:
-        source_name = compact_whitespace(str(source or ""))
-        target_name = compact_whitespace(str(target or ""))
+        source_id = _optional_int(source_tag_id)
+        target_id = _optional_int(target_tag_id)
+        source_item = tags_by_id.get(source_id)
+        target_item = tags_by_id.get(target_id)
+        source_name = compact_whitespace(
+            str((source_item or {}).get("name") or source or "")
+        )
+        target_name = compact_whitespace(
+            str((target_item or {}).get("name") or target or "")
+        )
         source_norm = normalize_text(source_name)
         target_norm = normalize_text(target_name)
         if not source_norm or not target_norm:
             return
-        target_name = canonical_by_name.get(target_norm, target_name)
-        target_norm = normalize_text(target_name)
-        if source_norm == target_norm or source_norm in seen_sources:
+        if source_id <= 0:
+            source_candidates = tags_by_normalized_name.get(source_norm, [])
+            if len(source_candidates) == 1:
+                source_item = source_candidates[0]
+                source_id = _optional_int(source_item.get("tagId"))
+                source_name = compact_whitespace(
+                    str(source_item.get("name") or source_name)
+                )
+                source_norm = normalize_text(source_name)
+            else:
+                source_id = 0
+        if target_id <= 0:
+            target_candidates = tags_by_normalized_name.get(target_norm, [])
+            if len(target_candidates) == 1:
+                target_item = target_candidates[0]
+                target_id = _optional_int(target_item.get("tagId"))
+                target_name = compact_whitespace(
+                    str(target_item.get("name") or target_name)
+                )
+                target_norm = normalize_text(target_name)
+            else:
+                target_id = 0
+                target_name = canonical_by_name.get(target_norm, target_name)
+                target_norm = normalize_text(target_name)
+        source_key = f"id:{source_id}" if source_id else f"name:{source_norm}"
+        target_key = f"id:{target_id}" if target_id else f"name:{target_norm}"
+        if source_key == target_key or source_key in seen_sources:
             return
-        if target_norm not in canonical_by_name and target_norm not in proposed_names:
+        if (
+            target_id <= 0
+            and target_norm not in canonical_by_name
+            and target_norm not in proposed_names
+        ):
             return
-        cursor = target_norm
+        cursor = target_key
         visited: set[str] = set()
         while cursor and cursor not in visited:
-            if cursor == source_norm:
+            if cursor == source_key:
                 return
             visited.add(cursor)
             cursor = merge_target_by_source.get(cursor, "")
-        seen_sources.add(source_norm)
-        merge_target_by_source[source_norm] = target_norm
+        seen_sources.add(source_key)
+        merge_target_by_source[source_key] = target_key
         merges.append(
             {
                 "source": source_name,
                 "target": target_name,
+                **({"sourceTagId": source_id} if source_id else {}),
+                **({"targetTagId": target_id} if target_id else {}),
                 "reason": compact_whitespace(str(reason or "同义标签规范化")),
                 "evidenceEventIds": _positive_ints(evidence_event_ids),
                 "confidence": _bounded_float(confidence, default=0.8),
-                "requiresApply": source_norm in canonical_by_name,
+                "requiresApply": (
+                    source_id in tags_by_id
+                    if source_id
+                    else source_norm in canonical_by_name
+                ),
             }
         )
 
@@ -4361,37 +5880,131 @@ def _planned_tag_merges(
         add_merge(
             item.get("source") or item.get("from"),
             item.get("target") or item.get("into"),
+            source_tag_id=item.get("sourceTagId"),
+            target_tag_id=item.get("targetTagId"),
             reason=item.get("reason"),
             evidence_event_ids=item.get("evidenceEventIds"),
             confidence=item.get("confidence"),
         )
 
-    # Exact normalized-name and declared-alias overlap is deterministic enough
-    # to propose a reviewable merge. It never mutates the formal graph here.
-    for item in existing:
-        name = compact_whitespace(str(item.get("name") or ""))
-        canonical = canonical_by_name.get(normalize_text(name), name)
-        if canonical and canonical != name:
-            add_merge(name, canonical, reason="规范化名称重复", confidence=0.98)
-    for target_name, aliases in aliases_by_name.items():
-        for alias in aliases:
-            existing_alias = canonical_by_name.get(normalize_text(alias))
-            if existing_alias and normalize_text(existing_alias) != normalize_text(target_name):
-                add_merge(existing_alias, target_name, reason="已有标签别名重合", confidence=0.95)
+    # Exact normalized-name duplicates are safe to coalesce by physical id.
+    # The source bundle is already ordered by quality and recency, so the first
+    # row is the canonical target and later rows become aliases of it.
+    for duplicate_items in (
+        tags_by_normalized_name.values() if global_catalog else ()
+    ):
+        if len(duplicate_items) < 2:
+            continue
+        target_item = duplicate_items[0]
+        for source_item in duplicate_items[1:]:
+            add_merge(
+                source_item.get("name"),
+                target_item.get("name"),
+                source_tag_id=source_item.get("tagId"),
+                target_tag_id=target_item.get("tagId"),
+                reason="规范化名称重复",
+                confidence=0.99,
+            )
+
+    # Declared aliases are also deterministic catalog evidence. They do not
+    # authorize fuzzy, related, parent/child, or co-occurrence merges.
+    for target_item in existing:
+        target_name = compact_whitespace(str(target_item.get("name") or ""))
+        for alias in _strings(target_item.get("aliases")):
+            alias_items = tags_by_normalized_name.get(normalize_text(alias), [])
+            for source_item in alias_items:
+                add_merge(
+                    source_item.get("name"),
+                    target_name,
+                    source_tag_id=source_item.get("tagId"),
+                    target_tag_id=target_item.get("tagId"),
+                    reason="已有标签别名重合",
+                    confidence=0.95,
+                )
+
     for item in _list_of_dicts(compile_output.get("semanticTags")):
         name = compact_whitespace(str(item.get("name") or item.get("tag") or ""))
         for candidate in [name, *_strings(item.get("aliases"))]:
-            existing_name = canonical_by_name.get(normalize_text(candidate))
-            if existing_name and normalize_text(name) != normalize_text(existing_name):
+            existing_items = tags_by_normalized_name.get(
+                normalize_text(candidate),
+                [],
+            )
+            if existing_items and normalize_text(name) != normalize_text(
+                str(existing_items[0].get("name") or "")
+            ):
                 add_merge(
                     name,
-                    existing_name,
+                    existing_items[0].get("name"),
+                    target_tag_id=existing_items[0].get("tagId"),
                     reason="本批标签与已有规范标签或别名重合",
                     evidence_event_ids=item.get("sourceEventIds"),
                     confidence=item.get("confidence"),
                 )
                 break
-    return merges
+    return _resolve_tag_merge_terminals(merges)
+
+def _tag_merge_key(name: object, tag_id: object) -> str:
+    physical_id = _optional_int(tag_id)
+    normalized = normalize_text(str(name or ""))
+    return f"id:{physical_id}" if physical_id > 0 else f"name:{normalized}"
+
+
+def _resolve_tag_merge_terminals(
+    merges: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Rewrite alias chains so every physical merge deletes only a leaf."""
+    target_by_source: dict[str, str] = {}
+    endpoint_by_key: dict[str, tuple[str, int]] = {}
+    for merge in merges:
+        source_name = compact_whitespace(str(merge.get("source") or ""))
+        target_name = compact_whitespace(str(merge.get("target") or ""))
+        source_key = _tag_merge_key(source_name, merge.get("sourceTagId"))
+        target_key = _tag_merge_key(target_name, merge.get("targetTagId"))
+        if not source_name or not target_name or source_key == target_key:
+            continue
+        target_by_source.setdefault(source_key, target_key)
+        endpoint_by_key.setdefault(
+            source_key,
+            (source_name, _optional_int(merge.get("sourceTagId"))),
+        )
+        endpoint_by_key.setdefault(
+            target_key,
+            (target_name, _optional_int(merge.get("targetTagId"))),
+        )
+
+    def terminal_for(key: str) -> str:
+        visited: set[str] = set()
+        current = key
+        while current in target_by_source and current not in visited:
+            visited.add(current)
+            current = target_by_source[current]
+        return current
+
+    resolved: list[dict[str, object]] = []
+    for merge in merges:
+        source_name = compact_whitespace(str(merge.get("source") or ""))
+        target_name = compact_whitespace(str(merge.get("target") or ""))
+        source_key = _tag_merge_key(source_name, merge.get("sourceTagId"))
+        target_key = _tag_merge_key(target_name, merge.get("targetTagId"))
+        terminal_key = terminal_for(target_key)
+        if terminal_key == source_key:
+            # The planner already rejects cycles; keep this guard here so a
+            # malformed legacy graph cannot reintroduce a self-merge.
+            continue
+        terminal = endpoint_by_key.get(terminal_key)
+        if terminal is None:
+            resolved.append(dict(merge))
+            continue
+        terminal_name, terminal_id = terminal
+        rewritten = dict(merge)
+        rewritten["target"] = terminal_name
+        if terminal_id > 0:
+            rewritten["targetTagId"] = terminal_id
+        else:
+            rewritten.pop("targetTagId", None)
+        resolved.append(rewritten)
+    return resolved
+
 
 
 def _canonical_tag_name(value: str, mapping: dict[str, str]) -> str:
@@ -4669,29 +6282,85 @@ def _source_rime_rank_feedback(
     return result, redaction_stats
 
 
-def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
+def _existing_book_summaries(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    catalog_only: bool = False,
+) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT book_id, book_type, book_key, title, summary, tags_json,
+        SELECT book_id, book_type, book_key, title, summary, project, app,
+               tags_json, surface_hints_json, query_expansions_json,
                source_event_ids_json, memory_atom_ids_json, status,
-               updated_at_ms, archived_at_ms, metadata_json
+               updated_at_ms, archived_at_ms, metadata_json,
+               owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
+               visibility, authorization_revision, binding_id, scope_mode
         FROM memory_books
         WHERE status IN ('active', 'approved', 'archived')
-          AND (? = '' OR project = ? OR project = '')
+          AND (
+                ? = 1
+                OR ? = ''
+                OR project = ?
+                OR project = ''
+              )
         ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
-                 updated_at_ms DESC
-        LIMIT 48
+                 updated_at_ms DESC, book_id ASC
+        LIMIT ?
         """,
-        (project, project),
+        (1 if catalog_only else 0, project, project, -1 if catalog_only else 48),
     ).fetchall()
     return [
         {
             "bookId": str(row["book_id"] or ""),
             "bookType": str(row["book_type"] or ""),
             "bookKey": str(row["book_key"] or ""),
-            "title": _sanitize_text(str(row["title"] or ""), max_chars=80)[0],
-            "summary": _sanitize_text(str(row["summary"] or ""), max_chars=180)[0],
-            "tags": [_sanitize_text(tag, max_chars=48)[0] for tag in _json_list(row["tags_json"])],
+            "title": _sanitize_catalog_text(
+                row["title"],
+                max_chars=80,
+                uncapped=catalog_only,
+            ),
+            "summary": _sanitize_catalog_text(
+                row["summary"],
+                max_chars=180,
+                uncapped=catalog_only,
+            ),
+            "contentHash": stable_text_hash(
+                json.dumps(
+                    {
+                        "title": row["title"],
+                        "summary": row["summary"],
+                        "tags": row["tags_json"],
+                        "surfaceHints": row["surface_hints_json"],
+                        "queryExpansions": row["query_expansions_json"],
+                        "sourceEventIds": row["source_event_ids_json"],
+                        "memoryAtomIds": row["memory_atom_ids_json"],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            ),
+            "tags": [
+                _sanitize_catalog_text(tag, max_chars=48, uncapped=catalog_only)
+                for tag in _json_list(row["tags_json"])
+            ],
+            "surfaceHints": [
+                _sanitize_catalog_text(
+                    item,
+                    max_chars=48,
+                    uncapped=catalog_only,
+                )
+                for item in _json_list(row["surface_hints_json"])
+            ],
+            "queryExpansions": [
+                _sanitize_catalog_text(
+                    item,
+                    max_chars=80,
+                    uncapped=catalog_only,
+                )
+                for item in _json_list(row["query_expansions_json"])
+            ],
             "sourceEventIds": _json_list(row["source_event_ids_json"]),
             "memoryAtomIds": _json_list(row["memory_atom_ids_json"]),
             "semanticGroupIds": [
@@ -4699,10 +6368,30 @@ def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[
                 for member in conn.execute(
                     "SELECT group_id FROM memory_semantic_group_members "
                     "WHERE member_type = 'book' AND member_id = ? "
-                    "ORDER BY weight DESC LIMIT 8",
-                    (str(row["book_id"] or ""),),
+                    "ORDER BY weight DESC, group_id ASC LIMIT ?",
+                    (str(row["book_id"] or ""), -1 if catalog_only else 8),
                 ).fetchall()
             ],
+            "project": _sanitize_catalog_text(
+                row["project"],
+                max_chars=120,
+                uncapped=catalog_only,
+            ),
+            "app": _sanitize_catalog_text(
+                row["app"],
+                max_chars=120,
+                uncapped=catalog_only,
+            ),
+            "ownerKind": str(row["owner_kind"] or ""),
+            "ownerId": str(row["owner_id"] or ""),
+            "knowledgeDomain": str(row["knowledge_domain"] or ""),
+            "scopeKind": str(row["scope_kind"] or ""),
+            "scopeId": str(row["scope_id"] or ""),
+            "visibility": str(row["visibility"] or ""),
+            "authorizationRevision": str(row["authorization_revision"] or ""),
+            "bindingId": str(row["binding_id"] or ""),
+            "scopeMode": str(row["scope_mode"] or ""),
+            "metadataHash": stable_text_hash(str(row["metadata_json"] or "{}")),
             "status": str(row["status"] or "active"),
             "updatedAtMs": int(row["updated_at_ms"] or 0),
             "archivedAtMs": int(row["archived_at_ms"] or 0),
@@ -4711,62 +6400,147 @@ def _existing_book_summaries(conn: sqlite3.Connection, *, project: str) -> list[
     ]
 
 
-def _existing_memory_atoms(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
+def _existing_memory_atoms(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    catalog_only: bool = False,
+) -> list[dict[str, object]]:
     """Return the compact global Atom catalog used for semantic deduplication."""
-
     rows = conn.execute(
         """
         SELECT id, kind, text, canonical_text, source_event_ids_json,
-               source_memory_ids_json, scope_app, scope_project, confidence,
-               quality_score, status, updated_at_ms, claim_key, lineage_id,
-               claim_state, valid_from_ms, valid_to_ms, supersedes_id
+               source_memory_ids_json, scope_app, scope_project, language,
+               confidence, quality_score, privacy_level, status, updated_at_ms,
+               claim_key, lineage_id, claim_state, valid_from_ms, valid_to_ms,
+               supersedes_id, owner_kind, owner_id, knowledge_domain, scope_kind,
+               scope_id, visibility, authorization_revision, binding_id, scope_mode
         FROM memory_atoms
         WHERE status IN ('active', 'approved', 'superseded')
-          AND (? = '' OR scope_project = ? OR scope_project = '' OR scope_project IS NULL)
+          AND (
+                ? = 1
+                OR ? = ''
+                OR scope_project = ?
+                OR scope_project = ''
+                OR scope_project IS NULL
+              )
         ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
                  quality_score DESC, updated_at_ms DESC, id ASC
-        LIMIT 500
+        LIMIT ?
         """,
-        (project, project),
+        (1 if catalog_only else 0, project, project, -1 if catalog_only else 500),
     ).fetchall()
     result: list[dict[str, object]] = []
     for row in rows:
         atom_id = str(row["id"] or "")
+        raw_alias_rows = [
+            _row_dict(alias_row)
+            for alias_row in conn.execute(
+                """
+                SELECT alias, alias_type, pinyin, weight, created_at_ms
+                FROM memory_aliases
+                WHERE memory_atom_id = ?
+                ORDER BY weight DESC, created_at_ms DESC, alias ASC
+                """,
+                (atom_id,),
+            ).fetchall()
+        ]
         aliases: list[str] = []
         surface_hints: list[str] = []
         query_expansions: list[str] = []
-        for alias_row in conn.execute(
-            """
-            SELECT alias, alias_type
-            FROM memory_aliases
-            WHERE memory_atom_id = ?
-            ORDER BY weight DESC, created_at_ms DESC
-            LIMIT 64
-            """,
-            (atom_id,),
-        ).fetchall():
-            value = _sanitize_text(str(alias_row["alias"] or ""), max_chars=80)[0]
+        for alias_row in raw_alias_rows if catalog_only else raw_alias_rows[:64]:
+            value = _sanitize_catalog_text(
+                alias_row.get("alias"),
+                max_chars=80,
+                uncapped=catalog_only,
+            )
             if not value:
                 continue
-            alias_type = str(alias_row["alias_type"] or "alias")
+            alias_type = str(alias_row.get("alias_type") or "alias")
             if alias_type == "surface_hint":
                 surface_hints.append(value)
             elif alias_type == "query_expansion":
                 query_expansions.append(value)
             else:
                 aliases.append(value)
+        raw_tag_rows = [
+            _row_dict(tag_row)
+            for tag_row in conn.execute(
+                """
+                SELECT mat.tag_id, mat.weight, mat.source, mt.tag
+                FROM memory_atom_tags mat
+                JOIN memory_tags mt ON CAST(mt.id AS TEXT) = mat.tag_id
+                WHERE mat.memory_atom_id = ? AND mt.status = 'active'
+                ORDER BY mat.weight DESC, mt.quality_score DESC, mt.id ASC
+                """,
+                (atom_id,),
+            ).fetchall()
+        ]
+        raw_group_rows = [
+            _row_dict(member)
+            for member in conn.execute(
+                "SELECT group_id, weight, source, updated_at_ms "
+                "FROM memory_semantic_group_members "
+                "WHERE member_type = 'atom' AND member_id = ?",
+                (atom_id,),
+            ).fetchall()
+        ]
+        raw_identity = {
+            "text": row["text"],
+            "canonicalText": row["canonical_text"] or row["text"],
+            "kind": row["kind"],
+            "language": row["language"],
+            "project": row["scope_project"],
+            "app": row["scope_app"],
+            "claimKey": row["claim_key"],
+            "lineageId": row["lineage_id"],
+            "claimState": row["claim_state"],
+            "validFromMs": row["valid_from_ms"],
+            "validToMs": row["valid_to_ms"],
+            "supersedesId": row["supersedes_id"],
+            "status": row["status"],
+            "ownerKind": row["owner_kind"],
+            "ownerId": row["owner_id"],
+            "privacyLevel": row["privacy_level"],
+            "knowledgeDomain": row["knowledge_domain"],
+            "scopeKind": row["scope_kind"],
+            "scopeId": row["scope_id"],
+            "visibility": row["visibility"],
+            "authorizationRevision": row["authorization_revision"],
+            "bindingId": row["binding_id"],
+            "scopeMode": row["scope_mode"],
+        }
+        identity_hash = memory_atom_identity_hash(raw_identity)
+        authority_hash = memory_atom_authority_hash(raw_identity)
         result.append(
             {
                 "atomId": atom_id,
+                "identityHash": identity_hash,
+                "authorityHash": authority_hash,
                 "kind": str(row["kind"] or "project_fact"),
-                "canonicalText": _sanitize_text(
-                    str(row["canonical_text"] or row["text"] or ""),
+                "language": str(row["language"] or ""),
+                "canonicalText": _sanitize_catalog_text(
+                    row["canonical_text"] or row["text"],
                     max_chars=500,
-                )[0],
+                    uncapped=catalog_only,
+                ),
+                "text": _sanitize_catalog_text(
+                    row["text"],
+                    max_chars=500,
+                    uncapped=catalog_only,
+                ),
                 "sourceEventIds": _json_list(row["source_event_ids_json"]),
                 "sourceMemoryIds": _json_list(row["source_memory_ids_json"]),
-                "app": _sanitize_text(str(row["scope_app"] or ""), max_chars=120)[0],
-                "project": _sanitize_text(str(row["scope_project"] or ""), max_chars=120)[0],
+                "app": _sanitize_catalog_text(
+                    row["scope_app"],
+                    max_chars=120,
+                    uncapped=catalog_only,
+                ),
+                "project": _sanitize_catalog_text(
+                    row["scope_project"],
+                    max_chars=120,
+                    uncapped=catalog_only,
+                ),
                 "confidence": float(row["confidence"] or 0.0),
                 "qualityScore": float(row["quality_score"] or 0.0),
                 "status": str(row["status"] or "active"),
@@ -4781,32 +6555,71 @@ def _existing_memory_atoms(conn: sqlite3.Connection, *, project: str) -> list[di
                 ),
                 "supersedesId": str(row["supersedes_id"] or ""),
                 "tags": [
-                    _sanitize_text(str(tag_row[0] or ""), max_chars=48)[0]
-                    for tag_row in conn.execute(
-                        """
-                        SELECT mt.tag
-                        FROM memory_atom_tags mat
-                        JOIN memory_tags mt ON CAST(mt.id AS TEXT) = mat.tag_id
-                        WHERE mat.memory_atom_id = ? AND mt.status = 'active'
-                        ORDER BY mat.weight DESC, mt.quality_score DESC
-                        LIMIT 24
-                        """,
-                        (atom_id,),
-                    ).fetchall()
-                    if str(tag_row[0] or "")
+                    _sanitize_catalog_text(
+                        tag_row.get("tag"),
+                        max_chars=48,
+                        uncapped=catalog_only,
+                    )
+                    for tag_row in (
+                        raw_tag_rows if catalog_only else raw_tag_rows[:24]
+                    )
+                    if str(tag_row.get("tag") or "")
                 ],
                 "semanticGroupIds": [
-                    str(member[0])
-                    for member in conn.execute(
-                        "SELECT group_id FROM memory_semantic_group_members "
-                        "WHERE member_type = 'atom' AND member_id = ? "
-                        "ORDER BY weight DESC LIMIT 8",
-                        (atom_id,),
-                    ).fetchall()
+                    str(member.get("group_id") or "")
+                    for member in (
+                        raw_group_rows if catalog_only else raw_group_rows[:8]
+                    )
+                    if str(member.get("group_id") or "")
                 ],
                 "aliases": aliases,
                 "surfaceHints": surface_hints,
                 "queryExpansions": query_expansions,
+                "tagRelationsHash": stable_text_hash(
+                    json.dumps(
+                        [
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key not in {"tag"}
+                            }
+                            for item in raw_tag_rows
+                        ],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                ),
+                "groupMembershipsHash": stable_text_hash(
+                    json.dumps(
+                        [
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key != "updated_at_ms"
+                            }
+                            for item in raw_group_rows
+                        ],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                ),
+                "aliasRecordsHash": stable_text_hash(
+                    json.dumps(
+                        [
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key != "created_at_ms"
+                            }
+                            for item in raw_alias_rows
+                        ],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                ),
             }
         )
     return result
@@ -4912,95 +6725,309 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     return len(left & right) / max(1, len(left | right))
 
 
-def _existing_semantic_groups(conn: sqlite3.Connection, *, project: str) -> list[dict[str, object]]:
+def _existing_semantic_groups(
+    conn: sqlite3.Connection,
+    *,
+    project: str,
+    catalog_only: bool = False,
+) -> list[dict[str, object]]:
     rows = conn.execute(
         """
-        SELECT group_id, title, description, aliases_json, tags_json, source_event_ids_json
+        SELECT group_id, title, description, project, aliases_json, tags_json,
+               source_event_ids_json, confidence, quality_score, metadata_json
         FROM memory_semantic_groups
-        WHERE status = 'active' AND (? = '' OR project = ? OR project = '')
-        ORDER BY quality_score DESC, updated_at_ms DESC
-        LIMIT 24
+        WHERE status = 'active' AND (
+            ? = 1 OR ? = '' OR project = ? OR project = ''
+        )
+        ORDER BY quality_score DESC, updated_at_ms DESC, group_id ASC
+        LIMIT ?
         """,
-        (project, project),
+        (1 if catalog_only else 0, project, project, -1 if catalog_only else 24),
     ).fetchall()
     return [
         {
             "groupId": str(row["group_id"] or ""),
-            "title": _sanitize_text(str(row["title"] or ""), max_chars=48)[0],
-            "description": _sanitize_text(str(row["description"] or ""), max_chars=160)[0],
-            "aliases": [_sanitize_text(item, max_chars=32)[0] for item in _json_list(row["aliases_json"])],
-            "tags": [_sanitize_text(item, max_chars=32)[0] for item in _json_list(row["tags_json"])],
+            "title": _sanitize_catalog_text(
+                row["title"],
+                max_chars=48,
+                uncapped=catalog_only,
+            ),
+            "description": _sanitize_catalog_text(
+                row["description"],
+                max_chars=160,
+                uncapped=catalog_only,
+            ),
+            "project": _sanitize_catalog_text(
+                row["project"],
+                max_chars=120,
+                uncapped=catalog_only,
+            ),
+            "aliases": [
+                _sanitize_catalog_text(item, max_chars=32, uncapped=catalog_only)
+                for item in _json_list(row["aliases_json"])
+            ],
+            "tags": [
+                _sanitize_catalog_text(item, max_chars=32, uncapped=catalog_only)
+                for item in _json_list(row["tags_json"])
+            ],
             "sourceEventIds": _json_list(row["source_event_ids_json"]),
+            "confidence": float(row["confidence"] or 0.0),
+            "qualityScore": float(row["quality_score"] or 0.0),
+            "metadataHash": stable_text_hash(str(row["metadata_json"] or "{}")),
+            "memberMetadataHash": stable_text_hash(
+                json.dumps(
+                    [
+                        _row_dict(member)
+                        for member in conn.execute(
+                            "SELECT member_type, member_id, weight, source "
+                            "FROM memory_semantic_group_members "
+                            "WHERE group_id = ?",
+                            (str(row["group_id"] or ""),),
+                        ).fetchall()
+                    ],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            ),
         }
         for row in rows
     ]
 
 
-def _existing_semantic_tags(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def _existing_semantic_tags(
+    conn: sqlite3.Connection,
+    *,
+    catalog_only: bool = False,
+) -> list[dict[str, object]]:
     rows = conn.execute(
-        """
-        SELECT mt.id, mt.tag, mt.description, mt.tag_type, mt.quality_score, mt.metadata_json,
+        f"""
+        SELECT mt.id, mt.tag, mt.normalized_tag, mt.description, mt.tag_type,
+               mt.quality_score, mt.source, mt.status, mt.metadata_json,
+               mt.created_at_ms, mt.updated_at_ms,
                COALESCE(mtp.aliases_json, '[]') AS aliases_json,
+               COALESCE(mtp.color_token, '') AS color_token,
                (SELECT COUNT(*) FROM memory_tag_edges edge
                 WHERE edge.src_tag_id = mt.id OR edge.dst_tag_id = mt.id) AS degree
         FROM memory_tags mt
         LEFT JOIN memory_tag_profiles mtp ON mtp.tag_id = mt.id
-        WHERE mt.status = 'active' AND mt.source IN ('dsv4', 'user')
-        ORDER BY mt.quality_score DESC, mt.updated_at_ms DESC
-        LIMIT 160
-        """
+        WHERE mt.status = 'active' AND {_tag_source_predicate('mt', catalog_only=catalog_only)}
+        ORDER BY mt.quality_score DESC, mt.updated_at_ms DESC, mt.id ASC
+        LIMIT ?
+        """,
+        (-1 if catalog_only else 160,),
     ).fetchall()
     result: list[dict[str, object]] = []
     for row in rows:
         metadata = _json_object(row["metadata_json"])
+        group_rows = [
+            _row_dict(member)
+            for member in conn.execute(
+                "SELECT group_id, weight, source, updated_at_ms "
+                "FROM memory_semantic_group_members "
+                "WHERE member_type = 'tag' AND member_id = ?",
+                (str(row["id"]),),
+            ).fetchall()
+        ]
+        aliases = _json_list(row["aliases_json"])
         result.append(
             {
                 "tagId": int(row["id"]),
-                "name": _sanitize_text(str(row["tag"] or ""), max_chars=32)[0],
-                "description": _sanitize_text(str(row["description"] or ""), max_chars=120)[0],
+                "name": _sanitize_catalog_text(
+                    row["tag"],
+                    max_chars=32,
+                    uncapped=catalog_only,
+                ),
+                "normalizedName": str(row["normalized_tag"] or ""),
+                "description": _sanitize_catalog_text(
+                    row["description"],
+                    max_chars=120,
+                    uncapped=catalog_only,
+                ),
                 "type": str(row["tag_type"] or "concept"),
-                "aliases": [_sanitize_text(item, max_chars=32)[0] for item in _json_list(row["aliases_json"])],
+                "aliases": [
+                    _sanitize_catalog_text(
+                        item,
+                        max_chars=32,
+                        uncapped=catalog_only,
+                    )
+                    for item in aliases
+                ],
                 "semanticGroupIds": [
-                    str(member[0])
-                    for member in conn.execute(
-                        "SELECT group_id FROM memory_semantic_group_members "
-                        "WHERE member_type = 'tag' AND member_id = ? ORDER BY weight DESC LIMIT 4",
-                        (str(row["id"]),),
-                    ).fetchall()
+                    str(member.get("group_id") or "")
+                    for member in (
+                        group_rows if catalog_only else group_rows[:4]
+                    )
+                    if str(member.get("group_id") or "")
                 ],
                 "degree": int(row["degree"] or 0),
                 "qualityScore": float(row["quality_score"] or 0.0),
                 "sourceEventIds": _positive_ints(metadata.get("sourceEventIds")),
+                "source": str(row["source"] or ""),
+                "status": str(row["status"] or "active"),
+                "metadataHash": stable_text_hash(str(row["metadata_json"] or "{}")),
+                "profileHash": stable_text_hash(
+                    json.dumps(
+                        {
+                            "colorToken": row["color_token"],
+                            "aliases": aliases,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                ),
+                "groupMembershipsHash": stable_text_hash(
+                    json.dumps(
+                        [
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key != "updated_at_ms"
+                            }
+                            for item in group_rows
+                        ],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                ),
             }
         )
     return result
 
 
-def _existing_semantic_tag_edges(conn: sqlite3.Connection) -> list[dict[str, object]]:
+def _existing_semantic_tag_edges(
+    conn: sqlite3.Connection,
+    *,
+    catalog_only: bool = False,
+) -> list[dict[str, object]]:
     rows = conn.execute(
-        """
-        SELECT src.tag AS src, dst.tag AS dst, edge.edge_type, edge.weight, edge.evidence_count
+        f"""
+        SELECT edge.src_tag_id, edge.dst_tag_id, src.tag AS src, dst.tag AS dst,
+               edge.edge_type, edge.weight, edge.direction_bias,
+               edge.evidence_count, edge.metadata_json, edge.updated_at_ms
         FROM memory_tag_edges edge
         JOIN memory_tags src ON src.id = edge.src_tag_id
         JOIN memory_tags dst ON dst.id = edge.dst_tag_id
         WHERE src.status = 'active' AND dst.status = 'active'
-          AND src.source IN ('dsv4', 'user')
-          AND dst.source IN ('dsv4', 'user')
-        ORDER BY edge.weight DESC, edge.evidence_count DESC, edge.updated_at_ms DESC
-        LIMIT 240
-        """
+          AND {_tag_source_predicate('src', catalog_only=catalog_only)}
+          AND {_tag_source_predicate('dst', catalog_only=catalog_only)}
+        ORDER BY edge.weight DESC, edge.evidence_count DESC, edge.updated_at_ms DESC,
+                 edge.src_tag_id ASC, edge.dst_tag_id ASC, edge.edge_type ASC
+        LIMIT ?
+        """,
+        (-1 if catalog_only else 240,),
     ).fetchall()
     return [
         {
-            "src": _sanitize_text(str(row["src"] or ""), max_chars=32)[0],
-            "dst": _sanitize_text(str(row["dst"] or ""), max_chars=32)[0],
+            "srcTagId": int(row["src_tag_id"]),
+            "dstTagId": int(row["dst_tag_id"]),
+            "src": _sanitize_catalog_text(
+                row["src"],
+                max_chars=32,
+                uncapped=catalog_only,
+            ),
+            "dst": _sanitize_catalog_text(
+                row["dst"],
+                max_chars=32,
+                uncapped=catalog_only,
+            ),
             "edgeType": str(row["edge_type"] or "related_to"),
             "weight": float(row["weight"] or 0.0),
+            "directionBias": float(row["direction_bias"] or 0.0),
             "evidenceCount": int(row["evidence_count"] or 0),
+            "metadataHash": stable_text_hash(
+                str(row["metadata_json"] or "{}")
+            ),
         }
         for row in rows
     ]
 
+
+def _catalog_truncation_flags(
+    *,
+    existing_books: list[dict[str, object]],
+    existing_atoms: list[dict[str, object]],
+    existing_groups: list[dict[str, object]],
+    existing_tags: list[dict[str, object]],
+    existing_tag_edges: list[dict[str, object]],
+    catalog_only: bool,
+) -> dict[str, bool]:
+    if catalog_only:
+        return {
+            "atoms": False,
+            "groups": False,
+            "tags": False,
+            "books": False,
+            "edges": False,
+            "atomAliases": False,
+            "atomTags": False,
+            "atomGroups": False,
+            "atomSurfaceHints": False,
+            "atomQueryExpansions": False,
+            "atomSourceMemoryIds": False,
+            "groupAliases": False,
+            "groupTags": False,
+            "tagAliases": False,
+            "tagGroups": False,
+            "bookTags": False,
+            "bookGroups": False,
+            "bookAtoms": False,
+        }
+    return {
+        "atoms": len(existing_atoms) >= 500,
+        "groups": len(existing_groups) >= 24,
+        "tags": len(existing_tags) >= 160,
+        "books": len(existing_books) >= 48,
+        "edges": len(existing_tag_edges) >= 240,
+        "atomAliases": any(
+            len(_strings(item.get("aliases"))) >= 64 for item in existing_atoms
+        ),
+        "atomTags": any(
+            len(_strings(item.get("tags"))) >= 24 for item in existing_atoms
+        ),
+        "atomGroups": any(
+            len(_strings(item.get("semanticGroupIds"))) >= 8
+            for item in existing_atoms
+        ),
+        "atomSurfaceHints": any(
+            len(_strings(item.get("surfaceHints"))) >= 64
+            for item in existing_atoms
+        ),
+        "atomQueryExpansions": any(
+            len(_strings(item.get("queryExpansions"))) >= 64
+            for item in existing_atoms
+        ),
+        "atomSourceMemoryIds": any(
+            len(_strings(item.get("sourceMemoryIds"))) >= 64
+            for item in existing_atoms
+        ),
+        "groupAliases": any(
+            len(_strings(item.get("aliases"))) >= 24 for item in existing_groups
+        ),
+        "groupTags": any(
+            len(_strings(item.get("tags"))) >= 24 for item in existing_groups
+        ),
+        "tagAliases": any(
+            len(_strings(item.get("aliases"))) >= 32 for item in existing_tags
+        ),
+        "tagGroups": any(
+            len(_strings(item.get("semanticGroupIds"))) >= 4
+            for item in existing_tags
+        ),
+        "bookTags": any(
+            len(_strings(item.get("tags"))) >= 48 for item in existing_books
+        ),
+        "bookGroups": any(
+            len(_strings(item.get("semanticGroupIds"))) >= 8
+            for item in existing_books
+        ),
+        "bookAtoms": any(
+            len(_strings(item.get("memoryAtomIds"))) >= 256
+            for item in existing_books
+        ),
+    }
 
 def _group_for_source_ids(source_ids: list[int], *, source_bundle: dict[str, object] | None) -> str:
     if not source_bundle:

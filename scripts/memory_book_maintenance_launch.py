@@ -11,7 +11,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import ProxyHandler, Request, build_opener
 
 
-TERMINAL_STATES = frozenset({"completed", "failed"})
+TERMINAL_STATES = frozenset({"completed", "failed", "expired"})
 
 
 def main() -> int:

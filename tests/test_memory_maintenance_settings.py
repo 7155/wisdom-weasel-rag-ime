@@ -41,9 +41,16 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertEqual(settings.dreaming_interval_seconds, 43_200)
         self.assertEqual(settings.recall_detail_level, "compact")
         self.assertEqual(settings.timeline_max_items, 2)
+        self.assertTrue(settings.catalog_consolidation_enabled)
+        self.assertEqual(settings.catalog_consolidation_cadence_days, 7)
+        self.assertEqual(
+            settings.catalog_consolidation_interval_seconds,
+            7 * 24 * 60 * 60,
+        )
         self.assertTrue(
             settings.as_dict()["automaticOrganization"]["includeAgentDialogue"]
         )
+        self.assertTrue(settings.as_dict()["catalogConsolidation"]["enabled"])
 
     def test_management_updates_drive_next_maintenance_run(self) -> None:
         self.store.update_settings(
@@ -56,6 +63,8 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
                 "memory.dreaming.model": "gpt/gpt-5.6-sol",
                 "memory.dreaming.thinkingLevel": "low",
                 "memory.dreaming.runsPerDay": 1,
+                "memory.catalogConsolidation.enabled": False,
+                "memory.catalogConsolidation.cadenceDays": 14,
                 "memory.recall.detailLevel": "balanced",
                 "memory.recall.timelineEnabled": False,
             }
@@ -71,6 +80,12 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertEqual(settings.dreaming_thinking_level, "low")
         self.assertEqual(settings.automatic_organization_interval_seconds, 21_600)
         self.assertEqual(settings.dreaming_interval_seconds, 86_400)
+        self.assertFalse(settings.catalog_consolidation_enabled)
+        self.assertEqual(settings.catalog_consolidation_cadence_days, 14)
+        self.assertEqual(
+            settings.catalog_consolidation_interval_seconds,
+            14 * 24 * 60 * 60,
+        )
         self.assertEqual(settings.recall_detail_level, "balanced")
         self.assertFalse(settings.timeline_recall_enabled)
 
@@ -85,6 +100,7 @@ class MemoryMaintenanceSettingsTests(unittest.TestCase):
         self.assertFalse(disabled.as_dict()["enabled"])
         self.assertFalse(disabled.as_dict()["automaticOrganization"]["enabled"])
         self.assertFalse(disabled.as_dict()["dreaming"]["enabled"])
+        self.assertFalse(disabled.as_dict()["catalogConsolidation"]["enabled"])
 
         # Re-enabling restores the independent lane defaults; no memory data
         # table is touched by resolving the switch.

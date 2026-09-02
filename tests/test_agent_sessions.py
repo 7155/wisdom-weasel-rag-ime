@@ -71,6 +71,24 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get(session_id)["modelProfile"], "pi/default")
         self.assertEqual(self.store.list()[0]["modelProfile"], "pi/default")
 
+    def test_evaluation_snapshot_is_a_visible_read_only_session_kind(self) -> None:
+        snapshot = self.store.create(
+            title="EnterpriseOps Validation · Task 1",
+            execution_mode="read_only",
+            tool_profile_version="subagent-readonly-v1",
+            evaluation_snapshot=True,
+            created_at_ms=100,
+        )
+
+        self.assertEqual(snapshot["sessionKind"], "conversation")
+        self.assertTrue(snapshot["evaluationSnapshot"])
+        self.assertEqual(snapshot["executionMode"], "read_only")
+        self.assertEqual(
+            [snapshot["id"]],
+            [item["id"] for item in self.store.list()],
+        )
+        validate_contract(snapshot, "agent-session.v1.json")
+
     def test_retired_builtin_role_ids_are_read_only_compatibility_aliases(
         self,
     ) -> None:
@@ -336,9 +354,9 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(projected["workspaceRoots"], [])
         self.assertFalse(projected["workspaceScopeGranted"])
 
-    def test_legacy_auto_approve_profile_is_not_persisted_as_new_policy(self) -> None:
+    def test_auto_approve_profile_is_persisted_as_an_unrestricted_policy(self) -> None:
         session = self.store.create(
-            title="旧策略兼容",
+            title="全盘自动批准",
             mode="coordinator",
             tool_profile_version="control-center-auto-approve-v1",
             workspace_roots=[self.tmp.name],
@@ -346,8 +364,33 @@ class AgentSessionStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(session["executionMode"], "full_trust")
-        self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(
+            session["toolProfileVersion"],
+            "control-center-auto-approve-v1",
+        )
+        self.assertEqual(
+            session["workspaceRoots"],
+            [str(Path(self.tmp.name).resolve()), "/"],
+        )
         self.assertTrue(session["workspaceScopeGranted"])
+        self.assertTrue(session["projectContextEnabled"])
+        self.assertTrue(session["piSkillsEnabled"])
+        self.assertTrue(session["codexSkillsEnabled"])
+
+    def test_full_access_profile_defaults_to_root_and_all_context_capabilities(self) -> None:
+        session = self.store.create(
+            title="全面访问",
+            mode="coordinator",
+            tool_profile_version="control-center-full-access-v1",
+            execution_mode="per_action",
+            created_at_ms=100,
+        )
+
+        self.assertEqual(session["workspaceRoots"], ["/"])
+        self.assertTrue(session["workspaceScopeGranted"])
+        self.assertTrue(session["projectContextEnabled"])
+        self.assertTrue(session["piSkillsEnabled"])
+        self.assertTrue(session["codexSkillsEnabled"])
 
     def test_assistant_rejects_workspace_and_coordinator_persists_normalized_roots(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot carry workspace roots"):

@@ -101,6 +101,10 @@ from .predictor_configuration import (
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import ManagedPiMemoryOrganizer
+from .memory_catalog_scheduler import (
+    CATALOG_CONSOLIDATION_SCHEMA_VERSION,
+    MemoryCatalogConsolidationScheduler,
+)
 from .memory_maintenance_settings import MemoryMaintenanceSettings
 from .memory_model_executor import (
     MINIMUM_MEMORY_CONTEXT_TOKENS,
@@ -149,6 +153,7 @@ from .memory_book_compiler import (
     memory_book_run_is_stale,
     memory_book_run_payload,
     rollback_memory_book_run,
+    seal_global_memory_book_plan,
     store_memory_book_plan,
     update_stored_memory_book_diff,
 )
@@ -240,6 +245,17 @@ from .voice_control import (
 
 _MAX_MANUAL_CURATION_PREPARE_BATCHES = 8
 _BROWSER_TRACE_RESOLUTION_LIMIT = 200
+
+GLOBAL_MEMORY_CATALOG_CONSOLIDATION_INSTRUCTION = (
+    "Inspect the complete governed P/B/G/T/Tag-edge Memory catalog. "
+    "Duplicate Books and over-split relations are candidate signals only: "
+    "propose exact-equivalence Atom merges and Tag merges only when two "
+    "physical Tags have the same normalized name or an explicit direct alias. "
+    "Preserve every evidence reference. Do not create, update, retract, or "
+    "rewrite facts, and do not directly change Books, Groups, Tag edges, or "
+    "memberships. The dedicated memory-catalog-consolidation curator and its "
+    "independent verifier must reject every other operation."
+)
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -594,6 +610,23 @@ class DebugImeService:
             os.environ.get("RAG_IME_AGENT_PLUGIN_INBOX_DIR", "").strip()
             or os.environ.get("RAG_IME_PI_PLUGIN_INBOX", "").strip()
         )
+        project_skill_paths = os.environ.get("RAG_IME_PROJECT_SKILL_PATHS", "")
+        project_skill_roots = tuple(
+            Path(value).expanduser()
+            for value in project_skill_paths.split(os.pathsep)
+            if value.strip()
+        )
+        if not project_skill_roots:
+            project_workspace = Path(
+                os.environ.get("RAG_IME_DEFAULT_WORKSPACE")
+                or os.environ.get("RAG_IME_SOURCE_ROOT")
+                or Path.cwd()
+            ).expanduser()
+            project_skill_roots = (
+                project_workspace / ".agents" / "skills",
+                project_workspace / ".pi" / "skills",
+                project_workspace / "skills",
+            )
         self.agent_extensions = AgentExtensionService(
             runtime_provider=lambda: self.agent.runtime,
             inbox_root=(
@@ -603,6 +636,10 @@ class DebugImeService:
                 / "Agent"
                 / "plugin-inbox"
             ),
+            project_skills_roots=project_skill_roots,
+        )
+        self.agent.bind_extension_app_skill_owners(
+            self.agent_extensions.extension_app_skill_owners
         )
         self.agent_lifecycle_hooks = AgentLifecycleHookService(config.db_path)
         self.agent_lifecycle_hooks.initialize()
@@ -681,6 +718,9 @@ class DebugImeService:
         self.agent_tools.bind_auto_approval_executor(self.agent.auto_approve_pending)
         self.agent.bind_memory_maintenance_probe(self.agent_memory_maintenance_status)
         self.agent.bind_tool_manifest_provider(self.agent_tools.runtime_manifests)
+        self.memory_catalog_scheduler = MemoryCatalogConsolidationScheduler(
+            config.db_path
+        )
         self.memory_maintenance_jobs = GatewayMemoryMaintenanceJobs(
             self._execute_gateway_memory_maintenance,
             db_path=config.db_path,
@@ -3348,22 +3388,43 @@ class DebugImeService:
     def _knowledge_workbench_database_organizer(
         self,
         request: KnowledgeWorkbenchRequest,
+        *,
+        source_bundle: Mapping[str, object] | None = None,
+        catalog_model_run_id: str = "",
     ) -> dict[str, object]:
         if not isinstance(self.core, LocalSqliteCoreClient):
             raise ValueError("database organization requires local SQLite core")
         scope = request.curation_scope
         policy = request.curation_policy
+        provided_bundle = (
+            dict(source_bundle)
+            if isinstance(source_bundle, Mapping)
+            else None
+        )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
-            bundle = build_memory_book_source_bundle(
-                conn,
-                project=request.project,
-                since_days=7 if scope == "global" else 30,
-                limit=500 if scope == "global" else 48,
-                after_event_id=0 if scope == "global" else None,
-                newest_first=scope == "global",
-                curation_scope=scope,
-                catalog_only=scope == "global",
-            )
+            if provided_bundle is None:
+                if scope == "global":
+                    conn.execute("BEGIN")
+                bundle = build_memory_book_source_bundle(
+                    conn,
+                    project=request.project,
+                    since_days=7 if scope == "global" else 30,
+                    limit=500 if scope == "global" else 48,
+                    after_event_id=0 if scope == "global" else None,
+                    newest_first=scope == "global",
+                    curation_scope=scope,
+                    catalog_only=scope == "global",
+                )
+            else:
+                bundle = provided_bundle
+            if _string(bundle.get("project")) != request.project:
+                raise ValueError("Memory catalog bundle project does not match request")
+            if scope == "global" and (
+                _string(bundle.get("curationScope")) != "global"
+                or not _bool(bundle.get("catalogAudit"))
+                or not _bool(bundle.get("catalogComplete"))
+            ):
+                raise ValueError("global Memory catalog bundle is incomplete")
             existing = find_memory_book_draft_for_bundle(
                 conn,
                 project=request.project,
@@ -3390,6 +3451,15 @@ class DebugImeService:
                         run_id=_string(existing.get("runId") or existing.get("run_id")),
                     )
                 auto_applied = str(stored_run.get("status") or "") in {"applied", "partial"}
+            if scope == "global" and validation.get("ok") and not _string(
+                stored_run.get("sealedCatalogDigest")
+            ):
+                with self.core._connect() as conn:  # type: ignore[attr-defined]
+                    sealed_digest = seal_global_memory_book_plan(conn, plan)
+                stored_run = {
+                    **stored_run,
+                    "sealedCatalogDigest": sealed_digest,
+                }
             response = {
                 "schemaVersion": "rag-ime.knowledge-database-organize.v1",
                 "ok": bool(validation.get("ok")),
@@ -3404,6 +3474,9 @@ class DebugImeService:
                 ),
                 "storedDraft": not auto_applied,
                 "reusedDraft": True,
+                "sealedCatalogDigest": _string(
+                    stored_run.get("sealedCatalogDigest")
+                ),
                 "source": {
                     "bundleHash": bundle.get("bundleHash"),
                     "eventCount": len(bundle.get("recentEvents") or []),
@@ -3434,108 +3507,179 @@ class DebugImeService:
                 },
             )
             return response
-        executor = build_governed_memory_model_executor(
-            self.agent.runtime,
-            managed.automatic_organization_model,
-            managed.automatic_organization_thinking_level,
-        )
-        organizer = ManagedPiMemoryOrganizer(executor)
-        decisions = organizer.compile_memory_curation(
-            bundle=bundle,
-            project=request.project,
-            instruction=request.question,
-            policy=policy,
-        )
-        compile_output = curation_decisions_to_compile_output(
-            decisions,
-            source_bundle=bundle,
-            project=request.project,
-        )
-        plan = memory_book_plan_from_compile_output(
-            compile_output,
-            project=request.project,
-            provider=organizer.provider_name,
-            model=organizer.config.model,
-            source_bundle=bundle,
-        )
-        validation = inspect_memory_book_plan(plan)
-        stored_run: dict[str, object] = {}
-        if validation.get("ok"):
-            with self.core._connect() as conn:  # type: ignore[attr-defined]
-                stored_run = store_memory_book_plan(
-                    conn,
-                    plan,
-                    supersede_project_drafts=True,
-                )
-                if (
-                    managed.automatic_organization_auto_apply
-                    and str(stored_run.get("status") or "") == "draft"
-                    and (
-                        int(stored_run.get("diffCount") or 0) > 0
-                        or bool(stored_run.get("diffs"))
-                    )
-                ):
-                    stored_run = apply_stored_memory_book_run(
-                        conn,
-                        run_id=_string(stored_run.get("runId") or stored_run.get("run_id")),
-                    )
-        auto_applied = str(stored_run.get("status") or "") in {"applied", "partial"}
-        stored_draft = bool(
-            stored_run
-            and str(stored_run.get("status") or "") == "draft"
-            and (
-                int(stored_run.get("diffCount") or 0) > 0
-                or bool(stored_run.get("diffs"))
+        organizer: ManagedPiMemoryOrganizer | None = None
+        provider_name = ""
+        model_name = ""
+        catalog_run_started = False
+
+        def fail_catalog_model_run(error: BaseException) -> None:
+            nonlocal catalog_run_started
+            if not catalog_run_started or organizer is None:
+                return
+            # Mark it consumed before invoking the failure path so a failure
+            # while retiring the internal Session cannot recurse through this
+            # cleanup branch.
+            catalog_run_started = False
+            try:
+                organizer.fail_run(error)
+            except Exception:
+                # The scheduler's lease failure remains the authoritative
+                # catalog receipt when model-session cleanup itself fails.
+                pass
+
+        try:
+            executor = build_governed_memory_model_executor(
+                self.agent.runtime,
+                managed.automatic_organization_model,
+                managed.automatic_organization_thinking_level,
+                db_path=self.core.db_path,
             )
-        )
-        response = {
-            "schemaVersion": "rag-ime.knowledge-database-organize.v1",
-            "ok": bool(validation.get("ok")),
-            "dryRun": not auto_applied,
-            "applySupported": not auto_applied,
-            "applyRequiresReview": stored_draft,
-            "autoApplied": auto_applied,
-            "appliedDiffCount": sum(
-                1
-                for item in stored_run.get("diffs") or []
-                if isinstance(item, Mapping) and item.get("status") == "applied"
-            ),
-            "storedDraft": stored_draft,
-            "reviewRequired": stored_draft,
-            "reusedDraft": False,
-            "source": {
-                "bundleHash": bundle.get("bundleHash"),
-                "eventCount": len(bundle.get("recentEvents") or []),
-                "redactionStats": bundle.get("redactionStats"),
-                "scope": scope,
-                "architecture": MEMORY_CURATION_ARCHITECTURE,
-                "lexicon": dict(compile_output.get("lexiconDiagnostics") or {}),
-            },
-            "plan": plan,
-            "validation": validation,
-            "storedRun": stored_run,
-        }
-        run_id = _string(stored_run.get("runId") or stored_run.get("run_id"))
-        self.agent.observations.emit_memory_event(
-            phase="applied" if auto_applied else "draft_ready" if stored_draft else "draft_finished",
-            status="completed" if auto_applied else "waiting" if stored_draft else "completed" if validation.get("ok") else "failed",
-            summary=(
-                "记忆整理变更已通过治理校验并自动应用"
-                if auto_applied
-                else "记忆整理草案已生成，等待审阅"
-                if stored_draft
-                else "本批记忆整理未产生待审变更"
-                if validation.get("ok")
-                else "记忆整理草案校验失败"
-            ),
-            run_id=run_id,
-            metrics={
-                "eventCount": len(bundle.get("recentEvents") or []),
-                "changeCount": int(stored_run.get("diffCount") or 0),
-                "reused": False,
-            },
-        )
-        return response
+            organizer = ManagedPiMemoryOrganizer(executor)
+            provider_name = organizer.provider_name
+            model_name = organizer.config.model
+            if catalog_model_run_id:
+                # The model executor owns the durable internal Session.  Start
+                # a named run before its first request and close it only after
+                # the plan has been durably stored/applied.
+                catalog_run_started = True
+                organizer.begin_run(catalog_model_run_id)
+            decisions = organizer.compile_memory_curation(
+                bundle=bundle,
+                project=request.project,
+                instruction=request.question,
+                policy=policy,
+            )
+            compile_output = curation_decisions_to_compile_output(
+                decisions,
+                source_bundle=bundle,
+                project=request.project,
+            )
+            plan = memory_book_plan_from_compile_output(
+                compile_output,
+                project=request.project,
+                provider=provider_name,
+                model=model_name,
+                source_bundle=bundle,
+            )
+            validation = inspect_memory_book_plan(plan)
+            stored_run: dict[str, object] = {}
+            if validation.get("ok"):
+                with self.core._connect() as conn:  # type: ignore[attr-defined]
+                    stored_run = store_memory_book_plan(
+                        conn,
+                        plan,
+                        supersede_project_drafts=True,
+                    )
+                    if (
+                        managed.automatic_organization_auto_apply
+                        and str(stored_run.get("status") or "") == "draft"
+                        and (
+                            int(stored_run.get("diffCount") or 0) > 0
+                            or bool(stored_run.get("diffs"))
+                        )
+                    ):
+                        stored_run = apply_stored_memory_book_run(
+                            conn,
+                            run_id=_string(
+                                stored_run.get("runId")
+                                or stored_run.get("run_id")
+                            ),
+                        )
+            elif catalog_run_started:
+                fail_catalog_model_run(
+                    RuntimeError("memory book plan failed validation")
+                )
+            auto_applied = str(stored_run.get("status") or "") in {
+                "applied",
+                "partial",
+            }
+            stored_draft = bool(
+                stored_run
+                and str(stored_run.get("status") or "") == "draft"
+                and (
+                    int(stored_run.get("diffCount") or 0) > 0
+                    or bool(stored_run.get("diffs"))
+                )
+            )
+            response = {
+                "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+                "ok": bool(validation.get("ok")),
+                "dryRun": not auto_applied,
+                "applySupported": not auto_applied,
+                "applyRequiresReview": stored_draft,
+                "autoApplied": auto_applied,
+                "appliedDiffCount": sum(
+                    1
+                    for item in stored_run.get("diffs") or []
+                    if isinstance(item, Mapping) and item.get("status") == "applied"
+                ),
+                "storedDraft": stored_draft,
+                "reviewRequired": stored_draft,
+                "reusedDraft": False,
+                "sealedCatalogDigest": _string(
+                    stored_run.get("sealedCatalogDigest")
+                ),
+                "source": {
+                    "bundleHash": bundle.get("bundleHash"),
+                    "eventCount": len(bundle.get("recentEvents") or []),
+                    "redactionStats": bundle.get("redactionStats"),
+                    "scope": scope,
+                    "architecture": MEMORY_CURATION_ARCHITECTURE,
+                    "lexicon": dict(
+                        compile_output.get("lexiconDiagnostics") or {}
+                    ),
+                },
+                "plan": plan,
+                "validation": validation,
+                "storedRun": stored_run,
+            }
+            run_id = _string(stored_run.get("runId") or stored_run.get("run_id"))
+            self.agent.observations.emit_memory_event(
+                phase=(
+                    "applied"
+                    if auto_applied
+                    else "draft_ready"
+                    if stored_draft
+                    else "draft_finished"
+                ),
+                status=(
+                    "completed"
+                    if auto_applied
+                    else "waiting"
+                    if stored_draft
+                    else "completed"
+                    if validation.get("ok")
+                    else "failed"
+                ),
+                summary=(
+                    "记忆整理变更已通过治理校验并自动应用"
+                    if auto_applied
+                    else "记忆整理草案已生成，等待审阅"
+                    if stored_draft
+                    else "本批记忆整理未产生待审变更"
+                    if validation.get("ok")
+                    else "记忆整理草案校验失败"
+                ),
+                run_id=run_id,
+                metrics={
+                    "eventCount": len(bundle.get("recentEvents") or []),
+                    "changeCount": int(stored_run.get("diffCount") or 0),
+                    "reused": False,
+                },
+            )
+            if catalog_run_started:
+                # The surrounding SQLite context has committed the durable
+                # memory plan and any applied diffs before this terminal
+                # model-run transition.
+                organizer.finish_run()
+                catalog_run_started = False
+            return response
+        except Exception as exc:
+            fail_catalog_model_run(exc)
+            raise
+        finally:
+            if organizer is not None:
+                organizer.close()
 
     def agent_memory_maintenance_trigger(
         self,
@@ -3622,6 +3766,251 @@ class DebugImeService:
             # Observability must not change the already-persisted maintenance
             # result or make the Gateway worker fail closed on shutdown.
             return
+
+    def _execute_gateway_memory_catalog_consolidation(
+        self,
+        *,
+        project: str,
+        manual: bool,
+        managed: MemoryMaintenanceSettings,
+    ) -> dict[str, object]:
+        scheduler = self.memory_catalog_scheduler
+        base = {
+            "schemaVersion": CATALOG_CONSOLIDATION_SCHEMA_VERSION,
+            "project": project,
+            "manual": bool(manual),
+            "modelCalled": False,
+        }
+        if not managed.catalog_consolidation_enabled:
+            status = scheduler.status(project)
+            return {
+                **base,
+                "ok": True,
+                "skipped": True,
+                "reason": "catalog_consolidation_disabled",
+                "due": False,
+                "status": status,
+                "state": status.get("state"),
+                "catalogDigest": status.get("catalogDigest", ""),
+                "curationRunId": status.get("curationRunId", ""),
+                "nextDueAtMs": status.get("nextDueAtMs", 0),
+            }
+        if not managed.automatic_organization_enabled:
+            status = scheduler.status(project)
+            return {
+                **base,
+                "ok": True,
+                "skipped": True,
+                "reason": "automatic_organization_disabled",
+                "due": False,
+                "status": status,
+                "state": status.get("state"),
+                "catalogDigest": status.get("catalogDigest", ""),
+                "curationRunId": status.get("curationRunId", ""),
+                "nextDueAtMs": status.get("nextDueAtMs", 0),
+            }
+
+        decision = scheduler.admit(
+            project,
+            manual=manual,
+            enabled=managed.catalog_consolidation_enabled,
+            automatic_organization_enabled=managed.automatic_organization_enabled,
+            cadence_days=managed.catalog_consolidation_cadence_days,
+        )
+        if not bool(decision.get("admitted")):
+            status = (
+                decision.get("status")
+                if isinstance(decision.get("status"), Mapping)
+                else scheduler.status(project)
+            )
+            return {
+                **base,
+                "ok": True,
+                "skipped": not bool(decision.get("due")),
+                "reason": _string(decision.get("reason")) or "not_due",
+                "due": bool(decision.get("due")),
+                "status": dict(status),
+                "state": status.get("state"),
+                "catalogDigest": status.get("catalogDigest", ""),
+                "curationRunId": status.get("curationRunId", ""),
+                "nextDueAtMs": status.get("nextDueAtMs", 0),
+            }
+
+        admission_token = _string(decision.get("admissionToken"))
+        if not admission_token:
+            # ``admit`` is the only producer of a token.  Treat a malformed
+            # admission as a local failure rather than attempting an
+            # unauthorised transition.
+            raise RuntimeError("catalog consolidation admission returned no token")
+        digest = ""
+        try:
+            with self.core._connect() as conn:  # type: ignore[attr-defined]
+                conn.execute("BEGIN")
+                bundle = build_memory_book_source_bundle(
+                    conn,
+                    project=project,
+                    since_days=7,
+                    limit=500,
+                    after_event_id=0,
+                    newest_first=True,
+                    curation_scope="global",
+                    catalog_only=True,
+                )
+            if not isinstance(bundle, Mapping):
+                raise ValueError("global Memory catalog bundle is invalid")
+            digest = compact_whitespace(
+                str(bundle.get("catalogDigest") or bundle.get("bundleHash") or "")
+            )[:240]
+            if not digest:
+                raise ValueError("global Memory catalog bundle has no stable digest")
+            scheduler.record_digest(
+                project,
+                digest,
+                admission_token=admission_token,
+            )
+            previous_status = decision.get("status")
+            previous_completed_digest = (
+                _string(previous_status.get("lastSuccessfulCatalogDigest"))
+                if isinstance(previous_status, Mapping)
+                else ""
+            )
+            previous_completed_at = (
+                int(previous_status.get("lastSuccessfulCatalogCommittedAtMs") or 0)
+                if isinstance(previous_status, Mapping)
+                else 0
+            )
+            if previous_completed_at > 0 and previous_completed_digest == digest:
+                unchanged = {
+                    **base,
+                    "ok": True,
+                    "skipped": True,
+                    "due": True,
+                    "reason": "catalog_unchanged",
+                    "catalogDigest": digest,
+                    "curationRunId": (
+                        _string(previous_status.get("curationRunId"))
+                        if isinstance(previous_status, Mapping)
+                        else ""
+                    ),
+                }
+                receipt = scheduler.complete(
+                    project,
+                    catalog_digest=digest,
+                    result=unchanged,
+                    curation_run_id=_string(unchanged.get("curationRunId")),
+                    ok=True,
+                    cadence_days=managed.catalog_consolidation_cadence_days,
+                    admission_token=admission_token,
+                )
+                return {
+                    **unchanged,
+                    "state": receipt.get("state"),
+                    "nextDueAtMs": receipt.get("nextDueAtMs", 0),
+                    "receipt": receipt,
+                }
+
+            request = KnowledgeWorkbenchRequest(
+                question=GLOBAL_MEMORY_CATALOG_CONSOLIDATION_INSTRUCTION[:800],
+                mode="database_organize",
+                project=project,
+                curation_scope="global",
+                curation_policy="conservative",
+            )
+            organizer = self._knowledge_workbench_database_organizer(
+                request,
+                source_bundle=bundle,
+                # Keep the lease token private to this scheduler method.  The
+                # durable model run is named by the receipt id, not by
+                # curation evidence or model-visible metadata.
+                catalog_model_run_id=(
+                    _string(
+                        dict(decision.get("status") or {}).get("receiptId")
+                    )
+                ),
+            )
+            organized_result = (
+                dict(organizer) if isinstance(organizer, Mapping) else {}
+            )
+            organized_ok = organized_result.get("ok") is True
+            stored_run = organized_result.get("storedRun")
+            run_id = (
+                _string(stored_run.get("runId") or stored_run.get("run_id"))
+                if isinstance(stored_run, Mapping)
+                else ""
+            ) or _string(organized_result.get("curationRunId")) or _string(
+                organized_result.get("runId")
+            )
+            model_called = (
+                _bool(organized_result.get("modelCalled"))
+                if "modelCalled" in organized_result
+                else not bool(organized_result.get("reusedDraft"))
+            )
+            if organized_ok:
+                # The compiler seals this digest under the same SQLite write
+                # reservation that validates the frozen catalog and stores or
+                # applies the governed plan.  Rebuilding after commit could
+                # incorrectly receipt a concurrent writer's unreviewed state.
+                digest = _string(organized_result.get("sealedCatalogDigest"))
+                if not digest:
+                    raise ValueError(
+                        "organized global Memory catalog has no sealed digest"
+                    )
+            output = {
+                **base,
+                "ok": organized_ok,
+                "skipped": False,
+                "due": True,
+                "reason": "completed" if organized_ok else "organizer_failed",
+                "modelCalled": model_called,
+                "catalogDigest": digest,
+                "curationRunId": run_id,
+                "organizer": organized_result,
+            }
+            receipt = scheduler.complete(
+                project,
+                catalog_digest=digest,
+                result=organized_result,
+                curation_run_id=run_id,
+                ok=organized_ok,
+                error=_string(organized_result.get("error")),
+                cadence_days=managed.catalog_consolidation_cadence_days,
+                admission_token=admission_token,
+            )
+            return {
+                **output,
+                "state": receipt.get("state"),
+                "nextDueAtMs": receipt.get("nextDueAtMs", 0),
+                "receipt": receipt,
+            }
+        except Exception as exc:
+            error = compact_whitespace(str(exc))[:800] or exc.__class__.__name__
+            try:
+                receipt = scheduler.fail(
+                    project,
+                    admission_token=admission_token,
+                    catalog_digest=digest,
+                    result={"ok": False, "error": error},
+                    error=error,
+                    cadence_days=managed.catalog_consolidation_cadence_days,
+                )
+            except Exception:
+                # A lease can expire while a worker is unwinding.  Its token
+                # must not mutate a successor run; expose the current durable
+                # status and leave recovery to the next admitted worker.
+                receipt = scheduler.status(project)
+            return {
+                **base,
+                "ok": False,
+                "skipped": False,
+                "due": True,
+                "reason": "failed",
+                "error": error,
+                "catalogDigest": digest,
+                "curationRunId": receipt.get("curationRunId", ""),
+                "state": receipt.get("state", "failed"),
+                "nextDueAtMs": receipt.get("nextDueAtMs", 0),
+                "receipt": receipt,
+            }
 
     def _execute_gateway_memory_maintenance(
         self,
@@ -3729,6 +4118,11 @@ class DebugImeService:
                 "reason": "automatic_organization_disabled",
                 "results": [],
             }
+        catalog = self._execute_gateway_memory_catalog_consolidation(
+            project=project,
+            manual=manual,
+            managed=managed,
+        )
         dreaming = self._execute_gateway_memory_dreaming(
             project=project,
             manual=manual,
@@ -3738,10 +4132,12 @@ class DebugImeService:
         )
         report["lexiconOrganization"] = lexicon
         report["dreaming"] = dreaming
+        report["catalogConsolidation"] = catalog
         report["ok"] = (
             report.get("ok") is True
             and lexicon.get("ok") is not False
             and dreaming.get("ok") is True
+            and catalog.get("ok") is True
         )
         report["managedSettings"] = managed.as_dict()
         report["executionOwner"] = "agent_gateway"
@@ -3893,177 +4289,183 @@ class DebugImeService:
                 managed.automatic_organization_thinking_level,
                 db_path=self.core.db_path,
             )
-            curator = OwnerMemoryCurator(
-                self.core.db_path,
-                organizer=ManagedPiMemoryOrganizer(executor),
-                project=project,
-                max_sources=_bounded_int(
-                    payload.get("maxSources"),
-                    default=DEFAULT_MAX_SOURCES,
-                    minimum=1,
-                    maximum=MAX_PERSONAL_V2_SOURCES,
-                ),
-                auto_apply=managed.automatic_organization_auto_apply,
-                embedding_provider=self.core.embedding_provider,
-                observations=self.agent.observations,
-            )
-            curator.initialize()
-            reports: list[dict[str, object]] = []
-            batch_summaries: list[dict[str, object]] = []
-            report: dict[str, object] = {}
-            result: dict[str, object] = {}
-            scope: dict[str, object] = {}
-            stored_run: dict[str, object] = {}
-            stored_draft = False
-            seen_cursors: set[tuple[int, str, int]] = set()
-            for batch_index in range(_MAX_MANUAL_CURATION_PREPARE_BATCHES):
-                report = curator.run_due(
-                    manual=True,
-                    owner_kind=owner_kind,
-                    owner_id=owner_id,
-                    instruction=instruction,
+            organizer = ManagedPiMemoryOrganizer(executor)
+            try:
+                curator = OwnerMemoryCurator(
+                    self.core.db_path,
+                    organizer=organizer,
+                    project=project,
+                    max_sources=_bounded_int(
+                        payload.get("maxSources"),
+                        default=DEFAULT_MAX_SOURCES,
+                        minimum=1,
+                        maximum=MAX_PERSONAL_V2_SOURCES,
+                    ),
+                    auto_apply=managed.automatic_organization_auto_apply,
+                    embedding_provider=self.core.embedding_provider,
+                    observations=self.agent.observations,
                 )
-                reports.append(dict(report))
-                scopes = list(
-                    dict(report.get("status") or {}).get("scopes") or []
-                )
-                scope = next(
-                    (
+                curator.initialize()
+                reports: list[dict[str, object]] = []
+                batch_summaries: list[dict[str, object]] = []
+                report: dict[str, object] = {}
+                result: dict[str, object] = {}
+                scope: dict[str, object] = {}
+                stored_run: dict[str, object] = {}
+                stored_draft = False
+                seen_cursors: set[tuple[int, str, int]] = set()
+                for batch_index in range(_MAX_MANUAL_CURATION_PREPARE_BATCHES):
+                    report = curator.run_due(
+                        manual=True,
+                        owner_kind=owner_kind,
+                        owner_id=owner_id,
+                        instruction=instruction,
+                    )
+                    reports.append(dict(report))
+                    scopes = list(
+                        dict(report.get("status") or {}).get("scopes") or []
+                    )
+                    scope = next(
+                        (
+                            dict(item)
+                            for item in scopes
+                            if isinstance(item, dict)
+                            and _string(item.get("ownerKind")) == owner_kind
+                            and _string(item.get("ownerId")) == owner_id
+                        ),
+                        {},
+                    )
+                    results = [
                         dict(item)
-                        for item in scopes
+                        for item in report.get("results") or []
                         if isinstance(item, dict)
-                        and _string(item.get("ownerKind")) == owner_kind
-                        and _string(item.get("ownerId")) == owner_id
-                    ),
-                    {},
-                )
-                results = [
-                    dict(item)
-                    for item in report.get("results") or []
-                    if isinstance(item, dict)
-                ]
-                result = next(
-                    (
-                        item
-                        for item in results
-                        if _string(item.get("ownerKind")) == owner_kind
-                        and _string(item.get("ownerId")) == owner_id
-                    ),
-                    {},
-                )
-                run_id = _string(result.get("runId")) or _string(
-                    scope.get("lastRunId")
-                )
-                stored_run = {}
-                if run_id:
-                    with self.core._connect() as conn:  # type: ignore[attr-defined]
-                        stored_run = memory_book_run_payload(conn, run_id=run_id)
-                stored_draft = _string(stored_run.get("status")) == "draft"
+                    ]
+                    result = next(
+                        (
+                            item
+                            for item in results
+                            if _string(item.get("ownerKind")) == owner_kind
+                            and _string(item.get("ownerId")) == owner_id
+                        ),
+                        {},
+                    )
+                    run_id = _string(result.get("runId")) or _string(
+                        scope.get("lastRunId")
+                    )
+                    stored_run = {}
+                    if run_id:
+                        with self.core._connect() as conn:  # type: ignore[attr-defined]
+                            stored_run = memory_book_run_payload(conn, run_id=run_id)
+                    stored_draft = _string(stored_run.get("status")) == "draft"
+                    pending_count = int(scope.get("pendingSourceCount") or 0)
+                    needs_review_count = int(scope.get("needsReviewSourceCount") or 0)
+                    cursor = dict(scope.get("lastSourceCursor") or {})
+                    cursor_key = (
+                        int(cursor.get("createdAtMs") or 0),
+                        _string(cursor.get("sourceId")),
+                        pending_count,
+                    )
+                    batch_summaries.append(
+                        {
+                            "batch": batch_index + 1,
+                            "runId": run_id,
+                            "runStatus": _string(result.get("runStatus")),
+                            "sourceCount": int(result.get("sourceCount") or 0),
+                            "modelSourceCount": int(result.get("modelSourceCount") or 0),
+                            "deferredModelInputCount": int(
+                                result.get("deferredModelInputCount") or 0
+                            ),
+                            "pendingSourceCount": pending_count,
+                            "needsReviewSourceCount": needs_review_count,
+                        }
+                    )
+                    stop_reason = _string(result.get("reason"))
+                    if (
+                        report.get("ok") is not True
+                        or stored_draft
+                        or pending_count <= 0
+                        or needs_review_count > 0
+                        or stop_reason
+                        in {
+                            "already_running",
+                            "draft_pending_review",
+                            "no_sources",
+                        }
+                        or cursor_key in seen_cursors
+                    ):
+                        break
+                    seen_cursors.add(cursor_key)
+
                 pending_count = int(scope.get("pendingSourceCount") or 0)
                 needs_review_count = int(scope.get("needsReviewSourceCount") or 0)
-                cursor = dict(scope.get("lastSourceCursor") or {})
-                cursor_key = (
-                    int(cursor.get("createdAtMs") or 0),
-                    _string(cursor.get("sourceId")),
-                    pending_count,
+                auto_applied = any(
+                    bool(item.get("autoApplied"))
+                    for report_item in reports
+                    for item in report_item.get("results") or []
+                    if isinstance(item, dict)
                 )
-                batch_summaries.append(
-                    {
-                        "batch": batch_index + 1,
-                        "runId": run_id,
-                        "runStatus": _string(result.get("runStatus")),
-                        "sourceCount": int(result.get("sourceCount") or 0),
-                        "modelSourceCount": int(result.get("modelSourceCount") or 0),
-                        "deferredModelInputCount": int(
-                            result.get("deferredModelInputCount") or 0
+                applied_diff_count = sum(
+                    int(item.get("diffCount") or 0)
+                    for report_item in reports
+                    for item in report_item.get("results") or []
+                    if isinstance(item, dict) and bool(item.get("autoApplied"))
+                )
+                drain_limited = (
+                    not stored_draft
+                    and pending_count > 0
+                    and needs_review_count <= 0
+                    and len(reports) >= _MAX_MANUAL_CURATION_PREPARE_BATCHES
+                )
+                return {
+                    "schemaVersion": "rag-ime.knowledge-database-organize.v1",
+                    "ok": all(item.get("ok") is True for item in reports),
+                    "dryRun": not auto_applied,
+                    "applySupported": not auto_applied,
+                    "applyRequiresReview": stored_draft and not auto_applied,
+                    "autoApplied": auto_applied,
+                    "appliedDiffCount": applied_diff_count,
+                    "storedDraft": stored_draft,
+                    "reusedDraft": bool(
+                        result.get("reason") == "draft_pending_review"
+                        or (
+                            result.get("skipped") is True
+                            and _string(scope.get("dueReason")) == "draft_pending_review"
+                        )
+                    ),
+                    "source": {
+                        "ownerKind": owner_kind,
+                        "ownerId": owner_id,
+                        "eventCount": sum(
+                            int(item.get("sourceCount") or 0) for item in batch_summaries
                         ),
                         "pendingSourceCount": pending_count,
                         "needsReviewSourceCount": needs_review_count,
-                    }
-                )
-                stop_reason = _string(result.get("reason"))
-                if (
-                    report.get("ok") is not True
-                    or stored_draft
-                    or pending_count <= 0
-                    or needs_review_count > 0
-                    or stop_reason
-                    in {
-                        "already_running",
-                        "draft_pending_review",
-                        "no_sources",
-                    }
-                    or cursor_key in seen_cursors
-                ):
-                    break
-                seen_cursors.add(cursor_key)
-
-            pending_count = int(scope.get("pendingSourceCount") or 0)
-            needs_review_count = int(scope.get("needsReviewSourceCount") or 0)
-            auto_applied = any(
-                bool(item.get("autoApplied"))
-                for report_item in reports
-                for item in report_item.get("results") or []
-                if isinstance(item, dict)
-            )
-            applied_diff_count = sum(
-                int(item.get("diffCount") or 0)
-                for report_item in reports
-                for item in report_item.get("results") or []
-                if isinstance(item, dict) and bool(item.get("autoApplied"))
-            )
-            drain_limited = (
-                not stored_draft
-                and pending_count > 0
-                and needs_review_count <= 0
-                and len(reports) >= _MAX_MANUAL_CURATION_PREPARE_BATCHES
-            )
-            return {
-                "schemaVersion": "rag-ime.knowledge-database-organize.v1",
-                "ok": all(item.get("ok") is True for item in reports),
-                "dryRun": not auto_applied,
-                "applySupported": not auto_applied,
-                "applyRequiresReview": stored_draft and not auto_applied,
-                "autoApplied": auto_applied,
-                "appliedDiffCount": applied_diff_count,
-                "storedDraft": stored_draft,
-                "reusedDraft": bool(
-                    result.get("reason") == "draft_pending_review"
-                    or (
-                        result.get("skipped") is True
-                        and _string(scope.get("dueReason")) == "draft_pending_review"
-                    )
-                ),
-                "source": {
-                    "ownerKind": owner_kind,
-                    "ownerId": owner_id,
-                    "eventCount": sum(
-                        int(item.get("sourceCount") or 0) for item in batch_summaries
-                    ),
-                    "pendingSourceCount": pending_count,
-                    "needsReviewSourceCount": needs_review_count,
-                    "autoApplied": auto_applied,
-                    "appliedDiffCount": applied_diff_count,
-                    "modelSourceCount": sum(
-                        int(item.get("modelSourceCount") or 0)
-                        for item in batch_summaries
-                    ),
-                    "batchCount": len(batch_summaries),
-                    "drainLimited": drain_limited,
-                },
-                "plan": {},
-                "validation": {
-                    "ok": all(item.get("ok") is True for item in reports),
-                    "errors": (
-                        []
-                        if all(item.get("ok") is True for item in reports)
-                        else [result.get("error") or "curation_failed"]
-                    ),
-                },
-                "storedRun": stored_run,
-                "curation": report,
-                "batchSummaries": batch_summaries,
-            }
+                        "autoApplied": auto_applied,
+                        "appliedDiffCount": applied_diff_count,
+                        "modelSourceCount": sum(
+                            int(item.get("modelSourceCount") or 0)
+                            for item in batch_summaries
+                        ),
+                        "batchCount": len(batch_summaries),
+                        "drainLimited": drain_limited,
+                    },
+                    "plan": {},
+                    "validation": {
+                        "ok": all(item.get("ok") is True for item in reports),
+                        "errors": (
+                            []
+                            if all(item.get("ok") is True for item in reports)
+                            else [result.get("error") or "curation_failed"]
+                        ),
+                    },
+                    "storedRun": stored_run,
+                    "curation": report,
+                    "batchSummaries": batch_summaries,
+                }
+            finally:
+                close = getattr(organizer, "close", None)
+                if callable(close):
+                    close()
         request = KnowledgeWorkbenchRequest(
             question=instruction,
             mode="database_organize",
@@ -4203,13 +4605,47 @@ class DebugImeService:
             },
         }
 
+    def _catalog_maintenance_status(
+        self,
+        project: str,
+        managed: MemoryMaintenanceSettings,
+    ) -> dict[str, object]:
+        raw = self.memory_catalog_scheduler.status(project)
+        if not managed.catalog_consolidation_enabled:
+            effective_due = False
+            effective_reason = "catalog_consolidation_disabled"
+        elif not managed.automatic_organization_enabled:
+            effective_due = False
+            effective_reason = "automatic_organization_disabled"
+        else:
+            effective_due = bool(raw.get("due"))
+            effective_reason = _string(raw.get("dueReason")) or "not_due"
+        return {
+            **raw,
+            "enabled": bool(managed.catalog_consolidation_enabled),
+            "automaticOrganizationEnabled": bool(
+                managed.automatic_organization_enabled
+            ),
+            "cadenceDays": int(managed.catalog_consolidation_cadence_days),
+            "due": effective_due,
+            "dueReason": effective_reason,
+        }
+
     def agent_memory_maintenance_status(self, payload: dict[str, Any]) -> dict[str, object]:
+        project = _string(payload.get("project")) or self.config.project
         if _bool(payload.get("projectionOnly")):
+            managed = (
+                MemoryMaintenanceSettings.load(self.core.db_path)
+                if isinstance(self.core, LocalSqliteCoreClient)
+                else MemoryMaintenanceSettings()
+            )
             return {
                 "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
                 "ok": True,
-                "job": self.memory_maintenance_jobs.latest_status(
-                    project=_string(payload.get("project")) or self.config.project
+                "job": self.memory_maintenance_jobs.latest_status(project=project),
+                "catalogConsolidation": self._catalog_maintenance_status(
+                    project,
+                    managed,
                 ),
                 "projection": self.memory_projection_status(),
             }
@@ -4218,9 +4654,12 @@ class DebugImeService:
                 "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
                 "ok": False,
                 "error": "local SQLite core required",
+                "catalogConsolidation": self._catalog_maintenance_status(
+                    project,
+                    MemoryMaintenanceSettings(),
+                ),
                 "projection": self.memory_projection_status(),
             }
-        project = _string(payload.get("project")) or self.config.project
         limit = _bounded_int(payload.get("limit"), default=8, minimum=1, maximum=30)
         requested_owner_kind = _string(payload.get("ownerKind"))
         requested_owner_id = _string(payload.get("ownerId"))
@@ -4232,6 +4671,7 @@ class DebugImeService:
             )
         current_ms = int(time.time() * 1000)
         managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        catalog_status = self._catalog_maintenance_status(project, managed)
         automatic_enabled = managed.automatic_organization_enabled
         automatic_interval_ms = (
             managed.automatic_organization_interval_seconds * 1_000
@@ -4378,6 +4818,7 @@ class DebugImeService:
                     - MAX_PERSONAL_V2_INPUT_TOKENS
                 ),
             },
+            "catalogConsolidation": catalog_status,
             "pendingDraftCount": sum(1 for item in runs if item["status"] == "draft"),
             "runs": runs,
             "ownerCuration": owner_curation,

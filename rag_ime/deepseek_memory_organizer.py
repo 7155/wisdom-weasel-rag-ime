@@ -371,9 +371,22 @@ class DeepSeekMemoryOrganizer:
         if normalized_policy not in {"conservative"}:
             raise ValueError(f"unsupported memory curation policy: {policy}")
         model_bundle = build_memory_curation_model_bundle(bundle)
+        global_catalog = (
+            str(model_bundle.get("curationScope") or "") == "global"
+            and bool(model_bundle.get("catalogAudit"))
+        )
+        if global_catalog and not bool(model_bundle.get("catalogComplete")):
+            raise DeepSeekMemoryOrganizerError(
+                "global Memory catalog consolidation requires a complete catalog snapshot"
+            )
         prompt_bundle = _semantic_curation_prompt_bundle(model_bundle)
+        system_prompt = (
+            _memory_catalog_consolidation_system_prompt()
+            if global_catalog
+            else _memory_curation_system_prompt()
+        )
         messages = [
-            {"role": "system", "content": _memory_curation_system_prompt()},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": json.dumps(
@@ -391,7 +404,11 @@ class DeepSeekMemoryOrganizer:
         started = time.perf_counter()
         response = self._call_chat_completions(
             messages=messages,
-            phase="atom-first-curation",
+            phase=(
+                "memory-catalog-consolidation"
+                if global_catalog
+                else "atom-first-curation"
+            ),
         )
         diagnostics = _response_diagnostics(response, model_bundle=prompt_bundle)
         payload, parse_error = _try_response_json_object(response)
@@ -408,29 +425,54 @@ class DeepSeekMemoryOrganizer:
             for item in model_bundle.get("inputs") or []
             if isinstance(item, dict) and str(item.get("ref") or "")
         }
-        if not _curation_payload_complete(payload, expected_refs=expected_refs):
+        payload_complete = (
+            not parse_error
+            and _curation_payload_complete(payload, expected_refs=expected_refs)
+        )
+        if not payload_complete:
+            retry_packet: dict[str, object]
+            retry_system_prompt: str
+            retry_phase: str
+            if global_catalog:
+                retry_packet = {
+                    "project": project,
+                    "policy": normalized_policy,
+                    "instruction": effective_instruction,
+                    "snapshot": prompt_bundle,
+                    "previousParseError": parse_error,
+                }
+                retry_system_prompt = (
+                    _memory_catalog_consolidation_recovery_prompt()
+                )
+                retry_phase = "memory-catalog-consolidation-repair"
+            else:
+                retry_packet = {
+                    "project": project,
+                    "policy": normalized_policy,
+                    "inputs": prompt_bundle.get("inputs") or [],
+                    "existingAtoms": prompt_bundle.get("existingAtoms") or [],
+                    "existingGroups": prompt_bundle.get("existingGroups") or [],
+                    "existingTags": prompt_bundle.get("existingTags") or [],
+                }
+                retry_system_prompt = _memory_curation_recovery_prompt()
+                retry_phase = "atom-first-repair"
             retry_response = self._call_chat_completions(
                 messages=[
-                    {"role": "system", "content": _memory_curation_recovery_prompt()},
+                    {"role": "system", "content": retry_system_prompt},
                     {
                         "role": "user",
                         "content": json.dumps(
-                            {
-                                "project": project,
-                                "policy": normalized_policy,
-                                "inputs": prompt_bundle.get("inputs") or [],
-                                "existingAtoms": prompt_bundle.get("existingAtoms") or [],
-                                "existingGroups": prompt_bundle.get("existingGroups") or [],
-                                "existingTags": prompt_bundle.get("existingTags") or [],
-                            },
+                            retry_packet,
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
                     },
                 ],
-                phase="atom-first-repair",
+                phase=retry_phase,
             )
-            retry_payload, retry_parse_error = _try_response_json_object(retry_response)
+            retry_payload, retry_parse_error = _try_response_json_object(
+                retry_response
+            )
             retry_payload, retry_local_create_bindings = (
                 _bind_curation_local_create_references(
                     retry_payload,
@@ -448,23 +490,38 @@ class DeepSeekMemoryOrganizer:
             if retry_parse_error:
                 retry_diagnostics["parseError"] = retry_parse_error
             diagnostics["retry"] = retry_diagnostics
-            if _curation_payload_complete(
-                retry_payload,
-                expected_refs=expected_refs,
-            ):
+            payload_complete = (
+                not retry_parse_error
+                and _curation_payload_complete(
+                    retry_payload,
+                    expected_refs=expected_refs,
+                )
+            )
+            if payload_complete:
                 payload = retry_payload
                 warnings = payload.get("warnings")
                 if not isinstance(warnings, list):
                     warnings = []
                     payload["warnings"] = warnings
-                warnings.append("curation_recovered_with_compact_retry")
-        if not _curation_payload_complete(payload, expected_refs=expected_refs):
+                warnings.append(
+                    "catalog_consolidation_recovered_with_retry"
+                    if global_catalog
+                    else "curation_recovered_with_compact_retry"
+                )
+        if not payload_complete:
             covered = _curation_covered_evidence_refs(payload)
             missing = sorted(expected_refs - covered)
             raise DeepSeekMemoryOrganizerError(
-                "memory curation response did not cover the frozen evidence batch "
-                f"({len(missing)} missing of {len(expected_refs)}; retry on the next scheduled run)"
+                (
+                    "global Memory catalog consolidation response was not valid JSON"
+                    if global_catalog
+                    else "memory curation response did not cover the frozen evidence batch "
+                    f"({len(missing)} missing of {len(expected_refs)}; "
+                    "retry on the next scheduled run)"
+                )
             )
+        if global_catalog:
+            payload = _constrain_memory_catalog_consolidation_payload(payload)
         payload["schemaVersion"] = MEMORY_CURATION_DECISION_SCHEMA_VERSION
         for key in (
             "decisions",
@@ -514,6 +571,7 @@ class DeepSeekMemoryOrganizer:
             policy=normalized_policy,
             instruction=effective_instruction,
             expected_refs=expected_refs,
+            catalog_audit=global_catalog,
         )
         semantic_repair_attempts: list[dict[str, object]] = []
         repair_retry_feedback: dict[str, object] = {}
@@ -546,7 +604,11 @@ class DeepSeekMemoryOrganizer:
                 messages=[
                     {
                         "role": "system",
-                        "content": _memory_curation_semantic_repair_prompt(),
+                        "content": (
+                            _memory_catalog_consolidation_repair_prompt()
+                            if global_catalog
+                            else _memory_curation_semantic_repair_prompt()
+                        ),
                     },
                     {
                         "role": "user",
@@ -557,7 +619,11 @@ class DeepSeekMemoryOrganizer:
                         ),
                     },
                 ],
-                phase="atom-first-repair",
+                phase=(
+                    "memory-catalog-consolidation-repair"
+                    if global_catalog
+                    else "atom-first-repair"
+                ),
             )
             repair_payload, repair_parse_error = _try_response_json_object(
                 repair_response
@@ -568,6 +634,10 @@ class DeepSeekMemoryOrganizer:
                     model_bundle=model_bundle,
                 )
             )
+            if global_catalog and not repair_parse_error:
+                repair_payload = _constrain_memory_catalog_consolidation_payload(
+                    repair_payload
+                )
             repair_diagnostics: dict[str, object] = {
                 "round": repair_round,
                 "verifierErrors": verifier_errors,
@@ -583,14 +653,21 @@ class DeepSeekMemoryOrganizer:
                 )
             if repair_parse_error:
                 repair_diagnostics["parseError"] = repair_parse_error
-            repair_complete = _curation_payload_complete(
-                repair_payload,
-                expected_refs=expected_refs,
+            repair_complete = (
+                not repair_parse_error
+                and _curation_payload_complete(
+                    repair_payload,
+                    expected_refs=expected_refs,
+                )
             )
-            repair_preserved_unflagged = _curation_repair_preserves_unflagged_actions(
-                dict(verification["decisionPacket"]),
-                repair_payload,
-                verifier_findings,
+            repair_preserved_unflagged = (
+                True
+                if global_catalog
+                else _curation_repair_preserves_unflagged_actions(
+                    dict(verification["decisionPacket"]),
+                    repair_payload,
+                    verifier_findings,
+                )
             )
             repair_diagnostics["preservedUnflaggedActions"] = (
                 repair_preserved_unflagged
@@ -598,7 +675,11 @@ class DeepSeekMemoryOrganizer:
             if repair_complete and repair_preserved_unflagged:
                 payload = repair_payload
                 payload.setdefault("warnings", []).append(
-                    "curation_repaired_after_independent_verifier"
+                    (
+                        "catalog_consolidation_repaired_after_independent_verifier"
+                        if global_catalog
+                        else "curation_repaired_after_independent_verifier"
+                    )
                 )
                 verification = _run_memory_curation_verifier(
                     self._call_chat_completions,
@@ -608,6 +689,7 @@ class DeepSeekMemoryOrganizer:
                     policy=normalized_policy,
                     instruction=effective_instruction,
                     expected_refs=expected_refs,
+                    catalog_audit=global_catalog,
                 )
                 repair_diagnostics["reverified"] = True
                 repair_diagnostics["passed"] = bool(
@@ -697,6 +779,13 @@ class DeepSeekMemoryOrganizer:
         payload["model"] = self.config.model
         payload["instruction"] = effective_instruction
         payload["policy"] = normalized_policy
+        payload["curationScope"] = str(
+            model_bundle.get("curationScope") or "incremental"
+        )
+        payload["catalogAudit"] = bool(model_bundle.get("catalogAudit"))
+        payload["catalogComplete"] = bool(
+            model_bundle.get("catalogComplete", True)
+        )
         payload["modelDiagnostics"] = diagnostics
         payload["modelBundleStats"] = {
             "chars": len(json.dumps(prompt_bundle, ensure_ascii=False, sort_keys=True)),
@@ -1755,6 +1844,130 @@ def _curation_action_evidence_refs(
     }
 
 
+def _constrain_memory_catalog_consolidation_payload(
+    payload: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """Reduce a global model response to the merge-only protocol."""
+    source = dict(payload or {})
+    constrained: dict[str, object] = {
+        "schemaVersion": MEMORY_CURATION_DECISION_SCHEMA_VERSION,
+        "decisions": [],
+        "attach": [],
+        "create": [],
+        "update": [],
+        "supersede": [],
+        "merge": [],
+        "retract": [],
+        "ignore": [],
+        "tagMerges": [],
+        "warnings": [],
+    }
+    merge_items: list[object] = []
+    raw_merge = source.get("merge")
+    if isinstance(raw_merge, list):
+        merge_items.extend(raw_merge)
+    discarded_direct_actions = False
+    for key in ("decisions", "atomDecisions"):
+        raw_decisions = source.get(key)
+        if not isinstance(raw_decisions, list):
+            continue
+        for item in raw_decisions:
+            if (
+                isinstance(item, Mapping)
+                and compact_whitespace(str(item.get("action") or "")).lower()
+                == "merge"
+            ):
+                merge_items.append(item)
+            else:
+                discarded_direct_actions = True
+    constrained["merge"] = merge_items
+    raw_tag_merges = source.get("tagMerges")
+    if isinstance(raw_tag_merges, list):
+        constrained["tagMerges"] = [
+            item for item in raw_tag_merges if isinstance(item, Mapping)
+        ]
+    warnings = [
+        str(item)
+        for item in source.get("warnings", [])
+        if isinstance(item, (str, int, float)) and compact_whitespace(str(item))
+    ]
+    discarded_direct_actions = discarded_direct_actions or any(
+        source.get(key)
+        for key in (
+            "attach",
+            "create",
+            "update",
+            "supersede",
+            "retract",
+            "ignore",
+        )
+    )
+    if discarded_direct_actions:
+        warnings.append("global_catalog_direct_actions_discarded")
+    constrained["warnings"] = warnings
+    return constrained
+
+
+def _memory_catalog_consolidation_system_prompt() -> str:
+    return compact_whitespace(
+        f"""
+        你是 memory-catalog-consolidation 阶段的全局 Memory 目录整理器。输入是完整、冻结且只读的
+        P Atom、B Book、G Group、T Tag 和 Tag-edge 快照，不是本批 Evidence。必须遍历整个目录；
+        重复 Book、孤立/过度拆分关系只是需要核对的信号，Book/Group/edge 是派生结构，绝不能直接改。
+        唯一允许的动作：1) 合并 canonicalText、kind、project、app、claimKey、lineageId、claimState、
+        validFromMs、validToMs、supersedesId 全部完全相同的现有 Atom；2) 合并两个不同 T 引用且
+        normalized name 完全相同，或目录 alias 直接互证的现有 Tag。禁止相似度、同项目、同日期、
+        共现或父子关系推断，禁止 create、attach、update、supersede、retract、ignore、Book/Group/
+        edge 写入和任何事实改写。Atom merge 使用 [["P2","P1"]]（P2 停用、P1 保留）；
+        Tag merge 使用 [{{"source":"T2","target":"T1","reason":"exact synonym"}}]。
+        只输出 JSON，schemaVersion={MEMORY_CURATION_DECISION_SCHEMA_VERSION}，顶层只可有 merge、
+        tagMerges、warnings；没有可证明项目就输出空数组，不要 Markdown、解释或工具调用。
+        """
+    )
+
+
+def _memory_catalog_consolidation_recovery_prompt() -> str:
+    return compact_whitespace(
+        f"""
+        重新输出 memory-catalog-consolidation 的最小合法 JSON。完整冻结的 P/B/G/T/Tag-edge
+        快照不可变。只保留所有身份、作用域和时间字段完全相同 Atom 的 merge，以及不同 T 引用间
+        normalized name 完全相同或目录 alias 直接互证的 Tag tagMerges。重复 Book 或碎片关系只
+        用于发现候选，禁止直接改 Book、Group、edge，禁止 Evidence action、新事实或字段改写。
+        schemaVersion={MEMORY_CURATION_DECISION_SCHEMA_VERSION}；只输出 merge、tagMerges、warnings
+        三个数组，不要 Markdown。
+        """
+    )
+
+
+def _memory_catalog_consolidation_repair_prompt() -> str:
+    return compact_whitespace(
+        f"""
+        你是 memory-catalog-consolidation 的有界修复器。根据 verifierFindings 只修复本次目录合并；
+        完整 P/B/G/T/Tag-edge 快照不可变。只允许所有身份、作用域、时间字段完全相同 Atom 的
+        merge，及不同 T 引用间 normalized name 完全相同或 alias 直接互证的 Tag merge。重复 Book
+        和碎片关系只是候选信号，绝不直接修改 Book、Group、edge；无法证明就删除合并，绝不创建、
+        更新、撤回事实。schemaVersion={MEMORY_CURATION_DECISION_SCHEMA_VERSION}，只输出 merge、
+        tagMerges、warnings 数组，不要 Markdown。
+        """
+    )
+
+
+def _memory_catalog_consolidation_verifier_prompt() -> str:
+    return compact_whitespace(
+        """
+        你是独立的 memory-catalog-consolidation 审计器。逐项审查冻结的完整 P/B/G/T/Tag-edge
+        快照和 decisions。Atom merge 只有在 canonicalText、kind、project、app、claimKey、
+        lineageId、claimState、validFromMs、validToMs、supersedesId 全部完全相同时合法；Tag merge
+        只有在两个不同 T 引用 normalized name 完全相同或 alias 直接互证时合法。重复 Book 或碎片
+        关系不能授权直接写 Book/Group/edge。任何 Evidence action、新事实、字段改写、相似度或共现
+        推断都必须报错。重新计算动作数和 decisionDigest；本阶段没有 Evidence，所以
+        coveredEvidenceRefs 必须为空。ok=1 时 findings/errors 必须为空。只输出 JSON：
+        {"v":1,"ok":1,"coveredEvidenceRefs":[],"checkedActionCount":0,
+        "decisionDigest":"64位摘要","findings":[],"errors":[]}。
+        """
+    )
+
+
 def _run_memory_curation_verifier(
     completion: Callable[..., dict[str, Any]],
     *,
@@ -1764,6 +1977,7 @@ def _run_memory_curation_verifier(
     policy: str,
     instruction: str,
     expected_refs: set[str],
+    catalog_audit: bool = False,
 ) -> dict[str, object]:
     decision_packet = _curation_verifier_payload(payload)
     decision_digest = hashlib.sha256(
@@ -1777,7 +1991,14 @@ def _run_memory_curation_verifier(
     expected_action_count = _curation_action_count(decision_packet)
     response = completion(
         messages=[
-            {"role": "system", "content": _memory_curation_verifier_prompt()},
+            {
+                "role": "system",
+                "content": (
+                    _memory_catalog_consolidation_verifier_prompt()
+                    if catalog_audit
+                    else _memory_curation_verifier_prompt()
+                ),
+            },
             {
                 "role": "user",
                 "content": json.dumps(
@@ -1797,7 +2018,11 @@ def _run_memory_curation_verifier(
             },
         ],
         max_tokens=2048,
-        phase="atom-first-verifier",
+        phase=(
+            "memory-catalog-consolidation-verifier"
+            if catalog_audit
+            else "atom-first-verifier"
+        ),
         isolated=True,
     )
     verifier_payload, parse_error = _try_response_json_object(response)
@@ -1847,13 +2072,11 @@ def _curation_verification_complete(
 def _semantic_curation_prompt_bundle(
     bundle: Mapping[str, object],
 ) -> dict[str, object]:
-    """Remove persistence identifiers that cannot affect semantic review.
+    """Keep only semantic fields needed for one bounded curation review.
 
-    The trusted full bundle remains in-process for Evidence/Atom expansion and
-    is already sealed by the run hash. Luna only needs stable E/P/B/G/T refs,
-    user text and small disambiguating fields. Repeating physical event ids,
-    database ids and Book membership ids in every curation and verifier prompt
-    adds latency without giving the model any legitimate decision authority.
+    The trusted full bundle remains in-process for reference expansion and is
+    sealed by the run hash. Physical Tag and Book ids are retained because a
+    global catalog audit must distinguish duplicate rows with equal names.
     """
 
     def compact_items(
@@ -1876,6 +2099,8 @@ def _semantic_curation_prompt_bundle(
         "project": str(bundle.get("project") or ""),
         "curationScope": str(bundle.get("curationScope") or "incremental"),
         "catalogAudit": bool(bundle.get("catalogAudit")),
+        "catalogComplete": bool(bundle.get("catalogComplete", True)),
+        "catalogDigest": str(bundle.get("catalogDigest") or ""),
         "evidenceOrder": str(bundle.get("evidenceOrder") or ""),
         "inputs": compact_items(
             "inputs",
@@ -1883,7 +2108,29 @@ def _semantic_curation_prompt_bundle(
         ),
         "existingAtoms": compact_items(
             "existingAtoms",
-            ("ref", "kind", "text", "tags", "groupIds", "app", "status"),
+            (
+                "ref",
+                "kind",
+                "text",
+                "tags",
+                "groupIds",
+                "aliases",
+                "surfaceHints",
+                "queryExpansions",
+                "sourceMemoryIds",
+                "sourceEventIds",
+                "app",
+                "project",
+                "status",
+                "claimKey",
+                "lineageId",
+                "claimState",
+                "validFromMs",
+                "validToMs",
+                "supersedesId",
+                "confidence",
+                "qualityScore",
+            ),
         ),
         "existingGroups": compact_items(
             "existingGroups",
@@ -1891,15 +2138,34 @@ def _semantic_curation_prompt_bundle(
         ),
         "existingTags": compact_items(
             "existingTags",
-            ("ref", "name", "description", "aliases", "groupIds", "degree"),
+            (
+                "ref",
+                "tagId",
+                "name",
+                "description",
+                "aliases",
+                "groupIds",
+                "type",
+                "degree",
+                "qualityScore",
+            ),
         ),
         "existingTagEdges": compact_items(
             "existingTagEdges",
-            ("sourceRef", "targetRef", "type", "weight"),
+            ("sourceRef", "targetRef", "type", "weight", "evidenceCount"),
         ),
         "existingBooks": compact_items(
             "existingBooks",
-            ("ref", "title", "summary", "tags", "groupIds"),
+            (
+                "ref",
+                "bookId",
+                "title",
+                "summary",
+                "tags",
+                "groupIds",
+                "atomIds",
+                "status",
+            ),
         ),
         "cursor": {
             key: cursor[key]

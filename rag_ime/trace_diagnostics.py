@@ -41,6 +41,14 @@ _DIMENSIONS = (
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _FAILED_STATUSES = frozenset({"failed", "cancelled"})
 _TIMEOUT_RE = re.compile(r"timeout|timed out|超时", re.IGNORECASE)
+_FAILURE_ATTRIBUTION_LAYERS = ("tool", "skill", "template", "workflow", "model")
+_FAILURE_ATTRIBUTION_VERDICTS = frozenset(
+    {"primary", "contributing", "healthy", "unknown", "not_applicable"}
+)
+_EVIDENCE_FAILURE_RE = re.compile(
+    r"timeout|timed out|failed|failure|error|unavailable|blocked|stale|超时|失败|错误|不可用|阻塞",
+    re.IGNORECASE,
+)
 _SCHEMA_ERROR_RE = re.compile(r"schema|validation|invalid arguments?|参数校验|验证失败", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"token", re.IGNORECASE)
 _TRACE_FINGERPRINT_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
@@ -59,9 +67,10 @@ EnvironmentReader = Callable[[str, str], Mapping[str, object] | None]
 def extract_trace_diagnostic_result(session_snapshot: Mapping[str, object]) -> dict[str, object]:
     """Parse the newest completed public assistant result block.
 
-    The delimiter is only a transport envelope.  ``_validate_result`` still
-    constrains every field, and report persistence later verifies all cited
-    evidence IDs against the frozen inspection.
+    The delimiter is only a transport envelope.  New extraction is governed
+    by ``_validate_result`` and therefore requires the presentation and its
+    complete failure attribution; report loading is the only compatibility
+    path that permits legacy omissions.
     """
 
     candidates: list[tuple[float, str]] = []
@@ -218,6 +227,7 @@ def inspect_trace_targets(
     timeline = timeline[-240:]
     evidence = evidence[-512:]
     valid_evidence_ids = {str(item["evidenceId"]) for item in evidence}
+    evidence_by_id = {str(item["evidenceId"]): item for item in evidence}
     requirements = _requirements_from_timeline(timeline, valid_evidence_ids)
     captured_at_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     environment = _environment_snapshot(
@@ -235,6 +245,7 @@ def inspect_trace_targets(
         targets=target_rows,
         target_count=len(target_rows),
         valid_evidence_ids=valid_evidence_ids,
+        evidence_by_id=evidence_by_id,
     )
     result = {
         "schemaVersion": TRACE_DIAGNOSTIC_INSPECTION_SCHEMA_VERSION,
@@ -413,7 +424,7 @@ class TraceDiagnosticReportStore:
         repair_session_id: str,
         now_ms: int | None = None,
     ) -> dict[str, object]:
-        """Append a repair handoff to a separately fenced repair Session."""
+        """Append a full-disk/all-tool auto-approved repair handoff."""
 
         identifier = _required_id(report_id, "reportId", 80)
         finding = _required_id(finding_id, "findingId", 160)
@@ -438,11 +449,12 @@ class TraceDiagnosticReportStore:
                 "failureRef": failure,
                 "repairSessionId": repair_session,
             }
-            if existing_authorization and all(existing_authorization.get(key) == value for key, value in comparable.items()):
-                return current
-            if existing_authorization:
+            if existing_authorization and not all(
+                existing_authorization.get(key) == value
+                for key, value in comparable.items()
+            ):
                 raise ValueError("diagnostic report already has a different repair authorization")
-            if revision != int(expected_revision):
+            if not existing_authorization and revision != int(expected_revision):
                 raise ValueError("report revision conflict")
             result = _mapping(current.get("result"))
             matching_finding = next(
@@ -451,16 +463,64 @@ class TraceDiagnosticReportStore:
             )
             if matching_finding is None:
                 raise ValueError("repair authorization finding is not in the diagnostic result")
-            if source_trace not in _string_sequence(current.get("traceIds"), maximum=32, item_maximum=240):
-                raise ValueError("repair authorization source Trace is outside the report")
-            if scope not in {str(item.get("targetKey") or "") for item in _mapping_sequence(current.get("targets"))}:
+            source_target = next(
+                (
+                    item
+                    for item in _mapping_sequence(current.get("targets"))
+                    if str(item.get("targetKey") or "") == scope
+                ),
+                None,
+            )
+            if source_target is None:
                 raise ValueError("repair authorization scope is outside the report")
+            target_trace_ids = _string_sequence(
+                source_target.get("traceIds"),
+                maximum=32,
+                item_maximum=240,
+            )
+            if source_trace not in target_trace_ids:
+                raise ValueError(
+                    "repair authorization source Trace is outside the frozen target"
+                )
             valid_failure_refs = {
                 finding,
-                *[str(value) for value in _string_sequence(matching_finding.get("evidenceIds"), maximum=128, item_maximum=640)],
+                *[
+                    str(value)
+                    for value in _string_sequence(
+                        matching_finding.get("evidenceIds"),
+                        maximum=128,
+                        item_maximum=640,
+                    )
+                ],
             }
             if failure not in valid_failure_refs:
                 raise ValueError("repair authorization failureRef is not bound to the finding")
+            inspection_evidence = {
+                str(item.get("evidenceId") or ""): item
+                for item in _mapping_sequence(_mapping(current.get("inspection")).get("evidence"))
+                if str(item.get("evidenceId") or "")
+            }
+            finding_evidence_ids = _string_sequence(
+                matching_finding.get("evidenceIds"),
+                maximum=128,
+                item_maximum=640,
+            )
+            failed_evidence_ids = {
+                evidence_id
+                for evidence_id in finding_evidence_ids
+                if str(inspection_evidence.get(evidence_id, {}).get("status") or "").lower()
+                in _FAILED_STATUSES
+            }
+            if not failed_evidence_ids:
+                raise ValueError(
+                    "repair authorization requires recorded failed evidence"
+                )
+            if failure != finding and failure not in failed_evidence_ids:
+                raise ValueError(
+                    "repair authorization failureRef is not recorded failed evidence"
+                )
+            if existing_authorization:
+                return current
             authorization_id = "repair-authorization:" + _sha256(
                 f"{identifier}|{finding}|{scope}|{source_trace}|{failure}|{repair_session}"
             )[:32]
@@ -468,7 +528,7 @@ class TraceDiagnosticReportStore:
                 "authorization": {
                     "state": "authorized",
                     "authorizationKind": "repair_handoff",
-                    "writeAuthority": "model_arbitrated_full_trust",
+                    "writeAuthority": "auto_approved_full_trust",
                     "authorizationId": authorization_id,
                     **comparable,
                     "authorizedAtMs": timestamp,
@@ -484,7 +544,7 @@ class TraceDiagnosticReportStore:
                     "verifiedAtMs": 0,
                     "comparison": {
                         "status": "pending",
-                        "reason": "已授权修复交接；实际写入仍需逐次审批，并等待新 Trace/Eval。",
+                        "reason": "已授权全信任自动批准修复交接；所有 Tool 操作无需逐项审批，等待修复 Trace 中已记录的修改与通过测试证据，以及 AI Judge 复检。",
                         "sourceStatus": "",
                         "repairStatus": "",
                         "sourceFingerprint": "",
@@ -524,12 +584,14 @@ class TraceDiagnosticReportStore:
         eval_run_id = _required_id(eval_run.get("evalRunId"), "evalRunId", 160)
         if receipt.get("testStatus") != "passed":
             raise ValueError("repair verification requires passed test evidence")
-        if (
-            receipt.get("sandboxStatus") != "passed"
-            or int(receipt.get("sandboxedTestCount") or 0) < 1
+        sandbox_status = str(receipt.get("sandboxStatus") or "")
+        sandboxed_test_count = int(receipt.get("sandboxedTestCount") or 0)
+        if not (
+            (sandbox_status == "passed" and sandboxed_test_count >= 1)
+            or (sandbox_status == "not_required" and sandboxed_test_count == 0)
         ):
             raise ValueError(
-                "repair verification requires Host-owned sandbox evidence"
+                "repair verification requires authoritative completed test evidence"
             )
         if eval_run.get("status") != "completed" or eval_run.get("metricAuthority") != "ai_judge_estimate":
             raise ValueError("repair verification requires a completed bounded EvalRun")
@@ -564,8 +626,8 @@ class TraceDiagnosticReportStore:
                 "repairTraceId": repair_trace,
                 "evalRunId": eval_run_id,
                 "testStatus": "passed",
-                "sandboxStatus": "passed",
-                "sandboxedTestCount": int(receipt["sandboxedTestCount"]),
+                "sandboxStatus": sandbox_status,
+                "sandboxedTestCount": sandboxed_test_count,
                 "verifiedAtMs": timestamp,
                 "comparison": normalized_comparison,
             }
@@ -1050,6 +1112,7 @@ def _scorecard(
     targets: Sequence[Mapping[str, object]],
     target_count: int,
     valid_evidence_ids: set[str],
+    evidence_by_id: Mapping[str, Mapping[str, object]],
 ) -> dict[str, object]:
     dimensions = {
         identifier: _dimension(identifier, title)
@@ -1115,6 +1178,7 @@ def _scorecard(
             score=100.0 * completed / len(terminal_tools),
             metrics=metrics,
             evidence_ids=terminal_ids,
+            evidence_by_id=evidence_by_id,
             note="成功率只统计已有终态 Tool；额外验证调用不会因数量多而被惩罚。",
         )
 
@@ -1137,6 +1201,7 @@ def _scorecard(
                 score=None,
                 metrics=efficiency_metrics,
                 evidence_ids=terminal_ids,
+                evidence_by_id=evidence_by_id,
                 note="仅展示绝对成本；没有可比 cohort 时不声称浪费或节省。",
                 applicability="partial",
             )
@@ -1151,6 +1216,7 @@ def _scorecard(
             score=(100.0 * f1) if f1 is not None and 0 <= f1 <= 1 else None,
             metrics=[_metric(key, key, value, "ratio", eval_ids, authority="ground_truth") for key, value in sorted(evidence_metrics.items())],
             evidence_ids=eval_ids,
+            evidence_by_id=evidence_by_id,
             note="来自冻结标签 EvalRun；AI Judge 不参与 evidence F1。",
             authority="ground_truth",
         )
@@ -1165,6 +1231,7 @@ def _scorecard(
             score=None,
             metrics=[_metric(key, key, value, "ratio", eval_ids, authority="ground_truth") for key, value in sorted(retrieval_metrics.items())],
             evidence_ids=eval_ids,
+            evidence_by_id=evidence_by_id,
             note="只采用冻结测试集或人工标签 EvalRun。",
             authority="ground_truth",
         )
@@ -1178,6 +1245,7 @@ def _scorecard(
             score=None,
             metrics=[_metric(key, key, value, "observed", context_ids) for key, value in sorted(context_metrics.items())],
             evidence_ids=context_ids,
+            evidence_by_id=evidence_by_id,
             note="仅报告 Runtime 已记录的 Context 指标；语义组织质量留给标记为估计的 Judge。",
             applicability="partial",
         )
@@ -1204,6 +1272,7 @@ def _scorecard(
                 _metric("orphaned_work_item_count", "无 owner WorkItem 数", float(orphaned), "count", room_ids),
             ],
             evidence_ids=room_ids,
+            evidence_by_id=evidence_by_id,
             note="拆解是否合理等语义项不冒充确定性分数。",
             applicability="partial",
         )
@@ -1220,6 +1289,7 @@ def _scorecard(
                 _metric("requirements_expected", "应满足需求", float(expected), "count", requirement_ids),
             ],
             evidence_ids=requirement_ids,
+            evidence_by_id=evidence_by_id,
             note="需求总数和完成数必须来自 Runtime/Eval 证据。",
         )
 
@@ -1277,19 +1347,65 @@ def _measured_dimension(
     score: float | None,
     metrics: Sequence[Mapping[str, object]],
     evidence_ids: Sequence[str],
+    evidence_by_id: Mapping[str, Mapping[str, object]],
     note: str,
     applicability: str = "measured",
     authority: str = "deterministic",
 ) -> dict[str, object]:
+    bounded_evidence_ids, evidence_gap = _bounded_dimension_evidence_ids(
+        evidence_ids,
+        evidence_by_id=evidence_by_id,
+    )
+    note_budget = 800 - len(evidence_gap) - (1 if note and evidence_gap else 0)
+    bounded_note = f"{note[:max(0, note_budget)]} {evidence_gap}".strip()
     return {
         **base,
         "applicability": applicability,
         "authority": authority,
         "score": None if score is None else max(0.0, min(100.0, float(score))),
         "metrics": [dict(item) for item in metrics],
-        "evidenceIds": list(dict.fromkeys(evidence_ids)),
-        "note": note,
+        "evidenceIds": bounded_evidence_ids,
+        "note": bounded_note,
     }
+
+
+def _bounded_dimension_evidence_ids(
+    evidence_ids: Sequence[str],
+    *,
+    evidence_by_id: Mapping[str, Mapping[str, object]],
+    maximum: int = 256,
+) -> tuple[list[str], str]:
+    unique = list(dict.fromkeys(str(value) for value in evidence_ids if str(value)))
+    if len(unique) <= maximum:
+        return unique, ""
+
+    def priority(evidence_id: str) -> tuple[int, int, str]:
+        evidence = evidence_by_id.get(evidence_id, {})
+        status = str(evidence.get("status") or "").lower()
+        summary = str(evidence.get("summary") or "")
+        is_failure = status in _FAILED_STATUSES or _EVIDENCE_FAILURE_RE.search(
+            f"{status} {summary}"
+        ) is not None
+        is_terminal = status in _TERMINAL_STATUSES
+        return (
+            2 if is_failure else (1 if is_terminal else 0),
+            _nonnegative_int(evidence.get("createdAtMs")),
+            evidence_id,
+        )
+
+    selected = sorted(
+        unique,
+        key=lambda evidence_id: (
+            -priority(evidence_id)[0],
+            -priority(evidence_id)[1],
+            priority(evidence_id)[2],
+        ),
+    )[:maximum]
+    gap = (
+        "证据引用已按失败/超时、终态、最新时间优先的确定性顺序"
+        f"从 {len(unique)} 项截断至 {maximum} 项；完整候选仍保留在 inspection.evidence。"
+    )
+    return selected, gap
 
 
 def _metric(
@@ -1313,21 +1429,44 @@ def _metric(
     }
 
 
-def _comparison(traces: Sequence[Mapping[str, object]], target_count: int) -> dict[str, object]:
+def _comparison(
+    traces: Sequence[Mapping[str, object]],
+    target_count: int,
+) -> dict[str, object]:
     if target_count < 2:
-        return {"eligible": False, "status": "incomparable", "reason": "只有一个诊断对象，不能形成对照。"}
+        return {
+            "eligible": False,
+            "status": "incomparable",
+            "reason": "只有一个诊断对象，不能形成对照。",
+        }
     fingerprints = {
         str(_mapping(trace.get("input")).get("fingerprint") or "")
         for trace in traces
     }
     if not traces or "" in fingerprints:
-        return {"eligible": False, "status": "unknown", "reason": "缺少完整 source fingerprint，禁止声称差值或节省。"}
+        return {
+            "eligible": False,
+            "status": "unknown",
+            "reason": "缺少完整 source fingerprint，禁止声称差值或节省。",
+        }
     if len(fingerprints) != 1:
-        return {"eligible": False, "status": "incomparable", "reason": "输入 fingerprint 不同，只能分别展示，不能推导修复或效率差值。"}
-    return {"eligible": True, "status": "conditionally_comparable", "reason": "输入 fingerprint 相同，但 fixture、模型、配置与工具版本尚未全部冻结。"}
+        return {
+            "eligible": False,
+            "status": "incomparable",
+            "reason": "输入 fingerprint 不同，只能分别展示，不能推导修复或效率差值。",
+        }
+    return {
+        "eligible": True,
+        "status": "conditionally_comparable",
+        "reason": "输入 fingerprint 相同，但 fixture、模型、配置与工具版本尚未全部冻结。",
+    }
 
 
-def _validate_result(result: Mapping[str, object]) -> dict[str, object]:
+def _validate_result(
+    result: Mapping[str, object],
+    *,
+    require_governed: bool = True,
+) -> dict[str, object]:
     if not isinstance(result, Mapping):
         raise ValueError("result must be an object")
     normalized = dict(result)
@@ -1465,6 +1604,16 @@ def _validate_result(result: Mapping[str, object]) -> dict[str, object]:
                 "verification": _public_text(finding.get("verification"), 2000),
             }
         )
+    presentation = None
+    if "presentation" not in normalized:
+        if require_governed:
+            raise ValueError("result presentation is required")
+    else:
+        presentation = _normalize_result_presentation(
+            normalized.get("presentation"),
+            finding_ids={str(item["findingId"]) for item in findings},
+            require_failure_attribution=require_governed,
+        )
     payload: dict[str, object] = {
         "schemaVersion": TRACE_DIAGNOSTIC_RESULT_SCHEMA_VERSION,
         "summary": normalized["summary"],
@@ -1472,16 +1621,230 @@ def _validate_result(result: Mapping[str, object]) -> dict[str, object]:
         "judgeScores": judge_scores,
         "findings": findings,
     }
-    # These v1 additions are optional so reports produced before the richer
-    # audit contract remain byte-for-byte stable after validation.  Empty
-    # arrays are still preserved when the diagnosing Agent explicitly emitted
-    # them; absence must not be rewritten into an invented assessment.
+    # These v1 additions remain optional so older results can still be
+    # normalized on read. The governed presentation above is required for
+    # every new extraction and completion. Empty arrays are preserved when
+    # the diagnosing Agent explicitly emits them.
     if "requirementAssessments" in normalized:
         payload["requirementAssessments"] = requirement_assessments
     if "causalLinks" in normalized:
         payload["causalLinks"] = causal_links
+    if presentation is not None:
+        payload["presentation"] = presentation
     validate_contract(payload, "trace-diagnostic-result.v1.json")
     return payload
+
+
+def _normalize_result_presentation(
+    value: object,
+    *,
+    finding_ids: set[str],
+    require_failure_attribution: bool = False,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError("presentation must be an object")
+    required_keys = {
+        "headline",
+        "impact",
+        "primaryFindingId",
+        "knownFacts",
+        "evidenceGaps",
+        "causalNodes",
+        "expectedStageCount",
+        "recordedStageReceiptEvidenceIds",
+    }
+    allowed_keys = required_keys | {"failureAttribution"}
+    unknown_keys = set(value) - allowed_keys
+    missing_keys = required_keys - set(value)
+    if unknown_keys:
+        raise ValueError(f"presentation has unknown fields: {', '.join(sorted(unknown_keys))}")
+    if missing_keys:
+        raise ValueError(f"presentation is missing fields: {', '.join(sorted(missing_keys))}")
+    if require_failure_attribution and "failureAttribution" not in value:
+        raise ValueError("presentation.failureAttribution is required")
+
+    primary_finding_id = _strict_public_text(
+        value.get("primaryFindingId"),
+        "presentation.primaryFindingId",
+        160,
+        allow_empty=True,
+    )
+    if primary_finding_id and primary_finding_id not in finding_ids:
+        raise ValueError(f"unknown primaryFindingId: {primary_finding_id}")
+
+    known_facts = _strict_mapping_array(value.get("knownFacts"), "presentation.knownFacts", 12)
+    normalized_known_facts: list[dict[str, object]] = []
+    for index, fact in enumerate(known_facts):
+        _require_exact_keys(
+            fact,
+            {"fact", "evidenceIds"},
+            f"presentation.knownFacts[{index}]",
+        )
+        evidence_ids = _strict_evidence_ids(
+            fact.get("evidenceIds"),
+            f"presentation.knownFacts[{index}].evidenceIds",
+            maximum=32,
+        )
+        if not evidence_ids:
+            raise ValueError("known presentation facts require frozen evidence")
+        normalized_known_facts.append(
+            {
+                "fact": _strict_public_text(
+                    fact.get("fact"),
+                    f"presentation.knownFacts[{index}].fact",
+                    800,
+                ),
+                "evidenceIds": evidence_ids,
+            }
+        )
+
+    evidence_gaps = _strict_mapping_array(value.get("evidenceGaps"), "presentation.evidenceGaps", 12)
+    normalized_evidence_gaps: list[dict[str, object]] = []
+    for index, gap in enumerate(evidence_gaps):
+        prefix = f"presentation.evidenceGaps[{index}]"
+        _require_exact_keys(gap, {"gap", "consequence", "howToObtain"}, prefix)
+        normalized_evidence_gaps.append(
+            {
+                "gap": _strict_public_text(gap.get("gap"), f"{prefix}.gap", 800),
+                "consequence": _strict_public_text(
+                    gap.get("consequence"), f"{prefix}.consequence", 1000
+                ),
+                "howToObtain": _strict_public_text(
+                    gap.get("howToObtain"), f"{prefix}.howToObtain", 1000
+                ),
+            }
+        )
+
+    causal_nodes = _strict_mapping_array(value.get("causalNodes"), "presentation.causalNodes", 16)
+    normalized_causal_nodes: list[dict[str, object]] = []
+    for index, node in enumerate(causal_nodes):
+        prefix = f"presentation.causalNodes[{index}]"
+        _require_exact_keys(node, {"label", "detail", "status", "evidenceIds"}, prefix)
+        status = str(node.get("status") or "")
+        if status not in {"confirmed", "unverified"}:
+            raise ValueError(f"{prefix}.status is invalid")
+        evidence_ids = _strict_evidence_ids(
+            node.get("evidenceIds"), f"{prefix}.evidenceIds", maximum=32
+        )
+        if not evidence_ids:
+            raise ValueError("presentation causal nodes require frozen evidence")
+        normalized_causal_nodes.append(
+            {
+                "label": _strict_public_text(node.get("label"), f"{prefix}.label", 240),
+                "detail": _strict_public_text(node.get("detail"), f"{prefix}.detail", 1200),
+                "status": status,
+                "evidenceIds": evidence_ids,
+            }
+        )
+
+    expected_stage_count = value.get("expectedStageCount")
+    if (
+        isinstance(expected_stage_count, bool)
+        or not isinstance(expected_stage_count, int)
+        or not 0 <= expected_stage_count <= 32
+    ):
+        raise ValueError("presentation.expectedStageCount must be an integer from 0 to 32")
+    failure_attribution = None
+    if "failureAttribution" in value:
+        failure_attribution = _normalize_failure_attribution(
+            value.get("failureAttribution"),
+            name="presentation.failureAttribution",
+        )
+
+    normalized = {
+        "headline": _strict_public_text(value.get("headline"), "presentation.headline", 320),
+        "impact": _strict_public_text(value.get("impact"), "presentation.impact", 1000),
+        "primaryFindingId": primary_finding_id,
+        "knownFacts": normalized_known_facts,
+        "evidenceGaps": normalized_evidence_gaps,
+        "causalNodes": normalized_causal_nodes,
+        "expectedStageCount": expected_stage_count,
+        "recordedStageReceiptEvidenceIds": _strict_evidence_ids(
+            value.get("recordedStageReceiptEvidenceIds"),
+            "presentation.recordedStageReceiptEvidenceIds",
+            maximum=32,
+        ),
+    }
+    if failure_attribution is not None:
+        normalized["failureAttribution"] = failure_attribution
+    return normalized
+
+
+def _normalize_failure_attribution(
+    value: object,
+    *,
+    name: str,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    required_keys = {"primaryLayer", "summary", "layers"}
+    _require_exact_keys(value, required_keys, name)
+
+    primary_layer = value.get("primaryLayer")
+    if not isinstance(primary_layer, str) or primary_layer not in {
+        *_FAILURE_ATTRIBUTION_LAYERS,
+        "unknown",
+    }:
+        raise ValueError(f"{name}.primaryLayer is invalid")
+    summary = _strict_public_text(value.get("summary"), f"{name}.summary", 1600)
+    layers = value.get("layers")
+    if not isinstance(layers, list):
+        raise ValueError(f"{name}.layers must be an array")
+    if len(layers) != len(_FAILURE_ATTRIBUTION_LAYERS):
+        raise ValueError(
+            f"{name}.layers must contain exactly {len(_FAILURE_ATTRIBUTION_LAYERS)} items"
+        )
+
+    normalized_layers: list[dict[str, object]] = []
+    primary_layers: list[str] = []
+    for index, expected_layer in enumerate(_FAILURE_ATTRIBUTION_LAYERS):
+        prefix = f"{name}.layers[{index}]"
+        layer = layers[index]
+        if not isinstance(layer, Mapping):
+            raise ValueError(f"{prefix} must be an object")
+        _require_exact_keys(layer, {"layer", "verdict", "explanation", "evidenceIds"}, prefix)
+        if layer.get("layer") != expected_layer:
+            raise ValueError(f"{prefix}.layer must be {expected_layer}")
+        verdict = layer.get("verdict")
+        if not isinstance(verdict, str) or verdict not in _FAILURE_ATTRIBUTION_VERDICTS:
+            raise ValueError(f"{prefix}.verdict is invalid")
+        evidence_ids = _strict_evidence_ids(
+            layer.get("evidenceIds"),
+            f"{prefix}.evidenceIds",
+            maximum=32,
+        )
+        if verdict in {"primary", "contributing", "healthy"} and not evidence_ids:
+            raise ValueError(f"{prefix}.evidenceIds are required for {verdict} attribution")
+        if verdict == "primary":
+            primary_layers.append(expected_layer)
+        normalized_layers.append(
+            {
+                "layer": expected_layer,
+                "verdict": verdict,
+                "explanation": _strict_public_text(
+                    layer.get("explanation"),
+                    f"{prefix}.explanation",
+                    1200,
+                ),
+                "evidenceIds": evidence_ids,
+            }
+        )
+
+    if len(primary_layers) > 1:
+        raise ValueError(f"{name}.layers may contain at most one primary verdict")
+    if primary_layers:
+        if primary_layer != primary_layers[0]:
+            raise ValueError(
+                f"{name}.primaryLayer must match primary layer {primary_layers[0]}"
+            )
+    elif primary_layer != "unknown":
+        raise ValueError(f"{name}.primaryLayer must be unknown when no layer is primary")
+
+    return {
+        "primaryLayer": primary_layer,
+        "summary": summary,
+        "layers": normalized_layers,
+    }
 
 
 def _result_evidence_ids(result: Mapping[str, object]) -> list[str]:
@@ -1495,6 +1858,24 @@ def _result_evidence_ids(result: Mapping[str, object]) -> list[str]:
         for key in ("fromEvidenceId", "toEvidenceId"):
             evidence_id = str(link.get(key) or "")
             if evidence_id and evidence_id not in values:
+                values.append(evidence_id)
+    presentation = _mapping(result.get("presentation"))
+    for fact in _mapping_sequence(presentation.get("knownFacts")):
+        for evidence_id in _string_sequence(fact.get("evidenceIds"), maximum=32, item_maximum=640):
+            if evidence_id not in values:
+                values.append(evidence_id)
+    for node in _mapping_sequence(presentation.get("causalNodes")):
+        for evidence_id in _string_sequence(node.get("evidenceIds"), maximum=32, item_maximum=640):
+            if evidence_id not in values:
+                values.append(evidence_id)
+    for evidence_id in _string_sequence(
+        presentation.get("recordedStageReceiptEvidenceIds"), maximum=32, item_maximum=640
+    ):
+        if evidence_id not in values:
+            values.append(evidence_id)
+    for layer in _mapping_sequence(_mapping(presentation.get("failureAttribution")).get("layers")):
+        for evidence_id in _string_sequence(layer.get("evidenceIds"), maximum=32, item_maximum=640):
+            if evidence_id not in values:
                 values.append(evidence_id)
     return values
 
@@ -1515,6 +1896,14 @@ def _load_report(conn: sqlite3.Connection, report_id: str) -> dict[str, object]:
     payload = json.loads(str(row["payload_json"]))
     if not isinstance(payload, dict):
         raise RuntimeError("persisted Trace diagnostic report is invalid")
+    if isinstance(payload.get("result"), Mapping):
+        # Persisted rows may predate the governed presentation contract. Keep
+        # that compatibility boundary confined to reads; every new extraction
+        # and completion still uses the strict default.
+        payload["result"] = _validate_result(
+            payload["result"],
+            require_governed=False,
+        )
     validate_contract(payload, "trace-diagnostic-report.v1.json")
     return payload
 
@@ -1758,6 +2147,61 @@ def _public_text(value: object, maximum: int) -> str:
     text = _PATH_RE.sub("[path redacted]", text)
     text = _SECRET_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
     return text[:maximum]
+
+
+def _strict_public_text(
+    value: object,
+    name: str,
+    maximum: int,
+    *,
+    allow_empty: bool = False,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    text = " ".join(value.split())
+    if not allow_empty and not text:
+        raise ValueError(f"{name} is required")
+    if len(text) > maximum:
+        raise ValueError(f"{name} exceeds {maximum} characters")
+    text = _PATH_RE.sub("[path redacted]", text)
+    return _SECRET_RE.sub(lambda match: f"{match.group(1)}=[redacted]", text)
+
+
+def _strict_mapping_array(value: object, name: str, maximum: int) -> list[Mapping[str, object]]:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be an array")
+    if len(value) > maximum:
+        raise ValueError(f"{name} exceeds {maximum} items")
+    if any(not isinstance(item, Mapping) for item in value):
+        raise ValueError(f"{name} must contain only objects")
+    return list(value)
+
+
+def _strict_evidence_ids(value: object, name: str, *, maximum: int) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be an array")
+    if len(value) > maximum:
+        raise ValueError(f"{name} exceeds {maximum} items")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{name} must contain only strings")
+        normalized = item.strip()
+        if not normalized or len(normalized) > 640:
+            raise ValueError(f"{name} contains an invalid evidenceId")
+        if normalized in result:
+            raise ValueError(f"{name} contains a duplicate evidenceId")
+        result.append(normalized)
+    return result
+
+
+def _require_exact_keys(value: Mapping[str, object], expected: set[str], name: str) -> None:
+    unknown_keys = set(value) - expected
+    missing_keys = expected - set(value)
+    if unknown_keys:
+        raise ValueError(f"{name} has unknown fields: {', '.join(sorted(unknown_keys))}")
+    if missing_keys:
+        raise ValueError(f"{name} is missing fields: {', '.join(sorted(missing_keys))}")
 
 
 def _mapping(value: object) -> Mapping[str, object]:

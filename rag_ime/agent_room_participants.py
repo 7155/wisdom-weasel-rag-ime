@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
@@ -11,6 +12,7 @@ from .agent_execution_policy import (
     WORKSPACE_MANAGED_EXECUTION_MODE,
     canonical_tool_profile,
     normalize_execution_mode,
+    unrestricted_workspace_policy_active,
 )
 from .agent_rooms import (
     AgentRoomEventHub,
@@ -22,7 +24,139 @@ from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
 )
-from .agent_tool_ids import CONTROL_CENTER_TOOL_PROFILE
+from .agent_tool_ids import (
+    CONTROL_CENTER_TOOL_PROFILE,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
+)
+from .agent_workspace_roots import system_wide_workspace_roots
+
+
+@dataclass(frozen=True)
+class RoomParticipantPolicy:
+    """The canonical Session policy projected from a Room configuration."""
+
+    mode: str
+    execution_mode: str
+    tool_profile_version: str
+    grant_workspace_scope: bool
+    project_context_enabled: bool
+    pi_skills_enabled: bool | None
+    codex_skills_enabled: bool | None
+    workspace_roots: tuple[str, ...]
+
+    @property
+    def unrestricted(self) -> bool:
+        return unrestricted_workspace_policy_active(
+            {
+                "toolProfileVersion": self.tool_profile_version,
+                "executionMode": self.execution_mode,
+            }
+        )
+
+    def create_fields(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "toolProfileVersion": self.tool_profile_version,
+            "executionMode": self.execution_mode,
+            "_internalWorkspaceScopeGrant": self.grant_workspace_scope,
+            "projectContextEnabled": self.project_context_enabled,
+            "piSkillsEnabled": bool(self.pi_skills_enabled),
+            "codexSkillsEnabled": bool(self.codex_skills_enabled),
+            "workspaceRoots": list(self.workspace_roots),
+        }
+
+    def runtime_kwargs(self) -> dict[str, object]:
+        return {
+            "mode": self.mode,
+            "tool_profile_version": self.tool_profile_version,
+            "execution_mode": self.execution_mode,
+            "grant_workspace_scope": self.grant_workspace_scope,
+            "allowed_tools": None,
+            "project_context_enabled": self.project_context_enabled,
+            "pi_skills_enabled": self.pi_skills_enabled,
+            "codex_skills_enabled": self.codex_skills_enabled,
+            "workspace_roots": list(self.workspace_roots),
+        }
+
+
+def project_room_participant_policy(
+    room: Mapping[str, object],
+    *,
+    mode: str | None = None,
+    execution_mode: str | None = None,
+    workspace_roots: Iterable[object] | None = None,
+) -> RoomParticipantPolicy:
+    """Project one Room kind/mode pair into the participant Session policy."""
+
+    room_kind = str(room.get("roomKind") or "collaboration")
+    participant_mode = mode or (
+        "coordinator"
+        if room_kind == "collaboration"
+        else "assistant"
+    )
+    normalized_execution_mode = normalize_execution_mode(
+        room.get("executionMode")
+        if execution_mode is None
+        else execution_mode,
+        default=(
+            WORKSPACE_MANAGED_EXECUTION_MODE
+            if room_kind == "collaboration"
+            else PER_ACTION_EXECUTION_MODE
+        ),
+    )
+    if room_kind == "collaboration":
+        if normalized_execution_mode == PER_ACTION_EXECUTION_MODE:
+            profile = FULL_ACCESS_TOOL_PROFILE
+        elif normalized_execution_mode == FULL_TRUST_EXECUTION_MODE:
+            profile = DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+        else:
+            profile = canonical_tool_profile(
+                CONTROL_CENTER_TOOL_PROFILE,
+                execution_mode=normalized_execution_mode,
+            )
+    else:
+        profile = canonical_tool_profile(
+            CONTROL_CENTER_TOOL_PROFILE,
+            execution_mode=normalized_execution_mode,
+        )
+    projected = {
+        "toolProfileVersion": profile,
+        "executionMode": normalized_execution_mode,
+    }
+    unrestricted = unrestricted_workspace_policy_active(projected)
+    raw_roots = [
+        str(value).strip()
+        for value in (
+            room.get("workspaceRoots")
+            if workspace_roots is None
+            else workspace_roots
+        )
+        or []
+        if str(value).strip()
+    ]
+    roots = (
+        list(system_wide_workspace_roots(raw_roots))
+        if unrestricted and participant_mode == "coordinator"
+        else raw_roots
+        if participant_mode == "coordinator"
+        else []
+    )
+    return RoomParticipantPolicy(
+        mode=participant_mode,
+        execution_mode=normalized_execution_mode,
+        tool_profile_version=profile,
+        grant_workspace_scope=normalized_execution_mode
+        in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        },
+        project_context_enabled=bool(roots),
+        pi_skills_enabled=True if unrestricted else None,
+        codex_skills_enabled=True if unrestricted else None,
+        workspace_roots=tuple(roots),
+    )
+
 
 
 class RoomParticipantLifecycleService:
@@ -481,63 +615,46 @@ class RoomParticipantLifecycleService:
                 )
             return dict(session)
 
-        mode = (
-            "coordinator"
-            if room.get("roomKind", "collaboration")
-            == "collaboration"
-            else "assistant"
-        )
-        workspace_roots = (
-            list(room.get("workspaceRoots") or [])
-            if mode == "coordinator"
-            else []
-        )
-        project_context_enabled = bool(workspace_roots)
-        execution_mode = normalize_execution_mode(
-            room.get("executionMode"),
-            default=(
-                WORKSPACE_MANAGED_EXECUTION_MODE
-                if room.get("roomKind", "collaboration") == "collaboration"
-                else PER_ACTION_EXECUTION_MODE
-            ),
-        )
-        tool_profile = canonical_tool_profile(
-            session.get("toolProfileVersion"),
-            execution_mode=execution_mode,
+        policy = project_room_participant_policy(room)
+        expected_roots = list(policy.workspace_roots)
+        scope_required = (
+            policy.unrestricted
+            or policy.execution_mode
+            in {
+                WORKSPACE_MANAGED_EXECUTION_MODE,
+                FULL_TRUST_EXECUTION_MODE,
+            }
         )
         if (
-            session.get("mode") == mode
+            session.get("mode") == policy.mode
             and session.get("toolProfileVersion")
-            == tool_profile
-            and session.get("executionMode") == execution_mode
+            == policy.tool_profile_version
+            and session.get("executionMode") == policy.execution_mode
             and session.get("toolAllowlistMode") == "profile"
+            and list(session.get("allowedTools") or []) == []
             and list(session.get("workspaceRoots") or [])
-            == workspace_roots
+            == expected_roots
             and bool(session.get("projectContextEnabled"))
-            == project_context_enabled
+            == policy.project_context_enabled
             and (
-                execution_mode
-                not in {
-                    WORKSPACE_MANAGED_EXECUTION_MODE,
-                    FULL_TRUST_EXECUTION_MODE,
-                }
+                policy.pi_skills_enabled is None
+                or session.get("piSkillsEnabled")
+                == policy.pi_skills_enabled
+            )
+            and (
+                policy.codex_skills_enabled is None
+                or session.get("codexSkillsEnabled")
+                == policy.codex_skills_enabled
+            )
+            and (
+                not scope_required
                 or session.get("workspaceScopeGranted") is True
             )
         ):
             return dict(session)
         return self.sessions.set_runtime_policy(
             str(session["id"]),
-            mode=mode,
-            tool_profile_version=tool_profile,
-            execution_mode=execution_mode,
-            grant_workspace_scope=execution_mode
-            in {
-                WORKSPACE_MANAGED_EXECUTION_MODE,
-                FULL_TRUST_EXECUTION_MODE,
-            },
-            allowed_tools=None,
-            project_context_enabled=project_context_enabled,
-            workspace_roots=workspace_roots,
+            **policy.runtime_kwargs(),
         )
 
     def active_runtime_session_ids(self) -> set[str]:
@@ -571,40 +688,19 @@ def _session_payload(
     *,
     mode: str,
 ) -> dict[str, object]:
-    execution_mode = normalize_execution_mode(
-        room.get("executionMode"),
-        default=(
-            WORKSPACE_MANAGED_EXECUTION_MODE
-            if room.get("roomKind", "collaboration") == "collaboration"
-            else PER_ACTION_EXECUTION_MODE
-        ),
-    )
-    workspace_roots = (
-        list(room.get("workspaceRoots") or [])
-        if mode == "coordinator"
-        else []
+    policy = project_room_participant_policy(
+        room,
+        mode=mode,
     )
     return {
         "title": (
             f"{room['title']} · "
             f"{getattr(role, 'display_name')}"
         ),
-        "mode": mode,
         "_modelRoute": "roomCoordinator",
         "roleId": getattr(role, "role_id"),
         "roleVersion": getattr(role, "version"),
-        "toolProfileVersion": canonical_tool_profile(
-            CONTROL_CENTER_TOOL_PROFILE,
-            execution_mode=execution_mode,
-        ),
-        "executionMode": execution_mode,
-        "_internalWorkspaceScopeGrant": execution_mode
-        in {
-            WORKSPACE_MANAGED_EXECUTION_MODE,
-            FULL_TRUST_EXECUTION_MODE,
-        },
-        "projectContextEnabled": bool(workspace_roots),
-        "workspaceRoots": workspace_roots,
+        **policy.create_fields(),
     }
 
 

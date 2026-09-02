@@ -18,7 +18,8 @@ export type AgentCommandReceiptState =
 
 export type AgentCommandReceiptRecoveryState =
   | 'in_flight'
-  | 'unresolved';
+  | 'unresolved'
+  | 'new_command_required';
 
 export interface AgentCommandReceiptFailure {
   code:
@@ -59,6 +60,7 @@ export function agentCommandReceiptFailure(
   const recoveryState = (
     rawRecoveryState === 'in_flight'
     || rawRecoveryState === 'unresolved'
+    || rawRecoveryState === 'new_command_required'
   )
     ? rawRecoveryState
     : undefined;
@@ -139,7 +141,10 @@ export function publicAgentErrorText(
     );
   }
   if (receiptFailure?.code === 'AGENT_COMMAND_CONFLICT') {
-    return '发送标识与原请求不一致，请刷新对话后重新发送。';
+    if (receiptFailure.recoveryState === 'new_command_required') {
+      return '这次发送内容已经变化，输入已保留；请直接重新发送一次。';
+    }
+    return '这条消息没有发送；输入已保留，请直接重新发送一次。';
   }
   if (isAgentWorkspaceMissingError(value)) {
     return SESSION_WORKSPACE_MISSING_TEXT;

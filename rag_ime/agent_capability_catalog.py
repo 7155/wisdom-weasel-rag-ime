@@ -5,6 +5,7 @@ import json
 import time
 from collections.abc import Mapping, Sequence
 
+from .agent_execution_policy import unrestricted_workspace_policy_active
 
 _DISCLOSURE_VALUES = frozenset({"inherit", "enabled", "disabled"})
 _CAPABILITY_KINDS = frozenset({"tool", "skill", "extension"})
@@ -170,8 +171,9 @@ def _tool_item(
     canonical_id = f"tool:{tool_id}"
     authorized = session is not None and manifest.get("enabled") is True
     risk = str(manifest.get("riskLevel") or "R0")
-    disclosure = _disclosure(
+    disclosure = _capability_disclosure(
         canonical_id,
+        session=session,
         global_preferences=global_preferences,
         project_preferences=project_preferences,
         session_preferences=session_preferences,
@@ -243,8 +245,6 @@ def _native_ask_manifest(
     ordinary_session = (
         session is not None
         and str(session.get("sessionKind") or "conversation") == "conversation"
-        and str(session.get("toolProfileVersion") or "control-center-v1")
-        == "control-center-v1"
         and str(session.get("mode") or "assistant")
         in {"assistant", "coordinator"}
     )
@@ -291,8 +291,9 @@ def _skill_items(
         if not skill_id:
             continue
         canonical_id = f"skill:{skill_id}"
-        disclosure = _disclosure(
+        disclosure = _capability_disclosure(
             canonical_id,
+            session=session,
             global_preferences=global_preferences,
             project_preferences=project_preferences,
             session_preferences=session_preferences,
@@ -371,8 +372,9 @@ def _extension_items(
         if not extension_id:
             continue
         canonical_id = f"extension:{extension_id}"
-        disclosure = _disclosure(
+        disclosure = _capability_disclosure(
             canonical_id,
+            session=session,
             global_preferences=global_preferences,
             project_preferences=project_preferences,
             session_preferences=session_preferences,
@@ -517,6 +519,30 @@ def _disclosure(
         "state": "disclosed" if effective == "enabled" else "hidden",
         "reason": reason,
         "scope": scope,
+    }
+
+def _capability_disclosure(
+    canonical_id: str,
+    *,
+    session: Mapping[str, object] | None,
+    global_preferences: Mapping[str, str],
+    project_preferences: Mapping[str, str],
+    session_preferences: Mapping[str, str],
+) -> dict[str, str]:
+    disclosure = _disclosure(
+        canonical_id,
+        global_preferences=global_preferences,
+        project_preferences=project_preferences,
+        session_preferences=session_preferences,
+    )
+    if session is None or not unrestricted_workspace_policy_active(session):
+        return disclosure
+    return {
+        "preference": "inherit",
+        "effective": "enabled",
+        "state": "disclosed",
+        "reason": "unrestricted_session_profile",
+        "scope": "session",
     }
 
 

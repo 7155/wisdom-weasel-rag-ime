@@ -610,6 +610,14 @@
 .agent-trace-diagnostic-receipt strong { color: var(--color-text); font-size: var(--font-size-ui-strong); }
 .agent-trace-diagnostic-receipt p { max-width: 72ch; margin: 0; color: var(--color-text-secondary); line-height: var(--line-height-body); }
 .agent-trace-diagnostic-receipt small { overflow: hidden; color: var(--color-text-tertiary); font: var(--font-weight-medium) var(--font-size-caption) var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.agent-trace-diagnostic-receipt__summary { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; }
+.agent-trace-diagnostic-receipt__summary > div { display: grid; gap: 2px; }
+.agent-trace-diagnostic-receipt__summary dt { color: var(--color-text-tertiary); font-size: var(--font-size-caption); font-weight: var(--font-weight-semibold); }
+.agent-trace-diagnostic-receipt__summary dd { margin: 0; color: var(--color-text-secondary); line-height: var(--line-height-body); }
+.agent-trace-diagnostic-receipt__details { margin-top: var(--space-2); color: var(--color-text-tertiary); font-size: var(--font-size-caption); }
+.agent-trace-diagnostic-receipt__details summary { width: max-content; cursor: pointer; }
+.agent-trace-diagnostic-receipt__details p { margin-top: var(--space-2); font-size: var(--font-size-caption); }
+.agent-trace-diagnostic-receipt__details small { display: block; margin-top: var(--space-2); }
 .agent-trace-diagnostic-receipt__action {
   display: inline-flex;
   min-height: var(--control-height-sm);

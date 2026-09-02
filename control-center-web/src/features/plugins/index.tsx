@@ -119,10 +119,17 @@ export function PluginsFeature() {
   const [searchParams] = useSearchParams();
   const sessionContextId = searchParams.get('sessionId')?.trim() ?? '';
   const packageContextId = searchParams.get('packageId')?.trim() ?? '';
+  const skillsView = searchParams.get('view') === 'skills';
+  const [skillQuery, setSkillQuery] = useState('');
+  const [skillSource, setSkillSource] = useState<'all' | 'package' | 'bundled' | 'project'>('all');
+  const [skillStatus, setSkillStatus] = useState<'all' | 'enabled' | 'disabled' | 'inspect_only'>('all');
+  const [selectedSkillId, setSelectedSkillId] = useState('');
   const {
     catalog,
     defaults,
     installed,
+    skills,
+    skill,
     versions,
     proposals,
     lifecycle,
@@ -133,7 +140,12 @@ export function PluginsFeature() {
     updateProjectDefaults,
     updateLifecycle,
     refreshAll,
-  } = usePluginCatalog(sessionContextId, (surfaceActive ?? true) && pageVisible);
+  } = usePluginCatalog(
+    sessionContextId,
+    (surfaceActive ?? true) && pageVisible,
+    skillsView,
+    selectedSkillId,
+  );
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [availability, setAvailability] = useState<AvailabilityFilter>('all');
@@ -149,7 +161,7 @@ export function PluginsFeature() {
   const [hookError, setHookError] = useState('');
   const [showMaintenance, setShowMaintenance] = useState(Boolean(packageContextId));
   const nativeAppCenter = appSurface?.appId === 'app-center';
-  const nativePage = searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
+  const nativePage = skillsView ? 'skills' : searchParams.get('view') === 'proposals' ? 'proposals' : 'installed';
   const items = catalog.data?.items ?? [];
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('zh-CN');
@@ -442,6 +454,42 @@ export function PluginsFeature() {
   const availableUpdateFor = (pluginId: string) => versionItems.find(
     (item) => stringValue(item.id) === pluginId && item.updateAvailable === true,
   );
+  const skillSnapshot = asRecord(skills.data);
+  const skillItems = arrayRecords(skillSnapshot.items);
+  const filteredSkills = useMemo(() => {
+    const needle = skillQuery.trim().toLocaleLowerCase('zh-CN');
+    return skillItems.filter((item) => {
+      const haystack = [
+        stringValue(item.skillId),
+        stringValue(item.name),
+        stringValue(item.description),
+        stringValue(item.sourceKind),
+        stringValue(item.packageId),
+        stringValue(item.packageVersion),
+        stringValue(item.resourcePath),
+        stringValue(item.installState),
+        stringValue(item.contentRevision),
+      ].join(' ').toLocaleLowerCase('zh-CN');
+      const matchesStatus = skillStatus === 'all'
+        || (skillStatus === 'inspect_only'
+          ? stringValue(item.management) === 'inspect_only'
+          : skillStatus === 'enabled'
+            ? item.enabled === true
+            : item.enabled === false);
+      return (!needle || haystack.includes(needle))
+        && (skillSource === 'all' || stringValue(item.sourceKind) === skillSource)
+        && matchesStatus;
+    });
+  }, [skillItems, skillQuery, skillSource, skillStatus]);
+  const selectedSkill = filteredSkills.find((item) => stringValue(item.skillId) === selectedSkillId);
+  const selectedSkillDetail = asRecord(asRecord(skill.data).item);
+  const selectedSkillPackage = selectedSkill && stringValue(selectedSkill.packageId)
+    ? installedItems.find((item) => stringValue(item.id) === stringValue(selectedSkill.packageId))
+    : undefined;
+  const selectedSkillUpdate = selectedSkillPackage
+    ? availableUpdateFor(stringValue(selectedSkillPackage.id))
+    : undefined;
+  const skillRuntimeAvailable = skillSnapshot.runtimeAvailable !== false;
 
   /* -- Shared building blocks. Web keeps the management-sheet sections; the
      native App Center composes the same blocks into purpose cards without
@@ -796,6 +844,119 @@ export function PluginsFeature() {
   const errorBlock = lifecycleError
     ? <InlineNotice title="插件操作未完成" tone="danger">{lifecycleError}</InlineNotice>
     : null;
+  const skillsBrowseBlock = (
+    <div className="skills-surface">
+      {!skillRuntimeAvailable ? (
+        <InlineNotice title="Pi Runtime 暂时未连接" tone="warning">
+          Skill 清单暂时无法从 Pi Runtime 更新；页面不会把断连伪装成空清单。
+        </InlineNotice>
+      ) : null}
+      <MetricStrip items={[
+        { label: '可查看', value: skillItems.length, detail: '当前可发现的 Skill', icon: Sparkles },
+        { label: 'Package 管理', value: skillItems.filter((item) => stringValue(item.management) === 'package').length, detail: '按 Package 统一变更', icon: PackageCheck },
+        { label: '仅查看', value: skillItems.filter((item) => stringValue(item.management) === 'inspect_only').length, detail: 'Bundled 或项目来源', icon: ShieldQuestion },
+      ]} />
+      <div className="skills-filters">
+        <Field className="plugins-search" htmlFor="skill-search" label="搜索">
+          <Input
+            id="skill-search"
+            onChange={(event) => setSkillQuery(event.target.value)}
+            placeholder="名称、用途、Package 或路径"
+            value={skillQuery}
+          />
+        </Field>
+        <Field htmlFor="skill-source" label="来源">
+          <Select
+            id="skill-source"
+            onValueChange={setSkillSource}
+            options={[
+              { value: 'all', label: '全部来源' },
+              { value: 'package', label: 'Pi Package' },
+              { value: 'bundled', label: 'Bundled' },
+              { value: 'project', label: '当前项目' },
+            ]}
+            value={skillSource}
+          />
+        </Field>
+        <Field htmlFor="skill-status" label="状态">
+          <Select
+            id="skill-status"
+            onValueChange={setSkillStatus}
+            options={[
+              { value: 'all', label: '全部状态' },
+              { value: 'enabled', label: '已启用' },
+              { value: 'disabled', label: '已停用' },
+              { value: 'inspect_only', label: '仅查看' },
+            ]}
+            value={skillStatus}
+          />
+        </Field>
+      </div>
+      {filteredSkills.length ? (
+        <div className="plugins-browser skills-browser" data-detail-open={Boolean(selectedSkill)}>
+          <div aria-label="Skill 列表" className="plugins-list" role="group">
+            {filteredSkills.map((item) => {
+              const id = stringValue(item.skillId);
+              const name = stringValue(item.name, id);
+              const isSelected = id === selectedSkillId;
+              return (
+                <button
+                  aria-pressed={isSelected}
+                  className="plugins-list__item skills-list__item"
+                  data-selected={isSelected || undefined}
+                  key={id}
+                  onClick={() => setSelectedSkillId(id)}
+                  type="button"
+                >
+                  <span className="plugins-list__copy">
+                    <small>{skillSourceLabel(stringValue(item.sourceKind))} · {skillInstallStateLabel(item)}</small>
+                    <strong>{name}</strong>
+                    <span>{stringValue(item.description, '没有提供用途说明。')}</span>
+                  </span>
+                  <span className="plugins-list__aside">
+                    <StatusBadge {...skillStatusBadge(item)} />
+                    <ChevronRight aria-hidden="true" size={15} />
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {selectedSkill ? (
+            <SkillDetail
+              detail={selectedSkillDetail}
+              detailError={asError(skill.error)}
+              detailPending={skill.isPending}
+              installedPackage={selectedSkillPackage}
+              item={selectedSkill}
+              lifecyclePending={lifecyclePending}
+              onAction={(action) => void previewInstalledAction(action, stringValue(selectedSkill.packageId))}
+              onClose={() => setSelectedSkillId('')}
+              onRetry={() => void skill.refetch()}
+              onUpdate={() => {
+                if (selectedSkillPackage && selectedSkillUpdate) {
+                  void previewInstalledUpdate(selectedSkillPackage, selectedSkillUpdate);
+                }
+              }}
+              update={selectedSkillUpdate}
+            />
+          ) : (
+            <aside aria-label="Skill 详情占位" className="plugins-detail plugins-detail--empty">
+              <Sparkles aria-hidden="true" size={20} />
+              <strong>选择一个 Skill 查看正文</strong>
+              <span>这里会显示来源、Package 状态、内容修订和可读的 Skill 指令。</span>
+            </aside>
+          )}
+        </div>
+      ) : (
+        <EmptyState
+          description={skillItems.length ? '换一个关键词或筛选条件试试。' : '当前没有发现 Bundled、项目或已安装 Package Skill。'}
+          icon={Sparkles}
+          title="没有找到 Skill"
+        />
+      )}
+    </div>
+  );
+
 
   const installedGridBlock = (
     <div className="plugin-lifecycle__installed">
@@ -981,7 +1142,22 @@ export function PluginsFeature() {
      heading. 已安装 is the one vertical view over capabilities, Packages and
      automatic curation; 目录 and 建议 stay on their own routes. ------------ */
 
-  const nativeBody = nativePage === 'proposals' ? (
+  const nativeBody = nativePage === 'skills' ? (
+    <NativeConsole
+      icon={Sparkles}
+      title="Skills"
+      trailing={skills.data ? <span className="plugins-count">{filteredSkills.length} 项</span> : null}
+    >
+      <QueryState error={asError(skills.error)} isPending={skills.isPending} onRetry={() => void skills.refetch()}>
+        <div className="plugin-lifecycle">
+          {skillsBrowseBlock}
+          {approvalBlock}
+          {receiptBlock}
+          {errorBlock}
+        </div>
+      </QueryState>
+    </NativeConsole>
+  ) : nativePage === 'proposals' ? (
     <NativeConsole
       icon={Sparkles}
       title={`${identity.assistantName}的建议`}
@@ -1031,7 +1207,24 @@ export function PluginsFeature() {
     </>
   );
 
-  const webBody = (
+  const webBody = skillsView ? (
+    <>
+      <ManagementSection
+        description="查看 Pi Runtime 当前发现的 Skill，按来源、状态和内容修订筛选。Package Skill 的变更始终作用于整个 Package；Bundled 与项目 Skill 仅提供正文查看。"
+        title="Skills"
+        trailing={<span className="plugins-count">{skills.data ? `${filteredSkills.length} 项` : '读取中'}</span>}
+      >
+        <QueryState error={asError(skills.error)} isPending={skills.isPending} onRetry={() => void skills.refetch()}>
+          {skillsBrowseBlock}
+          <div className="plugin-lifecycle skills-lifecycle">
+            {approvalBlock}
+            {receiptBlock}
+            {errorBlock}
+          </div>
+        </QueryState>
+      </ManagementSection>
+    </>
+  ) : (
     <>
       <QueryState error={asError(catalog.error)} isPending={catalog.isPending} onRetry={() => void catalog.refetch()}>
         <ManagementSection
@@ -1092,7 +1285,7 @@ export function PluginsFeature() {
         description="在一些关键时刻自动留下检查点或复盘建议。它不会替你写入长期记忆，也不会获得新的权限。"
         title="自动整理与提醒"
         trailing={hooksStatusBadge}
-      >
+        >
         <QueryState
           error={asError(lifecycle.error)}
           isPending={lifecycle.isPending}
@@ -1110,10 +1303,12 @@ export function PluginsFeature() {
         <Button leadingIcon={<ShieldQuestion size={15} />} onClick={() => navigate('/approvals')} size="small" variant="quiet">审批中心</Button>
         <Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={() => void refreshAll()} size="small">刷新</Button>
       </>}
-      description="管理各类 Agent 可用的技能、工具与 Pi 扩展，包括发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。"
-      eyebrow="模型与扩展"
+      description={skillsView
+        ? '浏览当前可发现的 Skill；Package Skill 的启用、更新和卸载仍按整个 Package 预览、确认并应用。'
+        : '管理各类 Agent 可用的技能、工具与 Pi 扩展，包括发现、安装、启用范围和版本回退。高风险执行仍进入独立审批中心。'}
+      eyebrow={skillsView ? '模型与扩展 · Skills' : '模型与扩展'}
       routeId="plugins"
-      title="插件管理"
+      title={skillsView ? 'Skills 管理' : '插件管理'}
     >
       {nativeAppCenter ? nativeBody : webBody}
     </ManagementPage>
@@ -1155,6 +1350,115 @@ function NativeConsole({
     </section>
   );
 }
+function SkillDetail({
+  detail,
+  detailError,
+  detailPending,
+  installedPackage,
+  item,
+  lifecyclePending,
+  onAction,
+  onClose,
+  onRetry,
+  onUpdate,
+  update,
+}: {
+  detail: Record<string, unknown>;
+  detailError: Error | null;
+  detailPending: boolean;
+  installedPackage?: Record<string, unknown>;
+  item: Record<string, unknown>;
+  lifecyclePending: boolean;
+  onAction: (action: 'enable' | 'disable' | 'uninstall') => void;
+  onClose: () => void;
+  onRetry: () => void;
+  onUpdate: () => void;
+  update?: Record<string, unknown>;
+}) {
+  const sourceKind = stringValue(item.sourceKind);
+  const packageId = stringValue(item.packageId);
+  const actions = stringArray(item.actions);
+  const body = stringValue(detail.body);
+  const contentRevision = stringValue(item.contentRevision, stringValue(item.digest, '未提供'));
+  const packageVersion = stringValue(item.packageVersion);
+  const canManagePackage = stringValue(item.management) === 'package' && Boolean(packageId);
+  const enabled = item.enabled === true;
+
+  return (
+    <aside aria-label="Skill 详情" className="plugins-detail skills-detail">
+      <div className="plugins-detail__toolbar">
+        <span>Skill 详情</span>
+        <IconButton
+          icon={<PanelRightClose size={16} />}
+          label="关闭 Skill 详情"
+          onClick={onClose}
+          tooltip
+        />
+      </div>
+      <div className="plugins-detail__heading">
+        <span className="plugins-detail__icon"><Sparkles aria-hidden="true" size={18} /></span>
+        <div>
+          <small>{skillSourceLabel(sourceKind)} · {skillInstallStateLabel(item)}</small>
+          <h3>{stringValue(item.name, stringValue(item.skillId, '未命名 Skill'))}</h3>
+          <p>{stringValue(item.description, '没有提供用途说明。')}</p>
+        </div>
+        <StatusBadge {...skillStatusBadge(item)} />
+      </div>
+      <dl className="skills-detail__facts">
+        <div><dt>来源</dt><dd>{skillSourceLabel(sourceKind)}</dd></div>
+        {packageId ? <div><dt>Package</dt><dd>{packageId}{packageVersion ? ` · v${packageVersion}` : ''}</dd></div> : null}
+        <div><dt>资源路径</dt><dd className="skills-detail__path">{stringValue(item.resourcePath, '未提供')}</dd></div>
+        <div><dt>内容修订</dt><dd className="skills-detail__path">{contentRevision}</dd></div>
+      </dl>
+      <div className="skills-detail__scope">
+        <strong>{canManagePackage ? 'Package 范围管理' : '仅查看'}</strong>
+        <span>{stringValue(item.managementReason, canManagePackage
+          ? 'Skill 的生命周期由整个 Pi Package 统一管理。'
+          : '这个 Skill 没有独立的启用开关，当前仅提供正文查看。')}</span>
+      </div>
+      <div className="skills-detail__actions">
+        {canManagePackage && actions.includes(enabled ? 'disable' : 'enable') ? (
+          <Button
+            disabled={lifecyclePending || !installedPackage}
+            leadingIcon={<Power size={15} />}
+            onClick={() => onAction(enabled ? 'disable' : 'enable')}
+            size="small"
+          >{enabled ? '停用整个 Package' : '启用整个 Package'}</Button>
+        ) : null}
+        {canManagePackage && update && actions.includes('update') ? (
+          <Button
+            disabled={lifecyclePending || !installedPackage}
+            leadingIcon={<CircleArrowUp size={15} />}
+            loading={lifecyclePending}
+            onClick={onUpdate}
+            size="small"
+            variant="quiet"
+          >更新 Package{stringValue(update.latestVersion) ? ` 到 v${stringValue(update.latestVersion)}` : ''}</Button>
+        ) : null}
+        {canManagePackage && actions.includes('uninstall') ? (
+          <Button
+            disabled={lifecyclePending || !installedPackage}
+            leadingIcon={<PackageX size={15} />}
+            onClick={() => onAction('uninstall')}
+            size="small"
+            variant="quiet"
+          >卸载整个 Package</Button>
+        ) : null}
+      </div>
+      {detailPending ? (
+        <div aria-label="正在加载 Skill 正文" className="skills-detail__body-state" role="status">正在加载 Skill 正文…</div>
+      ) : detailError ? (
+        <InlineNotice title="Skill 正文暂时无法读取" tone="danger">
+          {publicErrorText(detailError, '服务器没有返回这项 Skill 的正文。')}
+          <Button onClick={onRetry} size="small" variant="quiet">重试正文</Button>
+        </InlineNotice>
+      ) : (
+        <pre className="skills-detail__body">{body || '服务器没有返回正文。'}</pre>
+      )}
+    </aside>
+  );
+}
+
 
 function ToolDetail({
   assistantName,
@@ -1413,6 +1717,30 @@ function publicPluginPermissionLabel(permission: string): string {
     'session.read': '读取对话内容',
     'memory.review': '提交记忆复盘建议',
   } as Record<string, string>)[permission] ?? permission;
+}
+function skillSourceLabel(value: string): string {
+  return ({
+    package: 'Pi Package',
+    bundled: 'Bundled',
+    project: '当前项目',
+  } as Record<string, string>)[value] ?? (value || '未知来源');
+}
+function skillInstallStateLabel(item: Record<string, unknown>): string {
+  if (stringValue(item.management) === 'inspect_only') {
+    return stringValue(item.sourceKind) === 'bundled' ? '随产品提供' : '项目发现';
+  }
+  if (item.installed === false) return '未安装';
+  return item.enabled === true ? '已启用' : '已停用';
+}
+function skillStatusBadge(item: Record<string, unknown>): {
+  label: string;
+  tone: 'success' | 'warning' | 'danger' | 'neutral';
+} {
+  if (item.installed === false) return { label: '未安装', tone: 'warning' };
+  if (stringValue(item.management) === 'inspect_only') return { label: '仅查看', tone: 'neutral' };
+  if (item.enabled === true) return { label: '已启用', tone: 'success' };
+  if (item.enabled === false) return { label: '已停用', tone: 'warning' };
+  return { label: '状态未知', tone: 'neutral' };
 }
 function stringArray(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []; }
 function numberValue(value: unknown): number {

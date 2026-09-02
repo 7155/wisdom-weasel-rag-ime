@@ -384,6 +384,10 @@ class AgentExtensionServiceTests(unittest.TestCase):
         self.assertEqual(item["extensionApp"]["version"], "0.1.0")
         self.assertEqual(item["extensionApp"]["skillRef"], "zhanggui-wenshu")
         self.assertEqual(item["extensionApp"]["verticalSuiteId"], "sgg")
+        self.assertEqual(
+            self.service.extension_app_skill_owners(),
+            {"zhanggui-wenshu": "extension:zhanggui-wenshu"},
+        )
 
         preview = self.service.preview(
             {"action": "disable", "pluginId": "@paw/zhanggui-wenshu"}
@@ -920,6 +924,64 @@ class AgentExtensionServiceTests(unittest.TestCase):
         self.assertEqual(receipt["receipt"]["action"], "update")
         self.assertEqual(self.runtime.calls[-1][0], "install")
 
+
+    def test_skill_inventory_is_ordered_and_detail_reads_only_server_owned_id(self) -> None:
+        bundled_root = self.root / "bundled"
+        project_root = self.root / "project"
+        package_source = self.root / "package-source"
+
+        def write_skill(root: Path, name: str, description: str, body: str) -> None:
+            path = root / name / "SKILL.md"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"---\nname: {name}\ndescription: {description}\n---\n\n{body}\n",
+                encoding="utf-8",
+            )
+
+        write_skill(bundled_root, "alpha", "Bundled alpha", "Bundled instructions.")
+        write_skill(project_root, "beta", "Project beta", "Project instructions.")
+        write_skill(package_source / "skills", "package-skill", "Package skill", "Package instructions.")
+        package_manifest = {"name": "@example/skills", "version": "1.2.0"}
+        (package_source / "package.json").write_text(
+            json.dumps(package_manifest),
+            encoding="utf-8",
+        )
+        package_digest = _native_package_digest(package_source)
+        package_key = hashlib.sha256(b"@example/skills").hexdigest()[:16]
+        managed_package = self.root / "packages" / package_key / package_digest
+        managed_package.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(package_source, managed_package)
+        self.runtime.installed = [{
+            "id": "@example/skills",
+            "version": "1.2.0",
+            "digest": package_digest,
+            "enabled": True,
+            "source": str(managed_package),
+            "resources": {"skills": ["skills/package-skill/SKILL.md"]},
+        }]
+        service = AgentExtensionService(
+            runtime_provider=lambda: self.runtime,
+            inbox_root=self.root / "skill-inbox",
+            bundled_skills_root=bundled_root,
+            project_skills_roots=(project_root,),
+        )
+
+        inventory = service.skills_list()
+        self.assertEqual(
+            [item["skillId"] for item in inventory["items"]],
+            ["alpha", "beta", "package-skill"],
+        )
+        self.assertEqual(
+            {item["sourceKind"] for item in inventory["items"]},
+            {"bundled", "project", "package"},
+        )
+        self.assertTrue(all(str(self.root) not in json.dumps(item) for item in inventory["items"]))
+
+        detail = service.skill_detail({"skillId": "package-skill", "path": str(self.root / "secret")})
+        self.assertEqual(detail["item"]["body"], "Package instructions.")
+        self.assertEqual(detail["item"]["contentRevision"], inventory["items"][2]["contentRevision"])
+        with self.assertRaisesRegex(ValueError, "skillId is invalid"):
+            service.skill_detail({"skillId": "../package-skill"})
 
 if __name__ == "__main__":
     unittest.main()

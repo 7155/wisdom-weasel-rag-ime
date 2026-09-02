@@ -3,9 +3,7 @@ import {
   Bot,
   BookOpen,
   CircleAlert,
-  Eye,
   Fingerprint,
-  FolderCog,
   Gauge,
   History,
   Keyboard,
@@ -108,6 +106,7 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
   ],
   'app-center': [
     { id: 'installed', label: '已安装', icon: PackageOpen, route: '/plugins', purpose: '已安装 Package 的启用、更新与移除' },
+    { id: 'skills', label: 'Skills', icon: BookOpen, route: '/plugins?view=skills', purpose: '查看 Bundled、项目与 Package Skill 的正文和来源' },
     { id: 'catalog', label: '目录', icon: LibraryBig, route: '/plugins?view=catalog', purpose: '安装之前先看清来源、权限与版本' },
     { id: 'proposals', label: '建议', icon: Sparkles, route: '/plugins?view=proposals', purpose: 'Agent 提出的安装建议，逐项等你确认' },
   ],
@@ -302,10 +301,19 @@ const agentExecutionModes: readonly {
   icon: LucideIcon;
   recommended?: boolean;
 }[] = [
-  { value: 'per_action', title: '按风险确认', detail: '低风险直接做；高风险先停在审批中心问你。', icon: ShieldCheck, recommended: true },
-  { value: 'read_only', title: '只读', detail: '只查看、只回答，不改动文件和设置。', icon: Eye },
-  { value: 'workspace_managed', title: '工作区托管', detail: '在授权的工作区里自己安排；越界的操作仍会先问你。', icon: FolderCog },
-  { value: 'full_trust', title: '全自动', detail: '不再逐项确认，只受本机保护规则约束。', icon: Zap },
+  {
+    value: 'per_action',
+    title: '全权限',
+    detail: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认。',
+    icon: ShieldCheck,
+    recommended: true,
+  },
+  {
+    value: 'full_trust',
+    title: '全自动',
+    detail: '整个系统与所有 Tool 可用；每个动作自动批准，仍受操作系统边界约束。',
+    icon: Zap,
+  },
 ];
 
 function PawAgentSettings() {
@@ -424,8 +432,8 @@ function PawAgentSettings() {
           {modelRouting.saveError ? <InlineNotice title="模型分工没有保存" tone="danger">{modelRouting.saveError}</InlineNotice> : null}
 
           <ManagementSection
-            description="无论选哪一档，高风险操作都会先停在审批中心，逐项问过你。"
-            title="动手之前，问不问你"
+            description="全权限覆盖整个系统与所有 Tool，有影响的操作逐项请求确认；全自动则自动批准每个动作，仍受操作系统边界约束。"
+            title="Agent 执行权限"
           >
             <div aria-label="Agent 执行权限" className="paw-agent-modes" role="radiogroup">
               {agentExecutionModes.map((mode) => {
@@ -434,7 +442,9 @@ function PawAgentSettings() {
                   <label className="paw-agent-mode" key={mode.value}>
                     <input
                       aria-label={mode.title}
-                      checked={preferences.executionMode === mode.value}
+                      checked={mode.value === 'full_trust'
+                        ? preferences.executionMode === 'full_trust'
+                        : preferences.executionMode !== 'full_trust'}
                       disabled={controlsDisabled}
                       name="paw-agent-execution-mode"
                       onChange={() => { void authority.save({ executionMode: mode.value }); }}

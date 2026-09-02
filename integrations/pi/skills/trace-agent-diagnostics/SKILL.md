@@ -101,6 +101,39 @@ adjacency is not causality: emit a `causalLink` only when the cited public
 evidence supports the direction, and keep its authority as
 `ai_judge_estimate`.
 
+## Attribute Every Failure Across Five Layers
+
+Every newly emitted result must include `presentation.failureAttribution`. This
+is a plain-language, evidence-linked decision about all five possible owners,
+always in this exact order:
+
+1. `tool` — Tool invocation, receipt, schema, capability, or Runtime effect.
+2. `skill` — The diagnostic or task Skill's instructions and required checks.
+3. `template` — The task template, prompt, or compiled prompt inputs.
+4. `workflow` — Session/Room sequencing, routing, retries, ownership, or policy.
+5. `model` — Model capability or execution after the other layers are adequately
+   observed.
+
+The object has exactly `primaryLayer`, `summary`, and `layers`. `primaryLayer`
+is one of `tool|skill|template|workflow|model|unknown`; `layers` has exactly
+five entries in the order above. Each entry has exactly `layer`, `verdict`,
+`explanation`, and `evidenceIds`. A verdict is one of
+`primary|contributing|healthy|unknown|not_applicable`. Emit at most one
+`primary`; when no primary is defensible, use `primaryLayer: "unknown"` and
+do not emit a primary verdict. Every `primary`, `contributing`, or `healthy`
+claim must cite frozen inspection Evidence IDs. Use `unknown` when the
+inspection cannot distinguish a layer and `not_applicable` only when that
+layer is outside the case.
+
+Treat Tool receipts as decisive for the Tool layer: if a Tool ran and its
+receipt shows the requested effect succeeded, mark `tool` `healthy` even when
+the final task outcome is wrong. Do not blame the model until the model's
+inputs/outputs and the Skill, template/prompt, workflow, and Tool evidence are
+adequate to exclude those owners. A model error message or a plausible final
+answer is not model-capability evidence by itself. Keep the attribution
+summary understandable without Runtime terminology, then cite the exact
+Evidence IDs in the layer entries.
+
 ## Score Without Inventing Certainty
 
 The deterministic web report always renders these eight rows: task completion,
@@ -144,21 +177,40 @@ sandbox evidence. If no representative replay exists, keep repair quality
 `unknown` or `blocked` and do not mark the candidate verified.
 
 The diagnostic Session is always read-only: it has no write roots and no
-mutation tools. “Repair” is a separate explicit user action that creates an
-ordinary full-automation Agent Session with the exact authorized workspace
-roots and the user's one-time `ENABLE_FULL_TRUST` confirmation. Concrete
-operations remain workspace-fenced and are arbitrated by the independent Luna
-Max approval Agent; the repair Agent does not ask the user again for every
-Tool. Creating a repair handoff does not mean that a repair was applied. Report
+mutation tools. “Repair” is a separate explicit product confirmation that
+creates a Trace repair Session with this exact policy:
+
+- `mode: "coordinator"`
+- `toolProfileVersion: "control-center-auto-approve-v1"`
+- `executionMode: "full_trust"`
+- `dangerousModeConfirmation: "ENABLE_FULL_TRUST"`
+- `workspaceRoots: ["/"]`
+- `toolAllowlistMode: "profile"`
+- `projectContextEnabled: true`, `piSkillsEnabled: true`, and
+  `codexSkillsEnabled: true`
+
+The completed-report UI keeps one explicit confirmation that explains this
+full-disk/all-tool automatic authority. The profile automatically approves
+every Tool effect; it does not require source-workspace equality or PAW
+workspace-scope/approval hashes. Direct OS/TCC/Unix permissions can still be
+the final boundary. The repair Agent must not ask the user to type a
+directory or `ENABLE_FULL_TRUST` again, and must not ask for per-Tool
+approval. A URL handoff never supplies authority.
+
+Creating a repair handoff does not mean that a repair was applied. Report
 candidate/unapplied when authorization is absent or denied. Only a new
 Trace/Eval receipt after the authorized Agent action may mark the repair
 verified; never infer install or foreground acceptance.
 
+Persist new authorization receipts with
+`writeAuthority: "auto_approved_full_trust"`; older
+`"per_action_required"` and `"model_arbitrated_full_trust"` values remain
+readable.
+
 The report must stop at a candidate repair. The UI asks the user whether to
-continue and which target owns the repair. Only the explicit confirmation may
-create an ordinary writable Agent Session. Read
-[references/repair-verification.md](references/repair-verification.md) when the
-user authorizes that second phase.
+continue; only the explicit confirmation may create the Trace repair Session.
+Read [references/repair-verification.md](references/repair-verification.md)
+when the user authorizes that second phase.
 
 ## Report Contract
 
@@ -168,10 +220,13 @@ Immediately before emitting the final envelope, validate the JSON itself against
 this checklist. This check is mandatory even when the diagnosis prose is
 correct:
 
-1. Allowed top-level keys (complete allowlist): `["schemaVersion","summary","hardGates","judgeScores","requirementAssessments","causalLinks","findings"]`
-2. Required top-level keys: `["schemaVersion","summary","hardGates","judgeScores","findings"]`
+1. Allowed top-level keys (complete allowlist): `["schemaVersion","summary","presentation","hardGates","judgeScores","requirementAssessments","causalLinks","findings"]`
+2. Required top-level keys: `["schemaVersion","summary","presentation","hardGates","judgeScores","findings"]`
+   This required list applies to every newly emitted result.
    `requirementAssessments` and `causalLinks` are optional; no other top-level
-   key is permitted. Do not add convenient aliases such as `target`,
+   key is permitted. The Runtime accepts an older persisted v1 result without
+   `presentation`, but a new diagnostic result must emit it. Do not add
+   convenient aliases such as `target`,
    `observations`, `hypotheses`, `conclusions`, or `repairCandidate`.
 3. Treat the top-level result and every nested result object as
    `additionalProperties=false`: use only the fields shown in
@@ -190,6 +245,33 @@ correct:
    emit `"hardGates": []`, `"judgeScores": []`, and `"findings": []` when
    there are no valid entries. Optional `requirementAssessments` and
    `causalLinks` may be omitted or emitted as `[]`.
+7. `presentation` is the bounded plain-language scan layer. Emit exactly these
+   fields: `headline`, `impact`, `primaryFindingId`, `knownFacts`,
+   `evidenceGaps`, `causalNodes`, `expectedStageCount`,
+   `recordedStageReceiptEvidenceIds`, and `failureAttribution`. Put one
+   independently understandable outcome in `headline`, and explain the
+   user-visible consequence in `impact` before naming internal components.
+   `primaryFindingId` is empty or matches an emitted finding. Every known fact
+   and causal node cites one or more frozen Evidence IDs. A causal node is
+   `confirmed` only when its cited Evidence proves that step; otherwise use
+   `unverified`. Each evidence gap states the missing fact, why it matters, and
+   how to obtain it. Count only authoritative expected stages and recorded
+   stage-receipt Evidence; if the inspection does not freeze an expected-stage
+   contract, emit `expectedStageCount: 0` and do not present that zero as proof
+   that no stage was expected.
+8. `failureAttribution` is required for every new result and optional only when
+   reading an older persisted v1 result. Emit exactly:
+   `{ "primaryLayer", "summary", "layers" }`, with `layers` containing exactly
+   five entries in order `tool`, `skill`, `template`, `workflow`, `model`.
+   Each entry has exactly `layer`, `verdict`, `explanation`, and `evidenceIds`;
+   verdicts are `primary`, `contributing`, `healthy`, `unknown`, or
+   `not_applicable`. Emit at most one `primary`, and make `primaryLayer`
+   match it; if no primary is defensible, use `primaryLayer: "unknown"`.
+   `primary`, `contributing`, and `healthy` require frozen Evidence IDs.
+   Mark Tool `healthy` when a receipt proves the Tool effect worked, even if
+   the final outcome is wrong. Do not blame the model until input, Skill,
+   template/prompt, workflow, and Tool evidence is adequate; otherwise use
+   `unknown`. Attribute the summary in plain user language.
 
 End the diagnostic Session with exactly one machine-readable result envelope:
 
@@ -213,7 +295,12 @@ arguments, Provider context, credentials, or machine paths.
 
 Keep explanatory text before the envelope to at most six lines: report identity,
 primary cause, impact, the most important unknown, and the next authorized
-action. Do not duplicate the full report in conversation prose; the Session UI
+action. Write `summary`, the visible cause, impact, candidate repair, and next
+action in plain user language: describe what did not finish or what the user
+cannot do before naming an internal Host, settlement call, JSONL boundary,
+provider, span, schema, or policy revision. Put those implementation names in
+finding evidence/details so the compact receipt remains understandable without
+Runtime knowledge. Do not duplicate the full report in conversation prose; the Session UI
 projects the completed envelope as a compact receipt and the persisted web page
 owns the detailed presentation.
 

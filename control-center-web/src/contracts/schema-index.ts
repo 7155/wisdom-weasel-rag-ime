@@ -3216,7 +3216,7 @@ export const contractSchemas = {
       "compileState",
       "draftCoverage",
       "automation",
-      "pendingDraftCount",
+      "catalogConsolidation",
       "ownerCuration",
       "modelCuration",
       "bookProjection",
@@ -3391,6 +3391,141 @@ export const contractSchemas = {
           "reservedContextTokens": {
             "type": "integer",
             "minimum": 1
+          }
+        }
+      },
+      "catalogConsolidation": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "project",
+          "receiptId",
+          "state",
+          "lastAttemptAtMs",
+          "lastCompletionAtMs",
+          "nextDueAtMs",
+          "catalogDigest",
+          "lastSuccessfulCatalogDigest",
+          "lastSuccessfulCatalogCommittedAtMs",
+          "attemptCatalogDigest",
+          "curationRunId",
+          "attemptCount",
+          "retryCount",
+          "result",
+          "error",
+          "createdAtMs",
+          "updatedAtMs",
+          "leaseExpiresAtMs",
+          "due",
+          "dueReason",
+          "observedAtMs",
+          "enabled",
+          "automaticOrganizationEnabled",
+          "cadenceDays"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.memory-catalog-consolidation.v1"
+          },
+          "project": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "automaticOrganizationEnabled": {
+            "type": "boolean"
+          },
+          "cadenceDays": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "receiptId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "never",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "lastAttemptAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastCompletionAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nextDueAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "catalogDigest": {
+            "type": "string"
+          },
+          "lastSuccessfulCatalogDigest": {
+            "type": "string"
+          },
+          "lastSuccessfulCatalogCommittedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "attemptCatalogDigest": {
+            "type": "string"
+          },
+          "curationRunId": {
+            "type": "string"
+          },
+          "attemptCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "retryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "result": {
+            "type": "object"
+          },
+          "error": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "leaseExpiresAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "due": {
+            "type": "boolean"
+          },
+          "dueReason": {
+            "type": "string",
+            "enum": [
+              "first_run",
+              "scheduled",
+              "retry_backoff",
+              "running",
+              "lease_expired",
+              "catalog_consolidation_disabled",
+              "automatic_organization_disabled",
+              "not_due"
+            ]
+          },
+          "observedAtMs": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -3680,7 +3815,8 @@ export const contractSchemas = {
                 "legacy",
                 "daily_curation",
                 "manual_curation",
-                "dream_insight"
+                "dream_insight",
+                "catalog_consolidation"
               ]
             }
           }
@@ -5676,7 +5812,7 @@ export const contractSchemas = {
           },
           "workspaceRoots": {
             "type": "array",
-            "maxItems": 4,
+            "maxItems": 5,
             "uniqueItems": true,
             "items": {
               "type": "string",
@@ -6174,7 +6310,7 @@ export const contractSchemas = {
       },
       "workspaceRoots": {
         "type": "array",
-        "maxItems": 4,
+        "maxItems": 5,
         "uniqueItems": true,
         "items": {
           "type": "string",
@@ -6977,6 +7113,9 @@ export const contractSchemas = {
           "conversation",
           "subagent_runtime"
         ]
+      },
+      "evaluationSnapshot": {
+        "type": "boolean"
       },
       "surfaceKind": {
         "type": "string",
@@ -23270,7 +23409,8 @@ export const contractSchemas = {
           "writeAuthority": {
             "enum": [
               "per_action_required",
-              "model_arbitrated_full_trust"
+              "model_arbitrated_full_trust",
+              "auto_approved_full_trust"
             ]
           },
           "authorizationId": {
@@ -23418,6 +23558,7 @@ export const contractSchemas = {
             "enum": [
               "",
               "passed",
+              "not_required",
               "blocked"
             ]
           },
@@ -23507,6 +23648,9 @@ export const contractSchemas = {
         "items": {
           "$ref": "#/$defs/finding"
         }
+      },
+      "presentation": {
+        "$ref": "#/$defs/presentation"
       }
     },
     "$defs": {
@@ -23758,6 +23902,363 @@ export const contractSchemas = {
             "maxLength": 2000
           }
         }
+      },
+      "presentation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "headline",
+          "impact",
+          "primaryFindingId",
+          "knownFacts",
+          "evidenceGaps",
+          "causalNodes",
+          "expectedStageCount",
+          "recordedStageReceiptEvidenceIds"
+        ],
+        "properties": {
+          "headline": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "primaryFindingId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "knownFacts": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/$defs/presentationKnownFact"
+            }
+          },
+          "evidenceGaps": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "$ref": "#/$defs/presentationEvidenceGap"
+            }
+          },
+          "causalNodes": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/$defs/presentationCausalNode"
+            }
+          },
+          "expectedStageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32
+          },
+          "recordedStageReceiptEvidenceIds": {
+            "$ref": "#/$defs/presentationEvidenceIds"
+          },
+          "failureAttribution": {
+            "$ref": "#/$defs/failureAttribution"
+          }
+        }
+      },
+      "presentationEvidenceIds": {
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 640
+        }
+      },
+      "presentationKnownFact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fact",
+          "evidenceIds"
+        ],
+        "properties": {
+          "fact": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 800
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          }
+        }
+      },
+      "presentationEvidenceGap": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gap",
+          "consequence",
+          "howToObtain"
+        ],
+        "properties": {
+          "gap": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 800
+          },
+          "consequence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "howToObtain": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      },
+      "presentationCausalNode": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "detail",
+          "status",
+          "evidenceIds"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "status": {
+            "enum": [
+              "confirmed",
+              "unverified"
+            ]
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 640
+            }
+          }
+        }
+      },
+      "failureAttribution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "primaryLayer",
+          "summary",
+          "layers"
+        ],
+        "properties": {
+          "primaryLayer": {
+            "enum": [
+              "tool",
+              "skill",
+              "template",
+              "workflow",
+              "model",
+              "unknown"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1600
+          },
+          "layers": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/$defs/failureAttributionLayer"
+            },
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/failureAttributionToolLayer"
+              },
+              {
+                "$ref": "#/$defs/failureAttributionSkillLayer"
+              },
+              {
+                "$ref": "#/$defs/failureAttributionTemplateLayer"
+              },
+              {
+                "$ref": "#/$defs/failureAttributionWorkflowLayer"
+              },
+              {
+                "$ref": "#/$defs/failureAttributionModelLayer"
+              }
+            ]
+          }
+        }
+      },
+      "failureAttributionEvidenceIds": {
+        "type": "array",
+        "maxItems": 32,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 640
+        }
+      },
+      "failureAttributionLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "layer",
+          "verdict",
+          "explanation",
+          "evidenceIds"
+        ],
+        "properties": {
+          "layer": {
+            "enum": [
+              "tool",
+              "skill",
+              "template",
+              "workflow",
+              "model"
+            ]
+          },
+          "verdict": {
+            "enum": [
+              "primary",
+              "contributing",
+              "healthy",
+              "unknown",
+              "not_applicable"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "evidenceIds": {
+            "$ref": "#/$defs/failureAttributionEvidenceIds"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "verdict": {
+                  "enum": [
+                    "primary",
+                    "contributing",
+                    "healthy"
+                  ]
+                }
+              },
+              "required": [
+                "verdict"
+              ]
+            },
+            "then": {
+              "properties": {
+                "evidenceIds": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ]
+      },
+      "failureAttributionToolLayer": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/failureAttributionLayer"
+          },
+          {
+            "properties": {
+              "layer": {
+                "const": "tool"
+              }
+            }
+          }
+        ]
+      },
+      "failureAttributionSkillLayer": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/failureAttributionLayer"
+          },
+          {
+            "properties": {
+              "layer": {
+                "const": "skill"
+              }
+            }
+          }
+        ]
+      },
+      "failureAttributionTemplateLayer": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/failureAttributionLayer"
+          },
+          {
+            "properties": {
+              "layer": {
+                "const": "template"
+              }
+            }
+          }
+        ]
+      },
+      "failureAttributionWorkflowLayer": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/failureAttributionLayer"
+          },
+          {
+            "properties": {
+              "layer": {
+                "const": "workflow"
+              }
+            }
+          }
+        ]
+      },
+      "failureAttributionModelLayer": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/failureAttributionLayer"
+          },
+          {
+            "properties": {
+              "layer": {
+                "const": "model"
+              }
+            }
+          }
+        ]
       }
     }
   },
@@ -24163,11 +24664,14 @@ export const contractSchemas = {
         "const": "passed"
       },
       "sandboxStatus": {
-        "const": "passed"
+        "enum": [
+          "passed",
+          "not_required"
+        ]
       },
       "sandboxedTestCount": {
         "type": "integer",
-        "minimum": 1
+        "minimum": 0
       },
       "repairTraceId": {
         "type": "string",

@@ -87,6 +87,31 @@ class AgentRoomTests(unittest.TestCase):
         self.assertEqual(stored["eventId"], event["eventId"])
         self.assertEqual(stat.S_IMODE(room_files[0].stat().st_mode), 0o600)
 
+    def test_room_storage_contract_accepts_four_context_roots_plus_system_root(
+        self,
+    ) -> None:
+        context_roots = [
+            self.root / f"context-{index}"
+            for index in range(4)
+        ]
+        room = self.store.create(
+            title="四个上下文加系统根",
+            routing_policy="manual_mentions",
+            workspace_roots=[
+                *(str(path) for path in context_roots),
+                "/",
+            ],
+            participants=[
+                self._participant("companion-present-v1", "Agent A"),
+                self._participant("companion-future-v1", "Agent B"),
+            ],
+        )
+
+        self.assertEqual(
+            room["workspaceRoots"],
+            [*(str(path.resolve()) for path in context_roots), "/"],
+        )
+
     def test_parallel_routing_starts_every_peer_and_keeps_work_owner_first(
         self,
     ) -> None:
@@ -1328,11 +1353,20 @@ class AgentRoomServiceTests(unittest.TestCase):
 
         session = self.service.sessions.get(session_id)
         self.assertEqual(session["mode"], "coordinator")
-        self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(
+            session["toolProfileVersion"],
+            "control-center-full-access-v1",
+        )
         self.assertEqual(session["toolAllowlistMode"], "profile")
         self.assertEqual(session["allowedTools"], [])
-        self.assertEqual(session["workspaceRoots"], [str(self.root.resolve())])
+        self.assertEqual(
+            session["workspaceRoots"],
+            [str(self.root.resolve()), "/"],
+        )
+        self.assertTrue(session["workspaceScopeGranted"])
         self.assertTrue(session["projectContextEnabled"])
+        self.assertTrue(session["piSkillsEnabled"])
+        self.assertTrue(session["codexSkillsEnabled"])
 
     def test_room_snapshot_does_not_revoke_an_active_task_workspace(self) -> None:
         room = self.service.create_room(
@@ -1412,9 +1446,9 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.service.update_room(str(room["id"]), {"archived": False})
         restored = self.service.sessions.get(session_id)
         self.assertEqual(restored["mode"], "coordinator")
-        self.assertEqual(restored["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(restored["toolProfileVersion"], "control-center-full-access-v1")
         self.assertEqual(restored["toolAllowlistMode"], "profile")
-        self.assertEqual(restored["workspaceRoots"], [str(self.root.resolve())])
+        self.assertEqual(restored["workspaceRoots"], [str(self.root.resolve()), "/"])
 
     def test_removed_member_is_archived_and_not_restored_by_room_snapshot(self) -> None:
         room = self.service.create_room(
@@ -2449,6 +2483,172 @@ class AgentRoomServiceTests(unittest.TestCase):
             dispatch_id,
         )
 
+    def test_unrestricted_collaboration_profiles_keep_optional_roots_and_system_access(self) -> None:
+        context_roots = [
+            self.root / f"optional-context-{index}"
+            for index in range(4)
+        ]
+        caller_contexts = [str(path) for path in context_roots]
+        participants = [
+            {"roleId": "companion-present-v1", "roleVersion": "1"},
+            {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+        ]
+        for execution_mode, profile in (
+            ("per_action", "control-center-full-access-v1"),
+            ("full_trust", "control-center-auto-approve-v1"),
+        ):
+            room = self.service.create_room(
+                {
+                    "title": f"Room {execution_mode}",
+                    "roomKind": "collaboration",
+                    "executionMode": execution_mode,
+                    "workspaceRoots": caller_contexts,
+                    "participants": participants,
+                }
+            )["room"]
+            expected_roots = [
+                *(str(path.resolve()) for path in context_roots),
+                "/",
+            ]
+            self.assertEqual(room["workspaceRoots"], expected_roots)
+            for participant in room["participants"]:
+                session = self.service.sessions.get(str(participant["sessionId"]))
+                self.assertEqual(session["mode"], "coordinator")
+                self.assertEqual(session["executionMode"], execution_mode)
+                self.assertEqual(session["toolProfileVersion"], profile)
+                self.assertEqual(session["toolAllowlistMode"], "profile")
+                self.assertEqual(session["allowedTools"], [])
+                self.assertEqual(session["workspaceRoots"], expected_roots)
+                self.assertTrue(session["projectContextEnabled"])
+                self.assertTrue(session["piSkillsEnabled"])
+                self.assertTrue(session["codexSkillsEnabled"])
+
+    def test_unrestricted_collaboration_participant_lifecycle_uses_shared_policy(
+        self,
+    ) -> None:
+        for execution_mode, profile in (
+            ("per_action", "control-center-full-access-v1"),
+            ("full_trust", "control-center-auto-approve-v1"),
+        ):
+            with self.subTest(execution_mode=execution_mode):
+                context_roots = [
+                    self.root / f"{execution_mode}-context-{index}"
+                    for index in range(4)
+                ]
+                expected_roots = [
+                    *(str(path.resolve()) for path in context_roots),
+                    "/",
+                ]
+                room = self.service.create_room(
+                    {
+                        "title": f"生命周期 {execution_mode}",
+                        "roomKind": "collaboration",
+                        "executionMode": execution_mode,
+                        "workspaceRoots": [
+                            str(path) for path in context_roots
+                        ],
+                        "participants": [
+                            {
+                                "roleId": "companion-present-v1",
+                                "roleVersion": "1",
+                            },
+                            {
+                                "roleId": "companion-firstlight-v1",
+                                "roleVersion": "1",
+                            },
+                        ],
+                    }
+                )["room"]
+                room_id = str(room["id"])
+
+                added = self.service.add_room_participant(
+                    room_id,
+                    {
+                        "roleId": "companion-future-v1",
+                        "roleVersion": "1",
+                    },
+                )
+                added_session = self.service.sessions.get(
+                    str(added["participant"]["sessionId"])
+                )
+                self.assertEqual(
+                    added_session["toolProfileVersion"],
+                    profile,
+                )
+                self.assertEqual(
+                    added_session["workspaceRoots"],
+                    expected_roots,
+                )
+                self.assertTrue(
+                    added_session["projectContextEnabled"]
+                )
+                self.assertTrue(added_session["piSkillsEnabled"])
+                self.assertTrue(added_session["codexSkillsEnabled"])
+
+                missing_participant = room["participants"][0]
+                missing_session_id = str(
+                    missing_participant["sessionId"]
+                )
+                with sqlite3.connect(self.service.sessions.db_path) as conn:
+                    conn.execute("PRAGMA foreign_keys = OFF")
+                    conn.execute(
+                        "DELETE FROM agent_sessions WHERE id = ?",
+                        (missing_session_id,),
+                    )
+
+                stale_participant = room["participants"][1]
+                stale_session_id = str(
+                    stale_participant["sessionId"]
+                )
+                self.service.sessions.set_runtime_policy(
+                    stale_session_id,
+                    mode="coordinator",
+                    tool_profile_version="control-center-v1",
+                    execution_mode=execution_mode,
+                    grant_workspace_scope=(
+                        execution_mode == "full_trust"
+                    ),
+                    allowed_tools=["workspace_read"],
+                    project_context_enabled=False,
+                    pi_skills_enabled=False,
+                    codex_skills_enabled=False,
+                    workspace_roots=[str(self.root)],
+                )
+
+                snapshot = self.service.room_snapshot(room_id)
+                repaired_room = snapshot["room"]
+                for participant in repaired_room["participants"]:
+                    session = self.service.sessions.get(
+                        str(participant["sessionId"])
+                    )
+                    self.assertEqual(session["mode"], "coordinator")
+                    self.assertEqual(
+                        session["executionMode"],
+                        execution_mode,
+                    )
+                    self.assertEqual(
+                        session["toolProfileVersion"],
+                        profile,
+                    )
+                    self.assertEqual(
+                        session["toolAllowlistMode"],
+                        "profile",
+                    )
+                    self.assertEqual(session["allowedTools"], [])
+                    self.assertEqual(
+                        session["workspaceRoots"],
+                        expected_roots,
+                    )
+                    self.assertTrue(
+                        session["workspaceScopeGranted"]
+                    )
+                    self.assertTrue(
+                        session["projectContextEnabled"]
+                    )
+                    self.assertTrue(session["piSkillsEnabled"])
+                    self.assertTrue(session["codexSkillsEnabled"])
+
+
     def test_room_execution_mode_updates_all_participants_atomically(self) -> None:
         room = self.service.create_room(
             {
@@ -2473,6 +2673,17 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.assertEqual(session["executionMode"], "read_only")
             self.assertEqual(session["toolProfileVersion"], "subagent-readonly-v1")
             self.assertFalse(session["workspaceScopeGranted"])
+        for participant in read_only["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.service.sessions.set_runtime_policy(
+                str(session["id"]),
+                mode="coordinator",
+                tool_profile_version="subagent-readonly-v1",
+                execution_mode="read_only",
+                allowed_tools=["workspace_read"],
+                project_context_enabled=True,
+                workspace_roots=session["workspaceRoots"],
+            )
 
         per_action = self.service.update_room(
             room_id,
@@ -2482,8 +2693,14 @@ class AgentRoomServiceTests(unittest.TestCase):
         for participant in per_action["participants"]:
             session = self.service.sessions.get(str(participant["sessionId"]))
             self.assertEqual(session["executionMode"], "per_action")
-            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
-            self.assertFalse(session["workspaceScopeGranted"])
+            self.assertEqual(session["toolProfileVersion"], "control-center-full-access-v1")
+            self.assertEqual(session["toolAllowlistMode"], "profile")
+            self.assertEqual(session["allowedTools"], [])
+            self.assertEqual(session["workspaceRoots"], [str(self.root.resolve()), "/"])
+            self.assertTrue(session["workspaceScopeGranted"])
+            self.assertTrue(session["projectContextEnabled"])
+            self.assertTrue(session["piSkillsEnabled"])
+            self.assertTrue(session["codexSkillsEnabled"])
 
         with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
             self.service.update_room(
@@ -2504,24 +2721,22 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.assertEqual(session["toolProfileVersion"], "control-center-v1")
             self.assertTrue(session["workspaceScopeGranted"])
 
-        with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
-            self.service.update_room(
-                room_id,
-                {"executionMode": "full_trust"},
-            )
         full_trust = self.service.update_room(
             room_id,
-            {
-                "executionMode": "full_trust",
-                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
-            },
+            {"executionMode": "full_trust"},
         )["room"]
         self.assertEqual(full_trust["executionMode"], "full_trust")
         for participant in full_trust["participants"]:
             session = self.service.sessions.get(str(participant["sessionId"]))
             self.assertEqual(session["executionMode"], "full_trust")
-            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+            self.assertEqual(session["toolProfileVersion"], "control-center-auto-approve-v1")
+            self.assertEqual(session["toolAllowlistMode"], "profile")
+            self.assertEqual(session["allowedTools"], [])
+            self.assertEqual(session["workspaceRoots"], [str(self.root.resolve()), "/"])
             self.assertTrue(session["workspaceScopeGranted"])
+            self.assertTrue(session["projectContextEnabled"])
+            self.assertTrue(session["piSkillsEnabled"])
+            self.assertTrue(session["codexSkillsEnabled"])
 
         changed_events = [
             event
@@ -2588,11 +2803,18 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(updated["title"], "统一保存后的名称")
         self.assertEqual(updated["description"], "配置与权限一次提交")
         self.assertEqual(updated["executionMode"], "full_trust")
+        self.assertEqual(updated["workspaceRoots"], [str(self.root.resolve()), "/"])
         self.assertEqual(updated["configRevision"], original_revision + 1)
         for participant in updated["participants"]:
             session = self.service.sessions.get(str(participant["sessionId"]))
             self.assertEqual(session["executionMode"], "full_trust")
+            self.assertEqual(session["toolProfileVersion"], "control-center-auto-approve-v1")
+            self.assertEqual(session["toolAllowlistMode"], "profile")
+            self.assertEqual(session["workspaceRoots"], [str(self.root.resolve()), "/"])
             self.assertTrue(session["workspaceScopeGranted"])
+            self.assertTrue(session["projectContextEnabled"])
+            self.assertTrue(session["piSkillsEnabled"])
+            self.assertTrue(session["codexSkillsEnabled"])
 
         changed = [
             event
@@ -2605,8 +2827,35 @@ class AgentRoomServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             changed["payload"]["changedFields"],
-            ["description", "executionMode", "title"],
+            ["description", "executionMode", "title", "workspaceRoots"],
         )
+
+    def test_full_auto_room_reuses_its_single_mode_confirmation(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "一次确认",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": [],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+
+        updated = self.service.update_room(
+            str(room["id"]),
+            {
+                "title": "无需重复确认",
+                "executionMode": "full_trust",
+                "workspaceRoots": [str(self.root)],
+            },
+        )["room"]
+
+        self.assertEqual(updated["title"], "无需重复确认")
+        self.assertEqual(updated["executionMode"], "full_trust")
+        self.assertEqual(updated["workspaceRoots"], [str(self.root.resolve()), "/"])
 
     def test_multi_mentions_share_one_root_but_keep_independent_dispatches(self) -> None:
         room = self.service.create_room(
@@ -3292,6 +3541,12 @@ class AgentRoomServiceTests(unittest.TestCase):
             == "per_action"
             for item in room["participants"]
         ))
+        for participant in room["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+            self.assertFalse(session["projectContextEnabled"])
+            self.assertFalse(session["piSkillsEnabled"])
+            self.assertFalse(session["codexSkillsEnabled"])
         with self.assertRaisesRegex(
             ValueError,
             "roleplay Rooms cannot create managed work",

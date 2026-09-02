@@ -770,7 +770,7 @@ export function AgentTimeline({
       return (
         <div className="agent-timeline-loading" role="status" aria-label="正在打开对话" aria-live="polite">
           <CircleDashed aria-hidden="true" size={18} />
-          <span><strong>正在打开对话</strong><small>先恢复最近内容，完整记录会继续载入。</small></span>
+          <span><strong>正在打开对话</strong><small>先载入最近内容；完整记录可按需加载。</small></span>
         </div>
       );
     }
@@ -1242,12 +1242,21 @@ export const AgentTurn = memo(function AgentTurn({
                         leadingIcon={<RefreshCcw size={14} />}
                         disabled={turnRecoveryDisabled || retryRequested}
                         onClick={() => {
-                          if (onRetryTurn(turnId, () => setRetryRequestedFor(''))) {
-                            setRetryRequestedFor(`${turnId}:${turn.status}`);
-                          }
+                          const retryKey = `${turn.id}:${turn.status}`;
+                          const rollback = () => {
+                            setRetryRequestedFor((current) => (
+                              current === retryKey ? '' : current
+                            ));
+                          };
+                          // Mark the request before entering the host callback.
+                          // A synchronous conflict can call rollback before the
+                          // callback returns; the keyed update must not clear a
+                          // newer request.
+                          setRetryRequestedFor(retryKey);
+                          if (!onRetryTurn(turn.id, rollback)) rollback();
                         }}
                       >
-                        {retryRequested ? '已提交重试' : failurePresentation === 'compact' ? '重新问数' : '重试本轮'}
+                        {retryRequested ? '已提交重试' : '重试本轮'}
                       </Button>
                     ) : null}
                     {failurePresentation === 'default' ? <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button> : null}

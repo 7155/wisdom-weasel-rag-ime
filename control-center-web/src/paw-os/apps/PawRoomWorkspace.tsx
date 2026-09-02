@@ -1087,8 +1087,18 @@ export function PawRoomGovernance({
 const collaborationRoleOptions = (['coordinator', 'researcher', 'implementer', 'reviewer', 'specialist'] as const)
   .map((role) => ({ value: role, label: roomCollaborationRoleLabel(role) }));
 
-const executionModeOptions = (['read_only', 'per_action', 'workspace_managed', 'full_trust'] as const)
-  .map((mode) => ({ value: mode, label: roomExecutionModeLabel(mode) }));
+const executionModeOptions = [
+  {
+    value: 'per_action' as const,
+    label: '全权限',
+    description: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认',
+  },
+  {
+    value: 'full_trust' as const,
+    label: '全自动',
+    description: '整个系统与所有 Tool 可用；每个动作自动批准，仍受操作系统边界约束',
+  },
+];
 
 function PawRoomGovernanceInner({
   personas,
@@ -1117,6 +1127,9 @@ function PawRoomGovernanceInner({
   const availablePersonas = personas.filter((persona) => !activeParticipants.some((item) => item.roleId === persona.roleId && item.roleVersion === persona.version));
   const participantLimitReached = activeParticipants.length >= ROOM_PARTICIPANT_LIMIT;
   const nextPlanetName = roomPlanetName(Math.max(-1, ...room.participants.map((participant) => participant.ordinal)) + 1);
+  const selectedExecutionMode = executionModeOptions.find((option) => option.value === executionMode);
+  const legacyExecutionMode = !selectedExecutionMode;
+  const executionModeDisplayLabel = selectedExecutionMode?.label ?? roomExecutionModeLabel(executionMode);
 
   async function mutate(key: string, request: ControlRequest): Promise<void> {
     setBusyKey(key);
@@ -1184,8 +1197,51 @@ function PawRoomGovernanceInner({
     </section>
 
     <section>
-      <header><span><Settings2 size={15} /><strong>空间设置</strong></span><small>{roomExecutionModeLabel(executionMode)}</small></header>
-      <div className="paw-room-governance__form"><input aria-label="Room 名称" maxLength={120} onChange={(event) => setTitle(event.target.value)} value={title} /><input aria-label="Room 简介" maxLength={500} onChange={(event) => setDescription(event.target.value)} placeholder="简介" value={description} />{room.roomKind !== 'roleplay' ? <Select aria-label="Room 执行权限" onValueChange={setExecutionMode} options={executionModeOptions} value={executionMode} /> : null}<button disabled={!title.trim() || Boolean(busyKey)} onClick={() => void mutate('settings', { pathId: 'agent.room.archive', params: { roomId: room.id }, body: { archived: false, title: title.trim(), description: description.trim(), executionMode, routingPolicy: room.routingPolicy, routingConfig: (room.routingConfig ?? null) as unknown as Record<string, unknown>, moderatorParticipantId: room.moderatorParticipantId, ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' } : {}), ...(executionMode === 'full_trust' ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' } : {}) } as unknown as ControlRequest['body'] })} type="button">保存</button></div>
+      <header><span><Settings2 size={15} /><strong>空间设置</strong></span><small>{executionModeDisplayLabel}</small></header>
+      <div className="paw-room-governance__form">
+        <input aria-label="Room 名称" maxLength={120} onChange={(event) => setTitle(event.target.value)} value={title} />
+        <input aria-label="Room 简介" maxLength={500} onChange={(event) => setDescription(event.target.value)} placeholder="简介" value={description} />
+        {room.roomKind !== 'roleplay' ? (
+          <>
+            <Select
+              aria-label="Room 执行权限"
+              onValueChange={setExecutionMode}
+              options={executionModeOptions}
+              placeholder={legacyExecutionMode ? roomExecutionModeLabel(executionMode) : undefined}
+              value={selectedExecutionMode?.value}
+            />
+            <small>
+              {selectedExecutionMode?.description
+                ?? `${roomExecutionModeLabel(executionMode)}（旧版策略，仅保留显示；选择全权限或全自动后更新）`}
+            </small>
+          </>
+        ) : null}
+        <button
+          disabled={!title.trim() || Boolean(busyKey)}
+          onClick={() => void mutate('settings', {
+            pathId: 'agent.room.archive',
+            params: { roomId: room.id },
+            body: {
+              archived: false,
+              title: title.trim(),
+              description: description.trim(),
+              executionMode,
+              routingPolicy: room.routingPolicy,
+              routingConfig: (room.routingConfig ?? null) as unknown as Record<string, unknown>,
+              moderatorParticipantId: room.moderatorParticipantId,
+              ...(executionMode === 'workspace_managed'
+                ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+                : {}),
+              ...(executionMode === 'full_trust'
+                ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+                : {}),
+            } as unknown as ControlRequest['body'],
+          })}
+          type="button"
+        >
+          保存
+        </button>
+      </div>
       <button className="paw-room-governance__archive" disabled={Boolean(busyKey)} onClick={() => void mutate('archive', { pathId: 'agent.room.archive', params: { roomId: room.id }, body: { archived: true } })} type="button"><Archive size={14} />收起 Room</button>
     </section>
   </div>;

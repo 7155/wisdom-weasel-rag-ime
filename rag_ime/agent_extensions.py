@@ -18,9 +18,18 @@ _MAX_PLUGIN_FILES = 256
 _MAX_PLUGIN_BYTES = 5 * 1024 * 1024
 _MAX_NATIVE_PACKAGE_FILES = 1024
 _MAX_NATIVE_PACKAGE_BYTES = 20 * 1024 * 1024
+_MAX_SKILL_FILES = 2_048
+_MAX_SKILL_FILE_BYTES = 2 * 1024 * 1024
+_MAX_SKILL_BODY_BYTES = 64 * 1024
 _SAFE_SUFFIXES = {".ts", ".js", ".mjs", ".json", ".md"}
 _PREVIEW_TTL_MS = 10 * 60 * 1000
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_SKILL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SKILL_RESOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
+_SKILL_FRONTMATTER = re.compile(
+    r"\A---[ \t]*\r?\n(?P<frontmatter>.*?)\r?\n---(?:\s*\r?\n|\s*\Z)",
+    re.DOTALL,
+)
 _EXTENSION_BINDING_CAPABILITY = "pawos.extension.binding."
 _EXTENSION_BINDING_TOKEN = re.compile(
     r"^pawos\.extension\.binding\.([0-9a-f]{40})$"
@@ -481,6 +490,177 @@ def _public_plugin_payload(value: Mapping[str, object]) -> dict[str, object]:
     return result
 
 
+def _bounded_skill_text(value: object, *, maximum: int = 512) -> str:
+    """Return display metadata without control characters or unbounded text."""
+
+    text = str(value or "").replace("\x00", "").strip()
+    text = "".join(character for character in text if character in "\n\t" or ord(character) >= 0x20)
+    return text[:maximum].strip()
+
+
+def _skill_frontmatter(content: str) -> tuple[str, str] | None:
+    match = _SKILL_FRONTMATTER.match(content)
+    if match is None:
+        return None
+    values: dict[str, str] = {}
+    for line in match.group("frontmatter").splitlines():
+        key, separator, raw_value = line.partition(":")
+        if not separator or key.strip() not in {"name", "description"}:
+            continue
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        values[key.strip()] = _bounded_skill_text(value)
+    name = values.get("name", "")
+    if not _SKILL_ID.fullmatch(name):
+        return None
+    return name, values.get("description", "")
+
+
+def _read_skill_file(path: Path) -> tuple[str, str, bytes] | None:
+    """Read and validate one server-owned Skill file."""
+
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        data = path.read_bytes()
+        if not data or len(data) > _MAX_SKILL_FILE_BYTES:
+            return None
+        content = data.decode("utf-8")
+    except (OSError, UnicodeError):
+        return None
+    frontmatter = _skill_frontmatter(content)
+    if frontmatter is None or path.parent.name != frontmatter[0]:
+        return None
+    return frontmatter[0], frontmatter[1], data
+
+
+def _discover_skill_files(root: Path) -> tuple[Path, ...]:
+    """Discover only regular ``SKILL.md`` files below one trusted root."""
+
+    try:
+        if root.is_symlink() or not root.exists():
+            return ()
+        canonical_root = root.resolve(strict=True)
+        if not canonical_root.is_dir():
+            return (canonical_root,) if canonical_root.name == "SKILL.md" else ()
+    except OSError:
+        return ()
+    discovered: list[Path] = []
+    pending = [canonical_root]
+    while pending and len(discovered) < _MAX_SKILL_FILES:
+        directory = pending.pop()
+        try:
+            entries = sorted(
+                directory.iterdir(),
+                key=lambda item: (item.name.casefold(), item.name),
+                reverse=True,
+            )
+        except OSError:
+            continue
+        for item in entries:
+            try:
+                if item.is_symlink():
+                    continue
+                if item.is_dir():
+                    pending.append(item)
+                elif item.name == "SKILL.md" and item.is_file():
+                    resolved = item.resolve(strict=True)
+                    if _is_within(resolved, canonical_root):
+                        discovered.append(resolved)
+                        if len(discovered) >= _MAX_SKILL_FILES:
+                            break
+            except OSError:
+                continue
+    return tuple(sorted(set(discovered), key=lambda item: item.as_posix()))
+
+
+def _safe_skill_resource(value: object) -> str | None:
+    resource = str(value or "").strip().replace("\\", "/")
+    path = Path(resource)
+    if (
+        not resource
+        or not _SKILL_RESOURCE.fullmatch(resource)
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.name != "SKILL.md"
+    ):
+        return None
+    return path.as_posix()
+
+
+def _runtime_package_source_path(value: Mapping[str, object]) -> Path | None:
+    """Extract a resolved, content-addressed Package directory from Runtime."""
+
+    package_id = str(value.get("id") or "").strip()
+    expected_digest = str(
+        value.get("digest") or value.get("installedDigest") or ""
+    ).strip().lower()
+    if not package_id or not _SHA256.fullmatch(expected_digest):
+        return None
+    package_key = hashlib.sha256(package_id.encode("utf-8")).hexdigest()[:16]
+    raw_source = value.get("source")
+    candidates: list[object] = []
+    if isinstance(raw_source, str):
+        candidates.append(raw_source)
+    elif isinstance(raw_source, Mapping):
+        candidates.extend(
+            raw_source.get(key)
+            for key in ("resolved", "requested", "path", "root", "sourcePath", "packagePath")
+        )
+    candidates.extend(
+        value.get(key)
+        for key in ("sourcePath", "packagePath", "packageRoot", "root")
+    )
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        requested = Path(candidate).expanduser()
+        if not requested.is_absolute():
+            continue
+        try:
+            resolved = requested.resolve(strict=True)
+        except OSError:
+            continue
+        if (
+            requested.is_symlink()
+            or resolved.is_symlink()
+            or not resolved.is_dir()
+            or resolved.name != expected_digest
+            or resolved.parent.name != package_key
+            or resolved.parent.parent.name != "packages"
+        ):
+            continue
+        return resolved
+    return None
+
+
+def _skill_resource_prefix(root: Path, *, bundled: bool) -> str:
+    parts = root.parts
+    if bundled and len(parts) >= 3 and parts[-3:] == ("integrations", "pi", "skills"):
+        return "integrations/pi/skills"
+    if not bundled and len(parts) >= 2 and parts[-2:] == (".agents", "skills"):
+        return ".agents/skills"
+    if not bundled and len(parts) >= 2 and parts[-2:] == (".pi", "skills"):
+        return ".pi/skills"
+    return root.name or "skills"
+
+
+def _skill_digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _bounded_utf8_prefix(data: bytes, maximum: int) -> tuple[str, bool]:
+    truncated = len(data) > maximum
+    end = min(len(data), maximum)
+    while end >= 0:
+        try:
+            return data[:end].decode("utf-8"), truncated or end < len(data)
+        except UnicodeDecodeError:
+            end -= 1
+    return "", True
+
+
 class AgentExtensionService:
     """Product-owned approval boundary around the managed Pi plugin store."""
 
@@ -490,6 +670,8 @@ class AgentExtensionService:
         runtime_provider: Callable[[], AgentRuntimeDriver],
         inbox_root: str | Path,
         catalog_path: str | Path | None = None,
+        bundled_skills_root: str | Path | None = None,
+        project_skills_roots: tuple[str | Path, ...] = (),
     ) -> None:
         self._runtime_provider = runtime_provider
         self.inbox_root = Path(inbox_root).expanduser().resolve(strict=False)
@@ -498,6 +680,24 @@ class AgentExtensionService:
             if catalog_path is not None
             else Path(__file__).with_name("plugin_catalog.json")
         )
+        self.bundled_skills_root = (
+            Path(bundled_skills_root).expanduser().resolve(strict=False)
+            if bundled_skills_root is not None
+            else Path(__file__).resolve().parents[1] / "integrations" / "pi" / "skills"
+        )
+        configured_project_roots = tuple(
+            Path(value).expanduser().resolve(strict=False)
+            for value in project_skills_roots
+            if str(value).strip()
+        )
+        if not configured_project_roots:
+            configured_paths = os.environ.get("RAG_IME_PROJECT_SKILL_PATHS", "")
+            configured_project_roots = tuple(
+                Path(value).expanduser().resolve(strict=False)
+                for value in configured_paths.split(os.pathsep)
+                if value.strip()
+            )
+        self.project_skills_roots = configured_project_roots
         self._lock = RLock()
         self._tokens: dict[str, dict[str, object]] = {}
         self._proposals: dict[str, dict[str, object]] = {}
@@ -580,6 +780,310 @@ class AgentExtensionService:
             "runtimeAvailable": True,
             "items": items,
         }
+
+    def skills_list(self) -> dict[str, object]:
+        """Project every currently discoverable Skill without exposing paths."""
+
+        runtime_available = True
+        try:
+            packages = self._call("plugin_list")
+        except AgentRuntimeError:
+            packages = []
+            runtime_available = False
+        if not isinstance(packages, list):
+            raise AgentRuntimeError("Pi Runtime Host returned an invalid plugin list")
+        records = self._skill_inventory_records(packages)
+        items = [dict(item) for item, _path in records]
+        revision = _payload_digest({"items": items})
+        return {
+            "schemaVersion": "rag-ime.skill-inventory.v1",
+            "ok": True,
+            "runtimeAvailable": runtime_available,
+            "revision": revision,
+            "items": items,
+        }
+
+    def skill_detail(self, payload: Mapping[str, object]) -> dict[str, object]:
+        """Read bounded instructions for an inventory ID, never a client path."""
+
+        skill_id = _bounded_skill_text(payload.get("skillId"), maximum=128)
+        if not _SKILL_ID.fullmatch(skill_id):
+            raise ValueError("skillId is invalid")
+        records = self._skill_inventory_records()
+        selected = next(
+            ((dict(item), path) for item, path in records if item.get("skillId") == skill_id),
+            None,
+        )
+        if selected is None:
+            raise ValueError("Skill is not present in the current inventory")
+        item, path = selected
+        loaded = _read_skill_file(path)
+        if loaded is None:
+            raise ValueError("Skill content is unavailable")
+        _name, _description, data = loaded
+        digest = _skill_digest(data)
+        if digest != str(item.get("digest") or ""):
+            raise ValueError("Skill content changed; reload the inventory")
+        try:
+            full_content = data.decode("utf-8")
+        except UnicodeDecodeError as error:  # pragma: no cover - guarded by reader
+            raise ValueError("Skill content is not valid UTF-8") from error
+        frontmatter = _SKILL_FRONTMATTER.match(full_content)
+        instructions = full_content[frontmatter.end() :] if frontmatter else full_content
+        body, truncated = _bounded_utf8_prefix(
+            instructions.strip().encode("utf-8"),
+            _MAX_SKILL_BODY_BYTES,
+        )
+        item.update(
+            {
+                "body": body,
+                "bodyBytes": len(body.encode("utf-8")),
+                "bodyTruncated": truncated,
+                "contentBytes": len(data),
+            }
+        )
+        return {
+            "schemaVersion": "rag-ime.skill-detail.v1",
+            "ok": True,
+            "revision": str(item.get("contentRevision") or ""),
+            "item": item,
+        }
+
+    def _skill_inventory_records(
+        self,
+        packages: list[object] | None = None,
+    ) -> list[tuple[dict[str, object], Path]]:
+        """Build a bounded, deterministic projection and its private path index."""
+
+        records: list[tuple[dict[str, object], Path]] = []
+        seen_paths: set[Path] = set()
+
+        def add_file(
+            path: Path,
+            *,
+            source_kind: str,
+            root: Path,
+            resource_path: str,
+            package: Mapping[str, object] | None = None,
+        ) -> None:
+            if len(records) >= _MAX_SKILL_FILES:
+                return
+            try:
+                canonical_root = root.resolve(strict=True)
+                canonical_path = path.resolve(strict=True)
+            except OSError:
+                return
+            if (
+                canonical_path in seen_paths
+                or not _is_within(canonical_path, canonical_root)
+            ):
+                return
+            loaded = _read_skill_file(canonical_path)
+            if loaded is None:
+                return
+            name, description, data = loaded
+            seen_paths.add(canonical_path)
+            digest = _skill_digest(data)
+            item: dict[str, object] = {
+                "skillId": name,
+                "name": name,
+                "description": description
+                or (
+                    _bounded_skill_text(package.get("description"))
+                    if isinstance(package, Mapping)
+                    else ""
+                ),
+                "sourceKind": source_kind,
+                "resourcePath": resource_path,
+                "digest": digest,
+                "contentRevision": f"sha256:{digest}",
+                "sizeBytes": len(data),
+                "installed": True,
+                "enabled": None,
+                "installState": source_kind,
+                "management": "inspect_only",
+                "managementReason": (
+                    "This Skill is supplied by Pi and has no independent enable switch."
+                    if source_kind == "bundled"
+                    else "This project Skill is discovered from the project workspace "
+                    "and has no independent Package lifecycle."
+                ),
+                "actions": [],
+            }
+            if isinstance(package, Mapping):
+                package_id = _bounded_skill_text(package.get("id"), maximum=160)
+                package_version = _bounded_skill_text(package.get("version"), maximum=64)
+                if not package_id:
+                    return
+                package_installed = package.get("removed") is not True
+                package_enabled = package.get("enabled") is True and package_installed
+                item.update(
+                    {
+                        "packageId": package_id,
+                        "packageVersion": package_version,
+                        "enabled": package_enabled,
+                        "installed": package_installed,
+                        "installState": (
+                            "enabled"
+                            if package_enabled
+                            else "disabled" if package_installed else "uninstalled"
+                        ),
+                        "management": "package",
+                        "managementReason": (
+                            "This Skill belongs to the Package; lifecycle changes apply "
+                            "to the whole Package and all of its resources."
+                        ),
+                        "actions": ["enable", "disable", "update", "uninstall"],
+                    }
+                )
+            records.append((item, canonical_path))
+
+        def add_local_root(root: Path, source_kind: str) -> None:
+            try:
+                canonical_root = root.resolve(strict=True)
+            except OSError:
+                return
+            prefix = _skill_resource_prefix(
+                canonical_root,
+                bundled=source_kind == "bundled",
+            )
+            for path in _discover_skill_files(canonical_root):
+                try:
+                    relative = path.relative_to(canonical_root).as_posix()
+                except ValueError:
+                    continue
+                add_file(
+                    path,
+                    source_kind=source_kind,
+                    root=canonical_root,
+                    resource_path=f"{prefix}/{relative}",
+                )
+
+        add_local_root(self.bundled_skills_root, "bundled")
+        for root in self.project_skills_roots:
+            add_local_root(root, "project")
+
+        if packages is None:
+            try:
+                packages = self._call("plugin_list")
+            except AgentRuntimeError:
+                packages = []
+        for raw_package in packages:
+            if not isinstance(raw_package, Mapping):
+                continue
+            package_id = _bounded_skill_text(raw_package.get("id"), maximum=160)
+            if not package_id:
+                continue
+            root = _runtime_package_source_path(raw_package)
+            if root is None:
+                continue
+            resources = raw_package.get("resources")
+            raw_skills = resources.get("skills") if isinstance(resources, Mapping) else None
+            skill_resources = (
+                [_safe_skill_resource(value) for value in raw_skills]
+                if isinstance(raw_skills, list)
+                else []
+            )
+            skill_resources = [
+                value for value in skill_resources if isinstance(value, str)
+            ]
+            if skill_resources:
+                for resource in skill_resources:
+                    candidate = root / resource
+                    if candidate.is_dir():
+                        candidate = candidate / "SKILL.md"
+                    add_file(
+                        candidate,
+                        source_kind="package",
+                        root=root,
+                        resource_path=resource,
+                        package=raw_package,
+                    )
+            else:
+                for path in _discover_skill_files(root / "skills"):
+                    try:
+                        resource = path.relative_to(root).as_posix()
+                    except ValueError:
+                        continue
+                    add_file(
+                        path,
+                        source_kind="package",
+                        root=root,
+                        resource_path=resource,
+                        package=raw_package,
+                    )
+
+        # A runtime may reject duplicate names before loading them. The
+        # projection keeps each trusted source inspectable while assigning
+        # deterministic route IDs for any stale or conflicting inventory.
+        records.sort(
+            key=lambda record: (
+                str(record[0].get("name") or "").casefold(),
+                str(record[0].get("name") or ""),
+                str(record[0].get("sourceKind") or ""),
+                str(record[0].get("packageId") or ""),
+                str(record[0].get("resourcePath") or ""),
+            )
+        )
+        counts: dict[str, int] = {}
+        for item, _path in records:
+            name = str(item.get("skillId") or "")
+            counts[name] = counts.get(name, 0) + 1
+        used_ids: set[str] = set()
+        for item, path in records:
+            skill_id = str(item.get("skillId") or "")
+            if counts.get(skill_id, 0) > 1 or skill_id in used_ids:
+                source = str(item.get("sourceKind") or "skill")
+                owner_key = "\0".join(
+                    (
+                        source,
+                        str(item.get("packageId") or ""),
+                        str(item.get("resourcePath") or ""),
+                        str(path),
+                    )
+                )
+                sequence = 1
+                while True:
+                    digest = hashlib.sha256(
+                        f"{owner_key}\0{sequence}".encode("utf-8")
+                    ).hexdigest()[:12]
+                    suffix = f"--{source}--{digest}"
+                    candidate = f"{skill_id[: 128 - len(suffix)]}{suffix}"
+                    if candidate not in used_ids:
+                        item["skillId"] = candidate
+                        break
+                    sequence += 1
+            used_ids.add(str(item.get("skillId") or ""))
+        records.sort(
+            key=lambda record: (
+                str(record[0].get("name") or "").casefold(),
+                str(record[0].get("name") or ""),
+                str(record[0].get("sourceKind") or ""),
+                str(record[0].get("packageId") or ""),
+                str(record[0].get("resourcePath") or ""),
+                str(record[0].get("skillId") or ""),
+            )
+        )
+        return records
+
+    def extension_app_skill_owners(self) -> dict[str, str]:
+        """Return verified enabled App Skill ownership for Session disclosure."""
+
+        inventory = self.list()
+        if inventory.get("runtimeAvailable") is False:
+            return {}
+        owners: dict[str, str] = {}
+        for item in inventory.get("items") or []:
+            if not isinstance(item, Mapping) or item.get("enabled") is not True:
+                continue
+            evidence = item.get("extensionApp")
+            if not isinstance(evidence, Mapping):
+                continue
+            skill_ref = str(evidence.get("skillRef") or "").strip()
+            owner_app_id = str(evidence.get("id") or "").strip()
+            if skill_ref and owner_app_id:
+                owners[skill_ref] = owner_app_id
+        return owners
 
     def catalog(self) -> dict[str, object]:
         document = self._catalog_document()

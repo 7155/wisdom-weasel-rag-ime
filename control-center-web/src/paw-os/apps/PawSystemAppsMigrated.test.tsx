@@ -357,16 +357,19 @@ describe('PawSystemAppsMigrated', () => {
       },
     });
     renderSystemApp('system-settings', '/configuration?view=agent', transport);
+    const permissions = await screen.findByRole('radiogroup', {
+      name: 'Agent 执行权限',
+    });
 
-    const permissions = await screen.findByRole('radiogroup', { name: 'Agent 执行权限' });
-    expect(within(permissions).getByRole('radio', { name: '按风险确认' })).toBeChecked();
-    await user.click(within(permissions).getByRole('radio', { name: '只读' }));
+    expect(within(permissions).getByRole('radio', { name: '全权限' })).toBeChecked();
+    expect(within(permissions).getByRole('radio', { name: '全自动' })).toBeEnabled();
+    await user.click(within(permissions).getByRole('radio', { name: '全自动' }));
 
     await waitFor(() => expect(transport.requests.map(({ request }) => request.pathId)).toEqual(expect.arrayContaining([
       'configuration.settings.preview',
       'configuration.settings.apply',
     ])));
-    await waitFor(() => expect(within(permissions).getByRole('radio', { name: '只读' })).toBeChecked());
+    await waitFor(() => expect(within(permissions).getByRole('radio', { name: '全自动' })).toBeChecked());
     expect(settingsReads).toBeGreaterThanOrEqual(2);
   });
 

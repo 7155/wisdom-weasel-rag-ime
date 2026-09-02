@@ -16,10 +16,15 @@ from .agent_execution_policy import (
 from .agent_role_identity import canonical_agent_role_id
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
     DANGEROUS_MODE_CONFIRMATION,
+    FULL_ACCESS_TOOL_PROFILE,
     READONLY_TOOL_PROFILE,
 )
-from .agent_workspace_roots import existing_workspace_roots
+from .agent_workspace_roots import (
+    existing_workspace_roots,
+    system_wide_workspace_roots,
+)
 
 
 class AgentSessionApplicationService:
@@ -212,10 +217,26 @@ class AgentSessionApplicationService:
         )
         if requested_tool_profile not in {
             CONTROL_CENTER_TOOL_PROFILE,
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
             READONLY_TOOL_PROFILE,
         }:
             raise ValueError(
-                "new conversations must start in a controlled or read-only tool profile"
+                "new conversations must start in a supported tool profile"
+            )
+        if requested_tool_profile == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE and (
+            mode != "coordinator"
+            or requested_execution_mode != FULL_TRUST_EXECUTION_MODE
+        ):
+            raise ValueError(
+                "automatic approval requires coordinator mode and full-trust execution"
+            )
+        if requested_tool_profile == FULL_ACCESS_TOOL_PROFILE and (
+            mode != "coordinator"
+            or requested_execution_mode != PER_ACTION_EXECUTION_MODE
+        ):
+            raise ValueError(
+                "full access requires coordinator mode and per-action execution"
             )
         roots_value = payload.get("workspaceRoots")
         if roots_value is None:
@@ -224,9 +245,24 @@ class AgentSessionApplicationService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
-        if mode == "coordinator" and workspace_roots:
+        if (
+            mode == "coordinator"
+            and workspace_roots
+            and requested_tool_profile
+            not in {
+                DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+                FULL_ACCESS_TOOL_PROFILE,
+            }
+        ):
             workspace_roots = list(
                 existing_workspace_roots(workspace_roots)
+            )
+        if requested_tool_profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }:
+            workspace_roots = list(
+                system_wide_workspace_roots(workspace_roots)
             )
         for boolean_key in (
             "projectContextEnabled",
@@ -247,14 +283,22 @@ class AgentSessionApplicationService:
             raise ValueError(
                 "workspace-managed execution requires an explicit workspace scope confirmation"
             )
-        if requested_execution_mode == FULL_TRUST_EXECUTION_MODE and not (
-            internal_scope_grant
-            or str(payload.get("dangerousModeConfirmation") or "")
-            == DANGEROUS_MODE_CONFIRMATION
+        if (
+            requested_execution_mode == FULL_TRUST_EXECUTION_MODE
+            and requested_tool_profile != DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+            and not (
+                internal_scope_grant
+                or str(payload.get("dangerousModeConfirmation") or "")
+                == DANGEROUS_MODE_CONFIRMATION
+            )
         ):
             raise ValueError(
                 "full-trust execution requires an explicit native confirmation"
             )
+        unrestricted_profile = requested_tool_profile in {
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+            FULL_ACCESS_TOOL_PROFILE,
+        }
         model_profile, thinking_level = self._session_model_defaults(
             payload=payload,
             session_defaults=session_defaults,
@@ -271,13 +315,23 @@ class AgentSessionApplicationService:
             tool_profile_version=requested_tool_profile,
             execution_mode=requested_execution_mode,
             project_context_enabled=(
-                bool(payload["projectContextEnabled"])
-                if "projectContextEnabled" in payload
-                else bool(workspace_roots)
+                True
+                if unrestricted_profile
+                else (
+                    bool(payload["projectContextEnabled"])
+                    if "projectContextEnabled" in payload
+                    else bool(workspace_roots)
+                )
             ),
-            pi_skills_enabled=bool(payload.get("piSkillsEnabled", False)),
-            codex_skills_enabled=bool(
-                payload.get("codexSkillsEnabled", False)
+            pi_skills_enabled=(
+                True
+                if unrestricted_profile
+                else bool(payload.get("piSkillsEnabled", False))
+            ),
+            codex_skills_enabled=(
+                True
+                if unrestricted_profile
+                else bool(payload.get("codexSkillsEnabled", False))
             ),
             workspace_roots=workspace_roots,
             surface_kind=str(payload.get("surfaceKind") or "agent"),

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from .memory_catalog_scheduler import DEFAULT_CATALOG_CONSOLIDATION_CADENCE_DAYS
 from .settings_store import ManagementSettingsStore
 from .text_utils import compact_whitespace
 
@@ -34,9 +35,11 @@ class MemoryMaintenanceSettings:
     recall_detail_level: str = "compact"
     timeline_recall_enabled: bool = True
     timeline_max_items: int = 2
-    # Keep the new master switch last so positional callers of the existing
-    # settings value object retain their previous field order.
+    # Keep the master switch before newly appended lane settings so positional
+    # callers of the existing settings value object retain their field order.
     memory_enabled: bool = True
+    catalog_consolidation_enabled: bool = True
+    catalog_consolidation_cadence_days: int = DEFAULT_CATALOG_CONSOLIDATION_CADENCE_DAYS
 
     @property
     def automatic_organization_auto_apply(self) -> bool:
@@ -61,6 +64,7 @@ class MemoryMaintenanceSettings:
         automatic = _mapping(memory.get("automaticOrganization"))
         dreaming = _mapping(memory.get("dreaming"))
         recall = _mapping(memory.get("recall"))
+        catalog = _mapping(memory.get("catalogConsolidation"))
         memory_enabled = bool(memory.get("enabled", True))
         return cls(
             memory_enabled=memory_enabled,
@@ -91,6 +95,12 @@ class MemoryMaintenanceSettings:
                 minimum=1,
                 maximum=4,
             ),
+            catalog_consolidation_enabled=(
+                memory_enabled and bool(catalog.get("enabled", True))
+            ),
+            catalog_consolidation_cadence_days=_cadence_days(
+                catalog.get("cadenceDays")
+            ),
         )
 
     @property
@@ -99,6 +109,10 @@ class MemoryMaintenanceSettings:
             60,
             SECONDS_PER_DAY // self.automatic_organization_runs_per_day,
         )
+
+    @property
+    def catalog_consolidation_interval_seconds(self) -> int:
+        return self.catalog_consolidation_cadence_days * SECONDS_PER_DAY
 
     @property
     def dreaming_interval_seconds(self) -> int:
@@ -123,6 +137,11 @@ class MemoryMaintenanceSettings:
                 "thinkingLevel": self.dreaming_thinking_level,
                 "runsPerDay": self.dreaming_runs_per_day,
                 "intervalSeconds": self.dreaming_interval_seconds,
+            },
+            "catalogConsolidation": {
+                "enabled": self.catalog_consolidation_enabled,
+                "cadenceDays": self.catalog_consolidation_cadence_days,
+                "intervalSeconds": self.catalog_consolidation_interval_seconds,
             },
             "recall": {
                 "detailLevel": self.recall_detail_level,
@@ -185,6 +204,15 @@ def _thinking_level(value: object) -> str:
 
 def _runs_per_day(value: object) -> int:
     return _bounded_int(value, default=2, minimum=1, maximum=6)
+
+
+def _cadence_days(value: object) -> int:
+    return _bounded_int(
+        value,
+        default=DEFAULT_CATALOG_CONSOLIDATION_CADENCE_DAYS,
+        minimum=1,
+        maximum=365,
+    )
 
 
 def _bounded_int(

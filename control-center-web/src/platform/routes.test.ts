@@ -146,6 +146,8 @@ const canonicalPathIds = [
   'agent.extensions.list',
   'agent.extensions.usage',
   'agent.extensions.catalog',
+  'agent.extensions.skills.list',
+  'agent.extensions.skills.get',
   'agent.extensions.create',
   'agent.extensions.proposals',
   'agent.extensions.validate',

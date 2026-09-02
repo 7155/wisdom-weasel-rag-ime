@@ -14,9 +14,7 @@
  *   「Agent 轨迹 / 上下文装配」，不描述任何这里没有的界面。「记有来源的装配
  *   节点能直接打开那条证据」对应 PawContextTrace 已落地的双向证据链：只有
  *   metadata 里带具体实体标识的节点才可点击，这句因此不构成过度承诺。
- * - UR-042/044/048：统一 Composer 骨架；锚定菜单紧贴触发控件，不撑开布局。
- * - UR-046：权限四档（按风险确认 / 只读 / 工作区托管 / 全自动），全自动需先选工作目录。
- * - UR-066/078：发送即乐观入场，后台补齐配置与回执。
+ * - UR-046：两档全系统权限（全权限逐项确认 / 全自动），全自动明确提示自动批准与 OS 边界。
  * - UR-011/025 与 PF-CM-018/021：页脚只投影真实目录状态（读取中 / 失败可重试 /
  *   模型数量），不虚构“Runtime 已连接”这类前端无法证明的声明。
  *
@@ -39,6 +37,7 @@ import {
   useAgentPreferencesRead,
   type AgentExecutionMode,
 } from '@/features/agent/composer/agent-preferences-store';
+import { unrestrictedWorkspaceRoots } from '@/features/agent/composer/permission-policy';
 import {
   supportedPiThinkingLevels,
   type PiModelOption,
@@ -81,16 +80,23 @@ type HomePendingAttachment = {
 
 const PERMISSION_PRESETS: ReadonlyArray<{
   executionMode: AgentExecutionMode;
+  toolProfileVersion: 'control-center-full-access-v1' | 'control-center-auto-approve-v1';
   label: string;
   description: string;
 }> = [
-  { executionMode: 'per_action', label: '按风险确认', description: '写入与 Shell 逐条确认' },
-  { executionMode: 'read_only', label: '只读', description: '只读自动，写入与 Shell 全部阻止' },
-  { executionMode: 'workspace_managed', label: '工作区托管', description: '启动时批准范围，范围内自动，越界再问' },
-  { executionMode: 'full_trust', label: '全自动', description: '待审批操作由审批 Agent 自动判定' },
+  {
+    executionMode: 'per_action',
+    toolProfileVersion: 'control-center-full-access-v1',
+    label: '全权限',
+    description: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认',
+  },
+  {
+    executionMode: 'full_trust',
+    toolProfileVersion: 'control-center-auto-approve-v1',
+    label: '全自动',
+    description: '整个系统与所有 Tool 可用；每个动作自动批准，仍受操作系统边界约束',
+  },
 ];
-
-/* 快速开始：只是把一句可编辑的开场白放进输入框，不代替用户发送。 */
 const PROMPT_STARTERS: ReadonlyArray<{ label: string; prompt: string }> = [
   { label: '梳理现状', prompt: '梳理这个项目的当前状态：正在进行什么、被什么卡住、下一步最值得做什么。' },
   { label: '审查改动', prompt: '审查最近的改动，指出风险、遗漏和需要跟进的问题。' },
@@ -133,7 +139,7 @@ export function PawAgentHome({
   const [mode, setMode] = useState<WorkMode>('session');
   const [prompt, setPrompt] = useState(initialDraft ?? '');
   const [workspaceRoot, setWorkspaceRoot] = useState('');
-  const [executionMode, setExecutionMode] = useState<AgentExecutionMode>(preferences.executionMode);
+  const [executionMode, setExecutionMode] = useState<AgentExecutionMode>(selectableExecutionMode(preferences.executionMode));
   const [modelReference, setModelReference] = useState(preferences.modelReference || defaultModel);
   const [thinking, setThinking] = useState(preferences.thinking);
   const [roomParticipantOverride, setRoomParticipantOverride] = useState<number | null>(null);
@@ -161,7 +167,7 @@ export function PawAgentHome({
   useEffect(() => {
     if (preferenceRead.isPending || preferenceRead.readError || preferenceHydratedRef.current) return;
     preferenceHydratedRef.current = true;
-    if (!preferenceEditedRef.current.executionMode) setExecutionMode(preferences.executionMode);
+    if (!preferenceEditedRef.current.executionMode) setExecutionMode(selectableExecutionMode(preferences.executionMode));
     if (!preferenceEditedRef.current.modelReference) setModelReference(preferences.modelReference || defaultModel);
     if (!preferenceEditedRef.current.thinking) setThinking(preferences.thinking);
   }, [defaultModel, preferenceRead.isPending, preferenceRead.readError, preferences.executionMode, preferences.modelReference, preferences.thinking]);
@@ -303,29 +309,29 @@ export function PawAgentHome({
   async function startWork(): Promise<void> {
     const message = prompt.trim() || (pendingAttachments.length || pendingClipboardPaste ? '请查看附件。' : '');
     if (!message || submitting) return;
-    if (executionMode === 'full_trust' && !workspaceRoot) {
-      setError('全自动需要先选择工作目录。');
-      setOptionsPanel('project');
-      return;
-    }
     if (mode === 'room' && !roomReady) {
       setError('当前没有足够的 Room 伙伴。');
       return;
     }
     setSubmitting(true);
     setError('');
+    const toolProfileVersion = executionMode === 'full_trust'
+      ? 'control-center-auto-approve-v1'
+      : 'control-center-full-access-v1';
+    const workspaceRoots = unrestrictedWorkspaceRoots(workspaceRoot);
     try {
       if (mode === 'session') {
         const response = await transport.request<Record<string, unknown>>({
           pathId: 'agent.sessions.create',
           body: {
             title: workTitle(message),
-            mode: workspaceRoot ? 'coordinator' : 'assistant',
+            mode: 'coordinator',
             executionMode,
-            toolProfileVersion: executionMode === 'read_only' ? 'subagent-readonly-v1' : 'control-center-v1',
-            workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
-            ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' } : {}),
-            ...(executionMode === 'full_trust' ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' } : {}),
+            toolProfileVersion,
+            workspaceRoots,
+            ...(executionMode === 'full_trust'
+              ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+              : {}),
           },
         });
         const rawSession = record(record(response).session);
@@ -392,10 +398,11 @@ export function PawAgentHome({
             })),
             routingPolicy: 'parallel',
             routingConfig: { maxResponders: selectedPersonas.length, naturalJitter: 0, fallbackParticipantId: '' },
-            workspaceRoots: workspaceRoot ? [workspaceRoot] : [],
+            workspaceRoots,
             executionMode,
-            ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' } : {}),
-            ...(executionMode === 'full_trust' ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' } : {}),
+            ...(executionMode === 'full_trust'
+              ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+              : {}),
           },
         });
         const rawRoom = record(record(response).room);
@@ -549,7 +556,6 @@ export function PawAgentHome({
                       <button
                         aria-checked={item.executionMode === executionMode}
                         className="an-menu-item"
-                        disabled={item.executionMode === 'full_trust' && !workspaceRoot}
                         key={item.executionMode}
                         onClick={() => {
                           preferenceEditedRef.current.executionMode = true;
@@ -561,7 +567,7 @@ export function PawAgentHome({
                       >
                         <span style={{ minWidth: 0 }}>
                           <span className="mi-tt">{item.executionMode === executionMode ? <Check size={12} style={{ marginRight: 6, verticalAlign: -1 }} /> : null}{item.label}</span>
-                          <span className="mi-sub">{item.description}{item.executionMode === 'full_trust' && !workspaceRoot ? '（需先选工作目录）' : ''}</span>
+                          <span className="mi-sub">{item.description}</span>
                         </span>
                       </button>
                     ))}
@@ -643,20 +649,20 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'project'}
-                  aria-label={workspaceRoot ? `工作目录 · ${projectName([workspaceRoot])}` : '选择工作目录'}
+                  aria-label={workspaceRoot ? `起始项目 · ${projectName([workspaceRoot])}` : '起始项目（可选）'}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'project' ? null : 'project')}
                   ref={(node) => { chipRefs.current.project = node; }}
-                  title={workspaceRoot || '选择工作目录'}
+                  title={workspaceRoot || '起始项目（可选）'}
                   type="button"
                 >
                   <WorkspaceMark bound={Boolean(workspaceRoot)} size={14} />
-                  <span className="an-chip-text">{workspaceRoot ? projectName([workspaceRoot]) : '选择工作目录'}</span>
+                  <span className="an-chip-text">{workspaceRoot ? projectName([workspaceRoot]) : '起始项目（可选）'}</span>
                   <ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'project' ? (
                   <div className="an-menu" role="menu">
-                    <div className="an-menu-title">工作目录</div>
+                    <div className="an-menu-title">起始项目（可选）</div>
                     {projectRoots.map((root) => (
                       <button
                         aria-checked={root === workspaceRoot}
@@ -825,6 +831,11 @@ function workTitle(message: string): string {
 function clientId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
+function selectableExecutionMode(mode: AgentExecutionMode): AgentExecutionMode {
+  return mode === 'full_trust' ? 'full_trust' : 'per_action';
+}
+
+
 function createdSessionSummary(
   raw: Record<string, unknown>,
   firstMessage: string,
@@ -834,13 +845,15 @@ function createdSessionSummary(
   return {
     id: text(raw.id),
     title: text(raw.title) || workTitle(firstMessage),
-    mode: text(raw.mode) || (workspaceRoot ? 'coordinator' : 'assistant'),
+    mode: 'coordinator',
     status: text(raw.status) || 'running',
     roleId: text(raw.roleId),
     roleVersion: text(raw.roleVersion),
     roleBookRevisionId: text(raw.roleBookRevisionId),
     updatedAtMs: typeof raw.updatedAtMs === 'number' ? raw.updatedAtMs : Date.now(),
-    workspaceRoots: Array.isArray(raw.workspaceRoots) ? (raw.workspaceRoots as string[]) : workspaceRoot ? [workspaceRoot] : [],
+    workspaceRoots: Array.isArray(raw.workspaceRoots)
+      ? unrestrictedWorkspaceRoots(...(raw.workspaceRoots as string[]))
+      : unrestrictedWorkspaceRoots(workspaceRoot),
     lastMessagePreview: firstMessage,
     executionMode,
   } as SessionSummary;
@@ -863,7 +876,9 @@ function createdRoomSummary(
     participants: Array.isArray(raw.participants)
       ? raw.participants
       : selectedPersonas.map((persona, ordinal) => ({ id: persona.roleId, ordinal })),
-    workspaceRoots: Array.isArray(raw.workspaceRoots) ? (raw.workspaceRoots as string[]) : workspaceRoot ? [workspaceRoot] : [],
+    workspaceRoots: Array.isArray(raw.workspaceRoots)
+      ? unrestrictedWorkspaceRoots(...(raw.workspaceRoots as string[]))
+      : unrestrictedWorkspaceRoots(workspaceRoot),
   } as RoomSummary;
 }
 

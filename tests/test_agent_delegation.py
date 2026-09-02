@@ -531,6 +531,121 @@ class AgentDelegationTests(unittest.TestCase):
             model_route_provider=model_route_provider,
         )
 
+    def test_unrestricted_writable_children_inherit_parent_profile_and_root(self) -> None:
+        for profile, execution_mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            parent = self.sessions.create(
+                title=f"不受限父会话 {profile}",
+                mode="coordinator",
+                tool_profile_version=profile,
+                execution_mode=execution_mode,
+                workspace_roots=["/"],
+            )
+            coordinator = self.coordinator()
+            try:
+                response = coordinator.delegate(
+                    str(parent["id"]),
+                    {
+                        "contextMode": "fresh",
+                        "tasks": [
+                            {
+                                "agent": "worker",
+                                "task": "在授权工作区执行修复",
+                                "access": "write",
+                                **_TASK_CONTRACT,
+                            }
+                        ],
+                    },
+                )
+                child = self.sessions.get(
+                    str(response["batch"]["runs"][0]["childSessionId"])
+                )
+                self.assertEqual(child["toolProfileVersion"], profile)
+                self.assertEqual(child["executionMode"], execution_mode)
+                self.assertEqual(child["mode"], "coordinator")
+                self.assertEqual(child["workspaceRoots"], ["/"])
+                self.assertEqual(child["toolAllowlistMode"], "profile")
+                self.assertTrue(child["projectContextEnabled"])
+                self.assertTrue(child["piSkillsEnabled"])
+                self.assertTrue(child["codexSkillsEnabled"])
+            finally:
+                coordinator.close()
+
+    def test_unrestricted_parent_accepts_existing_descendant_root_and_preserves_read_only_access(
+        self,
+    ) -> None:
+        child_root = self.root / "nested-child"
+        child_root.mkdir()
+        for profile, execution_mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            parent = self.sessions.create(
+                title=f"全系统父会话 {profile}",
+                mode="coordinator",
+                tool_profile_version=profile,
+                execution_mode=execution_mode,
+                workspace_roots=["/"],
+            )
+            coordinator = self.coordinator()
+            try:
+                response = coordinator.delegate(
+                    str(parent["id"]),
+                    {
+                        "contextMode": "fresh",
+                        "tasks": [
+                            {
+                                "agent": "worker",
+                                "task": "只读检查子目录",
+                                "access": "read_only",
+                                "workspaceRoots": [str(child_root)],
+                                **_TASK_CONTRACT,
+                            }
+                        ],
+                    },
+                )
+                child = self.sessions.get(
+                    str(response["batch"]["runs"][0]["childSessionId"])
+                )
+                self.assertEqual(child["workspaceRoots"], [str(child_root.resolve())])
+                self.assertEqual(child["mode"], "assistant")
+                self.assertEqual(child["executionMode"], "read_only")
+                self.assertEqual(child["toolProfileVersion"], "subagent-readonly-v1")
+            finally:
+                coordinator.close()
+
+    def test_delegated_child_roots_still_require_existing_paths(self) -> None:
+        parent = self.sessions.create(
+            title="全权限父会话",
+            mode="coordinator",
+            tool_profile_version="control-center-full-access-v1",
+            execution_mode="per_action",
+            workspace_roots=["/"],
+        )
+        coordinator = self.coordinator()
+        try:
+            with self.assertRaisesRegex(ValueError, "no longer exists"):
+                coordinator.delegate(
+                    str(parent["id"]),
+                    {
+                        "contextMode": "fresh",
+                        "tasks": [
+                            {
+                                "agent": "worker",
+                                "task": "拒绝不存在的子目录",
+                                "access": "write",
+                                "workspaceRoots": [str(self.root / "missing-child")],
+                                **_TASK_CONTRACT,
+                            }
+                        ],
+                    },
+                )
+        finally:
+            coordinator.close()
+
+
     def test_fixed_catalog_parallel_results_and_internal_sessions(self) -> None:
         coordinator = self.coordinator()
         catalog = coordinator.catalog()

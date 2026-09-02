@@ -298,6 +298,46 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
             ("memory", "workspace_lsp"),
         )
 
+    def test_well_paired_explicit_profiles_ignore_stale_allowlists(self) -> None:
+        available = (
+            "overview",
+            "workspace_read",
+            "workspace_shell",
+            "todo",
+        )
+        for profile, execution_mode in (
+            ("control-center-full-access-v1", "per_action"),
+            ("control-center-auto-approve-v1", "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                selected = _tools_for_session(
+                    available,
+                    {
+                        "mode": "coordinator",
+                        "toolProfileVersion": profile,
+                        "executionMode": execution_mode,
+                        "toolAllowlistMode": "explicit",
+                        "allowedTools": ["overview"],
+                    },
+                )
+                self.assertEqual(
+                    selected,
+                    ("overview", "workspace_read", "workspace_shell"),
+                )
+
+        mismatched = _tools_for_session(
+            available,
+            {
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-full-access-v1",
+                "executionMode": "full_trust",
+                "toolAllowlistMode": "explicit",
+                "allowedTools": ["overview"],
+            },
+        )
+        self.assertEqual(mismatched, ("overview",))
+
+
     def test_read_only_coordinator_gets_foreground_shell_but_not_background_jobs(self) -> None:
         selected = _tools_for_session(
             (
@@ -353,6 +393,64 @@ class PiRuntimeTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.runtime.stop()
         self.tmp.cleanup()
+
+    def test_legacy_runtime_projects_evaluation_snapshot_tools_without_starting_pi(self) -> None:
+        snapshot = self.store.create(
+            title="EnterpriseOps CSM · Task 1",
+            model_profile="deepseek/deepseek-v4",
+            thinking_level="off",
+            tool_profile_version="subagent-readonly-v1",
+            execution_mode="read_only",
+            evaluation_snapshot=True,
+        )
+        session_id = str(snapshot["id"])
+        transcript = self.config.session_dir / "evaluation-snapshot.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-evaluation-snapshot"},
+            {
+                "type": "message", "id": "user-1", "parentId": "",
+                "message": {"role": "user", "content": [{"type": "text", "text": "执行真实任务"}]},
+            },
+            {
+                "type": "message", "id": "assistant-tool", "parentId": "user-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "toolCall", "id": "call-1", "name": "find_users", "arguments": {"query": "Marc"}}],
+                },
+            },
+            {
+                "type": "message", "id": "tool-result", "parentId": "assistant-tool",
+                "message": {"role": "toolResult", "toolCallId": "call-1", "toolName": "find_users", "content": [{"type": "text", "text": "found"}]},
+            },
+            {
+                "type": "message", "id": "assistant-final", "parentId": "tool-result",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "任务已完成"}]},
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-evaluation-snapshot",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="assistant-final",
+            binding_state="prepared",
+            metadata={"protocolVersion": "2"},
+        )
+
+        runtime_snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(self.runtime.runtime_status()["status"], "stopped")
+        self.assertEqual([item["role"] for item in runtime_snapshot["messages"]], ["user", "assistant"])
+        self.assertEqual(
+            [event["eventType"] for event in runtime_snapshot["toolHistoryEvents"]],
+            ["tool_started", "tool_finished"],
+        )
 
     def test_launch_is_isolated_and_uses_no_tools_before_gateway_exists(self) -> None:
         command = self.config.launch_command(session=self.session)
@@ -528,6 +626,24 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn("skill_load", prompt)
         self.assertIn("bootstrap-project-context", prompt)
         self.assertIn("resourceRevision=missing", prompt)
+
+    def test_system_root_is_authority_not_project_bootstrap_context(self) -> None:
+        project = self.root / "project-after-system-root"
+        project.mkdir()
+
+        system_only = self.config.system_prompt_for_session({
+            **self.session,
+            "workspaceRoots": ["/"],
+            "projectContextEnabled": True,
+        })
+        with_project = self.config.system_prompt_for_session({
+            **self.session,
+            "workspaceRoots": ["/", str(project)],
+            "projectContextEnabled": True,
+        })
+
+        self.assertNotIn('name="project_context_bootstrap"', system_only)
+        self.assertIn('name="project_context_bootstrap"', with_project)
 
     def test_existing_project_guide_suppresses_the_bootstrap_layer(self) -> None:
         project = self.root / "existing-project"

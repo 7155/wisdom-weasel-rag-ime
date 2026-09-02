@@ -8,9 +8,54 @@ import {
 } from './capability-policy';
 import { PAW_EXTENSION_INSTALLATION_CHANGED_EVENT } from '@/paw-os/extensions/installation';
 
+export type SkillSourceKind = 'package' | 'bundled' | 'project';
+
+export type SkillInventoryItem = {
+  skillId: string;
+  name: string;
+  description: string;
+  sourceKind: SkillSourceKind;
+  packageId?: string;
+  packageVersion?: string;
+  resourcePath: string;
+  enabled: boolean | null;
+  installed: boolean;
+  installState: string;
+  digest: string;
+  contentRevision: string;
+  sizeBytes: number;
+  management: 'package' | 'inspect_only';
+  managementReason: string;
+  actions: string[];
+};
+
+export type SkillInventoryResponse = {
+  schemaVersion: 'rag-ime.skill-inventory.v1';
+  ok: boolean;
+  runtimeAvailable: boolean;
+  revision: string;
+  items: SkillInventoryItem[];
+};
+
+export type SkillDetailItem = SkillInventoryItem & {
+  body: string;
+  bodyBytes: number;
+  bodyTruncated: boolean;
+  contentBytes: number;
+};
+
+export type SkillDetailResponse = {
+  schemaVersion: 'rag-ime.skill-detail.v1';
+  ok: boolean;
+  revision: string;
+  item: SkillDetailItem;
+};
+
 export const pluginQueryKeys = {
   root: ['plugins'] as const,
   catalog: (sessionId = '') => [...pluginQueryKeys.root, 'catalog', sessionId] as const,
+  skills: () => [...pluginQueryKeys.root, 'skills'] as const,
+  skill: (skillId: string) => [...pluginQueryKeys.root, 'skills', skillId] as const,
   defaults: () => [...pluginQueryKeys.root, 'defaults'] as const,
   installed: () => [...pluginQueryKeys.root, 'installed'] as const,
   versions: () => [...pluginQueryKeys.root, 'versions'] as const,
@@ -18,7 +63,12 @@ export const pluginQueryKeys = {
   lifecycle: () => [...pluginQueryKeys.root, 'lifecycle'] as const,
 };
 
-export function usePluginCatalog(sessionId = '', enabled = true) {
+export function usePluginCatalog(
+  sessionId = '',
+  enabled = true,
+  skillsEnabled = false,
+  skillId = '',
+) {
   const transport = useControlTransport();
   const catalog = useQuery({
     queryKey: pluginQueryKeys.catalog(sessionId),
@@ -54,6 +104,24 @@ export function usePluginCatalog(sessionId = '', enabled = true) {
     enabled,
     staleTime: 5_000,
   });
+  const skills = useQuery({
+    queryKey: pluginQueryKeys.skills(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.skills.list', signal }),
+    enabled: enabled && skillsEnabled,
+    staleTime: 5_000,
+    refetchOnReconnect: 'always',
+  });
+  const skill = useQuery({
+    queryKey: pluginQueryKeys.skill(skillId),
+    queryFn: ({ signal }) => transport.request({
+      pathId: 'agent.extensions.skills.get',
+      query: { skillId },
+      signal,
+    }),
+    enabled: enabled && skillsEnabled && Boolean(skillId),
+    staleTime: 5_000,
+    refetchOnReconnect: 'always',
+  });
   const versions = useQuery({
     queryKey: pluginQueryKeys.versions(),
     queryFn: ({ signal }) => transport.request({ pathId: 'agent.extensions.catalog', signal }),
@@ -82,6 +150,7 @@ export function usePluginCatalog(sessionId = '', enabled = true) {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.installed() }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.skills() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.proposals() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog(sessionId) }),
@@ -153,12 +222,16 @@ export function usePluginCatalog(sessionId = '', enabled = true) {
       versions.refetch(),
       proposals.refetch(),
       lifecycle.refetch(),
+      ...(skillsEnabled ? [skills.refetch()] : []),
+      ...(skillsEnabled && skillId ? [skill.refetch()] : []),
     ]);
   };
   return {
     catalog,
     defaults,
     installed,
+    skills,
+    skill,
     versions,
     proposals,
     lifecycle,

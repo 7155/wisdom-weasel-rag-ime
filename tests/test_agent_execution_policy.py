@@ -18,8 +18,13 @@ from rag_ime.agent_execution_policy import (
     canonical_tool_profile,
     execution_policy_prompt,
     normalize_execution_mode,
+    unrestricted_workspace_policy_active,
     workspace_scope_is_granted,
     workspace_scope_sha256,
+)
+from rag_ime.agent_tool_ids import (
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
 )
 from rag_ime.agent_workspace import WorkspaceHarness
 
@@ -36,17 +41,50 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         self.assertEqual(
             normalize_execution_mode(
                 None,
-                tool_profile_version="control-center-auto-approve-v1",
+                tool_profile_version=DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
             ),
             FULL_TRUST_EXECUTION_MODE,
         )
         self.assertEqual(
             canonical_tool_profile(
-                "control-center-auto-approve-v1",
+                DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
                 execution_mode=FULL_TRUST_EXECUTION_MODE,
             ),
-            "control-center-v1",
+            DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
         )
+
+    def test_unrestricted_profiles_bypass_scope_and_preserve_approval_semantics(self) -> None:
+        for profile, mode, expected in (
+            (
+                FULL_ACCESS_TOOL_PROFILE,
+                PER_ACTION_EXECUTION_MODE,
+                APPROVAL_ASK,
+            ),
+            (
+                DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+                FULL_TRUST_EXECUTION_MODE,
+                APPROVAL_AUTO,
+            ),
+        ):
+            session = {
+                "mode": "coordinator",
+                "toolProfileVersion": profile,
+                "executionMode": mode,
+                "workspaceRoots": ["/"],
+                "workspaceScopeSha256": "",
+                "workspaceScopeGrantedAtMs": 0,
+            }
+            self.assertTrue(unrestricted_workspace_policy_active(session))
+            self.assertTrue(workspace_scope_is_granted(session))
+            self.assertEqual(
+                approval_strategy(
+                    session,
+                    tool="workspace_shell",
+                    operation="run",
+                ),
+                expected,
+            )
+            self.assertIn(profile, execution_policy_prompt(session))
 
     def test_scope_grant_is_bound_to_the_exact_normalized_root_set(self) -> None:
         roots = ["/workspace/b", "/workspace/a", "/workspace/a"]

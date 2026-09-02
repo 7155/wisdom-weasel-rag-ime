@@ -13,6 +13,7 @@ import {
   requeueOptimisticAgentMessage,
   reduceAgentEvent,
   rewriteOptimisticAgentMessage,
+  resolveAgentTurnUserMessage,
   reduceAgentEvents,
   type AgentTodoProjection,
 } from './agent-reducer';
@@ -41,6 +42,67 @@ describe('AgentEventReducer', () => {
     expect(state.turnsById['turn-without-answer']).toMatchObject({
       status: 'failed',
       failure: '未收到助手回复。',
+    });
+  });
+
+  it('recovers retry input for an activity-only failed turn', () => {
+    const state = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage(
+          'user-before-failure',
+          'user',
+          'turn-with-input',
+          '继续完成这轮修复',
+        ),
+      ],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: 'session-1:1',
+      status: 'idle',
+    });
+    state.turnsById['turn-activity-failure'] = {
+      id: 'turn-activity-failure',
+      status: 'failed',
+      messageIds: [],
+      activityIds: ['activity:failed'],
+      createdAtMs: 30,
+      updatedAtMs: 31,
+      failure: 'Session 操作没有完成',
+    };
+    state.turnOrder.push('turn-activity-failure');
+
+    expect(resolveAgentTurnUserMessage(state, 'turn-activity-failure')?.id)
+      .toBe('user-before-failure');
+  });
+
+  it('prefers an ambiguous follow-up when retrying its failed active turn', () => {
+    let state = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'original-prompt',
+      text: '正在执行原任务',
+      turnId: 'turn-active',
+      nowMs: 10,
+    });
+    state = appendOptimisticAgentMessage(state, {
+      clientMessageId: 'ambiguous-follow-up',
+      text: '完成后继续整理',
+      turnId: 'turn-active',
+      delivery: 'followUp',
+      nowMs: 20,
+    });
+    state = failOptimisticAgentMessage(
+      state,
+      'ambiguous-follow-up',
+      '暂时无法确认是否已接收',
+      30,
+      'ambiguous',
+    );
+
+    expect(resolveAgentTurnUserMessage(state, 'turn-active')).toMatchObject({
+      clientMessageId: 'ambiguous-follow-up',
+      admissionState: 'ambiguous',
+      blocks: [expect.objectContaining({
+        data: expect.objectContaining({ text: '完成后继续整理' }),
+      })],
     });
   });
 
@@ -78,6 +140,83 @@ describe('AgentEventReducer', () => {
     expect(state.turnsById[turnId]?.status).toBe('running');
     expect(state.activitiesById['tool:recent-running']?.status).toBe('running');
   });
+
+  it('settles stale running activity when the recent runtime projection is explicitly quiescent', () => {
+    const sessionId = 'session-recent-quiescent';
+    const turnId = 'turn:recent-stale';
+    const state = applyAgentSnapshot(
+      createAgentProjection(sessionId),
+      agentSnapshotFromResponse({
+        messages: [],
+        liveEvents: [{
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: `${sessionId}:40`,
+          sessionId,
+          turnId,
+          sequence: 40,
+          createdAtMs: 1_000,
+          eventType: 'tool_started',
+          payload: {
+            toolCallId: 'tool:recent-stale',
+            toolName: 'workspace_read',
+            summary: '已经停止但终态事件未被前台收到',
+            args: { path: 'README.md' },
+          },
+          resumeToken: `${sessionId}:40`,
+        }],
+        lastSequence: 40,
+        resumeToken: `${sessionId}:40`,
+        snapshotScope: 'recent',
+        partial: true,
+        runtimeQuiescent: true,
+        status: 'idle',
+      }),
+    );
+
+    expect(state.status).toBe('idle');
+    expect(state.turnsById[turnId]?.status).toBe('completed');
+    expect(state.activitiesById['tool:recent-stale']?.status).toBe('completed');
+  });
+  it('merges a bounded recent transcript into cached history and applies its terminal status', () => {
+    const sessionId = 'session-1';
+    const cached = applyAgentSnapshot(createAgentProjection(sessionId), {
+      messages: [
+        serverMessage('history-user', 'user', 'turn-history', '之前的问题'),
+        serverMessage('history-assistant', 'assistant', 'turn-history', '之前的回答'),
+        serverMessage('active-user', 'user', 'turn-active', '正在处理的问题'),
+      ],
+      liveEvents: [],
+      lastSequence: 10,
+      resumeToken: `${sessionId}:10`,
+      status: 'busy',
+    });
+    expect(cached.turnsById['turn-active']?.status).toBe('running');
+
+    const settled = applyAgentSnapshot(cached, agentSnapshotFromResponse({
+      messages: [
+        serverMessage('active-assistant', 'assistant', 'turn-active', '处理完成的回答'),
+      ],
+      liveEvents: [],
+      lastSequence: 11,
+      resumeToken: `${sessionId}:11`,
+      snapshotScope: 'recent',
+      partial: true,
+      runtimeQuiescent: true,
+      status: 'idle',
+    }));
+
+    expect(settled.messageOrder).toEqual([
+      'history-user',
+      'history-assistant',
+      'active-user',
+      'active-assistant',
+    ]);
+    expect(textOf(settled.messagesById['history-assistant'])).toBe('之前的回答');
+    expect(textOf(settled.messagesById['active-assistant'])).toBe('处理完成的回答');
+    expect(settled.status).toBe('idle');
+    expect(settled.turnsById['turn-active']?.status).toBe('completed');
+  });
+
 
   it('applies ordered deltas and ignores replayed duplicates', () => {
     const initial = createAgentProjection('session-1');
@@ -810,6 +949,146 @@ describe('AgentEventReducer', () => {
     expect(recovered.turnsById['history:pi-user'].activityIds).toContain('tool-proof');
   });
 
+  it('keeps one user anchor when transcript and replay media ids differ', () => {
+    const question = '收起所有工具和思考';
+    const transcriptUser = serverMessage('pi-user-with-image', 'user', 'history:pi-user-with-image', question);
+    const replayUser = serverMessage('event-user-with-image', 'user', 'turn-with-image', question);
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [{
+        ...transcriptUser,
+        attachments: ['transcript-media-copy'],
+        blocks: [
+          ...transcriptUser.blocks,
+          {
+            id: 'pi-user-with-image:image',
+            type: 'image',
+            status: 'completed',
+            presentationKind: 'image',
+            data: { mediaId: 'transcript-media-copy', receiptUrl: '/media/transcript' },
+          },
+        ],
+        createdAtMs: 1_000,
+        completedAtMs: 1_000,
+      }],
+      liveEvents: [
+        {
+          ...rawAgentEvent(41, 'message_completed', {
+            clientMessageId: 'web-image-prompt',
+            message: {
+              ...replayUser,
+              clientMessageId: 'web-image-prompt',
+              attachments: ['uploaded-media'],
+              blocks: [
+                ...replayUser.blocks,
+                {
+                  id: 'event-user-with-image:image',
+                  type: 'image',
+                  status: 'completed',
+                  presentationKind: 'image',
+                  data: { mediaId: 'uploaded-media', receiptUrl: '/media/uploaded' },
+                },
+              ],
+              createdAtMs: 1_000,
+              completedAtMs: 1_000,
+            },
+          }),
+          turnId: 'turn-with-image',
+        },
+        {
+          ...rawAgentEvent(42, 'reasoning_summary', {
+            requestId: 'reasoning-after-image',
+            summary: '正在处理图片消息',
+            source: 'provider_reasoning_summary',
+            state: 'completed',
+          }),
+          turnId: 'turn-with-image',
+        },
+      ],
+      lastSequence: 42,
+      resumeToken: 'session-1:42',
+      status: 'responding',
+    });
+
+    expect(recovered.messageOrder).toEqual(['pi-user-with-image']);
+    expect(recovered.messagesById['event-user-with-image']).toBeUndefined();
+    expect(recovered.messagesById['pi-user-with-image']).toMatchObject({
+      clientMessageId: 'web-image-prompt',
+      attachments: ['transcript-media-copy'],
+    });
+    expect(recovered.turnOrder).toEqual(['history:pi-user-with-image']);
+    expect(recovered.activitiesById['reasoning-after-image']).toMatchObject({
+      turnId: 'history:pi-user-with-image',
+    });
+  });
+
+  it('keeps distinct same-text media messages without client acceptance identity', () => {
+    const question = '分别检查这张图片';
+    const transcriptUser = serverMessage('pi-user-first-image', 'user', 'history:pi-user-first-image', question);
+    const replayUser = serverMessage('event-user-second-image', 'user', 'turn-second-image', question);
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [{
+        ...transcriptUser,
+        attachments: ['first-media'],
+        createdAtMs: 1_000,
+        completedAtMs: 1_000,
+      }],
+      liveEvents: [{
+        ...rawAgentEvent(41, 'message_completed', {
+          message: {
+            ...replayUser,
+            attachments: ['second-media'],
+            createdAtMs: 1_000,
+            completedAtMs: 1_000,
+          },
+        }),
+        turnId: 'turn-second-image',
+      }],
+      lastSequence: 41,
+      resumeToken: 'session-1:41',
+      status: 'responding',
+    });
+
+    expect(recovered.messageOrder).toEqual([
+      'pi-user-first-image',
+      'event-user-second-image',
+    ]);
+  });
+
+  it('keeps a later client-bound image message outside the replay window', () => {
+    const question = '分别检查这张图片';
+    const transcriptUser = serverMessage('pi-user-earlier-image', 'user', 'history:pi-user-earlier-image', question);
+    const replayUser = serverMessage('event-user-later-image', 'user', 'turn-later-image', question);
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [{
+        ...transcriptUser,
+        attachments: ['earlier-media'],
+        createdAtMs: 1_000,
+        completedAtMs: 1_000,
+      }],
+      liveEvents: [{
+        ...rawAgentEvent(41, 'message_completed', {
+          clientMessageId: 'web-later-image-prompt',
+          message: {
+            ...replayUser,
+            clientMessageId: 'web-later-image-prompt',
+            attachments: ['later-media'],
+            createdAtMs: 2_500,
+            completedAtMs: 2_500,
+          },
+        }),
+        turnId: 'turn-later-image',
+      }],
+      lastSequence: 41,
+      resumeToken: 'session-1:41',
+      status: 'responding',
+    });
+
+    expect(recovered.messageOrder).toEqual([
+      'pi-user-earlier-image',
+      'event-user-later-image',
+    ]);
+  });
+
   it('anchors replay-only reasoning to the matching durable turn without creating a phantom reply', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [
@@ -1391,6 +1670,85 @@ describe('AgentEventReducer', () => {
       'session-mte2oj9y-ek4g69yt',
     );
     expect(received.optimisticByClientMessageId).toEqual({});
+  });
+
+  it('reconciles a PAWOS prompt when the durable user SSE omits clientMessageId', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-pawos'), {
+      // PawSessionWorkspace admits its prompt before the runtime durable row is
+      // available. The normal PAWOS prefix must follow the same bounded path
+      // as the Home `session-*` admission.
+      clientMessageId: 'paw-01j-test-admission',
+      text: '检查掌柜问数的结果',
+      nowMs: 10,
+    });
+    const durableMessage = {
+      ...serverMessage('durable-pawos-user', 'user', 'turn-pawos', '检查掌柜问数的结果'),
+      sessionId: 'session-pawos',
+    };
+
+    const received = reduceAgentEvent(
+      optimistic,
+      {
+        ...agentEvent(2, 'message_completed', {
+          // The Pi durable user row can omit the product admission id.
+          message: durableMessage,
+        }),
+        sessionId: 'session-pawos',
+        turnId: 'turn-pawos',
+        payload: { message: durableMessage },
+      },
+    ).state;
+
+    expect(received.messageOrder).toEqual(['durable-pawos-user']);
+    expect(received.messagesById['local:paw-01j-test-admission']).toBeUndefined();
+    expect(received.messagesById['durable-pawos-user']?.clientMessageId).toBe(
+      'paw-01j-test-admission',
+    );
+    expect(received.optimisticByClientMessageId).toEqual({});
+  });
+
+  it('replaces a fast Room mirror when the durable participant user event arrives', () => {
+    const clientMessageId = 'eval-lab:evaluation-wizard';
+    const mirrorBase = serverMessage(
+      'room-event:room-a:2',
+      'user',
+      'room-turn:root-a',
+      '冻结本轮评测合同',
+    );
+    const mirror = {
+      ...mirrorBase,
+      clientMessageId,
+      createdAtMs: 1_000,
+      completedAtMs: 1_000,
+      blocks: [{
+        ...mirrorBase.blocks[0],
+        source: { kind: 'room_event', ref: 'room-a:2' },
+      }],
+    };
+    const projected = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [mirror],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'busy',
+      partial: true,
+    });
+    const durable = {
+      ...serverMessage('pi-user', 'user', 'pi-turn-a', '冻结本轮评测合同'),
+      createdAtMs: 6_100,
+      completedAtMs: 6_100,
+    };
+
+    const received = reduceAgentEvent(projected, {
+      ...agentEvent(1, 'message_completed', { message: durable }),
+      turnId: 'pi-turn-a',
+      createdAtMs: 6_100,
+      payload: { message: durable },
+    }).state;
+
+    expect(received.messageOrder).toEqual(['pi-user']);
+    expect(received.messagesById['room-event:room-a:2']).toBeUndefined();
+    expect(received.messagesById['pi-user']?.clientMessageId).toBe(clientMessageId);
   });
 
   it('settles a synthetic busy snapshot turn when the real turn completes', () => {

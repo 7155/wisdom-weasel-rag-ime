@@ -11,8 +11,16 @@ from rag_ime.agent_configuration import (
 from rag_ime.agent_execution_policy import read_only_blocks_effect
 from rag_ime.agent_session_policy import AgentSessionPolicyService
 from rag_ime.agent_sessions import AgentSessionStore
-from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
-from rag_ime.agent_tools import ControlToolGateway, _TOOL_SPEC_BY_ID
+from rag_ime.agent_tool_ids import (
+    CONTROL_TOOL_IDS,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
+)
+from rag_ime.agent_tools import (
+    ControlToolGateway,
+    _TOOL_SPEC_BY_ID,
+    _approval_payload_digest,
+)
 from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.pi_runtime import _tools_for_session
 
@@ -250,6 +258,51 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         )
         self.assertEqual(memory["disclosure"]["state"], "disclosed")
         self.assertEqual(memory["authorization"]["state"], "denied")
+
+    def test_unrestricted_profiles_disclose_tools_skills_and_extensions(self) -> None:
+        for profile, execution_mode in (
+            (FULL_ACCESS_TOOL_PROFILE, "per_action"),
+            (DANGEROUS_AUTO_APPROVE_TOOL_PROFILE, "full_trust"),
+        ):
+            with self.subTest(profile=profile):
+                session = self.sessions.create(title=f"unrestricted {profile}")
+                session_id = str(session["id"])
+                self.policy.update_session(
+                    session_id,
+                    {
+                        "capabilityDisclosurePreferences": {
+                            "tool:memory": "disabled",
+                            "skill:quality-gate": "disabled",
+                            "extension:session-review": "disabled",
+                        }
+                    },
+                )
+                self.policy.update_session(
+                    session_id,
+                    {
+                        "mode": "coordinator",
+                        "executionMode": execution_mode,
+                        "toolProfileVersion": profile,
+                        "workspaceRoots": [str(self.root)],
+                    },
+                )
+
+                items = self._gateway().manifests(session_id=session_id)["items"]
+                by_id = {
+                    str(item["canonicalId"]): item
+                    for item in items
+                }
+                for canonical_id in (
+                    "tool:memory",
+                    "skill:quality-gate",
+                    "extension:session-review",
+                ):
+                    disclosure = by_id[canonical_id]["disclosure"]
+                    self.assertEqual(disclosure["state"], "disclosed")
+                    self.assertEqual(
+                        disclosure["reason"],
+                        "unrestricted_session_profile",
+                    )
 
     def test_busy_mutation_is_rejected_without_retiring_runtime(self) -> None:
         session = self.sessions.create(title="busy")
@@ -492,6 +545,159 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         }
         self.assertNotIn("todo", runtime_names)
         self.assertNotIn("agent_goal", runtime_names)
+
+    def test_unrestricted_profiles_expose_ask_and_every_tool_operation(self) -> None:
+        for profile, execution_mode in (
+            (FULL_ACCESS_TOOL_PROFILE, "per_action"),
+            (DANGEROUS_AUTO_APPROVE_TOOL_PROFILE, "full_trust"),
+        ):
+            session = self.sessions.create(
+                title=profile,
+                mode="coordinator",
+                tool_profile_version=profile,
+                execution_mode=execution_mode,
+                workspace_roots=[str(self.root)],
+            )
+            self.policy.update_session(
+                str(session["id"]),
+                {
+                    "capabilityDisclosurePreferences": {
+                        "tool:overview": "disabled",
+                    },
+                },
+            )
+            catalog = self._gateway().manifests(session_id=str(session["id"]))
+            ask = next(
+                item
+                for item in catalog["items"]
+                if item["canonicalId"] == "tool:ask"
+            )
+            self.assertEqual(ask["authorization"]["state"], "authorized")
+            overview = next(
+                item
+                for item in catalog["items"]
+                if item["canonicalId"] == "tool:overview"
+            )
+            self.assertEqual(overview["disclosure"]["effective"], "enabled")
+            self.assertEqual(
+                overview["disclosure"]["reason"],
+                "unrestricted_session_profile",
+            )
+            self.assertIn(
+                "overview",
+                {
+                    str(item["name"])
+                    for item in self._gateway().runtime_manifests(session)
+                },
+            )
+            for item in catalog["items"]:
+                if item.get("kind") != "tool" or item.get("id") == "ask":
+                    continue
+                self.assertEqual(
+                    item["profileOperations"][profile],
+                    item["operations"],
+                    msg=f"{profile} did not expose all operations for {item['id']}",
+                )
+
+    def test_approval_preview_state_fences_follow_live_unrestricted_profiles(self) -> None:
+        class _PlanningManagement:
+            def __init__(self) -> None:
+                self.task = {
+                    "id": "task:1",
+                    "title": "task",
+                    "status": "done",
+                    "updatedAtMs": 2,
+                }
+                self.calls: list[dict[str, object]] = []
+
+            def planning_dashboard(self, *, plan_date: str, project: str) -> dict[str, object]:
+                del plan_date, project
+                return {"tasks": [dict(self.task)]}
+
+            def planning_task_action(self, payload: dict[str, object]) -> dict[str, object]:
+                self.calls.append(dict(payload))
+                return {
+                    "task": dict(self.task),
+                    "eventId": "event:1",
+                    "undoAvailable": True,
+                    "auditId": 1,
+                }
+
+        action_payload = {
+            "taskId": "task:1",
+            "action": "complete",
+            "date": "2026-01-01",
+        }
+        base_state = {"status": "todo", "updatedAtMs": 1}
+        management = _PlanningManagement()
+        gateway = self._gateway()
+        gateway.management = management
+
+        for profile, execution_mode in (
+            (FULL_ACCESS_TOOL_PROFILE, "per_action"),
+            (DANGEROUS_AUTO_APPROVE_TOOL_PROFILE, "full_trust"),
+        ):
+            session = self.sessions.create(
+                title=profile,
+                mode="coordinator",
+                tool_profile_version=profile,
+                execution_mode=execution_mode,
+                workspace_roots=[str(self.root)],
+            )
+            session_id = str(session["id"])
+            approval = {
+                "approvalId": f"approval:{profile}",
+                "sessionId": session_id,
+                "state": "approved",
+                "toolId": "planning",
+                "operation": "task_action",
+                "preview": {
+                    "actionPayload": action_payload,
+                    "baseState": base_state,
+                    "summary": "complete task",
+                },
+                "payloadSha256": "stale-preview-digest",
+            }
+            self.assertFalse(gateway._approval_preview_state_fence_applies(session_id))
+            self.assertTrue(
+                gateway._approval_payload_matches(approval, "current-preview-digest")
+            )
+            self.assertEqual(gateway.apply_approval(approval)["mutationApplied"], True)
+
+        legacy = self.sessions.create(
+            title="legacy preview fences",
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            workspace_roots=[str(self.root)],
+        )
+        legacy_id = str(legacy["id"])
+        legacy_digest = _approval_payload_digest(
+            session_id=legacy_id,
+            tool="planning",
+            operation="task_action",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        legacy_approval = {
+            "approvalId": "approval:legacy",
+            "sessionId": legacy_id,
+            "state": "approved",
+            "toolId": "planning",
+            "operation": "task_action",
+            "preview": {
+                "actionPayload": action_payload,
+                "baseState": base_state,
+                "summary": "complete task",
+            },
+            "payloadSha256": legacy_digest,
+        }
+        self.assertTrue(gateway._approval_preview_state_fence_applies(legacy_id))
+        self.assertFalse(
+            gateway._approval_payload_matches(legacy_approval, "changed-preview-digest")
+        )
+        with self.assertRaisesRegex(ValueError, "task changed after"):
+            gateway.apply_approval(legacy_approval)
 
     def test_reviewer_and_read_only_collaborator_manifest_fences_workspace_mutations(
         self,

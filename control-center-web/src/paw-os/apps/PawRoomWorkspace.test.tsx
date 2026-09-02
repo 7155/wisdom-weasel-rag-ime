@@ -172,10 +172,9 @@ describe('PAWOS Room collaboration tools', () => {
 
     const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
     expect(within(rounds).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。')).toBeInTheDocument();
-    expect(within(rounds).getAllByRole('row')).toHaveLength(2);
+    expect(within(rounds).getByRole('region', { name: 'Venus 当前任务' })).toBeInTheDocument();
     expect(within(rounds).getByRole('region', { name: 'Earth 最终结果' })).toBeInTheDocument();
     expect(within(rounds).getByRole('region', { name: 'Mars 最终结果' })).toBeInTheDocument();
-    expect(within(rounds).getByRole('table')).toHaveTextContent('Venus');
     expect(screen.queryByRole('log', { name: 'Room 公开对话' })).not.toBeInTheDocument();
     expect(openWindow).not.toHaveBeenCalled();
 
@@ -352,7 +351,7 @@ describe('PAWOS Room collaboration tools', () => {
     );
     await screen.findByRole('textbox', { name: '协作消息' });
 
-    const resume = screen.getByRole('button', { name: '恢复 Earth 并重新分派' });
+    const resume = screen.getByRole('button', { name: '恢复 Venus 并重新分派' });
     await user.click(resume);
     await waitFor(() => expect(transport.requests.some(({ request }) => (
       request.pathId === 'agent.room.workItem.resume'
@@ -607,6 +606,34 @@ describe('PAWOS Room collaboration tools', () => {
       request.pathId === 'agent.room.participant.update'
       && (request.body as { collaborationRole?: string }).collaborationRole === 'reviewer'
     ))).toBe(true));
+  });
+
+  it('offers only the two full-system collaboration permissions while displaying legacy state', async () => {
+    const user = userEvent.setup();
+    const { container, transport } = renderRoom(900);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    await user.click(within(tools).getByRole('tab', { name: '治理' }));
+    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
+    const permission = within(governance).getByRole('combobox', { name: 'Room 执行权限' });
+
+    expect(permission).toHaveTextContent('工作区托管');
+    await user.click(permission);
+    const listbox = await screen.findByRole('listbox');
+    expect(within(listbox).getAllByRole('option')).toHaveLength(2);
+    expect(within(listbox).getByRole('option', { name: '全权限' })).toBeInTheDocument();
+    expect(within(listbox).getByRole('option', { name: '全自动' })).toBeInTheDocument();
+    expect(within(listbox).queryByRole('option', { name: '工作区托管' })).not.toBeInTheDocument();
+    await user.click(within(listbox).getByRole('option', { name: '全权限' }));
+
+    expect(governance).toHaveTextContent('整个系统与所有 Tool 可用；有影响的操作逐项请求确认');
+    await user.click(within(governance).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.room.archive')).toBe(true));
+    const request = transport.requests.find(({ request: item }) => item.pathId === 'agent.room.archive')?.request;
+    expect(request?.body).toMatchObject({ executionMode: 'per_action' });
+    expect(request?.body).not.toHaveProperty('workspaceScopeConfirmation');
   });
 
   it('does not initialize an inactive Room surface', async () => {

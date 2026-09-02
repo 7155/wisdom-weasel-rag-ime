@@ -15,6 +15,7 @@ from pathlib import Path
 from .agent_artifacts import AgentArtifactStore
 from .agent_context_runtime import AgentContextRuntime
 from .agent_events import AgentEventHub
+from .agent_execution_policy import unrestricted_workspace_policy_active
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_driver import (
     AgentRuntimeDriver,
@@ -26,6 +27,7 @@ from .agent_runtime_driver import (
 )
 from .agent_sessions import AgentSessionStore
 from .agent_templates import AgentTemplate, agent_template, agent_template_catalog
+from .agent_workspace_roots import existing_workspace_roots
 from .contracts.json_schema import validate_contract, validate_json_schema
 from .db import apply_database_migrations
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeManager
@@ -1948,6 +1950,7 @@ class AgentDelegationCoordinator:
             try:
                 for ordinal, (task, template) in enumerate(zip(tasks, templates, strict=True)):
                     parent_profile = str(parent.get("toolProfileVersion") or "control-center-v1")
+                    unrestricted_parent = unrestricted_workspace_policy_active(parent)
                     parent_execution_mode = str(parent.get("executionMode") or "").strip()
                     access = str(task.get("access") or "inherit")
                     writable = access == "write"
@@ -1965,27 +1968,44 @@ class AgentDelegationCoordinator:
                     # templates still need the parent's roots for browse,
                     # search and read tools; their assistant mode, read-only
                     # execution policy and tool profile remain the write gate.
-                    child_roots = requested_roots or parent_roots
-                    if writable and not child_roots:
-                        raise ValueError("writable delegated tasks require an authorized workspace")
                     if requested_roots:
-                        authorized_roots = {
-                            str(Path(value).expanduser().resolve(strict=False))
-                            for value in parent_roots
-                        }
-                        if any(
-                            str(Path(value).expanduser().resolve(strict=False))
-                            not in authorized_roots
+                        requested_roots = list(existing_workspace_roots(requested_roots))
+                        normalized_requested_roots = tuple(
+                            Path(value).expanduser().resolve(strict=False)
                             for value in requested_roots
-                        ):
+                        )
+                        normalized_parent_roots = tuple(
+                            Path(value).expanduser().resolve(strict=False)
+                            for value in parent_roots
+                        )
+                        if unrestricted_parent:
+                            authorized = normalized_parent_roots + (Path("/"),)
+                            inherited = all(
+                                any(
+                                    root == candidate or root in candidate.parents
+                                    for root in authorized
+                                )
+                                for candidate in normalized_requested_roots
+                            )
+                        else:
+                            inherited = all(
+                                candidate in normalized_parent_roots
+                                for candidate in normalized_requested_roots
+                            )
+                        if not inherited:
                             raise ValueError(
                                 "delegated workspaceRoots must be inherited from the parent Session"
                             )
+                    child_roots = requested_roots or parent_roots
+                    if writable and not child_roots:
+                        raise ValueError("writable delegated tasks require an authorized workspace")
                     child_profile = (
                         "subagent-readonly-v1"
                         if access == "read_only"
                         or parent_profile == "subagent-readonly-v1"
                         or parent_execution_mode == "read_only"
+                        else parent_profile
+                        if writable and unrestricted_parent
                         else "subagent-worker-v1"
                         if writable
                         else template.tool_profile_version
@@ -2047,15 +2067,32 @@ class AgentDelegationCoordinator:
                         thinking_level=selected_thinking_level,
                         tool_profile_version=child_profile,
                         execution_mode=child_execution_mode,
-                        pi_skills_enabled=bool(
-                            task.get("piSkillsEnabled")
-                            if task.get("piSkillsEnabled") is not None
-                            else parent.get("piSkillsEnabled", False)
+                        project_context_enabled=(
+                            True
+                            if writable and unrestricted_parent
+                            else bool(
+                                task.get("projectContextEnabled")
+                                if task.get("projectContextEnabled") is not None
+                                else parent.get("projectContextEnabled", False)
+                            )
                         ),
-                        codex_skills_enabled=bool(
-                            task.get("codexSkillsEnabled")
-                            if task.get("codexSkillsEnabled") is not None
-                            else parent.get("codexSkillsEnabled", False)
+                        pi_skills_enabled=(
+                            True
+                            if writable and unrestricted_parent
+                            else bool(
+                                task.get("piSkillsEnabled")
+                                if task.get("piSkillsEnabled") is not None
+                                else parent.get("piSkillsEnabled", False)
+                            )
+                        ),
+                        codex_skills_enabled=(
+                            True
+                            if writable and unrestricted_parent
+                            else bool(
+                                task.get("codexSkillsEnabled")
+                                if task.get("codexSkillsEnabled") is not None
+                                else parent.get("codexSkillsEnabled", False)
+                            )
                         ),
                         workspace_roots=child_roots,
                         session_kind="subagent_runtime",
@@ -2097,7 +2134,10 @@ class AgentDelegationCoordinator:
                                 tool for tool in requested_tools if tool in parent_tools
                             ]
                         )
-                    if requested_tools is not None:
+                    if (
+                        requested_tools is not None
+                        and not (writable and unrestricted_parent)
+                    ):
                         child = self.sessions.set_runtime_policy(
                             str(child["id"]),
                             mode=child_mode,

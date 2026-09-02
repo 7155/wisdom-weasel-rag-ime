@@ -877,6 +877,107 @@ describe('PluginsFeature', () => {
     expect(screen.getByRole('heading', { name: '还没有额外扩展' })).toBeVisible();
   });
 
+  it('browses Skills by source, reads bounded detail, and scopes Package actions', async () => {
+    const user = userEvent.setup();
+    const packageSkill = {
+      skillId: 'package-skill',
+      name: 'Package Skill',
+      description: '来自已安装 Package 的 Skill',
+      sourceKind: 'package',
+      packageId: 'skills-package',
+      packageVersion: '1.2.0',
+      resourcePath: 'skills/package-skill/SKILL.md',
+      enabled: true,
+      installed: true,
+      installState: 'enabled',
+      digest: `sha256:${'1'.repeat(64)}`,
+      contentRevision: `sha256:${'1'.repeat(64)}`,
+      sizeBytes: 240,
+      management: 'package',
+      managementReason: 'Skill 生命周期属于整个 Package。',
+      actions: ['enable', 'disable', 'update', 'uninstall'],
+    };
+    const projectSkill = {
+      skillId: 'project-skill',
+      name: 'Project Skill',
+      description: '来自当前项目的 Skill',
+      sourceKind: 'project',
+      resourcePath: 'skills/project-skill/SKILL.md',
+      enabled: null,
+      installed: true,
+      installState: 'project',
+      digest: `sha256:${'2'.repeat(64)}`,
+      contentRevision: `sha256:${'2'.repeat(64)}`,
+      sizeBytes: 180,
+      management: 'inspect_only',
+      managementReason: '项目 Skill 没有独立 Package 生命周期。',
+      actions: [],
+    };
+    const transport = renderPlugins({
+      'agent.extensions.list': {
+        schemaVersion: 'rag-ime.plugin-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        items: [{ id: 'skills-package', version: '1.2.0', enabled: true, installed: true }],
+      },
+      'agent.extensions.skills.list': {
+        schemaVersion: 'rag-ime.skill-inventory.v1',
+        ok: true,
+        runtimeAvailable: true,
+        revision: `sha256:${'a'.repeat(64)}`,
+        items: [packageSkill, projectSkill],
+      },
+      'agent.extensions.skills.get': {
+        schemaVersion: 'rag-ime.skill-detail.v1',
+        ok: true,
+        revision: packageSkill.contentRevision,
+        item: {
+          ...packageSkill,
+          body: '# Package Skill\n\n只读正文来自服务器。',
+          bodyBytes: 48,
+          contentBytes: 48,
+          bodyTruncated: false,
+        },
+      },
+      'agent.extensions.preview': {
+        ok: true,
+        previewToken: 'preview:disable:skills-package',
+        payloadSha256: 'b'.repeat(64),
+        summary: {
+          action: 'disable',
+          pluginId: 'skills-package',
+          displayName: 'Package Skill',
+          expectedEnabled: false,
+        },
+      },
+    }, '/plugins?view=skills');
+
+    expect(await screen.findByRole('heading', { name: 'Skills 管理', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Package Skill/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Project Skill/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '来源' }));
+    await user.click(screen.getByRole('option', { name: '当前项目' }));
+    expect(screen.queryByRole('button', { name: /Package Skill/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Project Skill/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '来源' }));
+    await user.click(screen.getByRole('option', { name: '全部来源' }));
+    await user.click(screen.getByRole('button', { name: /Package Skill/ }));
+    expect(await screen.findByText(/只读正文来自服务器。/)).toBeVisible();
+    expect(screen.getByText('Package 范围管理')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '停用整个 Package' }));
+    await waitFor(() => {
+      const request = transport.requests.find((candidate) => (
+        candidate.request.pathId === 'agent.extensions.preview'
+      ));
+      expect(request?.request.body).toMatchObject({
+        action: 'disable',
+        pluginId: 'skills-package',
+      });
+    });
+    expect(screen.getByRole('region', { name: '待确认的插件更改' })).toBeVisible();
+    expect(screen.getByRole('button', { name: '确认更改' })).toBeVisible();
+  });
+
 });
 
 function renderPlugins(

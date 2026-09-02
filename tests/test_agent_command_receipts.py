@@ -391,6 +391,79 @@ class AgentCommandReceiptStoreTests(unittest.TestCase):
                 },
             )
 
+    def test_delivery_fallback_is_a_new_command_not_an_exact_replay(
+        self,
+    ) -> None:
+        steer_payload = {
+            "message": "继续处理",
+            "attachments": [],
+            "delivery": "steer",
+            "retryOfClientMessageId": "",
+        }
+        failed_steer = self.store.begin(
+            command_scope="session_prompt",
+            scope_id="delivery-fallback",
+            client_message_id="steer-1",
+            payload=steer_payload,
+        )
+        self.store.fail(
+            failed_steer,
+            command_scope="session_prompt",
+            scope_id="delivery-fallback",
+            client_message_id="steer-1",
+            error=RuntimeError("Session is idle"),
+            cause_code="SESSION_IDLE",
+        )
+
+        with self.assertRaises(AgentCommandReceiptConflict) as same_id:
+            self.store.begin(
+                command_scope="session_prompt",
+                scope_id="delivery-fallback",
+                client_message_id="steer-1",
+                payload={
+                    **steer_payload,
+                    "delivery": "prompt",
+                },
+            )
+        self.assertEqual(
+            same_id.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_CONFLICT",
+                "commandReceipt": {
+                    "state": "conflict",
+                    "clientMessageId": "steer-1",
+                    "recoveryState": "new_command_required",
+                },
+            },
+        )
+
+        with self.assertRaises(AgentCommandReceiptConflict) as lineage:
+            self.store.begin(
+                command_scope="session_prompt",
+                scope_id="delivery-fallback",
+                client_message_id="prompt-with-lineage",
+                payload={
+                    **steer_payload,
+                    "delivery": "prompt",
+                    "retryOfClientMessageId": "steer-1",
+                },
+            )
+        self.assertEqual(
+            lineage.exception.recovery_state,
+            "new_command_required",
+        )
+
+        new_prompt = self.store.begin(
+            command_scope="session_prompt",
+            scope_id="delivery-fallback",
+            client_message_id="prompt-2",
+            payload={
+                **steer_payload,
+                "delivery": "prompt",
+            },
+        )
+        self.assertFalse(new_prompt.is_replay)
+
     def test_acceptance_evidence_fences_failure_and_fail_replays_winner(
         self,
     ) -> None:

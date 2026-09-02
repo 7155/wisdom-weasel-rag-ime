@@ -53,7 +53,45 @@ export interface AgentMemoryMaintenanceStatusV1 {
     reservedContextTokens: number;
     [k: string]: unknown;
   };
-  pendingDraftCount: number;
+  catalogConsolidation: {
+    schemaVersion: 'rag-ime.memory-catalog-consolidation.v1';
+    project: string;
+    enabled: boolean;
+    automaticOrganizationEnabled: boolean;
+    cadenceDays: number;
+    receiptId: string;
+    state: 'never' | 'running' | 'completed' | 'failed';
+    lastAttemptAtMs: number;
+    lastCompletionAtMs: number;
+    nextDueAtMs: number;
+    catalogDigest: string;
+    lastSuccessfulCatalogDigest: string;
+    lastSuccessfulCatalogCommittedAtMs: number;
+    attemptCatalogDigest: string;
+    curationRunId: string;
+    attemptCount: number;
+    retryCount: number;
+    result: {
+      [k: string]: unknown;
+    };
+    error: string;
+    createdAtMs: number;
+    updatedAtMs: number;
+    leaseExpiresAtMs: number;
+    due: boolean;
+    dueReason:
+      | 'first_run'
+      | 'scheduled'
+      | 'retry_backoff'
+      | 'running'
+      | 'lease_expired'
+      | 'catalog_consolidation_disabled'
+      | 'automatic_organization_disabled'
+      | 'not_due';
+    observedAtMs: number;
+    [k: string]: unknown;
+  };
+  pendingDraftCount?: number;
   ownerCuration: {
     schemaVersion: 'rag-ime.owner-memory-curation-status.v1';
     ok: true;
@@ -126,7 +164,8 @@ export interface AgentMemoryMaintenanceStatusV1 {
     };
     ownerKind: 'user' | 'shared' | 'agent' | 'session' | 'room';
     ownerId: string;
-    runKind: 'legacy' | 'daily_curation' | 'manual_curation' | 'dream_insight';
+    runKind:
+      'legacy' | 'daily_curation' | 'manual_curation' | 'dream_insight' | 'catalog_consolidation';
     [k: string]: unknown;
   }[];
   [k: string]: unknown;

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import base64
 import hashlib
 import tempfile
@@ -1404,9 +1406,17 @@ class DebugManagementApiTests(unittest.TestCase):
             "jobId": "memory-maintenance:active",
             "state": "running",
         }
+        catalog = {
+            "schemaVersion": "rag-ime.memory-catalog-consolidation.v1",
+            "project": "wisdom-weasel-rag-ime",
+            "state": "never",
+            "due": True,
+            "dueReason": "first_run",
+        }
         with (
             patch.object(self.service, "memory_projection_status", return_value=projection) as project,
             patch.object(self.service.memory_maintenance_jobs, "latest_status", return_value=job) as latest_job,
+            patch.object(self.service.memory_catalog_scheduler, "status", return_value=catalog) as catalog_status,
             patch("rag_ime.debug_server.memory_compile_due") as compile_due,
             patch("rag_ime.debug_server.owner_memory_curation_status") as owner_status,
         ):
@@ -1420,13 +1430,81 @@ class DebugManagementApiTests(unittest.TestCase):
                 "schemaVersion": "rag-ime.agent-memory-maintenance-status.v1",
                 "ok": True,
                 "job": job,
+                "catalogConsolidation": {
+                    **catalog,
+                    "enabled": True,
+                    "automaticOrganizationEnabled": True,
+                    "cadenceDays": 7,
+                },
                 "projection": projection,
             },
         )
         project.assert_called_once_with()
         latest_job.assert_called_once_with(project=self.service.config.project)
+        catalog_status.assert_called_once_with(self.service.config.project)
         compile_due.assert_not_called()
         owner_status.assert_not_called()
+
+    def test_global_catalog_unchanged_digest_skips_a_second_model_call(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=False,
+            catalog_consolidation_enabled=True,
+            catalog_consolidation_cadence_days=7,
+        )
+        def organizer_result(
+            _request: object,
+            *,
+            source_bundle: Mapping[str, object],
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            sealed_digest = str(source_bundle["catalogDigest"])
+            return {
+                "ok": True,
+                "modelCalled": True,
+                "sealedCatalogDigest": sealed_digest,
+                "storedRun": {
+                    "runId": "memory-book-run:catalog-1",
+                    "status": "applied",
+                    "sealedCatalogDigest": sealed_digest,
+                },
+            }
+
+        with patch.object(
+            self.service,
+            "_knowledge_workbench_database_organizer",
+            side_effect=organizer_result,
+        ) as organizer:
+            first = self.service._execute_gateway_memory_catalog_consolidation(
+                project="wisdom-weasel-rag-ime",
+                manual=True,
+                managed=managed,
+            )
+            second = self.service._execute_gateway_memory_catalog_consolidation(
+                project="wisdom-weasel-rag-ime",
+                manual=True,
+                managed=managed,
+            )
+
+        self.assertTrue(first["ok"])
+        self.assertFalse(first["skipped"])
+        self.assertTrue(first["modelCalled"])
+        self.assertEqual(first["state"], "completed")
+        self.assertTrue(first["catalogDigest"])
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["skipped"])
+        self.assertFalse(second["modelCalled"])
+        self.assertEqual(second["reason"], "catalog_unchanged")
+        self.assertEqual(second["catalogDigest"], first["catalogDigest"])
+        self.assertEqual(second["curationRunId"], first["curationRunId"])
+        self.assertEqual(second["state"], "completed")
+        organizer.assert_called_once()
+        handed_off_bundle = organizer.call_args.kwargs["source_bundle"]
+        self.assertEqual(
+            handed_off_bundle["catalogDigest"],
+            first["catalogDigest"],
+        )
+        self.assertTrue(handed_off_bundle["catalogComplete"])
 
     def test_generic_memory_organizer_auto_applies_a_valid_reused_draft(self) -> None:
         event_ref = self.core.record_event(
@@ -1558,6 +1636,7 @@ class DebugManagementApiTests(unittest.TestCase):
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,
             dreaming_enabled=False,
+            catalog_consolidation_enabled=False,
         )
         executor = Mock(
             reference="openai-codex/gpt-5.6-luna",
@@ -2659,9 +2738,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(maintenance["policy"], "auto_governed")
         self.assertTrue(maintenance["autoApply"])
         self.assertFalse(maintenance["scheduledDraftOnly"])
+        self.assertEqual(maintenance["catalogConsolidation"]["state"], "never")
         self.assertEqual(
             set(maintenance_activity),
-            {"schemaVersion", "ok", "job", "projection"},
+            {"schemaVersion", "ok", "job", "catalogConsolidation", "projection"},
         )
         self.assertEqual(
             maintenance_activity["schemaVersion"],

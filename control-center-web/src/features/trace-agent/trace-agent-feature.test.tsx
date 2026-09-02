@@ -65,7 +65,186 @@ describe('TraceAgentFeature', () => {
     expect(prompt).toContain('建议主诊断域：Memory 维护结果与 Runtime 失败链');
     expect(prompt).toContain('没有命中条件的诊断域必须标记为 not_applicable');
     expect(prompt).toContain('Room / WorkItem / 子 Agent 只在 inspect 返回真实协作绑定时启用');
+    expect(prompt).toContain('"failureAttribution"');
+    expect(prompt).toContain('"primaryLayer": "tool"');
+    expect(prompt.indexOf('"layer": "tool"')).toBeLessThan(prompt.indexOf('"layer": "skill"'));
+    expect(prompt.indexOf('"layer": "skill"')).toBeLessThan(prompt.indexOf('"layer": "template"'));
+    expect(prompt.indexOf('"layer": "template"')).toBeLessThan(prompt.indexOf('"layer": "workflow"'));
+    expect(prompt.indexOf('"layer": "workflow"')).toBeLessThan(prompt.indexOf('"layer": "model"'));
     expect(prompt).not.toContain('请使用现有 Observability/TraceStore/Eval 与对象本身的真实记录，覆盖：');
+  });
+
+  it('ignores canonical and handoff Session roots when launching full-disk repair', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'session',
+      entityId: 'session-source',
+      sessionId: 'session-source',
+      title: '原 Session 执行失败',
+      summary: '请 Trace 诊断并修复。',
+      sourceRoute: '/agent?session=session-source',
+      workspaceRoots: ['/untrusted/url/root'],
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    expect(await screen.findByRole('region', { name: '已选择诊断对象' })).toHaveTextContent('原 Session 执行失败');
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    const repairCreate = transport.requests
+      .filter(({ request }) => request.pathId === 'agent.sessions.create')
+      .at(-1)?.request;
+    expect(repairCreate?.body).toMatchObject({
+      executionMode: 'full_trust',
+      workspaceRoots: ['/'],
+    });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/workspace/paw'] });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/untrusted/url/root'] });
+  });
+
+  it('ignores canonical and handoff Room roots when launching full-disk repair', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({
+      rooms: [{
+        id: 'room-source',
+        title: '失败的协作',
+        status: 'active',
+        updatedAtMs: 110,
+        participantCount: 3,
+        workspaceRoots: ['/workspace/room'],
+      }],
+    });
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'room',
+      entityId: 'room-source',
+      roomId: 'room-source',
+      title: 'Room 协作失败',
+      summary: '请 Trace 诊断并修复。',
+      sourceRoute: '/rooms?room=room-source',
+      workspaceRoots: ['/untrusted/url/root'],
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    expect(await screen.findByRole('region', { name: '已选择诊断对象' })).toHaveTextContent('Room 协作失败');
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    const repairCreate = transport.requests
+      .filter(({ request }) => request.pathId === 'agent.sessions.create')
+      .at(-1)?.request;
+    expect(repairCreate?.body).toMatchObject({
+      executionMode: 'full_trust',
+      workspaceRoots: ['/'],
+    });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/workspace/room'] });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/untrusted/url/root'] });
+  });
+
+  it('uses full-disk repair authority for a Run even when a canonical Session root exists', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'runtime',
+      entityId: 'run-source',
+      runId: 'run-source',
+      title: '运行失败',
+      summary: '从运行记录进入诊断。',
+      sourceRoute: '/observability?runId=run-source',
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    expect(await screen.findByRole('region', { name: '已选择诊断对象' })).toHaveTextContent('run-source');
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    const repairCreate = transport.requests
+      .filter(({ request }) => request.pathId === 'agent.sessions.create')
+      .at(-1)?.request;
+    expect(repairCreate?.body).toMatchObject({
+      executionMode: 'full_trust',
+      workspaceRoots: ['/'],
+    });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/workspace/paw'] });
+  });
+
+  it('uses full-disk repair authority for a Memory run regardless of its source workspace', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport();
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'memory',
+      entityId: 'memory-maintenance:job-1',
+      runId: 'run-source',
+      title: '记忆维护运行失败',
+      summary: '维护运行写入失败。',
+      sourceRoute: '/memory?view=activity',
+      workspaceRoots: ['/untrusted/url/root'],
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    expect(await screen.findByRole('region', { name: '已选择诊断对象' })).toHaveTextContent('记忆维护运行失败');
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    const repairCreate = transport.requests
+      .filter(({ request }) => request.pathId === 'agent.sessions.create')
+      .at(-1)?.request;
+    expect(repairCreate?.body).toMatchObject({
+      executionMode: 'full_trust',
+      workspaceRoots: ['/'],
+    });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/workspace/paw'] });
+    expect(repairCreate?.body).not.toMatchObject({ workspaceRoots: ['/untrusted/url/root'] });
+  });
+
+  it('launches full-disk repair when a Run has no canonical Session workspace binding', async () => {
+    const user = userEvent.setup();
+    const unbound = runObservationSnapshot([
+      observationEvent(1, '', ''),
+    ], false);
+    const transport = traceAgentTransport({ observationSource: unbound });
+    const route = buildTraceAgentHandoffRoute({
+      kind: 'runtime',
+      entityId: 'run-source',
+      runId: 'run-source',
+      title: '无 Session 绑定的运行',
+      summary: '只有运行证据。',
+      sourceRoute: '/observability?runId=run-source',
+      occurredAtMs: 123,
+    });
+    renderFeature(transport, [], [route]);
+
+    expect(await screen.findByRole('region', { name: '已选择诊断对象' })).toHaveTextContent('run-source');
+    await user.click(screen.getByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    const repairTrigger = within(report).getByRole('button', { name: '交给 Agent 修复' });
+    expect(repairTrigger).toBeEnabled();
+    await user.click(repairTrigger);
+    expect(screen.getByTestId('trace-agent-repair-confirmation')).toHaveTextContent('完整磁盘（根目录 /）');
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
+
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    const repairCreate = transport.requests
+      .filter(({ request }) => request.pathId === 'agent.sessions.create')
+      .at(-1)?.request;
+    expect(repairCreate?.body).toMatchObject({ workspaceRoots: ['/'] });
+    expect(within(report).queryByText(/canonical Session 工作区绑定/)).not.toBeInTheDocument();
   });
 
   it('keeps a handoff-only input usable without inventing a runId or fetching a canonical snapshot', async () => {
@@ -211,6 +390,31 @@ describe('TraceAgentFeature', () => {
     )).length).toBeGreaterThanOrEqual(2);
   });
 
+  it('waits for terminal settlement before finalizing a canonical structured snapshot', async () => {
+    const user = userEvent.setup();
+    const completedWhileBusy = {
+      ...diagnosticSessionSnapshot(),
+      status: 'busy',
+    };
+    const transport = traceAgentTransport({
+      diagnosticSnapshots: [completedWhileBusy, diagnosticSessionSnapshot()],
+    });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    await waitFor(() => expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.params?.sessionId === 'agent:trace-diagnostic'
+    ))).toHaveLength(1));
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'observability.traceDiagnosticReport.finalize'
+    ))).toHaveLength(0);
+
+    await waitFor(() => expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'observability.traceDiagnosticReport.finalize'
+    ))).toHaveLength(1), { timeout: 3_500 });
+  });
+
   it('finalizes a faulted diagnostic Session into a persisted failed report', async () => {
     const user = userEvent.setup();
     const reportId = `trace-report:${'f'.repeat(32)}`;
@@ -279,11 +483,16 @@ describe('TraceAgentFeature', () => {
     const start = await screen.findByRole('button', { name: '开始诊断' });
 
     vi.useFakeTimers();
-    await act(async () => {
-      start.click();
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    const report = screen.getByRole('region', { name: 'Trace 诊断报告' });
+    start.click();
+    let report = screen.queryByRole('region', { name: 'Trace 诊断报告' });
+    for (let attempt = 0; attempt < 20 && !report; attempt += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      report = screen.queryByRole('region', { name: 'Trace 诊断报告' });
+    }
+    expect(report).not.toBeNull();
+    if (!report) throw new Error('Trace diagnostic report did not render');
     expect(report).toHaveTextContent('生成中');
 
     await act(async () => {
@@ -520,7 +729,11 @@ describe('TraceAgentFeature', () => {
     const repairTrigger = within(report).getByRole('button', { name: '交给 Agent 修复' });
     await user.click(repairTrigger);
     const confirmation = screen.getByTestId('trace-agent-repair-confirmation');
-    expect(confirmation).toHaveTextContent('修复 owner');
+    expect(confirmation).toHaveTextContent('修复目标');
+    expect(confirmation).toHaveTextContent('完整磁盘（根目录 /）');
+    expect(confirmation).toHaveTextContent('全部 Tools');
+    expect(confirmation).toHaveTextContent('自动批准每一次 Tool 操作');
+    expect(confirmation).toHaveTextContent('操作系统权限仍是最终边界');
     expect(confirmation).toHaveAttribute('aria-modal', 'true');
     expect(within(confirmation).getByRole('button', { name: '取消' })).toHaveFocus();
     await user.keyboard('{Escape}');
@@ -533,27 +746,41 @@ describe('TraceAgentFeature', () => {
 
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
     expect(within(report).getByRole('button', { name: '修复 Agent 已就绪' })).toBeDisabled();
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('所有 Tool 操作自动批准');
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('等待的是这些证据与复检，不是逐项审批');
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('不重跑命令');
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('不验证 source SHA');
+    expect(screen.getByTestId('trace-agent-repair-ready')).not.toHaveTextContent('代表测试');
+    expect(screen.getByTestId('trace-agent-repair-ready')).not.toHaveTextContent('独立复验');
 
     const createRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.create');
     expect(createRequests).toHaveLength(2);
-    expect(createRequests[1]?.request.body).toMatchObject({
+    expect(createRequests[1]?.request.body).toEqual({
+      title: '修复 Trace 诊断 · 失败的对话',
       mode: 'coordinator',
+      toolProfileVersion: 'control-center-auto-approve-v1',
       executionMode: 'full_trust',
       dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
-      toolProfileVersion: 'control-center-v1',
-      workspaceRoots: ['/workspace/paw'],
-    });
-    const modeRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.session.mode.update');
-    expect(modeRequests[1]?.request.body).toMatchObject({
-      mode: 'coordinator',
-      executionMode: 'full_trust',
-      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+      workspaceRoots: ['/'],
+      toolAllowlistMode: 'profile',
       projectContextEnabled: true,
       piSkillsEnabled: true,
-      codexSkillsEnabled: false,
+      codexSkillsEnabled: true,
     });
-    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('全自动修复 Agent');
-    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('Luna Max');
+    const modeRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.session.mode.update');
+    expect(modeRequests[1]?.request.body).toEqual({
+      mode: 'coordinator',
+      toolProfileVersion: 'control-center-auto-approve-v1',
+      executionMode: 'full_trust',
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+      workspaceRoots: ['/'],
+      toolAllowlistMode: 'profile',
+      projectContextEnabled: true,
+      piSkillsEnabled: true,
+      codexSkillsEnabled: true,
+    });
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('全信任修复 Agent');
+    expect(screen.getByTestId('trace-agent-repair-ready')).toHaveTextContent('所有 Tool 操作自动批准');
     const promptRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt');
     expect(promptRequests).toHaveLength(2);
     const repairPrompt = String((promptRequests[1]?.request.body as Record<string, unknown> | undefined)?.message);
@@ -566,8 +793,15 @@ describe('TraceAgentFeature', () => {
     expect(repairPrompt).toContain('服务端在证据写入后生成');
     expect(repairPrompt).not.toContain('changeReceiptId: <');
     expect(repairPrompt).not.toContain('testEvidenceId: <');
-    expect(repairPrompt).toContain('write/edit validation error: target file changed');
-    expect(repairPrompt).toContain('per_action 授权');
+    expect(repairPrompt).toContain('control-center-auto-approve-v1');
+    expect(repairPrompt).toContain('权限边界始终是 /');
+    expect(repairPrompt).toContain('不要再询问目录、ENABLE_FULL_TRUST、Tool 批准或任何 PAW 审批');
+    expect(repairPrompt).not.toContain('工作区已由 Host 从原 Session/Room 的权威绑定自动继承');
+    expect(repairPrompt).not.toContain('待审批操作交给独立 Luna Max');
+    expect(repairPrompt).not.toContain('per_action 授权');
+    const requestOrder = transport.requests.map(({ request }) => request.pathId);
+    expect(requestOrder.indexOf('observability.traceDiagnosticReport.repairAuthorize'))
+      .toBeLessThan(requestOrder.lastIndexOf('agent.session.prompt'));
 
     await user.click(within(report).getByRole('button', { name: '打开修复 Session' }));
     expect(routes).toContain('/agent?session=agent%3Atrace-repair');
@@ -575,6 +809,43 @@ describe('TraceAgentFeature', () => {
     await user.click(within(report).getByRole('button', { name: '回到 Trace 重跑诊断' }));
     expect(routes).toContain('/observability?traceId=trace%3Asource');
     expect(screen.getByRole('button', { name: '开始诊断' })).toBeInTheDocument();
+  });
+
+  it('resumes the authorized repair Session when prompt delivery fails', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({ repairPromptFailures: 1 });
+    renderFeature(transport, []);
+
+    await user.click(await screen.findByRole('button', { name: '开始诊断' }));
+    const report = await screen.findByRole('region', { name: 'Trace 诊断报告' });
+    await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
+    await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
+
+    const recovery = await screen.findByTestId('trace-agent-repair-recovery');
+    expect(recovery).toHaveTextContent('原修复 Session 已持久化');
+    expect(within(report).getByRole('button', { name: '修复授权已保存' })).toBeDisabled();
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.sessions.create'
+    ))).toHaveLength(2);
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'observability.traceDiagnosticReport.repairAuthorize'
+    ))).toHaveLength(1);
+
+    await user.click(within(recovery).getByRole('button', { name: '重新发送修复任务' }));
+    await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.sessions.create'
+    ))).toHaveLength(2);
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'observability.traceDiagnosticReport.repairAuthorize'
+    ))).toHaveLength(1);
+    const repairPrompts = transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.session.prompt'
+      && String((request.body as Record<string, unknown> | undefined)?.message ?? '').includes('Trace Agent 的候选修复交接')
+    ));
+    expect(repairPrompts).toHaveLength(2);
+    expect((repairPrompts[0]?.request.body as Record<string, unknown>).clientMessageId)
+      .toBe((repairPrompts[1]?.request.body as Record<string, unknown>).clientMessageId);
   });
 
   it('submits only repair references in order, then rechecks the authoritative receipt', async () => {
@@ -588,15 +859,19 @@ describe('TraceAgentFeature', () => {
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
 
-    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+    await user.click(within(report).getByRole('button', { name: '复检修复 Trace 证据' }));
 
     await waitFor(() => expect(screen.getByTestId('trace-agent-eval-receipt')).toBeInTheDocument());
     const receipt = screen.getByTestId('trace-agent-eval-receipt');
     expect(receipt).toHaveTextContent('eval:trace-agent:recheck:independent');
     expect(receipt).toHaveTextContent('诊断 Trace：trace:source');
-    expect(receipt).toHaveTextContent('修复 Trace：trace:repair');
-    expect(receipt).toHaveTextContent('Host 沙盒：passed · 1 次');
-    expect(receipt).toHaveTextContent('独立复验');
+    expect(receipt).toHaveTextContent('修复 Trace：trace:turn:turn-repair');
+    expect(receipt).toHaveTextContent('已记录的 Host 沙盒测试证据：passed · 1 次');
+    expect(receipt).toHaveTextContent('AI Judge 复检已持久化');
+    expect(receipt).toHaveTextContent('此按钮不重跑命令');
+    expect(receipt).toHaveTextContent('不进行同案 Trace 回放');
+    expect(receipt).toHaveTextContent('不验证 source SHA');
+    expect(receipt).not.toHaveTextContent('独立复验');
     const repairSnapshotRequest = transport.requests.find(({ request }) => (
       request.pathId === 'observability.snapshot'
       && request.query?.sessionId === 'agent:trace-repair'
@@ -617,12 +892,12 @@ describe('TraceAgentFeature', () => {
     expect(repairRequests[0]?.body).toEqual({
       schemaVersion: 'rag-ime.trace-repair-change-evidence.v1',
       repairSessionId: 'agent:trace-repair',
-      repairTraceId: 'trace:repair',
+      repairTraceId: 'trace:turn:turn-repair',
     });
     expect(repairRequests[1]?.body).toEqual({
       schemaVersion: 'rag-ime.trace-repair-test-evidence.v1',
       repairSessionId: 'agent:trace-repair',
-      repairTraceId: 'trace:repair',
+      repairTraceId: 'trace:turn:turn-repair',
     });
     expect(repairRequests.at(-1)?.body).toEqual({
       schemaVersion: 'rag-ime.trace-repair-recheck-request.v1',
@@ -642,7 +917,7 @@ describe('TraceAgentFeature', () => {
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
-    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+    await user.click(within(report).getByRole('button', { name: '复检修复 Trace 证据' }));
 
     await waitFor(() => expect(screen.getByTestId('trace-agent-eval-receipt')).toBeInTheDocument());
     expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.aiJudge.run')).toBe(false);
@@ -660,7 +935,7 @@ describe('TraceAgentFeature', () => {
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
-    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+    await user.click(within(report).getByRole('button', { name: '复检修复 Trace 证据' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('没有已通过的测试工具证据'));
     expect(transport.requests.some(({ request }) => request.pathId === 'observability.traceRepair.changeEvidence')).toBe(true);
@@ -679,7 +954,7 @@ describe('TraceAgentFeature', () => {
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
-    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+    await user.click(within(report).getByRole('button', { name: '复检修复 Trace 证据' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('没有已完成的修改工具证据'));
     expect(transport.requests.some(({ request }) => request.pathId === 'observability.traceRepair.changeEvidence')).toBe(true);
@@ -697,7 +972,7 @@ describe('TraceAgentFeature', () => {
     await user.click(within(report).getByRole('button', { name: '交给 Agent 修复' }));
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
-    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+    await user.click(within(report).getByRole('button', { name: '复检修复 Trace 证据' }));
 
     await waitFor(() => expect(screen.getByTestId('trace-agent-eval-receipt')).toBeInTheDocument());
     expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.aiJudge.run')).toBe(false);
@@ -705,7 +980,10 @@ describe('TraceAgentFeature', () => {
 
   it('does not evaluate the diagnostic Trace until the repair Session has a completed Trace', async () => {
     const user = userEvent.setup();
-    const transport = traceAgentTransport({ repairTrace: false });
+    const transport = traceAgentTransport({
+      repairTrace: false,
+      repairSessionSnapshot: { ...repairSessionSnapshot(), items: [] },
+    });
     renderFeature(transport, []);
 
     await user.click(await screen.findByRole('button', { name: '开始诊断' }));
@@ -714,7 +992,7 @@ describe('TraceAgentFeature', () => {
     await user.click(screen.getByRole('button', { name: '确认交给 Agent 修复' }));
     await waitFor(() => expect(screen.getByTestId('trace-agent-repair-ready')).toBeInTheDocument());
 
-    await user.click(within(report).getByRole('button', { name: '修复后运行 Eval 复检' }));
+    await user.click(within(report).getByRole('button', { name: '复检修复 Trace 证据' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('请先完成修复后再复检'));
     expect(transport.requests.some(({ request }) => request.pathId === 'observability.evals.evidence.run')).toBe(false);
@@ -1035,13 +1313,34 @@ describe('TraceAgentFeature', () => {
         confidence: 'high',
         explanation: '写入尝试触发 stale_snapshot。',
       }],
+      presentation: {
+        headline: '写入没有完成；Tool 使用了过期快照。',
+        impact: '目标文件没有产生可验证的新版本。',
+        primaryFindingId: 'finding:stale-revision',
+        failureAttribution: {
+          primaryLayer: 'tool',
+          summary: '主要故障在 Tool / Runtime；工作流也共同影响了失败。',
+          layers: [
+            { layer: 'tool', verdict: 'primary', explanation: '写入 Tool 返回 stale_snapshot。', evidenceIds: ['evidence:source'] },
+            { layer: 'skill', verdict: 'healthy', explanation: 'Skill 已要求重新读取后写入。', evidenceIds: ['evidence:source'] },
+            { layer: 'template', verdict: 'unknown', explanation: '没有冻结模板提示证据。', evidenceIds: [] },
+            { layer: 'workflow', verdict: 'contributing', explanation: '批准等待后没有刷新快照。', evidenceIds: ['evidence:source'] },
+            { layer: 'model', verdict: 'not_applicable', explanation: '本次失败由确定性 Tool 错误解释。', evidenceIds: [] },
+          ],
+        },
+        knownFacts: [{ fact: '写入 Tool 返回 stale_snapshot。', evidenceIds: ['evidence:source'] }],
+        evidenceGaps: [],
+        causalNodes: [],
+        expectedStageCount: 1,
+        recordedStageReceiptEvidenceIds: [],
+      },
     });
     Object.assign(report as unknown as Record<string, unknown>, {
       repairLifecycle: {
         authorization: {
           state: 'authorized',
           authorizationKind: 'repair_handoff',
-          writeAuthority: 'per_action_required',
+          writeAuthority: 'auto_approved_full_trust',
           authorizationId: 'repair-authorization:1',
           findingId: 'finding:stale-revision',
           sourceScope: 'session:session-source',
@@ -1061,7 +1360,7 @@ describe('TraceAgentFeature', () => {
           verifiedAtMs: 0,
           comparison: {
             status: 'pending',
-            reason: '等待新 Trace/Eval。',
+            reason: '已授权全信任自动批准修复交接；所有 Tool 操作无需逐项审批，等待修复 Trace 中已记录的修改与通过测试证据，以及 AI Judge 复检。',
             sourceStatus: 'failed',
             repairStatus: '',
             sourceFingerprint: `sha256:${'d'.repeat(64)}`,
@@ -1089,9 +1388,19 @@ describe('TraceAgentFeature', () => {
     expect(page).toHaveTextContent('跨 Session / Agent 因果时间线');
     expect(page).toHaveTextContent('可复现环境快照');
     expect(page).toHaveTextContent('完整冻结');
-    expect(page).toHaveTextContent('修复授权状态');
+    expect(page).toHaveTextContent('用户已确认全信任修复：全磁盘、全部 Tools 自动批准');
+    expect(page).toHaveTextContent('等待修复 Trace、测试证据与 AI Judge 复检');
+    expect(page).toHaveTextContent('Host 沙盒测试证据');
+    expect(page).not.toHaveTextContent('沙盒回放');
     expect(page).toHaveTextContent('修复前后 Trace / Eval 对照');
     expect(page).toHaveTextContent('查看完整冻结时间线');
+    expect(page).toHaveTextContent('问题出在哪一层');
+    expect(page).toHaveTextContent('主要故障在 Tool / Runtime');
+    expect(within(page).getByRole('listitem', { name: 'Tool / Runtime：主要责任' })).toBeInTheDocument();
+    expect(within(page).getByRole('listitem', { name: 'Skill：正常' })).toBeInTheDocument();
+    expect(within(page).getByRole('listitem', { name: '模板提示：未知' })).toBeInTheDocument();
+    expect(within(page).getByRole('listitem', { name: '工作流：共同影响' })).toBeInTheDocument();
+    expect(within(page).getByRole('listitem', { name: '模型能力：不适用' })).toBeInTheDocument();
     expect(within(page).getByTestId('trace-diagnostic-scorecard').querySelector('[aria-label="查看证据 evidence:source"]')).toBeInTheDocument();
     const roomScoreRow = within(page).getByTestId('trace-diagnostic-scorecard').querySelector('[data-dimension-id="room_collaboration"]');
     expect(roomScoreRow).toHaveTextContent('不适用');
@@ -1168,6 +1477,7 @@ function renderFeature(transport: MockControlTransport, routes: string[], initia
 function traceAgentTransport(options: {
   repairTrace?: boolean;
   repairTraceHasTestEvidence?: boolean;
+  repairPromptFailures?: number;
   serverRejectChange?: boolean;
   serverRejectTest?: boolean;
   rooms?: Array<Record<string, unknown>>;
@@ -1179,6 +1489,7 @@ function traceAgentTransport(options: {
   diagnosticReports?: TraceDiagnosticReportListV1;
   diagnosticReport?: TraceDiagnosticReportV1;
   diagnosticFinalizeReport?: TraceDiagnosticReportV1;
+  observationSource?: unknown;
   runObservationSnapshots?: Array<{ beforeSequence: number; snapshot: unknown }>;
   traceDetails?: Record<string, unknown | null | Promise<unknown>>;
   roomSourceSnapshot?: unknown;
@@ -1188,6 +1499,7 @@ function traceAgentTransport(options: {
   let diagnosticSnapshotIndex = 0;
   let sourceSnapshotIndex = 0;
   let roomSourceSnapshotIndex = 0;
+  let repairPromptAttempts = 0;
   let changeEvidence: Record<string, unknown> | null = null;
   let testEvidence: Record<string, unknown> | null = null;
   let repairReceipt: Record<string, unknown> | null = null;
@@ -1224,7 +1536,7 @@ function traceAgentTransport(options: {
           const page = options.runObservationSnapshots.find((candidate) => candidate.beforeSequence === beforeSequence);
           if (page) return page.snapshot;
         }
-        return observationSnapshot();
+        return options.observationSource ?? observationSnapshot();
       },
       'agent.session.snapshot': (request: ControlRequest) => {
         if (request.params?.sessionId === 'agent:trace-diagnostic') {
@@ -1260,7 +1572,14 @@ function traceAgentTransport(options: {
         },
       }),
       'agent.session.mode.update': { ok: true },
-      'agent.session.prompt': { ok: true },
+      'agent.session.prompt': (request: ControlRequest) => {
+        const message = String((request.body as Record<string, unknown> | undefined)?.message ?? '');
+        if (
+          message.includes('Trace Agent 的候选修复交接')
+          && repairPromptAttempts++ < (options.repairPromptFailures ?? 0)
+        ) throw new Error('repair prompt transport failed');
+        return { ok: true };
+      },
       'observability.traceDiagnosticReports.list': options.diagnosticReports ?? {
         schemaVersion: 'rag-ime.trace-diagnostic-report-list.v1',
         total: 0,
@@ -1271,10 +1590,43 @@ function traceAgentTransport(options: {
         if (!activeDiagnosticReport) throw new Error('No diagnostic report fixture registered');
         return activeDiagnosticReport;
       },
-      'observability.traceDiagnosticReports.create': () => activeDiagnosticReport,
+      'observability.traceDiagnosticReports.create': (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        const requestedTargets = Array.isArray(body.targets)
+          ? body.targets.map((rawTarget) => {
+              const target = rawTarget as Record<string, unknown>;
+              const kind = String(target.kind ?? '');
+              const id = String(target.id ?? '');
+              const traceIds = Array.isArray(target.traceIds)
+                ? target.traceIds.map(String).filter(Boolean)
+                : [];
+              return {
+                targetKey: `${kind}:${id}`,
+                kind,
+                id,
+                title: String(target.title ?? id),
+                traceIds: traceIds.length ? traceIds : ['trace:source'],
+                sourceAvailable: true,
+              };
+            }) as TraceDiagnosticReportV1['targets']
+          : activeDiagnosticReport.targets;
+        activeDiagnosticReport = {
+          ...activeDiagnosticReport,
+          targets: requestedTargets,
+          traceIds: [...new Set(requestedTargets.flatMap((target) => target.traceIds))],
+        };
+        return activeDiagnosticReport;
+      },
       'observability.traceDiagnosticReport.finalize': () => {
-        activeDiagnosticReport = options.diagnosticFinalizeReport
+        const finalized = options.diagnosticFinalizeReport
           ?? persistedTraceReportFixture(activeDiagnosticReport.reportId, 'completed');
+        activeDiagnosticReport = options.diagnosticFinalizeReport
+          ? finalized
+          : {
+              ...finalized,
+              targets: activeDiagnosticReport.targets,
+              traceIds: activeDiagnosticReport.traceIds,
+            };
         return activeDiagnosticReport;
       },
       'observability.traceDiagnosticReport.repairAuthorize': (request: ControlRequest) => {
@@ -1286,7 +1638,7 @@ function traceAgentTransport(options: {
             authorization: {
               state: 'authorized',
               authorizationKind: 'repair_handoff',
-              writeAuthority: 'model_arbitrated_full_trust',
+              writeAuthority: 'auto_approved_full_trust',
               authorizationId: 'repair-authorization:server-issued',
               findingId: String(body.findingId),
               sourceScope: String(body.sourceScope),
@@ -1306,7 +1658,7 @@ function traceAgentTransport(options: {
               verifiedAtMs: 0,
               comparison: {
                 status: 'pending',
-                reason: '等待新 Trace/Eval。',
+                reason: '已授权全信任自动批准修复交接；所有 Tool 操作无需逐项审批，等待修复 Trace 中已记录的修改与通过测试证据，以及 AI Judge 复检。',
                 sourceStatus: 'failed',
                 repairStatus: '',
                 sourceFingerprint: `sha256:${'d'.repeat(64)}`,
@@ -1361,7 +1713,7 @@ function traceAgentTransport(options: {
         expect(body).toEqual({
           schemaVersion: 'rag-ime.trace-repair-change-evidence.v1',
           repairSessionId: 'agent:trace-repair',
-          repairTraceId: 'trace:repair',
+          repairTraceId: 'trace:turn:turn-repair',
         });
         changeEvidence = {
           schemaVersion: 'rag-ime.trace-repair-evidence.v1',
@@ -1393,7 +1745,7 @@ function traceAgentTransport(options: {
         expect(body).toEqual({
           schemaVersion: 'rag-ime.trace-repair-test-evidence.v1',
           repairSessionId: 'agent:trace-repair',
-          repairTraceId: 'trace:repair',
+          repairTraceId: 'trace:turn:turn-repair',
         });
         testEvidence = {
           schemaVersion: 'rag-ime.trace-repair-evidence.v1',
@@ -2056,6 +2408,27 @@ function persistedTraceReportFixture(
         candidateRepair: 're-read and prepare the write again',
         verification: 'new Trace and tests must pass',
       }],
+      presentation: {
+        headline: '写入没有完成；Tool 使用了过期快照。',
+        impact: '目标文件没有产生可验证的新版本。',
+        primaryFindingId: 'finding:source-failure',
+        failureAttribution: {
+          primaryLayer: 'tool',
+          summary: '主要故障在 Tool / Runtime；工作流也共同影响了失败。',
+          layers: [
+            { layer: 'tool', verdict: 'primary', explanation: '写入 Tool 使用了过期状态。', evidenceIds: ['trace:observation-source'] },
+            { layer: 'skill', verdict: 'healthy', explanation: 'Skill 正确要求刷新状态。', evidenceIds: ['trace:observation-source'] },
+            { layer: 'template', verdict: 'unknown', explanation: '没有冻结模板提示证据。', evidenceIds: [] },
+            { layer: 'workflow', verdict: 'contributing', explanation: '工作流没有在写入前刷新状态。', evidenceIds: ['trace:observation-source'] },
+            { layer: 'model', verdict: 'not_applicable', explanation: '确定性 Tool 错误已解释失败。', evidenceIds: [] },
+          ],
+        },
+        knownFacts: [{ fact: '写入 Tool 返回 stale_snapshot。', evidenceIds: ['trace:observation-source'] }],
+        evidenceGaps: [],
+        causalNodes: [],
+        expectedStageCount: 1,
+        recordedStageReceiptEvidenceIds: [],
+      },
     } : null,
     failureReason: status === 'failed' ? '结构化结果缺失' : '',
     createdAtMs: 100,

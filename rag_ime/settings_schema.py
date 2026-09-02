@@ -122,6 +122,10 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "thinkingLevel": "max",
             "runsPerDay": 2,
         },
+        "catalogConsolidation": {
+            "enabled": True,
+            "cadenceDays": 7,
+        },
         "recall": {
             "detailLevel": "compact",
             "timelineEnabled": True,
@@ -420,6 +424,8 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "memory.dreaming.model", "type": "pi-model", "label": "做梦模型", "default": "openai-codex/gpt-5.6-luna"},
                 {"key": "memory.dreaming.thinkingLevel", "type": "pi-thinking", "label": "做梦思考", "default": "max", "modelKey": "memory.dreaming.model", "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]},
                 {"key": "memory.dreaming.runsPerDay", "type": "integer", "label": "每天做梦次数", "default": 2},
+                {"key": "memory.catalogConsolidation.enabled", "type": "boolean", "label": "启用全局目录整理", "default": True},
+                {"key": "memory.catalogConsolidation.cadenceDays", "type": "integer", "label": "全局目录整理周期（天）", "default": 7},
                 {"key": "memory.recall.detailLevel", "type": "enum", "label": "召回详细程度", "options": ["compact", "balanced", "detailed"], "default": "compact"},
                 {"key": "memory.recall.timelineEnabled", "type": "boolean", "label": "按需召回时间线", "default": True},
                 {"key": "memory.recall.timelineMaxItems", "type": "integer", "label": "时间线最多召回条数", "default": 2},
@@ -922,6 +928,17 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
         "min": 1,
         "max": 6,
         "unit": "次/天",
+    },
+    "memory.catalogConsolidation.enabled": {
+        "description": "每周对完整的 governed Memory catalog 做一次保守合并审查；只允许合并精确等价 Atom 与同义 Tag，不创建、修改或删除事实、Topic Book、Group、Tag edge 或嵌套成员",
+        "applyMode": "next_maintenance_run",
+    },
+    "memory.catalogConsolidation.cadenceDays": {
+        "description": "全局 Memory catalog 整理周期；Gateway 每小时只触发一次到期判断，真正执行由持久化回执决定",
+        "applyMode": "next_maintenance_run",
+        "min": 1,
+        "max": 365,
+        "unit": "天",
     },
     "memory.recall.detailLevel": {
         "description": "compact 只注入主题摘要和最相关 Atom；balanced 与 detailed 逐步放宽片段预算",

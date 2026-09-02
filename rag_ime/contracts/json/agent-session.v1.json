@@ -49,6 +49,7 @@
     "mode": {"type": "string", "enum": ["assistant", "coordinator"]},
     "status": {"type": "string", "enum": ["idle", "active", "busy", "faulted", "archived"]},
     "sessionKind": {"type": "string", "enum": ["conversation", "subagent_runtime"]},
+    "evaluationSnapshot": {"type": "boolean"},
     "surfaceKind": {"type": "string", "enum": ["agent", "extension_app", "builtin_app"]},
     "ownerAppId": {"type": "string", "pattern": "^$|^memory$|^extension:[a-z0-9][a-z0-9-]{0,63}$"},
     "surfaceKey": {"type": "string", "pattern": "^$|^[a-z0-9][a-z0-9._-]{0,63}$"},

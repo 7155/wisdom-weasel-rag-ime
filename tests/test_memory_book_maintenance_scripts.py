@@ -56,6 +56,30 @@ class _FakeOpener:
         )
 
 
+class _ExpiredOpener:
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    def open(self, request: object, *, timeout: float) -> _FakeResponse:
+        del timeout
+        self.requests.append(request)
+        state = "queued" if len(self.requests) == 1 else "expired"
+        return _FakeResponse(
+            {
+                "schemaVersion": "rag-ime.gateway-memory-maintenance-job.v1",
+                "ok": state != "expired",
+                "jobId": "memory-maintenance:expired",
+                "state": state,
+                "result": (
+                    {}
+                    if state == "queued"
+                    else {"ok": False, "error": "lease expired"}
+                ),
+            }
+        )
+
+
+
 def _load_wrapper(root: Path):
     path = root / "scripts/memory_book_maintenance_launch.py"
     spec = spec_from_file_location("memory_book_maintenance_launch_test", path)
@@ -102,6 +126,36 @@ class MemoryMaintenanceGatewayClientTests(unittest.TestCase):
             "jobId=memory-maintenance%3Atest",
             opener.requests[1].full_url,
         )
+
+    def test_expired_job_exits_polling_as_terminal(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        wrapper = _load_wrapper(root)
+        opener = _ExpiredOpener()
+        output = StringIO()
+        with (
+            patch.object(wrapper, "build_opener", return_value=opener),
+            patch.object(wrapper.time, "sleep", return_value=None),
+            patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_AGENT_GATEWAY_URL": "http://127.0.0.1:18768",
+                    "RAG_IME_MEMORY_MAINTENANCE_POLL_SECONDS": "0.05",
+                    "RAG_IME_PROJECT": "sample-project",
+                },
+                clear=False,
+            ),
+            redirect_stdout(output),
+        ):
+            exit_code = wrapper.main()
+
+        self.assertEqual(exit_code, 1)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["state"], "expired")
+        self.assertEqual(
+            [item.get_method() for item in opener.requests],
+            ["POST", "GET"],
+        )
+
 
     def test_wrapper_rejects_non_loopback_gateway(self) -> None:
         root = Path(__file__).resolve().parents[1]

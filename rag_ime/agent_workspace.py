@@ -23,11 +23,14 @@ from urllib.parse import unquote, urlparse
 
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
+    unrestricted_workspace_policy_active,
     normalize_execution_mode,
     read_only_policy_active,
     workspace_scope_is_granted,
     workspace_scope_sha256,
 )
+from .agent_workspace_roots import system_wide_workspace_roots
+
 from .contracts.json_schema import validate_contract
 
 
@@ -239,7 +242,7 @@ class PreparedWorkspaceCommand:
     allow_network: bool
     repository_metadata_roots: tuple[Path, ...] = ()
     source_read_only: bool = False
-
+    unrestricted: bool = False
     @property
     def roots_digest(self) -> str:
         values = [str(root) for root in self.roots]
@@ -464,6 +467,7 @@ class _WorkspaceLspClient:
     root: Path
     process: subprocess.Popen[bytes]
     temporary_directory: tempfile.TemporaryDirectory | None
+    unrestricted: bool = False
     capabilities: Mapping[str, object] = field(default_factory=dict)
     diagnostics: dict[str, list[Mapping[str, object]]] = field(default_factory=dict)
     open_documents: dict[Path, tuple[str, int]] = field(default_factory=dict)
@@ -728,9 +732,21 @@ class WorkspaceHarness:
         if not target.is_dir():
             raise WorkspaceHarnessError("workspace_list path must be a directory")
         depth = _bounded_integer(args.get("depth"), default=1, minimum=1, maximum=3)
-        limit = _bounded_integer(args.get("limit"), default=100, minimum=1, maximum=300)
+        limit = _bounded_integer(
+            args.get("limit"),
+            default=100,
+            minimum=1,
+            maximum=300,
+        )
         items: list[dict[str, object]] = []
-        self._walk(target=target, root=root, depth=depth, limit=limit, output=items)
+        self._walk(
+            target=target,
+            root=root,
+            depth=depth,
+            limit=limit,
+            output=items,
+            session=session,
+        )
         return {
             "summary": f"列出 {len(items)} 个工作区条目",
             "root": str(root),
@@ -745,7 +761,7 @@ class WorkspaceHarness:
         if not raw_path:
             raise WorkspaceHarnessError("path is required for workspace_read")
         target, root = self._resolve_existing_path(roots, raw_path, allow_directory=False)
-        if self._is_sensitive(target, root):
+        if self._is_sensitive_for_session(session, target, root):
             raise WorkspaceHarnessError("sensitive files are not available to coordinator sessions")
         if not target.is_file() or target.is_symlink():
             raise WorkspaceHarnessError("workspace_read requires a regular non-symlink file")
@@ -863,7 +879,7 @@ class WorkspaceHarness:
         files_scanned = 0
         truncated = False
         for target, root in targets:
-            for path in self._search_files(target, root):
+            for path in self._search_files(target, root, session=session):
                 if files_scanned >= _MAX_SEARCH_FILES or len(matches) >= limit:
                     truncated = True
                     break
@@ -1361,7 +1377,12 @@ class WorkspaceHarness:
             items: list[dict[str, object]] = []
             server_names: list[str] = []
             for config in self._lsp_configs_for_root(root, requested=args.get("server")):
-                client = self._lsp_client(root, config, timeout_seconds)
+                client = self._lsp_client(
+                    root,
+                    config,
+                    timeout_seconds,
+                    unrestricted=unrestricted_workspace_policy_active(session),
+                )
                 raw = self._lsp_request(
                     client,
                     "workspace/symbol",
@@ -1370,7 +1391,12 @@ class WorkspaceHarness:
                 )
                 server_names.append(config.name)
                 for value in raw if isinstance(raw, list) else []:
-                    normalized = self._normalize_lsp_symbol(value, root, config.name)
+                    normalized = self._normalize_lsp_symbol(
+                        value,
+                        root,
+                        config.name,
+                        allow_sensitive=unrestricted_workspace_policy_active(session),
+                    )
                     if normalized is not None:
                         items.append(normalized)
                         if len(items) >= _LSP_MAX_RESULT_ITEMS:
@@ -1392,7 +1418,12 @@ class WorkspaceHarness:
 
         target, root = self._lsp_source_path(session, args)
         config = self._lsp_config_for_file(root, target, requested=args.get("server"))
-        client = self._lsp_client(root, config, timeout_seconds)
+        client = self._lsp_client(
+            root,
+            config,
+            timeout_seconds,
+            unrestricted=unrestricted_workspace_policy_active(session),
+        )
         client.open_document(target, self._lsp_language_id(config, target))
         position = self._lsp_position(args)
         document = {"uri": target.as_uri()}
@@ -1460,7 +1491,11 @@ class WorkspaceHarness:
         values = raw if isinstance(raw, list) else ([] if raw is None else [raw])
         locations = []
         for value in values[:_LSP_MAX_RESULT_ITEMS]:
-            normalized = self._normalize_lsp_location(value, root)
+            normalized = self._normalize_lsp_location(
+                value,
+                root,
+                allow_sensitive=unrestricted_workspace_policy_active(session),
+            )
             if normalized is not None:
                 locations.append(normalized)
         return _validated_lsp(
@@ -1579,7 +1614,7 @@ class WorkspaceHarness:
                 "workspace_lsp path is outside the authorized workspace or does not exist",
             ) from exc
         if (
-            self._is_sensitive(target, root)
+            self._is_sensitive_for_session(session, target, root)
             or target.is_symlink()
             or not target.is_file()
             or target.stat().st_size > 2 * 1024 * 1024
@@ -1687,6 +1722,8 @@ class WorkspaceHarness:
         root: Path,
         config: WorkspaceLspServerConfig,
         timeout_seconds: float,
+        *,
+        unrestricted: bool = False,
     ) -> _WorkspaceLspClient:
         self._cleanup_idle_lsp_clients()
         key = (root, config.name)
@@ -1699,7 +1736,11 @@ class WorkspaceHarness:
             generation = self._lsp_generation
             root_generation = self._lsp_root_generations.get(root, 0)
             existing = self._lsp_clients.get(key)
-            if existing is not None and existing.process.poll() is None:
+            if (
+                existing is not None
+                and existing.process.poll() is None
+                and existing.unrestricted == unrestricted
+            ):
                 self._lsp_clients.move_to_end(key)
                 return existing
             if existing is not None:
@@ -1713,14 +1754,18 @@ class WorkspaceHarness:
             )
         temporary_directory: tempfile.TemporaryDirectory | None = None
         command = [executable, *config.command[1:]]
-        environment = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
-            "LANG": "en_US.UTF-8",
-            "LC_ALL": "en_US.UTF-8",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-        }
-        if self.lsp_process_sandbox:
+        environment = (
+            dict(os.environ)
+            if unrestricted
+            else {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+                "LANG": "en_US.UTF-8",
+                "LC_ALL": "en_US.UTF-8",
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1",
+            }
+        )
+        if self.lsp_process_sandbox and not unrestricted:
             if not self._lsp_sandbox_available():
                 raise WorkspaceLspError(
                     "server_degraded",
@@ -1735,7 +1780,10 @@ class WorkspaceHarness:
                 command = [
                     str(self.sandbox_executable),
                     "-p",
-                    _lsp_sandbox_profile(root=root, temporary=temporary),
+                    _lsp_sandbox_profile(
+                        root=root,
+                        temporary=temporary,
+                    ),
                     *command,
                 ]
             except Exception:
@@ -1771,6 +1819,7 @@ class WorkspaceHarness:
                 root=root,
                 process=process,
                 temporary_directory=temporary_directory,
+                unrestricted=unrestricted,
             )
             initialized = client.request(
                 "initialize",
@@ -1930,13 +1979,19 @@ class WorkspaceHarness:
         self,
         value: object,
         root: Path,
+        *,
+        allow_sensitive: bool = False,
     ) -> dict[str, object] | None:
         if not isinstance(value, Mapping):
             return None
         uri = str(value.get("uri") or value.get("targetUri") or "")
         range_value = value.get("range") or value.get("targetSelectionRange")
         path = _lsp_uri_path(uri)
-        if path is None or not _is_within(path, root) or self._is_sensitive(path, root):
+        if (
+            path is None
+            or not _is_within(path, root)
+            or (not allow_sensitive and self._is_sensitive(path, root))
+        ):
             return None
         if not isinstance(range_value, Mapping):
             return None
@@ -1955,6 +2010,7 @@ class WorkspaceHarness:
         position: Mapping[str, int],
         server: str,
         preimage_sha256: str,
+        allow_sensitive: bool = False,
     ) -> dict[str, object]:
         if raw is None:
             raise WorkspaceLspError(
@@ -1968,7 +2024,11 @@ class WorkspaceHarness:
             )
         locations: list[dict[str, object]] = []
         for value in raw:
-            normalized = self._normalize_lsp_location(value, root)
+            normalized = self._normalize_lsp_location(
+                value,
+                root,
+                allow_sensitive=allow_sensitive,
+            )
             if normalized is None:
                 raise WorkspaceLspError(
                     "references_evidence_invalid",
@@ -1978,7 +2038,7 @@ class WorkspaceHarness:
             if (
                 location_path.is_symlink()
                 or not location_path.is_file()
-                or self._is_sensitive(location_path, root)
+                or (not allow_sensitive and self._is_sensitive(location_path, root))
             ):
                 raise WorkspaceLspError(
                     "references_evidence_invalid",
@@ -2005,10 +2065,16 @@ class WorkspaceHarness:
         value: object,
         root: Path,
         server: str,
+        *,
+        allow_sensitive: bool = False,
     ) -> dict[str, object] | None:
         if not isinstance(value, Mapping):
             return None
-        location = self._normalize_lsp_location(value.get("location"), root)
+        location = self._normalize_lsp_location(
+            value.get("location"),
+            root,
+            allow_sensitive=allow_sensitive,
+        )
         if location is None:
             return None
         kind = _safe_lsp_int(value.get("kind"))
@@ -2084,6 +2150,7 @@ class WorkspaceHarness:
                 f"unsupported workspace_lsp mutation: {operation}",
             )
         target, root = self._lsp_source_path(session, args)
+        unrestricted = unrestricted_workspace_policy_active(session)
         config = self._lsp_config_for_file(root, target, requested=args.get("server"))
         timeout_seconds = _bounded_integer(
             args.get("timeoutMs"),
@@ -2091,7 +2158,12 @@ class WorkspaceHarness:
             minimum=100,
             maximum=20_000,
         ) / 1_000
-        client = self._lsp_client(root, config, timeout_seconds)
+        client = self._lsp_client(
+            root,
+            config,
+            timeout_seconds,
+            unrestricted=unrestricted,
+        )
         position = self._lsp_position(args)
         request: dict[str, object] = {
             "path": str(target),
@@ -2163,6 +2235,7 @@ class WorkspaceHarness:
                 position=position,
                 server=config.name,
                 preimage_sha256=expected_preimage_sha256,
+                allow_sensitive=unrestricted_workspace_policy_active(session),
             )
             workspace_edit = self._lsp_request(
                 client,
@@ -2236,6 +2309,7 @@ class WorkspaceHarness:
             workspace_edit=workspace_edit,
             expected_preimage_sha256=expected_preimage_sha256,
             references_evidence=references_evidence,
+            allow_sensitive=unrestricted_workspace_policy_active(session),
         )
 
     def _prepare_lsp_workspace_edit(
@@ -2248,6 +2322,7 @@ class WorkspaceHarness:
         workspace_edit: object,
         expected_preimage_sha256: str | None = None,
         references_evidence: Mapping[str, object] | None = None,
+        allow_sensitive: bool = False,
     ) -> PreparedWorkspaceLspMutation:
         if not isinstance(workspace_edit, Mapping):
             raise WorkspaceLspError(
@@ -2317,7 +2392,7 @@ class WorkspaceHarness:
                 or not path.exists()
                 or path.is_symlink()
                 or not path.is_file()
-                or self._is_sensitive(path, root)
+                or (not allow_sensitive and self._is_sensitive(path, root))
             ):
                 raise WorkspaceLspError(
                     "path_not_allowed",
@@ -2453,27 +2528,36 @@ class WorkspaceHarness:
         root: Path,
         action_payload: Mapping[str, object],
         base_state: Mapping[str, object],
+        allow_sensitive: bool = False,
+        authorization_root: Path | None = None,
     ) -> dict[str, object]:
+        containment_root = authorization_root or root
         payload_value = action_payload.get("referencesEvidence")
         state_value = base_state.get("referencesEvidence")
-        if not isinstance(payload_value, Mapping) or not isinstance(state_value, Mapping):
+        if not isinstance(payload_value, Mapping):
             raise WorkspaceLspError(
                 "references_required",
                 "workspace_lsp rename approval is missing references evidence",
             )
         evidence = dict(payload_value)
-        if evidence != dict(state_value):
-            raise WorkspaceLspError(
-                "invalid_approval",
-                "workspace_lsp references evidence disagrees with its preview",
-            )
-        if str(base_state.get("referencesEvidenceSha256") or "") != (
-            _lsp_references_evidence_digest(evidence)
-        ):
-            raise WorkspaceLspError(
-                "invalid_approval",
-                "workspace_lsp references evidence is not bound to its preview",
-            )
+        if authorization_root is None:
+            if not isinstance(state_value, Mapping):
+                raise WorkspaceLspError(
+                    "references_required",
+                    "workspace_lsp rename approval is missing references evidence",
+                )
+            if evidence != dict(state_value):
+                raise WorkspaceLspError(
+                    "invalid_approval",
+                    "workspace_lsp references evidence disagrees with its preview",
+                )
+            if str(base_state.get("referencesEvidenceSha256") or "") != (
+                _lsp_references_evidence_digest(evidence)
+            ):
+                raise WorkspaceLspError(
+                    "invalid_approval",
+                    "workspace_lsp references evidence is not bound to its preview",
+                )
         expected_keys = {
             "root",
             "path",
@@ -2524,10 +2608,17 @@ class WorkspaceHarness:
                 "workspace_lsp references evidence targets an unauthorized path",
             ) from exc
         if (
-            selected_root != root
+            (
+                authorization_root is None
+                and selected_root != root
+            )
+            or (
+                authorization_root is not None
+                and not _is_within(target, containment_root)
+            )
             or target.is_symlink()
             or not target.is_file()
-            or self._is_sensitive(target, root)
+            or (not allow_sensitive and self._is_sensitive(target, root))
         ):
             raise WorkspaceLspError(
                 "references_evidence_invalid",
@@ -2550,11 +2641,19 @@ class WorkspaceHarness:
                 "workspace_lsp references evidence has an invalid position",
             )
         if (
-            evidence["root"] != str(root)
+            (
+                authorization_root is None
+                and (
+                    evidence["root"] != str(root)
+                    or evidence["relativePath"] != str(target.relative_to(root))
+                )
+            )
             or evidence["path"] != str(target)
-            or evidence["relativePath"] != str(target.relative_to(root))
             or evidence["server"] != request_server
-            or str(base_state.get("server") or "") != request_server
+            or (
+                authorization_root is None
+                and str(base_state.get("server") or "") != request_server
+            )
             or evidence["line"] != request_line
             or evidence["column"] != request_column
         ):
@@ -2580,10 +2679,22 @@ class WorkspaceHarness:
                 "stale_snapshot",
                 "workspace_lsp rename target disappeared after references approval",
             ) from exc
-        if hashlib.sha256(current_raw).hexdigest() != preimage_sha256:
+        if len(current_raw) > 2 * 1024 * 1024 or b"\x00" in current_raw:
+            raise WorkspaceLspError(
+                "references_evidence_invalid",
+                "workspace_lsp references target is not a bounded text file",
+            )
+        try:
+            current_raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkspaceLspError(
+                "invalid_document",
+                "workspace_lsp references target is not UTF-8",
+            ) from exc
+        if authorization_root is None and hashlib.sha256(current_raw).hexdigest() != preimage_sha256:
             raise WorkspaceLspError(
                 "stale_snapshot",
-                "workspace_lsp references evidence is stale for the current file",
+                "workspace_lsp rename target is stale for the current file",
             )
         items = evidence["items"]
         count = evidence["count"]
@@ -2623,10 +2734,14 @@ class WorkspaceHarness:
             if (
                 item_path.is_symlink()
                 or str(resolved_item_path) != raw_item_path
-                or not _is_within(resolved_item_path, root)
+                or not _is_within(resolved_item_path, containment_root)
                 or not resolved_item_path.is_file()
-                or self._is_sensitive(resolved_item_path, root)
-                or item.get("relativePath") != str(resolved_item_path.relative_to(root))
+                or (not allow_sensitive and self._is_sensitive(resolved_item_path, root))
+                or (
+                    authorization_root is None
+                    and item.get("relativePath")
+                    != str(resolved_item_path.relative_to(root))
+                )
             ):
                 raise WorkspaceLspError(
                     "references_evidence_invalid",
@@ -2661,17 +2776,35 @@ class WorkspaceHarness:
                 "workspace_lsp approval operation no longer matches its preview",
             )
         roots = self._session_roots(session)
-        try:
-            root = Path(str(base_state.get("workspaceRoot") or "")).resolve(strict=True)
-        except (OSError, RuntimeError) as exc:
-            raise WorkspaceLspError(
-                "stale_snapshot",
-                "workspace_lsp authorized root changed after approval preview",
-            ) from exc
+        unrestricted = unrestricted_workspace_policy_active(session)
+        authorization_root: Path | None = None
+        if unrestricted:
+            raw_preview_root = str(base_state.get("workspaceRoot") or "").strip()
+            try:
+                root = (
+                    Path(raw_preview_root).expanduser().resolve(strict=False)
+                    if raw_preview_root
+                    else Path("/")
+                )
+            except (OSError, RuntimeError, ValueError):
+                root = Path("/")
+            authorization_root = Path("/")
+        else:
+            try:
+                root = Path(str(base_state.get("workspaceRoot") or "")).resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp authorized root changed after approval preview",
+                ) from exc
         expected_root_hash = hashlib.sha256(str(root).encode("utf-8")).hexdigest()
         if (
-            root not in roots
-            or expected_root_hash != str(base_state.get("workspaceRootSha256") or "")
+            not unrestricted
+            and (
+                root not in roots
+                or expected_root_hash
+                != str(base_state.get("workspaceRootSha256") or "")
+            )
         ):
             raise WorkspaceLspError(
                 "stale_snapshot",
@@ -2683,6 +2816,8 @@ class WorkspaceHarness:
                 root=root,
                 action_payload=action_payload,
                 base_state=base_state,
+                allow_sensitive=unrestricted,
+                authorization_root=authorization_root,
             )
             if operation == "rename"
             else None
@@ -2691,20 +2826,38 @@ class WorkspaceHarness:
         state_files = base_state.get("files")
         if (
             not isinstance(payload_files, list)
-            or not isinstance(state_files, list)
             or not 1 <= len(payload_files) <= _LSP_MAX_FILES
-            or len(payload_files) != len(state_files)
         ):
             raise WorkspaceLspError(
                 "invalid_approval",
                 "workspace_lsp approval contains invalid file state",
             )
+        if unrestricted:
+            effective_state_files: list[object] = [{} for _ in payload_files]
+        else:
+            if (
+                not isinstance(state_files, list)
+                or len(payload_files) != len(state_files)
+            ):
+                raise WorkspaceLspError(
+                    "invalid_approval",
+                    "workspace_lsp approval contains invalid file state",
+                )
+            effective_state_files = state_files
         prepared: list[tuple[Path, bytes, bytes, int, str, str]] = []
         total_bytes = 0
-        for payload_item, state_item in zip(payload_files, state_files, strict=True):
+        for payload_item, state_item in zip(
+            payload_files,
+            effective_state_files,
+            strict=True,
+        ):
             if not isinstance(payload_item, Mapping) or not isinstance(state_item, Mapping):
                 raise WorkspaceLspError("invalid_approval", "workspace_lsp approval is malformed")
-            if str(payload_item.get("path") or "") != str(state_item.get("path") or ""):
+            if (
+                not unrestricted
+                and str(payload_item.get("path") or "")
+                != str(state_item.get("path") or "")
+            ):
                 raise WorkspaceLspError("invalid_approval", "workspace_lsp approval paths disagree")
             target, selected_root = self._resolve_existing_path(
                 roots,
@@ -2712,10 +2865,17 @@ class WorkspaceHarness:
                 allow_directory=False,
             )
             if (
-                selected_root != root
+                (
+                    authorization_root is None
+                    and selected_root != root
+                )
+                or (
+                    authorization_root is not None
+                    and not _is_within(target, authorization_root)
+                )
                 or target.is_symlink()
                 or not target.is_file()
-                or self._is_sensitive(target, root)
+                or (not unrestricted and self._is_sensitive(target, root))
             ):
                 raise WorkspaceLspError(
                     "path_not_allowed",
@@ -2724,24 +2884,53 @@ class WorkspaceHarness:
             content = payload_item.get("content")
             if not isinstance(content, str) or "\x00" in content:
                 raise WorkspaceLspError("invalid_approval", "workspace_lsp content is invalid")
-            postimage = content.encode("utf-8")
+            try:
+                postimage = content.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise WorkspaceLspError(
+                    "invalid_approval",
+                    "workspace_lsp content is not valid UTF-8",
+                ) from exc
+            if len(postimage) > 2 * 1024 * 1024:
+                raise WorkspaceLspError(
+                    "workspace_edit_out_of_bounds",
+                    "workspace_lsp approved output exceeds its per-file size bound",
+                )
             total_bytes += len(postimage)
             if total_bytes > _LSP_MAX_TOTAL_WRITE_BYTES:
                 raise WorkspaceLspError(
                     "workspace_edit_out_of_bounds",
                     "workspace_lsp approved output exceeds its size bound",
                 )
-            preimage = target.read_bytes()
+            try:
+                preimage = target.read_bytes()
+            except OSError as exc:
+                raise WorkspaceLspError(
+                    "stale_snapshot",
+                    "workspace_lsp approved path disappeared before write",
+                ) from exc
+            if len(preimage) > 2 * 1024 * 1024 or b"\x00" in preimage:
+                raise WorkspaceLspError(
+                    "workspace_edit_out_of_bounds",
+                    "workspace_lsp only edits UTF-8 files up to 2 MiB",
+                )
+            try:
+                preimage.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise WorkspaceLspError(
+                    "invalid_document",
+                    "workspace_lsp only edits UTF-8 files",
+                ) from exc
             pre_hash = hashlib.sha256(preimage).hexdigest()
             post_hash = hashlib.sha256(postimage).hexdigest()
             expected_pre = str(state_item.get("preimageSha256") or "")
             expected_post = str(state_item.get("postimageSha256") or "")
-            if pre_hash != expected_pre:
+            if not unrestricted and pre_hash != expected_pre:
                 raise WorkspaceLspError(
                     "stale_snapshot",
                     "workspace_lsp file changed after approval preview",
                 )
-            if post_hash != expected_post:
+            if not unrestricted and post_hash != expected_post:
                 raise WorkspaceLspError(
                     "invalid_approval",
                     "workspace_lsp approved output no longer matches its preview",
@@ -2824,7 +3013,11 @@ class WorkspaceHarness:
         if not raw_path:
             raise WorkspaceHarnessError("path is required for workspace_patch")
         target, root = self._resolve_existing_path(roots, raw_path, allow_directory=False)
-        if self._is_sensitive(target, root) or target.is_symlink() or not target.is_file():
+        if (
+            self._is_sensitive_for_session(session, target, root)
+            or target.is_symlink()
+            or not target.is_file()
+        ):
             raise WorkspaceHarnessError("workspace_patch requires a non-sensitive regular file")
         old_text = args.get("oldText")
         new_text = args.get("newText")
@@ -2852,11 +3045,15 @@ class WorkspaceHarness:
             start = before.find(old_text, search_from)
             occurrence_spans.append((start, start + len(old_text)))
             search_from = start + len(old_text)
-        read_origin = _validated_workspace_read_origin(
-            args.get("readOrigin"),
-            preimage_sha256=preimage_sha256,
-            text=before,
-            anchor_spans=occurrence_spans,
+        read_origin = (
+            None
+            if unrestricted_workspace_policy_active(session)
+            else _validated_workspace_read_origin(
+                args.get("readOrigin"),
+                preimage_sha256=preimage_sha256,
+                text=before,
+                anchor_spans=occurrence_spans,
+            )
         )
         after = before.replace(old_text, new_text)
         after_raw = after.encode("utf-8")
@@ -2927,12 +3124,25 @@ class WorkspaceHarness:
         if isinstance(base_state.get("readOrigin"), Mapping):
             prepare_args["readOrigin"] = base_state["readOrigin"]
         prepared = self.prepare_patch(session, prepare_args)
-        if prepared.roots_digest != str(base_state.get("workspaceRootSha256") or ""):
-            raise WorkspaceHarnessError("authorized workspace changed after approval preview")
-        if prepared.preimage_sha256 != str(base_state.get("preimageSha256") or ""):
-            raise WorkspaceHarnessError("workspace file changed after approval preview")
-        if prepared.postimage_sha256 != str(base_state.get("postimageSha256") or ""):
-            raise WorkspaceHarnessError("workspace patch no longer matches approval preview")
+        if not unrestricted_workspace_policy_active(session):
+            if prepared.roots_digest != str(
+                base_state.get("workspaceRootSha256") or ""
+            ):
+                raise WorkspaceHarnessError(
+                    "authorized workspace changed after approval preview"
+                )
+            if prepared.preimage_sha256 != str(
+                base_state.get("preimageSha256") or ""
+            ):
+                raise WorkspaceHarnessError(
+                    "workspace file changed after approval preview"
+                )
+            if prepared.postimage_sha256 != str(
+                base_state.get("postimageSha256") or ""
+            ):
+                raise WorkspaceHarnessError(
+                    "workspace patch no longer matches approval preview"
+                )
         current_raw = prepared.path.read_bytes()
         if hashlib.sha256(current_raw).hexdigest() != prepared.preimage_sha256:
             raise WorkspaceHarnessError("workspace file changed immediately before atomic write")
@@ -2980,7 +3190,11 @@ class WorkspaceHarness:
         if not raw_path:
             raise WorkspaceHarnessError("path is required for workspace_edit")
         target, root = self._resolve_existing_path(roots, raw_path, allow_directory=False)
-        if self._is_sensitive(target, root) or target.is_symlink() or not target.is_file():
+        if (
+            self._is_sensitive_for_session(session, target, root)
+            or target.is_symlink()
+            or not target.is_file()
+        ):
             raise WorkspaceHarnessError("workspace_edit requires a non-sensitive regular file")
         edits_value = args.get("edits")
         if not isinstance(edits_value, list) or not 1 <= len(edits_value) <= 64:
@@ -3017,17 +3231,20 @@ class WorkspaceHarness:
         except UnicodeDecodeError as exc:
             raise WorkspaceHarnessError("workspace_edit only accepts UTF-8 text") from exc
         preimage_sha256 = hashlib.sha256(raw).hexdigest()
-        expected_revision = _required_workspace_resource_revision(
-            args.get("resourceRevision"),
-            operation="workspace_edit",
-        )
-        actual_revision = _workspace_resource_revision_from_sha256(preimage_sha256)
-        if expected_revision != actual_revision:
-            raise WorkspaceSnapshotError(
-                "stale_snapshot",
-                "workspace_edit snapshot is stale; read the file again before editing",
-                retryable=True,
+        if not unrestricted_workspace_policy_active(session):
+            expected_revision = _required_workspace_resource_revision(
+                args.get("resourceRevision"),
+                operation="workspace_edit",
             )
+            actual_revision = _workspace_resource_revision_from_sha256(
+                preimage_sha256
+            )
+            if expected_revision != actual_revision:
+                raise WorkspaceSnapshotError(
+                    "stale_snapshot",
+                    "workspace_edit snapshot is stale; read the file again before editing",
+                    retryable=True,
+                )
         replacements: list[tuple[int, int, str]] = []
         for index, (old_text, new_text) in enumerate(edits):
             occurrences = before.count(old_text)
@@ -3042,11 +3259,15 @@ class WorkspaceHarness:
         for previous, current in zip(ordered, ordered[1:], strict=False):
             if current[0] < previous[1]:
                 raise WorkspaceHarnessError("workspace_edit replacements may not overlap")
-        read_origin = _validated_workspace_read_origin(
-            args.get("readOrigin"),
-            preimage_sha256=preimage_sha256,
-            text=before,
-            anchor_spans=[(start, end) for start, end, _ in ordered],
+        read_origin = (
+            None
+            if unrestricted_workspace_policy_active(session)
+            else _validated_workspace_read_origin(
+                args.get("readOrigin"),
+                preimage_sha256=preimage_sha256,
+                text=before,
+                anchor_spans=[(start, end) for start, end, _ in ordered],
+            )
         )
         after = before
         for start, end, new_text in reversed(ordered):
@@ -3110,7 +3331,12 @@ class WorkspaceHarness:
         if isinstance(base_state.get("readOrigin"), Mapping):
             prepare_args["readOrigin"] = base_state["readOrigin"]
         prepared = self.prepare_edit(session, prepare_args)
-        self._verify_text_mutation(prepared, base_state, operation="edit")
+        self._verify_text_mutation(
+            prepared,
+            base_state,
+            session=session,
+            operation="edit",
+        )
         current_raw = prepared.path.read_bytes()
         if hashlib.sha256(current_raw).hexdigest() != prepared.preimage_sha256:
             raise WorkspaceHarnessError("workspace file changed immediately before atomic edit")
@@ -3143,28 +3369,33 @@ class WorkspaceHarness:
         if len(postimage) > 2 * 1024 * 1024:
             raise WorkspaceHarnessError("workspace_write content may not exceed 2 MiB")
         target, root = self._resolve_write_path(roots, raw_path)
-        if self._is_sensitive(target, root) or target.is_symlink() or target.is_dir():
+        if (
+            self._is_sensitive_for_session(session, target, root)
+            or target.is_symlink()
+            or target.is_dir()
+        ):
             raise WorkspaceHarnessError("workspace_write requires a non-sensitive file path")
         existed_before = target.exists()
         before_raw = target.read_bytes() if existed_before else b""
         preimage_sha256 = hashlib.sha256(before_raw).hexdigest()
-        expected_revision = _required_workspace_resource_revision(
-            args.get("resourceRevision"),
-            operation="workspace_write",
-            allow_missing=True,
-        )
-        actual_revision = (
-            _workspace_resource_revision_from_sha256(preimage_sha256)
-            if existed_before
-            else "missing"
-        )
-        if expected_revision != actual_revision:
-            raise WorkspaceSnapshotError(
-                "stale_snapshot",
-                "workspace_write snapshot is stale; read the existing file again "
-                "or use resourceRevision='missing' only for a path that does not exist",
-                retryable=True,
+        if not unrestricted_workspace_policy_active(session):
+            expected_revision = _required_workspace_resource_revision(
+                args.get("resourceRevision"),
+                operation="workspace_write",
+                allow_missing=True,
             )
+            actual_revision = (
+                _workspace_resource_revision_from_sha256(preimage_sha256)
+                if existed_before
+                else "missing"
+            )
+            if expected_revision != actual_revision:
+                raise WorkspaceSnapshotError(
+                    "stale_snapshot",
+                    "workspace_write snapshot is stale; read the existing file again "
+                    "or use resourceRevision='missing' only for a path that does not exist",
+                    retryable=True,
+                )
         if len(before_raw) > 2 * 1024 * 1024 or b"\x00" in before_raw:
             raise WorkspaceHarnessError("workspace_write only overwrites UTF-8 files up to 2 MiB")
         try:
@@ -3260,10 +3491,20 @@ class WorkspaceHarness:
         base_state: Mapping[str, object],
     ) -> dict[str, object]:
         prepared = self.prepare_write(session, args)
-        self._verify_text_mutation(prepared, base_state, operation="write")
+        self._verify_text_mutation(
+            prepared,
+            base_state,
+            session=session,
+            operation="write",
+        )
         expected_existence = base_state.get("existedBefore") is True
-        if prepared.existed_before != expected_existence:
-            raise WorkspaceHarnessError("workspace file existence changed after approval preview")
+        if (
+            not unrestricted_workspace_policy_active(session)
+            and prepared.existed_before != expected_existence
+        ):
+            raise WorkspaceHarnessError(
+                "workspace file existence changed after approval preview"
+            )
         if prepared.path.exists():
             if prepared.path.is_symlink() or not prepared.path.is_file():
                 raise WorkspaceHarnessError("workspace path changed before atomic write")
@@ -3335,19 +3576,12 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError("workspace commands require a coordinator session")
         roots = self._session_roots(session)
         repository_metadata_roots = _linked_worktree_metadata_roots(roots)
+        unrestricted = unrestricted_workspace_policy_active(session)
         source_read_only = read_only_policy_active(session)
         if source_read_only and tool_name == "workspace_job":
             raise WorkspaceHarnessError(
                 "background workspace jobs are not available in read-only mode"
             )
-        model_arbitrated = (
-            normalize_execution_mode(
-                session.get("executionMode"),
-                tool_profile_version=session.get("toolProfileVersion"),
-            )
-            == FULL_TRUST_EXECUTION_MODE
-            and workspace_scope_is_granted(session)
-        )
         command = str(args.get("command") or "").strip()
         if not command:
             raise WorkspaceHarnessError(f"command is required for {tool_name}")
@@ -3355,44 +3589,53 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError("workspace command is malformed or too long")
         if any(ord(character) < 32 and character not in "\n\t" for character in command):
             raise WorkspaceHarnessError("workspace command contains unsupported control characters")
-        if _FORBIDDEN_COMMAND.search(command):
+        if not unrestricted and _FORBIDDEN_COMMAND.search(command):
             raise WorkspaceHarnessError("this system or privilege command is not available")
-        if any(pattern.search(command) for pattern in _CATASTROPHIC_COMMANDS):
+        if not unrestricted and any(pattern.search(command) for pattern in _CATASTROPHIC_COMMANDS):
             raise WorkspaceHarnessError(
                 "catastrophic database or filesystem destruction is not available"
             )
         if (
-            _NETWORK_DESTINATION.search(command)
+            not unrestricted
+            and _NETWORK_DESTINATION.search(command)
             and _SENSITIVE_EGRESS_PATH.search(command)
         ):
             raise WorkspaceHarnessError(
                 "sending sensitive workspace data to a network destination is not available"
             )
         if (
-            any(pattern.search(command) for pattern in _DESTRUCTIVE_COMMANDS)
-            and not model_arbitrated
+            not unrestricted
+            and any(pattern.search(command) for pattern in _DESTRUCTIVE_COMMANDS)
+            and not (
+                normalize_execution_mode(
+                    session.get("executionMode"),
+                    tool_profile_version=session.get("toolProfileVersion"),
+                )
+                == FULL_TRUST_EXECUTION_MODE
+                and workspace_scope_is_granted(session)
+            )
         ):
             raise WorkspaceHarnessError("destructive commands require full-automation model arbitration")
-        if _SECRET_COMMAND.search(command):
+        if not unrestricted and _SECRET_COMMAND.search(command):
             raise WorkspaceHarnessError("commands containing secret-like values are not accepted")
-        if _SENSITIVE_COMMAND_PATH.search(command):
+        if not unrestricted and _SENSITIVE_COMMAND_PATH.search(command):
             raise WorkspaceHarnessError(
                 "commands naming sensitive files are not available"
             )
-        if re.search(r"(?<!&)&(?!&)", command):
+        if not unrestricted and re.search(r"(?<!&)&(?!&)", command):
             raise WorkspaceHarnessError("background shell syntax is not accepted; use workspace_job")
 
-        allow_network = _strict_bool(args.get("allowNetwork"))
-        if source_read_only and allow_network:
+        allow_network = True if unrestricted else _strict_bool(args.get("allowNetwork"))
+        if not unrestricted and source_read_only and allow_network:
             raise WorkspaceHarnessError(
                 "network access is not available for read-only validation commands"
             )
-        if _NETWORK_COMMAND.search(command) and not allow_network:
+        if not unrestricted and _NETWORK_COMMAND.search(command) and not allow_network:
             raise WorkspaceHarnessError("network command requires an explicit allowNetwork approval")
         raw_cwd = str(args.get("cwd") or "").strip()
         if raw_cwd:
             cwd, _ = self._resolve_existing_path(roots, raw_cwd, allow_directory=True)
-        elif len(roots) == 1:
+        elif len(roots) == 1 or unrestricted:
             cwd = roots[0]
         else:
             raise WorkspaceHarnessError("cwd is required when a session has multiple workspaces")
@@ -3412,6 +3655,7 @@ class WorkspaceHarness:
             timeout_seconds=timeout,
             allow_network=allow_network,
             source_read_only=source_read_only,
+            unrestricted=unrestricted,
         )
 
     def execute(self, prepared: PreparedWorkspaceCommand) -> dict[str, object]:
@@ -3419,9 +3663,12 @@ class WorkspaceHarness:
 
     def preview(self, prepared: PreparedWorkspaceCommand) -> dict[str, object]:
         return {
-            "title": "确认运行工作区命令",
-            "summary": f"在 {prepared.cwd.name or prepared.cwd} 中运行一条受沙箱保护的命令",
-            "operationLabel": "运行受控命令",
+            "title": "确认运行系统命令" if prepared.unrestricted else "确认运行工作区命令",
+            "summary": (
+                f"在 {prepared.cwd} 中运行具有全系统权限的命令"
+                if prepared.unrestricted
+                else f"在 {prepared.cwd.name or prepared.cwd} 中运行一条受沙箱保护的命令"
+            ),
             "changes": [
                 {"label": "命令", "before": "", "after": prepared.command},
                 {"label": "工作目录", "before": "", "after": str(prepared.cwd)},
@@ -3477,16 +3724,35 @@ class WorkspaceHarness:
         return self._authorized_roots(session)
 
     def _authorized_roots(self, session: Mapping[str, object]) -> tuple[Path, ...]:
+        unrestricted = unrestricted_workspace_policy_active(session)
         values = session.get("workspaceRoots")
-        if not isinstance(values, list) or not values:
-            raise WorkspaceHarnessError(_NO_AUTHORIZED_WORKSPACE)
+        if unrestricted:
+            projected_values: Sequence[object] = system_wide_workspace_roots(
+                values if isinstance(values, list) else ()
+            )
+        else:
+            if not isinstance(values, list) or not values:
+                raise WorkspaceHarnessError(_NO_AUTHORIZED_WORKSPACE)
+            projected_values = values
         roots: list[Path] = []
-        for value in values:
-            root = Path(str(value)).expanduser().resolve(strict=True)
+        for value in projected_values:
+            try:
+                root = Path(str(value)).expanduser().resolve(strict=True)
+            except (OSError, RuntimeError):
+                if unrestricted:
+                    continue
+                raise WorkspaceHarnessError(
+                    "authorized workspace must be a real directory"
+                )
             if not root.is_dir() or root.is_symlink():
-                raise WorkspaceHarnessError("authorized workspace must be a real directory")
-            if root in {
-                Path("/"),
+                if unrestricted:
+                    continue
+                raise WorkspaceHarnessError(
+                    "authorized workspace must be a real directory"
+                )
+            if root == Path("/") and not unrestricted:
+                raise WorkspaceHarnessError("authorized workspace root is too broad")
+            if not unrestricted and root in {
                 Path("/Users"),
                 Path("/Volumes"),
                 Path("/private"),
@@ -3495,6 +3761,8 @@ class WorkspaceHarness:
                 raise WorkspaceHarnessError("authorized workspace root is too broad")
             if root not in roots:
                 roots.append(root)
+        if unrestricted and not roots:
+            roots.append(Path("/"))
         return tuple(roots)
 
     def _resolve_existing_path(
@@ -3625,14 +3893,29 @@ class WorkspaceHarness:
         prepared: PreparedWorkspaceEdit | PreparedWorkspaceWrite,
         base_state: Mapping[str, object],
         *,
+        session: Mapping[str, object],
         operation: str,
     ) -> None:
-        if prepared.roots_digest != str(base_state.get("workspaceRootSha256") or ""):
-            raise WorkspaceHarnessError("authorized workspace changed after approval preview")
-        if prepared.preimage_sha256 != str(base_state.get("preimageSha256") or ""):
-            raise WorkspaceHarnessError(f"workspace {operation} preimage changed after approval preview")
-        if prepared.postimage_sha256 != str(base_state.get("postimageSha256") or ""):
-            raise WorkspaceHarnessError(f"workspace {operation} no longer matches approval preview")
+        if unrestricted_workspace_policy_active(session):
+            return
+        if prepared.roots_digest != str(
+            base_state.get("workspaceRootSha256") or ""
+        ):
+            raise WorkspaceHarnessError(
+                "authorized workspace changed after approval preview"
+            )
+        if prepared.preimage_sha256 != str(
+            base_state.get("preimageSha256") or ""
+        ):
+            raise WorkspaceHarnessError(
+                f"workspace {operation} preimage changed after approval preview"
+            )
+        if prepared.postimage_sha256 != str(
+            base_state.get("postimageSha256") or ""
+        ):
+            raise WorkspaceHarnessError(
+                f"workspace {operation} no longer matches approval preview"
+            )
 
     def _write_diagnostics(
         self,
@@ -3698,6 +3981,7 @@ class WorkspaceHarness:
         depth: int,
         limit: int,
         output: list[dict[str, object]],
+        session: Mapping[str, object],
     ) -> None:
         if depth <= 0 or len(output) >= limit:
             return
@@ -3708,7 +3992,7 @@ class WorkspaceHarness:
         for child in children:
             if len(output) >= limit:
                 return
-            if self._is_sensitive(child, root):
+            if self._is_sensitive_for_session(session, child, root):
                 continue
             is_link = child.is_symlink()
             kind = "symlink" if is_link else "directory" if child.is_dir() else "file"
@@ -3726,15 +4010,22 @@ class WorkspaceHarness:
                     depth=depth - 1,
                     limit=limit,
                     output=output,
+                    session=session,
                 )
 
-    def _search_files(self, target: Path, root: Path):
+    def _search_files(
+        self,
+        target: Path,
+        root: Path,
+        *,
+        session: Mapping[str, object],
+    ):
         # Search shallow paths first so a large nested tree cannot consume the
         # whole scan budget before nearby project files are considered.
         pending = deque([target])
         while pending:
             current = pending.popleft()
-            if current.is_symlink() or self._is_sensitive(current, root):
+            if current.is_symlink() or self._is_sensitive_for_session(session, current, root):
                 continue
             if current.is_file():
                 yield current
@@ -3760,6 +4051,17 @@ class WorkspaceHarness:
             or name.endswith(_SENSITIVE_SUFFIXES)
             or "credential" in name
             or "keychain" in name
+        )
+
+    def _is_sensitive_for_session(
+        self,
+        session: Mapping[str, object],
+        path: Path,
+        root: Path,
+    ) -> bool:
+        return (
+            not unrestricted_workspace_policy_active(session)
+            and self._is_sensitive(path, root)
         )
 
     def spawn_background(
@@ -3809,7 +4111,9 @@ class WorkspaceHarness:
         finally:
             launched.cleanup()
         duration_ms = max(0, int(time.time() * 1_000) - started_at_ms)
-        decoded = self.redact_output(output.decode("utf-8", errors="replace"))
+        decoded = output.decode("utf-8", errors="replace")
+        if not prepared.unrestricted:
+            decoded = self.redact_output(decoded)
         succeeded = int(exit_code) == 0 and not timed_out and not output_limited
         return {
             "schemaVersion": "rag-ime.workspace-command-receipt.v1",
@@ -3849,7 +4153,10 @@ class WorkspaceHarness:
         temporary_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
         sandbox = self.sandbox_executable
-        if not sandbox.is_file() or not os.access(sandbox, os.X_OK):
+        if (
+            not prepared.unrestricted
+            and (not sandbox.is_file() or not os.access(sandbox, os.X_OK))
+        ):
             raise WorkspaceHarnessError("macOS command harness is unavailable; refusing unsandboxed execution")
         durable_output = Path(output_path) if output_path is not None else None
         durable_exit = Path(exit_status_path) if exit_status_path is not None else None
@@ -3872,33 +4179,37 @@ class WorkspaceHarness:
         output_handle = None
         exit_handle = None
         try:
-            profile = _sandbox_profile(
-                roots=prepared.sandbox_roots,
-                temporary=temporary,
-                allow_network=prepared.allow_network,
-                writable_roots=not prepared.source_read_only,
-            )
-            cache_directory = temporary / "cache"
-            python_cache_directory = cache_directory / "python"
-            environment = {
-                "HOME": str(temporary),
-                "TMPDIR": str(temporary),
-                "XDG_CACHE_HOME": str(cache_directory),
-                "PYTHONPYCACHEPREFIX": str(python_cache_directory),
-                "npm_config_cache": str(cache_directory / "npm"),
-                "PIP_CACHE_DIR": str(cache_directory / "pip"),
-                "COREPACK_HOME": str(cache_directory / "corepack"),
-                "PATH": _workspace_command_path(),
-                "LANG": "en_US.UTF-8",
-                "LC_ALL": "en_US.UTF-8",
-                "GIT_CONFIG_GLOBAL": "/dev/null",
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_OPTIONAL_LOCKS": "0",
-            }
+            sandbox_prefix: list[str] = []
+            if prepared.unrestricted:
+                environment = dict(os.environ)
+                environment["PATH"] = _workspace_command_path()
+            else:
+                profile = _sandbox_profile(
+                    roots=prepared.sandbox_roots,
+                    temporary=temporary,
+                    allow_network=prepared.allow_network,
+                    writable_roots=not prepared.source_read_only,
+                )
+                cache_directory = temporary / "cache"
+                python_cache_directory = cache_directory / "python"
+                environment = {
+                    "HOME": str(temporary),
+                    "TMPDIR": str(temporary),
+                    "XDG_CACHE_HOME": str(cache_directory),
+                    "PYTHONPYCACHEPREFIX": str(python_cache_directory),
+                    "npm_config_cache": str(cache_directory / "npm"),
+                    "PIP_CACHE_DIR": str(cache_directory / "pip"),
+                    "COREPACK_HOME": str(cache_directory / "corepack"),
+                    "PATH": _workspace_command_path(),
+                    "LANG": "en_US.UTF-8",
+                    "LC_ALL": "en_US.UTF-8",
+                    "GIT_CONFIG_GLOBAL": "/dev/null",
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_OPTIONAL_LOCKS": "0",
+                }
+                sandbox_prefix = [str(sandbox), "-p", profile]
             command = [
-                str(sandbox),
-                "-p",
-                profile,
+                *sandbox_prefix,
                 "/bin/zsh",
                 "-f",
                 "-c",
@@ -3916,17 +4227,15 @@ class WorkspaceHarness:
                 wrapper = (
                     'receipt_fd="$2"\n'
                     '(\n'
-                    '  eval "exec ${receipt_fd}>&-"\n'
+                    '  exec {receipt_fd}>&-\n'
                     '  /bin/zsh -f -c "$1"\n'
                     ')\n'
                     'exit_code=$?\n'
-                    'eval "printf \'%s\\\\n\' \'$exit_code\' >&${receipt_fd}"\n'
+                    'printf \'%s\\n\' "$exit_code" >&$receipt_fd\n'
                     'exit "$exit_code"'
                 )
                 command = [
-                    str(sandbox),
-                    "-p",
-                    profile,
+                    *sandbox_prefix,
                     "/bin/zsh",
                     "-f",
                     "-c",
@@ -4042,6 +4351,131 @@ def _validated_lsp(
     validate_contract(payload, contract)
     return payload
 
+def _lsp_sandbox_profile(
+    *,
+    root: Path,
+    temporary: Path,
+    unrestricted: bool = False,
+) -> str:
+    """Return the language-server sandbox profile for the selected Session."""
+
+    if unrestricted:
+        return "\n".join(
+            [
+                "(version 1)",
+                "(deny default)",
+                "(allow process*)",
+                "(allow sysctl-read)",
+                "(allow file-read*)",
+                "(allow file-write*)",
+                "(allow network*)",
+            ]
+        )
+    escaped_root = _profile_escape(str(root))
+    escaped_temporary = _profile_escape(str(temporary))
+    lines = [
+        "(version 1)",
+        "(deny default)",
+        "(allow process*)",
+        "(allow sysctl-read)",
+        "(allow file-read-metadata)",
+        '(allow file-read* file-write-data (literal "/dev/null"))',
+        "(allow file-read*",
+        "  (require-all",
+        '    (require-not (subpath "/Users"))',
+        '    (require-not (subpath "/Volumes"))',
+        '    (require-not (subpath "/private/var/folders"))',
+        '    (require-not (subpath "/private/tmp"))))',
+        f'(allow file-read* (subpath "{escaped_root}"))',
+        f'(allow file-read* (subpath "{escaped_temporary}"))',
+        f'(allow file-write* (subpath "{escaped_temporary}"))',
+    ]
+    for pattern in (
+        r"/\.env$",
+        r"/\.env\.[^/]*$",
+        r"/\.git-credentials$",
+        r"/\.netrc$",
+        r"/auth\.json$",
+        r"/credentials\.json$",
+        r"/cookies\.sqlite$",
+        r"/id_rsa$",
+        r"/id_ed25519$",
+        r"/[^/]*\.(pem|key|p12|pfx|sqlite|sqlite3|db)$",
+        r"/\.(git|ssh|gnupg|aws|azure|keychain)(/|$)",
+    ):
+        lines.append(f'(deny file-read* (regex #"{pattern}"))')
+        lines.append(f'(deny file-write* (regex #"{pattern}"))')
+    return "\n".join(lines)
+
+
+def _sandbox_profile(
+    *,
+    roots: Sequence[Path],
+    temporary: Path,
+    allow_network: bool,
+    writable_roots: bool = True,
+    unrestricted: bool = False,
+) -> str:
+    if unrestricted:
+        return "\n".join(
+            [
+                "(version 1)",
+                "(deny default)",
+                "(allow process*)",
+                "(allow sysctl-read)",
+                "(allow file-read*)",
+                "(allow file-write*)",
+                "(allow network*)",
+            ]
+        )
+    lines = [
+        "(version 1)",
+        "(deny default)",
+        "(allow process*)",
+        "(allow sysctl-read)",
+        "(allow file-read-metadata)",
+        '(allow file-read* file-write-data (literal "/dev/null"))',
+        "(allow file-read*",
+        "  (require-all",
+        '    (require-not (subpath "/Users"))',
+        '    (require-not (subpath "/Volumes"))',
+        '    (require-not (subpath "/private/var/folders"))',
+        '    (require-not (subpath "/private/tmp"))))',
+    ]
+    for root in roots:
+        escaped = _profile_escape(str(root))
+        lines.append(f'(allow file-read* (subpath "{escaped}"))')
+        if writable_roots:
+            lines.append(f'(allow file-write* (subpath "{escaped}"))')
+    temp = _profile_escape(str(temporary))
+    lines.append(f'(allow file-read* (subpath "{temp}"))')
+    lines.append(f'(allow file-write* (subpath "{temp}"))')
+    sensitive_patterns = (
+        r"/\.env$",
+        r"/\.env\.[^/]*$",
+        r"/\.git-credentials$",
+        r"/\.netrc$",
+        r"/auth\.json$",
+        r"/credentials\.json$",
+        r"/cookies\.sqlite$",
+        r"/id_rsa$",
+        r"/id_ed25519$",
+        r"/[^/]*\.(pem|key|p12|pfx|sqlite|sqlite3|db)$",
+        r"/\.(ssh|gnupg|aws|azure|keychain)(/|$)",
+    )
+    for pattern in sensitive_patterns:
+        lines.append(f'(deny file-read* (regex #"{pattern}"))')
+        lines.append(f'(deny file-write* (regex #"{pattern}"))')
+    # A managed preview server is still local product validation, not external
+    # network access. Let it bind a socket while accepting only loopback input;
+    # outbound access remains behind the explicit allowNetwork contract below.
+    lines.append('(allow network-bind (local ip "*:*"))')
+    lines.append('(allow network-inbound (local ip "localhost:*"))')
+    if allow_network:
+        lines.append("(allow network-outbound)")
+        lines.append('(allow file-read* (literal "/private/etc/hosts"))')
+        lines.append('(allow file-read* (literal "/private/etc/resolv.conf"))')
+    return "\n".join(lines)
 
 def _safe_lsp_int(value: object) -> int:
     if isinstance(value, bool):
@@ -4073,7 +4507,6 @@ def _lsp_uri_path(uri: str) -> Path | None:
         return Path(unquote(parsed.path)).resolve(strict=True)
     except (OSError, RuntimeError, ValueError):
         return None
-
 
 def _lsp_text_offset(text: str, position: Mapping[str, object]) -> int:
     line_number = _safe_lsp_int(position.get("line"))
@@ -4153,101 +4586,6 @@ def _apply_lsp_text_edits(
     return result
 
 
-def _lsp_sandbox_profile(*, root: Path, temporary: Path) -> str:
-    """Read-only workspace profile for a root-scoped language server."""
-
-    escaped_root = _profile_escape(str(root))
-    escaped_temporary = _profile_escape(str(temporary))
-    lines = [
-        "(version 1)",
-        "(deny default)",
-        "(allow process*)",
-        "(allow sysctl-read)",
-        "(allow file-read-metadata)",
-        '(allow file-read* file-write-data (literal "/dev/null"))',
-        "(allow file-read*",
-        "  (require-all",
-        '    (require-not (subpath "/Users"))',
-        '    (require-not (subpath "/Volumes"))',
-        '    (require-not (subpath "/private/var/folders"))',
-        '    (require-not (subpath "/private/tmp"))))',
-        f'(allow file-read* (subpath "{escaped_root}"))',
-        f'(allow file-read* (subpath "{escaped_temporary}"))',
-        f'(allow file-write* (subpath "{escaped_temporary}"))',
-    ]
-    for pattern in (
-        r"/\.env$",
-        r"/\.env\.[^/]*$",
-        r"/\.git-credentials$",
-        r"/\.netrc$",
-        r"/auth\.json$",
-        r"/credentials\.json$",
-        r"/cookies\.sqlite$",
-        r"/id_rsa$",
-        r"/id_ed25519$",
-        r"/[^/]*\.(pem|key|p12|pfx|sqlite|sqlite3|db)$",
-        r"/\.(git|ssh|gnupg|aws|azure|keychain)(/|$)",
-    ):
-        lines.append(f'(deny file-read* (regex #"{pattern}"))')
-        lines.append(f'(deny file-write* (regex #"{pattern}"))')
-    return "\n".join(lines)
-
-
-def _sandbox_profile(
-    *,
-    roots: Sequence[Path],
-    temporary: Path,
-    allow_network: bool,
-    writable_roots: bool = True,
-) -> str:
-    lines = [
-        "(version 1)",
-        "(deny default)",
-        "(allow process*)",
-        "(allow sysctl-read)",
-        "(allow file-read-metadata)",
-        '(allow file-read* file-write-data (literal "/dev/null"))',
-        "(allow file-read*",
-        "  (require-all",
-        '    (require-not (subpath "/Users"))',
-        '    (require-not (subpath "/Volumes"))',
-        '    (require-not (subpath "/private/var/folders"))',
-        '    (require-not (subpath "/private/tmp"))))',
-    ]
-    for root in roots:
-        escaped = _profile_escape(str(root))
-        lines.append(f'(allow file-read* (subpath "{escaped}"))')
-        if writable_roots:
-            lines.append(f'(allow file-write* (subpath "{escaped}"))')
-    temp = _profile_escape(str(temporary))
-    lines.append(f'(allow file-read* (subpath "{temp}"))')
-    lines.append(f'(allow file-write* (subpath "{temp}"))')
-    sensitive_patterns = (
-        r"/\.env$",
-        r"/\.env\.[^/]*$",
-        r"/\.git-credentials$",
-        r"/\.netrc$",
-        r"/auth\.json$",
-        r"/credentials\.json$",
-        r"/cookies\.sqlite$",
-        r"/id_rsa$",
-        r"/id_ed25519$",
-        r"/[^/]*\.(pem|key|p12|pfx|sqlite|sqlite3|db)$",
-        r"/\.(ssh|gnupg|aws|azure|keychain)(/|$)",
-    )
-    for pattern in sensitive_patterns:
-        lines.append(f'(deny file-read* (regex #"{pattern}"))')
-        lines.append(f'(deny file-write* (regex #"{pattern}"))')
-    # A managed preview server is still local product validation, not external
-    # network access. Let it bind a socket while accepting only loopback input;
-    # outbound access remains behind the explicit allowNetwork contract below.
-    lines.append('(allow network-bind (local ip "*:*"))')
-    lines.append('(allow network-inbound (local ip "localhost:*"))')
-    if allow_network:
-        lines.append("(allow network-outbound)")
-        lines.append('(allow file-read* (literal "/private/etc/hosts"))')
-        lines.append('(allow file-read* (literal "/private/etc/resolv.conf"))')
-    return "\n".join(lines)
 
 
 def _profile_escape(value: str) -> str:

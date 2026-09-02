@@ -25,6 +25,7 @@ export type AgentSessionV1 = {
   mode: 'assistant' | 'coordinator';
   status: 'idle' | 'active' | 'busy' | 'faulted' | 'archived';
   sessionKind?: 'conversation' | 'subagent_runtime';
+  evaluationSnapshot?: boolean;
   surfaceKind?: 'agent' | 'extension_app' | 'builtin_app';
   ownerAppId?: string;
   surfaceKey?: string;

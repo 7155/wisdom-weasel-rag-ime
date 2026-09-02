@@ -64,7 +64,7 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
-    def test_first_executable_room_message_returns_public_confirmation_before_prompt(self) -> None:
+    def test_first_executable_room_message_dispatches_without_second_confirmation(self) -> None:
         room = self.service.create_room(
             {
                 "title": "Trace 修复",
@@ -88,7 +88,11 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             state="active",
         )
 
-        with patch.object(self.service, "prompt") as prompt:
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:direct"},
+        ) as prompt:
             response = self.service.post_room_message(
                 str(room["id"]),
                 {
@@ -106,23 +110,23 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
                 },
             )
 
-        self.assertFalse(response["accepted"])
-        self.assertEqual(response["status"], "awaiting_confirmation")
-        self.assertEqual(response["phase"], "alignment")
-        self.assertIn("startConfirmation", response)
-        self.assertEqual(replay["status"], "awaiting_confirmation")
-        prompt.assert_not_called()
+        self.assertTrue(response["accepted"])
+        self.assertEqual(response["phase"], "execution")
+        self.assertNotIn("startConfirmation", response)
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(replay["roomTurnId"], response["roomTurnId"])
+        prompt.assert_called_once()
+        self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
         snapshot = self.service.room_snapshot(str(room["id"]))
-        self.assertEqual(snapshot["room"]["startGate"]["status"], "pending")
-        self.assertEqual(
-            sum(
+        self.assertIsNone(snapshot["room"]["startGate"])
+        self.assertFalse(
+            any(
                 event["eventType"] == "room_start_confirmation_required"
                 for event in snapshot["events"]
-            ),
-            1,
+            )
         )
 
-    def test_confirmation_dispatches_original_task_and_is_idempotent(self) -> None:
+    def test_legacy_confirmation_dispatches_original_task_and_is_idempotent(self) -> None:
         room = self.service.create_room(
             {
                 "title": "确认后执行",
@@ -146,6 +150,15 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             mime_type="image/png",
             file_name="start-gate.png",
         )["media"]
+        pending = self.service.room_start_gates.claim(
+            room_id=str(room["id"]),
+            objective_text="原任务",
+            client_message_id="client:two",
+            target_participant_ids=[str(participant["id"])],
+            work_item_id=str(work["id"]),
+            attachment_ids=[str(media["mediaId"])],
+            retry_of_root_id="",
+        )
         with (
             patch.object(
                 self.service.runtime,
@@ -154,20 +167,11 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             ),
             patch.object(self.service, "prompt", return_value={"turnId": "turn:confirmed"}) as prompt,
         ):
-            pending = self.service.post_room_message(
-                str(room["id"]),
-                {
-                    "message": "原任务",
-                    "workItemId": work["id"],
-                    "clientMessageId": "client:two",
-                    "attachmentIds": [media["mediaId"]],
-                },
-            )
             confirmed = self.service.confirm_room_start(
-                str(room["id"]), {"gateId": pending["startConfirmation"]["gateId"], "decision": "confirm"},
+                str(room["id"]), {"gateId": pending["gateId"], "decision": "confirm"},
             )
             replay = self.service.confirm_room_start(
-                str(room["id"]), {"gateId": pending["startConfirmation"]["gateId"], "decision": "confirm"},
+                str(room["id"]), {"gateId": pending["gateId"], "decision": "confirm"},
             )
         self.assertTrue(confirmed["accepted"])
         self.assertEqual(confirmed["phase"], "execution")
@@ -176,7 +180,7 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         self.assertEqual(prompt.call_args.args[1]["attachments"], [media["mediaId"]])
         prompt.assert_called_once()
 
-    def test_confirmed_room_gate_does_not_block_a_later_work_item(self) -> None:
+    def test_confirmed_legacy_gate_does_not_block_a_later_work_item(self) -> None:
         room = self.service.create_room(
             {
                 "title": "确认一次后继续执行",
@@ -201,18 +205,23 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             created_by_participant_id=str(participant["id"]), client_message_id="work:second",
             topic_id=str(room["activeTopicId"]), state="active",
         )
+        pending = self.service.room_start_gates.claim(
+            room_id=str(room["id"]),
+            objective_text="执行第一个任务",
+            client_message_id="client:first",
+            target_participant_ids=[str(participant["id"])],
+            work_item_id=str(first_work["id"]),
+            attachment_ids=[],
+            retry_of_root_id="",
+        )
         with patch.object(
             self.service,
             "prompt",
             side_effect=[{"turnId": "turn:first"}, {"turnId": "turn:second"}],
         ) as prompt:
-            pending = self.service.post_room_message(
-                str(room["id"]),
-                {"message": "第一个任务", "workItemId": first_work["id"], "clientMessageId": "client:first"},
-            )
             first = self.service.confirm_room_start(
                 str(room["id"]),
-                {"gateId": pending["startConfirmation"]["gateId"], "decision": "confirm"},
+                {"gateId": pending["gateId"], "decision": "confirm"},
             )
             second = self.service.post_room_message(
                 str(room["id"]),

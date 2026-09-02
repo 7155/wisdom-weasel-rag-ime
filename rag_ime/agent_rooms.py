@@ -52,6 +52,7 @@ ROOM_EVENT_TYPES = frozenset(
 ROOM_SNAPSHOT_EVENT_LIMIT = 200
 ROOM_HISTORY_PAGE_LIMIT = 200
 MAX_ACTIVE_ROOM_PARTICIPANTS = 8
+MAX_ROOM_WORKSPACE_ROOTS = 5
 ROOM_COLLABORATION_ROLES = frozenset(
     {
         "coordinator",
@@ -121,8 +122,10 @@ class AgentRoomStore:
         if not 0 <= moderator_ordinal < len(values):
             raise ValueError("agent room moderator ordinal is out of range")
         roots = _workspace_roots(workspace_roots)
-        if len(roots) > 4:
-            raise ValueError("agent room accepts at most four workspace roots")
+        if len(roots) > MAX_ROOM_WORKSPACE_ROOTS:
+            raise ValueError(
+                f"agent room accepts at most {MAX_ROOM_WORKSPACE_ROOTS} workspace roots"
+            )
 
         timestamp = _timestamp(created_at_ms)
         room_id = f"room:{uuid.uuid4()}"
@@ -880,8 +883,15 @@ class AgentRoomStore:
             roots = values.get("workspaceRoots")
             if not isinstance(roots, list):
                 raise ValueError("workspaceRoots must be an array")
+            normalized_roots = _workspace_roots(
+                [str(value) for value in roots]
+            )
+            if len(normalized_roots) > MAX_ROOM_WORKSPACE_ROOTS:
+                raise ValueError(
+                    f"agent room accepts at most {MAX_ROOM_WORKSPACE_ROOTS} workspace roots"
+                )
             updates["workspace_roots_json"] = json.dumps(
-                [str(value) for value in roots],
+                normalized_roots,
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
@@ -2187,19 +2197,20 @@ def _room_start_gate_payload(row: sqlite3.Row | None) -> dict[str, object] | Non
 
 def _room_execution_mode(participants: Sequence[sqlite3.Row]) -> str:
     active = {
-        str(
-            row["session_execution_mode"]
-            if "session_execution_mode" in row.keys()
-            and row["session_execution_mode"]
-            else "per_action"
-        )
+        str(row["session_execution_mode"])
         for row in participants
-        if str(row["participant_status"] or "") == "active"
+        if (
+            str(row["participant_status"] or "") == "active"
+            and "session_execution_mode" in row.keys()
+            and row["session_execution_mode"]
+        )
     }
     if len(active) == 1:
         return next(iter(active))
     # A mixed participant policy is never treated as trusted. Lifecycle repair
-    # will converge it before the next managed Dispatch.
+    # will converge it before the next managed Dispatch. Missing Session rows
+    # are ignored above so a surviving participant still carries the Room mode
+    # into missing-session repair.
     return "per_action"
 
 

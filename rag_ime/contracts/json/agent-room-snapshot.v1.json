@@ -124,7 +124,7 @@
         "configRevision": {"type": "integer", "minimum": 1},
         "workspaceRoots": {
           "type": "array",
-          "maxItems": 4,
+          "maxItems": 5,
           "uniqueItems": true,
           "items": {"type": "string", "minLength": 1}
         },

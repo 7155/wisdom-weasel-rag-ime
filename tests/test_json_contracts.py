@@ -47,6 +47,93 @@ class JsonContractTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(load_contract(name)["type"], "object")
 
+    def test_trace_result_attribution_contract_enforces_order_and_evidence(self) -> None:
+        evidence_id = "observation:trace:attribution"
+        layers = [
+            {
+                "layer": "tool",
+                "verdict": "primary",
+                "explanation": "The receipt proves the Tool completed.",
+                "evidenceIds": [evidence_id],
+            },
+            {
+                "layer": "skill",
+                "verdict": "unknown",
+                "explanation": "Skill evidence is incomplete.",
+                "evidenceIds": [],
+            },
+            {
+                "layer": "template",
+                "verdict": "unknown",
+                "explanation": "Template evidence is incomplete.",
+                "evidenceIds": [],
+            },
+            {
+                "layer": "workflow",
+                "verdict": "unknown",
+                "explanation": "Workflow evidence is incomplete.",
+                "evidenceIds": [],
+            },
+            {
+                "layer": "model",
+                "verdict": "unknown",
+                "explanation": "Model evidence is incomplete.",
+                "evidenceIds": [],
+            },
+        ]
+        payload = {
+            "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
+            "summary": "Tool attribution",
+            "hardGates": [],
+            "judgeScores": [],
+            "findings": [],
+            "presentation": {
+                "headline": "Tool failed",
+                "impact": "The task did not finish.",
+                "primaryFindingId": "",
+                "knownFacts": [],
+                "evidenceGaps": [],
+                "causalNodes": [],
+                "expectedStageCount": 0,
+                "recordedStageReceiptEvidenceIds": [],
+                "failureAttribution": {
+                    "primaryLayer": "tool",
+                    "summary": "The Tool is the supported primary owner.",
+                    "layers": layers,
+                },
+            },
+        }
+        validate_contract(payload, "trace-diagnostic-result.v1.json")
+
+        misordered = {
+            **payload,
+            "presentation": {
+                **payload["presentation"],
+                "failureAttribution": {
+                    **payload["presentation"]["failureAttribution"],
+                    "layers": [layers[1], layers[0], *layers[2:]],
+                },
+            },
+        }
+        with self.assertRaises(ContractValidationError):
+            validate_contract(misordered, "trace-diagnostic-result.v1.json")
+
+        missing_evidence = {
+            **payload,
+            "presentation": {
+                **payload["presentation"],
+                "failureAttribution": {
+                    **payload["presentation"]["failureAttribution"],
+                    "layers": [
+                        {**layers[0], "evidenceIds": []},
+                        *layers[1:],
+                    ],
+                },
+            },
+        }
+        with self.assertRaises(ContractValidationError):
+            validate_contract(missing_evidence, "trace-diagnostic-result.v1.json")
+
     def test_suggest_request_and_selection_fixtures_validate(self) -> None:
         candidate = {"text": "继续完成", "insertText": "继续完成", "sourceType": "model"}
         request = {

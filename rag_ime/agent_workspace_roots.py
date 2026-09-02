@@ -40,3 +40,19 @@ def existing_workspace_roots(
             f"workspaceRoots accepts at most {maximum} directories"
         )
     return tuple(roots)
+
+
+def system_wide_workspace_roots(values: Iterable[object]) -> tuple[str, ...]:
+    """Keep optional project context first and make system access explicit."""
+
+    roots: list[str] = []
+    for value in values:
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        normalized = str(Path(raw).expanduser().resolve(strict=False))
+        if normalized not in roots:
+            roots.append(normalized)
+    if "/" not in roots:
+        roots.append("/")
+    return tuple(roots)

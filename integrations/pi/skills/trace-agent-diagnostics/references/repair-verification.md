@@ -3,13 +3,24 @@
 Read this only after the user explicitly confirms a candidate repair from the
 web report.
 
-1. Bind one repair owner and exact authorized workspace roots. A multi-target
-   report does not authorize modifying every target.
+1. Bind one repair owner, source fingerprint, failure reference, expected
+   effect, and rollback target. Full-disk authority does not widen a
+   multi-target report into permission to modify every target.
 2. After the user's one-time confirmation, create an ordinary writable Agent
-   Session with `full_trust`, `ENABLE_FULL_TRUST`, and the exact owner roots.
-   Pending operations are arbitrated by the independent Luna Max approval
-   Agent instead of returning to the user per Tool. The diagnostic Session
-   stays read-only.
+   Session with exactly this policy:
+   - `mode: "coordinator"`
+   - `toolProfileVersion: "control-center-auto-approve-v1"`
+   - `executionMode: "full_trust"`
+   - `dangerousModeConfirmation: "ENABLE_FULL_TRUST"`
+   - `workspaceRoots: ["/"]`
+   - `toolAllowlistMode: "profile"`
+   - `projectContextEnabled: true`, `piSkillsEnabled: true`, and
+     `codexSkillsEnabled: true`
+   The paired profile directly auto-approves every Tool effect. It does not
+   route actions through another approval Agent or ask for per-Tool approval.
+   Persist the authorization as
+   `writeAuthority: "auto_approved_full_trust"`. The diagnostic Session stays
+   read-only.
 3. Preserve the source fingerprint, failure reference, expected effect, test
    plan, and rollback target in the handoff.
 4. Require a visible diff or configuration receipt and focused test evidence.
@@ -33,7 +44,7 @@ web report.
 
 The report stores two separate linked facts: `repair_handoff` authorization
 and repair verification. The first records the user's decision to enter a
-scoped, model-arbitrated full-automation repair Session; it is not an applied
+system-wide, auto-approved full-trust repair Session; it is not an applied
 change or verification receipt. The second may link only a server-issued
 `TraceRepairReceipt` and Runtime-owned EvalRun. Each link appends a new immutable
 report revision instead of rewriting the completed diagnostic result.

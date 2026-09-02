@@ -132,13 +132,53 @@ describe('Agent experience', () => {
       }),
     })));
     expect(screen.getByRole('status', { name: '正在打开对话' })).toBeInTheDocument();
+    expect(screen.getByText('先载入最近内容；完整记录可按需加载。')).toBeInTheDocument();
 
     pendingSessions.resolve({ ok: true, items: previewSessions });
     pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
   });
 
-  it('renders a recent deep-link snapshot before idempotently replacing it with full history', async () => {
+  it('opens evaluation snapshots as frozen full transcripts without live controls', async () => {
+    const evaluationSession = {
+      ...previewSessions[0]!,
+      id: 'session-evaluation',
+      title: '冻结评测记录',
+      evaluationSnapshot: true,
+    };
+    const transport = productionTransport({
+      'agent.sessions.list': {
+        ok: true,
+        activeSessionId: evaluationSession.id,
+        items: [evaluationSession],
+      },
+      'agent.session.snapshot': previewAgentSnapshot(evaluationSession.id),
+    });
+
+    renderAgent(transport, `/agent?session=${evaluationSession.id}`);
+
+    expect(await screen.findByText('评测快照 · 只读证据')).toBeInTheDocument();
+    expect(screen.getAllByText('读取输入法工具书，并把结果作为可展开卡片保留。').length).toBeGreaterThan(0);
+    expect(screen.getByText('评测快照，只读证据')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '消息' })).not.toBeInTheDocument();
+    expect(transport.subscriptionCount('agent.session.events')).toBe(0);
+    expect(transport.requests.some((request) => (
+      request.pathId === 'agent.runtime.get'
+      || request.pathId === 'agent.session.models'
+      || request.pathId === 'agent.session.commands'
+      || request.pathId === 'agent.tools.list'
+    ))).toBe(false);
+    const snapshotRequests = transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+    ));
+    expect(snapshotRequests).toHaveLength(1);
+    expect(snapshotRequests[0]).toEqual(expect.objectContaining({
+      params: { sessionId: evaluationSession.id },
+    }));
+    expect(snapshotRequests[0]?.query).toBeUndefined();
+  });
+
+  it('renders and subscribes from recent history until the user requests the full record', async () => {
     const pendingFull = deferred<unknown>();
     const complete = previewAgentSnapshot('session-preview');
     const recentMessages = complete.messages.slice(-2);
@@ -163,7 +203,8 @@ describe('Agent experience', () => {
     expect(await screen.findByText(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     )).toBeInTheDocument();
-    expect(screen.getByText('正在恢复完整上下文')).toBeInTheDocument();
+    expect(screen.getByText('最近上下文')).toBeInTheDocument();
+    const composer = screen.getByRole('textbox', { name: '消息' });
     expect(transport.requests.filter((request) => (
       request.pathId === 'agent.session.snapshot'
       && request.query?.view === 'recent'
@@ -171,7 +212,16 @@ describe('Agent experience', () => {
     expect(transport.requests.filter((request) => (
       request.pathId === 'agent.session.snapshot'
       && request.query?.view === undefined
-    ))).toHaveLength(1);
+    ))).toHaveLength(0);
+    expect(transport.subscriptionCount('agent.session.events')).toBe(1);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: '加载完整记录' }));
+    await waitFor(() => expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(1));
+    expect(screen.getByText('正在加载完整记录')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '消息' })).toBe(composer);
 
     await act(async () => pendingFull.resolve(complete));
     await waitFor(() => expect(
@@ -182,7 +232,159 @@ describe('Agent experience', () => {
     ).size).toBe(4);
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnOrder).toHaveLength(2);
     expect(container.querySelectorAll('.agent-turn')).toHaveLength(2);
-    expect(screen.queryByText('正在恢复完整上下文')).not.toBeInTheDocument();
+    expect(screen.queryByText('最近上下文')).not.toBeInTheDocument();
+  });
+
+  it('opens and subscribes to a busy Session without starting the blocking full archive', async () => {
+    const complete = previewAgentSnapshot('session-preview');
+    const recentUser = complete.messages.at(-2)!;
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => {
+        if (request.query?.view !== 'recent') {
+          throw new Error('busy first paint must not request the full archive');
+        }
+        return {
+          ...complete,
+          status: 'busy',
+          items: [recentUser],
+          messages: undefined,
+          liveEvents: [],
+          snapshotScope: 'recent',
+          partial: true,
+          recentFromSequence: 12,
+        };
+      },
+    });
+
+    renderAgent(transport, '/agent?session=session-preview');
+
+    expect(await screen.findByText(
+      '读取输入法工具书，并把结果作为可展开卡片保留。',
+    )).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: '消息' })).toBeEnabled();
+    await waitFor(() => expect(
+      transport.subscriptionCount('agent.session.events'),
+    ).toBe(1));
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(0);
+  });
+
+  it('keeps a newer SSE turn when the background full archive resolves late', async () => {
+    const pendingFull = deferred<unknown>();
+    const complete = previewAgentSnapshot('session-preview');
+    const recentMessages = complete.messages.slice(-2);
+    const transport = productionTransport({
+      'agent.session.snapshot': (request: ControlRequest) => (
+        request.query?.view === 'recent'
+          ? {
+              ...complete,
+              items: recentMessages,
+              messages: undefined,
+              liveEvents: [],
+              snapshotScope: 'recent',
+              partial: true,
+              recentFromSequence: 12,
+            }
+          : pendingFull.promise
+      ),
+    });
+
+    renderAgent(transport, '/agent?session=session-preview');
+
+    await waitFor(() => expect(
+      transport.subscriptionCount('agent.session.events'),
+    ).toBe(1));
+    await userEvent.setup().click(screen.getByRole('button', { name: '加载完整记录' }));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const sequence = projection.lastSequence + 1;
+    const latestMessage = complete.messages.at(-1) as UiAgentMessage;
+    const streamedMessage = {
+      ...latestMessage,
+      id: 'session-preview:assistant-after-recent',
+      turnId: 'session-preview:turn-after-recent',
+      blocks: [{
+        ...latestMessage.blocks[0]!,
+        id: 'assistant-after-recent-text',
+        data: { text: '这是 recent 之后通过 SSE 到达的新回复。' },
+      }],
+      createdAtMs: Date.now(),
+      completedAtMs: Date.now(),
+    };
+    act(() => {
+      transport.emit('agent.session.events', {
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'message-after-recent',
+        sessionId: 'session-preview',
+        turnId: streamedMessage.turnId,
+        sequence,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'message_completed',
+        payload: { message: streamedMessage },
+        resumeToken: `session-preview:${sequence}`,
+      });
+    });
+    expect((await screen.findAllByText(
+      '这是 recent 之后通过 SSE 到达的新回复。',
+    )).length).toBeGreaterThan(0);
+
+    await act(async () => pendingFull.resolve(complete));
+    expect(screen.getAllByText('这是 recent 之后通过 SSE 到达的新回复。').length).toBeGreaterThan(0);
+    expect(useAgentLiveStore.getState().projections['session-preview']?.lastSequence).toBe(sequence);
+  });
+
+  it('keeps an immediate optimistic send when the background full archive resolves late', async () => {
+    const pendingFull = deferred<unknown>();
+    const pendingPrompt = deferred<unknown>();
+    const complete = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.prompt': () => pendingPrompt.promise,
+      'agent.session.snapshot': (request: ControlRequest) => (
+        request.query?.view === 'recent'
+          ? {
+              ...complete,
+              items: complete.messages.slice(-2),
+              messages: undefined,
+              liveEvents: [],
+              snapshotScope: 'recent',
+              partial: true,
+              recentFromSequence: 12,
+            }
+          : pendingFull.promise
+      ),
+    });
+    const user = userEvent.setup();
+
+    renderAgent(transport, '/agent?session=session-preview');
+    await waitFor(() => expect(
+      transport.subscriptionCount('agent.session.events'),
+    ).toBe(1));
+    await user.click(screen.getByRole('button', { name: '加载完整记录' }));
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, 'full archive 不能覆盖这条刚发送的消息');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(Object.keys(
+      useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId ?? {},
+    )).toHaveLength(1));
+
+    await act(async () => pendingFull.resolve(complete));
+    expect(Object.keys(
+      useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId ?? {},
+    )).toHaveLength(1);
+    expect(screen.getAllByText('full archive 不能覆盖这条刚发送的消息').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(
+      '把迁移进度按真实代码链整理一下，别把工具日志当回答。',
+    )).toHaveLength(0);
+    expect(screen.getByText('最近上下文')).toBeInTheDocument();
+
+    pendingPrompt.resolve({
+      accepted: false,
+      cancelled: true,
+      abortRequested: true,
+      admissionCancelled: true,
+    });
   });
 
   it('does not present a settled recent user-only window as the completed conversation', async () => {
@@ -207,19 +409,24 @@ describe('Agent experience', () => {
 
     renderAgent(transport, '/agent?session=session-preview');
 
-    expect(await screen.findByText('正在恢复完整上下文')).toBeInTheDocument();
+    expect(await screen.findByText('最近上下文')).toBeInTheDocument();
     expect(screen.queryByText(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     )).not.toBeInTheDocument();
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(0);
 
+    await userEvent.setup().click(screen.getByRole('button', { name: '加载完整记录' }));
     await act(async () => pendingFull.resolve(complete));
     expect((await screen.findAllByText(
       '读取输入法工具书，并把结果作为可展开卡片保留。',
     )).length).toBeGreaterThan(0);
-    expect(screen.queryByText('正在恢复完整上下文')).not.toBeInTheDocument();
+    expect(screen.queryByText('最近上下文')).not.toBeInTheDocument();
   });
 
-  it('falls back to the compatible full snapshot when the recent window fails', async () => {
+  it('keeps the Session usable and waits for an explicit full load when recent recovery fails', async () => {
     const complete = previewAgentSnapshot('session-preview');
     const transport = productionTransport({
       'agent.session.snapshot': (request: ControlRequest) => {
@@ -230,13 +437,17 @@ describe('Agent experience', () => {
 
     renderAgent(transport, '/agent?session=session-preview');
 
+    expect(await screen.findByRole('textbox', { name: '消息' })).toBeEnabled();
+    expect(screen.getByText('最近上下文')).toBeInTheDocument();
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(0);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: '加载完整记录' }));
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
     ).toHaveLength(4));
-    expect(screen.queryByText(/recent unavailable/)).not.toBeInTheDocument();
-    expect(transport.requests.filter((request) => (
-      request.pathId === 'agent.session.snapshot'
-    ))).toHaveLength(2);
   });
 
   it('makes the full session row clickable', async () => {
@@ -2103,6 +2314,66 @@ describe('Agent experience', () => {
     expect(retryBody.clientMessageId).not.toBe(firstClientMessageId);
     expect(retryBody.retryOfClientMessageId).toBe(firstClientMessageId);
   });
+  it('rolls back the classic retry card when admission becomes unresolved before submission', async () => {
+    const pendingSessionRefresh = deferred<unknown>();
+    let holdSessionRefresh = false;
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      () => holdSessionRefresh
+        ? pendingSessionRefresh.promise
+        : { ok: true, items: previewSessions },
+      () => {
+        throw new Error('model unavailable');
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '这条消息需要安全重试');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    const projection = useAgentLiveStore.getState().projections['session-preview']!;
+    const userMessage = Object.values(projection.messagesById).find((message) => (
+      message.role === 'user'
+      && message.blocks.some((block) => block.data.text === '这条消息需要安全重试')
+    ))!;
+    const clientMessageId = userMessage.clientMessageId;
+    expect(clientMessageId).toEqual(expect.any(String));
+    const sessionListRequestsBeforeRetry = transport.requests.filter(
+      ({ request }) => request.pathId === 'agent.sessions.list',
+    ).length;
+    holdSessionRefresh = true;
+    await user.click(retry);
+    await waitFor(() => expect(transport.requests.filter(
+      ({ request }) => request.pathId === 'agent.sessions.list',
+    )).toHaveLength(sessionListRequestsBeforeRetry + 1));
+
+    act(() => {
+      useAgentLiveStore.getState().failOptimistic(
+        'session-preview',
+        clientMessageId!,
+        'receipt unresolved',
+        Date.now(),
+        'unresolved',
+      );
+      pendingSessionRefresh.resolve({ ok: true, items: previewSessions });
+    });
+    expect(await screen.findByText('这条消息仍无法确认是否已执行；为避免重复执行，不能自动重试。请刷新对话检查结果后，再决定是否发送新的请求。')).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt')).toHaveLength(1);
+
+    act(() => {
+      const store = useAgentLiveStore.getState();
+      store.requeueOptimistic('session-preview', clientMessageId!, Date.now());
+      store.failOptimistic('session-preview', clientMessageId!, 'retry remains failed', Date.now());
+    });
+    const rolledBackRetry = await screen.findByRole('button', { name: '重试本轮' });
+    expect(rolledBackRetry).toBeEnabled();
+    expect(screen.queryByRole('button', { name: '已提交重试' })).not.toBeInTheDocument();
+  });
+
+
 
   it('continues from a network interruption without replaying the failed prompt', async () => {
     let attempt = 0;
@@ -2207,6 +2478,53 @@ describe('Agent experience', () => {
         matchingMessages[0]?.turnId ?? ''
       ]?.failure,
     ).toContain('系统不会自动重试');
+  });
+
+  it('replays an ambiguous native follow-up with the exact original delivery payload', async () => {
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => {
+        throw new TypeError('Failed to fetch');
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder.length,
+    ).toBeGreaterThan(0));
+    act(() => useAgentLiveStore.getState().appendOptimistic('session-preview', {
+      clientMessageId: 'native-ambiguous-active',
+      text: '正在执行原任务',
+      nowMs: Date.now(),
+    }));
+
+    await user.type(composer, '完成后继续整理');
+    await user.keyboard('{Enter}');
+    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    const firstAttempt = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    );
+    expect(firstAttempt).toHaveLength(1);
+    expect(firstAttempt[0]?.request.body).toMatchObject({
+      message: '完成后继续整理',
+      delivery: 'followUp',
+    });
+
+    await user.click(retry);
+    await waitFor(() => expect(
+      transport.requests.filter(
+        (call) => call.request.pathId === 'agent.session.prompt',
+      ),
+    ).toHaveLength(2));
+    const prompts = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    );
+    expect(JSON.stringify(prompts[1]?.request.body)).toBe(
+      JSON.stringify(prompts[0]?.request.body),
+    );
   });
 
   it('terminalizes an unresolved pending receipt without resending or offering retry actions', async () => {
@@ -2383,8 +2701,9 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       document.querySelector('.agent-conversation__header [role="alert"]')
     ).toHaveTextContent('上一轮仍在处理，输入已保留'));
-    await waitFor(() => expect(retry).toHaveTextContent('重试本轮'));
-    expect(retry).toBeEnabled();
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: '重试本轮' }),
+    ).toBeEnabled());
     const projection = useAgentLiveStore.getState().projections['session-preview'];
     const matchingUserMessages = Object.values(projection.messagesById).filter((message) => (
       message.role === 'user'
@@ -2623,7 +2942,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const picker = document.querySelector('.agent-picker-popover');
     expect(picker).not.toBeNull();
-    expect(within(picker as HTMLElement).getByRole('radio', { name: /写入与命令确认/ })).toBeInTheDocument();
+    expect(within(picker as HTMLElement).getByRole('radio', { name: /全权限/ })).toBeInTheDocument();
   });
 
   it('restores a pending approval dialog directly from the session snapshot', async () => {
@@ -2791,6 +3110,117 @@ describe('Agent experience', () => {
     resolveAbort({ ok: true });
   });
 
+  it('keeps acknowledged Stop disabled until terminal SSE without requesting full history', async () => {
+    const complete = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.abort': { ok: true },
+      'agent.session.snapshot': (request: ControlRequest) => {
+        if (request.query?.view !== 'recent') {
+          throw new Error('Stop must wait for terminal SSE before archive reconciliation');
+        }
+        return {
+          ...busyStopSnapshot('session-preview', complete.lastSequence),
+          snapshotScope: 'recent',
+          partial: true,
+          recentFromSequence: complete.lastSequence,
+        };
+      },
+    });
+
+    renderAgent(transport);
+    await waitFor(() => expect(
+      transport.subscriptionCount('agent.session.events'),
+    ).toBe(1));
+    fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    expect(await screen.findByRole('button', { name: '正在停止本轮' })).toBeDisabled();
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(0);
+
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const sequence = projection.lastSequence + 1;
+    act(() => {
+      transport.emit('agent.session.events', {
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'acknowledged-stop-terminal',
+        sessionId: 'session-preview',
+        turnId: 'session-preview:turn-stop-reconcile',
+        sequence,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'turn_failed',
+        payload: { error: 'aborted', status: 'aborted' },
+        resumeToken: `session-preview:${sequence}`,
+      });
+    });
+    await waitFor(() => expect(
+      screen.queryByRole('button', { name: '正在停止本轮' }),
+    ).not.toBeInTheDocument());
+  });
+
+  it('settles pending admission from the abort receipt without requesting full history', async () => {
+    const complete = previewAgentSnapshot('session-preview');
+    const transport = productionTransport({
+      'agent.session.abort': {
+        schemaVersion: 'rag-ime.agent-abort.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        runtimeReceipt: {
+          schemaVersion: 'rag-ime.pi-session-abort-receipt.v1',
+          sessionId: 'session-preview',
+          turnId: '',
+          pendingAdmission: true,
+          admissionCancelled: true,
+          lifecycle: {
+            schemaVersion: 'pi.agent-abort-receipt.v1',
+            scopeId: 'session-preview',
+            generation: 0,
+            reason: 'user_abort',
+            pendingOperations: [],
+            drained: true,
+            idle: true,
+          },
+        },
+        approvalCancellation: {},
+      },
+      'agent.session.snapshot': (request: ControlRequest) => {
+        if (request.query?.view !== 'recent') {
+          throw new Error('pending admission must not wait for full history');
+        }
+        return {
+          ...complete,
+          status: 'busy',
+          snapshotScope: 'recent',
+          partial: true,
+          recentFromSequence: complete.lastSequence,
+        };
+      },
+    });
+
+    renderAgent(transport);
+    await waitFor(() => expect(
+      transport.subscriptionCount('agent.session.events'),
+    ).toBe(1));
+    act(() => {
+      useAgentLiveStore.getState().appendOptimistic('session-preview', {
+        clientMessageId: 'pending-admission-stop',
+        text: '在 admission 阶段停止',
+        nowMs: Date.now(),
+      });
+    });
+    fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
+
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.optimisticByClientMessageId,
+    ).toEqual({}));
+    expect(transport.requests.filter((request) => (
+      request.pathId === 'agent.session.snapshot'
+      && request.query?.view === undefined
+    ))).toHaveLength(0);
+  });
+
   it('settles a pre-dispatch stop from the explicit cancellation receipt without leaving a ghost turn', async () => {
     const pendingPrompt = deferred<unknown>();
     let snapshotCalls = 0;
@@ -2850,8 +3280,10 @@ describe('Agent experience', () => {
     ).toHaveLength(1));
     fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
 
-    await waitFor(() => expect(snapshotCalls).toBe(2));
-    expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
+    expect(snapshotCalls).toBe(1);
+    await waitFor(() => expect(
+      screen.queryByRole('button', { name: '正在停止本轮' }),
+    ).not.toBeInTheDocument());
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.status,
     ).toBe('idle'));
@@ -2905,7 +3337,7 @@ describe('Agent experience', () => {
     expect(screen.queryByText('思考中')).not.toBeInTheDocument();
   });
 
-  it('recovers a stale client-side busy turn from the idle snapshot returned after abort ACK', async () => {
+  it('keeps a stale client-side busy turn until terminal SSE starts quiet reconciliation', async () => {
     let snapshotCalls = 0;
     const transport = productionTransport({
       'agent.session.abort': { ok: true },
@@ -2936,12 +3368,34 @@ describe('Agent experience', () => {
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnsById['session-preview:turn-stop-reconcile']?.status).toBe('running');
     await user.click(await screen.findByRole('button', { name: '停止本轮' }));
 
-    await waitFor(() => expect(snapshotCalls).toBe(3));
-    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('idle'));
-    expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '正在停止本轮' })).toBeDisabled();
+    expect(snapshotCalls).toBe(1);
+    expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('busy');
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const sequence = projection.lastSequence + 1;
+    act(() => {
+      transport.emit('agent.session.events', {
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'stop-terminal-before-stale-snapshot',
+        sessionId: 'session-preview',
+        turnId: 'session-preview:turn-stop-reconcile',
+        sequence,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'turn_failed',
+        payload: { error: 'aborted', status: 'aborted' },
+        resumeToken: `session-preview:${sequence}`,
+      });
+    });
+
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('failed'));
+    await waitFor(() => expect(
+      screen.queryByRole('button', { name: '正在停止本轮' }),
+    ).not.toBeInTheDocument());
   });
 
-  it('uses a bounded Pi fallback notice, then converges from a late terminal snapshot', async () => {
+  it('returns after abort ACK, then converges from a late terminal snapshot', async () => {
     let snapshotCalls = 0;
     let terminalPersisted = false;
     const transport = productionTransport({
@@ -2961,18 +3415,9 @@ describe('Agent experience', () => {
     ).toBe('busy'));
     fireEvent.click(await screen.findByRole('button', { name: '停止本轮' }));
 
-    /* The 1.5 s fallback intentionally removes this state. Assert the click's
-       synchronous transition before awaiting that boundary so a loaded full
-       suite cannot return a live button node and mutate it before the matcher. */
     expect(screen.getByRole('button', { name: '正在停止本轮' })).toBeDisabled();
-    expect(await screen.findByRole('alert', {}, { timeout: 2_000 })).toHaveTextContent(
-      '1.5 秒内未收到终态，已进入 Pi 终止兜底；状态会继续同步。',
-    );
-    expect(screen.queryByRole('button', { name: '正在停止本轮' })).not.toBeInTheDocument();
-    /* Initial hydration plus one authoritative post-ACK snapshot is the hard
-       guarantee inside the deadline. Extra checkpoints are best-effort when
-       the browser event loop is not stalled by the surrounding suite. */
-    expect(snapshotCalls).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(snapshotCalls).toBe(1);
 
     terminalPersisted = true;
     const projection = useAgentLiveStore.getState().projections['session-preview'];
@@ -2995,9 +3440,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.status,
     ).toBe('idle'));
-    await waitFor(() => expect(screen.queryByText(
-      '1.5 秒内未收到终态，已进入 Pi 终止兜底；状态会继续同步。',
-    )).not.toBeInTheDocument());
+    await waitFor(() => expect(snapshotCalls).toBe(2));
     expect(screen.getAllByText('停止当前回合')).toHaveLength(1);
     expect(screen.queryByText('partial')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止本轮' })).not.toBeInTheDocument();
@@ -3028,7 +3471,7 @@ describe('Agent experience', () => {
     expect(screen.queryByText('思考中')).not.toBeInTheDocument();
   });
 
-  it('replaces the composer with an in-place question card while the turn waits for input', async () => {
+  it('keeps the composer mounted beside an in-place question card while the turn waits for input', async () => {
     const transport = featureTransport();
     renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
@@ -3064,7 +3507,7 @@ describe('Agent experience', () => {
 
     const card = await screen.findByRole('region', { name: '确认交付方式' });
     expect(card.parentElement).toHaveClass('agent-composer-dock');
-    expect(screen.queryByRole('textbox', { name: '消息' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '消息' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '确认交付方式' })).not.toBeInTheDocument();
   });
 
@@ -3315,29 +3758,27 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /写入与命令确认/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ })).toBeInTheDocument();
+    const availablePermissions = within(permissionPicker as HTMLElement).getAllByRole('radio');
+    expect(availablePermissions).toHaveLength(2);
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全自动/ })).toBeInTheDocument();
-    const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ });
-    const perActionPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /写入与命令确认/ });
-    expect(perActionPermission).toHaveAttribute('aria-checked', 'true');
-    readonlyPermission.focus();
-    await user.keyboard(' ');
+    const fullAccessPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ });
+    expect(fullAccessPermission).not.toBeDisabled();
+    await user.click(fullAccessPermission);
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.mode.update',
         params: { sessionId: 'session-preview' },
         body: {
           mode: 'coordinator',
-          executionMode: 'read_only',
-          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
-          toolProfileVersion: 'subagent-readonly-v1',
+          executionMode: 'per_action',
+          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench', '/'],
+          toolProfileVersion: 'control-center-full-access-v1',
           toolAllowlistMode: 'profile',
         },
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：只读' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：全权限' })).toBeInTheDocument();
 
     await openCommandPalette();
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
@@ -3397,7 +3838,7 @@ describe('Agent experience', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(false);
   });
 
-  it('requires a native workspace choice before enabling coordinator mode', async () => {
+  it('offers full system access without a workspace prerequisite', async () => {
     const assistantSession = {
       ...previewSessions[0]!,
       mode: 'assistant' as const,
@@ -3409,98 +3850,32 @@ describe('Agent experience', () => {
       undefined,
       { ok: true, items: [assistantSession] },
     );
-    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
-      id: 'workspace-directory-1',
-      name: 'learnA',
-      mimeType: 'application/octet-stream',
-      byteSize: 0,
-      path: '/Users/example/Projects/personal-agent-workbench',
-    }]);
     const user = userEvent.setup();
     renderAgent(transport);
 
     await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ }));
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ }));
 
-    await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
-      purpose: 'workspace-root',
-      selection: 'directory',
-      multiple: true,
-      maxFiles: 4,
-    }));
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.mode.update',
-        body: expect.objectContaining({
+        params: { sessionId: 'session-preview' },
+        body: {
           mode: 'coordinator',
-          executionMode: 'workspace_managed',
-          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
-          workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
+          executionMode: 'per_action',
+          workspaceRoots: ['/'],
+          toolProfileVersion: 'control-center-full-access-v1',
           toolAllowlistMode: 'profile',
-        }),
+        },
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：工作区托管' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：全权限' })).toBeInTheDocument();
   });
 
-  it('does not infer a workspace grant when the update receipt omits its Session', async () => {
-    const initialSession = {
-      ...previewSessions[0]!,
-      mode: 'assistant' as const,
-      workspaceRoots: [],
-      workspaceScopeGranted: false,
-      toolProfileVersion: 'control-center-v1',
-    };
-    const reloadedSession = {
-      ...initialSession,
-      mode: 'coordinator' as const,
-      executionMode: 'workspace_managed' as const,
-      workspaceScopeGranted: false,
-    };
-    let sessionReads = 0;
-    const transport = featureTransport(
-      undefined,
-      undefined,
-      () => ({
-        ok: true,
-        items: [sessionReads++ === 0 ? initialSession : reloadedSession],
-      }),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { ok: true },
-    );
-    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
-      id: 'workspace-directory-no-receipt',
-      name: 'learnA',
-      mimeType: 'application/octet-stream',
-      byteSize: 0,
-      path: '/Users/example/Projects/personal-agent-workbench',
-    }]);
-    const user = userEvent.setup();
-    renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
-    const permissionPicker = document.querySelector('.agent-picker-popover');
-    expect(permissionPicker).not.toBeNull();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ }));
-
-    await waitFor(() => expect(pickFiles).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(sessionReads).toBe(2));
-    await user.click(screen.getByRole('button', { name: '对话权限：工作区托管' }));
-    expect(await screen.findByText('尚未授权目录，工作区工具无法运行')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('权限更新未返回确认结果');
-  });
-
-  it('requires explicit confirmation before enabling Luna-arbitrated full automation', async () => {
+  it('confirms full automation once without a checkbox or workspace gate', async () => {
     const assistantSession = {
       ...previewSessions[0]!,
       mode: 'assistant' as const,
@@ -3512,13 +3887,6 @@ describe('Agent experience', () => {
       undefined,
       { ok: true, items: [assistantSession] },
     );
-    const pickFiles = vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
-      id: 'workspace-directory-danger',
-      name: 'learnA',
-      mimeType: 'application/octet-stream',
-      byteSize: 0,
-      path: '/Users/example/Projects/personal-agent-workbench',
-    }]);
     const user = userEvent.setup();
     renderAgent(transport);
 
@@ -3528,18 +3896,9 @@ describe('Agent experience', () => {
     await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全自动/ }));
 
     const dialog = await screen.findByRole('dialog', { name: '启用全自动模式？' });
-    const confirm = within(dialog).getByRole('button', { name: '启用全自动' });
-    expect(confirm).toBeDisabled();
-    await user.click(within(dialog).getByRole('checkbox', { name: '我确认让此对话全自动执行，并由独立审批 Agent（Luna Max）判定所有待审批操作' }));
-    expect(confirm).toBeEnabled();
-    await user.click(confirm);
+    expect(within(dialog).queryByRole('checkbox')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: '启用全自动' }));
 
-    await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
-      purpose: 'workspace-root',
-      selection: 'directory',
-      multiple: true,
-      maxFiles: 4,
-    }));
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.mode.update',
@@ -3547,14 +3906,150 @@ describe('Agent experience', () => {
         body: {
           mode: 'coordinator',
           executionMode: 'full_trust',
-          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
-          toolProfileVersion: 'control-center-v1',
+          workspaceRoots: ['/'],
+          toolProfileVersion: 'control-center-auto-approve-v1',
           toolAllowlistMode: 'profile',
           dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
         },
       }),
     })));
     expect(await screen.findByRole('button', { name: '对话权限：全自动' })).toBeInTheDocument();
+  });
+
+  it('keeps legacy workspace roots scoped and preserves their explicit allowlist', async () => {
+    const legacySession = {
+      ...previewSessions[0]!,
+      mode: 'assistant' as const,
+      executionMode: 'per_action' as const,
+      toolProfileVersion: 'control-center-v1' as const,
+      toolAllowlistMode: 'explicit' as const,
+      allowedTools: ['overview', 'memory'],
+      workspaceRoots: ['/Users/example/Projects/old'],
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, activeSessionId: 'session-preview', items: [legacySession] },
+    );
+    vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-root',
+      name: 'new',
+      mimeType: 'inode/directory',
+      byteSize: 0,
+      path: '/Users/example/Projects/new',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开文件目录' }));
+    const panel = screen.getByRole('complementary', { name: '当前对话文件目录' });
+    await user.click(within(panel).getByRole('button', { name: '管理工作区目录' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'coordinator',
+          executionMode: 'per_action',
+          workspaceRoots: ['/Users/example/Projects/new'],
+          toolProfileVersion: 'control-center-v1',
+          toolAllowlistMode: 'explicit',
+          allowedTools: ['overview', 'memory'],
+        },
+      }),
+    })));
+  });
+
+  it('keeps read-only workspace roots scoped and preserves their explicit allowlist', async () => {
+    const readonlySession = {
+      ...previewSessions[0]!,
+      mode: 'assistant' as const,
+      executionMode: 'read_only' as const,
+      toolProfileVersion: 'subagent-readonly-v1' as const,
+      toolAllowlistMode: 'explicit' as const,
+      allowedTools: ['memory'],
+      workspaceRoots: ['/Users/example/Projects/old'],
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, activeSessionId: 'session-preview', items: [readonlySession] },
+    );
+    vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-root',
+      name: 'new',
+      mimeType: 'inode/directory',
+      byteSize: 0,
+      path: '/Users/example/Projects/new',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开文件目录' }));
+    const panel = screen.getByRole('complementary', { name: '当前对话文件目录' });
+    await user.click(within(panel).getByRole('button', { name: '管理工作区目录' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'coordinator',
+          executionMode: 'read_only',
+          workspaceRoots: ['/Users/example/Projects/new'],
+          toolProfileVersion: 'subagent-readonly-v1',
+          toolAllowlistMode: 'explicit',
+          allowedTools: ['memory'],
+        },
+      }),
+    })));
+  });
+
+  it('adds the system root and clears stale allowlists only for paired explicit profiles', async () => {
+    const explicitSession = {
+      ...previewSessions[0]!,
+      mode: 'coordinator' as const,
+      executionMode: 'per_action' as const,
+      toolProfileVersion: 'control-center-full-access-v1' as const,
+      toolAllowlistMode: 'explicit' as const,
+      allowedTools: ['overview'],
+      workspaceRoots: ['/Users/example/Projects/old'],
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, activeSessionId: 'session-preview', items: [explicitSession] },
+    );
+    vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-root',
+      name: 'new',
+      mimeType: 'inode/directory',
+      byteSize: 0,
+      path: '/Users/example/Projects/new',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开文件目录' }));
+    const panel = screen.getByRole('complementary', { name: '当前对话文件目录' });
+    await user.click(within(panel).getByRole('button', { name: '管理工作区目录' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'coordinator',
+          executionMode: 'per_action',
+          workspaceRoots: ['/Users/example/Projects/new', '/'],
+          toolProfileVersion: 'control-center-full-access-v1',
+          toolAllowlistMode: 'profile',
+        },
+      }),
+    })));
+    const update = transport.requests.find((call) => call.request.pathId === 'agent.session.mode.update');
+    expect(update?.request.body).not.toHaveProperty('allowedTools');
   });
 
   it('sends an advertised Pi RPC command through the prompt route', async () => {
@@ -4137,15 +4632,15 @@ describe('Agent experience', () => {
     )).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '新建对话' }));
     const dialog = await screen.findByRole('dialog', { name: '新建对话' });
-    expect(within(dialog).getByRole('radio', { name: /直接聊天/ })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: /不预选项目/ })).toBeChecked();
     await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
-      mode: 'assistant',
+      mode: 'coordinator',
       executionMode: 'per_action',
-      toolProfileVersion: 'control-center-v1',
-      workspaceRoots: [],
+      toolProfileVersion: 'control-center-full-access-v1',
+      workspaceRoots: ['/'],
     });
     expect(create?.request.body).not.toHaveProperty('roleId');
     expect(create?.request.body).not.toHaveProperty('roleVersion');
@@ -4162,16 +4657,15 @@ describe('Agent experience', () => {
     const dialog = await screen.findByRole('dialog', { name: '新建对话' });
     await user.click(within(dialog).getByRole('radio', { name: /personal-agent-workbench/ }));
     await user.click(within(dialog).getByRole('radio', { name: /全自动/ }));
-    await user.click(within(dialog).getByRole('checkbox', { name: /我确认让此对话全自动执行/ }));
-    await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
+    await user.click(within(dialog).getByRole('button', { name: '启用全自动并开始' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
       mode: 'coordinator',
       executionMode: 'full_trust',
-      toolProfileVersion: 'control-center-v1',
-      workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
+      toolProfileVersion: 'control-center-auto-approve-v1',
+      workspaceRoots: ['/Users/example/Projects/personal-agent-workbench', '/'],
       dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
     });
   });

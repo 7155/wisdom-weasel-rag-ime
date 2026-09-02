@@ -13,7 +13,13 @@ import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
 import { PawAgentApp } from './PawAgentApp';
 
 vi.mock('./PawSessionWorkspace', () => ({
-  PawSessionWorkspace: () => <div>Session 工作区</div>,
+  PawSessionWorkspace: ({ record, recordId }: { record?: { id?: string; evaluationSnapshot?: boolean }; recordId: string }) => (
+    <div>
+      Session 工作区
+      <output data-testid="session-record-id">{record?.id ?? `missing:${recordId}`}</output>
+      <output data-testid="session-record-read-only">{record?.evaluationSnapshot ? 'true' : 'false'}</output>
+    </div>
+  ),
 }));
 vi.mock('./PawRoomWorkspace', () => ({
   PawRoomWorkspace: ({ initialDraft, recordId }: { initialDraft?: string; recordId: string }) => (
@@ -144,6 +150,53 @@ describe('PAWOS Agent App', () => {
     await waitFor(() => expect(within(rail).queryByText('Room 内部会话')).not.toBeInTheDocument());
   });
 
+  it('reconciles canonical selected-Session metadata while the rail is closed', async () => {
+    const sessionId = 'eval-session';
+    const transport = createTransport({
+      sessions: [{
+        id: sessionId,
+        title: '评测快照',
+        mode: 'coordinator',
+        status: 'idle',
+        updatedAtMs: 4,
+        workspaceRoots: [],
+        messageCount: 1,
+        lastMessagePreview: '真实评测记录',
+        evaluationSnapshot: true,
+      }],
+    });
+
+    renderAgent(transport, { initialRoute: `/agent?session=${sessionId}` });
+
+    expect(screen.getByTestId('session-record-id')).toHaveTextContent(sessionId);
+    await waitFor(() => expect(screen.getByTestId('session-record-read-only')).toHaveTextContent('true'));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.sessions.list')).toHaveLength(1);
+  });
+
+  it('mounts a directly targeted Session before loading its optional work-record catalog', async () => {
+    const catalog = deferred<unknown>();
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': () => catalog.promise,
+      'agent.rooms.list': () => catalog.promise,
+      'agent.roles.list': () => catalog.promise,
+      'agent.role.models': () => catalog.promise,
+    } });
+
+    const user = userEvent.setup();
+    renderAgent(transport, { initialRoute: '/agent?session=session-latency' });
+
+    expect(screen.getByTestId('session-record-id')).toHaveTextContent(/^session-latency$/);
+    await waitFor(() => expect(catalogRequestPaths(transport)).toEqual(['agent.sessions.list']));
+
+    await user.click(screen.getByRole('button', { name: '打开工作记录' }));
+    await waitFor(() => expect(catalogRequestPaths(transport)).toEqual([
+      'agent.sessions.list',
+      'agent.sessions.list',
+      'agent.rooms.list',
+      'agent.roles.list',
+    ]));
+  });
+
   it('projects truthful bounded status into virtual conversation files and lets project folders fold in place', async () => {
     const now = Date.now();
     const user = userEvent.setup();
@@ -201,7 +254,7 @@ describe('PAWOS Agent App', () => {
     const user = userEvent.setup();
     renderAgent();
 
-    const chip = await screen.findByRole('button', { name: /按风险确认/ });
+    const chip = await screen.findByRole('button', { name: /全权限/ });
     await user.click(chip);
     expect(screen.getByRole('menu')).toBeInTheDocument();
     await user.tab();
@@ -257,7 +310,7 @@ describe('PAWOS Agent App', () => {
     }));
 
     expect(await screen.findByRole('button', { name: '模型与推理 · GPT-5.6 Sol · Max' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /全权限/ })).toBeInTheDocument();
   });
 
   it('does not let late authority hydration overwrite a composer choice already made by the user', async () => {
@@ -273,7 +326,7 @@ describe('PAWOS Agent App', () => {
       executionMode: 'read_only',
     }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /全权限/ })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /GPT-5\.6 Sol/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /GPT-5\.6 Terra · High/ })).not.toBeInTheDocument();
   });
@@ -328,12 +381,12 @@ describe('PAWOS Agent App', () => {
 
     // The chip signals the mode through the PermissionMark glyph family, not
     // a colour dot: the mark's data-mark kind must follow the selection.
-    const chip = await screen.findByRole('button', { name: /按风险确认/ });
+    const chip = await screen.findByRole('button', { name: /全权限/ });
     expect(chip.querySelector('[data-mark="permission-per-action"]')).toBeInTheDocument();
 
     await user.click(chip);
-    await user.click(await screen.findByRole('menuitemradio', { name: /^只读/ }));
-    expect(screen.getByRole('button', { name: /只读/ }).querySelector('[data-mark="permission-read-only"]'))
+    await user.click(await screen.findByRole('menuitemradio', { name: /^全自动/ }));
+    expect(screen.getByRole('button', { name: /全自动/ }).querySelector('[data-mark="permission-full-trust"]'))
       .toBeInTheDocument();
   });
 
@@ -574,10 +627,10 @@ describe('PAWOS Agent App', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '工作目录 · work/paw' }));
+    await user.click(await screen.findByRole('button', { name: '起始项目 · work/paw' }));
     await user.click(await screen.findByRole('button', { name: '浏览其他目录…' }));
     await waitFor(() => expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('button', { name: '工作目录 · work/paw-natural' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '起始项目 · work/paw-natural' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: 'Room' }));
     await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '从自然目标开始');
@@ -585,7 +638,7 @@ describe('PAWOS Agent App', () => {
 
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create')).toBe(true));
     const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request;
-    expect(create?.body).toMatchObject({ workspaceRoots: ['/work/paw-natural'] });
+    expect(create?.body).toMatchObject({ workspaceRoots: ['/work/paw-natural', '/'] });
   });
 
   it('opens the Room and its optimistic first message before a slow Room receipt settles', async () => {
@@ -613,6 +666,7 @@ type MockSessionSummary = {
   workspaceRoots: string[];
   messageCount: number;
   lastMessagePreview: string;
+  evaluationSnapshot?: boolean;
   roomParticipant?: boolean;
 };
 

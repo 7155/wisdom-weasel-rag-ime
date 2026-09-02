@@ -21,6 +21,32 @@ from rag_ime.debug_server import DebugRequestHandler
 from rag_ime.pi_runtime import PiRuntimeConfig
 
 
+def _governed_presentation() -> dict[str, object]:
+    return {
+        "headline": "结构化诊断",
+        "impact": "结果已按冻结证据完成治理呈现。",
+        "primaryFindingId": "",
+        "knownFacts": [],
+        "evidenceGaps": [],
+        "causalNodes": [],
+        "expectedStageCount": 0,
+        "recordedStageReceiptEvidenceIds": [],
+        "failureAttribution": {
+            "primaryLayer": "unknown",
+            "summary": "当前冻结证据不足以确认唯一主要失败层。",
+            "layers": [
+                {
+                    "layer": layer_name,
+                    "verdict": "unknown",
+                    "explanation": f"{layer_name} 层暂无足够冻结证据。",
+                    "evidenceIds": [],
+                }
+                for layer_name in ("tool", "skill", "template", "workflow", "model")
+            ],
+        },
+    }
+
+
 class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-trace-diagnostic-http-")
@@ -102,6 +128,22 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
         )["session"]
         return str(source["id"]), str(diagnostic["id"])
 
+    def _full_auto_repair_session(self, title: str) -> dict[str, object]:
+        return self.service.create_session(
+            {
+                "title": title,
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": ["/"],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            }
+        )["session"]
+
     @staticmethod
     def _structured_snapshot() -> dict[str, object]:
         result = {
@@ -110,6 +152,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
             "hardGates": [],
             "judgeScores": [],
             "findings": [],
+            "presentation": _governed_presentation(),
         }
         return {
             "ok": True,
@@ -149,15 +192,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
         return source_id, diagnostic_id, report
 
     def test_repair_authorization_requires_a_confirmed_full_automation_session(self) -> None:
-        repair = self.service.create_session(
-            {
-                "title": "Trace full-auto repair",
-                "mode": "coordinator",
-                "executionMode": "full_trust",
-                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
-                "workspaceRoots": [str(self.root)],
-            }
-        )["session"]
+        repair = self._full_auto_repair_session("Trace full-auto repair")
         payload = {
             "expectedRevision": 2,
             "findingId": "finding:repair",
@@ -189,15 +224,352 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
             {
                 "title": "Trace manual repair",
                 "mode": "coordinator",
+                "toolProfileVersion": "control-center-full-access-v1",
                 "executionMode": "per_action",
-                "workspaceRoots": [str(self.root)],
+                "workspaceRoots": ["/"],
             }
         )["session"]
-        with self.assertRaisesRegex(ValueError, "full_trust mode"):
+        with self.assertRaisesRegex(ValueError, "unrestricted auto-approve profile"):
             self.service.authorize_trace_diagnostic_repair(
                 "report:repair",
                 {**payload, "repairSessionId": per_action["id"]},
             )
+
+    def test_repair_authorization_uses_full_disk_authority_independent_of_source_workspace(
+        self,
+    ) -> None:
+        source = self.service.create_session(
+            {
+                "title": "source workspace",
+                "mode": "coordinator",
+                "executionMode": "per_action",
+                "workspaceRoots": [str(self.root)],
+            }
+        )["session"]
+        diagnostic = self.service.create_session(
+            {
+                "title": "Trace diagnostic",
+                "executionMode": "read_only",
+            }
+        )["session"]
+        report = self.service.create_trace_diagnostic_report(
+            {
+                "diagnosticSessionId": diagnostic["id"],
+                "title": "full disk repair authority",
+                "targets": [
+                    {
+                        "kind": "session",
+                        "id": source["id"],
+                        "title": "source",
+                        "traceIds": ["trace:source"],
+                    }
+                ],
+            }
+        )
+        repair = self._full_auto_repair_session("full disk repair")
+        payload = {
+            "expectedRevision": report["revision"],
+            "findingId": "finding:repair",
+            "sourceScope": f"session:{source['id']}",
+            "sourceTraceId": "trace:source",
+            "failureRef": "evidence:failure",
+            "repairSessionId": repair["id"],
+        }
+
+        with patch.object(
+            self.service.trace_diagnostic_reports,
+            "authorize_repair",
+            return_value={"ok": True},
+        ) as authorize:
+            self.assertEqual(
+                self.service.authorize_trace_diagnostic_repair(
+                    str(report["reportId"]),
+                    payload,
+                ),
+                {"ok": True},
+            )
+        authorize.assert_called_once()
+
+    def test_session_repair_authorization_rejects_cross_target_trace_pairing(self) -> None:
+        source_a = self.service.create_session({"title": "source A"})["session"]
+        source_b = self.service.create_session({"title": "source B"})["session"]
+        repair = self._full_auto_repair_session("session target repair")
+        report = {
+            "targets": [
+                {
+                    "targetKey": f"session:{source_a['id']}",
+                    "kind": "session",
+                    "id": source_a["id"],
+                    "traceIds": ["trace:session:a"],
+                },
+                {
+                    "targetKey": f"session:{source_b['id']}",
+                    "kind": "session",
+                    "id": source_b["id"],
+                    "traceIds": ["trace:session:b"],
+                },
+            ]
+        }
+        payload = {
+            "expectedRevision": 2,
+            "findingId": "finding:repair",
+            "sourceScope": f"session:{source_a['id']}",
+            "sourceTraceId": "trace:session:b",
+            "failureRef": "evidence:failure",
+            "repairSessionId": repair["id"],
+        }
+
+        with patch.object(
+            self.service.trace_diagnostic_reports,
+            "get",
+            return_value=report,
+        ), patch.object(
+            self.service.trace_diagnostic_reports,
+            "authorize_repair",
+            return_value={"ok": True},
+        ) as authorize:
+            with self.assertRaisesRegex(ValueError, "frozen session target"):
+                self.service.authorize_trace_diagnostic_repair(
+                    "report:session-target",
+                    payload,
+                )
+        authorize.assert_not_called()
+
+        accepted_payload = {
+            **payload,
+            "sourceTraceId": "trace:session:a",
+        }
+        with patch.object(
+            self.service.trace_diagnostic_reports,
+            "get",
+            return_value=report,
+        ), patch.object(
+            self.service.trace_diagnostic_reports,
+            "authorize_repair",
+            return_value={"ok": True},
+        ) as authorize:
+            self.assertEqual(
+                self.service.authorize_trace_diagnostic_repair(
+                    "report:session-target",
+                    accepted_payload,
+                ),
+                {"ok": True},
+            )
+        authorize.assert_called_once()
+
+    def test_room_repair_authorization_checks_canonical_binding_when_available(self) -> None:
+        room_a = "room:source-a"
+        room_b = "room:source-b"
+        repair = self._full_auto_repair_session("room target repair")
+        report = {
+            "targets": [
+                {
+                    "targetKey": room_a,
+                    "kind": "room",
+                    "id": room_a,
+                    "traceIds": ["trace:room:a"],
+                },
+                {
+                    "targetKey": room_b,
+                    "kind": "room",
+                    "id": room_b,
+                    "traceIds": ["trace:room:b"],
+                },
+            ]
+        }
+        base_payload = {
+            "expectedRevision": 2,
+            "findingId": "finding:repair",
+            "sourceScope": room_a,
+            "sourceTraceId": "trace:room:a",
+            "failureRef": "evidence:failure",
+            "repairSessionId": repair["id"],
+        }
+
+        with patch.object(
+            self.service.rooms,
+            "get",
+            side_effect=lambda room_id: {"id": room_id},
+        ), patch.object(
+            self.service.trace_diagnostic_reports,
+            "get",
+            return_value=report,
+        ), patch.object(
+            self.service,
+            "observation_trace",
+            return_value={"trace": {"binding": {"roomId": room_b}}},
+        ), patch.object(
+            self.service.trace_diagnostic_reports,
+            "authorize_repair",
+            return_value={"ok": True},
+        ) as authorize:
+            with self.assertRaisesRegex(ValueError, "room binding"):
+                self.service.authorize_trace_diagnostic_repair(
+                    "report:room-target",
+                    base_payload,
+                )
+        authorize.assert_not_called()
+
+        with patch.object(
+            self.service.rooms,
+            "get",
+            side_effect=lambda room_id: {"id": room_id},
+        ), patch.object(
+            self.service.trace_diagnostic_reports,
+            "get",
+            return_value=report,
+        ), patch.object(
+            self.service,
+            "observation_trace",
+            side_effect=KeyError("trace:room:a"),
+        ), patch.object(
+            self.service.trace_diagnostic_reports,
+            "authorize_repair",
+            return_value={"ok": True},
+        ) as authorize:
+            self.assertEqual(
+                self.service.authorize_trace_diagnostic_repair(
+                    "report:room-target",
+                    base_payload,
+                ),
+                {"ok": True},
+            )
+        authorize.assert_called_once()
+
+
+    def test_run_repair_authorization_validates_trace_binding_without_workspace_fence(
+        self,
+    ) -> None:
+        source = self.service.create_session(
+            {
+                "title": "run source workspace",
+                "mode": "coordinator",
+                "executionMode": "per_action",
+                "workspaceRoots": [str(self.root)],
+            }
+        )["session"]
+        diagnostic = self.service.create_session(
+            {
+                "title": "Trace diagnostic",
+                "executionMode": "read_only",
+            }
+        )["session"]
+        trace_projection = {
+            "trace": {
+                "traceId": "trace:run-source",
+                "binding": {
+                    "runId": "run:memory-maintenance",
+                    "sessionId": source["id"],
+                },
+            }
+        }
+        with patch.object(
+            self.service,
+            "observation_trace",
+            return_value=trace_projection,
+        ):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": diagnostic["id"],
+                    "title": "run trace binding",
+                    "targets": [
+                        {
+                            "kind": "run",
+                            "id": "run:memory-maintenance",
+                            "title": "memory maintenance",
+                            "traceIds": ["trace:run-source"],
+                        }
+                    ],
+                }
+            )
+
+        repair = self._full_auto_repair_session("run full disk repair")
+        payload = {
+            "expectedRevision": report["revision"],
+            "findingId": "finding:repair",
+            "sourceScope": "run:run:memory-maintenance",
+            "sourceTraceId": "trace:run-source",
+            "failureRef": "evidence:failure",
+            "repairSessionId": repair["id"],
+        }
+
+        with patch.object(self.service, "observation_trace", return_value=trace_projection):
+            with patch.object(
+                self.service.trace_diagnostic_reports,
+                "authorize_repair",
+                return_value={"ok": True},
+            ) as authorize:
+                with self.assertRaisesRegex(ValueError, "frozen run target"):
+                    self.service.authorize_trace_diagnostic_repair(
+                        str(report["reportId"]),
+                        {**payload, "sourceTraceId": "trace:guessed"},
+                    )
+        authorize.assert_not_called()
+
+        with patch.object(self.service, "observation_trace", return_value=trace_projection):
+            with patch.object(
+                self.service.trace_diagnostic_reports,
+                "authorize_repair",
+                return_value={"ok": True},
+            ) as authorize:
+                self.assertEqual(
+                    self.service.authorize_trace_diagnostic_repair(
+                        str(report["reportId"]),
+                        payload,
+                    ),
+                    {"ok": True},
+                )
+        authorize.assert_called_once()
+
+    def test_run_repair_authorization_rejects_a_missing_canonical_session_binding(self) -> None:
+        diagnostic = self.service.create_session(
+            {
+                "title": "Trace diagnostic",
+                "executionMode": "read_only",
+            }
+        )["session"]
+        trace_projection = {
+            "trace": {
+                "traceId": "trace:unbound-run",
+                "binding": {"runId": "run:unbound"},
+            }
+        }
+        with patch.object(self.service, "observation_trace", return_value=trace_projection):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": diagnostic["id"],
+                    "title": "unbound run",
+                    "targets": [
+                        {
+                            "kind": "run",
+                            "id": "run:unbound",
+                            "title": "unbound run",
+                            "traceIds": ["trace:unbound-run"],
+                        }
+                    ],
+                }
+            )
+        repair = self._full_auto_repair_session("unbound run repair")
+
+        with patch.object(self.service, "observation_trace", return_value=trace_projection):
+            with patch.object(
+                self.service.trace_diagnostic_reports,
+                "authorize_repair",
+                return_value={"ok": True},
+            ) as authorize:
+                with self.assertRaisesRegex(ValueError, "canonical Session"):
+                    self.service.authorize_trace_diagnostic_repair(
+                        str(report["reportId"]),
+                        {
+                            "expectedRevision": report["revision"],
+                            "findingId": "finding:repair",
+                            "sourceScope": "run:run:unbound",
+                            "sourceTraceId": "trace:unbound-run",
+                            "failureRef": "evidence:failure",
+                            "repairSessionId": repair["id"],
+                        },
+                    )
+        authorize.assert_not_called()
 
     def test_terminal_diagnostic_session_finalizes_report_without_trace_page_mounted(self) -> None:
         _source_id, diagnostic_id, report = self._create_report()

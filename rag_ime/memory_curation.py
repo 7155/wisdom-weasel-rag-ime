@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Mapping
@@ -54,9 +55,221 @@ _KIND_MAP = {
     "project_question": "project_question",
 }
 
+_ATOM_AUTHORITY_FIELDS = (
+    "ownerKind",
+    "ownerId",
+    "privacyLevel",
+    "knowledgeDomain",
+    "scopeKind",
+    "scopeId",
+    "visibility",
+    "authorizationRevision",
+    "bindingId",
+    "scopeMode",
+)
+_ATOM_IDENTITY_FIELDS = (
+    "text",
+    "canonicalText",
+    "kind",
+    "language",
+    "project",
+    "app",
+    "claimKey",
+    "lineageId",
+    "claimState",
+    "validFromMs",
+    "validToMs",
+    "supersedesId",
+    "status",
+    *_ATOM_AUTHORITY_FIELDS,
+)
+_SEMANTIC_CATALOG_MAINTENANCE_KEYS = {
+    "updatedAtMs",
+    "updated_at_ms",
+    "archivedAtMs",
+    "archived_at_ms",
+    "lastActiveAtMs",
+    "last_active_at_ms",
+}
+
+
+def _atom_field(item: Mapping[str, object], field: str) -> object:
+    aliases = {
+        "canonicalText": ("canonicalText", "canonical_text"),
+        "claimKey": ("claimKey", "claim_key"),
+        "lineageId": ("lineageId", "lineage_id"),
+        "claimState": ("claimState", "claim_state"),
+        "validFromMs": ("validFromMs", "valid_from_ms"),
+        "validToMs": ("validToMs", "valid_to_ms"),
+        "supersedesId": ("supersedesId", "supersedes_id"),
+        "ownerKind": ("ownerKind", "owner_kind"),
+        "ownerId": ("ownerId", "owner_id"),
+        "privacyLevel": ("privacyLevel", "privacy_level"),
+        "knowledgeDomain": ("knowledgeDomain", "knowledge_domain"),
+        "scopeKind": ("scopeKind", "scope_kind"),
+        "scopeId": ("scopeId", "scope_id"),
+        "authorizationRevision": (
+            "authorizationRevision",
+            "authorization_revision",
+        ),
+        "bindingId": ("bindingId", "binding_id"),
+        "scopeMode": ("scopeMode", "scope_mode"),
+    }
+    for candidate in aliases.get(field, (field,)):
+        if candidate in item:
+            return item.get(candidate)
+    return None
+
+
+def _atom_identity_material(item: Mapping[str, object]) -> dict[str, object]:
+    return {
+        field: _atom_field(item, field)
+        for field in _ATOM_IDENTITY_FIELDS
+    }
+
+
+def memory_atom_identity_hash(item: Mapping[str, object]) -> str:
+    """Hash raw Atom identity without exposing private authority values."""
+
+    return stable_text_hash(
+        json.dumps(
+            _atom_identity_material(item),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
+def memory_atom_authority_hash(item: Mapping[str, object]) -> str:
+    """Hash the complete owner/privacy/scope/binding authority tuple."""
+
+    return stable_text_hash(
+        json.dumps(
+            {
+                field: _atom_field(item, field)
+                for field in _ATOM_AUTHORITY_FIELDS
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
+def _semantic_catalog_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _semantic_catalog_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if str(key) not in _SEMANTIC_CATALOG_MAINTENANCE_KEYS
+        }
+    if isinstance(value, (list, tuple, set)):
+        items = [_semantic_catalog_value(item) for item in value]
+        return sorted(
+            items,
+            key=lambda item: json.dumps(
+                item,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+    return value
+
+
+def _is_global_catalog_audit(bundle: Mapping[str, object]) -> bool:
+    return (
+        compact_whitespace(str(bundle.get("curationScope") or "")).lower()
+        == "global"
+        and bool(bundle.get("catalogAudit"))
+    )
+
+def _canonical_catalog_value(value: object) -> object:
+    return _semantic_catalog_value(value)
+
+
+def memory_catalog_digest(bundle: Mapping[str, object]) -> str:
+    """Return an order-independent semantic identity for the complete catalog."""
+
+    catalog = {
+        "atoms": bundle.get("existingMemoryAtoms", bundle.get("existingAtoms", [])),
+        "books": bundle.get("existingMemoryBooks", bundle.get("existingBooks", [])),
+        "groups": bundle.get("existingSemanticGroups", bundle.get("existingGroups", [])),
+        "tags": bundle.get("existingSemanticTags", bundle.get("existingTags", [])),
+        "edges": bundle.get("existingTagEdges", bundle.get("edges", [])),
+        "atomTagRelations": bundle.get("existingAtomTagRelations", []),
+        "atomGroupMemberships": bundle.get("existingAtomGroupMemberships", []),
+        "tagProfiles": bundle.get("existingTagProfiles", []),
+        "groupMembers": bundle.get("existingSemanticGroupMembers", []),
+    }
+    canonical = _canonical_catalog_value(catalog)
+    return stable_text_hash(
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
+
+
+def _is_complete_global_catalog(bundle: Mapping[str, object]) -> bool:
+    return _is_global_catalog_audit(bundle) and bool(bundle.get("catalogComplete"))
+
 
 def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str, object]:
     """Expose compact stable references for one Atom-first curation snapshot."""
+
+    curation_scope = (
+        "global"
+        if compact_whitespace(str(bundle.get("curationScope") or "")).lower()
+        == "global"
+        else "incremental"
+    )
+    catalog_audit = bool(bundle.get("catalogAudit"))
+    raw_atoms = _dicts(bundle.get("existingMemoryAtoms"))
+    raw_groups = _dicts(bundle.get("existingSemanticGroups"))
+    raw_tags = _dicts(bundle.get("existingSemanticTags"))
+    raw_edges = _dicts(bundle.get("existingTagEdges"))
+    raw_books = _dicts(bundle.get("existingMemoryBooks"))
+    upstream_truncation = {
+        str(key): bool(value)
+        for key, value in dict(bundle.get("catalogTruncated") or {}).items()
+        if str(key)
+    }
+    declared_complete = (
+        bool(bundle.get("catalogComplete"))
+        if "catalogComplete" in bundle
+        else not any(upstream_truncation.values())
+        if catalog_audit
+        else True
+    )
+    global_catalog = (
+        curation_scope == "global"
+        and catalog_audit
+        and declared_complete
+        and not any(upstream_truncation.values())
+    )
+    atoms_source = raw_atoms if global_catalog else raw_atoms[:500]
+    groups_source = raw_groups if global_catalog else raw_groups[:24]
+    tags_source = raw_tags if global_catalog else raw_tags[:160]
+    books_source = raw_books if global_catalog else raw_books[:48]
+    edges_source = raw_edges if global_catalog else raw_edges[:240]
+
+    def catalog_strings(value: object, *, incremental_limit: int) -> list[str]:
+        limit = (
+            max(incremental_limit, len(_items(value)))
+            if global_catalog
+            else incremental_limit
+        )
+        return _strings(value, limit=limit)
+
+    def catalog_text(value: object, *, max_chars: int) -> str:
+        text = compact_whitespace(str(value or ""))
+        return text if global_catalog else text[:max_chars]
 
     evidence: list[dict[str, object]] = []
     for item in _dicts(bundle.get("recentEvents")):
@@ -79,7 +292,9 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
                 "text": text[:600],
                 "app": compact_whitespace(str(item.get("app") or ""))[:120],
                 "createdAtMs": _int(item.get("createdAtMs")),
-                "contextGroupId": compact_whitespace(str(item.get("contextGroupId") or ""))[:120],
+                "contextGroupId": compact_whitespace(
+                    str(item.get("contextGroupId") or "")
+                )[:120],
                 "localContext": local_context[-800:],
             }
         )
@@ -88,45 +303,118 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         {
             "ref": f"P{index}",
             "atomId": compact_whitespace(str(item.get("atomId") or item.get("id") or "")),
-            "kind": compact_whitespace(str(item.get("kind") or "project_fact")),
-            "text": compact_whitespace(
-                str(item.get("canonicalText") or item.get("text") or "")
-            )[:500],
-            "tags": _strings(item.get("tags"), limit=16),
-            "groupIds": _strings(
-                item.get("semanticGroupIds") or item.get("groupIds"),
-                limit=8,
+            "identityHash": compact_whitespace(
+                str(item.get("identityHash") or memory_atom_identity_hash(item))
             ),
-            "app": compact_whitespace(str(item.get("app") or ""))[:120],
+            "authorityHash": compact_whitespace(
+                str(item.get("authorityHash") or memory_atom_authority_hash(item))
+            ),
+            "kind": compact_whitespace(str(item.get("kind") or "project_fact")),
+            "claimKey": compact_whitespace(str(item.get("claimKey") or "")),
+            "lineageId": compact_whitespace(str(item.get("lineageId") or "")),
+            "claimState": compact_whitespace(
+                str(item.get("claimState") or "current")
+            ),
+            "validFromMs": _int(item.get("validFromMs")),
+            "validToMs": (
+                _int(item.get("validToMs"))
+                if item.get("validToMs") is not None
+                else None
+            ),
+            "supersedesId": compact_whitespace(
+                str(item.get("supersedesId") or "")
+            ),
+            "text": catalog_text(
+                item.get("canonicalText") or item.get("text"),
+                max_chars=500,
+            ),
+            "tags": catalog_strings(item.get("tags"), incremental_limit=16),
+            "groupIds": catalog_strings(
+                item.get("semanticGroupIds") or item.get("groupIds"),
+                incremental_limit=8,
+            ),
+            "aliases": catalog_strings(item.get("aliases"), incremental_limit=48),
+            "surfaceHints": catalog_strings(
+                item.get("surfaceHints"),
+                incremental_limit=32,
+            ),
+            "queryExpansions": catalog_strings(
+                item.get("queryExpansions"),
+                incremental_limit=48,
+            ),
+            "sourceMemoryIds": catalog_strings(
+                item.get("sourceMemoryIds"),
+                incremental_limit=64,
+            ),
+            "sourceEventIds": _positive_ints(item.get("sourceEventIds")),
+            "app": catalog_text(item.get("app"), max_chars=120),
+            "project": catalog_text(item.get("project"), max_chars=120),
             "status": compact_whitespace(str(item.get("status") or "active")),
+            "confidence": _float(item.get("confidence"), default=0.0),
+            "qualityScore": _float(item.get("qualityScore"), default=0.0),
+            "tagRelationsHash": compact_whitespace(
+                str(item.get("tagRelationsHash") or "")
+            ),
+            "groupMembershipsHash": compact_whitespace(
+                str(item.get("groupMembershipsHash") or "")
+            ),
+            "aliasRecordsHash": compact_whitespace(
+                str(item.get("aliasRecordsHash") or "")
+            ),
         }
-        for index, item in enumerate(_dicts(bundle.get("existingMemoryAtoms")), start=1)
+        for index, item in enumerate(atoms_source, start=1)
         if compact_whitespace(str(item.get("atomId") or item.get("id") or ""))
-        and compact_whitespace(str(item.get("canonicalText") or item.get("text") or ""))
+        and catalog_text(
+            item.get("canonicalText") or item.get("text"),
+            max_chars=500,
+        )
     ]
     groups = [
         {
             "ref": f"G{index}",
             "groupId": compact_whitespace(str(item.get("groupId") or "")),
-            "title": compact_whitespace(str(item.get("title") or ""))[:80],
-            "description": compact_whitespace(str(item.get("description") or ""))[:240],
-            "aliases": _strings(item.get("aliases"), limit=12),
-            "tags": _strings(item.get("tags"), limit=16),
+            "title": catalog_text(item.get("title"), max_chars=80),
+            "description": catalog_text(item.get("description"), max_chars=240),
+            "project": catalog_text(item.get("project"), max_chars=120),
+            "aliases": catalog_strings(item.get("aliases"), incremental_limit=12),
+            "tags": catalog_strings(item.get("tags"), incremental_limit=16),
+            "confidence": _float(item.get("confidence"), default=0.0),
+            "qualityScore": _float(item.get("qualityScore"), default=0.0),
+            "metadataHash": compact_whitespace(
+                str(item.get("metadataHash") or "")
+            ),
+            "memberMetadataHash": compact_whitespace(
+                str(item.get("memberMetadataHash") or "")
+            ),
         }
-        for index, item in enumerate(_dicts(bundle.get("existingSemanticGroups")), start=1)
+        for index, item in enumerate(groups_source, start=1)
         if compact_whitespace(str(item.get("groupId") or ""))
     ]
     tags = [
         {
             "ref": f"T{index}",
             "tagId": item.get("tagId"),
-            "name": compact_whitespace(str(item.get("name") or ""))[:80],
-            "description": compact_whitespace(str(item.get("description") or ""))[:200],
-            "aliases": _strings(item.get("aliases"), limit=16),
-            "groupIds": _strings(item.get("semanticGroupIds"), limit=8),
+            "name": catalog_text(item.get("name"), max_chars=80),
+            "description": catalog_text(item.get("description"), max_chars=200),
+            "aliases": catalog_strings(item.get("aliases"), incremental_limit=16),
+            "groupIds": catalog_strings(
+                item.get("semanticGroupIds"),
+                incremental_limit=8,
+            ),
+            "type": compact_whitespace(str(item.get("type") or "concept")),
             "degree": _int(item.get("degree")),
+            "qualityScore": _float(item.get("qualityScore"), default=0.0),
+            "metadataHash": compact_whitespace(
+                str(item.get("metadataHash") or "")
+            ),
+            "profileHash": compact_whitespace(
+                str(item.get("profileHash") or "")
+            ),
+            "groupMembershipsHash": compact_whitespace(
+                str(item.get("groupMembershipsHash") or "")
+            ),
         }
-        for index, item in enumerate(_dicts(bundle.get("existingSemanticTags")), start=1)
+        for index, item in enumerate(tags_source, start=1)
         if compact_whitespace(str(item.get("name") or ""))
     ]
     tag_ref_by_name = {
@@ -134,44 +422,196 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         for item in tags
         if normalize_text(str(item["name"]))
     }
+    tag_ref_by_id = {
+        str(item["tagId"]): str(item["ref"])
+        for item in tags
+        if item.get("tagId") not in (None, "")
+    }
     edges: list[dict[str, object]] = []
-    for item in _dicts(bundle.get("existingTagEdges")):
-        source_ref = tag_ref_by_name.get(normalize_text(str(item.get("src") or "")), "")
-        target_ref = tag_ref_by_name.get(normalize_text(str(item.get("dst") or "")), "")
+    for item in edges_source:
+        source_ref = tag_ref_by_id.get(
+            str(item.get("srcTagId") or ""),
+            "",
+        ) or tag_ref_by_name.get(
+            normalize_text(str(item.get("src") or "")),
+            "",
+        )
+        target_ref = tag_ref_by_id.get(
+            str(item.get("dstTagId") or ""),
+            "",
+        ) or tag_ref_by_name.get(
+            normalize_text(str(item.get("dst") or "")),
+            "",
+        )
         if not source_ref or not target_ref:
             continue
         edges.append(
             {
                 "sourceRef": source_ref,
                 "targetRef": target_ref,
-                "type": compact_whitespace(str(item.get("edgeType") or "related_to")),
+                "type": compact_whitespace(
+                    str(item.get("edgeType") or "related_to")
+                ),
                 "weight": _float(item.get("weight"), default=0.5),
+                "directionBias": _float(
+                    item.get("directionBias"),
+                    default=0.0,
+                ),
+                "evidenceCount": _int(item.get("evidenceCount")),
+                "metadataHash": compact_whitespace(
+                    str(item.get("metadataHash") or "")
+                ),
             }
         )
-        if len(edges) >= 240:
-            break
     books = [
         {
             "ref": f"B{index}",
             "bookId": compact_whitespace(str(item.get("bookId") or "")),
-            "title": compact_whitespace(str(item.get("title") or ""))[:100],
-            "summary": compact_whitespace(str(item.get("summary") or ""))[:320],
-            "tags": _strings(item.get("tags"), limit=16),
-            "groupIds": _strings(item.get("semanticGroupIds"), limit=8),
-            "atomIds": _strings(item.get("memoryAtomIds"), limit=80),
+            "title": catalog_text(item.get("title"), max_chars=100),
+            "summary": catalog_text(item.get("summary"), max_chars=320),
+            "tags": catalog_strings(item.get("tags"), incremental_limit=16),
+            "surfaceHints": catalog_strings(
+                item.get("surfaceHints"),
+                incremental_limit=32,
+            ),
+            "queryExpansions": catalog_strings(
+                item.get("queryExpansions"),
+                incremental_limit=48,
+            ),
+            "groupIds": catalog_strings(
+                item.get("semanticGroupIds"),
+                incremental_limit=8,
+            ),
+            "atomIds": catalog_strings(
+                item.get("memoryAtomIds"),
+                incremental_limit=80,
+            ),
+            "project": catalog_text(item.get("project"), max_chars=120),
+            "app": catalog_text(item.get("app"), max_chars=120),
+            "ownerKind": compact_whitespace(str(item.get("ownerKind") or "")),
+            "ownerId": compact_whitespace(str(item.get("ownerId") or "")),
+            "knowledgeDomain": compact_whitespace(
+                str(item.get("knowledgeDomain") or "")
+            ),
+            "scopeKind": compact_whitespace(str(item.get("scopeKind") or "")),
+            "scopeId": compact_whitespace(str(item.get("scopeId") or "")),
+            "visibility": compact_whitespace(str(item.get("visibility") or "")),
+            "authorizationRevision": compact_whitespace(
+                str(item.get("authorizationRevision") or "")
+            ),
+            "bindingId": compact_whitespace(str(item.get("bindingId") or "")),
+            "scopeMode": compact_whitespace(str(item.get("scopeMode") or "")),
+            "metadataHash": compact_whitespace(
+                str(item.get("metadataHash") or "")
+            ),
+            "contentHash": compact_whitespace(
+                str(item.get("contentHash") or "")
+            ),
+            "status": compact_whitespace(str(item.get("status") or "active")),
         }
-        for index, item in enumerate(_dicts(bundle.get("existingMemoryBooks")), start=1)
+        for index, item in enumerate(books_source, start=1)
         if compact_whitespace(str(item.get("bookId") or ""))
     ]
+
+    catalog_truncated = {
+        "atoms": len(raw_atoms) > len(atoms),
+        "groups": len(raw_groups) > len(groups),
+        "tags": len(raw_tags) > len(tags),
+        "books": len(raw_books) > len(books),
+        "edges": len(raw_edges) > len(edges),
+        "atomTags": (
+            not global_catalog
+            and any(len(_items(item.get("tags"))) > 16 for item in raw_atoms[:500])
+        ),
+        "atomGroups": (
+            not global_catalog
+            and any(
+                len(_items(item.get("semanticGroupIds") or item.get("groupIds"))) > 8
+                for item in raw_atoms[:500]
+            )
+        ),
+        "atomAliases": (
+            not global_catalog
+            and any(len(_items(item.get("aliases"))) > 48 for item in raw_atoms[:500])
+        ),
+        "atomSurfaceHints": (
+            not global_catalog
+            and any(
+                len(_items(item.get("surfaceHints"))) > 32
+                for item in raw_atoms[:500]
+            )
+        ),
+        "atomQueryExpansions": (
+            not global_catalog
+            and any(
+                len(_items(item.get("queryExpansions"))) > 48
+                for item in raw_atoms[:500]
+            )
+        ),
+        "atomSourceMemoryIds": (
+            not global_catalog
+            and any(
+                len(_items(item.get("sourceMemoryIds"))) > 64
+                for item in raw_atoms[:500]
+            )
+        ),
+        "groupAliases": (
+            not global_catalog
+            and any(len(_items(item.get("aliases"))) > 12 for item in raw_groups[:24])
+        ),
+        "groupTags": (
+            not global_catalog
+            and any(len(_items(item.get("tags"))) > 16 for item in raw_groups[:24])
+        ),
+        "tagAliases": (
+            not global_catalog
+            and any(len(_items(item.get("aliases"))) > 16 for item in raw_tags[:160])
+        ),
+        "tagGroups": (
+            not global_catalog
+            and any(
+                len(_items(item.get("semanticGroupIds"))) > 8
+                for item in raw_tags[:160]
+            )
+        ),
+        "bookTags": (
+            not global_catalog
+            and any(len(_items(item.get("tags"))) > 16 for item in raw_books[:48])
+        ),
+        "bookGroups": (
+            not global_catalog
+            and any(
+                len(_items(item.get("semanticGroupIds"))) > 8
+                for item in raw_books[:48]
+            )
+        ),
+        "bookAtoms": (
+            not global_catalog
+            and any(
+                len(_items(item.get("memoryAtomIds"))) > 80
+                for item in raw_books[:48]
+            )
+        ),
+    }
+    for key, value in upstream_truncation.items():
+        if value:
+            catalog_truncated[key] = True
+    catalog_complete = declared_complete and not any(catalog_truncated.values())
+    catalog_digest = compact_whitespace(str(bundle.get("catalogDigest") or ""))
+    if _is_complete_global_catalog(
+        {
+            "curationScope": curation_scope,
+            "catalogAudit": catalog_audit,
+            "catalogComplete": catalog_complete,
+        }
+    ) and not catalog_digest:
+        catalog_digest = memory_catalog_digest(bundle)
     return {
         "schemaVersion": MEMORY_CURATION_MODEL_BUNDLE_SCHEMA_VERSION,
         "project": compact_whitespace(str(bundle.get("project") or "")),
-        "curationScope": (
-            "global"
-            if compact_whitespace(str(bundle.get("curationScope") or "")).lower() == "global"
-            else "incremental"
-        ),
-        "catalogAudit": bool(bundle.get("catalogAudit")),
+        "curationScope": curation_scope,
+        "catalogAudit": catalog_audit,
+        "catalogDigest": catalog_digest,
         "evidenceOrder": compact_whitespace(str(bundle.get("evidenceOrder") or "")),
         "inputs": evidence,
         "existingAtoms": atoms,
@@ -181,12 +621,8 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         "existingBooks": books,
         "cursor": dict(bundle.get("cursor") or {}),
         "reconstruction": dict(bundle.get("reconstruction") or {}),
-        "catalogTruncated": {
-            "atoms": len(_dicts(bundle.get("existingMemoryAtoms"))) > len(atoms),
-            "groups": len(_dicts(bundle.get("existingSemanticGroups"))) > len(groups),
-            "tags": len(_dicts(bundle.get("existingSemanticTags"))) > len(tags),
-            "books": len(_dicts(bundle.get("existingMemoryBooks"))) > len(books),
-        },
+        "catalogTruncated": catalog_truncated,
+        "catalogComplete": catalog_complete,
     }
 
 
@@ -204,6 +640,10 @@ def curation_decisions_to_compile_output(
     """
 
     model_bundle = build_memory_curation_model_bundle(source_bundle)
+    catalog_audit = _is_global_catalog_audit(model_bundle)
+    catalog_incomplete = catalog_audit and not bool(
+        model_bundle.get("catalogComplete", True)
+    )
     evidence_by_ref = {
         str(item["ref"]): item for item in _dicts(model_bundle.get("inputs"))
     }
@@ -268,6 +708,19 @@ def curation_decisions_to_compile_output(
         decisions_payload,
         evidence_by_ref=evidence_by_ref,
     )
+    if catalog_audit:
+        merge_items = [
+            item
+            for item in decision_items
+            if compact_whitespace(str(item.get("action") or "")).lower() == "merge"
+        ]
+        if len(merge_items) != len(decision_items):
+            warnings.append("catalog_audit_disallowed_fact_action_ignored")
+        if catalog_incomplete:
+            warnings.append("global_catalog_incomplete")
+            decision_items = []
+        else:
+            decision_items = merge_items
     for decision_index, decision in enumerate(decision_items, start=1):
         action = compact_whitespace(str(decision.get("action") or "create")).lower()
         evidence_refs = _strings(
@@ -390,6 +843,15 @@ def curation_decisions_to_compile_output(
                 )
                 invalid_count += 1
                 continue
+            if catalog_audit and not _atoms_exactly_equivalent(
+                existing_atom,
+                merge_source_atom,
+            ):
+                warnings.append(
+                    f"global_catalog_non_equivalent_atom_merge_ignored:{decision_index}"
+                )
+                invalid_count += 1
+                continue
         existing_canonical = compact_whitespace(
             str(
                 (existing_atom or {}).get("canonicalText")
@@ -447,24 +909,30 @@ def curation_decisions_to_compile_output(
             else f"atom:{stable_text_hash(normalize_text(canonical)).removeprefix('sha256:')}"
         )
         staged_atom = memory_atoms.get(atom_id)
+        merge_limit = None if catalog_audit else 512
         existing_source_ids = _unique_ints(
             [
                 *_positive_ints((existing_atom or {}).get("sourceEventIds")),
                 *_positive_ints((merge_source_atom or {}).get("sourceEventIds")),
                 *_positive_ints((staged_atom or {}).get("sourceEventIds")),
             ],
-            limit=512,
+            limit=merge_limit,
         )
-        combined_source_ids = _unique_ints([*existing_source_ids, *source_ids], limit=512)
+        combined_source_ids = _unique_ints(
+            [*existing_source_ids, *source_ids],
+            limit=merge_limit,
+        )
         base_atom: dict[str, object] = dict(existing_atom or {})
-        for field, limit in (
+        for field, incremental_limit in (
             ("tags", 32),
             ("semanticGroupIds", 8),
             ("groupIds", 8),
             ("aliases", 48),
+            ("surfaceHints", 32),
             ("queryExpansions", 48),
             ("sourceMemoryIds", 64),
         ):
+            limit = None if catalog_audit else incremental_limit
             base_atom[field] = _unique_strings(
                 [
                     *_strings((existing_atom or {}).get(field), limit=limit),
@@ -498,19 +966,29 @@ def curation_decisions_to_compile_output(
             source_ids=projection_source_ids,
             semantic_tags=semantic_tags,
         )
-        for existing_tag in _strings(base_atom.get("tags"), limit=32):
-            resolved = _canonical_tag(
-                existing_tag,
-                canonical_tag_by_name=canonical_tag_by_name,
+        for existing_tag in _strings(
+            base_atom.get("tags"),
+            limit=None if catalog_audit else 32,
+        ):
+            resolved = (
+                existing_tag
+                if catalog_audit
+                else _canonical_tag(
+                    existing_tag,
+                    canonical_tag_by_name=canonical_tag_by_name,
+                )
             )
             if resolved and resolved not in tag_names:
                 tag_names.append(resolved)
         existing_group_ids = _strings(
             base_atom.get("semanticGroupIds")
             or base_atom.get("groupIds"),
-            limit=8,
+            limit=None if catalog_audit else 8,
         )
-        group_ids = _unique_strings([*existing_group_ids, *group_ids], limit=4)
+        group_ids = _unique_strings(
+            [*existing_group_ids, *group_ids],
+            limit=None if catalog_audit else 4,
+        )
 
         evidence_items = [
             evidence_by_ref[ref] for ref in evidence_refs if ref in evidence_by_ref
@@ -522,14 +1000,18 @@ def curation_decisions_to_compile_output(
                 {"app": (merge_source_atom or {}).get("app")},
             ]
         )
-        kind = _canonical_kind(
-            (
-                base_atom.get("kind")
-                if action in {"attach", "merge"}
-                else decision.get("kind")
+        kind = (
+            compact_whitespace(str(base_atom.get("kind") or "project_fact"))
+            if catalog_audit
+            else _canonical_kind(
+                (
+                    base_atom.get("kind")
+                    if action in {"attach", "merge"}
+                    else decision.get("kind")
+                )
+                or base_atom.get("kind")
+                or "project_fact"
             )
-            or base_atom.get("kind")
-            or "project_fact"
         )
         merge_aliases = []
         if action == "merge":
@@ -544,25 +1026,66 @@ def curation_decisions_to_compile_output(
                 merge_aliases.append(merge_alias)
         aliases = _unique_strings(
             [
-                *_strings(base_atom.get("aliases"), limit=48),
+                *_strings(
+                    base_atom.get("aliases"),
+                    limit=None if catalog_audit else 48,
+                ),
                 *merge_aliases,
-                *_strings(decision.get("aliases"), limit=32),
+                *(
+                    _strings(decision.get("aliases"), limit=32)
+                    if not catalog_audit
+                    else []
+                ),
             ],
-            limit=48,
+            limit=None if catalog_audit else 48,
         )
         query_expansions = _unique_strings(
             [
-                *_strings(base_atom.get("queryExpansions"), limit=48),
-                *_strings(decision.get("queryExpansions"), limit=32),
-                *tag_names,
+                *_strings(
+                    base_atom.get("queryExpansions"),
+                    limit=None if catalog_audit else 48,
+                ),
+                *(
+                    _strings(decision.get("queryExpansions"), limit=32)
+                    if not catalog_audit
+                    else []
+                ),
+                *(tag_names if not catalog_audit else []),
             ],
-            limit=48,
+            limit=None if catalog_audit else 48,
+        )
+        target_identity_hash = compact_whitespace(
+            str(
+                (existing_atom or {}).get("identityHash")
+                or memory_atom_identity_hash(existing_atom or {})
+            )
+        )
+        target_authority_hash = compact_whitespace(
+            str(
+                (existing_atom or {}).get("authorityHash")
+                or memory_atom_authority_hash(existing_atom or {})
+            )
         )
         memory_atoms[atom_id] = {
             "atomId": atom_id,
+            "identityHash": target_identity_hash,
+            "authorityHash": target_authority_hash,
+            "mergeSourceId": merge_source_id if action == "merge" else "",
             "operation": action,
             "kind": kind,
+            "language": compact_whitespace(
+                str(base_atom.get("language") or "zh")
+            ),
             "claimKey": compact_whitespace(
+                str(
+                    (existing_atom or {}).get("claimKey")
+                    or (merge_source_atom or {}).get("claimKey")
+                    or decision.get("claimKey")
+                    or ""
+                )
+            )
+            if catalog_audit
+            else compact_whitespace(
                 str(
                     (existing_atom or {}).get("claimKey")
                     or (merge_source_atom or {}).get("claimKey")
@@ -576,23 +1099,93 @@ def curation_decisions_to_compile_output(
                     or (merge_source_atom or {}).get("lineageId")
                     or ""
                 )
+            )
+            if catalog_audit
+            else compact_whitespace(
+                str(
+                    (existing_atom or {}).get("lineageId")
+                    or (merge_source_atom or {}).get("lineageId")
+                    or ""
+                )
             )[:200],
+            "claimState": compact_whitespace(
+                str(
+                    (existing_atom or {}).get("claimState")
+                    or (merge_source_atom or {}).get("claimState")
+                    or decision.get("claimState")
+                    or "current"
+                )
+            ).lower(),
+            "validFromMs": (
+                _int((existing_atom or {}).get("validFromMs"))
+                if (existing_atom or {}).get("validFromMs") is not None
+                else _int((merge_source_atom or {}).get("validFromMs"))
+                if (merge_source_atom or {}).get("validFromMs") is not None
+                else _int(decision.get("validFromMs"))
+            ),
+            "validToMs": (
+                _int((existing_atom or {}).get("validToMs"))
+                if (existing_atom or {}).get("validToMs") is not None
+                else _int((merge_source_atom or {}).get("validToMs"))
+                if (merge_source_atom or {}).get("validToMs") is not None
+                else _int(decision.get("validToMs"))
+                if decision.get("validToMs") is not None
+                else None
+            ),
+            "supersedesId": compact_whitespace(
+                str(
+                    (existing_atom or {}).get("supersedesId")
+                    or (merge_source_atom or {}).get("supersedesId")
+                    or decision.get("supersedesId")
+                    or ""
+                )
+            )
+            if catalog_audit
+            else compact_whitespace(
+                str(
+                    (existing_atom or {}).get("supersedesId")
+                    or (merge_source_atom or {}).get("supersedesId")
+                    or decision.get("supersedesId")
+                    or ""
+                )
+            )[:240],
             "canonicalText": canonical,
+            "text": compact_whitespace(str(base_atom.get("text") or canonical)),
             "summary": compact_whitespace(
                 str(decision.get("summary") or (staged_atom or {}).get("summary") or canonical)
             )[:600],
             "tags": tag_names,
             "aliases": aliases,
-            # Surface hints and lexicon phrases are intentionally not model
-            # outputs. The Rime feedback lane below owns those proposals.
-            "surfaceHints": [],
+            "surfaceHints": (
+                _strings(
+                    base_atom.get("surfaceHints"),
+                    limit=None if catalog_audit else 0,
+                )
+                if catalog_audit
+                else []
+            ),
             "queryExpansions": query_expansions,
             "sourceEventIds": combined_source_ids,
-            "sourceMemoryIds": _strings(base_atom.get("sourceMemoryIds"), limit=64),
+            "sourceMemoryIds": _strings(
+                base_atom.get("sourceMemoryIds"),
+                limit=None if catalog_audit else 64,
+            ),
             "semanticGroupIds": group_ids,
             "directCandidateAllowed": False,
             "project": compact_whitespace(str(base_atom.get("project") or project)),
             "app": scope_app,
+            "ownerKind": compact_whitespace(str(base_atom.get("ownerKind") or "")),
+            "ownerId": compact_whitespace(str(base_atom.get("ownerId") or "")),
+            "privacyLevel": compact_whitespace(str(base_atom.get("privacyLevel") or "")),
+            "knowledgeDomain": compact_whitespace(str(base_atom.get("knowledgeDomain") or "")),
+            "scopeKind": compact_whitespace(str(base_atom.get("scopeKind") or "")),
+            "scopeId": compact_whitespace(str(base_atom.get("scopeId") or "")),
+            "visibility": compact_whitespace(str(base_atom.get("visibility") or "")),
+            "authorizationRevision": compact_whitespace(
+                str(base_atom.get("authorizationRevision") or "")
+            ),
+            "bindingId": compact_whitespace(str(base_atom.get("bindingId") or "")),
+            "scopeMode": compact_whitespace(str(base_atom.get("scopeMode") or "")),
             "confidence": _float(decision.get("confidence"), default=0.75),
             "qualityScore": _float(
                 decision.get("qualityScore"),
@@ -646,33 +1239,57 @@ def curation_decisions_to_compile_output(
                 }
             )
 
-    tag_merges = _compile_tag_merges(
-        decisions_payload,
-        evidence_by_ref=evidence_by_ref,
-        tags_by_ref=tags_by_ref,
-        canonical_tag_by_name=canonical_tag_by_name,
+    tag_merges = (
+        []
+        if catalog_incomplete
+        else _compile_tag_merges(
+            decisions_payload,
+            evidence_by_ref=evidence_by_ref,
+            tags_by_ref=tags_by_ref,
+            canonical_tag_by_name=canonical_tag_by_name,
+            source_bundle=source_bundle,
+        )
     )
-    tag_edges = _derive_tag_edges(
-        atom_tags=atom_tags,
-        atom_source_ids=atom_source_ids,
-    )
-    topic_books = _derive_topic_books(
-        source_bundle=source_bundle,
-        semantic_groups=semantic_groups,
-        memory_atoms=memory_atoms,
-        group_atom_ids=group_atom_ids,
-        group_source_ids=group_source_ids,
-        atom_tags=atom_tags,
-        project=project,
-    )
-    phrase_candidates, negative_phrases, lexicon_diagnostics = _derive_lexicon_lane(
-        source_bundle=source_bundle,
-        event_group_ids=_event_group_index(
-            atom_groups=atom_groups,
+    if catalog_audit:
+        # A catalog audit is a consolidation pass, not a second projection
+        # writer.  Existing Book/Group/Tag/edge projections are rebuilt by the
+        # governed apply path after Atom/tag merges, so never emit direct
+        # upserts from this pass.
+        semantic_groups = {}
+        semantic_tags = {}
+        tag_edges = []
+        topic_books = {}
+        phrase_candidates = []
+        negative_phrases = []
+        lexicon_diagnostics = {
+            "source": "catalog-audit",
+            "modelGenerated": False,
+            "feedbackCount": 0,
+            "phraseCandidateCount": 0,
+            "negativePhraseCount": 0,
+        }
+    else:
+        tag_edges = _derive_tag_edges(
+            atom_tags=atom_tags,
             atom_source_ids=atom_source_ids,
-        ),
-        project=project,
-    )
+        )
+        topic_books = _derive_topic_books(
+            source_bundle=source_bundle,
+            semantic_groups=semantic_groups,
+            memory_atoms=memory_atoms,
+            group_atom_ids=group_atom_ids,
+            group_source_ids=group_source_ids,
+            atom_tags=atom_tags,
+            project=project,
+        )
+        phrase_candidates, negative_phrases, lexicon_diagnostics = _derive_lexicon_lane(
+            source_bundle=source_bundle,
+            event_group_ids=_event_group_index(
+                atom_groups=atom_groups,
+                atom_source_ids=atom_source_ids,
+            ),
+            project=project,
+        )
     curation_outcome = (
         "changes"
         if memory_atoms
@@ -727,6 +1344,13 @@ def curation_decisions_to_compile_output(
     return {
         "schemaVersion": MEMORY_CURATION_DECISION_SCHEMA_VERSION,
         "sourceDecisions": source_decisions,
+        "curationScope": model_bundle.get("curationScope") or "incremental",
+        "catalogAudit": bool(model_bundle.get("catalogAudit")),
+        "catalogDigest": compact_whitespace(
+            str(model_bundle.get("catalogDigest") or "")
+        ),
+        "catalogComplete": bool(model_bundle.get("catalogComplete", True)),
+        "catalogTruncated": dict(model_bundle.get("catalogTruncated") or {}),
         "dailyBooks": [],
         "topicBooks": list(topic_books.values()),
         "semanticGroups": list(semantic_groups.values()),
@@ -1143,38 +1767,75 @@ def _compile_tag_merges(
     evidence_by_ref: Mapping[str, Mapping[str, object]],
     tags_by_ref: Mapping[str, Mapping[str, object]],
     canonical_tag_by_name: Mapping[str, Mapping[str, object]],
+    source_bundle: Mapping[str, object],
 ) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
+    global_catalog = _is_global_catalog_audit(source_bundle)
     for item in _dicts(decisions_payload.get("tagMerges")):
-        source = _tag_name_from_ref(
-            item.get("sourceRef") or item.get("source"),
-            tags_by_ref=tags_by_ref,
-            canonical_tag_by_name=canonical_tag_by_name,
+        source_raw = compact_whitespace(
+            str(item.get("sourceRef") or item.get("source") or "")
         )
-        target = _tag_name_from_ref(
-            item.get("targetRef") or item.get("target"),
-            tags_by_ref=tags_by_ref,
-            canonical_tag_by_name=canonical_tag_by_name,
+        target_raw = compact_whitespace(
+            str(item.get("targetRef") or item.get("target") or "")
         )
-        if not source or not target or normalize_text(source) == normalize_text(target):
+        source_item = tags_by_ref.get(source_raw) or canonical_tag_by_name.get(
+            normalize_text(source_raw)
+        )
+        target_item = tags_by_ref.get(target_raw) or canonical_tag_by_name.get(
+            normalize_text(target_raw)
+        )
+        source = compact_whitespace(
+            str((source_item or {}).get("name") or source_raw)
+        )
+        target = compact_whitespace(
+            str((target_item or {}).get("name") or target_raw)
+        )
+        source_tag_id = _int((source_item or {}).get("tagId"))
+        target_tag_id = _int((target_item or {}).get("tagId"))
+        if (
+            not source
+            or not target
+            or (
+                source_tag_id > 0
+                and target_tag_id > 0
+                and source_tag_id == target_tag_id
+            )
+        ):
             continue
         evidence_ids = _evidence_ids(
             _strings(item.get("evidenceRefs"), limit=40),
             evidence_by_ref=evidence_by_ref,
             explicit_ids=item.get("evidenceEventIds"),
         )
-        if not evidence_ids:
+        if not evidence_ids and not global_catalog:
+            continue
+        if global_catalog and not _tag_items_exact_synonym(
+            source_item,
+            target_item,
+        ):
             continue
         result.append(
             {
                 "source": source,
                 "target": target,
-                "reason": compact_whitespace(str(item.get("reason") or "同义标签规范化")),
+                **(
+                    {"sourceTagId": source_tag_id}
+                    if source_tag_id > 0
+                    else {}
+                ),
+                **(
+                    {"targetTagId": target_tag_id}
+                    if target_tag_id > 0
+                    else {}
+                ),
+                "reason": compact_whitespace(
+                    str(item.get("reason") or "同义标签规范化")
+                ),
                 "evidenceEventIds": evidence_ids,
                 "confidence": _float(item.get("confidence"), default=0.8),
             }
         )
-    return result[:32]
+    return result
 
 
 def _derive_tag_edges(
@@ -1531,19 +2192,6 @@ def _evidence_ids(
     return _unique_ints(result, limit=512)
 
 
-def _tag_name_from_ref(
-    value: object,
-    *,
-    tags_by_ref: Mapping[str, Mapping[str, object]],
-    canonical_tag_by_name: Mapping[str, Mapping[str, object]],
-) -> str:
-    raw = compact_whitespace(str(value or ""))
-    if raw in tags_by_ref:
-        raw = compact_whitespace(str(tags_by_ref[raw].get("name") or ""))
-    return _canonical_tag(
-        raw.removeprefix("new:"),
-        canonical_tag_by_name=canonical_tag_by_name,
-    )
 
 
 def _canonical_tag(
@@ -1556,20 +2204,74 @@ def _canonical_tag(
     return compact_whitespace(str((existing or {}).get("name") or value))
 
 
+
+def _atoms_exactly_equivalent(
+    left: Mapping[str, object] | None,
+    right: Mapping[str, object] | None,
+) -> bool:
+    if left is None or right is None:
+        return False
+    left_hash = compact_whitespace(str(left.get("identityHash") or ""))
+    right_hash = compact_whitespace(str(right.get("identityHash") or ""))
+    if left_hash or right_hash:
+        if not left_hash or not right_hash or left_hash != right_hash:
+            return False
+        left_authority = compact_whitespace(
+            str(left.get("authorityHash") or "")
+        )
+        right_authority = compact_whitespace(
+            str(right.get("authorityHash") or "")
+        )
+        return not left_authority or not right_authority or left_authority == right_authority
+    return memory_atom_identity_hash(left) == memory_atom_identity_hash(right)
+
+
+def _tag_items_exact_synonym(
+    source_item: Mapping[str, object] | None,
+    target_item: Mapping[str, object] | None,
+) -> bool:
+    if source_item is None or target_item is None:
+        return False
+    source_tag_id = _int(source_item.get("tagId"))
+    target_tag_id = _int(target_item.get("tagId"))
+    if (
+        source_tag_id > 0
+        and target_tag_id > 0
+        and source_tag_id == target_tag_id
+    ):
+        return False
+    source_name = normalize_text(str(source_item.get("name") or ""))
+    target_name = normalize_text(str(target_item.get("name") or ""))
+    if not source_name or not target_name:
+        return False
+    if source_name == target_name:
+        return (
+            source_tag_id > 0
+            and target_tag_id > 0
+            and source_tag_id != target_tag_id
+        )
+    source_aliases = {
+        normalize_text(alias)
+        for alias in _strings(source_item.get("aliases"), limit=32)
+        if normalize_text(alias)
+    }
+    target_aliases = {
+        normalize_text(alias)
+        for alias in _strings(target_item.get("aliases"), limit=32)
+        if normalize_text(alias)
+    }
+    return source_name in target_aliases or target_name in source_aliases
+
 def _valid_tag_name(value: str) -> bool:
     text = compact_whitespace(value)
-    if not 2 <= len(text) <= 32:
-        return False
-    if text in _TAG_NOISE:
-        return False
-    lowered = text.lower()
-    return not (
-        lowered.startswith("com.")
-        or lowered.startswith("app:")
-        or lowered.startswith("source:")
-        or ":" in lowered and lowered.split(":", 1)[0] in {"source", "status", "app"}
+    return (
+        bool(text)
+        and len(text) <= 48
+        and 1 <= _cjk_length(text) <= 16
+        and "\t" not in text
+        and "\n" not in text
+        and text not in _TAG_NOISE
     )
-
 
 def _valid_phrase(value: str) -> bool:
     text = compact_whitespace(value)
@@ -1620,7 +2322,7 @@ def _items(value: object) -> list[object]:
     return [] if value is None else [value]
 
 
-def _strings(value: object, *, limit: int) -> list[str]:
+def _strings(value: object, *, limit: int | None) -> list[str]:
     if isinstance(value, str):
         raw_values = [value]
     elif isinstance(value, (list, tuple, set)):
@@ -1633,7 +2335,7 @@ def _strings(value: object, *, limit: int) -> list[str]:
     )
 
 
-def _unique_strings(values: list[str], *, limit: int) -> list[str]:
+def _unique_strings(values: list[str], *, limit: int | None) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -1643,7 +2345,7 @@ def _unique_strings(values: list[str], *, limit: int) -> list[str]:
             continue
         seen.add(normalized)
         result.append(compact)
-        if len(result) >= limit:
+        if limit is not None and len(result) >= limit:
             break
     return result
 
@@ -1661,14 +2363,14 @@ def _positive_ints(value: object) -> list[int]:
     return result
 
 
-def _unique_ints(values: list[int], *, limit: int) -> list[int]:
+def _unique_ints(values: list[int], *, limit: int | None) -> list[int]:
     result: list[int] = []
     for value in values:
         number = _int(value)
         if number <= 0 or number in result:
             continue
         result.append(number)
-        if len(result) >= limit:
+        if limit is not None and len(result) >= limit:
             break
     return result
 

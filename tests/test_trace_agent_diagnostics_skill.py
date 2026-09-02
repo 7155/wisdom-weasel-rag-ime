@@ -10,6 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = (
     ROOT / "integrations" / "pi" / "skills" / "trace-agent-diagnostics" / "SKILL.md"
 )
+REPAIR_VERIFICATION_PATH = (
+    SKILL_PATH.parent / "references" / "repair-verification.md"
+)
 
 
 class TraceAgentDiagnosticsSkillTests(unittest.TestCase):
@@ -33,6 +36,7 @@ class TraceAgentDiagnosticsSkillTests(unittest.TestCase):
             [
                 "schemaVersion",
                 "summary",
+                "presentation",
                 "hardGates",
                 "judgeScores",
                 "requirementAssessments",
@@ -45,6 +49,7 @@ class TraceAgentDiagnosticsSkillTests(unittest.TestCase):
             [
                 "schemaVersion",
                 "summary",
+                "presentation",
                 "hardGates",
                 "judgeScores",
                 "findings",
@@ -70,6 +75,32 @@ class TraceAgentDiagnosticsSkillTests(unittest.TestCase):
             '`"hardGates": []`, `"judgeScores": []`, and `"findings": []`',
             checklist,
         )
+        self.assertIn("`presentation` is the bounded plain-language scan layer", checklist)
+        self.assertIn("`recordedStageReceiptEvidenceIds`", checklist)
+        self.assertIn("`expectedStageCount: 0`", checklist)
+        self.assertIn("no stage was expected", checklist)
+        self.assertIn("`failureAttribution` is required for every new result", checklist)
+        self.assertIn("five entries in order `tool`, `skill`, `template`, `workflow`, `model`", checklist)
+        self.assertIn("Mark Tool `healthy` when a receipt proves the Tool effect worked", checklist)
+        self.assertIn(
+            "Do not blame the model until input, Skill, template/prompt, workflow, "
+            "and Tool evidence is adequate",
+            " ".join(checklist.split()),
+        )
+        self.assertIn('`workspaceRoots: ["/"]`', content)
+        self.assertIn('`writeAuthority: "auto_approved_full_trust"`', content)
+        self.assertNotIn("Luna Max", content)
+        self.assertNotIn("workspace-fenced", content)
+
+    def test_repair_verification_uses_direct_full_auto_authority(self) -> None:
+        content = REPAIR_VERIFICATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('`toolProfileVersion: "control-center-auto-approve-v1"`', content)
+        self.assertIn('`executionMode: "full_trust"`', content)
+        self.assertIn('`workspaceRoots: ["/"]`', content)
+        self.assertIn('`writeAuthority: "auto_approved_full_trust"`', content)
+        self.assertNotIn("Pending operations are arbitrated", content)
+        self.assertNotIn("model-arbitrated", content)
+        self.assertNotIn("exact authorized workspace roots", content)
 
 
 if __name__ == "__main__":

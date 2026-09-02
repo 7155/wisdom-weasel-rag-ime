@@ -112,7 +112,7 @@
 
 .paw-room-session-round__prompt small {
   color: color-mix(in srgb, #31547f 78%, var(--paw-text-secondary, #65758a));
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -343,7 +343,7 @@
 
 .paw-room-round__standalone-summary-body > small {
   color: #5b51c5;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .04em;
   text-transform: uppercase;

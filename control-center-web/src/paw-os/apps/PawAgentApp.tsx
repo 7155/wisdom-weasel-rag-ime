@@ -90,9 +90,11 @@ export function PawAgentApp({
      the lightweight new-work shell; a superseded route, filter change or an
      unmounted window must never let an older catalog write into the new view. */
   const catalogRequestRef = useRef(0);
+  const selectedSessionRequestRef = useRef(0);
   const targetKind = target?.kind;
   const targetId = target?.id;
   const targetRoomId = target?.kind === 'participant' ? target.roomId : undefined;
+  const selectedSessionId = selection.kind === 'session' ? selection.id : '';
   /* 反向证据链只对它自己指名的那段 Session 生效；在同一扇窗里换一段
      Session 之后，落点就过期了，不该继续劫持视图。 */
   const evidenceFocus = useMemo(() => {
@@ -111,14 +113,29 @@ export function PawAgentApp({
     const requestId = ++catalogRequestRef.current;
     setLoading(true);
     setLoadError('');
+    const includeRooms = selection.kind !== 'session' || railOpen;
+    const includeRoleModels = selection.kind === 'new';
     const [sessionResult, roomResult, roleResult, modelResult] = await Promise.allSettled([
-      transport.request({ pathId: 'agent.sessions.list', query: { limit: 100, includeArchived: showArchived } }),
-      transport.request({ pathId: 'agent.rooms.list', query: { limit: 100 } }),
+      transport.request({
+        pathId: 'agent.sessions.list',
+        query: {
+          limit: 100,
+          includeArchived: showArchived,
+        },
+      }),
+      includeRooms
+        ? transport.request({ pathId: 'agent.rooms.list', query: { limit: 100 } })
+        : Promise.resolve(undefined),
       transport.request({ pathId: 'agent.roles.list' }),
-      transport.request({ pathId: 'agent.role.models' }),
+      includeRoleModels
+        ? transport.request({ pathId: 'agent.role.models' })
+        : Promise.resolve(undefined),
     ]);
     if (catalogRequestRef.current !== requestId) return;
-    const failures = [sessionResult, roomResult, roleResult, modelResult]
+    const failures = [sessionResult, roleResult,
+      ...(includeRooms ? [roomResult] : []),
+      ...(includeRoleModels ? [modelResult] : []),
+    ]
       .filter((result) => result.status === 'rejected').length;
     /* A mock/local transport can resolve all four reads in the same turn. Put
      * the directory projection behind React's transition lane so it cannot
@@ -129,8 +146,8 @@ export function PawAgentApp({
         /* Room Partner Sessions stay out of the ordinary work-record rail, but
          * a planet window must retain the one explicitly targeted Session so it
          * can render the same complete workspace as any other Session. */
-        const listed = sessionItems(sessionResult.value).filter((item) => (
-          !item.roomParticipant || (targetKind === 'session' && item.id === targetId)
+        const listed = sessionItems(sessionResult.value, { includeAppOwned: true }).filter((item) => (
+          !item.roomParticipant || item.id === selectedSessionId
         ));
         const listedIds = new Set(listed.map((item) => item.id));
         for (const id of Object.keys(optimisticSessionsRef.current)) {
@@ -141,7 +158,7 @@ export function PawAgentApp({
           ...listed.filter((item) => !optimisticSessionsRef.current[item.id]),
         ]);
       }
-      if (roomResult.status === 'fulfilled') {
+      if (roomResult.status === 'fulfilled' && roomResult.value !== undefined) {
         const listed = roomItems(roomResult.value);
         const listedIds = new Set(listed.map((item) => item.id));
         for (const id of Object.keys(optimisticRoomsRef.current)) {
@@ -153,7 +170,7 @@ export function PawAgentApp({
         ]);
       }
       if (roleResult.status === 'fulfilled') setPersonas(roleItems(roleResult.value));
-      if (modelResult.status === 'fulfilled') {
+      if (modelResult.status === 'fulfilled' && modelResult.value !== undefined) {
         const catalog = parsePiModelCatalogOptions(modelResult.value);
         setModels(catalog.models);
         setDefaultModel(catalog.selectedReference);
@@ -161,9 +178,13 @@ export function PawAgentApp({
       if (failures) setLoadError(failures === 4 ? 'Agent 工作记录暂时无法读取。' : '部分 Agent 目录暂时不可用。');
       setLoading(false);
     });
-  }, [showArchived, targetId, targetKind, transport]);
+  }, [railOpen, selectedSessionId, selection.kind, showArchived, transport]);
 
   useEffect(() => {
+    if (surfaceActive === false || (selection.kind === 'session' && !railOpen)) {
+      catalogRequestRef.current += 1;
+      return;
+    }
     let cancelled = false;
     /* Let PawAppProcess' boot surface and the Agent home commit first. The
      * catalog remains truthful, but no longer runs inside the Dock click's
@@ -176,7 +197,44 @@ export function PawAgentApp({
       window.cancelAnimationFrame(frame);
       catalogRequestRef.current += 1;
     };
-  }, [catalogRevision, loadCatalog]);
+  }, [catalogRevision, loadCatalog, railOpen, selection.kind, surfaceActive]);
+  useEffect(() => {
+    if (
+      surfaceActive === false
+      || selection.kind !== 'session'
+      || railOpen
+      || !selectedSessionId
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const frame = window.requestAnimationFrame(() => {
+      const requestId = ++selectedSessionRequestRef.current;
+      void transport.request({
+        pathId: 'agent.sessions.list',
+        query: { limit: 100, includeArchived: true },
+      }).then((response) => {
+        if (cancelled || requestId !== selectedSessionRequestRef.current) return;
+        const canonical = sessionItems(response, { includeAppOwned: true })
+          .find((item) => item.id === selectedSessionId);
+        if (!canonical) return;
+        setSessions((current) => {
+          const existing = current.some((item) => item.id === canonical.id);
+          return existing
+            ? current.map((item) => item.id === canonical.id ? canonical : item)
+            : [canonical, ...current];
+        });
+      }).catch(() => {
+        // A direct Session can still render from its route identity. The
+        // directory refresh remains the recovery path when the rail opens.
+      });
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      selectedSessionRequestRef.current += 1;
+    };
+  }, [railOpen, selectedSessionId, selection.kind, surfaceActive, transport]);
 
   useEffect(() => {
     if (!railOpen) return;
@@ -206,6 +264,11 @@ export function PawAgentApp({
   const selectedSession = selection.kind === 'session'
     ? sessions.find((item) => item.id === selection.id)
     : undefined;
+  const selectedSessionRecord = useMemo(() => (
+    selectedSessionId
+      ? selectedSession ?? provisionalSessionRecord(selectedSessionId, target?.title)
+      : undefined
+  ), [selectedSession, selectedSessionId, target?.title]);
   const selectedRoom = selection.kind === 'room'
     ? rooms.find((item) => item.id === selection.id)
     : undefined;
@@ -216,11 +279,11 @@ export function PawAgentApp({
       desktop.bindAgentMain(surfaceIdentity.windowId);
       return;
     }
-    if (selection.kind === 'session' && selectedSession) {
+    if (selection.kind === 'session' && selectedSessionRecord) {
       desktop.bindAgentMain(surfaceIdentity.windowId, {
         kind: 'session',
-        id: selectedSession.id,
-        title: selectedSession.title,
+        id: selectedSessionRecord.id,
+        title: selectedSessionRecord.title,
       });
       return;
     }
@@ -232,7 +295,7 @@ export function PawAgentApp({
         subtitle: selectedRoom.description,
       });
     }
-  }, [desktop, selectedRoom, selectedSession, selection.kind, surfaceIdentity?.windowId]);
+  }, [desktop, selectedRoom, selectedSessionRecord, selection.kind, surfaceIdentity?.windowId]);
 
   async function archiveSession(session: SessionSummary): Promise<void> {
     const archived = session.status === 'archived';
@@ -375,7 +438,7 @@ export function PawAgentApp({
             key={`session:${selection.id}`}
             initialDraft={selection.draft}
             persona={personas.find((item) => item.roleId === sessions.find((session) => session.id === selection.id)?.roleId)}
-            record={sessions.find((item) => item.id === selection.id)}
+            record={selectedSessionRecord}
             recordId={selection.id}
             traceFocusNodeId={evidenceFocus}
             onNewWork={() => setSelection({ kind: 'new' })}
@@ -479,7 +542,7 @@ function ProjectFolder({
               projection={sessionFileProjection(session)}
               onClick={() => onOpenSession(session.id)}
               title={session.title}
-              trailing={<SessionActions onArchive={() => onArchiveSession(session)} onDelete={() => onDeleteSession(session)} session={session} />}
+              trailing={session.evaluationSnapshot ? null : <SessionActions onArchive={() => onArchiveSession(session)} onDelete={() => onDeleteSession(session)} session={session} />}
             />
           ))}
         </WorkGroup> : null}
@@ -550,6 +613,20 @@ function initialSelection(
   return sessionId ? { kind: 'session', id: sessionId } : { kind: 'new' };
 }
 
+function provisionalSessionRecord(id: string, title = ''): SessionSummary {
+  return {
+    id,
+    title: title.trim() && title !== id ? title : 'Session',
+    mode: 'assistant',
+    status: 'idle',
+    roleId: '',
+    roleVersion: '',
+    roleBookRevisionId: '',
+    updatedAtMs: 0,
+    workspaceRoots: [],
+  };
+}
+
 function roomItems(value: unknown): RoomSummary[] {
   const envelope = record(value);
   const source = Array.isArray(envelope.items) ? envelope.items : Array.isArray(envelope.rooms) ? envelope.rooms : [];
@@ -607,6 +684,13 @@ function projectName(paths: string[] | undefined): string {
 
 function sessionFileProjection(session: SessionSummary): WorkFileProjection {
   const base = `${projectName(session.workspaceRoots)} · ${relativeTime(session.updatedAtMs)}`;
+  if (session.evaluationSnapshot) {
+    return {
+      detail: '冻结 JSONL · 不可继续提问、改写或删除',
+      meta: `评测快照 · 只读 · ${relativeTime(session.updatedAtMs)}`,
+      state: 'complete',
+    };
+  }
   const state = session.status === 'archived' ? '已归档'
     : session.status === 'busy' ? '进行中'
     : session.status === 'faulted' ? '需要处理'

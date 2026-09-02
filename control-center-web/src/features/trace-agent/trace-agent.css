@@ -403,6 +403,17 @@
   gap: 6px;
 }
 
+.trace-agent-repair-confirmation__copy {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.trace-agent-repair-confirmation__copy > strong {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-body);
+}
+
 .trace-agent-repair-state {
   display: flex;
   align-items: center;

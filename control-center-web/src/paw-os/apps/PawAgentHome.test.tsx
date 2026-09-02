@@ -45,18 +45,11 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(agentNextCss).toMatch(/\.an-menu\s*\{[^}]*top:\s*calc\(100% \+ 8px\);/s);
   });
 
-  it('uses one focus edge and a content-driven prompt instead of a double glow around empty space', () => {
-    expect(agentNextCss).not.toContain('.an-composer::before');
-    expect(agentNextCss).not.toContain('conic-gradient');
-    expect(agentNextCss).toMatch(/\.an-composer:focus-within\s*\{[^}]*border-color:[^}]*box-shadow:/s);
-    expect(agentNextCss).toMatch(/\.an-composer textarea\s*\{[^}]*min-height:\s*64px;[^}]*max-height:\s*148px;[^}]*field-sizing:\s*content;/s);
-  });
-
   it('collapses home composer chips to semantic marks before words vanish from the accessibility tree', async () => {
     renderHome();
 
-    expect(await screen.findByRole('button', { name: /权限 · 按风险确认/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /工作目录 · work\/paw|选择工作目录|工作目录/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /权限 · 全权限/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /起始项目 · work\/paw|起始项目（可选）/ })).toBeInTheDocument();
 
     // The toolbar is a named container; narrow windows shed detail then labels.
     expect(agentNextCss).toMatch(/container:\s*an-home-composer\s*\/\s*inline-size/);

@@ -19,18 +19,19 @@ describe('NewSessionDialog', () => {
     );
 
     const dialog = screen.getByRole('dialog', { name: '新建对话' });
-    expect(within(dialog).getByRole('radio', { name: /直接聊天/ })).toBeChecked();
-    expect(within(dialog).getByRole('radio', { name: /全自动/ })).toBeDisabled();
+    expect(within(dialog).getByRole('radio', { name: /不预选项目/ })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: /全自动/ })).toBeEnabled();
     await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
 
     expect(onCreate).toHaveBeenCalledWith({
       title: '新对话',
       workspaceRoots: [],
       executionMode: 'per_action',
+      toolProfileVersion: 'control-center-full-access-v1',
     });
   });
 
-  it('requires explicit confirmation before creating a full-automation project conversation', async () => {
+  it('creates a full-automation project conversation with one explicit action', async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn().mockResolvedValue(true);
     render(
@@ -43,19 +44,17 @@ describe('NewSessionDialog', () => {
         onCreate={onCreate}
       />,
     );
-
     const dialog = screen.getByRole('dialog', { name: '新建对话' });
     const fullAutomation = within(dialog).getByRole('radio', { name: /全自动/ });
     expect(fullAutomation).toBeEnabled();
     await user.click(fullAutomation);
-    expect(within(dialog).getByRole('button', { name: '开始对话' })).toBeDisabled();
-    await user.click(within(dialog).getByRole('checkbox', { name: /我确认让此对话全自动执行/ }));
-    await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
+    await user.click(within(dialog).getByRole('button', { name: '启用全自动并开始' }));
 
     expect(onCreate).toHaveBeenCalledWith({
       title: '新对话',
       workspaceRoots: ['/Volumes/work/learnA'],
       executionMode: 'full_trust',
+      toolProfileVersion: 'control-center-auto-approve-v1',
       dangerousModeConfirmed: true,
     });
   });
@@ -83,6 +82,7 @@ describe('NewSessionDialog', () => {
       title: '整理 RAG 工具',
       workspaceRoots: ['/Volumes/work/learnA'],
       executionMode: 'per_action',
+      toolProfileVersion: 'control-center-full-access-v1',
     });
   });
 
@@ -102,13 +102,14 @@ describe('NewSessionDialog', () => {
 
     const dialog = screen.getByRole('dialog', { name: '新建对话' });
     expect(within(dialog).getByRole('radio', { name: /learnA/ })).toBeChecked();
-    await user.click(within(dialog).getByRole('radio', { name: /直接聊天/ }));
+    await user.click(within(dialog).getByRole('radio', { name: /不预选项目/ }));
     await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
 
     expect(onCreate).toHaveBeenCalledWith({
       title: '新对话',
       workspaceRoots: [],
       executionMode: 'per_action',
+      toolProfileVersion: 'control-center-full-access-v1',
     });
   });
 });

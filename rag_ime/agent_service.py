@@ -28,6 +28,8 @@ from .agent_approval_model import ApprovalModelArbiter
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_context_runtime import AgentContextRuntime
 from .agent_execution_policy import (
+    ROOM_UNRESTRICTED_EXECUTION_MODE,
+    auto_approve_policy_active,
     execution_policy_prompt,
 )
 from .work_documents import WorkDocumentService
@@ -139,6 +141,7 @@ from .trace_runtime import (
     TraceContractError,
     TraceEnvelope,
     build_eval_run,
+    build_trace_envelope,
     validate_sandbox_run,
     validate_trace_envelope,
 )
@@ -841,6 +844,14 @@ class AgentService:
         """Bind the backend-owned tool catalog without exposing gateway credentials."""
 
         self._tool_manifest_provider = provider
+
+    def bind_extension_app_skill_owners(
+        self,
+        provider: Callable[[], Mapping[str, str]],
+    ) -> None:
+        """Scope packaged App Skills to their owning Session surface."""
+
+        self.session_policy.bind_extension_app_skill_owners(provider)
 
     def bind_external_trace_resolver(
         self,
@@ -1989,16 +2000,23 @@ class AgentService:
         room: Mapping[str, object],
         participant: Mapping[str, object],
     ) -> dict[str, object]:
-        return self.room_management._repair_participant_session(
+        repaired = self.room_management._repair_participant_session(
             room,
             participant,
         )
+        self._activate_room_unrestricted_execution(
+            str(room.get("id") or ""),
+        )
+        return repaired
 
     def _restore_room_participant_sessions(
         self,
         room: Mapping[str, object],
     ) -> None:
         self.room_management.restore_participant_sessions(room)
+        self._activate_room_unrestricted_execution(
+            str(room.get("id") or ""),
+        )
 
     def room(self, room_id: str) -> dict[str, object]:
         return self.room_management.get_room(room_id)
@@ -2260,7 +2278,9 @@ class AgentService:
         room_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        return self.room_management.add_participant(room_id, payload)
+        response = self.room_management.add_participant(room_id, payload)
+        self._activate_room_unrestricted_execution(room_id)
+        return response
 
     def remove_room_participant(
         self,
@@ -2287,7 +2307,14 @@ class AgentService:
         return self.room_management.delete_room(room_id, payload)
 
     def create_room(self, payload: Mapping[str, object]) -> dict[str, object]:
-        return self.room_management.create_room(payload)
+        response = self.room_management.create_room(payload)
+        room = response.get("room") if isinstance(response, Mapping) else None
+        if isinstance(room, Mapping):
+            self._activate_room_unrestricted_execution(
+                str(room.get("id") or ""),
+                room=room,
+            )
+        return response
 
     def post_room_message(self, room_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         message = str(payload.get("message") or "")
@@ -2322,41 +2349,19 @@ class AgentService:
             ]
         else:
             raise ValueError("participantIds must be an array")
-        # A collaboration Room's first executable request is a public start
-        # gate. Keep this before the ordinary command receipt and dispatch
-        # path: a pending gate must not reach route planning, Pi, Tools or
-        # Partner/private child dispatch.
+        # Room is an explicitly created collaboration surface. Its participant
+        # Sessions receive the workspace-scoped unrestricted overlay at Room
+        # creation, so normal work never pauses for a second start approval or
+        # for per-Tool approvals. Retire a legacy pending gate if an older Host
+        # left one behind, then continue through the ordinary idempotent command
+        # receipt and dispatch path.
         if work_item_id:
             room = self.rooms.get(room_id)
             if str(room.get("roomKind") or "collaboration") == "collaboration":
-                gate = self._claim_room_start_gate(
-                    room_id,
-                    message=message,
-                    client_message_id=client_message_id,
-                    requested_participant_ids=requested_participant_ids,
-                    work_item_id=work_item_id,
-                    attachment_ids=attachment_ids,
-                    retry_of_root_id=retry_of_root_id,
-                )
-                if gate is not None:
-                    if gate.get("status") == "pending":
-                        return self._room_start_confirmation_response(gate)
-                    stored = gate.get("response")
-                    if isinstance(stored, Mapping):
-                        return {**dict(stored), "idempotentReplay": True}
-                    # A confirmed gate with no completed response is a safe
-                    # retry window (for example a process died after the
-                    # confirmation was recorded but before Pi admission).
-                    return self._post_room_message_command(
-                        room_id,
-                        message=message,
-                        client_message_id=client_message_id,
-                        retry_of_root_id=retry_of_root_id,
-                        requested_participant_ids=requested_participant_ids,
-                        work_item_id=work_item_id,
-                        attachment_ids=attachment_ids,
-                        bypass_start_gate=True,
-                    )
+                self._activate_room_unrestricted_execution(room_id, room=room)
+                legacy_gate = self.room_start_gates.get(room_id)
+                if legacy_gate is not None and legacy_gate.get("status") == "pending":
+                    self.room_start_gates.reject(room_id)
         if not client_message_id:
             return self._post_room_message_once(
                 room_id,
@@ -2419,92 +2424,6 @@ class AgentService:
             response=response,
         )
 
-    def _claim_room_start_gate(
-        self,
-        room_id: str,
-        *,
-        message: str,
-        client_message_id: str,
-        requested_participant_ids: Sequence[str],
-        work_item_id: str,
-        attachment_ids: Sequence[str],
-        retry_of_root_id: str,
-    ) -> dict[str, object] | None:
-        # Client IDs are the replay boundary for Room commands. Requests from
-        # older direct callers without one retain the pre-gate compatibility
-        # path; the Control Center always supplies one.
-        if not client_message_id:
-            return None
-        existing_gate = self.room_start_gates.get(room_id)
-        if (
-            existing_gate is not None
-            and existing_gate.get("status") == "confirmed"
-            and str(existing_gate.get("clientMessageId") or "") != client_message_id
-        ):
-            # The Room start boundary is crossed once. A later WorkItem owns a
-            # new command receipt, not a new alignment gate. The original
-            # client id still reaches `claim()` below so an exact retry can
-            # replay the stored first response and a mutated retry is rejected.
-            return None
-        target_ids = list(requested_participant_ids)
-        if not target_ids:
-            try:
-                _work, owner_id = self.room_work.authoritative_owner(
-                    work_item_id,
-                    room_id=room_id,
-                )
-                target_ids = [str(owner_id)]
-            except Exception:
-                target_ids = []
-        gate = self.room_start_gates.claim(
-            room_id=room_id,
-            objective_text=message,
-            client_message_id=client_message_id,
-            target_participant_ids=target_ids,
-            work_item_id=work_item_id,
-            attachment_ids=attachment_ids,
-            retry_of_root_id=retry_of_root_id,
-        )
-        if gate.get("status") == "pending" and not gate.get("idempotentReplay"):
-            event = self.room_events.publish(
-                room_id=room_id,
-                event_type="room_start_confirmation_required",
-                payload={
-                    "gateId": gate["gateId"],
-                    "objective": gate["objective"],
-                    "workItemId": gate["workItemId"],
-                    "targetParticipantIds": gate["targetParticipantIds"],
-                    "requiresConfirmation": True,
-                },
-                turn_id=str(gate["gateId"]),
-                topic_id=str(self.rooms.get(room_id).get("activeTopicId") or ""),
-            )
-            gate = {**gate, "event": event}
-        return gate
-
-    @staticmethod
-    def _room_start_confirmation_response(gate: Mapping[str, object]) -> dict[str, object]:
-        return {
-            "schemaVersion": "rag-ime.agent-room-message.v1",
-            "ok": True,
-            "accepted": False,
-            "status": "awaiting_confirmation",
-            "phase": "alignment",
-            "executionOwner": "session",
-            "roomId": gate["roomId"],
-            "clientMessageId": gate["clientMessageId"],
-            "workItemId": gate["workItemId"],
-            "startConfirmation": {
-                "gateId": gate["gateId"],
-                "status": gate["status"],
-                "objective": gate["objective"],
-                "workItemId": gate["workItemId"],
-                "targetParticipantIds": gate["targetParticipantIds"],
-                "requiresConfirmation": True,
-                "afterConfirmExecutionMode": "room_unrestricted",
-            },
-            "timelineEvents": ([gate["event"]] if isinstance(gate.get("event"), Mapping) else []),
-        }
 
     def _post_room_message_command(
         self,
@@ -2635,6 +2554,11 @@ class AgentService:
                 "idempotentReplay": gate["status"] != "pending",
             }
         confirmed = self.room_start_gates.confirm(room_id)
+        # A pending gate may survive an older Host. Confirming that legacy
+        # record persists the unrestricted overlay before dispatch and on
+        # idempotent replay, preventing participant Sessions from falling back
+        # to per-Tool approvals.
+        self._activate_room_unrestricted_execution(room_id)
         stored = confirmed.get("response")
         if isinstance(stored, Mapping):
             return {**dict(stored), "idempotentReplay": True}
@@ -2645,7 +2569,7 @@ class AgentService:
                 "gateId": confirmed["gateId"],
                 "objective": confirmed["objective"],
                 "workItemId": confirmed["workItemId"],
-                "executionMode": "room_unrestricted",
+                "executionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
             },
             turn_id=str(confirmed["gateId"]),
         )
@@ -2669,6 +2593,47 @@ class AgentService:
             response=response,
         )
         return response
+
+    def _activate_room_unrestricted_execution(
+        self,
+        room_id: str,
+        *,
+        room: Mapping[str, object] | None = None,
+    ) -> int:
+        """Apply Room's default approval-free overlay to active participants."""
+
+        current_room = room
+        if current_room is None:
+            try:
+                current_room = self.rooms.get(room_id)
+            except AgentRoomNotFound:
+                return 0
+        if str(current_room.get("status") or "") != "active":
+            return 0
+        updated = 0
+        for participant in current_room.get("participants", []):
+            if not isinstance(participant, Mapping):
+                continue
+            if str(participant.get("status") or "") != "active":
+                continue
+            session_id = str(participant.get("sessionId") or "").strip()
+            if not session_id:
+                continue
+            try:
+                session = self.sessions.get(session_id)
+            except KeyError:
+                continue
+            if (
+                str(session.get("roomExecutionMode") or "")
+                == ROOM_UNRESTRICTED_EXECUTION_MODE
+            ):
+                continue
+            self.sessions.set_room_execution_mode(
+                session_id,
+                ROOM_UNRESTRICTED_EXECUTION_MODE,
+            )
+            updated += 1
+        return updated
 
     def steer_room_participant(
         self,
@@ -3070,26 +3035,37 @@ class AgentService:
     def command_catalog(self, session_id: str) -> dict[str, object]:
         return self.session_policy.command_catalog(session_id)
 
+    def _require_mutable_session(self, session_id: str) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        if session.get("evaluationSnapshot") is True:
+            raise ValueError("evaluation snapshot is read-only")
+        return session
+
     def invoke_command(
         self,
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.session_policy.invoke_command(session_id, payload)
 
     def select_model(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.session_policy.select_model(session_id, payload)
 
     def select_thinking_level(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.session_policy.select_thinking_level(
             session_id,
             payload,
         )
 
     def update_session(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.session_policy.update_session(session_id, payload)
 
     def delete_session(self, session_id: str) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         self.background_jobs.cancel_session(
             session_id,
             reason="agent_session_deleted",
@@ -3100,12 +3076,14 @@ class AgentService:
         return self.session_branching.fork_candidates(session_id)
 
     def fork_session(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.session_branching.fork_session(
             session_id,
             payload,
         )
 
     def rewrite_session(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.session_branching.rewrite_session(
             session_id,
             payload,
@@ -3315,6 +3293,7 @@ class AgentService:
         )
 
     def prompt(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.prompt_application.prompt(
             session_id,
             payload,
@@ -3562,6 +3541,7 @@ class AgentService:
         )
 
     def abort(self, session_id: str) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         runtime_receipt: Mapping[str, object] = {}
         try:
             raw_runtime_receipt = self.runtime.abort(session_id)
@@ -3584,6 +3564,7 @@ class AgentService:
         }
 
     def compact(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         self._recent_recall_messages(session_id)
         result = dict(
             self.runtime.compact(session_id, str(payload.get("instructions") or ""))
@@ -3741,6 +3722,7 @@ class AgentService:
         return self.approval_application.list_approvals(payload)
 
     def resolve_review(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         return self.approval_application.resolve_review(session_id, payload)
 
     def resolve_ui_request(
@@ -3748,6 +3730,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._require_mutable_session(session_id)
         request_id = str(payload.get("requestId") or "").strip()
         if not request_id:
             raise ValueError("UI requestId must not be empty")
@@ -4062,14 +4045,126 @@ class AgentService:
         expected_revision = _trace_diagnostic_expected_revision(payload)
         repair_session_id = _required_text(payload, "repairSessionId")
         repair_session = self.sessions.get(repair_session_id)
-        if str(repair_session.get("executionMode") or "") != "full_trust":
-            raise ValueError("Trace diagnostic repair handoff requires full_trust mode")
+        if not auto_approve_policy_active(repair_session):
+            raise ValueError(
+                "Trace diagnostic repair handoff requires the unrestricted auto-approve profile"
+            )
+        source_scope = _required_text(payload, "sourceScope")
+        source_trace_id = _required_text(payload, "sourceTraceId")
+        report = self.trace_diagnostic_reports.get(report_id)
+        if report is not None:
+            targets = report.get("targets")
+            source_target = next(
+                (
+                    target
+                    for target in targets
+                    if isinstance(target, Mapping)
+                    and str(target.get("targetKey") or "") == source_scope
+                ),
+                None,
+            ) if isinstance(targets, Sequence) and not isinstance(
+                targets, (str, bytes, bytearray)
+            ) else None
+            if isinstance(source_target, Mapping):
+                source_kind = str(source_target.get("kind") or "")
+                source_id = str(source_target.get("id") or "")
+                frozen_trace_ids = source_target.get("traceIds")
+                if (
+                    not isinstance(frozen_trace_ids, Sequence)
+                    or isinstance(frozen_trace_ids, (str, bytes, bytearray))
+                    or source_trace_id
+                    not in {str(trace_id) for trace_id in frozen_trace_ids}
+                ):
+                    raise ValueError(
+                        "Trace diagnostic source Trace is outside the frozen "
+                        f"{source_kind} target"
+                    )
+
+                if source_kind == "session":
+                    # The target row is the frozen authority. A canonical
+                    # Trace binding, when one is available, must agree with
+                    # that row rather than silently rebinding the handoff.
+                    self.sessions.get(source_id)
+                    try:
+                        trace_projection = self.observation_trace(
+                            {"traceId": source_trace_id}
+                        )
+                    except KeyError:
+                        trace_projection = None
+                    trace = (
+                        trace_projection.get("trace")
+                        if isinstance(trace_projection, Mapping)
+                        else None
+                    )
+                    binding = trace.get("binding") if isinstance(trace, Mapping) else None
+                    if isinstance(binding, Mapping):
+                        bound_session_id = str(binding.get("sessionId") or "").strip()
+                        if bound_session_id and bound_session_id != source_id:
+                            raise ValueError(
+                                "Trace diagnostic session binding does not match "
+                                "the source session"
+                            )
+                elif source_kind == "room":
+                    self.rooms.get(source_id)
+                    try:
+                        trace_projection = self.observation_trace(
+                            {"traceId": source_trace_id}
+                        )
+                    except KeyError:
+                        trace_projection = None
+                    trace = (
+                        trace_projection.get("trace")
+                        if isinstance(trace_projection, Mapping)
+                        else None
+                    )
+                    binding = trace.get("binding") if isinstance(trace, Mapping) else None
+                    if isinstance(binding, Mapping):
+                        bound_room_id = str(binding.get("roomId") or "").strip()
+                        if bound_room_id and bound_room_id != source_id:
+                            raise ValueError(
+                                "Trace diagnostic room binding does not match "
+                                "the source room"
+                            )
+                elif source_kind == "run":
+                    try:
+                        trace_projection = self.observation_trace(
+                            {"traceId": source_trace_id}
+                        )
+                    except KeyError as exc:
+                        raise ValueError(
+                            "Trace diagnostic run has no canonical Session binding"
+                        ) from exc
+                    trace = (
+                        trace_projection.get("trace")
+                        if isinstance(trace_projection, Mapping)
+                        else None
+                    )
+                    binding = trace.get("binding") if isinstance(trace, Mapping) else None
+                    if not isinstance(binding, Mapping):
+                        raise ValueError(
+                            "Trace diagnostic run has no canonical Session binding"
+                        )
+                    if str(binding.get("runId") or "") != source_id:
+                        raise ValueError(
+                            "Trace diagnostic run binding does not match the source run"
+                        )
+                    source_session_id = str(binding.get("sessionId") or "").strip()
+                    if not source_session_id:
+                        raise ValueError(
+                            "Trace diagnostic run has no canonical Session binding"
+                        )
+                    try:
+                        self.sessions.get(source_session_id)
+                    except KeyError as exc:
+                        raise ValueError(
+                            "Trace diagnostic run canonical Session is unavailable"
+                        ) from exc
         return self.trace_diagnostic_reports.authorize_repair(
             report_id,
             expected_revision=expected_revision,
             finding_id=_required_text(payload, "findingId"),
-            source_scope=_required_text(payload, "sourceScope"),
-            source_trace_id=_required_text(payload, "sourceTraceId"),
+            source_scope=source_scope,
+            source_trace_id=source_trace_id,
             failure_ref=_required_text(payload, "failureRef"),
             repair_session_id=repair_session_id,
         )
@@ -4760,13 +4855,22 @@ class AgentService:
             raise TraceRepairValidationError("change evidence has no completed mutating Tool")
         if str(canonical_test.get("status") or "") != "passed":
             raise TraceRepairValidationError("test evidence is not passed")
-        if (
-            canonical_test.get("sandboxRequired") is not True
-            or int(canonical_test.get("sandboxedCount") or 0) < 1
-        ):
+        has_host_sandbox = (
+            canonical_test.get("sandboxRequired") is True
+            and int(canonical_test.get("sandboxedCount") or 0) >= 1
+        )
+        has_server_terminal = (
+            canonical_test.get("sessionTerminalRequired") is True
+            and int(canonical_test.get("sessionTerminalCount") or 0) >= 1
+        )
+        if not has_host_sandbox and not has_server_terminal:
             raise TraceRepairValidationError(
-                "test evidence has no Host-owned sandbox execution"
+                "test evidence has no authoritative completed execution"
             )
+        self._freeze_trace_repair_source_trace(
+            source_trace_id=source_trace_id,
+            source_scope=source_scope,
+        )
         receipt = store.persist_receipt(
             source_scope=source_scope,
             source_trace_id=source_trace_id,
@@ -4875,12 +4979,160 @@ class AgentService:
                 "idempotent": False,
             }
 
-    def _require_trace_repair_trace(self, trace_id: str) -> Mapping[str, object]:
+    def _require_trace_repair_trace(
+        self,
+        trace_id: str,
+        *,
+        repair_session_id: str = "",
+        session_snapshot: Mapping[str, object] | None = None,
+    ) -> Mapping[str, object]:
         trace = self.trace_store.get(trace_id)
+        if (
+            trace is None
+            and repair_session_id
+            and isinstance(session_snapshot, Mapping)
+        ):
+            trace = self._materialize_terminal_repair_trace(
+                trace_id=trace_id,
+                repair_session_id=repair_session_id,
+                session_snapshot=session_snapshot,
+            )
         if trace is None:
             raise TraceRepairValidationError("source trace is not persisted")
         if not isinstance(trace, Mapping):
             raise TraceRepairValidationError("persisted source trace is invalid")
+        return trace
+
+    def _materialize_terminal_repair_trace(
+        self,
+        *,
+        trace_id: str,
+        repair_session_id: str,
+        session_snapshot: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Persist a metadata-only Trace for one terminal Agent repair turn.
+
+        Pi's durable runtime-event journal is the authority.  The caller-provided
+        Trace ID is accepted only when it names an exact non-history terminal
+        turn in a complete, idle snapshot of the same Session.  No message or
+        Tool content is copied into the Trace.
+        """
+
+        match = re.fullmatch(
+            r"trace:turn:([A-Za-z0-9][A-Za-z0-9_.:-]{0,127})",
+            trace_id,
+        )
+        if match is None:
+            return None
+        turn_id = match.group(1)
+        if turn_id.startswith("history:"):
+            return None
+        if (
+            session_snapshot.get("status") != "idle"
+            or session_snapshot.get("partial") is True
+            or session_snapshot.get("truncated") is True
+            or str(session_snapshot.get("snapshotScope") or "").strip().lower()
+            == "recent"
+            or str(session_snapshot.get("sessionId") or "").strip()
+            != repair_session_id
+        ):
+            return None
+        terminal_event_lookup = getattr(
+            self.sessions,
+            "runtime_turn_terminal_event",
+            None,
+        )
+        if not callable(terminal_event_lookup):
+            return None
+        terminal_event = terminal_event_lookup(repair_session_id, turn_id)
+        if (
+            not isinstance(terminal_event, Mapping)
+            or str(terminal_event.get("sessionId") or "") != repair_session_id
+            or str(terminal_event.get("turnId") or "") != turn_id
+            or terminal_event.get("eventType")
+            not in {"turn_completed", "turn_failed"}
+        ):
+            return None
+        created_at_ms = terminal_event.get("createdAtMs")
+        if (
+            not isinstance(created_at_ms, int)
+            or isinstance(created_at_ms, bool)
+            or created_at_ms < 0
+        ):
+            return None
+        updated_at_ms = created_at_ms
+        return self.trace_store.persist(
+            build_trace_envelope(
+                trace_id=trace_id,
+                source_kind="agent_repair",
+                input_text=f"{repair_session_id}\n{turn_id}",
+                binding={
+                    "sessionId": repair_session_id,
+                    "turnId": turn_id,
+                },
+                status="completed",
+                spans=(),
+                evidence=(),
+                artifacts=(),
+                created_at_ms=created_at_ms,
+                updated_at_ms=max(created_at_ms, updated_at_ms),
+                input_content_policy="hash_only",
+                input_normalization="none",
+            )
+        )
+
+    def _freeze_trace_repair_source_trace(
+        self,
+        *,
+        source_trace_id: str,
+        source_scope: str,
+    ) -> Mapping[str, object]:
+        """Freeze one observation-backed source Trace before receipt creation."""
+
+        trace = self.trace_store.get(source_trace_id)
+        if trace is None:
+            try:
+                projection = self.observation_trace(
+                    {"traceId": source_trace_id}
+                )
+            except KeyError as exc:
+                raise TraceRepairValidationError(
+                    "source trace is not available"
+                ) from exc
+            candidate = (
+                projection.get("trace")
+                if isinstance(projection, Mapping)
+                else None
+            )
+            if (
+                not isinstance(candidate, Mapping)
+                or str(candidate.get("traceId") or "") != source_trace_id
+                or candidate.get("partial") is True
+                or candidate.get("truncated") is True
+            ):
+                raise TraceRepairValidationError(
+                    "source trace projection is invalid"
+                )
+            trace = candidate
+
+        scope_kind, separator, scope_id = source_scope.partition(":")
+        binding_key = {
+            "session": "sessionId",
+            "room": "roomId",
+            "run": "runId",
+        }.get(scope_kind if separator else "")
+        if binding_key is not None:
+            binding = trace.get("binding")
+            if (
+                not isinstance(binding, Mapping)
+                or str(binding.get(binding_key) or "") != scope_id
+            ):
+                raise TraceRepairValidationError(
+                    "source trace binding does not match sourceScope"
+                )
+
+        if self.trace_store.get(source_trace_id) is None:
+            trace = self.trace_store.persist(trace)
         return trace
 
     def create_trace_replay_case(
@@ -4998,12 +5250,16 @@ class AgentService:
     ) -> dict[str, dict[str, object]]:
         """Build canonical evidence from the server's Session and Trace views."""
 
-        repair_trace = self._require_trace_repair_trace(repair_trace_id)
         snapshot = self.message_snapshot.messages(repair_session_id)
         if not isinstance(snapshot, Mapping):
             raise TraceRepairValidationError(
                 "repair Session message snapshot is unavailable"
             )
+        repair_trace = self._require_trace_repair_trace(
+            repair_trace_id,
+            repair_session_id=repair_session_id,
+            session_snapshot=snapshot,
+        )
         return derive_repair_evidence(
             repair_session_id=repair_session_id,
             repair_trace_id=repair_trace_id,

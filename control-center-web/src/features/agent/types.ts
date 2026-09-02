@@ -19,6 +19,7 @@ export type SessionSummary = Pick<
   Partial<Pick<
     AgentSessionV1,
     | 'lastMessagePreview'
+    | 'lastTerminalTurnId'
     | 'messageCount'
     | 'modelProfile'
     | 'toolProfileVersion'
@@ -33,12 +34,20 @@ export type SessionSummary = Pick<
     | 'surfaceKind'
     | 'ownerAppId'
     | 'surfaceKey'
+    | 'evaluationSnapshot'
   >>;
 
 export interface AgentPermissionSelection {
   mode: 'assistant' | 'coordinator';
-  toolProfileVersion: 'control-center-v1' | 'subagent-readonly-v1' | 'control-center-auto-approve-v1';
+  toolProfileVersion: (
+    | 'control-center-v1'
+    | 'control-center-full-access-v1'
+    | 'subagent-readonly-v1'
+    | 'control-center-auto-approve-v1'
+  );
   executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
+  /** The selected project may stay as context, but `/` is always granted. */
+  workspaceRoots?: string[];
   workspaceScopeConfirmed?: boolean;
   dangerousModeConfirmed?: boolean;
 }
@@ -114,17 +123,17 @@ export function sessionItems(
 }
 
 export function sessionPermissionLabel(session: SessionSummary): string {
+  if (session.toolProfileVersion === 'control-center-full-access-v1') return '全权限';
+  if (session.toolProfileVersion === 'control-center-auto-approve-v1') return '全自动';
   const executionMode = session.executionMode
-    ?? (session.toolProfileVersion === 'control-center-auto-approve-v1'
-      ? 'full_trust'
-      : session.toolProfileVersion === 'subagent-readonly-v1'
-        ? 'read_only'
-        : 'per_action');
+    ?? (session.toolProfileVersion === 'subagent-readonly-v1'
+      ? 'read_only'
+      : 'per_action');
   return {
     read_only: '只读',
-    per_action: '写入与命令确认',
-    workspace_managed: '工作区托管',
-    full_trust: '全自动',
+    per_action: '写入与命令确认（旧配置）',
+    workspace_managed: '工作区托管（旧配置）',
+    full_trust: '全自动（旧配置）',
   }[executionMode];
 }
 

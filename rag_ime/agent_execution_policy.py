@@ -9,6 +9,7 @@ from pathlib import Path
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
     READONLY_TOOL_PROFILE,
 )
 
@@ -99,10 +100,34 @@ def room_unrestricted_policy_active(session: Mapping[str, object]) -> bool:
         == ROOM_UNRESTRICTED_EXECUTION_MODE
     )
 
-# Full automation is model-arbitrated, never policy auto-approval. Product
-# runtime replacement and whole-product restore stay human-gated in other
-# execution modes; Luna Max judges them only after explicit full automation is
-# enabled. The model cannot create workspace scope or bypass hard fences.
+def full_access_policy_active(session: Mapping[str, object]) -> bool:
+    """Return whether this Session carries the explicit unrestricted ASK profile."""
+
+    execution_mode = str(session.get("executionMode") or "").strip().lower()
+    return (
+        str(session.get("toolProfileVersion") or "").strip()
+        == FULL_ACCESS_TOOL_PROFILE
+        and execution_mode in {"", PER_ACTION_EXECUTION_MODE}
+    )
+
+
+def auto_approve_policy_active(session: Mapping[str, object]) -> bool:
+    """Return whether this Session carries the explicit unrestricted AUTO profile."""
+
+    execution_mode = str(session.get("executionMode") or "").strip().lower()
+    return (
+        str(session.get("toolProfileVersion") or "").strip()
+        == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+        and execution_mode in {"", FULL_TRUST_EXECUTION_MODE}
+    )
+
+
+def unrestricted_workspace_policy_active(session: Mapping[str, object]) -> bool:
+    return full_access_policy_active(session) or auto_approve_policy_active(session)
+
+# Legacy ``control-center-v1`` modes remain readable for persisted/system
+# Sessions. New user-facing full-access and full-auto Sessions use explicit
+# unrestricted profiles and are handled before these legacy fences.
 _ALWAYS_MANUAL_EFFECTS = frozenset(
     {
         ("runtime", "restart_sidecar"),
@@ -112,10 +137,6 @@ _ALWAYS_MANUAL_EFFECTS = frozenset(
     }
 )
 
-# Full automation may skip the model for an ordinary command whose concrete,
-# server-created preview proves the exact user-authorized workspace scope and
-# excludes network, destructive, sensitive, and R3 effects. The workspace
-# harness remains the authoritative executor-side hard fence.
 _SAFE_FULL_AUTO_COMMAND_EFFECTS = frozenset(
     {
         ("workspace_shell", "run"),
@@ -150,8 +171,6 @@ _NETWORK_PREVIEW = re.compile(
 _REMOTE_GIT_PREVIEW = re.compile(
     r"(?i)\bgit\s+(?:push|fetch|pull|clone|ls-remote)\b"
 )
-
-
 def normalize_execution_mode(
     value: object,
     *,
@@ -163,6 +182,8 @@ def normalize_execution_mode(
         profile = str(tool_profile_version or "").strip()
         if profile == READONLY_TOOL_PROFILE:
             return READ_ONLY_EXECUTION_MODE
+        if profile == FULL_ACCESS_TOOL_PROFILE:
+            return PER_ACTION_EXECUTION_MODE
         if profile == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
             return FULL_TRUST_EXECUTION_MODE
         normalized = default
@@ -179,10 +200,7 @@ def canonical_tool_profile(
     profile = str(tool_profile_version or CONTROL_CENTER_TOOL_PROFILE).strip()
     if execution_mode == READ_ONLY_EXECUTION_MODE:
         return READONLY_TOOL_PROFILE
-    if profile in {
-        READONLY_TOOL_PROFILE,
-        DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
-    }:
+    if profile == READONLY_TOOL_PROFILE:
         return CONTROL_CENTER_TOOL_PROFILE
     return profile
 
@@ -200,16 +218,26 @@ def workspace_scope_sha256(workspace_roots: Sequence[object]) -> str:
     ).hexdigest()
 
 
+def _coerce_int(value: object) -> int:
+    """Read a persisted numeric policy timestamp without raising on legacy rows."""
+
+    if isinstance(value, bool):
+        return 0
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def workspace_scope_is_granted(session: Mapping[str, object]) -> bool:
+    if unrestricted_workspace_policy_active(session):
+        return True
     expected = workspace_scope_sha256(
         list(session.get("workspaceRoots") or [])
     )
-    return bool(
-        expected
-        and expected
-        == str(session.get("workspaceScopeSha256") or "")
-        and int(session.get("workspaceScopeGrantedAtMs") or 0) > 0
-    )
+    actual = str(session.get("workspaceScopeSha256") or "")
+    granted_at = _coerce_int(session.get("workspaceScopeGrantedAtMs"))
+    return bool(actual and actual == expected and granted_at > 0)
 def _preview_mapping(
     preview: Mapping[str, object] | None,
     key: str,
@@ -337,12 +365,16 @@ def approval_strategy(
         tool_profile_version=session.get("toolProfileVersion"),
     )
     effect = (str(tool), str(operation))
+    if auto_approve_policy_active(session):
+        return APPROVAL_AUTO
+    if full_access_policy_active(session):
+        return APPROVAL_ASK
     if mode == READ_ONLY_EXECUTION_MODE:
         return APPROVAL_DENY
     if room_unrestricted_policy_active(session):
-        # A Room confirmation removes the repeated per-Tool prompt, not the
-        # workspace lease, parameter validation, Stop/cancel path, or native
-        # hard fences for product/runtime replacement.
+        # Room-unrestricted mode is still bounded by the workspace lease,
+        # parameter validation, Stop/cancel path, and native hard fences for
+        # product/runtime replacement.
         if effect in _ALWAYS_MANUAL_EFFECTS:
             return APPROVAL_ASK
         if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
@@ -394,6 +426,7 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
         session.get("executionMode"),
         tool_profile_version=session.get("toolProfileVersion"),
     )
+    auto_profile = auto_approve_policy_active(session)
     scope_granted = workspace_scope_is_granted(session)
     guidance = {
         READ_ONLY_EXECUTION_MODE: (
@@ -434,16 +467,43 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
             )
         ),
     }[mode]
-    if room_unrestricted_policy_active(session) and mode != READ_ONLY_EXECUTION_MODE:
+    full_profile = full_access_policy_active(session)
+    unrestricted = auto_profile or full_profile
+    if auto_profile:
+        guidance = (
+            "本轮使用 Control Center 全盘自动批准配置 "
+            "(control-center-auto-approve-v1，full_trust)。每一个 Tool action "
+            "都由策略自动批准，不等待 Luna、人工或逐 Tool 确认；授权工作区是 /，由操作系统"
+            "权限和用户确认的任务意图决定最终边界。\n"
+            "PAW 的路径、工作区范围、审批预览哈希、来源路径匹配、Luna 和人工审批门槛均已关闭；"
+            "不要因为这些 PAW 门槛失败而改写、缩小或原样重试用户请求。"
+        )
+    elif full_profile:
+        guidance = (
+            "本轮使用 Control Center 全面访问配置 "
+            "(control-center-full-access-v1，per_action)。每一个 Tool action 都可以访问"
+            "授权工作区 / 以及其中的系统、网络和敏感目标；所有会改变外部状态的操作仍需原生"
+            "人工批准（ASK），该批准是确认而不是权限拒绝。\n"
+            "除了这一项一确认，PAW 的路径、工作区范围、审批预览哈希、Luna 审批和其他权限"
+            "门槛均已关闭；操作系统/TCC、Unix 权限和 Tool 可用性仍是最终边界。"
+        )
+    elif room_unrestricted_policy_active(session) and mode != READ_ONLY_EXECUTION_MODE:
         guidance = (
             f"{guidance}\n"
             "本轮已由 Room 显式确认 room_unrestricted：已披露且在授权边界内的 Tool 连续执行，"
             "不再逐 Tool 弹出审批；工作区范围、参数校验、系统权限、取消/停止和审计仍然有效，"
             "触发硬围栏的运行时替换等操作仍需人工处理。"
         )
+    suffix = (
+        ""
+        if unrestricted
+        else (
+            "范围和哈希硬边界始终有效；取消、审计和迟到写入保护始终有效；删库、灾难性破坏和敏感数据外传由代码硬阻止。"
+        )
+    )
     return (
         f'<execution-mode mode="{mode}">\n'
-        f"{guidance}\n\n"
-        "范围和哈希硬边界始终有效；取消、审计和迟到写入保护始终有效；删库、灾难性破坏和敏感数据外传由代码硬阻止。\n"
+        f"{guidance}\n"
+        f"{suffix}\n"
         "</execution-mode>"
     )

@@ -40,7 +40,7 @@
       "properties": {
         "state": {"enum": ["authorized", "declined", "blocked", "expired"]},
         "authorizationKind": {"const": "repair_handoff"},
-        "writeAuthority": {"enum": ["per_action_required", "model_arbitrated_full_trust"]},
+        "writeAuthority": {"enum": ["per_action_required", "model_arbitrated_full_trust", "auto_approved_full_trust"]},
         "authorizationId": {"type": "string", "minLength": 1, "maxLength": 160},
         "findingId": {"type": "string", "minLength": 1, "maxLength": 160},
         "sourceScope": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -74,7 +74,7 @@
         "repairTraceId": {"type": "string", "maxLength": 160},
         "evalRunId": {"type": "string", "maxLength": 160},
         "testStatus": {"enum": ["", "passed", "failed", "blocked"]},
-        "sandboxStatus": {"enum": ["", "passed", "blocked"]},
+        "sandboxStatus": {"enum": ["", "passed", "not_required", "blocked"]},
         "sandboxedTestCount": {"type": "integer", "minimum": 0},
         "verifiedAtMs": {"type": "integer", "minimum": 0},
         "comparison": {"$ref": "#/$defs/comparison"}

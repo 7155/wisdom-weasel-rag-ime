@@ -18,7 +18,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 180))
+POST_0126_MIGRATIONS = tuple(range(127, 186))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 179)
+            self.assertEqual(status["currentVersion"], 185)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -68,6 +68,8 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("room_v2_requirement_catalog_revisions", tables)
             self.assertIn("room_v2_verification_receipts", tables)
             self.assertIn("room_v2_delivery_gate_receipts", tables)
+            self.assertIn("agent_recent_message_projections", tables)
+            self.assertIn("agent_lab_experiment_revisions", tables)
             self.assertIn("room_v2_peer_judgment_rounds", tables)
             self.assertIn("room_v2_peer_judgments", tables)
             self.assertIn("room_v2_conflict_matrix_revisions", tables)
@@ -107,7 +109,32 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_room_participants", tables)
             self.assertIn("agent_room_events", tables)
             self.assertIn("agent_room_start_gates", tables)
-            self.assertIn("memory_maintenance_jobs", tables)
+            self.assertIn("memory_catalog_consolidation_receipts", tables)
+            catalog_columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(memory_catalog_consolidation_receipts)"
+                )
+            }
+            self.assertTrue(
+                {
+                    "receipt_sequence",
+                    "receipt_id",
+                    "project",
+                    "state",
+                    "last_attempt_at_ms",
+                    "last_completion_at_ms",
+                    "next_due_at_ms",
+                    "catalog_digest",
+                    "curation_run_id",
+                    "attempt_count",
+                    "retry_count",
+                    "result_json",
+                    "error",
+                    "created_at_ms",
+                    "updated_at_ms",
+                }.issubset(catalog_columns)
+            )
             self.assertIn("trace_repair_evidence", tables)
             self.assertIn("trace_repair_receipts", tables)
             self.assertIn("agent_room_public_projection_receipts", tables)
@@ -988,7 +1015,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 179)
+                self.assertEqual(upgraded.current_version, 185)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -1163,7 +1190,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, tuple(range(153, 180)))
+                self.assertEqual(upgraded.applied_versions, tuple(range(153, 186)))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -1231,7 +1258,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 179)
+                self.assertEqual(status["currentVersion"], 185)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1970,7 +1997,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    tuple(range(135, 180)),
+                    tuple(range(135, 186)),
                 )
                 todo = conn.execute(
                     """
@@ -2115,9 +2142,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             upgraded = apply_database_migrations(conn, applied_at_ms=161)
             self.assertEqual(
                 upgraded.applied_versions,
-                (160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179),
+                tuple(range(160, 186)),
             )
-            self.assertEqual(upgraded.current_version, 179)
+            self.assertEqual(upgraded.current_version, 185)
             review_columns = {
                 str(row[1])
                 for row in conn.execute(
@@ -2142,6 +2169,77 @@ class DatabaseMigrationTests(unittest.TestCase):
                     "WHERE type = 'table' AND name = 'agent_room_partner_dispatches'"
                 ).fetchone()
             )
+
+    def test_0185_expands_run_kind_without_losing_runs_or_diffs(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-production-0184-"
+        ) as temporary, closing(sqlite3.connect(":memory:")) as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            migrations_0184 = Path(temporary) / "migrations"
+            migrations_0184.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 184:
+                    shutil.copy2(migration.path, migrations_0184 / migration.path.name)
+            initial = apply_database_migrations(
+                conn,
+                migrations_dir=migrations_0184,
+                applied_at_ms=184,
+            )
+            self.assertEqual(initial.current_version, 184)
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(
+                    run_id, created_at_ms, provider, model, status, summary,
+                    metadata_json, owner_kind, owner_id, run_kind
+                ) VALUES (
+                    'memory_book_preserved', 1, 'test', 'test', 'draft',
+                    'preserved', '{}', 'user', 'default', 'manual_curation'
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_diffs(
+                    run_id, op, target_memory_id, payload_json, status,
+                    created_at_ms, rollback_json
+                ) VALUES (
+                    'memory_book_preserved', 'noop', '', '{}', 'pending', 1, '{}'
+                )
+                """
+            )
+            conn.commit()
+
+            upgraded = apply_database_migrations(conn, applied_at_ms=185)
+
+            self.assertEqual(upgraded.applied_versions, (185,))
+            self.assertEqual(
+                conn.execute(
+                    "SELECT run_kind FROM memory_cleanup_runs "
+                    "WHERE run_id = 'memory_book_preserved'"
+                ).fetchone()[0],
+                "manual_curation",
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_cleanup_diffs "
+                    "WHERE run_id = 'memory_book_preserved'"
+                ).fetchone()[0],
+                1,
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_cleanup_runs(
+                    run_id, created_at_ms, metadata_json,
+                    owner_kind, owner_id, run_kind
+                ) VALUES (
+                    'memory_book_catalog', 2, '{}',
+                    'user', 'default', 'catalog_consolidation'
+                )
+                """
+            )
+            self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
 
     def test_0160_resume_hook_does_not_swallow_other_sql_errors(self) -> None:
         with tempfile.TemporaryDirectory(

@@ -25,6 +25,7 @@ from .agent_execution_policy import (
     approval_strategy,
     read_only_blocks_effect,
     read_only_policy_active,
+    unrestricted_workspace_policy_active,
 )
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_memory_sources import AgentMemorySourceStore
@@ -33,6 +34,7 @@ from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     CONTROL_TOOL_IDS,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
     PI_PACKAGE_OWNED_CONTROL_TOOL_IDS,
     READONLY_TOOL_PROFILE,
 )
@@ -2833,9 +2835,10 @@ class ControlToolGateway:
 
     Pi never receives a database handle. Each operation is an explicit adapter
     over the same management/core services used by the native control center.
-    R1+ operations always create a hash-bound preview. They wait for native UI
-    approval by default; a natively confirmed dangerous Session may decide that
-    approval automatically while retaining validation, receipts, and rollback.
+    R1+ operations always create a preview with a payload hash. Legacy
+    Sessions enforce preview hash/state fences; explicit unrestricted profiles
+    retain approval, schemas, native applicability/atomic checks, receipts, and
+    rollback.
     """
 
     def __init__(
@@ -3222,6 +3225,7 @@ class ControlToolGateway:
                         "control-center-v1",
                         "subagent-readonly-v1",
                         DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+                        FULL_ACCESS_TOOL_PROFILE,
                     )
                 }
                 effective_operations = [
@@ -4236,6 +4240,21 @@ class ControlToolGateway:
             )
         return self._apply_approved_operation(approval)
 
+    def _approval_preview_state_fence_applies(self, session_id: str) -> bool:
+        """Use the live Session when deciding whether legacy state fences apply."""
+
+        session = self.sessions.get(str(session_id or ""))
+        return not unrestricted_workspace_policy_active(session)
+
+    def _approval_payload_matches(
+        self,
+        approval: Mapping[str, object],
+        expected_digest: str,
+    ) -> bool:
+        return not self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) or expected_digest == str(approval.get("payloadSha256") or "")
+
     def _apply_approved_operation(
         self,
         approval: Mapping[str, object],
@@ -4312,7 +4331,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
 
         task_id = _bounded_text(action_payload.get("taskId"), maximum=240)
@@ -4321,7 +4340,9 @@ class ControlToolGateway:
         if not task_id or action not in _PLANNING_TARGET_STATUS or not plan_date:
             raise ValueError("approved task action payload is invalid")
         task = self._planning_task(task_id=task_id, plan_date=plan_date)
-        if (
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and (
             str(task.get("status") or "") != str(base_state.get("status") or "")
             or _safe_int(task.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
         ):
@@ -4337,7 +4358,13 @@ class ControlToolGateway:
             observed = self._planning_task(task_id=task_id, plan_date=plan_date)
             if (
                 str(observed.get("status") or "") == target_status
-                and _safe_int(observed.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+                and (
+                    not self._approval_preview_state_fence_applies(
+                        str(approval.get("sessionId") or "")
+                    )
+                    or _safe_int(observed.get("updatedAtMs"))
+                    != _safe_int(base_state.get("updatedAtMs"))
+                )
             ):
                 return self._planning_receipt(
                     approval=approval,
@@ -4731,7 +4758,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("desktop approval no longer matches its preview")
         receipt = self.desktop_client.act(  # type: ignore[attr-defined]
             action_payload=action_payload,
@@ -4907,7 +4934,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         run_id = _bounded_text(action_payload.get("runId"), maximum=240)
         project = _bounded_text(action_payload.get("project"), maximum=160)
@@ -4936,7 +4963,7 @@ class ControlToolGateway:
         )
         current_run = current.get("run") if isinstance(current.get("run"), Mapping) else {}
         _require_memory_run_owner(current_run, expected_owner)
-        if (
+        if self._approval_preview_state_fence_applies(session_id) and (
             _bounded_text(current.get("revisionHash"), maximum=96)
             != _bounded_text(base_state.get("revisionHash"), maximum=96)
             or _bounded_text(_mapping_value(current, "run", "status"), maximum=40)
@@ -5103,7 +5130,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         proposal_id = _bounded_text(action_payload.get("proposalId"), maximum=240)
         payload_sha256 = _bounded_text(
@@ -5242,16 +5269,28 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
-        normalized = _normalize_input_setting_changes(action_payload.get("changes"))
         snapshot = self._input_settings_snapshot()
-        if snapshot["settingsHash"] != str(base_state.get("settingsHash") or ""):
-            raise ValueError("input settings changed after the approval preview was created")
         current_flat = flatten_settings(snapshot["settings"])
-        before_values = base_state.get("values") if isinstance(base_state.get("values"), Mapping) else {}
-        if not before_values or any(current_flat.get(str(key)) != value for key, value in before_values.items()):
-            raise ValueError("input settings no longer match the approval preview")
+        before_values = (
+            base_state.get("values")
+            if isinstance(base_state.get("values"), Mapping)
+            else {}
+        )
+        normalized = _normalize_input_setting_changes(action_payload.get("changes"))
+        if not before_values:
+            raise ValueError("input settings changed after the approval preview was created")
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and (
+            snapshot["settingsHash"] != str(base_state.get("settingsHash") or "")
+            or any(
+                current_flat.get(str(key)) != value
+                for key, value in before_values.items()
+            )
+        ):
+            raise ValueError("input settings changed after the approval preview was created")
         source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
         if operation == "rollback_settings":
             self._settings_rollback_source(
@@ -5462,7 +5501,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
 
         rolling_back = operation == "lexicon_rollback"
@@ -5501,12 +5540,17 @@ class ControlToolGateway:
                 for item in entries
                 if isinstance(item, Mapping)
             }
-            selected_entries = [entry_by_key[key] for key in selected_keys if key in entry_by_key]
-            if (
-                not token
-                or _sha256_text(token) != str(base_state.get("reviewTokenSha256") or "")
-                or len(selected_entries) != len(selected_keys)
-                or _sha256_json(selected_entries) != str(base_state.get("selectedEntriesSha256") or "")
+            selected_entries = [
+                entry_by_key[key] for key in selected_keys if key in entry_by_key
+            ]
+            if not token or len(selected_entries) != len(selected_keys):
+                raise ValueError("lexicon review changed after the approval preview was created")
+            if self._approval_preview_state_fence_applies(
+                str(approval.get("sessionId") or "")
+            ) and (
+                _sha256_text(token) != str(base_state.get("reviewTokenSha256") or "")
+                or _sha256_json(selected_entries)
+                != str(base_state.get("selectedEntriesSha256") or "")
             ):
                 raise ValueError("lexicon review changed after the approval preview was created")
             result = self._facade_call(
@@ -5702,10 +5746,12 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         snapshot = self._voice_provider_snapshot()
-        if (
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and (
             snapshot["configurationHash"] != str(base_state.get("configurationHash") or "")
             or snapshot["provider"] != str(base_state.get("provider") or "")
         ):
@@ -5952,14 +5998,16 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
-        slot = _bounded_text(action_payload.get("slot"), maximum=40)
-        desired_raw = action_payload.get("profile") if isinstance(action_payload.get("profile"), Mapping) else {}
         snapshot = self._model_profile_snapshot()
         profiles = snapshot["profiles"] if isinstance(snapshot.get("profiles"), Mapping) else {}
+        slot = _bounded_text(action_payload.get("slot"), maximum=40)
         current = profiles.get(slot) if isinstance(profiles.get(slot), Mapping) else {}
-        if (
+        desired_raw = action_payload.get("profile") if isinstance(action_payload.get("profile"), Mapping) else {}
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and (
             snapshot["configurationHash"] != str(base_state.get("configurationHash") or "")
             or dict(current) != dict(base_state.get("profile") or {})
         ):
@@ -6149,16 +6197,23 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         current = self.management.overview()
-        if (
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and (
             _bounded_text(current.get("settingsRevision"), maximum=96)
             != _bounded_text(base_state.get("settingsRevision"), maximum=96)
-            or _safe_int(current.get("runtimeRevision")) != _safe_int(base_state.get("runtimeRevision"))
+            or _safe_int(current.get("runtimeRevision"))
+            != _safe_int(base_state.get("runtimeRevision"))
             or (current.get("aiPaused") is True) != bool(base_state.get("aiPaused"))
         ):
             raise ValueError("runtime state changed after the approval preview was created")
+        if operation == "pause_ai" and current.get("aiPaused") is True:
+            raise ValueError("AI assistance is already paused")
+        if operation == "resume_ai" and current.get("aiPaused") is not True:
+            raise ValueError("AI assistance is already running")
         action = _bounded_text(action_payload.get("action"), maximum=80)
         expected_action = {
             "pause_ai": "stop_ai",
@@ -6344,7 +6399,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         if base_state.get("secretsIncluded") is not False or base_state.get("scopeVersion") != "portable-backup-v1":
             raise ValueError("approved backup scope is invalid")
@@ -6467,7 +6522,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         source_approval_id = _bounded_text(action_payload.get("sourceApprovalId"), maximum=240)
         _source, target = self._configuration_export_source(
@@ -6477,10 +6532,17 @@ class ControlToolGateway:
         current = self.management.portable_restore_preview({"path": str(target)})
         if (
             current.get("valid") is not True
-            or _bounded_text(current.get("restoreToken"), maximum=96)
-            != _bounded_text(base_state.get("archiveRevision"), maximum=96)
-            or _safe_int(current.get("databaseMigrationVersion"))
-            != _safe_int(base_state.get("databaseMigrationVersion"))
+            or (
+                self._approval_preview_state_fence_applies(
+                    str(approval.get("sessionId") or "")
+                )
+                and (
+                    _bounded_text(current.get("restoreToken"), maximum=96)
+                    != _bounded_text(base_state.get("archiveRevision"), maximum=96)
+                    or _safe_int(current.get("databaseMigrationVersion"))
+                    != _safe_int(base_state.get("databaseMigrationVersion"))
+                )
+            )
         ):
             raise ValueError("managed backup changed after the restore approval preview")
 
@@ -6613,14 +6675,16 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(str(approval.get("sessionId") or ""))
         prepared: PreparedWorkspaceCommand = self.workspace_harness.prepare_command(
             session,
             action_payload,
         )
-        if prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
             raise ValueError("authorized workspace changed after approval preview")
         receipt = self.workspace_harness.execute(prepared)
         return {
@@ -6711,14 +6775,16 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
         prepared = self.workspace_harness.prepare_background_command(
             session,
             action_payload,
         )
-        if prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
+        if self._approval_preview_state_fence_applies(session_id) and (
+            prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or "")
+        ):
             raise ValueError("authorized workspace changed after approval preview")
         causal_metadata = (
             dict(approval.get("causalMetadata"))
@@ -6834,7 +6900,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         receipt = self._background_job_service().cancel(
             session_id,
@@ -6920,7 +6986,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
         receipt = self.workspace_harness.apply_lsp_mutation(
@@ -6989,7 +7055,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
         receipt = self.workspace_harness.apply_patch(session, action_payload, base_state)
@@ -7061,7 +7127,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
         receipt = self.workspace_harness.apply_edit(session, action_payload, base_state)
@@ -7134,7 +7200,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
         work_document = (
@@ -7361,7 +7427,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("approval payload no longer matches its preview")
         event_id = _bounded_text(action_payload.get("eventId"), maximum=240)
         task_id = _bounded_text(action_payload.get("taskId"), maximum=240)
@@ -7376,7 +7442,9 @@ class ControlToolGateway:
             expected_approval_id=source_approval_id,
         )
         task = self._planning_task(task_id=task_id, plan_date=plan_date)
-        if (
+        if self._approval_preview_state_fence_applies(
+            str(approval.get("sessionId") or "")
+        ) and (
             str(task.get("status") or "") != str(base_state.get("status") or "")
             or _safe_int(task.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
         ):
@@ -7387,7 +7455,13 @@ class ControlToolGateway:
             observed = self._planning_task(task_id=task_id, plan_date=plan_date)
             if (
                 str(observed.get("status") or "") == target_status
-                and _safe_int(observed.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+                and (
+                    not self._approval_preview_state_fence_applies(
+                        str(approval.get("sessionId") or "")
+                    )
+                    or _safe_int(observed.get("updatedAtMs"))
+                    != _safe_int(base_state.get("updatedAtMs"))
+                )
             ):
                 return self._planning_undo_receipt(
                     approval=approval,
@@ -7875,7 +7949,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("Agent schedule approval no longer matches its preview")
         if operation == "schedule":
             result = self.scheduling.create_wake_schedule(  # type: ignore[attr-defined]
@@ -7886,9 +7960,12 @@ class ControlToolGateway:
         else:
             schedule_id = _bounded_text(action_payload.get("scheduleId"), maximum=240)
             current = self.scheduling.get_wake_schedule(schedule_id)  # type: ignore[attr-defined]
-            if (
+            if self._approval_preview_state_fence_applies(
+                str(approval.get("sessionId") or "")
+            ) and (
                 str(current.get("status") or "") != str(base_state.get("status") or "")
-                or _safe_int(current.get("updatedAtMs")) != _safe_int(base_state.get("updatedAtMs"))
+                or _safe_int(current.get("updatedAtMs"))
+                != _safe_int(base_state.get("updatedAtMs"))
             ):
                 raise ValueError("Agent schedule changed after the approval preview was created")
             result = self.scheduling.wake_schedule_action(  # type: ignore[attr-defined]
@@ -8590,7 +8667,7 @@ class ControlToolGateway:
             action_payload=action_payload,
             base_state=base_state,
         )
-        if expected_digest != str(approval.get("payloadSha256") or ""):
+        if not self._approval_payload_matches(approval, expected_digest):
             raise ValueError("knowledge approval no longer matches its preview")
 
         control = self._knowledge_management_service()
@@ -8601,10 +8678,13 @@ class ControlToolGateway:
             expected_revision = _knowledge_expected_revision(
                 action_payload.get("expectedRevision")
             )
+            session_id = str(approval.get("sessionId") or "")
+            state_fence_applies = self._approval_preview_state_fence_applies(session_id)
             current = _knowledge_base_record(
                 control.get_base(base_id)  # type: ignore[attr-defined]
             )
-            if _knowledge_base_revision(current) != expected_revision:
+            current_revision = _knowledge_base_revision(current)
+            if state_fence_applies and current_revision != expected_revision:
                 raise ValueError(
                     "knowledge base changed after the approval preview was created"
                 )
@@ -8616,7 +8696,12 @@ class ControlToolGateway:
                 )
                 result = control.update_base(  # type: ignore[attr-defined]
                     base_id,
-                    {**patch, "expectedRevision": expected_revision},
+                    {
+                        **patch,
+                        "expectedRevision": (
+                            expected_revision if state_fence_applies else current_revision
+                        ),
+                    },
                 )
             elif operation == "import_text":
                 text_value = action_payload.get("text")
@@ -8647,21 +8732,42 @@ class ControlToolGateway:
                     ),
                 )
             elif operation == "rebuild":
+                rebuild_payload: dict[str, object] = {
+                    "expectedRevision": expected_revision,
+                    "previewToken": _knowledge_required_text(
+                        action_payload.get("previewToken"),
+                        field="previewToken",
+                        maximum=240,
+                    ),
+                    "payloadSha256": _knowledge_sha256(
+                        action_payload.get("payloadSha256"),
+                        field="payloadSha256",
+                    ),
+                    "confirmText": "REBUILD",
+                }
+                if not state_fence_applies:
+                    fresh_preview = control.reindex_preview(base_id)  # type: ignore[attr-defined]
+                    if not isinstance(fresh_preview, Mapping):
+                        raise ValueError("knowledge rebuild preview is invalid")
+                    rebuild_payload.update(
+                        {
+                            "expectedRevision": _knowledge_expected_revision(
+                                fresh_preview.get("configRevision")
+                            ),
+                            "previewToken": _knowledge_required_text(
+                                fresh_preview.get("previewToken"),
+                                field="previewToken",
+                                maximum=240,
+                            ),
+                            "payloadSha256": _knowledge_sha256(
+                                fresh_preview.get("payloadSha256"),
+                                field="payloadSha256",
+                            ),
+                        }
+                    )
                 result = control.rebuild(  # type: ignore[attr-defined]
                     base_id,
-                    {
-                        "expectedRevision": expected_revision,
-                        "previewToken": _knowledge_required_text(
-                            action_payload.get("previewToken"),
-                            field="previewToken",
-                            maximum=240,
-                        ),
-                        "payloadSha256": _knowledge_sha256(
-                            action_payload.get("payloadSha256"),
-                            field="payloadSha256",
-                        ),
-                        "confirmText": "REBUILD",
-                    },
+                    rebuild_payload,
                 )
             else:
                 raise ValueError("unsupported approved knowledge mutation")
@@ -10070,12 +10176,17 @@ def _tool_profile_allows(
     operation: str,
     spec: Mapping[str, object],
 ) -> bool:
+    profile = str(session.get("toolProfileVersion") or "control-center-v1")
+    if profile in {
+        DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+        FULL_ACCESS_TOOL_PROFILE,
+    }:
+        return True
     if (
         str(session.get("toolAllowlistMode") or "profile") == "explicit"
         and tool not in {str(value) for value in session.get("allowedTools") or []}
     ):
         return False
-    profile = str(session.get("toolProfileVersion") or "control-center-v1")
     if read_only_policy_active(session) and read_only_blocks_effect(tool, operation):
         return False
     if (

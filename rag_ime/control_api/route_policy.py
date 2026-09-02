@@ -161,6 +161,8 @@ class ControlPathId(str, Enum):
     AGENT_EXTENSIONS_LIST = "agent.extensions.list"
     AGENT_EXTENSIONS_USAGE = "agent.extensions.usage"
     AGENT_EXTENSIONS_CATALOG = "agent.extensions.catalog"
+    AGENT_EXTENSIONS_SKILLS_LIST = "agent.extensions.skills.list"
+    AGENT_EXTENSIONS_SKILLS_GET = "agent.extensions.skills.get"
     AGENT_EXTENSIONS_CREATE = "agent.extensions.create"
     AGENT_EXTENSIONS_PROPOSALS = "agent.extensions.proposals"
     AGENT_EXTENSIONS_VALIDATE = "agent.extensions.validate"
@@ -801,7 +803,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_CONFIGURATION_GET, ControlMethod.GET, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_READ], remote_safe=True),
         _route(ControlPathId.AGENT_CONFIGURATION_UPDATE, ControlMethod.POST, "/api/agent/configuration", "/control/v1/agent/configuration", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"expectedRevision", "changes", "updatedBy"}, required_body={"expectedRevision", "changes"}, remote_body={"expectedRevision", "changes"}),
         _route(ControlPathId.AGENT_SESSIONS_LIST, ControlMethod.GET, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "includeInternal", "limit", "beforeUpdatedAtMs", "beforeId", "surfaceKind", "ownerAppId", "surfaceKey"}, remote_query={"includeArchived", "limit", "beforeUpdatedAtMs", "beforeId"}),
-        _route(ControlPathId.AGENT_SESSIONS_CREATE, ControlMethod.POST, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "_modelRoute", "toolProfileVersion", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "dangerousModeConfirmation", "surfaceKind", "ownerAppId", "surfaceKey"}, remote_body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion"}, remote_body_values={"mode": {"assistant"}}),
+        _route(ControlPathId.AGENT_SESSIONS_CREATE, ControlMethod.POST, "/api/agent/sessions", "/control/v1/agent/sessions", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "_modelRoute", "toolProfileVersion", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "dangerousModeConfirmation", "toolAllowlistMode", "allowedTools", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "surfaceKind", "ownerAppId", "surfaceKey"}, remote_body={"title", "mode", "roleId", "roleVersion", "modelProfile", "toolProfileVersion"}, remote_body_values={"mode": {"assistant"}}),
         _route(ControlPathId.AGENT_SESSIONS_SURFACE_ENSURE, ControlMethod.POST, "/api/agent/sessions/surface/ensure", None, body={"title", "mode", "roleId", "roleVersion", "modelProfile", "_modelRoute", "toolProfileVersion", "executionMode", "workspaceRoots", "workspaceScopeConfirmation", "dangerousModeConfirmation", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "surfaceKind", "ownerAppId", "surfaceKey"}, required_body={"title", "mode", "toolProfileVersion", "executionMode", "workspaceRoots", "surfaceKind", "ownerAppId", "surfaceKey"}),
         _route(ControlPathId.AGENT_SESSION_SNAPSHOT, ControlMethod.GET, "/api/agent/sessions/{sessionId}/messages", "/control/v1/agent/sessions/{sessionId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_SESSION, query={"view"}),
         _route(ControlPathId.AGENT_SESSION_WORKSPACE_LIST, ControlMethod.GET, "/api/agent/sessions/{sessionId}/workspace", None, params=_SESSION, query={"path", "depth", "limit"}),
@@ -901,6 +903,8 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_EXTENSIONS_LIST, ControlMethod.GET, "/api/agent/extensions", "/control/v1/agent/extensions"),
         _route(ControlPathId.AGENT_EXTENSIONS_USAGE, ControlMethod.GET, "/api/agent/extensions/usage", None, query={"packageId", "resourceKind", "sessionId", "sinceMs", "limit"}),
         _route(ControlPathId.AGENT_EXTENSIONS_CATALOG, ControlMethod.GET, "/api/agent/extensions/catalog", "/control/v1/agent/extensions/catalog"),
+        _route(ControlPathId.AGENT_EXTENSIONS_SKILLS_LIST, ControlMethod.GET, "/api/agent/extensions/skills", "/control/v1/agent/extensions/skills"),
+        _route(ControlPathId.AGENT_EXTENSIONS_SKILLS_GET, ControlMethod.GET, "/api/agent/extensions/skills/detail", "/control/v1/agent/extensions/skills/detail", query={"skillId"}, required_query={"skillId"}),
         _route(ControlPathId.AGENT_EXTENSIONS_CREATE, ControlMethod.POST, "/api/agent/extensions/drafts", "/control/v1/agent/extensions/drafts", body={"draftId", "packageJson", "files"}, required_body={"draftId", "packageJson", "files"}),
         _route(ControlPathId.AGENT_EXTENSIONS_PROPOSALS, ControlMethod.GET, "/api/agent/extensions/proposals", "/control/v1/agent/extensions/proposals"),
         _route(ControlPathId.AGENT_EXTENSIONS_VALIDATE, ControlMethod.POST, "/api/agent/extensions/validate", "/control/v1/agent/extensions/validate", body={"sourcePath", "packageSource", "catalogId", "catalogVersion"}),

@@ -71,12 +71,26 @@ from .pi_runtime_values import (
 from .room_runtime_host_kill_gate import RuntimeHostKillGate, process_birth_token
 
 
-__all__ = ["PiRuntimeHostManager"]
+__all__ = [
+    "PiRuntimeHostManager",
+    "durable_branch_messages",
+    "durable_tool_history_events",
+]
 
 
 _PROTOCOL_VERSION = "2"
 _MODEL_CATALOG_CACHE_SECONDS = 1_800.0
 _PROMPT_TIMEOUT_SECONDS = 60.0 * 60.0
+_RECENT_SESSION_TURN_LIMIT = 6
+_RECENT_SESSION_MESSAGE_LIMIT = 24
+_RECENT_SESSION_RESPONSE_BYTES = 48 * 1024
+_RECENT_SESSION_ACTIVITY_LIMIT = 16
+_RECENT_SESSION_ACTIVITY_BYTES = 16 * 1024
+_RECENT_SESSION_TAIL_SCAN_BYTES = 2 * 1024 * 1024
+_DURABLE_TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024
+_DURABLE_TRANSCRIPT_MAX_LINES = 200_000
+_DURABLE_TRANSCRIPT_MAX_LINE_BYTES = 8 * 1024 * 1024
+_RECENT_TRANSCRIPT_BOUNDARY_BYTES = 64 * 1024
 
 
 def _record_plugin_usage_notice(
@@ -1875,17 +1889,28 @@ class PiRuntimeHostManager:
             )
 
     def session_snapshot(self, session_id: str) -> dict[str, object]:
-        try:
-            snapshot = self._inspection_snapshot(session_id)
-        except AgentRuntimeError:
-            # A transient Host failure is not evidence that the Session has no
-            # history. The append-only Pi transcript remains readable even when
-            # Provider context inspection is unavailable; use it as the
-            # recovery source instead of publishing a successful empty
-            # snapshot that would make the API and UI erase the conversation.
+        session = self.sessions.get(session_id)
+        if session.get("evaluationSnapshot") is True:
+            # Imported evaluation transcripts are immutable evidence.  Reading
+            # one must never start, resume, or rebind a Provider Runtime; the
+            # exact PAW-managed JSONL copy is the sole snapshot authority.
             snapshot = self._durable_history_snapshot(session_id)
             if snapshot is None:
-                raise
+                raise AgentRuntimeError(
+                    "evaluation snapshot transcript is unavailable"
+                )
+        else:
+            try:
+                snapshot = self._inspection_snapshot(session_id)
+            except AgentRuntimeError:
+                # A transient Host failure is not evidence that the Session has no
+                # history. The append-only Pi transcript remains readable even when
+                # Provider context inspection is unavailable; use it as the
+                # recovery source instead of publishing a successful empty
+                # snapshot that would make the API and UI erase the conversation.
+                snapshot = self._durable_history_snapshot(session_id)
+                if snapshot is None:
+                    raise
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
         raw_entries = snapshot.get("entries") if isinstance(snapshot.get("entries"), list) else []
         durable_messages, durable_entries = _pi_durable_branch_messages(
@@ -4982,6 +5007,35 @@ def _pi_tool_history_events(
             event["timelineSequence"] = timeline_sequence
         result.append(event)
     return result
+
+
+def durable_branch_messages(
+    raw_entries: list[object],
+    *,
+    leaf_id: str,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Public compatibility projection for an already-validated Pi JSONL."""
+
+    return _pi_durable_branch_messages(raw_entries, leaf_id=leaf_id)
+
+
+def durable_tool_history_events(
+    raw_messages: list[object],
+    *,
+    session_id: str,
+    raw_entries: list[object] | None = None,
+    maximum_tools: int | None = 256,
+    maximum_public_chars: int | None = 48_000,
+) -> list[dict[str, object]]:
+    """Public compatibility projection of redacted durable Tool events."""
+
+    return _pi_tool_history_events(
+        raw_messages,
+        session_id=session_id,
+        raw_entries=raw_entries,
+        maximum_tools=maximum_tools,
+        maximum_public_chars=maximum_public_chars,
+    )
 
 
 def _pi_history_entry_timestamps(raw_entries: list[object]) -> dict[str, deque[int]]:

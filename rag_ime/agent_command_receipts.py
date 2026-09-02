@@ -163,7 +163,7 @@ class AgentCommandReceiptStore:
                 return AgentCommandClaim(claim_token=claim_token)
 
             if str(row["payload_sha256"]) != digest:
-                raise AgentCommandReceiptConflict(
+                raise _new_command_required_conflict(
                     "clientMessageId was already used for a different command payload",
                     client_message_id=client_message_id,
                 )
@@ -233,7 +233,7 @@ class AgentCommandReceiptStore:
                     "Agent command receipt disappeared before evidence reconciliation"
                 )
             if str(row["payload_sha256"]) != digest:
-                raise AgentCommandReceiptConflict(
+                raise _new_command_required_conflict(
                     "clientMessageId was already used for a different command payload",
                     client_message_id=client_message_id,
                 )
@@ -354,7 +354,7 @@ class AgentCommandReceiptStore:
         if row is None:
             return None
         if str(row["payload_sha256"]) != digest:
-            raise AgentCommandReceiptConflict(
+            raise _new_command_required_conflict(
                 "clientMessageId was already used for a different command payload",
                 client_message_id=client_message_id,
             )
@@ -657,12 +657,12 @@ def _validate_retry_lineage(
         (command_scope, scope_id, retry_of_client_message_id),
     ).fetchone()
     if prior is None:
-        raise AgentCommandReceiptConflict(
+        raise _new_command_required_conflict(
             "retryOfClientMessageId does not identify a command in this scope",
             client_message_id=client_message_id,
         )
     if str(prior["state"]) != "failed":
-        raise AgentCommandReceiptConflict(
+        raise _new_command_required_conflict(
             "only a durably failed command may have a successor",
             client_message_id=client_message_id,
         )
@@ -671,7 +671,7 @@ def _validate_retry_lineage(
         not prior_digest
         or prior_digest != semantic_payload_sha256
     ):
-        raise AgentCommandReceiptConflict(
+        raise _new_command_required_conflict(
             "retry payload does not match the failed command",
             client_message_id=client_message_id,
         )
@@ -685,10 +685,29 @@ def _validate_retry_lineage(
         (command_scope, scope_id, retry_of_client_message_id),
     ).fetchone()
     if successor is not None:
-        raise AgentCommandReceiptConflict(
+        raise _new_command_required_conflict(
             "the failed command already has a retry successor",
             client_message_id=client_message_id,
         )
+
+
+def _new_command_required_conflict(
+    message: str,
+    *,
+    client_message_id: str,
+) -> AgentCommandReceiptConflict:
+    """Tell clients to allocate a new identity without exposing digests.
+
+    Exact replays keep the original identity and payload. Changed content,
+    attachments, delivery, or retry lineage is a distinct command and must use
+    a fresh clientMessageId; internal SHA-256 values never enter the response.
+    """
+
+    return AgentCommandReceiptConflict(
+        message,
+        client_message_id=client_message_id,
+        recovery_state="new_command_required",
+    )
 
 
 def _json(payload: Mapping[str, object]) -> str:
