@@ -546,6 +546,68 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
       expect.objectContaining({ id: 'progress-2', summary: '正在等待审阅' }),
     ]);
   });
+
+  it('does not turn facilitator accountability into a second assigned planet', () => {
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+    ]);
+    room.workItems = [{
+      ...workItem('work-mars', 'turn-1', '', [], 4),
+      accountableParticipantId: 'participant-earth',
+      currentOwnerParticipantId: 'participant-mars',
+      state: 'active',
+      completedAtMs: null,
+    }];
+    const projection = runningProjection('Mars 正在执行唯一任务');
+    projection.turnsById['turn-1'] = {
+      ...projection.turnsById['turn-1']!,
+      participantIds: ['participant-earth', 'participant-mars'],
+    };
+
+    const rows = selectRoomRoundTaskSheets(room, projection)[0]?.rows ?? [];
+
+    expect(rows.find((row) => row.participantId === 'participant-earth')?.assigned).toBe(false);
+    expect(rows.find((row) => row.participantId === 'participant-mars')).toMatchObject({
+      assigned: true,
+      state: 'running',
+    });
+  });
+
+  it('lets a done WorkItem override a lagging running turn and progress receipt', () => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    room.workItems = [workItem('work-done', 'turn-1', '唯一实现任务已经交付', [], 8)];
+    const row = selectRoomRoundTaskSheets(room, runningProjection('当前任务仍在执行'))[0]?.rows[0];
+
+    expect(row).toMatchObject({
+      state: 'completed',
+      latestProgress: '唯一实现任务已经交付',
+      result: '唯一实现任务已经交付',
+    });
+  });
+
+  it('lets a latest terminal turn override stale queued WorkItem and running activity state', () => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    room.workItems = [{
+      ...workItem('work-stale-queued', 'turn-1', '', [], 8),
+      state: 'queued',
+      completedAtMs: null,
+    }];
+    const projection = runningProjection('历史运行进度不应覆盖终态');
+    projection.turnsById['turn-1'] = {
+      ...projection.turnsById['turn-1']!,
+      status: 'completed',
+      terminalParticipantIds: [],
+      updatedAtMs: 9,
+    };
+
+    const row = selectRoomRoundTaskSheets(room, projection)[0]?.rows[0];
+
+    expect(row).toMatchObject({
+      state: 'completed',
+      latestProgress: '本轮工作已结束',
+    });
+  });
 });
 
 function runningProjection(summary: string): RoomProjectionState {

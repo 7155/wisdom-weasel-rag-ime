@@ -141,6 +141,9 @@ function roundRow({
   const currentMessages = assistantMessagesForLanes(lanes, projection);
   const messages = assistantMessagesForLanes(historicalLanes, projection);
   const historyTurnIds = historyTurns.map((historyTurn) => historyTurn.id);
+  const roundWorkItems = (room.workItems ?? []).filter((work) => (
+    historyTurnIds.includes(work.rootTurnId)
+  ));
   const workItems = matchingWorkItems(room.workItems ?? [], participant.id, historyTurnIds);
   const currentWorkItems = matchingWorkItems(room.workItems ?? [], participant.id, [turnId]);
   const participantHistoryTurns = historyTurns.filter((historyTurn) => (
@@ -170,12 +173,34 @@ function roundRow({
   const task = latestTask(currentActivities)
     || currentWorkItems.find((work) => Boolean(work.objective.trim()))?.objective.trim()
     || `${roomCollaborationRoleLabel(participant.collaborationRole)} · 等待本轮分工`;
-  const assigned = turn.participantIds.includes(participant.id)
+  const eventAssigned = turn.participantIds.includes(participant.id)
     || lanes.length > 0
     || currentActivities.length > 0
     || currentMessages.length > 0
     || currentWorkItems.length > 0;
+  /* A facilitator can stay live and accountable while another planet owns the
+   * only WorkItem. Accountability alone is coordination, not a second task
+   * assignment. Keep event-only collaborators that have no delegated
+   * accountability record (including unfinished lanes beside a submitted
+   * result), while letting an explicit owner remain authoritative. */
+  const delegatedAccountabilityOnly = workItems.length === 0 && roundWorkItems.some((work) => (
+    work.accountableParticipantId === participant.id
+    && assignedWorkParticipantId(work) !== participant.id
+  ));
+  /* Keep event-backed work visible even when the coordinator is the only
+     participant. The view layer decides whether that coordinator event is a
+     standalone task or a synthesis card once it knows whether worker rows
+     exist; suppress only the explicit facilitator-accountability bookkeeping
+     case above. */
+  const assigned = workItems.length > 0 || (eventAssigned && !delegatedAccountabilityOnly);
   const state = rowState(turn, participant.id, lanes, currentActivities, currentMessages, currentWorkItems);
+  const completedProgress = compactMarkdown(
+    workResult
+      || resultMessage?.text.trim()
+      || (latestCurrent && !['queued', 'waiting', 'running'].includes(latestCurrent.status)
+        ? latestCurrent.summary
+        : ''),
+  ) || progressFallback('completed');
   return {
     key: `${sheetId}:${participant.id}`,
     participantId: participant.id,
@@ -188,7 +213,9 @@ function roundRow({
     task: compactMarkdown(task),
     latestProgress: state === 'blocked' && blockerReason
       ? blockerReason
-      : latestCurrent?.summary || progressFallback(state),
+      : state === 'completed'
+        ? completedProgress
+        : latestCurrent?.summary || progressFallback(state),
     ...(blockerReason ? { blockerReason } : {}),
     ...(blockerNextStep ? { blockerNextStep } : {}),
     ...(blockedWorkItemId ? { blockedWorkItemId } : {}),
@@ -216,17 +243,20 @@ function rowState(
   if (workItems.some((work) => work.state === 'failed')) return 'failed';
   if (workItems.some((work) => work.state === 'cancelled')) return 'aborted';
   if (workItems.some((work) => work.state === 'blocked')) return 'blocked';
+  if (workItems.length && workItems.every((work) => work.state === 'done')) return 'completed';
 
   if (turn.terminalParticipantIds?.includes(participantId)) return 'completed';
 
   const participates = turn.participantIds.includes(participantId) || lanes.length > 0;
+  if (participates && turn.status === 'completed') return 'completed';
+  if (participates && turn.status === 'failed') return 'failed';
+  if (participates && turn.status === 'aborted') return 'aborted';
   /* A failed Tool call is a recoverable event inside an active Pi turn, not a
      terminal verdict on the planet. Keep its red receipt in row history, but
      let the current turn/work lifecycle own the headline state. */
   if (participates && turn.status === 'running') return 'running';
   if (workItems.some((work) => work.state === 'active')) return 'running';
   if (workItems.some((work) => work.state === 'review')) return 'waiting';
-  if (workItems.length && workItems.every((work) => work.state === 'done')) return 'completed';
   if (workItems.some((work) => work.state === 'queued')) return 'queued';
 
   const statuses = [
@@ -241,9 +271,6 @@ function rowState(
   if (statuses.includes('running') || statuses.includes('streaming')) return 'running';
   if (statuses.includes('waiting')) return 'waiting';
 
-  if (participates && turn.status === 'completed') return 'completed';
-  if (participates && turn.status === 'failed') return 'failed';
-  if (participates && turn.status === 'aborted') return 'aborted';
   if (participates && turn.status === 'running') return 'running';
   return turn.status === 'queued' ? 'queued' : 'waiting';
 }
@@ -435,14 +462,16 @@ function matchingWorkItems(
   const matchingTurnIds = new Set(turnIds);
   const matching = workItems.filter((work) => (
     matchingTurnIds.has(work.rootTurnId)
-    && [
-      work.currentOwnerParticipantId,
-      work.offeredToParticipantId,
-      work.accountableParticipantId,
-    ].includes(participantId)
+    && assignedWorkParticipantId(work) === participantId
   ));
   const uniqueById = new Map(matching.map((work) => [work.id, work]));
   return [...uniqueById.values()].sort(compareWorkItems);
+}
+
+function assignedWorkParticipantId(work: RoomWorkItem): string {
+  return work.currentOwnerParticipantId
+    || work.offeredToParticipantId
+    || work.accountableParticipantId;
 }
 
 function compareWorkItems(left: RoomWorkItem, right: RoomWorkItem): number {
@@ -524,7 +553,7 @@ function messageStatus(status: RoomMessageProjection['status']): RoomRoundRowSta
   return status;
 }
 
-function progressFallback(state: RoomRoundRowState): string {
+export function progressFallback(state: RoomRoundRowState): string {
   return ({
     queued: '等待本轮开始',
     waiting: '等待本轮分工或公开进展',
