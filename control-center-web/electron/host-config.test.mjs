@@ -277,6 +277,34 @@ test('host serves PAWOS and proxies GET, POST, and event streams through one ori
   }
 });
 
+test('host falls back to an ephemeral port when its preferred port is occupied', async () => {
+  const occupied = http.createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/plain' });
+    response.end('occupied');
+  });
+  await listen(occupied);
+  const occupiedAddress = occupied.address();
+  assert.ok(occupiedAddress && typeof occupiedAddress !== 'string');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'paw-electron-host-fallback-'));
+  const frontendEntry = path.join(root, 'index.html');
+  fs.writeFileSync(frontendEntry, '<!doctype html><title>PAWOS fallback</title>', 'utf8');
+  let host = null;
+  try {
+    host = await startPawHostServer({
+      fallbackToEphemeralPort: true,
+      frontendEntry,
+      hostMode: 'development',
+      port: occupiedAddress.port,
+    });
+    assert.notEqual(Number(new URL(host.origin).port), occupiedAddress.port);
+    assert.match(await (await fetch(`${host.origin}/`)).text(), /PAWOS fallback/);
+  } finally {
+    await host?.close();
+    await new Promise((resolve) => occupied.close(resolve));
+    fs.rmSync(root, { recursive: true });
+  }
+});
+
 test('Browser settings report and clear the fixed persistent session', async () => {
   let cacheBytes = 8192;
   let cookieCount = 3;

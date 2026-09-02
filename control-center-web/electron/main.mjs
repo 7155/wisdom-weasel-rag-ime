@@ -191,11 +191,13 @@ async function startPrimaryInstance() {
   fs.mkdirSync(paths.browserExtensionsDir, { recursive: true });
   fs.writeFileSync(paths.hostPidFile, `${process.pid}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.writeFileSync(paths.hostPidFile.replace(/\.pid$/, '.token'), `${hostToken}\n`, { encoding: 'utf8', mode: 0o600 });
+  const configuredFrontendPort = String(process.env.PAW_FRONTEND_PORT || '').trim();
   hostServer = await startPawHostServer({
     browserBridge: { activateTarget: activateVisibleTarget, createTab: createVisibleTab, token: hostToken },
+    fallbackToEphemeralPort: configuredFrontendPort === '',
     frontendEntry: paths.frontendEntry,
     controlOrigin: process.env.PAW_CONTROL_ORIGIN || 'http://127.0.0.1:8768',
-    port: Number(process.env.PAW_FRONTEND_PORT || defaultPawHostPort),
+    port: Number(configuredFrontendPort || defaultPawHostPort),
   });
   fs.writeFileSync(
     paths.hostPidFile.replace(/\.pid$/, '.origin'),

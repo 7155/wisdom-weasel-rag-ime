@@ -23,6 +23,7 @@ const contentTypes = new Map([
 
 export async function startPawHostServer({
   browserBridge = null,
+  fallbackToEphemeralPort = false,
   frontendEntry,
   controlOrigin = 'http://127.0.0.1:8768',
   hostMode = resolveHostMode(),
@@ -52,10 +53,14 @@ export async function startPawHostServer({
     }
     serveFrontend(requestUrl.pathname, response, frontendRoot, frontendEntry);
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, '127.0.0.1', resolve);
-  });
+  try {
+    await listenLoopback(server, port);
+  } catch (error) {
+    if (!fallbackToEphemeralPort || error?.code !== 'EADDRINUSE' || Number(port) === 0) {
+      throw error;
+    }
+    await listenLoopback(server, 0);
+  }
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('PAWOS host did not bind loopback');
   hostOrigin = `http://127.0.0.1:${address.port}`;
@@ -65,6 +70,22 @@ export async function startPawHostServer({
     origin: hostOrigin,
     production: hostMode === 'production',
   };
+}
+
+function listenLoopback(server, port) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
 }
 
 function isAllowedControlRequest(request, hostOrigin) {
