@@ -137,4 +137,107 @@ describe('useAgentLiveSession shared ownership', () => {
     firstWindow.unmount();
     secondWindow.unmount();
   });
+
+
+  it('applies an equal-sequence idle snapshot to settle stale running state', async () => {
+    let snapshotCalls = 0;
+    const delta = agentEventFixture(1, 'text_delta', {
+      delta: '重启前仍显示为流式输出',
+      replaceBlock: true,
+    });
+    const liveEvent = {
+      ...delta,
+      eventId: `${SESSION_ID}:1`,
+      sessionId: SESSION_ID,
+      resumeToken: `${SESSION_ID}:1`,
+    };
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return snapshotCalls === 1
+            ? {
+                lastSequence: 1,
+                resumeToken: `${SESSION_ID}:1`,
+                status: 'busy',
+                messages: [],
+                liveEvents: [liveEvent],
+                partial: true,
+                snapshotScope: 'recent',
+                runtimeQuiescent: false,
+              }
+            : {
+                lastSequence: 1,
+                resumeToken: `${SESSION_ID}:1`,
+                status: 'idle',
+                messages: [],
+                liveEvents: [],
+                partial: true,
+                snapshotScope: 'recent',
+                runtimeQuiescent: true,
+              };
+        },
+      },
+    });
+    const window = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]?.turnsById['turn-1']?.status)
+      .toBe('running');
+    vi.useFakeTimers();
+
+    act(() => transport.fail('agent.session.events', new Error('stream interrupted')));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => Promise.resolve());
+
+    expect(snapshotCalls).toBe(2);
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]?.turnsById['turn-1']?.status)
+      .toBe('completed');
+    window.unmount();
+  });
+  it('keeps retrying after the first recovery snapshot fails during a Runtime restart', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          if (snapshotCalls === 2) throw new Error('gateway restarting');
+          return {
+            lastSequence: 0,
+            resumeToken: `${SESSION_ID}:0`,
+            status: 'idle',
+            messages: [],
+            liveEvents: [],
+          };
+        },
+      },
+    });
+    const snapshotError = vi.fn();
+    const restored = vi.fn();
+    const window = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+      onSnapshotError: snapshotError,
+      onConnectionRestored: restored,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    vi.useFakeTimers();
+
+    act(() => transport.fail('agent.session.events', new Error('stream interrupted')));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(snapshotCalls).toBe(2);
+    expect(snapshotError).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: SESSION_ID,
+      error: expect.objectContaining({ message: 'gateway restarting' }),
+    }));
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    await act(async () => Promise.resolve());
+    expect(snapshotCalls).toBe(3);
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    expect(restored).toHaveBeenLastCalledWith(SESSION_ID);
+    window.unmount();
+  });
 });

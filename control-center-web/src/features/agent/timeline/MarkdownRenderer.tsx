@@ -24,11 +24,13 @@ import {
 
 export function TextBlockRenderer({
   block,
+  allowTraceDiagnosticReceipt,
   sessionId,
   streamingTail,
 }: AgentBlockRenderProps) {
   return (
     <MarkdownBody
+      allowTraceDiagnosticReceipt={allowTraceDiagnosticReceipt}
       documentKey={block.id}
       sessionId={sessionId}
       streamingTail={streamingTail}
@@ -38,11 +40,13 @@ export function TextBlockRenderer({
 }
 
 export function MarkdownBody({
+  allowTraceDiagnosticReceipt = true,
   documentKey = '',
   sessionId = '',
   streamingTail = false,
   text: source,
 }: {
+  allowTraceDiagnosticReceipt?: boolean;
   documentKey?: string;
   sessionId?: string;
   streamingTail?: boolean;
@@ -54,8 +58,8 @@ export function MarkdownBody({
   const progressiveMode = useDeferredStreaming(streamingTail);
   const standaloneHtml = useMemo(() => standaloneHtmlSource(source), [source]);
   const traceDiagnostic = useMemo(
-    () => traceDiagnosticResultReceipt(source),
-    [source],
+    () => allowTraceDiagnosticReceipt ? traceDiagnosticResultReceipt(source) : null,
+    [allowTraceDiagnosticReceipt, source],
   );
   if (!source) return null;
   if (traceDiagnostic && !progressiveMode) {

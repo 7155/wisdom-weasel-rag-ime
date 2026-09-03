@@ -3,6 +3,7 @@ import type { UiAgentBlock } from '@/contracts/ui-events';
 
 export interface AgentBlockRenderProps {
   block: UiAgentBlock;
+  allowTraceDiagnosticReceipt: boolean;
   onApprovalDecision?: (
     approvalId: string,
     decision: 'approved' | 'rejected',

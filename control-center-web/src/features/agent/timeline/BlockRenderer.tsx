@@ -9,6 +9,7 @@ export { MarkdownBody } from './MarkdownRenderer';
 export { SafeFieldList } from './StructuredRenderers';
 
 interface AgentBlocksProps {
+  allowTraceDiagnosticReceipt?: boolean;
   blocks: UiAgentBlock[];
   onApprovalDecision?: (
     approvalId: string,
@@ -20,6 +21,7 @@ interface AgentBlocksProps {
 }
 
 export function AgentBlocks({
+  allowTraceDiagnosticReceipt = true,
   blocks,
   onApprovalDecision,
   sessionId = '',
@@ -37,6 +39,7 @@ export function AgentBlocks({
         />
       ) : (
         <AgentBlock
+          allowTraceDiagnosticReceipt={allowTraceDiagnosticReceipt}
           key={`${entry.block.id}:${entry.index}`}
           block={entry.block}
           onApprovalDecision={onApprovalDecision}
@@ -49,12 +52,14 @@ export function AgentBlocks({
 }
 
 export const AgentBlock = memo(function AgentBlock({
+  allowTraceDiagnosticReceipt = true,
   block,
   onApprovalDecision,
   sessionId = '',
   streamingTail = false,
 }: {
   block: UiAgentBlock;
+  allowTraceDiagnosticReceipt?: boolean;
   onApprovalDecision?: AgentBlocksProps['onApprovalDecision'];
   sessionId?: string;
   streamingTail?: boolean;
@@ -63,6 +68,7 @@ export const AgentBlock = memo(function AgentBlock({
   const Renderer = descriptor?.Renderer ?? UnknownBlockRenderer;
   return (
     <Renderer
+      allowTraceDiagnosticReceipt={allowTraceDiagnosticReceipt}
       block={block}
       onApprovalDecision={onApprovalDecision}
       sessionId={sessionId}

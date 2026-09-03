@@ -329,10 +329,21 @@ function createSharedAgentLiveSession(
       const presentable = actualView === 'full' || recentAgentSnapshotIsPresentable(value);
       const sequence = agentSnapshotSequence(value);
       const resumeToken = agentSnapshotResumeToken(value);
+      // Equality is authoritative only for a quiescent snapshot. A stale busy
+      // snapshot at the same cursor must not overwrite a terminal SSE event;
+      // idle/quiescent metadata at that cursor may settle activity left behind
+      // by a dropped stream.
+      const equalCursorIsQuiescent = request.preserveAfterSequence !== undefined
+        && sequence === request.preserveAfterSequence
+        && isRecord(value)
+        && (value.runtimeQuiescent === true || value.partial !== true)
+        && typeof value.status === 'string'
+        && ['idle', 'ready', 'stopped', 'active'].includes(value.status);
       const shouldHydrate = presentable
         && (
           request.preserveAfterSequence === undefined
           || sequence > request.preserveAfterSequence
+          || equalCursorIsQuiescent
         );
       if (shouldHydrate) useAgentLiveStore.getState().hydrate(sessionId, value);
       const snapshot = {
@@ -367,11 +378,10 @@ function createSharedAgentLiveSession(
       setLoading(false);
       setRecoveryState('failed');
       broadcast((listener) => listener.onSnapshotError?.(failure));
-      if (recoverable && shouldStream()) {
-        maybeSubscribe();
-        return true;
-      }
-      return false;
+      const resumeStream = recoverable && shouldStream();
+      if (resumeStream) maybeSubscribe();
+      if (shouldStream()) scheduleAutomaticRecovery();
+      return resumeStream;
     }
   }
 
@@ -443,7 +453,7 @@ function createSharedAgentLiveSession(
         {
           open: () => {
             if (!active || subscriptionGeneration !== streamGeneration) return;
-            resetRecoveryBackoff();
+            if (lastSnapshotError === undefined) resetRecoveryBackoff();
             connected = true;
             lastConnectionError = undefined;
             broadcast((listener) => listener.onConnectionRestored?.(sessionId));

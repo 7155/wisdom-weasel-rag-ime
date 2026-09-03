@@ -1101,6 +1101,61 @@ describe('Agent chat rendering', () => {
     expect(openRoute).toHaveBeenCalledWith(`/trace-agent?reportId=${encodeURIComponent(reportId)}`);
   });
 
+  it('does not render a user instruction template as a completed Trace receipt', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-trace-diagnostic';
+    const instructionTemplate = [
+      '--- TRACE_DIAGNOSTIC_RESULT_V1 ---',
+      JSON.stringify({
+        schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
+        summary: '<简短结论>',
+        hardGates: [],
+        findings: [{ candidateRepair: '<候选修复>' }],
+      }),
+      '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---',
+    ].join('\n');
+    const completedResult = [
+      '--- TRACE_DIAGNOSTIC_RESULT_V1 ---',
+      JSON.stringify({
+        schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
+        summary: '维护运行缺少权威阶段记录。',
+        hardGates: [],
+        findings: [{ candidateRepair: '补齐权威阶段回执。' }],
+      }),
+      '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---',
+    ].join('\n');
+    const user = userMessage(sessionId, turnId);
+    user.id = 'trace-diagnostic-user';
+    user.blocks = [{
+      ...user.blocks[0]!,
+      id: 'trace-diagnostic-user:text',
+      data: { text: instructionTemplate },
+    }];
+    const assistant = assistantMessage(
+      sessionId,
+      turnId,
+      completedResult,
+      2,
+    );
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [user, assistant],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+
+    render(<AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />);
+
+    const userBubble = document.querySelector('.agent-user-message');
+    const assistantBubble = document.querySelector('.agent-assistant-message');
+    expect(userBubble).not.toBeNull();
+    expect(assistantBubble).not.toBeNull();
+    expect(within(userBubble as HTMLElement).queryByRole('status', { name: 'Trace 诊断结构化结果' })).not.toBeInTheDocument();
+    expect(within(assistantBubble as HTMLElement).getByRole('status', { name: 'Trace 诊断结构化结果' }))
+      .toHaveTextContent('维护运行缺少权威阶段记录。');
+  });
+
   it('opens workspace file references from prose while keeping hashes, commands, and code spans plain', async () => {
     const user = userEvent.setup();
     const openRoute = vi.fn();

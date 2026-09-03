@@ -1513,7 +1513,7 @@ function MessageView({
           </time>
         ) : <span className="sr-only">用户消息</span>}
         <div className="paw-user-message" data-status={message.status}>
-          <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
+          <AgentBlocks allowTraceDiagnosticReceipt={false} blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
         </div>
         {visibleUserMeta ? (
           <span className="fx-user-meta" aria-live={deliveryFeedback ? 'polite' : undefined} role={deliveryFeedback ? 'status' : undefined}>
@@ -1575,7 +1575,7 @@ function MessageView({
   return user ? (
     <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
-        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
+        <AgentBlocks allowTraceDiagnosticReceipt={false} blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
         {deliveryFeedback ? (
           <small
             aria-live="polite"
