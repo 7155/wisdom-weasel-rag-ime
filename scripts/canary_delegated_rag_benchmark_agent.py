@@ -10,6 +10,8 @@ import os
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -61,6 +63,11 @@ def main(argv: list[str] | None = None) -> int:
             / "config"
         ),
     )
+    parser.add_argument(
+        "--pi-runtime-payload",
+        type=Path,
+        help="Use one explicit verified Runtime payload instead of the installed snapshot.",
+    )
     args = parser.parse_args(argv)
 
     private_root = args.private_root.expanduser().resolve(strict=False)
@@ -72,18 +79,32 @@ def main(argv: list[str] | None = None) -> int:
         report = _run(
             Path(temporary).resolve(strict=True),
             source_agent_config=args.source_agent_config.expanduser().resolve(strict=True),
+            runtime_payload=(
+                args.pi_runtime_payload.expanduser().resolve(strict=True)
+                if args.pi_runtime_payload is not None
+                else None
+            ),
         )
     _write_json(output, report)
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if report.get("passed") is True else 1
 
 
-def _run(run_root: Path, *, source_agent_config: Path) -> dict[str, object]:
+def _run(
+    run_root: Path,
+    *,
+    source_agent_config: Path,
+    runtime_payload: Path | None = None,
+) -> dict[str, object]:
     started_at_ms = int(time.time() * 1_000)
     agent_config = run_root / "agent" / "config"
     _copy_private_agent_config(source_agent_config, agent_config)
     runtime_config = replace(
-        _isolated_runtime_config(run_root, agent_config=agent_config),
+        _isolated_runtime_config(
+            run_root,
+            agent_config=agent_config,
+            runtime_payload=runtime_payload,
+        ),
         max_sessions=4,
     )
     sandbox = RagBenchmarkSandbox(run_root / "knowledge-runs")
@@ -117,7 +138,10 @@ def _run(run_root: Path, *, source_agent_config: Path) -> dict[str, object]:
             background_jobs=service.background_jobs,
             delegation=service.delegation,
             configuration_store=service.configuration_store,
-            governed_skills=service.room_skill_policy,
+            # Skills are resolved by the managed Pi resource loader.  Keep
+            # this canary aligned with the production ablation harness: the
+            # AgentService no longer owns a parallel governed Skill registry.
+            governed_skills=None,
             work_documents=service.work_documents,
         )
         gateway.delegated_parent_loader = lambda child_session_id: (
@@ -204,9 +228,13 @@ def _run(run_root: Path, *, source_agent_config: Path) -> dict[str, object]:
         ensure = service.ensure_runtime({"sessionId": parent_session_id})
         if not _is_luna_max(ensure):
             raise RuntimeError("parent did not open Luna Max")
-        delegation = service.delegation.delegate(
-            parent_session_id,
-            {
+        tool_call = {
+            "schemaVersion": "rag-ime.agent-tool-call.v1",
+            "sessionId": parent_session_id,
+            "tool": "agents",
+            "toolCallId": "delegated-rag-canary:agents:delegate",
+            "args": {
+                "op": "delegate",
                 "agent": "researcher",
                 "version": "1",
                 "task": (
@@ -225,7 +253,35 @@ def _run(run_root: Path, *, source_agent_config: Path) -> dict[str, object]:
                 "contextMode": "fresh",
                 "wait": True,
             },
+        }
+        request = urllib.request.Request(
+            server.tool_gateway_url,
+            data=json.dumps(tool_call, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-RAG-IME-Agent-Token": server.token,
+            },
+            method="POST",
         )
+        try:
+            with urllib.request.urlopen(request, timeout=600) as response:  # noqa: S310
+                gateway_response = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:2_000]
+            raise RuntimeError(
+                f"agents Tool gateway returned HTTP {exc.code}: {detail}"
+            ) from exc
+        if not isinstance(gateway_response, Mapping):
+            raise RuntimeError("agents Tool gateway response is not an object")
+        if gateway_response.get("ok") is not True:
+            raise RuntimeError(
+                "agents Tool gateway failed: "
+                + str(gateway_response.get("error") or "unknown error")
+            )
+        raw_delegation = gateway_response.get("result")
+        if not isinstance(raw_delegation, Mapping):
+            raise RuntimeError("agents Tool gateway returned no delegation result")
+        delegation = dict(raw_delegation)
         ledger = gateway.lineage_ledger(parent_session_id)
     except Exception as exc:
         failure = f"{type(exc).__name__}: {exc}"

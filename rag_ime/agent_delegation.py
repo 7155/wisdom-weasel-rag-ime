@@ -37,7 +37,12 @@ from .agent_runtime_driver import (
     ToolManifestProvider,
 )
 from .agent_sessions import AgentSessionStore
-from .agent_templates import AgentTemplate, agent_template, agent_template_catalog
+from .agent_templates import (
+    AgentTemplate,
+    AgentTemplateBudget,
+    agent_template,
+    agent_template_catalog,
+)
 from .agent_workspace_roots import existing_workspace_roots, system_wide_workspace_roots
 from .contracts.json_schema import validate_contract, validate_json_schema
 from .db import apply_database_migrations
@@ -106,6 +111,28 @@ _DELEGATION_TASK_CONTRACT: dict[str, object] = {
         "thinkingLevel": {
             "type": "string",
             "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+        },
+        "budget": {
+            "type": "object",
+            "additionalProperties": False,
+            "minProperties": 1,
+            "properties": {
+                "maxTotalTokens": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 262_144,
+                },
+                "maxDurationMs": {
+                    "type": "integer",
+                    "minimum": 1_000,
+                    "maximum": 900_000,
+                },
+                "maxOutputChars": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 100_000,
+                },
+            },
         },
         "access": {
             "type": "string",
@@ -2372,7 +2399,7 @@ class AgentDelegationCoordinator:
                     prepared_authority,
                     strict=True,
                 ):
-                    budget = template.budget
+                    budget = _delegation_budget(template.budget, task.get("budget"))
                     try:
                         runtime_manifests = (
                             list(self._tool_manifest_provider(child))
@@ -4219,6 +4246,7 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
                 "outputSchema",
                 "modelProfile",
                 "thinkingLevel",
+                "budget",
                 "access",
                 "allowedTools",
                 "piSkillsEnabled",
@@ -4247,6 +4275,7 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
                     for field in (
                         "modelProfile",
                         "thinkingLevel",
+                        "budget",
                         "access",
                         "allowedTools",
                         "piSkillsEnabled",
@@ -4269,6 +4298,7 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
         "outputSchema",
         "modelProfile",
         "thinkingLevel",
+        "budget",
         "access",
         "allowedTools",
         "piSkillsEnabled",
@@ -4310,6 +4340,11 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
         ):
             if field in value:
                 task[field] = value.get(field)
+        if "budget" in value:
+            raw_budget = value.get("budget")
+            if not isinstance(raw_budget, Mapping):
+                raise ValueError("budget must be an object")
+            task["budget"] = dict(raw_budget)
         if "allowedTools" in value:
             raw_tools = value.get("allowedTools")
             if not isinstance(raw_tools, list):
@@ -4323,6 +4358,48 @@ def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
         validate_contract(task, _DELEGATION_TASK_CONTRACT)
         tasks.append(task)
     return tasks
+
+
+def _delegation_budget(
+    template_budget: AgentTemplateBudget,
+    requested: object,
+) -> AgentTemplateBudget:
+    """Apply request-local caps without allowing a task to widen its template."""
+
+    if requested is None:
+        return template_budget
+    if not isinstance(requested, Mapping):
+        raise ValueError("budget must be an object")
+    allowed = {"maxTotalTokens", "maxDurationMs", "maxOutputChars"}
+    unsupported = set(requested) - allowed
+    if unsupported:
+        raise ValueError(f"unsupported delegation budget field: {sorted(unsupported)[0]}")
+    if not requested:
+        raise ValueError("budget must contain at least one limit")
+    limits = {
+        "maxTotalTokens": (template_budget.max_total_tokens, 256, 262_144),
+        "maxDurationMs": (template_budget.max_duration_ms, 1_000, 900_000),
+        "maxOutputChars": (template_budget.max_output_chars, 256, 100_000),
+    }
+    normalized: dict[str, int] = {}
+    for field, value in requested.items():
+        template_limit, minimum, maximum = limits[field]
+        parsed = _bounded_int(value, minimum=minimum, maximum=maximum)
+        if parsed > template_limit:
+            raise ValueError(f"delegation budget cannot exceed template {field}")
+        normalized[field] = parsed
+    return replace(
+        template_budget,
+        max_total_tokens=normalized.get(
+            "maxTotalTokens", template_budget.max_total_tokens
+        ),
+        max_duration_ms=normalized.get(
+            "maxDurationMs", template_budget.max_duration_ms
+        ),
+        max_output_chars=normalized.get(
+            "maxOutputChars", template_budget.max_output_chars
+        ),
+    )
 
 
 def _validated_native_fork_sessions(

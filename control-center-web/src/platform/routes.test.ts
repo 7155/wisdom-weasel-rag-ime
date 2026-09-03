@@ -109,6 +109,7 @@ const canonicalPathIds = [
   'agent.rooms.create',
   'agent.room.get',
   'agent.room.snapshot',
+  'agent.room.conversationSnapshot',
   'agent.room.startGate.get',
   'agent.room.startGate.confirm',
   'agent.room.archive',

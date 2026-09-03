@@ -654,6 +654,8 @@ class TraceDiagnosticReportStoreTests(unittest.TestCase):
                 inspection=inspection,
                 now_ms=100,
             )
+            self.assertTrue(store.owns_session("agent:diagnostic:1"))
+            self.assertFalse(store.owns_session("agent:ordinary:1"))
 
             self.assertEqual(created["status"], "generating")
             self.assertEqual(created["revision"], 1)
@@ -844,6 +846,7 @@ class TraceDiagnosticReportStoreTests(unittest.TestCase):
                 authorized["repairLifecycle"]["authorization"]["repairSessionId"],
                 "agent:repair:1",
             )
+            self.assertTrue(store.owns_session("agent:repair:1"))
 
             verified = store.verify_repair(
                 authorized["reportId"],

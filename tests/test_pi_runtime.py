@@ -1144,6 +1144,18 @@ class PiRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(PiRuntimeError, "尚未配置对话模型"):
             runtime.ensure(str(self.session["id"]))
 
+    def test_protocol_v1_rejects_per_session_skill_allowlists(self) -> None:
+        runtime = PiRuntimeManager(
+            config=self.config,
+            sessions=self.store,
+            events=self.events,
+            skill_allowlist_provider=lambda _session: ["systematic-debugging"],
+        )
+
+        self.assertFalse(runtime.runtime_status()["capabilities"]["sessionSkillAllowlist"])
+        with self.assertRaisesRegex(PiRuntimeError, "protocol v1"):
+            runtime.ensure(str(self.session["id"]))
+
     def test_audited_extension_receives_only_scoped_gateway_capability(self) -> None:
         extension = self.root / "rag-ime-control.ts"
         extension.write_text("export default function () {}\n", encoding="utf-8")

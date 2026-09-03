@@ -716,19 +716,25 @@ function sessionFileProjection(session: SessionSummary): WorkFileProjection {
 function roomFileProjection(room: RoomSummary): WorkFileProjection {
   const workItems = room.workItems;
   const activeWork = (workItems ?? []).filter((item) => ['queued', 'active', 'review', 'blocked'].includes(item.state)).length;
-  const status = room.status === 'archived' ? '已归档' : room.status === 'active' ? '进行中' : room.status;
   const progress = activeWork ? ` · ${activeWork} 项任务` : '';
   const focus = workItems?.slice().sort(compareWorkFilePriority)[0];
+  const state = focus?.state === 'blocked' || focus?.state === 'failed' ? 'attention'
+    : focus && ['queued', 'active', 'review'].includes(focus.state) ? 'working'
+    : focus?.state === 'done' || room.status === 'archived' ? 'complete'
+    : 'neutral';
+  const status = room.status === 'archived' ? '已归档'
+    : state === 'attention' ? '需要处理'
+    : state === 'working' ? '进行中'
+    : state === 'complete' ? '已完成'
+    : focus?.state === 'cancelled' ? '已停止'
+    : '就绪';
   const detail = workItems === undefined ? '任务进度不可用'
     : !focus ? '尚无任务'
     : workItemFileDetail(focus);
   return {
     detail,
     meta: `${status} · ${room.participants.length} 位伙伴${progress} · ${relativeTime(room.updatedAtMs)}`,
-    state: focus?.state === 'blocked' || focus?.state === 'failed' ? 'attention'
-      : focus && ['queued', 'active', 'review'].includes(focus.state) ? 'working'
-      : focus?.state === 'done' || room.status === 'archived' ? 'complete'
-      : 'neutral',
+    state,
   };
 }
 

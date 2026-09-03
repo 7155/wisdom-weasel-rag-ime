@@ -68,6 +68,24 @@ class AgentConfigurationTests(unittest.TestCase):
             },
         )
 
+        skill_routing = configuration["skillRouting"]
+        self.assertIn("systematic-debugging", skill_routing["ordinary"])
+        self.assertIn("systematic-debugging", skill_routing["room"])
+        self.assertIn("systematic-debugging", skill_routing["trace"])
+        self.assertIn("systematic-debugging", skill_routing["agentLab"])
+        self.assertIn("facilitate-room", skill_routing["room"])
+        self.assertNotIn("facilitate-room", skill_routing["ordinary"])
+        self.assertIn("trace-agent-diagnostics", skill_routing["trace"])
+        self.assertNotIn("trace-agent-diagnostics", skill_routing["ordinary"])
+        self.assertIn("agent-eval-room-optimizer", skill_routing["agentLab"])
+        self.assertNotIn("agent-eval-room-optimizer", skill_routing["room"])
+        self.assertTrue(
+            all(
+                "memory-curation" not in skill_ids
+                for skill_ids in skill_routing.values()
+            )
+        )
+
     def test_model_routes_are_revisioned_without_changing_legacy_session_defaults(self) -> None:
         update = self.store.update(
             {
@@ -114,6 +132,55 @@ class AgentConfigurationTests(unittest.TestCase):
             },
         )
         self.assertNotIn("roomCoordinator", update.changed_keys)
+
+    def test_skill_routes_are_revisioned_and_restart_the_runtime(self) -> None:
+        update = self.store.update(
+            {
+                "skillRouting.ordinary": [
+                    "systematic-debugging",
+                    "test-driven-implementation",
+                ],
+            },
+            expected_revision=1,
+            updated_by="settings-ui",
+        )
+
+        self.assertEqual(
+            update.snapshot["configuration"]["skillRouting"]["ordinary"],
+            ["systematic-debugging", "test-driven-implementation"],
+        )
+        self.assertEqual(update.changed_keys, ("skillRouting.ordinary",))
+        self.assertTrue(update.runtime_sync_required)
+        self.assertEqual(update.snapshot["sync"]["state"], "pending")
+
+    def test_owning_private_skill_cannot_be_removed_from_its_scenario(self) -> None:
+        update = self.store.update(
+            {"skillRouting.room": []},
+            expected_revision=1,
+            updated_by="settings-ui",
+        )
+
+        self.assertEqual(
+            update.snapshot["configuration"]["skillRouting"]["room"],
+            ["facilitate-room"],
+        )
+
+    def test_skill_routes_reject_cross_scenario_private_skills(self) -> None:
+        for key, skill_id in (
+            ("skillRouting.ordinary", "facilitate-room"),
+            ("skillRouting.room", "trace-agent-diagnostics"),
+            ("skillRouting.trace", "agent-eval-room-optimizer"),
+            ("skillRouting.agentLab", "trace-agent-diagnostics"),
+        ):
+            with self.subTest(key=key, skill_id=skill_id), self.assertRaisesRegex(
+                ValueError,
+                "belongs to",
+            ):
+                self.store.update(
+                    {key: [skill_id]},
+                    expected_revision=1,
+                    updated_by="settings-ui",
+                )
 
     def test_startup_rewrites_a_persisted_legacy_role_id_once(self) -> None:
         path = Path(self.tmp.name) / "legacy-agent.sqlite"
@@ -244,6 +311,35 @@ class AgentConfigurationTests(unittest.TestCase):
                 ).fetchone()[0]
             )
         self.assertIn("traceDiagnostic", persisted["modelRouting"])
+
+    def test_startup_adds_skill_routes_to_legacy_configuration_once(self) -> None:
+        path = Path(self.tmp.name) / "legacy-skill-routing.sqlite"
+        legacy = default_agent_configuration()
+        legacy.pop("skillRouting")
+        with closing(sqlite3.connect(path)) as conn, conn:
+            apply_database_migrations(conn)
+            conn.execute(
+                """
+                INSERT INTO agent_configuration_state(
+                    singleton_id, revision, configuration_json, applied_revision,
+                    sync_state, sync_error, updated_at_ms, updated_by
+                ) VALUES (1, 5, ?, 5, 'synchronized', '', 1, 'legacy-settings')
+                """,
+                (json.dumps(legacy, ensure_ascii=False, sort_keys=True),),
+            )
+
+        store = AgentConfigurationStore(path)
+        store.initialize(default_agent_configuration())
+        snapshot = store.snapshot()
+
+        self.assertEqual(snapshot["revision"], 6)
+        self.assertEqual(
+            snapshot["configuration"]["skillRouting"],
+            default_agent_configuration()["skillRouting"],
+        )
+        store_again = AgentConfigurationStore(path)
+        store_again.initialize(default_agent_configuration())
+        self.assertEqual(store_again.snapshot()["revision"], 6)
 
     def test_configuration_is_revisioned_and_rejects_stale_writers(self) -> None:
         initial = self.store.snapshot()

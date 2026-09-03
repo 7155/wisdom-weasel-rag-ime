@@ -157,6 +157,68 @@ v1/v3/v4/v5 的真实回执分别是 `runs/memory-maintenance-luna-max-validatio
 
 ## 面试问答（可直接展开）
 
+**问：你们的 LLM-as-Judge 到底怎么打分？**
+
+答：PAW 不让 Judge 一个人决定发布。以 Enterprise RAG 的 answer-evidence
+评测为例，Runner 先冻结并匿名化每条 lane 的候选答案；Judge 只看到问题、公开
+reference answer，以及该候选实际引用到的证据正文，看不到检索 qrels、指标反馈和
+候选名称。Judge 必须先把题目明确询问的实体、数字、日期、方向或动作拆成
+`requiredFacts`，再为每个候选输出严格 JSON：`coveredFactIds`、是否矛盾、是否含无
+证据的重要主张、`correct` 和 `reasonCode`。所有必答槽位都覆盖才是 `correct`；漏一项
+是 `incomplete`，与证据矛盾是 `wrong`，有证据却拒答是 `abstained`，额外的重要主张
+没有引用支持是 `unsupported`。Rubric 明确不奖励文风、长度或复述 reference 的措辞。
+
+Judge 输出还要经过确定性解析器：case/candidate 必须一一齐全、reason code 必须在
+白名单、fact ID 必须来自本题，否则整次 Judge receipt fail closed。之后 Host 再用
+隐藏的 `fact → source/chunk/quote` qrels 独立检查 citation 是否可解析、每条必要事实是否
+真的被所引原文支持；Schema、终态、Tool contract、拒答和 citation 都是发布硬门禁，
+最后才比较 token、耗时和价格。因此 Judge 是语义评分层，不是唯一真相来源。
+
+当前诚实边界：本项目已有匿名化、严格 JSON、逐事实 rubric、确定性 hard gate 和失败
+回执，但这批 RAG receipt 没有绑定一份“多位人工标注者与 Judge 的一致率”校准报告，
+所以面试中不能声称已证明 85% 人类一致性。下一步应在独立标注子集上报告一致率、
+分歧类型和复核规则，而不是只换一个更强 Judge 后自行宣布可靠。
+
+实际例子：`qst_0474` 问的是 Redwood inference engine 明确列出的 serving-runtime
+优化。Judge 从题目和 reference 拆出 5 个必答事实：modern attention、continuous
+batching、KV/prefix cache、quantization-friendly path，以及同时感知 architecture、
+sequence length 和 hardware 的 kernel selection。旧 v20 receipt 中 baseline、Skill、
+tuned 都只覆盖 `F2 + F3`，没有矛盾、也没有额外无依据主张，但因为少了另外 3 项，仍
+统一判为 `incomplete`，不能因“答到两个关键词”给部分成功。`qst_0477` 则询问 4 类收入
+来源；候选覆盖 `F1–F4` 后 Judge 判 `correct`。但旧 receipt 中该答案的 citation support
+仍未通过 Host qrels，所以最终仍被发布硬门禁拒绝。这正好说明“语义答对”不等于“引用
+证据正确”。
+
+**问：Golden Data（不是 goalen data）怎么做？**
+
+答：先定义成功的最小可验收事实，再做数据，而不是先收一堆日志。当前 Enterprise RAG
+使用公开 EnterpriseRAG-Bench 的真实语料，固定 `5,101` documents、`29,846` chunks、
+split、case 选择、chunking 和检索配置；answer-evidence Validation 冻结 4 个 case，
+其中 2 个可回答、2 个应拒答，避免用“每题都回答”刷分。可回答题被拆成 9 条必要事实，
+再绑定到 11 个 support group、13 组精确的 source/chunk/quote 证据；拒答题把
+`abstentionExpected` 作为独立 Gold。
+
+Gold 保存在 Host-private manifest，不进入 Agent Prompt；检索 qrels 也不进入 Judge。
+manifest 同时绑定 prepared source hash、split、chunking hash、fact hash、document hash、
+精确 quote 和总 manifest hash。加载时只要题目漂移、split 不符、fact hash 不符、文档
+变化、quote 不在对应 chunk、必要事实没有 verified support，Runner 就在模型运行前
+拒绝计分。Validation 用来诊断和选候选，Held-out 只能在 Promotion 后一次性打开；
+失败 case 和拒答反例都保留在原分母中。
+
+当前诚实边界：这些合同能证明 Gold 与冻结语料一致，并阻止标签泄漏；现有 receipt 没有
+完整记录双人标注、仲裁人和 inter-annotator agreement，因此不能包装成“全部 Golden
+Data 已由多人双盲审核”。若扩到生产数据，应补标注指南、双标/仲裁、困难与负例分层、
+来源授权、PII 脱敏、版本/hash 和定期漂移复审。
+
+实际例子：`qst_0474` 的 Gold 不是一整段“标准作文”，而是上面的 5 条原子事实；
+`qst_0477` 再贡献 4 条收入事实，因此两个可回答 case 合计 9 条必要事实。Host-private
+qrels 把它们绑定为 11 个可替代 support group、13 组精确 source/chunk/quote。另两题
+`qst_0488`（A100/H100 safe-mode BIOS 默认值）和 `qst_0492`（microburst surcharge 与
+GL account）在冻结语料中没有完整答案，所以 Gold 是 `abstentionExpected=true`；候选
+必须明确说明资料不足，不能用相似文档猜答案。Agent Lab 中点击这些 case 时，应在内置
+只读面板展示问题、必答事实/拒答预期、候选输出、Judge reason code 和 citation support
+摘要；Host-private 原始 qrels 只显示 hash 与通过状态，不直接弹出文件夹或泄露隐藏标签。
+
 **问：为什么不把 RAG、CloudOps、EnterpriseOps 的分数加成一个总分？**
 
 答：它们的成功定义不同。RAG 的主指标是 Recall/MRR/nDCG，EnterpriseOps 的硬门禁是数据库 verifier 和 cleanup，Trace 的核心是 first-failing-span 与 Evidence F1。Agent Lab 统一的是数据契约、冻结控制、证据链和决策格式，不制造没有业务意义的总分。

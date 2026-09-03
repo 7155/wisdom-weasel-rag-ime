@@ -848,6 +848,7 @@ class AgentDelegationTests(unittest.TestCase):
                 for run in batch["runs"]
             )
         )
+
         self.assertTrue(all(run["result"]["summary"] for run in batch["runs"]))
         self.assertTrue(
             all(run["result"]["deliveryStatus"] == "returned" for run in batch["runs"])
@@ -903,6 +904,51 @@ class AgentDelegationTests(unittest.TestCase):
                 {"agent": "market-shell-agent", "task": "执行任意命令", **_TASK_CONTRACT},
             )
         coordinator.close()
+
+    def test_delegation_budget_may_narrow_but_never_expand_template_limits(self) -> None:
+        coordinator = self.coordinator()
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "wait": True,
+                    "agent": "reviewer",
+                    "task": "在有界预算内检查证据覆盖",
+                    "budget": {
+                        "maxTotalTokens": 8_000,
+                        "maxDurationMs": 120_000,
+                        "maxOutputChars": 4_000,
+                    },
+                    **_TASK_CONTRACT,
+                },
+            )
+            self.assertEqual(
+                {
+                    "maxTurns": 0,
+                    "maxToolCalls": 0,
+                    "maxTotalTokens": 8_000,
+                    "maxDurationMs": 120_000,
+                    "maxOutputChars": 4_000,
+                },
+                response["batch"]["runs"][0]["budget"],
+            )
+            with self.assertRaisesRegex(ValueError, "budget cannot exceed"):
+                coordinator.delegate(
+                    str(self.parent["id"]),
+                    {
+                        "wait": True,
+                        "tasks": [
+                            {
+                                "agent": "reviewer",
+                                "task": "拒绝扩大模板预算",
+                                "budget": {"maxTotalTokens": 64_000},
+                                **_TASK_CONTRACT,
+                            }
+                        ],
+                    },
+                )
+        finally:
+            coordinator.close()
 
     def test_read_only_child_inherits_parent_workspace_roots_without_write_authority(
         self,

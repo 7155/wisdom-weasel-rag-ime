@@ -88,9 +88,15 @@ class TraceAgentDiagnosticsSkillTests(unittest.TestCase):
             " ".join(checklist.split()),
         )
         self.assertIn('`workspaceRoots: ["/"]`', content)
-        self.assertIn('`writeAuthority: "auto_approved_full_trust"`', content)
-        self.assertNotIn("Luna Max", content)
-        self.assertNotIn("workspace-fenced", content)
+        self.assertIn('`toolProfileVersion: "control-center-auto-approve-v1"`', content)
+        self.assertIn('`executionMode: "full_trust"`', content)
+        self.assertIn('`dangerousModeConfirmation: "ENABLE_FULL_TRUST"`', content)
+        self.assertIn('`toolAllowlistMode: "profile"`', content)
+        self.assertIn('`projectContextEnabled: true`', content)
+        self.assertIn("source conversations and files", content)
+        self.assertIn("without per-read approval", content)
+        self.assertNotIn("The diagnostic Session is read-only", content)
+        self.assertNotIn("Do not use for generic log summarization or direct mutation", content)
 
     def test_repair_verification_uses_direct_full_auto_authority(self) -> None:
         content = REPAIR_VERIFICATION_PATH.read_text(encoding="utf-8")

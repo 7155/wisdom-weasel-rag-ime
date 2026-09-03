@@ -56,6 +56,7 @@ const EVAL_LAB_CANDIDATE_PERMISSION_POLICY: RoomPermissionPolicy = {
 };
 
 type EvalLabPage = 'overview' | 'paths' | 'details' | 'sessions';
+type ExperimentRecordView = 'task' | 'dataset' | 'baseline' | 'change' | 'candidate';
 type RoomAction = { runId: string; state: 'creating' | 'sending' | 'error'; message?: string };
 type CandidateLaunch = {
   experiment: EvalLabExperiment;
@@ -1472,6 +1473,7 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
       {currentRoomAction?.state === 'error' ? <p aria-live="assertive" className="eval-lab__room-error" role="alert">{currentRoomAction.message}</p> : null}
 
       <ExperimentOutcomeSummary experiment={experiment} />
+      <ExperimentRecordBrowser evidenceCatalog={evidenceCatalog} experiment={experiment} />
       <CandidateProposal experiment={experiment} onEnterRoom={() => onCreateRoom(linkedRuns[0])} busy={Boolean(currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending')} />
       <RoomReviewEvidence onOpenRoom={onOpenRoom} rooms={rooms} />
       <div className="eval-lab__experiment-context">
@@ -1559,6 +1561,133 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
       </section>
       <ExperimentEvidenceLinks catalog={evidenceCatalog} experiment={experiment} />
     </article>
+  );
+}
+
+const EXPERIMENT_RECORD_VIEWS = [
+  ['task', '任务定义'],
+  ['dataset', '数据集 Cases'],
+  ['baseline', '原结果'],
+  ['change', '优化记录'],
+  ['candidate', '新结果'],
+] as const satisfies readonly (readonly [ExperimentRecordView, string])[];
+
+function ExperimentRecordBrowser({ evidenceCatalog, experiment }: {
+  evidenceCatalog?: EvalLabEvidenceResponse;
+  experiment: EvalLabExperiment;
+}) {
+  const [view, setView] = useState<ExperimentRecordView>('task');
+  const datasetExplanation = experimentDatasetExplanation(experiment);
+  const evidenceRuns = matchingEvidenceRuns(evidenceCatalog, experiment);
+  return (
+    <section aria-label="任务、数据集与优化记录" className="eval-lab__record-browser">
+      <header>
+        <div><span>本轮档案</span><h3>从任务一路核对到新结果</h3></div>
+        <p>所有内容都在 Agent Lab 内查看；本机文件夹只作为高级用户的次级入口。</p>
+      </header>
+      <nav aria-label="选择实验档案" className="eval-lab__record-tabs" role="tablist">
+        {EXPERIMENT_RECORD_VIEWS.map(([key, label], index) => (
+          <button
+            aria-selected={view === key}
+            key={key}
+            onClick={() => setView(key)}
+            onKeyDown={(event) => moveTabbedSelection(event, index, EXPERIMENT_RECORD_VIEWS.map(([value]) => value), setView)}
+            role="tab"
+            type="button"
+          >{label}</button>
+        ))}
+      </nav>
+      <div className="eval-lab__record-panel" role="tabpanel">
+        {view === 'task' ? (
+          <dl>
+            <div><dt>业务问题</dt><dd>{humanClaimText(experiment.businessProblem)}</dd></div>
+            <div><dt>本轮任务</dt><dd>{humanClaimText(experiment.star.task)}</dd></div>
+            <div><dt>为什么使用 Agent</dt><dd>{humanClaimText(experiment.whyAgent)}</dd></div>
+            <div><dt>成功定义</dt><dd>{metricLabel(experiment.scoring.primaryMetric)}；{experiment.scoring.hardGates.map(humanClaimText).join('；') || '未记录硬门禁'}</dd></div>
+          </dl>
+        ) : null}
+        {view === 'dataset' ? (
+          <div className="eval-lab__record-dataset">
+            <dl>
+              <div><dt>数据集</dt><dd>{experiment.dataset.datasetId}</dd></div>
+              <div><dt>范围</dt><dd>{splitLabel(experiment.dataset.split)} · {datasetSummary(experiment.dataset)}</dd></div>
+              <div><dt>Manifest</dt><dd><code>{experiment.dataset.manifestSha256.slice(0, 16)}</code></dd></div>
+              <div><dt>原始数据</dt><dd>{datasetExplanation.source}</dd></div>
+              <div><dt>构造方法</dt><dd>{datasetExplanation.preparation}</dd></div>
+              <div><dt>Golden Data</dt><dd>{datasetExplanation.gold}</dd></div>
+            </dl>
+            <ExperimentDatasetCases evidenceRuns={evidenceRuns} experiment={experiment} />
+          </div>
+        ) : null}
+        {view === 'baseline' ? <ExperimentResultRecord experiment={experiment} kind="baseline" evidenceRuns={evidenceRuns} /> : null}
+        {view === 'change' ? <ExperimentChangeRecord experiment={experiment} /> : null}
+        {view === 'candidate' ? <ExperimentResultRecord experiment={experiment} kind="candidate" evidenceRuns={evidenceRuns} /> : null}
+      </div>
+    </section>
+  );
+}
+
+function ExperimentDatasetCases({ evidenceRuns, experiment }: {
+  evidenceRuns: readonly EvalLabEvidenceRun[];
+  experiment: EvalLabExperiment;
+}) {
+  const [selected, setSelected] = useState<{ runId: string; task: EvalLabEvidenceTask }>();
+  const preferredRuns = [...evidenceRuns].sort((left, right) => {
+    const relationDelta = Number(evidenceRelation(experiment, right) === 'candidate') - Number(evidenceRelation(experiment, left) === 'candidate');
+    return relationDelta || right.updatedAtMs - left.updatedAtMs;
+  });
+  const cases = new Map<string, { run: EvalLabEvidenceRun; task: EvalLabEvidenceTask }>();
+  for (const run of preferredRuns) {
+    for (const task of run.tasks ?? []) {
+      const key = task.taskLabel.trim() || String(task.taskIndex);
+      if (!cases.has(key)) cases.set(key, { run, task });
+    }
+  }
+  const rows = [...cases.values()].slice(0, experiment.dataset.caseCount);
+  return (
+    <section aria-label="数据集 Case 浏览器" className="eval-lab__case-browser">
+      <header><div><strong>Case 浏览器</strong><span>点击后仍在本页查看输入、输出、Trace、环境和验收。</span></div><em>{rows.length ? `${rows.length}/${experiment.dataset.caseCount} 条公开证据` : 'Case 正文未公开'}</em></header>
+      {rows.length ? <ol>{rows.map(({ run, task }) => {
+        const active = selected?.runId === run.runId && selected.task.taskIndex === task.taskIndex;
+        return <li key={`${run.runId}:${task.taskIndex}`}>
+          <div><strong>{task.taskLabel}</strong><span>{evidenceRelationLabel(experiment, run)} · {task.taskSucceeded === true ? '任务通过' : task.taskSucceeded === false ? '需要复核' : '结果未记录'} · {task.transcriptAvailable ? `${task.toolCalls} 次 Tool` : evidenceTaskIsReportOnly(run, task) ? '报告证据' : 'Transcript 缺失'}</span></div>
+          <button onClick={() => setSelected(active ? undefined : { runId: run.runId, task })} type="button">{active ? '收起 Case' : '查看 Case'}</button>
+          {active ? <EvidencePanel runId={run.runId} taskIndex={evidenceTaskIndex(run, task)} fallbackTask={task} initialTab={evidenceTaskIsReportOnly(run, task) ? 'report' : 'task'} /> : null}
+        </li>;
+      })}</ol> : <p>当前只公开了数据集规模、构造方法、Golden Data 与校验码，没有公开逐 Case 正文；App 不会用示例内容冒充真实数据。</p>}
+    </section>
+  );
+}
+
+function ExperimentResultRecord({ evidenceRuns, experiment, kind }: {
+  evidenceRuns: readonly EvalLabEvidenceRun[];
+  experiment: EvalLabExperiment;
+  kind: 'baseline' | 'candidate';
+}) {
+  const result = experiment[kind];
+  const runs = evidenceRuns.filter((run) => evidenceRelation(experiment, run) === kind);
+  return (
+    <div className="eval-lab__result-record">
+      <div className="eval-lab__result-verdicts">
+        <div><span>任务结果</span><strong>{matrixQuality(experiment)}</strong></div>
+        <div><span>发布 / 可靠性门禁</span><strong>{matrixReliability(experiment)}</strong></div>
+        <div><span>时间与成本</span><strong>{matrixEfficiency(experiment)}</strong></div>
+      </div>
+      <MetricList metrics={result.metrics} />
+      <footer><span>Run ID</span><code>{result.runId}</code><span>{runs.length ? `${runs.length} 个证据批次已绑定` : '没有匹配的公开运行证据'}</span></footer>
+    </div>
+  );
+}
+
+function ExperimentChangeRecord({ experiment }: { experiment: EvalLabExperiment }) {
+  return (
+    <div className="eval-lab__change-record">
+      <section><h4>为什么改</h4><p>{publicProblemSummary(experiment)}</p></section>
+      <section><h4>实际改动</h4>{experiment.factors.length ? <ol>{experiment.factors.map((factor) => <li key={factor.name}><strong>{factorLabel(factor.name)}</strong><span>{humanClaimText(factor.before)} → {humanClaimText(factor.after)}</span><small>{humanClaimText(factor.reason)}</small></li>)}</ol> : <p>本轮没有记录可归因的改动。</p>}</section>
+      <section><h4>保持不变</h4><p>{experiment.frozenControls.map((control) => controlLabel(control.name)).join('、') || '未记录冻结控制'}</p></section>
+      <section><h4>前后差值</h4>{experiment.comparison.metricDeltas.length ? <ul>{experiment.comparison.metricDeltas.map((delta) => <li key={delta.metric}><span>{metricLabel(delta.metric)}</span><strong>{formatMetricByName(delta.metric, delta.before)} → {formatMetricByName(delta.metric, delta.after)}</strong></li>)}</ul> : <p>暂无可比较的指标变化。</p>}</section>
+      <footer><strong>{experiment.comparison.decision === 'keep' ? 'Keep' : experiment.comparison.decision === 'reject' ? 'Reject' : '待定'}</strong><span>{humanClaimText(experiment.comparison.decisionReason)}</span></footer>
+    </div>
   );
 }
 

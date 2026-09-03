@@ -724,6 +724,37 @@ class TraceDiagnosticReportStore:
                 else None
             )
 
+    def owns_session(self, session_id: str) -> bool:
+        """Return whether a Session is bound to a diagnostic or repair report."""
+
+        identifier = _required_id(session_id, "sessionId", 240)
+        self.initialize()
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM trace_diagnostic_reports AS report
+                JOIN trace_diagnostic_report_revisions AS revision
+                  ON revision.report_id = report.report_id
+                 AND revision.revision = report.current_revision
+                WHERE report.diagnostic_session_id = ?
+                   OR (
+                        json_valid(revision.payload_json)
+                        AND json_extract(
+                            revision.payload_json,
+                            '$.repairLifecycle.authorization.repairSessionId'
+                        ) = ?
+                   )
+                LIMIT 1
+                """,
+                (identifier, identifier),
+            ).fetchone()
+            return row is not None
+
     def list(self, *, limit: int = 100) -> dict[str, object]:
         safe_limit = _bounded_integer(limit, minimum=1, maximum=100, name="limit")
         self.initialize()

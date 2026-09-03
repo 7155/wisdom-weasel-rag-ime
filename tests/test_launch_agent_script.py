@@ -248,8 +248,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 capture_output=True,
             )
             projection_payload = json.loads(projection.stdout)
-            self.assertEqual(projection_payload["experimentTotal"], 21)
-            self.assertEqual(projection_payload["pathSearchTotal"], 1)
+            self.assertEqual(projection_payload["experimentTotal"], 22)
+            self.assertEqual(projection_payload["pathSearchTotal"], 2)
             init_prompt = (
                 Path(tmp)
                 / "Library"

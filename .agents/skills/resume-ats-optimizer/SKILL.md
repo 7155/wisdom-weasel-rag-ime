@@ -9,18 +9,18 @@ description: 审计简历的 ATS 可解析性、检查 JD 关键词覆盖和生�
 
 ## 先读
 
-读取 [简历事实契约](../resume-builder/references/resume-contract.md) 与 [写作规范中的 ATS 输出规则](../resume-builder/references/content-writing.md)。若当前环境是源码仓库或已安装完整 npm 包 `@chasen-liao/resume-skills`，可用包内脚本自动检查：
+读取 [简历事实契约](../resume-workflow/references/resume-contract.md) 与 [写作规范中的 ATS 输出规则](../resume-workflow/references/content-writing.md)。若当前环境是源码仓库或已安装完整简历工具包，可用包内脚本自动检查：
 
 ```powershell
-python skills/resume-builder/scripts/validate_resume.py --html <resume.html> --mode ats
-python skills/resume-builder/scripts/validate_resume.py --pdf <resume.pdf>
+python skills/resume-workflow/scripts/validate_resume.py --html <resume.html> --mode ats
+python skills/resume-workflow/scripts/validate_resume.py --pdf <resume.pdf>
 ```
 
-> 以上脚本随 npm 包发布（`skills/resume-builder/scripts/`）。在包目录下运行时用 `node_modules/@chasen-liao/resume-skills/` 前缀替换 `skills/`；通过 `npx skills add` 仅安装 SKILL.md 的环境没有这些脚本，此时按下方工作流做结构化检查即可，不要把脚本路径当作必需步骤。
+> 以上脚本随 PAW 的共享简历工作流资源发布（`skills/resume-workflow/scripts/`）。在包目录下运行时用对应包目录前缀替换 `skills/`；通过 `npx skills add` 仅安装 SKILL.md 的环境没有这些脚本，此时按下方工作流做结构化检查即可，不要把脚本路径当作必需步骤。
 
 ## 协作入口
 
-这是母版生成后和 JD 定制版生成后的**质量关卡**。默认检查并报告解析风险与关键词/事实缺口，但不静默修改简历；用户确认后，才将呈现修复交回 `resume-builder` 或 `jd-tailorer`。
+这是母版生成后和 JD 定制版生成后的**质量关卡**。默认检查并报告解析风险与关键词/事实缺口，但不静默修改简历；用户确认后，才将呈现修复交回 `resume-workflow` 或 `jd-tailorer`。
 
 没有 JD 时只检查可解析性和结构；有 JD 时把“可直接改善的呈现问题”与“必须保留的真实能力缺口”分开报告。它不替代 JD 分析，也不决定是否投递。
 

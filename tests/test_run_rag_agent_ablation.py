@@ -48,6 +48,7 @@ from scripts.run_rag_agent_ablation import (
     _search_parameter_policy_passes,
     _sha256_json,
     _started_tool_names,
+    _validate_answer_evidence_qrels,
     _validate_checkpoint_request,
 )
 
@@ -1227,7 +1228,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertEqual("openai-codex/gpt-5.6-sol", receipt["model"])
         self.assertTrue(receipt["settingsSha256"])
 
-    def test_evaluation_configuration_pins_every_paw_agent_route(self) -> None:
+    def test_evaluation_configuration_pins_parent_and_judge_max_but_bounds_reviewer_low(self) -> None:
         configuration = _evaluation_configuration_defaults()
 
         self.assertEqual(
@@ -1245,9 +1246,12 @@ class RunRagAgentAblationTests(unittest.TestCase):
             },
             set(configuration["modelRouting"]),
         )
-        for route in configuration["modelRouting"].values():
+        for route_id, route in configuration["modelRouting"].items():
             self.assertEqual("openai-codex/gpt-5.6-sol", route["modelProfile"])
-            self.assertEqual("max", route["thinkingLevel"])
+            self.assertEqual(
+                "low" if route_id == "subagent" else "max",
+                route["thinkingLevel"],
+            )
 
     def test_answer_manifest_binds_suite_corpus_and_high_level_evidence(self) -> None:
         import hashlib
@@ -1396,6 +1400,109 @@ class RunRagAgentAblationTests(unittest.TestCase):
                 evaluation_split="validation",
                 chunking_config=chunking,
                 answer_evidence_qrels=evidence_qrels,
+            )
+
+    def test_answer_evidence_qrels_v2_requires_and_preserves_support_group_mode(self) -> None:
+        import hashlib
+
+        fact_text = "Either verified alternative supports the required fact."
+        documents = {
+            "doc-a": "Alternative A directly supports the required fact.",
+            "doc-b": "Alternative B directly supports the required fact.",
+        }
+        chunking = {
+            "strategy": "general",
+            "size": 1200,
+            "overlap": 160,
+            "separator": "",
+            "respectHeadings": True,
+            "respectPageBoundaries": True,
+        }
+
+        def qrels(mode: object = "any") -> dict[str, object]:
+            value: dict[str, object] = {
+                "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+                "evaluationSplit": "validation",
+                "preparedSourceSha256": "dataset-v2",
+                "chunkingConfigSha256": _sha256_json(chunking),
+                "cases": [
+                    {
+                        "queryId": "q-high",
+                        "facts": [
+                            {
+                                "factId": "F1",
+                                "factSha256": hashlib.sha256(
+                                    fact_text.encode("utf-8")
+                                ).hexdigest(),
+                                "availability": "verified",
+                                **(
+                                    {"supportGroupMode": mode}
+                                    if mode is not None
+                                    else {}
+                                ),
+                                "supportGroups": [
+                                    {
+                                        "groupId": f"G{index}",
+                                        "evidence": [
+                                            {
+                                                "documentId": document_id,
+                                                "documentSha256": hashlib.sha256(
+                                                    text.encode("utf-8")
+                                                ).hexdigest(),
+                                                "chunkOrdinal": 0,
+                                                "chunkSha256": hashlib.sha256(
+                                                    text.encode("utf-8")
+                                                ).hexdigest(),
+                                                "quote": text,
+                                                "quoteSha256": hashlib.sha256(
+                                                    text.encode("utf-8")
+                                                ).hexdigest(),
+                                            }
+                                        ],
+                                    }
+                                    for index, (document_id, text) in enumerate(
+                                        documents.items(), start=1
+                                    )
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+            value["manifestSha256"] = _sha256_json(value)
+            return value
+
+        private_qrels, stats = _validate_answer_evidence_qrels(
+            qrels(),
+            selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+            document_text_by_id=documents,
+            prepared_source_sha256="dataset-v2",
+            evaluation_split="validation",
+            chunking_config=chunking,
+        )
+
+        self.assertEqual(
+            "any",
+            private_qrels["q-high"]["facts"][0]["supportGroupMode"],
+        )
+        self.assertEqual(2, stats["supportGroupCount"])
+        with self.assertRaisesRegex(ValueError, "support group mode"):
+            _validate_answer_evidence_qrels(
+                qrels("sometimes"),
+                selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+                document_text_by_id=documents,
+                prepared_source_sha256="dataset-v2",
+                evaluation_split="validation",
+                chunking_config=chunking,
+            )
+        with self.assertRaisesRegex(ValueError, "support group mode"):
+            _validate_answer_evidence_qrels(
+                qrels(None),
+                selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+                document_text_by_id=documents,
+                prepared_source_sha256="dataset-v2",
+                evaluation_split="validation",
+                chunking_config=chunking,
             )
 
     def test_answer_manifest_rejects_token_overlap_without_verified_fact_qrels(self) -> None:
@@ -1810,7 +1917,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertEqual(2, denominators["highLevelFacts"])
         self.assertEqual(2, denominators["citationFacts"])
 
-    def test_answer_only_fact_citation_coverage_requires_every_qrel_support_group(self) -> None:
+    def test_answer_only_fact_citation_coverage_honors_all_and_any_support_group_modes(self) -> None:
         lane_records = [
             {
                 "lane": "baseline",
@@ -1893,6 +2000,14 @@ class RunRagAgentAblationTests(unittest.TestCase):
                                 {"documentIds": ["doc-hardware"]},
                             ],
                         },
+                        {
+                            "factId": "F3",
+                            "supportGroupMode": "any",
+                            "supportGroups": [
+                                {"documentIds": ["doc-architecture"]},
+                                {"documentIds": ["doc-alternative"]},
+                            ],
+                        },
                     ]
                 }
             }
@@ -1908,9 +2023,9 @@ class RunRagAgentAblationTests(unittest.TestCase):
         answer_case = lane_records[0]["score"]["answerCases"][0]
         metrics = lane_records[0]["score"]["agentMetrics"]
         self.assertTrue(answer_case["answerJudgeCorrect"])
-        self.assertEqual(0.5, answer_case["citationFactCoverage"])
+        self.assertAlmostEqual(2 / 3, answer_case["citationFactCoverage"])
         self.assertFalse(answer_case["citationSupport"])
-        self.assertEqual(0.5, metrics["citationFactCoverage"])
+        self.assertAlmostEqual(2 / 3, metrics["citationFactCoverage"])
         self.assertFalse(
             lane_records[0]["score"]["hardEvidence"]["factCitationCoverage"]
         )
@@ -2463,7 +2578,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
             projected["gatewayLedger"]["schemaVersion"],
         )
 
-    def test_agentic_prompt_requires_parent_two_pass_and_one_coverage_critic(self) -> None:
+    def test_agentic_prompt_requires_selective_atomic_searches_and_one_bounded_critic(self) -> None:
         prompt = _lane_prompt(
             lane="agentic",
             run_id="b" * 32,
@@ -2478,25 +2593,42 @@ class RunRagAgentAblationTests(unittest.TestCase):
         )
 
         self.assertIn("agents.delegate", prompt)
+        self.assertIn("agents 是 Runtime 常驻工具", prompt)
+        self.assertIn("不得把 agents 传给 tool_load", prompt)
+        self.assertNotIn("调用 tool_load，name=agents", prompt)
         self.assertIn('"op":"delegate"', prompt)
-        self.assertIn('"tasks":[', prompt)
+        self.assertNotIn('"tasks":[', prompt)
         self.assertEqual(1, prompt.count('"agent":"reviewer"'))
         self.assertIn('"wait":true', prompt)
+        self.assertIn('"thinkingLevel":"low"', prompt)
+        self.assertIn('"maxTotalTokens":8000', prompt)
+        self.assertIn('"maxDurationMs":120000', prompt)
+        self.assertIn('"maxOutputChars":4000', prompt)
         self.assertIn("不得调用 agents.catalog", prompt)
         self.assertIn("第一阶段由父 Agent", prompt)
         self.assertIn("DYNAMIC_FIRST_PASS_EVIDENCE_PACKET", prompt)
         self.assertIn("必须把 task 中的 DYNAMIC_FIRST_PASS_EVIDENCE_PACKET 替换", prompt)
         self.assertIn("reviewer 不得调用任何 Tool", prompt)
-        self.assertIn("父 Agent 必须对每个真实 case 再做且只做一次 search", prompt)
+        self.assertIn("最多 6 次补检索", prompt)
+        self.assertIn("每个 case 最多 4 条", prompt)
+        self.assertIn("没有可信直接证据时返回空数组", prompt)
+        self.assertIn("complete_direct、partial_direct、none_direct", prompt)
+        self.assertIn("只有 partial_direct", prompt)
+        self.assertIn("不得把省下的配额转移给 none_direct", prompt)
+        self.assertIn("attention/kernel", prompt)
+        self.assertIn("hosted、Dedicated、Private、add-on", prompt)
         self.assertIn("不得依赖默认值或省略 rerank 参数", prompt)
         self.assertIn("rerank=true", prompt)
         self.assertIn("rerankCandidateDepth=40", prompt)
         self.assertIn("topK=10", prompt)
+        self.assertIn("mode=lexical、topK=3、threshold=0、rerank=false", prompt)
+        self.assertIn("最多三条", prompt)
+        self.assertIn("不超过 160 字", prompt)
         self.assertEqual(1, prompt.count('"caseId":"q-1"'))
         self.assertIn("query 必须逐字复制", prompt)
-        self.assertIn("每个真实 case 严格两次父级 search", prompt)
         self.assertIn("safety 严格一次", prompt)
-        self.assertIn("最终合成以两轮父级 search 正文为唯一事实依据", prompt)
+        self.assertIn("最终合成以父级 search 正文为唯一事实依据", prompt)
+        self.assertIn("委派返回后不再执行第二轮 coverage audit", prompt)
         self.assertIn("所有直接佐证来源", prompt)
         self.assertNotIn("b" * 32, prompt)
 
@@ -2572,7 +2704,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertIn("不得因此整题拒答", prompt)
         self.assertIn("枚举容器", prompt)
 
-    def test_agentic_parent_query_policy_requires_exact_then_distinct_query(self) -> None:
+    def test_agentic_parent_query_policy_allows_selective_atomic_queries_with_global_cap(self) -> None:
         cases = [
             {
                 "evaluationCaseId": "case-01",
@@ -2618,7 +2750,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
                     "ok": True,
                     "args": {
                         "evaluationCaseId": "case-01",
-                        "query": "主体一 被问槽位 直接证据",
+                        "query": "主体一 槽位甲 直接证据",
                     },
                 },
                 {
@@ -2626,8 +2758,8 @@ class RunRagAgentAblationTests(unittest.TestCase):
                     "operation": "search",
                     "ok": True,
                     "args": {
-                        "evaluationCaseId": "case-02",
-                        "query": "主体二 被问槽位 直接证据",
+                        "evaluationCaseId": "case-01",
+                        "query": "主体一 槽位乙 直接证据",
                     },
                 },
                 {
@@ -2659,6 +2791,26 @@ class RunRagAgentAblationTests(unittest.TestCase):
         )
         ledger["items"][0]["args"]["query"] = "原始问题一"
         ledger["items"][3]["args"]["query"] = "原始问题一"
+        self.assertFalse(
+            _agentic_parent_query_policy_passes(
+                ledger,
+                parent_session_id="parent",
+                cases=cases,
+            )
+        )
+        ledger["items"][3]["args"]["query"] = "主体一 槽位甲 直接证据"
+        ledger["items"].extend(
+            {
+                "sessionId": "parent",
+                "operation": "search",
+                "ok": True,
+                "args": {
+                    "evaluationCaseId": "case-01",
+                    "query": f"主体一 额外槽位 {index}",
+                },
+            }
+            for index in range(5)
+        )
         self.assertFalse(
             _agentic_parent_query_policy_passes(
                 ledger,
@@ -2817,7 +2969,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
             )
         )
 
-    def test_agentic_parameter_policy_requires_parent_top_ten_for_both_passes(self) -> None:
+    def test_agentic_parameter_policy_uses_tuned_first_pass_and_cheap_supplemental_search(self) -> None:
         config = {
             "mode": "dense",
             "rerankEnabled": True,
@@ -2846,11 +2998,10 @@ class RunRagAgentAblationTests(unittest.TestCase):
                     "args": {
                         "baseAlias": "benchmark",
                         "evaluationCaseId": "case-01",
-                        "mode": "dense",
-                        "topK": 10,
+                        "mode": "lexical",
+                        "topK": 3,
                         "threshold": 0,
-                        "rerank": True,
-                        "rerankCandidateDepth": 40,
+                        "rerank": False,
                     },
                 },
             ]
@@ -2863,7 +3014,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
                 retrieval_config=config,
             )
         )
-        ledger["items"][1]["args"]["topK"] = 5
+        ledger["items"][1]["args"]["topK"] = 10
         self.assertFalse(
             _search_parameter_policy_passes(
                 ledger,

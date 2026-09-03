@@ -1808,6 +1808,30 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
     },
 }
 
+_DELEGATION_BUDGET_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "minProperties": 1,
+    "properties": {
+        "maxTotalTokens": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 262_144,
+        },
+        "maxDurationMs": {
+            "type": "integer",
+            "minimum": 1_000,
+            "maximum": 900_000,
+        },
+        "maxOutputChars": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 100_000,
+        },
+    },
+}
+
+
 _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "query": {"type": "string", "maxLength": 500},
     "suiteId": {"type": "string", "minLength": 1, "maxLength": 120},
@@ -2058,6 +2082,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "type": "string",
         "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
     },
+    "budget": dict(_DELEGATION_BUDGET_SCHEMA),
     "access": {
         "type": "string",
         "enum": ["inherit", "read_only", "write"],
@@ -2131,6 +2156,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                     "type": "string",
                     "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
                 },
+                "budget": dict(_DELEGATION_BUDGET_SCHEMA),
                 "access": {
                     "type": "string",
                     "enum": ["inherit", "read_only", "write"],
@@ -2336,7 +2362,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "agents": (
         "agent", "version", "task", "tasks", "expectedOutput",
         "acceptanceCriteria", "outputSchema", "modelProfile", "thinkingLevel",
-        "access", "allowedTools", "piSkillsEnabled", "codexSkillsEnabled",
+        "budget", "access", "allowedTools", "piSkillsEnabled", "codexSkillsEnabled",
         "workspaceRoots", "todoTask", "contextMode", "forkEntryId", "wait",
         "runId", "batchId", "targetRunId", "message", "artifactId", "limit",
     ),
@@ -10562,7 +10588,7 @@ def _runtime_tool_parameter_schema(
             single_task_fields = (
                 "agent", "version", "task", "expectedOutput",
                 "acceptanceCriteria", "outputSchema", "modelProfile",
-                "thinkingLevel", "access", "allowedTools", "piSkillsEnabled",
+                "thinkingLevel", "budget", "access", "allowedTools", "piSkillsEnabled",
                 "codexSkillsEnabled", "workspaceRoots",
             )
             branch["oneOf"] = [

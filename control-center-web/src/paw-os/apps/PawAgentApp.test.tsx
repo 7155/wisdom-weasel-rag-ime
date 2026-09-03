@@ -232,6 +232,26 @@ describe('PAWOS Agent App', () => {
     expect(await within(rail).findByText('Trace 地基')).toBeInTheDocument();
   });
 
+  it('labels an active conversation with a completed Root WorkItem as completed', async () => {
+    renderAgent(createTransport({
+      rooms: [roomFixture({
+        workItems: [
+          workItemFixture({
+            state: 'done',
+            resultSummary: '最终 Root 结果已提交',
+            completedAtMs: Date.now(),
+          }),
+        ],
+      })],
+      sessions: [],
+    }));
+
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
+    const roomRow = await within(rail).findByRole('button', { name: /迁移作战室/ });
+    expect(within(roomRow).getByText(/^已完成 · 2 位伙伴/)).toBeInTheDocument();
+    expect(within(roomRow).queryByText(/^进行中 ·/)).not.toBeInTheDocument();
+  });
+
   it('exposes the rail relationship and returns focus when Escape closes it', async () => {
     const user = userEvent.setup();
     renderAgent();

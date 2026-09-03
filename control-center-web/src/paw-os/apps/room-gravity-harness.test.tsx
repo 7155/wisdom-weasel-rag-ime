@@ -33,6 +33,24 @@ import {
 
 const root = resolve(process.cwd(), 'e2e/fixtures/minecraft-harness-20260825');
 
+const fullTrustPermissionPolicy = {
+  schemaVersion: 'rag-ime.room-permission-policy.v1',
+  room: { executionMode: 'full_trust' },
+  partner: { executionMode: 'inherit' },
+  toolAgent: { executionMode: 'inherit' },
+} as const;
+
+function readRoomFixture(path: string): Record<string, unknown> & { room: RoomSummary } {
+  const response = JSON.parse(readFileSync(resolve(root, path), 'utf8')) as Record<string, unknown> & { room: RoomSummary };
+  return {
+    ...response,
+    room: {
+      ...response.room,
+      permissionPolicy: fullTrustPermissionPolicy,
+    },
+  };
+}
+
 const firstRootId = 'room-turn:10000000-0000-4000-8000-000000000001';
 const latestRootId = 'room-turn:10000000-0000-4000-8000-000000000002';
 
@@ -63,7 +81,7 @@ function projectionForPublicRoot(projection: RoomProjectionState, rootId: string
 const harness = (() => {
   const events = readFileSync(resolve(root, 'room/history.jsonl'), 'utf8')
     .trim().split('\n').map((line) => parseRoomEvent(JSON.parse(line)));
-  const snapshot = JSON.parse(readFileSync(resolve(root, 'room/snapshot.json'), 'utf8')) as { room: RoomSummary };
+  const snapshot = readRoomFixture('room/snapshot.json');
   const projection = reduceRoomEvents(createRoomProjection(snapshot.room.id), events);
   const focus = buildRoomFocusProjection(snapshot.room, projection);
   const firstRootProjection = projectionForPublicRoot(projection, firstRootId);
@@ -210,7 +228,7 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(harness.firstRoot.focus.workItems).toHaveLength(3);
     expect(new Set(firstRootObjectives).size).toBe(firstRootObjectives.length);
 
-    const page = parseRoomEventSnapshot(JSON.parse(readFileSync(resolve(root, 'room/snapshot.json'), 'utf8')));
+    const page = parseRoomEventSnapshot(readRoomFixture('room/snapshot.json'));
     const projection = reduceRoomEvents(createRoomProjection(harness.room.id), page.events);
     const focus = buildRoomFocusProjection(harness.room, projection);
 
@@ -327,7 +345,7 @@ describe('room gravity projection over the minecraft harness', () => {
     const slice = harness.events.filter((event) => event.sequence >= 30 && event.sequence <= 110);
     const projection = reduceRoomEvents(createRoomProjection(harness.room.id), slice);
     useRoomLiveStore.setState({ projections: { [harness.room.id]: projection } });
-    const roomGet = JSON.parse(readFileSync(resolve(root, 'room/get.json'), 'utf8')) as Record<string, unknown>;
+    const roomGet = readRoomFixture('room/get.json');
     const transport = new MockControlTransport({ routes: { 'agent.room.get': roomGet } });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 

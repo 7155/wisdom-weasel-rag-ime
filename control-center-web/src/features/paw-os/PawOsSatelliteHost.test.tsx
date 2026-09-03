@@ -4,7 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
-import { createRoomProjection } from '@/contracts/room-reducer';
+import {
+  createRoomProjection,
+  parseRoomConversationSnapshot,
+  parseRoomEventSnapshot,
+} from '@/contracts/room-reducer';
+import { parseRoomEvent } from '@/contracts/validators';
+import type { UiRoomEvent } from '@/contracts/ui-events';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import type { RoomSummary } from '@/features/rooms/room-types';
@@ -390,7 +396,43 @@ describe('PawOsSatelliteHost', () => {
     expect(timeline.querySelector('.ccui-tool-card.status-running')).toHaveTextContent('正在读取 PawWindowLayer.tsx');
     expect(screen.queryByRole('banner', { name: '实现伙伴 当前上下文' })).not.toBeInTheDocument();
     expect(document.querySelector('.paw-os-satellite__hero')).not.toBeInTheDocument();
-    expect(transport.requests.map(({ request }) => request.pathId)).toEqual(['agent.room.get']);
+    expect(transport.requests.map(({ request }) => request.pathId)).toEqual([
+      'agent.room.get',
+      'agent.room.conversationSnapshot',
+      'agent.room.snapshot',
+    ]);
+  });
+
+  it('hydrates a cold planet from the message-first Room snapshot and applies live messages immediately', async () => {
+    const room = participantRoom();
+    const initialEvent = participantRoomEvent(1, 'participant_message', {
+      message: participantAgentMessage('message-cold', '冷启动的真实消息', 101),
+      messageId: 'message-cold',
+    });
+    const snapshot = participantRoomConversationSnapshot(room, [initialEvent]);
+    expect(() => parseRoomConversationSnapshot(snapshot)).not.toThrow();
+    const transport = new MockControlTransport({ routes: {
+      'agent.room.get': { room },
+      'agent.room.conversationSnapshot': snapshot,
+    } });
+
+    renderSatellite(transport, {
+      kind: 'participant', id: 'participant-a', roomId: room.id,
+      title: '实现伙伴', subtitle: '实现 · session-a',
+    });
+
+    const timeline = await screen.findByRole('log', { name: '行星公开对话时间线' });
+    expect(await within(timeline).findByText('冷启动的真实消息')).toBeInTheDocument();
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+
+    const liveEvent = participantRoomEvent(2, 'participant_message', {
+      message: participantAgentMessage('message-live', '实时推送已到达', 102),
+      messageId: 'message-live',
+    });
+    act(() => {
+      expect(transport.emit('agent.room.events', roomEventWireValue(liveEvent))).toBe(1);
+    });
+    expect(await within(timeline).findByText('实时推送已到达')).toBeInTheDocument();
   });
 
   it('keeps a planet read-only while retaining Trace and full Session navigation', async () => {
@@ -992,5 +1034,125 @@ function participantRoom(): RoomSummary {
       resultSummary: '', artifactRefs: [], evidenceRefs: [], blocker: {}, acceptedTurnId: 'turn-a',
       createdAtMs: 100, updatedAtMs: 110, completedAtMs: null,
     }],
+  };
+}
+
+function participantAgentMessage(id: string, content: string, createdAtMs: number) {
+  return {
+    schemaVersion: 'rag-ime.agent-message.v1',
+    id,
+    sessionId: 'session-a',
+    turnId: 'root-a',
+    role: 'assistant',
+    status: 'completed',
+    blocks: [{
+      id: `${id}:text`,
+      type: 'text',
+      status: 'completed',
+      presentationKind: 'markdown',
+      data: { text: content },
+    }],
+    attachments: [],
+    citations: [],
+    createdAtMs,
+    completedAtMs: createdAtMs,
+  };
+}
+
+function participantRoomEvent(
+  sequence: number,
+  eventType: string,
+  payload: Record<string, unknown>,
+  source: { participantId?: string; sourceSessionId?: string } = {},
+): UiRoomEvent {
+  return parseRoomEvent({
+    schemaVersion: 'rag-ime.agent-room-event.v1',
+    eventId: `room-live:${sequence}`,
+    roomId: 'room-live',
+    sequence,
+    turnId: 'root-a',
+    eventType,
+    participantId: source.participantId ?? 'participant-a',
+    sourceSessionId: source.sourceSessionId ?? 'session-a',
+    createdAtMs: 100 + sequence,
+    payload,
+    resumeToken: `room-live:${sequence}`,
+  });
+}
+
+function roomEventWireValue(event: UiRoomEvent): Record<string, unknown> {
+  const { streamKind: _streamKind, ...wireValue } = event;
+  return wireValue;
+}
+
+function participantRoomSnapshot(room: RoomSummary, events: readonly UiRoomEvent[]) {
+  const lastSequence = events.at(-1)?.sequence ?? 0;
+  return {
+    schemaVersion: 'rag-ime.agent-room-snapshot.v1',
+    ok: true,
+    room: {
+      schemaVersion: 'rag-ime.agent-room.v1',
+      id: room.id,
+      title: room.title,
+      status: room.status,
+      description: room.description ?? '',
+      routingPolicy: room.routingPolicy,
+      moderatorParticipantId: room.moderatorParticipantId ?? 'participant-root',
+      workspaceRoots: [],
+      executionMode: 'workspace_managed',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'workspace_managed' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
+      createdAtMs: 100,
+      updatedAtMs: room.updatedAtMs,
+      lastEventSequence: lastSequence,
+      participants: [{
+        schemaVersion: 'rag-ime.agent-participant.v1',
+        id: 'participant-root',
+        roomId: room.id,
+        sessionId: 'session-root',
+        roleId: 'moderator',
+        roleVersion: '1',
+        displayName: 'Root',
+        collaborationRole: 'coordinator',
+        status: 'active',
+        ordinal: 0,
+        createdAtMs: 100,
+        lastSpokeAtMs: null,
+      }, ...room.participants.map((participant) => ({
+        schemaVersion: 'rag-ime.agent-participant.v1',
+        roomId: room.id,
+        createdAtMs: 100,
+        lastSpokeAtMs: null,
+        ...participant,
+      }))],
+      workItems: room.workItems ?? [],
+    },
+    events: events.map(roomEventWireValue),
+    firstSequence: events[0]?.sequence ?? 0,
+    lastSequence,
+    resumeToken: lastSequence ? `${room.id}:${lastSequence}` : '',
+    truncated: false,
+  };
+}
+
+function participantRoomConversationSnapshot(
+  room: RoomSummary,
+  events: readonly UiRoomEvent[],
+) {
+  const full = participantRoomSnapshot(room, events);
+  return {
+    schemaVersion: 'rag-ime.agent-room-conversation-snapshot.v1',
+    ok: true,
+    room: full.room,
+    events: full.events,
+    firstEventSequence: events[0]?.sequence ?? 0,
+    cursorSequence: full.lastSequence,
+    resumeToken: full.resumeToken,
+    deferredEventCount: 0,
+    truncated: false,
   };
 }

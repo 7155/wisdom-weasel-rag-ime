@@ -12,6 +12,7 @@ import { usePlanningDashboard } from '@/features/planning/api';
 import { RoomStatusPanel } from '@/features/rooms/RoomStatusPanel';
 import type { RoomSummary } from '@/features/rooms/room-types';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
+import { useRoomLiveSession } from '@/features/rooms/runtime/use-room-live-session';
 import { openPawOsRoute, usePawOsDesktop } from './surface-context';
 import { routePath } from './model/app-registry';
 import type { PawOsWindowTarget } from './model/desktop';
@@ -24,6 +25,7 @@ import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosu
 import { toggleDisclosurePreservingAnchor } from '@/features/agent/timeline/disclosure-anchor';
 import { buildRoomFocusProjection, roomFocusCelestialName, roomFocusStateLabel, type RoomFocusState } from '@/paw-os/apps/room-focus-projection';
 import { RoomActivityGlyph } from '@/paw-os/apps/room-tool-glyph';
+import { usePageVisibility } from '@/platform/use-page-visibility';
 import './paw-os-satellite.css';
 
 export function PawOsSatelliteHost({ target }: { target: PawOsWindowTarget }) {
@@ -386,18 +388,52 @@ function RoomPanelSatellite({ target }: { target: Extract<PawOsWindowTarget, { k
 
 function RoomParticipantSatellite({ target }: { target: Extract<PawOsWindowTarget, { kind: 'participant' }> }) {
   const desktop = usePawOsDesktop();
+  const transport = useControlTransport();
+  const pageVisible = usePageVisibility();
   const roomQuery = useRoomDetail(target.roomId);
-  const room = roomFromResponse(roomQuery.data, target.roomId);
+  const [liveRoomResponse, setLiveRoomResponse] = useState<unknown>();
+  const [liveError, setLiveError] = useState<unknown>();
+  const [liveState, setLiveState] = useState<'recovering' | 'failed' | 'synced'>('recovering');
+  const room = roomFromResponse(liveRoomResponse, target.roomId)
+    ?? roomFromResponse(roomQuery.data, target.roomId);
   const participant = room?.participants.find((candidate) => candidate.id === target.id);
   const projection = useRoomLiveStore((state) => state.projections[target.roomId]);
+  const retryLive = useRoomLiveSession({
+    active: pageVisible,
+    roomId: target.roomId,
+    transport,
+    onLoadingChange: () => undefined,
+    onSnapshot: (_roomId, snapshot) => setLiveRoomResponse({ room: snapshot.room }),
+    onMetadata: (_roomId, response) => setLiveRoomResponse(response),
+    onConnectionRestored: () => setLiveError(undefined),
+    onConnectionError: (_roomId, error) => setLiveError(error),
+    onRecoveryState: (_roomId, state) => setLiveState(state),
+    onEvents: () => undefined,
+  });
   const focusPartner = useMemo(() => (
     room ? buildRoomFocusProjection(room, projection).partners.find((partner) => partner.participantId === target.id) : undefined
   ), [projection, room, target.id]);
+  const retry = () => {
+    setLiveError(undefined);
+    retryLive();
+    void roomQuery.refetch();
+  };
+  const loadError = !room && !projection ? roomQuery.error ?? liveError : undefined;
+  const loading = !room && !loadError && (roomQuery.isPending || liveState === 'recovering');
   return (
     <section className="paw-os-satellite paw-os-satellite--participant-chat" data-presentation="planet-observer">
-      {roomQuery.isPending ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
-      {roomQuery.error ? <SatelliteLoadError error={roomQuery.error} icon={MessageSquare} onRetry={() => void roomQuery.refetch()} title="行星窗口没有打开" /> : null}
-      {!roomQuery.isPending && !roomQuery.error && !participant ? <SatelliteMissing copy="这颗行星已经不在当前 Room 中。" icon={MessageSquare} route="rooms" title="找不到这颗行星" /> : null}
+      {loading ? <div className="paw-os-satellite__loading" role="status"><Skeleton /><Skeleton /><Skeleton /></div> : null}
+      {loadError ? <SatelliteLoadError error={loadError} icon={MessageSquare} onRetry={retry} title="行星窗口没有打开" /> : null}
+      {liveState === 'failed' && (room || projection) ? (
+        <div className="paw-os-satellite__feedback" role="alert">
+          <span>{publicErrorText(liveError, '实时同步已暂停，已加载的记录仍然可读。')}</span>
+          <Button onClick={retry} size="small">恢复实时同步</Button>
+        </div>
+      ) : null}
+      {liveState === 'recovering' && projection ? (
+        <div className="paw-os-satellite__feedback" role="status">正在恢复实时同步；已加载的记录仍然可读。</div>
+      ) : null}
+      {!loading && !loadError && room && !participant ? <SatelliteMissing copy="这颗行星已经不在当前 Room 中。" icon={MessageSquare} route="rooms" title="找不到这颗行星" /> : null}
       {participant && room ? (
         <>
           {/* UR-056：窗口标题栏已标识行星身份，内容区只保留该行星的真实公开

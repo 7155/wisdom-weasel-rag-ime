@@ -757,10 +757,9 @@ describe('Agent experience', () => {
     expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 
-  it('keeps only the latest snapshot when gap recovery responses resolve out of order', async () => {
+  it('coalesces overlapping gap markers into one authoritative recovery snapshot', async () => {
     const baseline = previewAgentSnapshot('session-preview');
-    const staleSnapshot = deferred<unknown>();
-    const latestSnapshot = deferred<unknown>();
+    const recoverySnapshot = deferred<unknown>();
     let snapshotRequests = 0;
     const transport = featureTransport(
       undefined,
@@ -774,8 +773,7 @@ describe('Agent experience', () => {
       () => {
         snapshotRequests += 1;
         if (snapshotRequests === 1) return baseline;
-        if (snapshotRequests === 2) return staleSnapshot.promise;
-        if (snapshotRequests === 3) return latestSnapshot.promise;
+        if (snapshotRequests === 2) return recoverySnapshot.promise;
         throw new Error(`unexpected snapshot request ${snapshotRequests}`);
       },
     );
@@ -802,16 +800,16 @@ describe('Agent experience', () => {
       transport.emit('agent.session.events', gapEvent(baseline.lastSequence + 1));
       transport.emit('agent.session.events', gapEvent(baseline.lastSequence + 2));
     });
-    await waitFor(() => expect(snapshotRequests).toBe(3));
+    await waitFor(() => expect(snapshotRequests).toBe(2));
 
     const latestSequence = baseline.lastSequence + 20;
     await act(async () => {
-      latestSnapshot.resolve({
+      recoverySnapshot.resolve({
         ...baseline,
         lastSequence: latestSequence,
         resumeToken: `session-preview:${latestSequence}`,
       });
-      await Promise.resolve();
+      await recoverySnapshot.promise;
     });
     await waitFor(() => {
       expect(useAgentLiveStore.getState().projections['session-preview'].resumeToken)
@@ -819,18 +817,7 @@ describe('Agent experience', () => {
       expect(transport.subscriptionCalls.at(-1)?.request.lastEventId)
         .toBe(`session-preview:${latestSequence}`);
     });
-
-    await act(async () => {
-      staleSnapshot.resolve({
-        ...baseline,
-        lastSequence: baseline.lastSequence + 10,
-        resumeToken: `session-preview:${baseline.lastSequence + 10}`,
-      });
-      await Promise.resolve();
-    });
-    expect(useAgentLiveStore.getState().projections['session-preview'].resumeToken)
-      .toBe(`session-preview:${latestSequence}`);
-    expect(snapshotRequests).toBe(3);
+    expect(snapshotRequests).toBe(2);
     expect(transport.subscriptionCalls).toHaveLength(2);
   });
 

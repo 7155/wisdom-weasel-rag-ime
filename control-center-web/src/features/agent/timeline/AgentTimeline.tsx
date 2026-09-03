@@ -58,8 +58,14 @@ export function isRoomPublicPostMessage(message: AgentMessageProjection): boolea
   ));
 }
 
-function isRenderableAssistantMessage(message: AgentMessageProjection): boolean {
-  if (message.role !== 'assistant' || isRoomPublicPostMessage(message)) return false;
+function isRenderableAssistantMessage(
+  message: AgentMessageProjection,
+  includeRoomPublicPosts = false,
+): boolean {
+  if (
+    message.role !== 'assistant'
+    || (!includeRoomPublicPosts && isRoomPublicPostMessage(message))
+  ) return false;
   return message.blocks.some((block) => (
     block.type !== 'error'
     && (block.type !== 'text' || Boolean(text(block.data.text).trim()))
@@ -78,9 +84,10 @@ function isProviderFailurePlaceholder(message: AgentMessageProjection): boolean 
 
 export function visibleAssistantMessages(
   messages: AgentMessageProjection[],
+  includeRoomPublicPosts = false,
 ): AgentMessageProjection[] {
   return messages.filter((message) => (
-    isRenderableAssistantMessage(message)
+    isRenderableAssistantMessage(message, includeRoomPublicPosts)
     && !isProviderFailurePlaceholder(message)
   ));
 }
@@ -139,6 +146,7 @@ export function agentTurnMarkerKind(
  * rebuilding its own maps on every batched token commit. */
 type ProjectionDerivedViews = {
   visibleTurnIds?: string[];
+  visibleTurnIdsWithRoomPosts?: string[];
   retrySuccessors?: Map<string, string>;
   retryChildren?: Set<string>;
   userMessagesByClientId?: Map<string, AgentMessageProjection>;
@@ -156,19 +164,26 @@ function derivedViews(projection: AgentProjectionState): ProjectionDerivedViews 
   return views;
 }
 
-/** Room Posts remain in the durable transcript for audit/recovery, but their
- * public rendering belongs to the Room task card. A Session timeline only
- * owns direct user/assistant turns and their Runtime activities. */
-export function visibleAgentTurnIds(projection: AgentProjectionState): string[] {
+/** Room Posts remain in the durable transcript for audit/recovery. Ordinary
+ * Sessions leave the Room's public copy on its task card; a Room participant's
+ * full Session explicitly includes it so opening that chat never hides real
+ * messages that the Runtime persisted for the participant. */
+export function visibleAgentTurnIds(
+  projection: AgentProjectionState,
+  includeRoomPublicPosts = false,
+): string[] {
   const views = derivedViews(projection);
-  if (views.visibleTurnIds) return views.visibleTurnIds;
+  const cached = includeRoomPublicPosts
+    ? views.visibleTurnIdsWithRoomPosts
+    : views.visibleTurnIds;
+  if (cached) return cached;
   const retrySuccessors = retrySuccessorTurnIds(projection);
   // More than one retry can be issued before the first receipt/snapshot
   // settles. The successor map intentionally keeps the newest leaf, but all
   // retry children still belong to that same logical slot; otherwise an older
   // sibling renders as a second identical user bubble.
   const retryChildren = retryChildTurnIds(projection);
-  views.visibleTurnIds = projection.turnOrder.flatMap((turnId) => {
+  const result = projection.turnOrder.flatMap((turnId) => {
     // A retry is a new idempotent Runtime attempt, but it remains the same
     // logical conversation turn. Keep the durable attempts for audit, replace
     // the root with its latest attempt, and preserve the root's visual slot.
@@ -178,11 +193,16 @@ export function visibleAgentTurnIds(projection: AgentProjectionState): string[] 
     if (!turn) return [];
     const hasVisibleMessage = turn.messageIds.some((messageId) => {
       const message = projection.messagesById[messageId];
-      return Boolean(message && !isRoomPublicPostMessage(message));
+      return Boolean(
+        message
+        && (includeRoomPublicPosts || !isRoomPublicPostMessage(message)),
+      );
     });
     return hasVisibleMessage || turn.activityIds.length > 0 ? [visibleTurnId] : [];
   });
-  return views.visibleTurnIds;
+  if (includeRoomPublicPosts) views.visibleTurnIdsWithRoomPosts = result;
+  else views.visibleTurnIds = result;
+  return result;
 }
 
 function retrySuccessorTurnIds(projection: AgentProjectionState): Map<string, string> {
@@ -388,6 +408,7 @@ export function AgentTimeline({
   failurePresentation = 'default',
   presentation = 'default',
   showConversationNavigation = true,
+  includeRoomPublicPosts = false,
   leadingContent,
 }: {
   assistantName?: string;
@@ -420,6 +441,7 @@ export function AgentTimeline({
   failurePresentation?: 'default' | 'compact';
   presentation?: 'default' | 'fx';
   showConversationNavigation?: boolean;
+  includeRoomPublicPosts?: boolean;
   /** Conversation lead-in (e.g. Session context chips) rendered once above the
    * first turn. It scrolls with the transcript instead of stealing viewport. */
   leadingContent?: ReactNode;
@@ -468,7 +490,7 @@ export function AgentTimeline({
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     if (!projection) return emptyIds;
-    return visibleAgentTurnIds(projection);
+    return visibleAgentTurnIds(projection, includeRoomPublicPosts);
   }));
   const hasActiveTurn = useAgentLiveStore((state) => turnOrder.some((turnId) => {
     const status = state.projections[sessionId]?.turnsById[turnId]?.status;
@@ -828,6 +850,7 @@ export function AgentTimeline({
             key={turnId}
             sessionId={sessionId}
             turnId={turnId}
+            includeRoomPublicPosts={includeRoomPublicPosts}
             persona={persona}
             modelSelectionAvailable={modelSelectionAvailable}
             turnRecoveryDisabled={turnRecoveryDisabled}
@@ -971,6 +994,7 @@ export const AgentTurn = memo(function AgentTurn({
   failurePresentation = 'default',
   dayStartLabel = '',
   presentation = 'default',
+  includeRoomPublicPosts = false,
   memoryRecallReceipt,
 }: {
   assistantName?: string;
@@ -998,6 +1022,7 @@ export const AgentTurn = memo(function AgentTurn({
   failurePresentation?: 'default' | 'compact';
   dayStartLabel?: string;
   presentation?: 'default' | 'fx';
+  includeRoomPublicPosts?: boolean;
   memoryRecallReceipt?: MemoryRecallReceiptView;
 }) {
   const turn = useAgentLiveStore((state) => state.projections[sessionId]?.turnsById[turnId]);
@@ -1016,7 +1041,7 @@ export const AgentTurn = memo(function AgentTurn({
       .map((id) => projection?.messagesById[id])
       .filter((message): message is AgentMessageProjection => (
         Boolean(message)
-      )));
+      )), includeRoomPublicPosts);
   }));
   const inlineUserMessages = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];

@@ -11,8 +11,26 @@ import { parseAgentEvent, parseAgentMessage, parseRoomEvent } from '@/contracts/
 
 const root = resolve(process.cwd(), 'e2e/fixtures/minecraft-harness-20260825');
 
+const fullTrustPermissionPolicy = {
+  schemaVersion: 'rag-ime.room-permission-policy.v1',
+  room: { executionMode: 'full_trust' },
+  partner: { executionMode: 'inherit' },
+  toolAgent: { executionMode: 'inherit' },
+} as const;
+
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(resolve(root, path), 'utf8'));
+}
+
+function readRoomFixture(path: string): unknown {
+  const response = readJson(path) as { room: Record<string, unknown> };
+  return {
+    ...response,
+    room: {
+      ...response.room,
+      permissionPolicy: fullTrustPermissionPolicy,
+    },
+  };
 }
 
 describe('Minecraft Harness frontend fixture', () => {
@@ -23,7 +41,7 @@ describe('Minecraft Harness frontend fixture', () => {
     expect(events[0]?.sequence).toBe(1);
     expect(events.at(-1)?.sequence).toBe(3261);
     events.forEach((event, index) => expect(event.sequence).toBe(index + 1));
-    expect(parseRoomEventSnapshot(readJson('room/snapshot.json')).events).toHaveLength(373);
+    expect(parseRoomEventSnapshot(readRoomFixture('room/snapshot.json')).events).toHaveLength(373);
   });
 
   it('keeps four production-shaped Session conversation projections parseable', () => {

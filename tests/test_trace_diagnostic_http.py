@@ -119,19 +119,21 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
 
     def _sessions(self) -> tuple[str, str]:
         source = self.service.create_session({"title": "source transcript"})["session"]
-        diagnostic = self.service.create_session(
-            {
-                "title": "Trace diagnostic",
-                "mode": "coordinator",
-                "executionMode": "read_only",
-            }
-        )["session"]
+        diagnostic = self._full_auto_diagnostic_session()
         return str(source["id"]), str(diagnostic["id"])
 
-    def _full_auto_repair_session(self, title: str) -> dict[str, object]:
+    def _full_auto_trace_session(
+        self,
+        title: str,
+        *,
+        surface_key: str,
+    ) -> dict[str, object]:
         return self.service.create_session(
             {
                 "title": title,
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": surface_key,
                 "mode": "coordinator",
                 "toolProfileVersion": "control-center-auto-approve-v1",
                 "executionMode": "full_trust",
@@ -143,6 +145,16 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "codexSkillsEnabled": True,
             }
         )["session"]
+
+    def _full_auto_repair_session(self, title: str) -> dict[str, object]:
+        return self._full_auto_trace_session(title, surface_key="repair")
+
+    def _full_auto_diagnostic_session(
+        self,
+        title: str = "Trace diagnostic",
+    ) -> dict[str, object]:
+        return self._full_auto_trace_session(title, surface_key="diagnostic")
+
 
     @staticmethod
     def _structured_snapshot() -> dict[str, object]:
@@ -220,6 +232,13 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
             repair_session_id=repair["id"],
         )
 
+        diagnostic = self._full_auto_diagnostic_session("Trace diagnostic is not repair")
+        with self.assertRaisesRegex(ValueError, "unrestricted auto-approve profile"):
+            self.service.authorize_trace_diagnostic_repair(
+                "report:repair",
+                {**payload, "repairSessionId": diagnostic["id"]},
+            )
+
         per_action = self.service.create_session(
             {
                 "title": "Trace manual repair",
@@ -246,12 +265,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "workspaceRoots": [str(self.root)],
             }
         )["session"]
-        diagnostic = self.service.create_session(
-            {
-                "title": "Trace diagnostic",
-                "executionMode": "read_only",
-            }
-        )["session"]
+        diagnostic = self._full_auto_diagnostic_session()
         report = self.service.create_trace_diagnostic_report(
             {
                 "diagnosticSessionId": diagnostic["id"],
@@ -448,12 +462,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
                 "workspaceRoots": [str(self.root)],
             }
         )["session"]
-        diagnostic = self.service.create_session(
-            {
-                "title": "Trace diagnostic",
-                "executionMode": "read_only",
-            }
-        )["session"]
+        diagnostic = self._full_auto_diagnostic_session()
         trace_projection = {
             "trace": {
                 "traceId": "trace:run-source",
@@ -522,12 +531,7 @@ class TraceDiagnosticHttpIntegrationTests(unittest.TestCase):
         authorize.assert_called_once()
 
     def test_run_repair_authorization_rejects_a_missing_canonical_session_binding(self) -> None:
-        diagnostic = self.service.create_session(
-            {
-                "title": "Trace diagnostic",
-                "executionMode": "read_only",
-            }
-        )["session"]
+        diagnostic = self._full_auto_diagnostic_session()
         trace_projection = {
             "trace": {
                 "traceId": "trace:unbound-run",

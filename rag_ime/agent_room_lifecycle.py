@@ -137,6 +137,11 @@ class RoomLifecycleService:
         self.participants.restore_sessions(room)
         return self.rooms.snapshot(room_id)
 
+    def conversation_snapshot(self, room_id: str) -> dict[str, object]:
+        room = self.rooms.get(room_id)
+        self.participants.restore_sessions(room)
+        return self.rooms.conversation_snapshot(room_id)
+
     def history(
         self,
         room_id: str,
@@ -912,10 +917,6 @@ def _workspace_roots(
         )
     if policy.unrestricted:
         return policy.workspace_roots
-    if len(raw_roots) > 4:
-        raise ValueError(
-            "agent room accepts at most four workspace roots"
-        )
     return existing_workspace_roots(raw_roots)
 
 

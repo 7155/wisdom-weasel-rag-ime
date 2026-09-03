@@ -4,12 +4,14 @@ import {
   appendOptimisticRoomMessage,
   applyRoomSnapshot,
   createRoomProjection,
+  parseRoomConversationSnapshot,
   parseRoomEventPage,
   parseRoomEventSnapshot,
+  roomActivityLaneIdentity,
   reduceRoomEvent,
   reduceRoomEvents,
+  replayRoomConversationSnapshot,
   replayRoomEventSnapshot,
-  roomActivityLaneIdentity,
   selectRoomParticipantPublicProgress,
 } from './room-reducer';
 import { parseRoomEvent } from './validators';
@@ -543,6 +545,71 @@ describe('RoomEventReducer', () => {
         )).toHaveLength(0);
       }
     }
+  });
+
+  it('does not let WorkDocument activity or a final-post runtime id create phantom dispatches', () => {
+    const partnerRoute = wireRoomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-partner',
+      targetParticipantId: 'participant-2',
+    });
+    partnerRoute.participantId = 'participant-2';
+    partnerRoute.sourceSessionId = 'session-room-2';
+    const partnerResult = wireRoomEvent(2, 'room_post', {
+      post: formalRoomPost(
+        'partner-work-result',
+        '伙伴交付证据',
+        'dispatch-partner',
+        'work_result',
+        'participant-2',
+      ),
+    });
+    partnerResult.participantId = 'participant-2';
+    partnerResult.sourceSessionId = 'session-room-2';
+    const partnerTerminal = wireRoomEvent(3, 'turn_completed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-partner',
+      status: 'completed',
+    });
+    partnerTerminal.participantId = 'participant-2';
+    partnerTerminal.sourceSessionId = 'session-room-2';
+    const documentSync = wireRoomEvent(4, 'participant_activity', {
+      rootId: 'room-turn-1',
+      attemptId: 'room-turn-1',
+      dispatchId: 'room-turn-1',
+      activityKind: 'work',
+      phase: 'submitted',
+      summary: 'WorkDocument 已同步',
+    });
+    const moderatorFinal = wireRoomEvent(5, 'room_post', {
+      post: formalRoomPost(
+        'coordinator-final',
+        '主持者最终报告',
+        'room-wake-dispatch:dispatch-partner:1',
+        'result',
+      ),
+    });
+    const events = [
+      partnerRoute,
+      partnerResult,
+      partnerTerminal,
+      documentSync,
+      moderatorFinal,
+    ];
+
+    const replayed = replayRoomEventSnapshot(
+      createRoomProjection('room-1'),
+      parseRoomEventSnapshot(roomSnapshotFixture(events)),
+    );
+
+    expect(replayed.turnsById['room-turn-1']).toMatchObject({
+      status: 'completed',
+      dispatchIds: ['dispatch-partner'],
+      terminalDispatchIds: ['dispatch-partner'],
+    });
+    expect(new Set(replayed.turnsById['room-turn-1']?.terminalParticipantIds)).toEqual(
+      new Set(['participant-1', 'participant-2']),
+    );
   });
 
   it('requires the persisted moderator for the formal final while retaining partner results', () => {
@@ -1982,6 +2049,49 @@ describe('RoomEventReducer', () => {
     ], { firstSequence: 1 }))).toThrow(/contiguous/);
   });
 
+  it('replays sparse message-first Room snapshots without treating deferred activity as a gap', () => {
+    const events = [
+      wireRoomEvent(1, 'user_message', {
+        clientMessageId: 'client-conversation',
+        messageId: 'message-user',
+        text: '先显示真实消息',
+      }),
+      wireRoomEvent(2, 'route_decision', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        targetParticipantId: 'participant-1',
+      }),
+      wireRoomEvent(20, 'participant_message', {
+        dispatchId: 'dispatch-1',
+        message: roomServerMessage('message-assistant', '消息已加载'),
+      }),
+      wireRoomEvent(25, 'turn_completed', {
+        dispatchId: 'dispatch-1',
+        status: 'completed',
+      }),
+    ];
+    const snapshot = parseRoomConversationSnapshot(
+      roomConversationSnapshotFixture(events, 30, 26),
+    );
+    const replayed = replayRoomConversationSnapshot(
+      createRoomProjection('room-1'),
+      snapshot,
+    );
+
+    expect(replayed.messageOrder).toEqual(['message-user', 'message-assistant']);
+    expect(replayed.messagesById['message-assistant']?.text).toBe('消息已加载');
+    expect(replayed.lastSequence).toBe(30);
+    expect(replayed.resumeToken).toBe('room-1:30');
+    expect(replayed.needsSnapshot).toBe(false);
+
+    const live = reduceRoomEvent(
+      replayed,
+      parseRoomEvent(wireRoomEvent(31, 'room_config_changed', {})),
+    );
+    expect(live.disposition).toBe('applied');
+    expect(live.state.needsSnapshot).toBe(false);
+  });
+
   it('validates bounded Room history pages and their cursor invariants', () => {
     const items = [
       wireRoomEvent(3, 'participant_status', { status: 'working' }),
@@ -2286,6 +2396,25 @@ function roomSnapshotFixture(
     lastSequence,
     resumeToken: lastSequence ? `room-1:${lastSequence}` : '',
     truncated: options.truncated ?? false,
+  };
+}
+
+function roomConversationSnapshotFixture(
+  events: Record<string, unknown>[],
+  cursorSequence: number,
+  deferredEventCount: number,
+) {
+  const room = roomSnapshotFixture([]).room;
+  return {
+    schemaVersion: 'rag-ime.agent-room-conversation-snapshot.v1',
+    ok: true,
+    room: { ...room, lastEventSequence: cursorSequence },
+    events,
+    firstEventSequence: Number(events[0]?.sequence ?? 0),
+    cursorSequence,
+    resumeToken: cursorSequence ? `room-1:${cursorSequence}` : '',
+    deferredEventCount,
+    truncated: false,
   };
 }
 

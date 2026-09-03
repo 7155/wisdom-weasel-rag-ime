@@ -20,10 +20,10 @@ release evidence remains in `release/product-status.json` and the release audit.
 | ID | User result | Status | Current evidence boundary | Next acceptance frontier |
 | --- | --- | --- | --- | --- |
 | O1 | Session can work reliably for a long time | active | Installed Luna canary passed activity, Steer, Stop, Tool-failure closure, refresh, and an 8/8 Tool round; source/tests preserve exact failed-turn retry and paired full-system policies | Long soak and compaction/recovery, then installed retry and permission acceptance |
-| O2 | Room completes a real collaboration by composing Pi Sessions | active | Installed Luna Room canary completed the collaboration lifecycle; source/tests propagate paired policies through Room and participant lifecycle operations | Self-host a useful project change, retain Partner/Tool Agent evidence, then accept installed Room permissions |
+| O2 | Room completes a real collaboration by composing Pi Sessions | active | The 2026-09-03 installed build proved persisted conversation-first history, full-trust participants, simultaneous live updates, one terminal Root, refresh recovery, and selected-moderator Runtime prewarming; fresh probes measured Provider first text in 2.57–2.58 s while total Room first text varied 6.54–8.58 s | Run a multi-day reconnect/cancellation soak; if visible first text must stay below 7 s, separately bound pre-Provider routing and query-aware memory bootstrap |
 | O3 | A parent Session can use configurable private Tool Agents | active | Current source supports bounded child events/results, read/write choice, model/thinking override, and same-tree peer calls | Prove a useful live parent/child run, then raise capacity through bounded event/UI/resource budgets rather than more Kernel state |
-| O4 | PAW can develop itself through a bounded context and Skill harness | active | Core Skills exist; source/tests add Runtime-owned Skill inventory/detail routes and a browser-verified Package-scoped manager | Install and verify Skill inventory, then foreground 掌柜问数 acceptance and uninstall/restore |
-| O5 | Control Center truthfully renders Session and Room state | active | Source/tests and live browser now render a four-scenario Agent Lab matrix, matched Sol/Luna quality rejection, versioned path history, and read-only transcript/Tool evidence; the installed wizard creates its Room, but installed model dispatch is blocked by a missing `runtime-host/openai-codex.ts` provider module | Repair and reinstall the Runtime provider bundle, rerun the Agent Lab Room end to end, then finish history deduplication/restoration |
+| O4 | PAW can develop itself through a bounded context and Skill harness | active | The installed managed Pi enforces revisioned four-scenario Skill allowlists; Settings/catalog checks proved mandatory Room/Trace/Lab isolation, and `resume-builder` is absent | Finish foreground 掌柜问数 acceptance and Package uninstall/restore |
+| O5 | Control Center truthfully renders Session and Room state | active | Installed PAWOS showed optimistic Room text immediately, real participant timelines, terminal Root/Room/catalog state after reload, four Skill-routing controls, and Room participants prewarmed on visibility or mention | Run an Agent Lab Room end to end, then finish history deduplication/restoration and long-window soak |
 | O6 | Memory and Knowledge provide governed, explainable context | active | Local stores, curation, retrieval, evaluation, and management surfaces exist; recent commits refined daily activity and Project Field evidence | Keep Memory/Knowledge authority separate, verify retrieval quality on frozen evaluations, and finish product-facing acceptance without widening Session bootstrap |
 | O7 | The macOS input experience is correct in real foreground apps | active | Source, sidecar, patched Squirrel, and automated checks exist; the older status snapshot records partial foreground evidence | Fresh foreground matrix for composition, deletion, app switch, follow-up, RAG/memory selection, Accessibility, and voice |
 | O8 | A public macOS release is reproducible and distributable | blocked | Public source and engineering build paths exist | Clean scoped source, current release manifest, candidate-quality sign-off, Developer ID signing, notarization, stapling, clean-machine installation, and accepted foreground evidence |
@@ -60,11 +60,18 @@ Sessions. Partners may use private Tool Agents. Pi owns each Session; Room owns
 collaboration identity, explicit dispatch, ordered public events, cancellation
 fan-out, and one terminal Root.
 
-The installed Luna canary proves the lifecycle on the current development
-Runtime: two ordinary Luna Sessions, Facilitator-owned dispatch, one Partner
-child start/completion, Partner result return, one Root final, a second live
-Tool turn stopped with one `aborted` terminal, and a stable refresh. The next
-frontier is useful self-hosted work rather than another scripted lifecycle.
+The 2026-09-03 installed build rehydrated a useful project Room with one
+accepted WorkItem, one Earth Root, and terminal participant results. A fresh
+main/Earth/Mars turn showed its optimistic message immediately, both route
+cards within 0.71 seconds, both results in every window, and the same terminal
+state after reload. The selected moderator is now prewarmed before send and
+mentioned participants are prewarmed while drafting. Two installed cold probes
+measured Provider `busy` to first durable text at 2.579 and 2.566 seconds; full
+Room send-to-first-text was 6.537 and 8.583 seconds because routing and
+query-aware memory bootstrap happen first. Layered `full_trust` reached Runtime
+without widening macOS/TCC or Provider boundaries. Next: bound the pre-Provider
+path if a strict seven-second visible-response target is required, then run a
+multi-day reconnect/cancellation soak.
 
 ## O3 — Tool Agent Capacity
 
@@ -91,10 +98,13 @@ catalog sources; prepares and inspects them without model approval; asks for
 product confirmation only before state mutation; and records installed
 versions for update and rollback. Pi loads Package resources into new
 Sessions. The `plugin-creator` Skill searches and reuses first, creates a
-minimal Package only when the capability is absent, and stops at the same
-product confirmation boundary. The 2026-08-16 development installation exposed
-`piPackages: true`; its active Runtime created and prepared an isolated local
-Package with one Skill without mutating real installed-package state.
+minimal Package only when the capability is absent, and stops at product confirmation.
+
+The 2026-09-03 development installation exposes revisioned ordinary, Room,
+Trace and Agent Lab Skill routes in Settings and enforces the selected
+allowlists at `session.open`. Mandatory private Skills remain exact-scenario
+only; an Agent Lab Room receives both Lab and Room capabilities. The removed
+`resume-builder` no longer appears in the installed catalog.
 
 New projects initialize only when the user invokes Pi's `/init` prompt
 template. It inspects the bound workspace and creates or narrowly supplements

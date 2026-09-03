@@ -9,7 +9,7 @@ description: 分析职位描述（JD）、判断岗位匹配度、提取要求�
 
 ## 先读
 
-读取 [简历事实契约](../resume-builder/references/resume-contract.md) 和 [JD 匹配报告模板](../jd-tailorer/references/matching-analysis.md)。后续定制交给 `jd-tailorer`。
+读取 [简历事实契约](../resume-workflow/references/resume-contract.md) 和 [JD 匹配报告模板](../jd-tailorer/references/matching-analysis.md)。后续定制交给 `jd-tailorer`。
 
 ## 协作入口
 

@@ -130,7 +130,7 @@ class GatewayMemoryMaintenanceJobs:
                 self._recent_jobs_loaded = True
             active = self._jobs.get(self._active_job_id)
             if active is not None and self._matches_project(active, normalized_project):
-                return self._payload(active, reused=False)
+                return self._payload(active, reused=False, compact=True)
             candidates = sorted(
                 (
                     job
@@ -140,7 +140,11 @@ class GatewayMemoryMaintenanceJobs:
                 key=lambda item: int(item.get("updatedAtMs") or 0),
                 reverse=True,
             )
-            return self._payload(candidates[0], reused=False) if candidates else {}
+            return (
+                self._payload(candidates[0], reused=False, compact=True)
+                if candidates
+                else {}
+            )
 
     def activity_timeline_status(self, *, project: str = "") -> dict[str, object]:
         """Return one safe timeline-job projection for refresh recovery."""
@@ -591,10 +595,13 @@ class GatewayMemoryMaintenanceJobs:
         job: Mapping[str, object],
         *,
         reused: bool,
+        compact: bool = False,
     ) -> dict[str, object]:
         job_id = str(job.get("jobId") or "")
         result = (
-            dict(job.get("result") or {})
+            {}
+            if compact
+            else dict(job.get("result") or {})
             if isinstance(job.get("result"), Mapping)
             else {}
         )
@@ -620,7 +627,7 @@ class GatewayMemoryMaintenanceJobs:
             "runId": job_id,
             "failureRef": job_id if state == "failed" else "",
             "sourceCursor": source_cursor,
-            "sourceInputRefs": _nested_list(result, "sourceInputRefs"),
+            "sourceInputRefs": [] if compact else _nested_list(result, "sourceInputRefs"),
             "traceEvidence": {
                 "traceId": f"trace:memory:{job_id}",
                 "runId": job_id,

@@ -5,7 +5,10 @@ import { useControlTransport } from '@/app/control-transport';
 import { useComposerClearance } from '@/components/layout/use-composer-clearance';
 import { IconButton } from '@/components/primitives';
 import { isComposerImageMimeType } from '@/contracts/attachment-policy';
-import { createAgentDeltaBatcher } from '@/contracts/batching';
+import {
+  useAgentLiveSession,
+  type AgentLiveSnapshotLoader,
+} from './runtime/use-agent-live-session';
 import {
   agentMessageDelivery,
   resolveAgentTurnUserMessage,
@@ -13,7 +16,6 @@ import {
   type AgentMessageProjection,
   type AgentProjectionState,
 } from '@/contracts/agent-reducer';
-import type { UiAgentEvent } from '@/contracts/ui-events';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 import { AgentComposer, type AgentComposerEditState, type AgentMessageDelivery } from './composer/AgentComposer';
@@ -135,6 +137,7 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const [timelineFollow, setTimelineFollow] = useState({ following: true, unseenUpdates: 0 });
   const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [snapshotReadySessionId, setSnapshotReadySessionId] = useState('');
+  const [metadataGraceSessionId, setMetadataGraceSessionId] = useState('');
   const [railOpen, setRailOpen] = useState(() => !mobileViewport);
   const [statusOpen, setStatusOpen] = useState(shouldOpenTaskCenterByDefault);
   const [filesOpen, setFilesOpen] = useState(false);
@@ -182,7 +185,13 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const stopReconcileEscalatedSessionsRef = useRef(new Set<string>());
   const modelCatalogCacheRef = useRef(new Map<string, ModelCatalog>());
   const forkCatalogCacheRef = useRef(new Map<string, Record<string, unknown>>());
+  const loadAgentSnapshotRef = useRef<AgentLiveSnapshotLoader>(
+    () => Promise.resolve(false),
+  );
   const loadFullSnapshotRef = useRef<() => void>(() => {});
+  const loadSessionCatalogsRef = useRef<() => Promise<void>>(
+    () => Promise.resolve(),
+  );
   const startMutableControlsRef = useRef<() => void>(() => {});
   const startMutableCatalogsRef = useRef<() => void>(() => {});
   const evaluationSnapshotHydratedRef = useRef<{ full: boolean; sessionId: string }>({
@@ -232,6 +241,95 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   const rewriteResolving = rewriteResolvingSessionIds.has(selectedId);
   const capabilityPolicyMutation = capabilityPolicyMutations.get(selectedId);
   const capabilityPolicyPending = capabilityPolicyMutation?.status === 'pending';
+  useEffect(() => {
+    if (!selectedId || sessionMetadataKnown) {
+      setMetadataGraceSessionId('');
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setMetadataGraceSessionId(selectedId);
+    }, 25);
+    return () => window.clearTimeout(timer);
+  }, [selectedId, sessionMetadataKnown]);
+  const sessionSnapshotMayStart = Boolean(selectedId) && (
+    sessionMetadataKnown || metadataGraceSessionId === selectedId
+  );
+  const loadAgentSnapshot = useAgentLiveSession({
+    sessionId: selectedId,
+    transport,
+    active: sessionSnapshotMayStart,
+    live: sessionMetadataKnown && !evaluationSnapshot,
+    snapshotView: evaluationSnapshot ? 'full' : 'recent',
+    onSnapshot: (snapshot) => {
+      if (snapshot.view === 'recent') {
+        setContextSnapshot({ sessionId: snapshot.sessionId, state: 'partial' });
+      } else {
+        evaluationSnapshotHydratedRef.current = {
+          full: true,
+          sessionId: snapshot.sessionId,
+        };
+        setContextSnapshot((current) => (
+          current?.sessionId === snapshot.sessionId ? undefined : current
+        ));
+      }
+      setCatalogNotice(snapshot.sessionId, 'snapshot', '');
+      setSnapshotReadySessionId(snapshot.sessionId);
+      startMutableControlsRef.current();
+    },
+    onSnapshotError: (failure) => {
+      if (failure.view === 'recent') {
+        setContextSnapshot({ sessionId: failure.sessionId, state: 'partial' });
+        setCatalogNotice(
+          failure.sessionId,
+          'snapshot',
+          `最近记录暂时无法恢复。${errorText(failure.error)}`,
+        );
+      } else {
+        setContextSnapshot({ sessionId: failure.sessionId, state: 'partial' });
+        setCatalogNotice(
+          failure.sessionId,
+          'snapshot',
+          `对话记录暂时无法恢复。${errorText(failure.error)}`,
+        );
+      }
+      if (failure.recoverable) {
+        setSnapshotReadySessionId(failure.sessionId);
+        startMutableControlsRef.current();
+      }
+    },
+    onEvent: (event) => {
+      sendTimings.observe(event);
+      if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
+        setSessionStopping(event.sessionId, false);
+        void refreshSessionRail();
+        const stopWasWaitingForTerminal = stopReconcileEscalatedSessionsRef.current.delete(
+          event.sessionId,
+        );
+        void loadAgentSnapshotRef.current({
+          preserveAfterSequence: event.sequence,
+        }).then((loaded) => {
+          if (selectedIdRef.current !== event.sessionId || !loaded || !stopWasWaitingForTerminal) return;
+          if (
+            sessionErrorsRef.current.get(event.sessionId)
+            === STOP_RECONCILE_ESCALATED_MESSAGE
+          ) {
+            setSessionError(event.sessionId, '');
+          }
+          void loadSessionCatalogsRef.current();
+        });
+      }
+      if (event.eventType === 'session_configuration_changed') {
+        modelSelection.applyConfigurationEvent(event.sessionId, event.payload);
+      }
+    },
+    onConnectionRestored: (activeSessionId) => {
+      setCatalogNotice(activeSessionId, 'live-stream', '');
+    },
+    onConnectionError: (activeSessionId, streamError) => {
+      setCatalogNotice(activeSessionId, 'live-stream', errorText(streamError));
+    },
+  });
+  loadAgentSnapshotRef.current = loadAgentSnapshot;
 
   function selectSessionId(sessionId: string): void {
     selectedIdRef.current = sessionId;
@@ -562,15 +660,12 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
   useEffect(() => {
     if (!selectedId) return;
     ensure(selectedId);
-    let active = true;
-    let unsubscribe = () => {};
-    let snapshotRequestId = 0;
-    let snapshotAbort: AbortController | undefined;
     let fullSnapshotRequestId = 0;
     let fullSnapshotAbort: AbortController | undefined;
     let mutableControlsInitialized = false;
     let mutableCatalogsInitialized = false;
     evaluationSnapshotHydratedRef.current = { full: false, sessionId: selectedId };
+    let active = true;
     const currentSessionMetadata = (): {
       evaluationSnapshot: boolean;
       known: boolean;
@@ -584,59 +679,6 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
       const metadata = currentSessionMetadata();
       return metadata.known && !metadata.evaluationSnapshot;
     };
-    const batcher = createAgentDeltaBatcher((events) => {
-      const needsSnapshot = useAgentLiveStore.getState().applyEvents(selectedId, events);
-      if (needsSnapshot) void loadSnapshot();
-    });
-    function subscribeToEvents(): void {
-      if (!liveSessionControlsAvailable()) return;
-      const cursor = agentProjection(selectedId).resumeToken;
-      unsubscribe();
-      unsubscribe = transport.subscribe<UiAgentEvent>(
-        { pathId: 'agent.session.events', params: { sessionId: selectedId }, lastEventId: cursor },
-        {
-          next: (event) => {
-            sendTimings.observe(event);
-            // Every transport reports snapshot_required through `next` and
-            // the optional callback. Owning recovery here avoids launching
-            // two snapshots for one gap while still recovering gaps found
-            // locally by the reducer's batched sequence check.
-            if (event.eventType === 'snapshot_required') {
-              const needsSnapshot = useAgentLiveStore.getState().applyEvents(
-                selectedId,
-                [event],
-              );
-              if (needsSnapshot) void loadSnapshot();
-              return;
-            }
-            batcher.push(event);
-            if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
-              setSessionStopping(selectedId, false);
-              void refreshSessionRail();
-              const stopWasWaitingForTerminal = stopReconcileEscalatedSessionsRef.current.delete(
-                selectedId,
-              );
-              // Terminal SSE quietly refreshes only the bounded recent view.
-              // Full history remains an explicit action and never gates input.
-              void loadSnapshot(event.sequence).then((loaded) => {
-                if (!active || !loaded || !stopWasWaitingForTerminal) return;
-                if (
-                  sessionErrorsRef.current.get(selectedId)
-                  === STOP_RECONCILE_ESCALATED_MESSAGE
-                ) {
-                  setSessionError(selectedId, '');
-                }
-                void loadSessionCatalogs();
-              });
-            }
-            if (event.eventType === 'session_configuration_changed') {
-              modelSelection.applyConfigurationEvent(selectedId, event.payload);
-            }
-          },
-          error: (streamError) => active && setError(errorText(streamError)),
-        },
-      );
-    }
     async function loadFullSnapshot(): Promise<void> {
       const requestId = fullSnapshotRequestId + 1;
       fullSnapshotRequestId = requestId;
@@ -677,82 +719,6 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
       }
     }
     loadFullSnapshotRef.current = () => { void loadFullSnapshot(); };
-    async function loadSnapshot(preserveAfterSequence?: number): Promise<boolean> {
-      const requestId = snapshotRequestId + 1;
-      snapshotRequestId = requestId;
-      snapshotAbort?.abort();
-      const abort = new AbortController();
-      snapshotAbort = abort;
-      const requestSnapshot = (recent: boolean) => transport.request({
-        pathId: 'agent.session.snapshot',
-        params: { sessionId: selectedId },
-        ...(recent ? { query: { view: 'recent' } } : {}),
-        signal: abort.signal,
-      });
-      try {
-        const recentAtRequest = !currentSessionMetadata().evaluationSnapshot;
-        let snapshotResponse: unknown;
-        try {
-          snapshotResponse = await requestSnapshot(recentAtRequest);
-        } catch (snapshotError) {
-          if (abort.signal.aborted) throw snapshotError;
-          if (currentSessionMetadata().evaluationSnapshot && recentAtRequest) {
-            snapshotResponse = await requestSnapshot(false);
-          } else {
-            setContextSnapshot({ sessionId: selectedId, state: 'partial' });
-            setSessionError(selectedId, `最近记录暂时无法恢复。${errorText(snapshotError)}`);
-            subscribeToEvents();
-            return true;
-          }
-        }
-        if (!active || requestId !== snapshotRequestId) return false;
-        const latestMetadata = currentSessionMetadata();
-        if (latestMetadata.evaluationSnapshot && recentAtRequest) {
-          snapshotResponse = await requestSnapshot(false);
-          if (!active || requestId !== snapshotRequestId) return false;
-        }
-        const hydrateSnapshotResponse = (value: unknown) => {
-          if (
-            preserveAfterSequence !== undefined
-            && agentSnapshotSequence(value) <= preserveAfterSequence
-          ) {
-            return;
-          }
-          useAgentLiveStore.getState().hydrate(selectedId, value);
-        };
-        const recentSnapshot = isRecentAgentSnapshot(snapshotResponse);
-        const recentSnapshotPresentable = recentSnapshot
-          && recentAgentSnapshotIsPresentable(snapshotResponse);
-        if (!recentSnapshot || recentSnapshotPresentable) {
-          hydrateSnapshotResponse(snapshotResponse);
-        }
-        if (latestMetadata.evaluationSnapshot) {
-          evaluationSnapshotHydratedRef.current = { full: true, sessionId: selectedId };
-          setContextSnapshot((current) => (
-            current?.sessionId === selectedId ? undefined : current
-          ));
-          setSessionError(selectedId, '');
-          return true;
-        }
-        if (recentSnapshot) {
-          setContextSnapshot({ sessionId: selectedId, state: 'partial' });
-          reconcileMutableControlsAfterSnapshot();
-          return true;
-        }
-        setContextSnapshot((current) => (
-          current?.sessionId === selectedId ? undefined : current
-        ));
-        reconcileMutableControlsAfterSnapshot();
-        return true;
-      } catch (loadError) {
-        if (active && requestId === snapshotRequestId && !abort.signal.aborted) {
-          setError(`对话记录暂时无法恢复。${errorText(loadError)}`);
-        }
-        return false;
-      } finally {
-        if (requestId === snapshotRequestId) snapshotAbort = undefined;
-      }
-    }
     async function loadSessionCatalogs(): Promise<void> {
       if (!liveSessionControlsAvailable()) return;
       setToolCatalogStatus('loading');
@@ -860,54 +826,23 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
     function startMutableControls(): void {
       if (!liveSessionControlsAvailable() || mutableControlsInitialized) return;
       mutableControlsInitialized = true;
-      subscribeToEvents();
       startMutableCatalogs();
     }
-    function reconcileMutableControlsAfterSnapshot(): void {
-      if (!liveSessionControlsAvailable()) return;
-      if (mutableControlsInitialized) {
-        subscribeToEvents();
-      } else {
-        startMutableControls();
-      }
-    }
+    loadSessionCatalogsRef.current = loadSessionCatalogs;
+    startMutableControlsRef.current = startMutableControls;
     startMutableCatalogsRef.current = startMutableCatalogs;
-    // History recovery owns the stream cursor; model, command and tool
-    // catalogs are independent and should become interactive immediately.
-    // Let the rail response settle first so evaluation snapshots can choose
-    // their immutable full-snapshot path before any recent/live work starts.
-    const snapshotStartTimer = window.setTimeout(() => {
-      if (!active) return;
-      void loadSnapshot().then((loaded) => {
-        if (!active || !loaded) return;
-        setSnapshotReadySessionId(selectedId);
-        startMutableControls();
-      });
-    }, 0);
     return () => {
       active = false;
-      window.clearTimeout(snapshotStartTimer);
-      snapshotAbort?.abort();
       fullSnapshotAbort?.abort();
       loadFullSnapshotRef.current = () => {};
+      loadSessionCatalogsRef.current = () => Promise.resolve();
       startMutableControlsRef.current = () => {};
       startMutableCatalogsRef.current = () => {};
-      batcher.clear();
-      unsubscribe();
       sendTimings.clearSession(selectedId);
     };
-  }, [ensure, refreshSessionRail, selectedId, sendTimings, transport]);
+  }, [ensure, selectedId, sendTimings, transport]);
   useEffect(() => {
-    if (!selectedId) return;
-    if (evaluationSnapshot) {
-      if (snapshotReadySessionId !== selectedId) return;
-      const hydrated = evaluationSnapshotHydratedRef.current;
-      if (hydrated.sessionId !== selectedId || !hydrated.full) {
-        loadFullSnapshotRef.current();
-      }
-      return;
-    }
-    if (!sessionMetadataKnown) return;
+    if (!selectedId || evaluationSnapshot || !sessionMetadataKnown) return;
     startMutableCatalogsRef.current();
     if (snapshotReadySessionId === selectedId) startMutableControlsRef.current();
   }, [evaluationSnapshot, selectedId, sessionMetadataKnown, snapshotReadySessionId]);
@@ -2426,12 +2361,6 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 
-function agentSnapshotSequence(value: unknown): number {
-  if (!isRecord(value)) return -1;
-  return typeof value.lastSequence === 'number' && Number.isFinite(value.lastSequence)
-    ? value.lastSequence
-    : -1;
-}
 
 function isCancelledPromptAdmission(value: unknown): boolean {
   return isRecord(value)
@@ -2468,24 +2397,6 @@ function discardSessionOptimisticMessages(sessionId: string): void {
   }
 }
 
-function isRecentAgentSnapshot(value: unknown): boolean {
-  return isRecord(value)
-    && value.snapshotScope === 'recent'
-    && value.partial === true;
-}
-
-function recentAgentSnapshotIsPresentable(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const status = typeof value.status === 'string' ? value.status : '';
-  if (status === 'active' || status === 'busy') return true;
-  const items = Array.isArray(value.items)
-    ? value.items
-    : Array.isArray(value.messages)
-      ? value.messages
-      : [];
-  const last = items.at(-1);
-  return !(isRecord(last) && last.role === 'user');
-}
 
 function conversationNodeText(blocks: Array<{ type: string; data: Record<string, unknown> }>): string {
   const value = blocks.map((block) => {

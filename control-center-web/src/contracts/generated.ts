@@ -43,6 +43,7 @@ import type { AgentPersonaV1 } from './generated/agent-persona.v1';
 import type { AgentRoleBookToolResultV1 } from './generated/agent-role-book-tool-result.v1';
 import type { AgentRoleBookV1 } from './generated/agent-role-book.v1';
 import type { AgentRoleRoutingProfileV1 } from './generated/agent-role-routing-profile.v1';
+import type { AgentRoomConversationSnapshotV1 } from './generated/agent-room-conversation-snapshot.v1';
 import type { AgentRoomEventPageV1 } from './generated/agent-room-event-page.v1';
 import type { AgentRoomEventV1 } from './generated/agent-room-event.v1';
 import type { AgentRoomIntercomV1 } from './generated/agent-room-intercom.v1';
@@ -213,6 +214,7 @@ export type {
   AgentRoleBookToolResultV1,
   AgentRoleBookV1,
   AgentRoleRoutingProfileV1,
+  AgentRoomConversationSnapshotV1,
   AgentRoomEventPageV1,
   AgentRoomEventV1,
   AgentRoomIntercomV1,
@@ -384,6 +386,7 @@ export interface ContractTypeMap {
   'agent-role-book-tool-result.v1': AgentRoleBookToolResultV1;
   'agent-role-book.v1': AgentRoleBookV1;
   'agent-role-routing-profile.v1': AgentRoleRoutingProfileV1;
+  'agent-room-conversation-snapshot.v1': AgentRoomConversationSnapshotV1;
   'agent-room-event-page.v1': AgentRoomEventPageV1;
   'agent-room-event.v1': AgentRoomEventV1;
   'agent-room-intercom.v1': AgentRoomIntercomV1;

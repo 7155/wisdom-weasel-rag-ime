@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-room-conversation-snapshot.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ok",
+    "room",
+    "events",
+    "firstEventSequence",
+    "cursorSequence",
+    "resumeToken",
+    "deferredEventCount",
+    "truncated"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.agent-room-conversation-snapshot.v1"
+    },
+    "ok": {"type": "boolean", "const": true},
+    "room": {"type": "object"},
+    "events": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {"type": "object"}
+    },
+    "firstEventSequence": {"type": "integer", "minimum": 0},
+    "cursorSequence": {"type": "integer", "minimum": 0},
+    "resumeToken": {"type": "string"},
+    "deferredEventCount": {"type": "integer", "minimum": 0},
+    "truncated": {"type": "boolean"}
+  }
+}

@@ -732,6 +732,12 @@ export const CONTROL_ROUTES = {
     params: { roomId: null },
     responseContract: 'agent-room-snapshot.v1',
   },
+  'agent.room.conversationSnapshot': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/conversation',
+    params: { roomId: null },
+    responseContract: 'agent-room-conversation-snapshot.v1',
+  },
   'agent.room.history': {
     method: 'GET',
     path: '/api/agent/rooms/:roomId/history',

@@ -81,7 +81,8 @@ const TRACE_DIAGNOSTIC_TITLE_PREFIX = 'Trace 诊断 · ';
 const TRACE_TIMELINE_PAGE_SIZE = 60;
 const TRACE_AGENT_DIAGNOSTIC_POLL_INTERVAL_MS = 1_500;
 export const TRACE_AGENT_DIAGNOSTIC_MAX_POLL_DURATION_MS = 60_000;
-const TRACE_REPAIR_SESSION_POLICY = {
+const TRACE_AGENT_OWNER_APP_ID = 'extension:trace-agent';
+export const TRACE_DIAGNOSTIC_SESSION_POLICY = {
   mode: 'coordinator',
   toolProfileVersion: 'control-center-auto-approve-v1',
   executionMode: 'full_trust',
@@ -449,31 +450,23 @@ function TraceAgentWorkbench() {
       const created = await transport.request({
         pathId: 'agent.sessions.create',
         body: {
-          title: reportTitle,
-          mode: 'assistant',
           _modelRoute: 'traceDiagnostic',
-          toolProfileVersion: 'control-center-v1',
-          executionMode: 'read_only',
-          workspaceRoots: [],
+          surfaceKind: 'extension_app',
+          ownerAppId: TRACE_AGENT_OWNER_APP_ID,
+          surfaceKey: 'diagnostic',
+          title: reportTitle,
+          ...TRACE_DIAGNOSTIC_SESSION_POLICY,
         },
       });
       const sessionId = createdSessionId(created);
       if (!sessionId) throw new Error('诊断 Session 创建失败。');
-      // Session creation intentionally stays on the existing public contract.
-      // Enable the exact diagnostic Skill source through the normal Session
-      // policy seam before the first turn, so the SkillRef is real at runtime
-      // rather than only a label in this page.
+      // Carry the same explicit full-trust policy through the normal Session
+      // update seam before the first turn, so transcript and workspace reads
+      // use the profile-authorized scope rather than a UI-only label.
       await transport.request({
         pathId: 'agent.session.mode.update',
         params: { sessionId },
-        body: {
-          mode: 'assistant',
-          executionMode: 'read_only',
-          toolProfileVersion: 'control-center-v1',
-          projectContextEnabled: false,
-          piSkillsEnabled: true,
-          codexSkillsEnabled: false,
-        },
+        body: { ...TRACE_DIAGNOSTIC_SESSION_POLICY },
       });
       const persistedReport = await transport.request<TraceDiagnosticReportV1>({
         pathId: 'observability.traceDiagnosticReports.create',
@@ -569,7 +562,10 @@ function TraceAgentWorkbench() {
           pathId: 'agent.sessions.create',
           body: {
             title: `修复 Trace 诊断 · ${diagnostic.target.title}`,
-            ...TRACE_REPAIR_SESSION_POLICY,
+            surfaceKind: 'extension_app',
+            ownerAppId: TRACE_AGENT_OWNER_APP_ID,
+            surfaceKey: 'repair',
+            ...TRACE_DIAGNOSTIC_SESSION_POLICY,
           },
         });
         const sessionId = createdSessionId(created);
@@ -577,7 +573,7 @@ function TraceAgentWorkbench() {
         await transport.request({
           pathId: 'agent.session.mode.update',
           params: { sessionId },
-          body: { ...TRACE_REPAIR_SESSION_POLICY },
+          body: { ...TRACE_DIAGNOSTIC_SESSION_POLICY },
         });
         const linkedReport = await transport.request<TraceDiagnosticReportV1>({
           pathId: 'observability.traceDiagnosticReport.repairAuthorize',
@@ -839,9 +835,9 @@ function TraceAgentWorkbench() {
             <div>
               <span className="trace-agent-kicker">选择 → 关联 → 解释</span>
               <h2>让一段运行记录自己说清楚问题</h2>
-              <p>诊断 Session 只读运行，加载专用 Skill，先给证据和候选修复；真正改动仍由普通 Agent 在授权后完成。</p>
+              <p>诊断 Session 使用全信任运行，加载专用 Skill，可读取原始对话与根目录 / 下文件，并在证据充分时执行最小、可验证的项目修改。</p>
             </div>
-            <StatusBadge label="只读诊断" tone="info" />
+            <StatusBadge label="全信任诊断" tone="warning" />
           </header>
 
           <ManagementSection
@@ -874,7 +870,7 @@ function TraceAgentWorkbench() {
                 <div className="trace-agent-persisted-reports__heading">
                   <div>
                     <strong>已保存的工程审计报告</strong>
-                    <p>报告正文、八维评分和证据引用独立持久化；诊断 Agent 对话只保留生成过程。</p>
+                    <p>报告正文、八维评分和证据引用独立持久化；诊断 Agent 对话保留完整过程与必要修改记录，报告只呈现已持久化证据。</p>
                   </div>
                   <StatusBadge label={`${persistedReports.length} 份`} tone="neutral" />
                 </div>
@@ -1357,7 +1353,7 @@ function TraceAgentReport({
           <div><dt>诊断输入</dt><dd>{report.target.kind} · {report.target.id}</dd></div>
           <div><dt>诊断范围</dt><dd>{report.targets.length} 个对象 · {report.traceIds.length} 条 Trace</dd></div>
           <div><dt>修复 owner</dt><dd>{report.primaryTarget.title || report.primaryTarget.id}（{report.primaryTarget.kind} · {report.primaryTarget.id}）；其余对象仅作比较证据</dd></div>
-          <div><dt>权限</dt><dd>Trace 只读；修复 Session 为全磁盘、全部 Tools 自动批准，操作系统权限是最终边界</dd></div>
+          <div><dt>权限</dt><dd>Trace 诊断为全信任：可读取原始对话与根目录 / 下文件，并自动批准全部 Tools；操作系统权限是最终边界</dd></div>
         </dl>
       </div>
     </section>
@@ -2676,7 +2672,7 @@ function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''
   return [
     `先调用 skill_load 加载 name=trace-agent-diagnostics；SkillRef=${TRACE_AGENT_SKILL_REF}。`,
     '',
-    '这是一次只读诊断。不要修改代码、配置、Prompt、路由或评测数据；只输出证据、根因判断和候选修复，任何真实改动都交给用户授权后的普通 Agent。',
+    '这是一次全信任诊断与修复。可直接读取选定对象的原始对话、Trace 和根目录 / 下文件，无需逐项审批；确认根因后执行最小、可验证的项目修改，不把报告或猜测当成完成。',
     `诊断对象：${primaryTarget.kind} ${safeTargetId}（${safeTargetTitle}）`,
     targets.length > 1 ? `本次冻结范围共 ${targets.length} 个对象：${targets.map((target) => `${target.kind}:${redactTraceAgentText(target.id, 120)}`).join('、')}` : '',
     reportId ? `网页报告 ID：${redactTraceAgentText(reportId, 180)}。诊断完成后必须输出结构化结果标记，供服务端持久化。` : '',
@@ -2787,7 +2783,7 @@ function repairPrompt(report: TraceAgentReport, identity: TraceRepairIdentity = 
     diagnosticSessionId: redactTraceAgentText(report.sessionId, 180),
     diagnosticReportRef: `agent-session:${redactTraceAgentText(report.sessionId, 180)}`,
     traceId: report.traceId ? redactTraceAgentText(report.traceId, 180) : null,
-    repairSessionPolicy: TRACE_REPAIR_SESSION_POLICY,
+    repairSessionPolicy: TRACE_DIAGNOSTIC_SESSION_POLICY,
     failedEvidence: report.evidence.map((item) => ({
       id: redactTraceAgentText(item.id, 180),
       source: redactTraceAgentText(item.source, 240),

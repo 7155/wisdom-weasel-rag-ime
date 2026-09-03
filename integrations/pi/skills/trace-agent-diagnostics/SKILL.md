@@ -1,14 +1,17 @@
 ---
 name: trace-agent-diagnostics
-description: Diagnose one or several selected PAW Sessions, Rooms, or runs from canonical public Trace and Eval evidence; use when the Trace Agent App must score execution quality, explain failures or waste, persist an evidence-linked report, and propose a repair that still requires explicit user authorization. Do not use for generic log summarization or direct mutation.
+description: Diagnose one or several selected PAW Sessions, Rooms, or runs from canonical public Trace and Eval evidence; use when the Trace Agent App must inspect source conversations, read project and external files, score execution quality, explain failures or waste, persist an evidence-linked report, and apply evidence-backed project repairs under its explicit full-trust policy. Do not use for generic log summarization or unrelated mutation.
 ---
 
 # Diagnose Agent Traces
 
 Turn a bounded selection of PAW execution objects into a persisted,
-evidence-linked diagnostic report. The diagnostic Session is read-only. It
-produces a candidate repair but never treats the candidate, a generated handoff,
-or an Agent claim as an applied fix.
+evidence-linked diagnostic report. The diagnostic Session uses an explicit
+full-trust policy: it may read the selected source conversations and files
+under `/` without per-read approval, and it may apply the smallest
+evidence-backed project change. Never treat a candidate, a generated handoff,
+or an Agent claim as an applied fix without a real change receipt and
+verification evidence.
 
 Use `trace_diagnostics.inspect` before diagnosing. It is the model-visible
 public projection owned by Runtime; `session_search` summaries and prompt text
@@ -176,9 +179,9 @@ with network blocked; an ordinary or model-claimed successful command is not
 sandbox evidence. If no representative replay exists, keep repair quality
 `unknown` or `blocked` and do not mark the candidate verified.
 
-The diagnostic Session is always read-only: it has no write roots and no
-mutation tools. “Repair” is a separate explicit product confirmation that
-creates a Trace repair Session with this exact policy:
+The diagnostic Session uses this exact full-trust policy so its source
+conversation and external-file reads, as well as project modifications, are
+authorized by one explicit profile:
 
 - `mode: "coordinator"`
 - `toolProfileVersion: "control-center-auto-approve-v1"`
@@ -189,28 +192,30 @@ creates a Trace repair Session with this exact policy:
 - `projectContextEnabled: true`, `piSkillsEnabled: true`, and
   `codexSkillsEnabled: true`
 
-The completed-report UI keeps one explicit confirmation that explains this
-full-disk/all-tool automatic authority. The profile automatically approves
-every Tool effect; it does not require source-workspace equality or PAW
-workspace-scope/approval hashes. Direct OS/TCC/Unix permissions can still be
-the final boundary. The repair Agent must not ask the user to type a
+The profile automatically approves every Tool effect; it does not require
+source-workspace equality or PAW workspace-scope/approval hashes. Direct
+OS/TCC/Unix permissions can still be the final boundary. The diagnostic Agent
+and any explicitly handed-off repair Agent must not ask the user to type a
 directory or `ENABLE_FULL_TRUST` again, and must not ask for per-Tool
 approval. A URL handoff never supplies authority.
 
-Creating a repair handoff does not mean that a repair was applied. Report
-candidate/unapplied when authorization is absent or denied. Only a new
-Trace/Eval receipt after the authorized Agent action may mark the repair
-verified; never infer install or foreground acceptance.
+Creating a report or describing a candidate change does not prove that a
+project modification was applied. Report candidate/unapplied when the
+diagnostic Agent has not made the change or when a separate repair handoff is
+not authorized. Only a real change receipt plus a new Trace/Eval receipt after
+the Agent action may mark the repair verified; never infer install or
+foreground acceptance.
 
 Persist new authorization receipts with
 `writeAuthority: "auto_approved_full_trust"`; older
 `"per_action_required"` and `"model_arbitrated_full_trust"` values remain
 readable.
 
-The report must stop at a candidate repair. The UI asks the user whether to
-continue; only the explicit confirmation may create the Trace repair Session.
-Read [references/repair-verification.md](references/repair-verification.md)
-when the user authorizes that second phase.
+The completed-report UI may offer one explicit confirmation for a separate
+repair handoff; that action creates the Trace repair Session with the same
+full-trust policy. Read
+[references/repair-verification.md](references/repair-verification.md) when
+the user authorizes that second phase.
 
 ## Report Contract
 

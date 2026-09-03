@@ -76,10 +76,33 @@ describe('PAWOS Room collaboration tools', () => {
     }));
   });
 
-  it('hydrates a planet mention into the one shared Room composer', async () => {
-    renderRoom(900, vi.fn(), undefined, undefined, '@Mars ');
+  it('hydrates a planet mention and prewarms its Session', async () => {
+    const { room, transport } = renderRoom(900, vi.fn(), undefined, undefined, '@Mars ');
+    const mars = room.participants.find((participant) => participant.displayName === 'Mars');
 
     expect(await screen.findByRole('textbox', { name: '协作消息' })).toHaveValue('@Mars ');
+    await waitFor(() => expect(transport.requests.some(({ request }) => {
+      const body = request.body;
+      return request.pathId === 'agent.runtime.ensure'
+        && typeof body === 'object'
+        && body !== null
+        && !Array.isArray(body)
+        && 'sessionId' in body
+        && body.sessionId === mars?.sessionId;
+    })).toBe(true));
+  });
+
+  it('prewarms the moderator Session while a Room is visible', async () => {
+    const { room, transport } = renderRoom(900);
+    const moderator = room.participants.find((participant) => (
+      participant.id === room.moderatorParticipantId
+    ));
+
+    await waitFor(() => expect(transport.requests.find(({ request }) => (
+      request.pathId === 'agent.runtime.ensure'
+    ))?.request).toMatchObject({
+      body: { sessionId: moderator?.sessionId },
+    }));
   });
 
   it('shows submitted partner results separately while the Room still awaits its Root terminal', async () => {
@@ -872,8 +895,8 @@ describe('PAWOS Room collaboration tools', () => {
     expect(request?.body).not.toHaveProperty('executionMode');
   });
 
-  it('does not initialize an inactive Room surface', async () => {
-    const { transport } = renderRoom(
+  it('keeps an inactive but visible Room window on the authoritative stream', async () => {
+    const { controlTransport, transport } = renderRoom(
       900,
       vi.fn(),
       undefined,
@@ -886,11 +909,12 @@ describe('PAWOS Room collaboration tools', () => {
       false,
     );
 
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+    await waitFor(() => {
+      expect(transport.requests.filter(
+        ({ request }) => request.pathId === 'agent.room.conversationSnapshot',
+      )).toHaveLength(1);
+      expect(controlTransport.activeSubscriptionCount()).toBe(1);
     });
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.snapshot')).toHaveLength(0);
   });
 
   it('does not initialize a Room surface while the document is hidden', async () => {

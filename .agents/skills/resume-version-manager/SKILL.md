@@ -11,7 +11,7 @@ description: 管理简历母版及针对不同公司、岗位和 JD 的定制版
 
 ## 先读
 
-读取 [简历事实契约](../resume-builder/references/resume-contract.md)、[JD 匹配报告模板](../jd-tailorer/references/matching-analysis.md) 和 [写作规范](../resume-builder/references/content-writing.md)。
+读取 [简历事实契约](../resume-workflow/references/resume-contract.md)、[JD 匹配报告模板](../jd-tailorer/references/matching-analysis.md) 和 [写作规范](../resume-workflow/references/content-writing.md)。
 
 ## 工作流
 

@@ -2672,6 +2672,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         for field in (
             "modelProfile",
             "thinkingLevel",
+            "budget",
             "access",
             "allowedTools",
             "piSkillsEnabled",
@@ -2689,6 +2690,11 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "task": "核对联网搜索能力",
                 "expectedOutput": "一份可复核结论",
                 "acceptanceCriteria": ["列出证据路径"],
+                "budget": {
+                    "maxTotalTokens": 8_000,
+                    "maxDurationMs": 120_000,
+                    "maxOutputChars": 4_000,
+                },
                 "allowedTools": ["plugins", "workspace_read", "workspace_search"],
             },
             schema,
@@ -2703,6 +2709,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                         "task": "批量调查",
                         "expectedOutput": "调查结果",
                         "acceptanceCriteria": ["给出证据"],
+                        "budget": {"maxTotalTokens": 8_000},
                     }
                 ],
                 "contextMode": "fresh",

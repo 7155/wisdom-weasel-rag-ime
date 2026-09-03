@@ -18,7 +18,7 @@
     "revisionToken": {"type": "string", "minLength": 1},
     "configuration": {
       "type": "object",
-      "required": ["runtime", "sessionDefaults", "coordination", "modelRouting"],
+      "required": ["runtime", "sessionDefaults", "coordination", "modelRouting", "skillRouting"],
       "properties": {
         "runtime": {
           "type": "object",
@@ -72,6 +72,17 @@
             "roomCoordinator": {"$ref": "#/$defs/modelRoute"}
           },
           "additionalProperties": false
+        },
+        "skillRouting": {
+          "type": "object",
+          "required": ["ordinary", "room", "trace", "agentLab"],
+          "properties": {
+            "ordinary": {"$ref": "#/$defs/skillRoute"},
+            "room": {"$ref": "#/$defs/skillRoute"},
+            "trace": {"$ref": "#/$defs/skillRoute"},
+            "agentLab": {"$ref": "#/$defs/skillRoute"}
+          },
+          "additionalProperties": false
         }
       }
     },
@@ -100,6 +111,17 @@
         }
       },
       "additionalProperties": false
+    },
+    "skillRoute": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
     }
   }
 }

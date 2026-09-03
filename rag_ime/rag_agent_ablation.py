@@ -135,8 +135,8 @@ def score_answer_only_lane(
     normalized_lane = str(lane or "").strip().lower()
     if normalized_lane not in LANE_FEATURES:
         raise ValueError("lane must be baseline, skill, tuned, or agentic")
-    if max_searches_per_case not in {1, 2, 3}:
-        raise ValueError("max_searches_per_case must be between one and three")
+    if max_searches_per_case not in {1, 2, 3, 4, 5}:
+        raise ValueError("max_searches_per_case must be between one and five")
     normalized_cases: list[dict[str, Any]] = []
     for raw in cases:
         query_id = str(raw.get("queryId") or "").strip()
@@ -331,8 +331,8 @@ def score_agent_lane(
     normalized_lane = str(lane or "").strip().lower()
     if normalized_lane not in LANE_FEATURES:
         raise ValueError("lane must be baseline, skill, tuned, or agentic")
-    if max_searches_per_case not in {1, 2, 3}:
-        raise ValueError("max_searches_per_case must be between one and three")
+    if max_searches_per_case not in {1, 2, 3, 4, 5}:
+        raise ValueError("max_searches_per_case must be between one and five")
     normalized_cases = [_normalized_case(item) for item in cases]
     evaluation_case_ids = {item["evaluationCaseId"] for item in normalized_cases}
 

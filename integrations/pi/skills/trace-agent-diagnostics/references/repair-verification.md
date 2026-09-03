@@ -6,8 +6,8 @@ web report.
 1. Bind one repair owner, source fingerprint, failure reference, expected
    effect, and rollback target. Full-disk authority does not widen a
    multi-target report into permission to modify every target.
-2. After the user's one-time confirmation, create an ordinary writable Agent
-   Session with exactly this policy:
+2. After the user's one-time confirmation, create the dedicated writable Trace
+   repair Agent Session with exactly this policy:
    - `mode: "coordinator"`
    - `toolProfileVersion: "control-center-auto-approve-v1"`
    - `executionMode: "full_trust"`
@@ -19,8 +19,9 @@ web report.
    The paired profile directly auto-approves every Tool effect. It does not
    route actions through another approval Agent or ask for per-Tool approval.
    Persist the authorization as
-   `writeAuthority: "auto_approved_full_trust"`. The diagnostic Session stays
-   read-only.
+   `writeAuthority: "auto_approved_full_trust"`. The diagnostic Session already
+   uses this same full-trust profile; the separate repair Session is created
+   only after explicit confirmation.
 3. Preserve the source fingerprint, failure reference, expected effect, test
    plan, and rollback target in the handoff.
 4. Require a visible diff or configuration receipt and focused test evidence.

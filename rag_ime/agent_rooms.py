@@ -56,6 +56,7 @@ ROOM_EVENT_TYPES = frozenset(
 )
 
 ROOM_SNAPSHOT_EVENT_LIMIT = 200
+ROOM_CONVERSATION_EVENT_LIMIT = 2_000
 ROOM_HISTORY_PAGE_LIMIT = 200
 MAX_ACTIVE_ROOM_PARTICIPANTS = 8
 MAX_ROOM_WORKSPACE_ROOTS = 5
@@ -2209,8 +2210,13 @@ class AgentRoomStore:
         validate_contract(response, "agent-room-event-page.v1.json")
         return response
 
-    def snapshot(self, room_id: str) -> dict[str, object]:
-        """Read room metadata and the retained timeline from one SQLite snapshot."""
+    def snapshot(
+        self,
+        room_id: str,
+        *,
+        conversation_only: bool = False,
+    ) -> dict[str, object]:
+        """Read room metadata and a retained projection from one SQLite snapshot."""
         with self._connect() as conn:
             # sqlite3 does not keep multiple SELECT statements on one snapshot
             # unless a transaction is opened explicitly.
@@ -2270,16 +2276,37 @@ class AgentRoomStore:
                 """,
                 (room_id,),
             ).fetchone()
-            event_rows = conn.execute(
-                """
-                SELECT * FROM (
-                    SELECT * FROM agent_room_events
-                    WHERE room_id = ?
-                    ORDER BY sequence DESC LIMIT ?
-                ) ORDER BY sequence ASC
-                """,
-                (room_id, ROOM_SNAPSHOT_EVENT_LIMIT),
-            ).fetchall()
+            conversation_count_row: sqlite3.Row | None = None
+            if conversation_only:
+                conversation_count_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS event_count
+                    FROM agent_room_events
+                    WHERE room_id = ? AND event_type <> 'participant_activity'
+                    """,
+                    (room_id,),
+                ).fetchone()
+                event_rows = conn.execute(
+                    """
+                    SELECT * FROM (
+                        SELECT * FROM agent_room_events
+                        WHERE room_id = ? AND event_type <> 'participant_activity'
+                        ORDER BY sequence DESC LIMIT ?
+                    ) ORDER BY sequence ASC
+                    """,
+                    (room_id, ROOM_CONVERSATION_EVENT_LIMIT),
+                ).fetchall()
+            else:
+                event_rows = conn.execute(
+                    """
+                    SELECT * FROM (
+                        SELECT * FROM agent_room_events
+                        WHERE room_id = ?
+                        ORDER BY sequence DESC LIMIT ?
+                    ) ORDER BY sequence ASC
+                    """,
+                    (room_id, ROOM_SNAPSHOT_EVENT_LIMIT),
+                ).fetchall()
             # The live snapshot is a projection input, not an arbitrary tail
             # of the audit log.  Cutting through the middle of a Room turn can
             # drop its user message and route decision while retaining later
@@ -2287,7 +2314,7 @@ class AgentRoomStore:
             # messages as unrouted and lose a final result that was visible
             # before refresh.  Keep the normal bounded tail, but expand it to
             # the start of the earliest turn already represented by that tail.
-            if event_rows:
+            if event_rows and not conversation_only:
                 leading_turn_id = str(event_rows[0]["turn_id"] or "")
                 if leading_turn_id:
                     boundary_row = conn.execute(
@@ -2333,7 +2360,32 @@ class AgentRoomStore:
         if retained_count and retained_last != last_sequence:
             raise RuntimeError("agent room event cursor is inconsistent with retained events")
         first_sequence = int(events[0]["sequence"]) if events else 0
-        snapshot: dict[str, object] = {
+        if conversation_only:
+            conversation_count = (
+                int(conversation_count_row["event_count"])
+                if conversation_count_row is not None
+                else 0
+            )
+            snapshot = {
+                "schemaVersion": "rag-ime.agent-room-conversation-snapshot.v1",
+                "ok": True,
+                "room": room,
+                "events": events,
+                "firstEventSequence": first_sequence,
+                "cursorSequence": last_sequence,
+                "resumeToken": f"{room_id}:{last_sequence}" if last_sequence else "",
+                "deferredEventCount": max(0, retained_count - conversation_count),
+                "truncated": bool(
+                    conversation_count > len(events)
+                    or retained_first > 1
+                ),
+            }
+            validate_contract(
+                snapshot,
+                "agent-room-conversation-snapshot.v1.json",
+            )
+            return snapshot
+        snapshot = {
             "schemaVersion": "rag-ime.agent-room-snapshot.v1",
             "ok": True,
             "room": room,
@@ -2349,6 +2401,10 @@ class AgentRoomStore:
         }
         validate_contract(snapshot, "agent-room-snapshot.v1.json")
         return snapshot
+
+    def conversation_snapshot(self, room_id: str) -> dict[str, object]:
+        """Return the message/terminal projection before deferred Tool activity."""
+        return self.snapshot(room_id, conversation_only=True)
 
     def event_bounds(self, room_id: str) -> tuple[int, int]:
         self.get(room_id)

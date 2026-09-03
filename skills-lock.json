@@ -19,12 +19,6 @@
       "skillPath": "skills/resume-ats-optimizer/SKILL.md",
       "computedHash": "3336ffca1fa1260cd3b4cde1667308c6af6e0598434add3fcf2436f39f9b9b4c"
     },
-    "resume-builder": {
-      "source": "Chasen-Liao/resume-skills",
-      "sourceType": "github",
-      "skillPath": "skills/resume-builder/SKILL.md",
-      "computedHash": "fb1d70ab8575c7645650f77062a14da6907278ae19089a0fdfbbc355e9d1b17b"
-    },
     "resume-bullet-writer": {
       "source": "Chasen-Liao/resume-skills",
       "sourceType": "github",

@@ -8544,6 +8544,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.agent.room_snapshot(agent_room_id),
             )
             return
+        if agent_room_id and room_action == "conversation":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.room_conversation_snapshot(agent_room_id),
+            )
+            return
         if agent_room_id and room_action == "start-gate":
             self._write_json(
                 HTTPStatus.OK,

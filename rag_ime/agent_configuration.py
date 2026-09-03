@@ -13,6 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_role_identity import canonical_agent_role_id
+from .agent_skill_routing import (
+    SKILL_SCENARIOS,
+    default_skill_routing,
+    normalize_skill_route,
+    normalize_skill_routing,
+)
 from .agent_runtime_driver import AgentRuntimePolicy
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
@@ -25,6 +31,7 @@ _RUNTIME_KEYS = frozenset(
         "runtime.enabled",
         "runtime.startup",
         "runtime.idleTimeoutSeconds",
+        *(f"skillRouting.{scenario}" for scenario in SKILL_SCENARIOS),
     }
 )
 _MODEL_ROUTE_IDS = (
@@ -63,7 +70,7 @@ def default_agent_configuration(
     resume_last_session: bool = True,
     coordinator_enabled: bool = False,
 ) -> dict[str, object]:
-    configuration = {
+    configuration: dict[str, object] = {
         "runtime": {
             "enabled": bool(enabled),
             "startup": "lazy",
@@ -96,6 +103,7 @@ def default_agent_configuration(
         },
         "coordination": {"enabled": bool(coordinator_enabled)},
         "modelRouting": _default_model_routing(),
+        "skillRouting": default_skill_routing(),
         "capabilityDisclosure": {"projectPreferences": {}},
     }
     _validate_configuration(configuration)
@@ -256,6 +264,21 @@ class AgentConfigurationStore:
             "capabilityDisclosure",
             {"projectPreferences": {}},
         )
+        if "skillRouting" not in configuration:
+            fallback_skill_routing = fallback.get("skillRouting")
+            configuration["skillRouting"] = copy.deepcopy(
+                fallback_skill_routing
+                if isinstance(fallback_skill_routing, Mapping)
+                else default_skill_routing()
+            )
+            changed_keys.append("skillRouting")
+        else:
+            normalized_skill_routing = normalize_skill_routing(
+                configuration["skillRouting"]
+            )
+            if configuration["skillRouting"] != normalized_skill_routing:
+                configuration["skillRouting"] = normalized_skill_routing
+                changed_keys.append("skillRouting")
         had_trace_diagnostic_route = isinstance(
             configuration.get("modelRouting"), Mapping
         ) and "traceDiagnostic" in configuration["modelRouting"]
@@ -784,6 +807,9 @@ def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
             if route_id not in _MODEL_ROUTE_IDS:
                 raise ValueError(f"unsupported Agent model route: {route_id}")
             normalized[key] = _model_route(value, field=key)
+        elif key.startswith("skillRouting."):
+            scenario = key.removeprefix("skillRouting.")
+            normalized[key] = normalize_skill_route(value, scenario=scenario)
         elif key == "capabilityDisclosure.projectPreferences":
             normalized[key] = _project_disclosure_preferences(value)
         else:
@@ -798,12 +824,17 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         "coordination",
         "modelRouting",
         "capabilityDisclosure",
+        "skillRouting",
     }:
         raise ValueError("agent configuration sections are invalid")
     runtime = _mapping(configuration.get("runtime"), field="runtime")
     defaults = _mapping(configuration.get("sessionDefaults"), field="sessionDefaults")
     coordination = _mapping(configuration.get("coordination"), field="coordination")
     model_routing = _mapping(configuration.get("modelRouting"), field="modelRouting")
+    skill_routing = _mapping(
+        configuration.get("skillRouting"),
+        field="skillRouting",
+    )
     disclosure = _mapping(
         configuration.get("capabilityDisclosure"),
         field="capabilityDisclosure",
@@ -825,6 +856,7 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         raise ValueError("agent model routing fields are invalid")
     if set(disclosure) != {"projectPreferences"}:
         raise ValueError("agent capability disclosure fields are invalid")
+    normalize_skill_routing(skill_routing)
     runtime_policy_from_configuration(configuration)
     _boolean(defaults.get("resumeLastSession"), field="sessionDefaults.resumeLastSession")
     _identifier(defaults.get("roleId"), field="sessionDefaults.roleId", maximum=80)

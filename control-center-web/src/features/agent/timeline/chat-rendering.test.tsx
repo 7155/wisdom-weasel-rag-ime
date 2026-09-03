@@ -2049,7 +2049,7 @@ describe('Agent chat rendering', () => {
     expect(agentTurnMarkerKind(projection, stoppedTurnId)).toBe('aborted');
   });
 
-  it('keeps Room public posts auditable without rendering them as another Session turn', () => {
+  it('shows persisted Room posts in participant Sessions while ordinary Sessions avoid duplication', () => {
     const sessionId = 'session-1';
     const currentTurnId = '831ba902-637d-48aa-b92f-2b1c32c4c969';
     const roomTurnId = 'room-root:98459a93-e95c-4e9b-9054-693131c2af66';
@@ -2080,12 +2080,23 @@ describe('Agent chat rendering', () => {
     const projection = useAgentLiveStore.getState().projections[sessionId];
     expect(projection.messagesById[roomPost.id]).toBeDefined();
     expect(visibleAgentTurnIds(projection)).toEqual([currentTurnId]);
+    expect(visibleAgentTurnIds(projection, true)).toEqual([currentTurnId, roomTurnId]);
 
-    const { container } = render(
+    const { container, rerender } = render(
       <AgentTurn sessionId={sessionId} turnId={roomTurnId} onApprovalDecision={() => {}} />,
     );
     expect(container.querySelector('.agent-assistant-turn')).not.toBeInTheDocument();
     expect(screen.queryByText('Room 公共交付不应复制到 Session。')).not.toBeInTheDocument();
+
+    rerender(
+      <AgentTurn
+        includeRoomPublicPosts
+        sessionId={sessionId}
+        turnId={roomTurnId}
+        onApprovalDecision={() => {}}
+      />,
+    );
+    expect(screen.getByText('Room 公共交付不应复制到 Session。')).toBeInTheDocument();
   });
 
   it('replaces a failed turn in place while keeping retry attempts auditable', () => {

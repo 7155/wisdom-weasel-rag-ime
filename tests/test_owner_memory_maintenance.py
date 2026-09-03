@@ -126,7 +126,7 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         def execute(_payload: Mapping[str, object]) -> dict[str, object]:
             started.set()
             self.assertTrue(release.wait(timeout=2))
-            return {"ok": True}
+            return {"ok": True, "blob": "x" * 100_000}
 
         jobs = GatewayMemoryMaintenanceJobs(execute)
         created = jobs.trigger({"project": "project-a", "manual": False})
@@ -138,7 +138,12 @@ class GatewayMemoryMaintenanceJobsTests(unittest.TestCase):
         self.assertEqual(latest["state"], "running")
         self.assertNotIn("request", latest)
         release.set()
-        self._wait_for_terminal(jobs, str(created["jobId"]))
+        terminal = self._wait_for_terminal(jobs, str(created["jobId"]))
+        self.assertEqual(len(terminal["result"]["blob"]), 100_000)
+        latest_terminal = jobs.latest_status(project="project-a")
+        self.assertEqual(latest_terminal["result"], {})
+        self.assertEqual(latest_terminal["sourceCursor"], {})
+        self.assertEqual(latest_terminal["sourceInputRefs"], [])
 
     def test_failed_manual_catch_up_remains_visible_after_refresh(self) -> None:
         jobs = GatewayMemoryMaintenanceJobs(

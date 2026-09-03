@@ -17,12 +17,14 @@ __all__ = [
     "RuntimeDriverContext",
     "RuntimeDriverFactory",
     "SessionContextProvider",
+    "SkillAllowlistProvider",
     "ToolManifestProvider",
 ]
 
 
 MediaResolver = Callable[[str, str, str], str]
 SessionContextProvider = Callable[[Mapping[str, object]], Mapping[str, object]]
+SkillAllowlistProvider = Callable[[Mapping[str, object]], list[str]]
 ToolManifestProvider = Callable[[Mapping[str, object]], list[Mapping[str, object]]]
 CompactionObserver = Callable[
     [str, Mapping[str, object], str],
@@ -44,6 +46,7 @@ class RuntimeDriverContext:
     tool_gateway_url: str = "http://127.0.0.1:8766/api/agent/tool/execute"
     media_resolver: MediaResolver | None = None
     tool_manifest_provider: ToolManifestProvider | None = None
+    skill_allowlist_provider: SkillAllowlistProvider | None = None
     compaction_observer: CompactionObserver | None = None
 
 

@@ -73,6 +73,7 @@ for line in sys.stdin:
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
                          "sessionControlState": True,
+                         "sessionSkillAllowlist": True,
                          "transientContext": True,
                          "statelessCompletion": True,
                          "conversationFork": True,
@@ -958,6 +959,43 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["noContextFiles"])
         self.assertTrue(opened["params"]["piSkillsEnabled"])
         self.assertTrue(opened["params"]["codexSkillsEnabled"])
+
+    def test_session_skill_allowlist_reaches_pi_session_open(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime._skill_allowlist_provider = (
+            lambda _session: [
+                "systematic-debugging",
+                "test-driven-implementation",
+            ]
+        )
+
+        self.runtime.ensure(session_id)
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = next(request for request in requests if request["method"] == "session.open")
+        self.assertEqual(
+            opened["params"]["skillAllowlist"],
+            ["systematic-debugging", "test-driven-implementation"],
+        )
+
+    def test_session_skill_allowlist_fails_closed_on_an_old_host(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime._skill_allowlist_provider = (
+            lambda _session: ["systematic-debugging"]
+        )
+        self.runtime._host()
+        self.runtime._host_capabilities.pop("sessionSkillAllowlist", None)
+
+        with self.assertRaisesRegex(
+            PiRuntimeError,
+            "does not support per-Session Skill allowlists",
+        ):
+            self.runtime.ensure(session_id)
 
     def test_retire_recovered_turn_uses_exact_idle_turn_and_confirms_clear(
         self,
@@ -4044,6 +4082,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertTrue(opened["params"]["noContextFiles"])
         self.assertFalse(opened["params"]["piSkillsEnabled"])
         self.assertFalse(opened["params"]["codexSkillsEnabled"])
+        self.assertEqual(opened["params"]["skillAllowlist"], [])
         self.assertIn(
             "governed personal-memory curation engine",
             opened["params"]["systemPrompt"],
@@ -4578,6 +4617,37 @@ class PiRuntimeV2Tests(unittest.TestCase):
             self.runtime.prompt(session_id, "允许一轮长时间使用工具")
 
         self.assertEqual(prompt_timeouts, [3_600.0])
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+
+    def test_prompt_reuses_resident_session_without_control_state_round_trip(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        original_send = client.send
+        methods: list[str] = []
+
+        def record_send(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            methods.append(method)
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=record_send):
+            self.runtime.prompt(session_id, "复用已驻留的会话")
+
+        self.assertIn("session.prompt", methods)
+        self.assertNotIn("session.control_state", methods)
         _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
 
     def test_pending_prompt_admission_prevents_idle_shutdown(self) -> None:

@@ -6,7 +6,9 @@ import {
   appendOptimisticRoomMessage,
   createRoomProjection,
   reduceRoomEvents,
+  replayRoomConversationSnapshot,
   replayRoomEventSnapshot,
+  type RoomConversationSnapshot,
   type RoomEventPage,
   type RoomEventSnapshot,
   type OptimisticRoomMessageInput,
@@ -31,6 +33,12 @@ interface RoomLiveStore {
   snapshotsByRoomId: Record<string, RoomEventSnapshot>;
   ensure(roomId: string): void;
   replaySnapshot(roomId: string, snapshot: RoomEventSnapshot): boolean;
+  replaySnapshotWithTail(
+    roomId: string,
+    snapshot: RoomEventSnapshot,
+    liveTail: readonly UiRoomEvent[],
+  ): boolean;
+  replayConversationSnapshot(roomId: string, snapshot: RoomConversationSnapshot): boolean;
   applyEvents(roomId: string, events: readonly UiRoomEvent[]): boolean;
   prependHistory(roomId: string, page: RoomEventPage): boolean;
   appendOptimistic(
@@ -80,6 +88,56 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
         [roomId]: merged.snapshot,
       },
     }));
+    replaceProjection(set, get, roomId, next, allTurnIds(current, next));
+    return true;
+  },
+  replaySnapshotWithTail(roomId, snapshot, liveTail) {
+    const current = roomProjection(roomId);
+    const latestTailSequence = liveTail.at(-1)?.sequence ?? snapshot.lastSequence;
+    if (
+      snapshot.lastSequence < current.lastSequence
+      && latestTailSequence < current.lastSequence
+    ) return false;
+    const merged = mergeSnapshotWindow(snapshot, get().historyByRoomId[roomId]);
+    const events = appendLiveEvents(merged.window.events, liveTail);
+    const latest = events.at(-1);
+    const replaySnapshot: RoomEventSnapshot = {
+      ...merged.snapshot,
+      room: {
+        ...merged.snapshot.room,
+        lastEventSequence: latest?.sequence ?? merged.snapshot.lastSequence,
+      },
+      events,
+      firstSequence: events[0]?.sequence ?? 0,
+      lastSequence: latest?.sequence ?? merged.snapshot.lastSequence,
+      resumeToken: latest?.resumeToken ?? merged.snapshot.resumeToken,
+      truncated: (events[0]?.sequence ?? 0) > 1,
+    };
+    const next = replayRoomEventSnapshot(current, replaySnapshot);
+    set((state) => ({
+      historyByRoomId: {
+        ...state.historyByRoomId,
+        [roomId]: {
+          ...merged.window,
+          events,
+          firstSequence: replaySnapshot.firstSequence,
+        },
+      },
+      snapshotsByRoomId: {
+        ...state.snapshotsByRoomId,
+        [roomId]: replaySnapshot,
+      },
+    }));
+    replaceProjection(set, get, roomId, next, allTurnIds(current, next));
+    return true;
+  },
+  replayConversationSnapshot(roomId, snapshot) {
+    const current = roomProjection(roomId);
+    // Warm projections render immediately and keep their richer Tool history.
+    // Their existing cursor can catch up through SSE; the lightweight snapshot
+    // is the cold-open path, not permission to erase already loaded evidence.
+    if (current.lastSequence > 0) return false;
+    const next = replayRoomConversationSnapshot(current, snapshot);
     replaceProjection(set, get, roomId, next, allTurnIds(current, next));
     return true;
   },

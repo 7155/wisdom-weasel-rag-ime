@@ -189,14 +189,46 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertTrue(self.service.sessions.get(session_id)["evaluationSnapshot"])
 
-    def test_trace_diagnostic_report_freezes_read_only_session_and_finalizes_structured_result(self) -> None:
+    def test_trace_diagnostic_report_freezes_full_trust_session_and_finalizes_structured_result(self) -> None:
+        policy = {
+            "mode": "coordinator",
+            "toolProfileVersion": "control-center-auto-approve-v1",
+            "executionMode": "full_trust",
+            "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            "workspaceRoots": ["/"],
+            "toolAllowlistMode": "profile",
+            "projectContextEnabled": True,
+            "piSkillsEnabled": True,
+            "codexSkillsEnabled": True,
+        }
+        ownerless = self.service.create_session(
+            {"title": "ordinary full-trust Session", **policy}
+        )["session"]
+        with self.assertRaisesRegex(ValueError, "explicit full-trust diagnostic"):
+            self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": ownerless["id"],
+                    "title": "must reject ordinary Session",
+                    "targets": [],
+                }
+            )
         session = self.service.create_session(
             {
                 "title": "Trace diagnostic",
-                "mode": "coordinator",
-                "executionMode": "read_only",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
+                **policy,
             }
         )["session"]
+        self.assertEqual(session["mode"], "coordinator")
+        self.assertEqual(session["toolProfileVersion"], "control-center-auto-approve-v1")
+        self.assertEqual(session["executionMode"], "full_trust")
+        self.assertEqual(session["workspaceRoots"], ["/"])
+        self.assertEqual(session["toolAllowlistMode"], "profile")
+        self.assertTrue(session["projectContextEnabled"])
+        self.assertTrue(session["piSkillsEnabled"])
+        self.assertTrue(session["codexSkillsEnabled"])
         result = {
             "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
             "summary": "没有权威完成回执，结论保持未知。",
@@ -210,6 +242,35 @@ class AgentServiceTests(unittest.TestCase):
             ],
             "judgeScores": [],
             "findings": [],
+            "presentation": {
+                "headline": "诊断证据不足",
+                "impact": "没有权威完成回执，因此不能确认任务完成。",
+                "primaryFindingId": "",
+                "knownFacts": [],
+                "evidenceGaps": [
+                    {
+                        "gap": "缺少完成回执",
+                        "consequence": "任务完成度保持未知",
+                        "howToObtain": "读取权威 Runtime 完成事件",
+                    }
+                ],
+                "causalNodes": [],
+                "expectedStageCount": 0,
+                "recordedStageReceiptEvidenceIds": [],
+                "failureAttribution": {
+                    "primaryLayer": "unknown",
+                    "summary": "现有证据不足以归因。",
+                    "layers": [
+                        {
+                            "layer": layer,
+                            "verdict": "unknown",
+                            "explanation": "没有足够的冻结证据。",
+                            "evidenceIds": [],
+                        }
+                        for layer in ("tool", "skill", "template", "workflow", "model")
+                    ],
+                },
+            },
         }
         public_snapshot = {
             "ok": True,
@@ -258,12 +319,44 @@ class AgentServiceTests(unittest.TestCase):
             report["reportId"],
         )
 
+    def test_trace_diagnostic_report_rejects_ordinary_session_policy(self) -> None:
+        session = self.service.create_session({"title": "ordinary Agent"})["session"]
+        self.assertEqual(session["executionMode"], "per_action")
+        self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(session["workspaceRoots"], [])
+        with self.assertRaisesRegex(
+            ValueError,
+            "explicit full-trust diagnostic Session policy",
+        ):
+            self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": session["id"],
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": session["id"],
+                            "title": "ordinary Agent",
+                        }
+                    ],
+                }
+            )
+
     def test_trace_diagnostic_finalize_requires_exact_revision(self) -> None:
         session = self.service.create_session(
             {
                 "title": "Strict Trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
                 "mode": "coordinator",
-                "executionMode": "read_only",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": ["/"],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
             }
         )["session"]
         snapshot = {
@@ -304,8 +397,18 @@ class AgentServiceTests(unittest.TestCase):
         session = self.service.create_session(
             {
                 "title": "Faulted trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
                 "mode": "coordinator",
-                "executionMode": "read_only",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": ["/"],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
             }
         )["session"]
         idle_snapshot = {
@@ -364,8 +467,18 @@ class AgentServiceTests(unittest.TestCase):
                 session = self.service.create_session(
                     {
                         "title": f"{terminal_status} trace diagnostic",
+                        "surfaceKind": "extension_app",
+                        "ownerAppId": "extension:trace-agent",
+                        "surfaceKey": "diagnostic",
                         "mode": "coordinator",
-                        "executionMode": "read_only",
+                        "toolProfileVersion": "control-center-auto-approve-v1",
+                        "executionMode": "full_trust",
+                        "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                        "workspaceRoots": ["/"],
+                        "toolAllowlistMode": "profile",
+                        "projectContextEnabled": True,
+                        "piSkillsEnabled": True,
+                        "codexSkillsEnabled": True,
                     }
                 )["session"]
                 idle_snapshot = {
@@ -2854,7 +2967,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(explicit["toolProfileVersion"], "subagent-readonly-v1")
         self.assertEqual(explicit["roleBookRevisionId"], "")
 
-    def test_trace_diagnostic_sessions_read_the_dedicated_route_at_creation_only(self) -> None:
+    def test_trace_diagnostic_sessions_use_dedicated_route_and_full_trust_at_creation_only(self) -> None:
         initial = self.service.configuration()["configuration"]
         configured = self.service.update_configuration(
             {
@@ -2871,8 +2984,16 @@ class AgentServiceTests(unittest.TestCase):
 
         existing = self.service.create_session(
             {
+                "mode": "coordinator",
                 "title": "Trace diagnostic existing",
-                "executionMode": "read_only",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": ["/"],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
                 "_modelRoute": "traceDiagnostic",
             }
         )["session"]
@@ -2891,8 +3012,16 @@ class AgentServiceTests(unittest.TestCase):
         )
         new_session = self.service.create_session(
             {
+                "mode": "coordinator",
                 "title": "Trace diagnostic new",
-                "executionMode": "read_only",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": ["/"],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
                 "_modelRoute": "traceDiagnostic",
             }
         )["session"]
@@ -3654,6 +3783,43 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             response["items"][0]["clientMessageId"],
             "room-client-recent",
+        )
+
+    def test_room_conversation_snapshot_uses_management_facade(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 对话首屏",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        event = self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "通过公开服务读取"},
+            turn_id="root:conversation-facade",
+        )
+
+        response = self.service.room_conversation_snapshot(room_id)
+
+        self.assertEqual(
+            response["schemaVersion"],
+            "rag-ime.agent-room-conversation-snapshot.v1",
+        )
+        self.assertEqual(response["room"]["id"], room_id)
+        self.assertEqual(
+            response["events"][-1]["eventId"],
+            event["eventId"],
         )
 
     def test_recent_room_message_snapshot_never_loads_full_room_history(

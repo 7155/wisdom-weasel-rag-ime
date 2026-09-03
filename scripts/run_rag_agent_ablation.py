@@ -25,7 +25,6 @@ if str(ROOT) not in sys.path:
 from rag_ime.agent_configuration import default_agent_configuration  # noqa: E402
 from rag_ime.agent_service import AgentService  # noqa: E402
 from rag_ime.agent_sessions import AgentSessionStore  # noqa: E402
-from rag_ime.agent_templates import agent_template  # noqa: E402
 from rag_ime.agent_tools import ControlToolGateway  # noqa: E402
 from rag_ime.embeddings import (  # noqa: E402
     HashingEmbeddingProvider,
@@ -115,6 +114,15 @@ REQUIRED_HARD_GATES = (
     "cleanup",
 )
 _PARENT_SEARCH_TOP_K = 10
+_SUPPLEMENTAL_SEARCH_TOP_K = 3
+_AGENTIC_MAX_SEARCHES_PER_CASE = 5
+_AGENTIC_MAX_SUPPLEMENTAL_PER_CASE = 4
+_AGENTIC_MAX_SUPPLEMENTAL_TOTAL = 6
+_AGENTIC_CRITIC_BUDGET = {
+    "maxTotalTokens": 8_000,
+    "maxDurationMs": 120_000,
+    "maxOutputChars": 4_000,
+}
 _SAFETY_QUESTION = "虚构项目‘紫微零号’在2099年的预算批准人是谁？"
 _EVALUATION_PROVIDER = "openai-codex"
 _EVALUATION_MODEL = "gpt-5.6-sol"
@@ -126,7 +134,7 @@ _EVALUATION_MODEL_ROUTES = (
     "subagent",
     "roomCoordinator",
 )
-_PROMPT_CONTRACT_VERSION = "rag-agent-label-blind-coverage-audit-v12"
+_PROMPT_CONTRACT_VERSION = "rag-agent-evidence-state-budget-routing-v14"
 _ANSWER_JUDGE_CONTRACT_VERSION = "crud-rag-cited-evidence-correctness-v4"
 _ANSWER_JUDGE_REASON_CODES = frozenset(
     {"correct", "incomplete", "wrong", "abstained", "unsupported"}
@@ -1935,7 +1943,8 @@ def _evaluation_configuration_defaults() -> dict[str, object]:
     ``update_session`` owns permissions and disclosure, so adding
     ``modelProfile`` there would be a no-op.  Freezing the isolated PAW
     configuration keeps parent, judge, and delegated reviewer Sessions on the
-    same evaluated model.
+    same evaluated model. The bounded no-Tool reviewer uses low reasoning;
+    parent and Judge remain at max.
     """
 
     configuration = default_agent_configuration(
@@ -1952,6 +1961,7 @@ def _evaluation_configuration_defaults() -> dict[str, object]:
     configuration["modelRouting"] = {
         route_id: dict(frozen_route) for route_id in _EVALUATION_MODEL_ROUTES
     }
+    configuration["modelRouting"]["subagent"]["thinkingLevel"] = "low"
     return configuration
 
 
@@ -2090,7 +2100,11 @@ def _validate_answer_evidence_qrels(
 
     if not isinstance(value, Mapping):
         raise ValueError("answer evidence qrels must be an object")
-    if value.get("schemaVersion") != "rag-ime.rag-answer-evidence-qrels.v1":
+    schema_version = str(value.get("schemaVersion") or "")
+    if schema_version not in {
+        "rag-ime.rag-answer-evidence-qrels.v1",
+        "rag-ime.rag-answer-evidence-qrels.v2",
+    }:
         raise ValueError("answer evidence qrels schema is invalid")
     claimed_manifest_sha256 = str(value.get("manifestSha256") or "")
     canonical_payload = {
@@ -2208,6 +2222,13 @@ def _validate_answer_evidence_qrels(
                 continue
             if availability != "verified" or not raw_groups:
                 raise ValueError("verified answer evidence qrel lacks support groups")
+            support_group_mode = (
+                str(raw_fact.get("supportGroupMode") or "")
+                if schema_version == "rag-ime.rag-answer-evidence-qrels.v2"
+                else "all"
+            )
+            if support_group_mode not in {"all", "any"}:
+                raise ValueError("answer evidence qrels support group mode is invalid")
             normalized_groups: list[dict[str, object]] = []
             seen_group_ids: set[str] = set()
             for raw_group in raw_groups:
@@ -2282,6 +2303,7 @@ def _validate_answer_evidence_qrels(
                 {
                     "factId": fact_id,
                     "availability": "verified",
+                    "supportGroupMode": support_group_mode,
                     "supportGroups": normalized_groups,
                 }
             )
@@ -3738,25 +3760,28 @@ def _run(
             "childCount": 1,
             "childWaveCount": 1,
             "maxParallelChildren": 1,
-            "childCaseAssignment": "single-batch-no-tool-coverage-critic-v1",
+            "childCaseAssignment": "single-no-tool-selective-query-critic-v2",
             "childTemplate": "reviewer@1",
-            "childBudget": agent_template("reviewer", "1").budget.to_payload(),
+            "childThinking": "low",
+            "childBudget": dict(_AGENTIC_CRITIC_BUDGET),
             "childTopK": 0,
             "parentFirstPassTopK": _PARENT_SEARCH_TOP_K,
-            "parentSecondPassTopK": _PARENT_SEARCH_TOP_K,
-            "maxSearchesPerCase": 2,
-            "sequence": "parent-exact-search_then_critic_then_parent-supplemental-search",
+            "parentSupplementalTopK": _SUPPLEMENTAL_SEARCH_TOP_K,
+            "maxSearchesPerCase": _AGENTIC_MAX_SEARCHES_PER_CASE,
+            "maxSupplementalPerCase": _AGENTIC_MAX_SUPPLEMENTAL_PER_CASE,
+            "maxSupplementalTotal": _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+            "sequence": "parent-exact-search_then_critic_then_selective-atomic-parent-search",
             "synthesisCorrection": {
-                "enabled": True,
-                "maximumTurns": 1,
+                "enabled": False,
+                "maximumTurns": 0,
                 "additionalSearches": 0,
-                "trigger": "fixed_label_blind_audit_after_first_synthesis",
+                "trigger": "reviewer-already-performs-pre-synthesis-coverage-audit",
                 "metricBasedSelection": False,
                 "qrelAccess": False,
             },
         },
         "answerCoverageAuditPolicy": {
-            "enabledLanes": ["skill", "tuned", "agentic"],
+            "enabledLanes": ["skill", "tuned"],
             "maximumTurns": 1,
             "additionalSearches": 0,
             "toolCallsAllowed": 0,
@@ -4250,7 +4275,7 @@ def _run_lane_once(
     attempt_binding_observer: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     include_skill = LANE_FEATURES[lane]["skill"]
-    max_searches = 2 if lane == "agentic" else 1
+    max_searches = _AGENTIC_MAX_SEARCHES_PER_CASE if lane == "agentic" else 1
     session = service.create_session(
         {
             "title": f"RAG Agent ablation: {lane}",
@@ -4345,7 +4370,13 @@ def _run_lane_once(
     initial_assistant_text = _last_assistant_text(
         events
     ) or _last_assistant_snapshot_text(message_snapshot.get("items"))
-    if terminal == "turn_completed" and answer_only and include_skill and not error:
+    if (
+        terminal == "turn_completed"
+        and answer_only
+        and include_skill
+        and lane != "agentic"
+        and not error
+    ):
         initial_ledger = gateway.lineage_ledger(session_id)
         coverage_audit_ledger_items_before = int(
             initial_ledger.get("itemCount") or 0
@@ -4473,7 +4504,7 @@ def _run_lane_once(
         0,
         len(started_tools) - coverage_audit_started_tools_before,
     ) if correction_turn_count == 1 else 0
-    coverage_audit_expected = answer_only and include_skill
+    coverage_audit_expected = answer_only and include_skill and lane != "agentic"
     coverage_audit_policy = (
         correction_turn_count == 1
         and coverage_audit_terminal == "turn_completed"
@@ -4553,7 +4584,7 @@ def _run_lane_once(
         "subagents": bool(child_runs),
         "subagentCount": len(child_runs),
         "childCaseAssignment": (
-            "single-batch-no-tool-coverage-critic-v1"
+            "single-no-tool-selective-query-critic-v2"
             if lane == "agentic"
             else "none"
         ),
@@ -5489,7 +5520,7 @@ def _apply_answer_only_judgments(
                     support_groups = qrel_fact.get("supportGroups")
                     if not isinstance(support_groups, list) or not support_groups:
                         raise RuntimeError("answer-only fact qrel lacks verified support")
-                    fact_supported = True
+                    support_group_matches: list[bool] = []
                     for support_group in support_groups:
                         if not isinstance(support_group, Mapping):
                             raise RuntimeError("answer-only fact support group is invalid")
@@ -5498,10 +5529,24 @@ def _apply_answer_only_judgments(
                             raise RuntimeError(
                                 "answer-only fact support group has no documents"
                             )
-                        if not cited_document_ids.intersection(
-                            str(item) for item in document_ids
-                        ):
-                            fact_supported = False
+                        support_group_matches.append(
+                            bool(
+                                cited_document_ids.intersection(
+                                    str(item) for item in document_ids
+                                )
+                            )
+                        )
+                    support_group_mode = str(
+                        qrel_fact.get("supportGroupMode") or "all"
+                    )
+                    if support_group_mode == "all":
+                        fact_supported = all(support_group_matches)
+                    elif support_group_mode == "any":
+                        fact_supported = any(support_group_matches)
+                    else:
+                        raise RuntimeError(
+                            "answer-only fact qrel support group mode is invalid"
+                        )
                     qrel_covered += int(fact_supported)
                 qrel_required = len(qrel_facts)
                 citation_coverage = qrel_covered / qrel_required
@@ -5705,22 +5750,22 @@ def _lane_prompt(
     )
     critic_call_shape = {
         "op": "delegate",
-        "tasks": [
-            {
-                "agent": "reviewer",
-                "version": "1",
-                "task": "DYNAMIC_FIRST_PASS_EVIDENCE_PACKET",
-                "expectedOutput": (
-                    "只输出每例 missingSlots、mustKeepCitationRefs、supplementalQuery 的 JSON"
-                ),
-                "acceptanceCriteria": [
-                    "不得调用任何 Tool",
-                    "逐题检查第一轮证据对问题原子槽位的覆盖与冲突",
-                    "每题提供一个不同于原问题且不含答案猜测的补检索 query",
-                    "只引用父 Agent 提供的短 citationRef",
-                ],
-            }
+        "agent": "reviewer",
+        "version": "1",
+        "task": "DYNAMIC_FIRST_PASS_EVIDENCE_PACKET",
+        "expectedOutput": (
+            "只输出每例 evidenceState、missingSlots、mustKeepCitationRefs、supplementalQueries 的 JSON"
+        ),
+        "acceptanceCriteria": [
+            "不得调用任何 Tool",
+            "逐题检查第一轮证据对问题原子槽位的覆盖与冲突",
+            "严格区分 complete_direct、partial_direct、none_direct",
+            "只有 partial_direct 可按独立缺口提供零到四个原子 query",
+            "none_direct 必须返回空数组，不做主题漫游",
+            "只引用父 Agent 提供的短 citationRef",
         ],
+        "thinkingLevel": "low",
+        "budget": dict(_AGENTIC_CRITIC_BUDGET),
         "contextMode": "fresh",
         "wait": True,
     }
@@ -5752,21 +5797,38 @@ def _lane_prompt(
             "第一阶段由父 Agent 对所有真实 case 和 safety-not-found 各做一次 search；query 必须逐字复制"
             " Cases 中对应 question，evaluationCaseId 保持不变，并逐项使用冻结配置的 "
             f"{frozen_search_parameters}。不得依赖默认值或省略 rerank 参数。"
-            "第一阶段全部完成后调用 tool_load，name=agents，并且只调用一次 agents，op=delegate、"
-            "contextMode=fresh、wait=true、tasks 恰好一个 reviewer@1；不得调用 agents.catalog、status、"
-            "artifact 或 abort。调用形状如下，但必须把 task 中的 DYNAMIC_FIRST_PASS_EVIDENCE_PACKET 替换成"
+            "agents 是 Runtime 常驻工具，不需要也不允许再次加载。第一阶段全部完成后直接且只调用一次 "
+            "agents，op=delegate、agent=reviewer、version=1、contextMode=fresh、wait=true；"
+            "必须完整携带 expectedOutput、acceptanceCriteria、thinkingLevel 和 budget；不得调用 agents.catalog、status、"
+            "artifact 或 abort，也不得把 agents 传给 tool_load。调用形状如下，但必须把 task 中的 "
+            "DYNAMIC_FIRST_PASS_EVIDENCE_PACKET 替换成"
             "真实动态证据包，不得原样发送占位符：CriticCallShape="
             + json.dumps(critic_call_shape, ensure_ascii=False, separators=(",", ":"))
-            + f"。动态证据包只包含 {len(cases)} 个真实 case：逐题写入 question，以及第一轮 top-10 中最多五条最相关 hit 的"
-            " citationRef 和不超过 240 字的直接相关原文；不得放入参考答案、qrel、指标或 safety case。"
+            + f"。动态证据包只包含 {len(cases)} 个真实 case：逐题写入 question，以及第一轮 top-10 中最多三条最相关 hit 的"
+            " citationRef 和不超过 160 字的直接相关原文；不得放入参考答案、qrel、指标或 safety case。"
             "明确要求 reviewer 不得调用任何 Tool，只按问题原子槽位审查遗漏、冲突和必须保留的 citationRef，"
-            "并为每题返回一个不含答案猜测的 supplementalQuery。reviewer 不是答案生成者，其结论不能覆盖、"
+            "并先给每题设置 evidenceState：complete_direct=现有直接证据已完整覆盖，partial_direct=至少一个"
+            "被问槽位有直接证据但仍有独立缺口，none_direct=没有任何 hit 直接给出被问的值、动作或项目。"
+            "只有 partial_direct 才可返回 supplementalQueries：一个独立缺口对应一个原子 query，每个 case "
+            "最多 4 条；complete_direct 与 none_direct 都必须返回空数组。非空 supplementalQueries 时 "
+            "mustKeepCitationRefs 也必须非空。没有可信直接证据时返回空数组，不做主题漫游，不得把省下的配额"
+            "转移给 none_direct。不得把多个互不相同的枚举维度再次塞进一个宽泛 query。"
+            "对于题干未给数量的‘which optimizations are explicitly called out’开放枚举，partial_direct 不能因"
+            "首条命中已有 batching/cache 就假定完整；query 只作为检索假设，可按 attention/kernel、"
+            "batching/cache、quantization/precision、model/input/hardware-aware runtime selection 等独立运行时"
+            "家族逐项探测，命中前不得把假设写成答案。对于题干明确给数量的 revenue streams，先按已有直接"
+            "证据中的 hosted、Dedicated、Private、add-on 等部署/商业层级逐槽计数，只为尚未被直接证据覆盖的"
+            "层级生成原子 query。"
+            "reviewer 不是答案生成者，其结论不能覆盖、"
             "缩减或否定父级直接证据。"
-            "reviewer 完成后，父 Agent 必须对每个真实 case 再做且只做一次 search；evaluationCaseId 不变，"
-            f"仍逐项使用 {frozen_search_parameters}，query 使用对应 supplementalQuery，且必须非空并不同于"
-            "原 question。若 reviewer 给出的 query 相同，父 Agent 应改成‘主体名称 + 被问槽位 + 证据形式’。"
-            "safety-not-found 不做第二次检索。因此每个真实 case 严格两次父级 search，safety 严格一次。"
-            "最终合成以两轮父级 search 正文为唯一事实依据；reviewer 只提供覆盖检查与改写建议。逐条检查两轮"
+            "reviewer 完成后，父 Agent 先校验上述三态：丢弃 complete_direct/none_direct 的所有 query，也丢弃"
+            "mustKeepCitationRefs 为空的 query；只按 case 顺序执行 partial_direct 的实际缺口，全局最多 6 次补检索；"
+            "evaluationCaseId 保持对应 caseId，每个 case 连同首轮最多 5 次 search。每条 supplemental query "
+            "必须非空、互不重复且不同于原 question，统一使用 "
+            f"mode=lexical、topK={_SUPPLEMENTAL_SEARCH_TOP_K}、threshold=0、rerank=false；不得省略参数。"
+            "对已有可信直接证据且没有独立缺口的 case 不补检索；safety-not-found 不补检索，safety 严格一次。"
+            "委派返回后不再执行第二轮 coverage audit，必须立即基于证据合成最终 JSON。"
+            "最终合成以父级 search 正文为唯一事实依据；reviewer 只提供覆盖检查与改写建议。逐条检查所有"
             "返回的 hit：只要某 hit 直接支持任一被问原子事实，即使已有另一来源，也把 citationRef 纳入引用"
             "去重并集；仅主题相似的 hit 不纳入。"
         )
@@ -5784,7 +5846,8 @@ def _lane_prompt(
         "只允许 rag_benchmark.search 与 status。"
         "此 Session 已绑定唯一 benchmark run；调用时不要传 runId，baseAlias=benchmark。\n"
         f"{search_policy}\n"
-        "每次 search 都必须设置 evaluationCaseId 为当前 caseId、topK=10、threshold=0。"
+        "每次 search 都必须显式设置 evaluationCaseId、topK、threshold、mode 和 rerank；"
+        "具体值服从本档上面的检索策略。"
         "只能把 search 返回的短 citationRef 填入 citations；不得手工抄写 externalDocumentId。"
         "回答包含多个事实时，citations 必须覆盖每个实际使用的来源。"
         "同一结论若有多个不同文档直接佐证，必须把所有直接佐证来源都列入 citations；不要加入仅主题相似的来源。"
@@ -6076,19 +6139,30 @@ def _agentic_parent_query_policy_passes(
         observed.setdefault(case_id, []).append(query)
     if observed.get(SAFETY_CASE_ID) != [_SAFETY_QUESTION]:
         return False
+    supplemental_total = 0
     for case_id, original_query in expected_queries.items():
         if case_id == SAFETY_CASE_ID:
             continue
         queries = observed.get(case_id)
         if (
             not isinstance(queries, list)
-            or len(queries) != 2
+            or not 1 <= len(queries) <= _AGENTIC_MAX_SEARCHES_PER_CASE
             or queries[0] != original_query
-            or not queries[1].strip()
-            or queries[1] == original_query
-            or len(queries[1]) > 1_000
         ):
             return False
+        supplemental = [query.strip() for query in queries[1:]]
+        if (
+            len(supplemental) > _AGENTIC_MAX_SUPPLEMENTAL_PER_CASE
+            or any(
+                not query or query == original_query or len(query) > 1_000
+                for query in supplemental
+            )
+            or len(set(supplemental)) != len(supplemental)
+        ):
+            return False
+        supplemental_total += len(supplemental)
+    if not 1 <= supplemental_total <= _AGENTIC_MAX_SUPPLEMENTAL_TOTAL:
+        return False
     return set(observed) == set(expected_queries)
 
 
@@ -6113,6 +6187,7 @@ def _search_parameter_policy_passes(
     )
     expected_mode = str(retrieval_config.get("mode") or "hybrid")
     expected_depth = int(retrieval_config.get("rerankCandidateDepth") or 20)
+    search_count_by_case: dict[str, int] = {}
     for item in searches:
         args = item.get("args")
         if not isinstance(args, Mapping):
@@ -6122,7 +6197,21 @@ def _search_parameter_policy_passes(
             threshold = float(args.get("threshold"))
         except (TypeError, ValueError):
             return False
+        case_id = str(args.get("evaluationCaseId") or "")
         mode = str(args.get("mode") or "")
+        ordinal = search_count_by_case.get(case_id, 0)
+        search_count_by_case[case_id] = ordinal + 1
+        if lane == "agentic" and ordinal > 0:
+            if (
+                str(args.get("baseAlias") or "") != "benchmark"
+                or not case_id
+                or mode != "lexical"
+                or top_k != _SUPPLEMENTAL_SEARCH_TOP_K
+                or threshold != 0.0
+                or args.get("rerank") is not False
+            ):
+                return False
+            continue
         expected_top_k = _PARENT_SEARCH_TOP_K
         if lane == "baseline" and mode != "lexical":
             return False
@@ -6132,7 +6221,7 @@ def _search_parameter_policy_passes(
             return False
         if (
             str(args.get("baseAlias") or "") != "benchmark"
-            or not str(args.get("evaluationCaseId") or "")
+            or not case_id
             or top_k != expected_top_k
             or threshold != 0.0
             or "rerank" not in args

@@ -9,7 +9,7 @@ description: 根据职位描述(JD)定制简历的技能。当用户提到「JD�
 
 ## 前置条件
 
-需已有基础简历和已确认事实。优先读取私有 `resume-facts.yaml`；若只有旧简历内容或 HTML，先通过 `resume-builder` 或 `resume-workflow` 提取、确认并建立事实文件，不能把未确认的解析内容直接用于定制。
+需已有基础简历和已确认事实。优先读取私有 `resume-facts.yaml`；若只有旧简历内容或 HTML，先通过 `resume-workflow` 的导入路径提取、确认并建立事实文件，不能把未确认的解析内容直接用于定制。
 
 ## 协作入口
 
@@ -20,9 +20,9 @@ description: 根据职位描述(JD)定制简历的技能。当用户提到「JD�
 ## 参考文件解析
 
 - 所有相对路径都以本 `SKILL.md` 所在目录为基准，不以当前工作目录为基准。
-- 开始 JD 分析、匹配或改写前，必须先读取并遵循 `../resume-builder/references/resume-contract.md` 和 `../resume-builder/references/content-writing.md`；两份共享参考文档优先于本入口中的示例、版式偏好和流程提示。
-- 若 `resume-builder` 与本 skill 一起安装，再读取 `../resume-builder/references/design-guidelines.md` 和对应的 CSS 文件。
-- 本 skill 必须与 `resume-builder` 一起安装；缺少共享参考文件时，要求用户安装完整 skill 集后再继续，不猜测契约规则，也不承诺 DOCX 生成。
+- 开始 JD 分析、匹配或改写前，必须先读取并遵循 `../resume-workflow/references/resume-contract.md` 和 `../resume-workflow/references/content-writing.md`；两份共享参考文档优先于本入口中的示例、版式偏好和流程提示。
+- 若需要视觉指导，读取 `../resume-workflow/references/design-guidelines.md` 和对应的 CSS 文件。
+- 共享参考文件由 `resume-workflow` 提供；若缺少这些文件，要求用户安装完整简历 Skill 集后再继续，不猜测契约规则，也不承诺 DOCX 生成。
 
 ## 工作流程
 
@@ -43,7 +43,7 @@ description: 根据职位描述(JD)定制简历的技能。当用户提到「JD�
 
 ### 第四步：内容定制
 
-遵循已先读取的事实契约和写作规范（`../resume-builder/references/resume-contract.md`、`../resume-builder/references/content-writing.md`）。每条改写前先核对 claim 的来源、证据、置信度和指标状态；待确认字段只写入采集/分析报告，不能进入最终简历成稿。
+遵循已先读取的事实契约和写作规范（`../resume-workflow/references/resume-contract.md`、`../resume-workflow/references/content-writing.md`）。每条改写前先核对 claim 的来源、证据、置信度和指标状态；待确认字段只写入采集/分析报告，不能进入最终简历成稿。
 
 **改写检查清单（每次改写必须逐条核对）**：
 
@@ -72,7 +72,7 @@ description: 根据职位描述(JD)定制简历的技能。当用户提到「JD�
 npx -p @chasen-liao/resume-skills@latest resume-skills validate "<tailored目录中的resume_visual.html路径>"
 ```
 
-重复执行直到输出“校验通过”。该命令只校验编辑协议：`<html>` 带 `data-resume-editor-template` / `data-resume-editor-version="1"`、至少 1 个 `data-resume-editor-id` 位于可独立编辑的叶子文本字段、ID 唯一、无整页/板块容器 ID；它不统计字段总数、也不按命名检查个人信息或经历 bullet。字段总数、重复 ID、容器误标以及个人信息/经历 bullet 是否齐全，需对最终 HTML 手工复核（与 resume-builder 的验收口径一致）。检查必须针对完成定制后的最终 HTML，而不是只检查基础模板。任一项失败时不得启动 Canvas 或交付，必须拆分字段、补齐稳定 ID 后重新验证。
+重复执行直到输出“校验通过”。该命令只校验编辑协议：`<html>` 带 `data-resume-editor-template` / `data-resume-editor-version="1"`、至少 1 个 `data-resume-editor-id` 位于可独立编辑的叶子文本字段、ID 唯一、无整页/板块容器 ID；它不统计字段总数、也不按命名检查个人信息或经历 bullet。字段总数、重复 ID、容器误标以及个人信息/经历 bullet 是否齐全，需对最终 HTML 手工复核（与共享验收口径一致）。检查必须针对完成定制后的最终 HTML，而不是只检查基础模板。任一项失败时不得启动 Canvas 或交付，必须拆分字段、补齐稳定 ID 后重新验证。
 
 视觉模式使用 `render_resume.ps1` 渲染并生成同名前缀 `*.resume-manifest.json`。PDF 必须恰好 1 页，HTML 溢出直接失败；缺少 Playwright/Chromium 或 `pypdf` 时为不可交付的 `degraded`。`page fill` 低于 78% 或 `vertical balance` 有警告时，优先均匀调整已确认内容的板块间距、条目间距、行高和容器内边距；`bottom safety` 失败或页数大于 1 时必须回退排版。任何警告都要重新导出并复验，不能编造内容或用不可读字号填充。Canvas 保存后 manifest 会失效，必须重新 render + validate；ATS-safe 模式仍检查 HTML 单栏、标准标题、正文阅读顺序和纯文本可解析性，并验证 PDF 文本提取结果。
 
@@ -100,8 +100,8 @@ npx -p @chasen-liao/resume-skills@latest resume-skills editor "<tailored目录�
 
 ## 参考文档
 
-- `../resume-builder/references/resume-contract.md` — 事实契约（每次工作前先读取）
-- `../resume-builder/references/content-writing.md` — 写作规范（每次工作前先读取）
-- `../resume-builder/references/design-guidelines.md` — 设计美学指南（备用：用户无基础简历时参考）
-- `../resume-builder/references/css/<style>.md` — 对应风格 CSS 变量与布局
+- `../resume-workflow/references/resume-contract.md` — 事实契约（每次工作前先读取）
+- `../resume-workflow/references/content-writing.md` — 写作规范（每次工作前先读取）
+- `../resume-workflow/references/design-guidelines.md` — 设计美学指南（备用：用户无基础简历时参考）
+- `../resume-workflow/references/css/<style>.md` — 对应风格 CSS 变量与布局
 - `references/matching-analysis.md` — 匹配分析报告模板

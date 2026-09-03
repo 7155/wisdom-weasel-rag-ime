@@ -32,9 +32,7 @@ import {
   type AgentProjectionState,
 } from '@/contracts/agent-reducer';
 import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
-import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import type { UiAgentEvent } from '@/contracts/ui-events';
 import {
   AgentComposer,
   type AgentMessageDelivery,
@@ -50,6 +48,10 @@ import {
   publicAgentErrorText,
   SESSION_WORKSPACE_MISSING_TEXT,
 } from '@/features/agent/public-error';
+import {
+  useAgentLiveSession,
+  type AgentLiveSnapshotLoader,
+} from '@/features/agent/runtime/use-agent-live-session';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { pulsePawCompositionForRuntimeEvent } from '../runtime/composition-pulse';
 import {
@@ -164,7 +166,9 @@ export function PawSessionWorkspace({
   const workspaceRecord = record ?? provisionalSessionRecord(recordId);
   const evaluationSnapshot = record?.evaluationSnapshot === true;
   const pageVisible = usePageVisibility();
-  const liveActive = active && pageVisible;
+  // Keep every mounted chat window current even when another PAW window has
+  // focus. Only a hidden document suspends the authoritative event stream.
+  const liveActive = pageVisible;
   const projectionSlice = useAgentLiveStore(useShallow(
     (state) => sessionWorkspaceProjectionSlice(state, recordId),
   ));
@@ -207,8 +211,11 @@ export function PawSessionWorkspace({
   const toolMenuRef = useRef<HTMLElement>(null);
   const toolMenuInitialFocusRef = useRef<'first' | 'last'>('first');
   const primaryRef = useRef<HTMLDivElement>(null);
-  const fullSnapshotAbortRef = useRef<AbortController | undefined>(undefined);
-  const fullSnapshotRequestIdRef = useRef(0);
+  const terminalSnapshotTimerRef = useRef<number | undefined>(undefined);
+  const catalogAbortRef = useRef<AbortController | undefined>(undefined);
+  const loadAgentSnapshotRef = useRef<AgentLiveSnapshotLoader>(
+    async () => false,
+  );
   const sessionActionLockRef = useRef(false);
   /* The composer floats over the full-height conversation canvas, so the
      timeline must reserve exactly the overlay's rendered height as footer
@@ -238,111 +245,12 @@ export function PawSessionWorkspace({
   const pendingApproval = projectionSlice.pendingApproval;
   const imageSupport = selectedModelImageSupport(catalog);
 
-  const loadSnapshot = useCallback(async (quiet = false, signal?: AbortSignal): Promise<boolean> => {
-    if ((!liveActive && !signal) || signal?.aborted) return false;
-    if (!quiet) setLoading(true);
-    try {
-      if (evaluationSnapshot) {
-        const snapshot = await transport.request({
-          pathId: 'agent.session.snapshot',
-          params: { sessionId: recordId },
-          ...(signal ? { signal } : {}),
-        });
-        if (signal?.aborted) return false;
-        useAgentLiveStore.getState().hydrate(recordId, snapshot);
-        setContextSnapshotState(undefined);
-        setError('');
-        return true;
-      }
-      let recent: unknown;
-      try {
-        recent = await transport.request({
-          pathId: 'agent.session.snapshot',
-          params: { sessionId: recordId },
-          query: { view: 'recent' },
-          ...(signal ? { signal } : {}),
-        });
-      } catch (reason) {
-        if (signal?.aborted) return false;
-        setContextSnapshotState('partial');
-        setError(errorText(reason));
-        return true;
-      }
-      if (signal?.aborted) return false;
-      if (isRecentAgentSnapshot(recent)) {
-        const presentable = recentAgentSnapshotIsPresentable(recent);
-        if (presentable) {
-          // `recent` is a bounded projection, so hydrate through the shared
-          // reducer even when this Session already has a full local history.
-          // The reducer keeps durable rows and applies the snapshot's newer
-          // status/terminal boundary instead of choosing between the two.
-          useAgentLiveStore.getState().hydrate(recordId, recent);
-          // The recent snapshot is the first truthful, usable view. Do not
-          // keep the conversation in a loading state after it is presentable.
-          setLoading(false);
-        }
-        setContextSnapshotState('partial');
-        setError('');
-        return true;
-      } else {
-        if (signal?.aborted) return false;
-        useAgentLiveStore.getState().hydrate(recordId, recent);
-        setContextSnapshotState(undefined);
-      }
-      setError('');
-      return true;
-    } catch (reason) {
-      if (signal?.aborted) return false;
-      setError(errorText(reason));
-      return false;
-    } finally {
-      if (!signal?.aborted && !quiet) setLoading(false);
-    }
-  }, [evaluationSnapshot, liveActive, recordId, transport]);
-
   const loadFullSnapshot = useCallback(async (): Promise<void> => {
     if (!liveActive) return;
-    const requestId = fullSnapshotRequestIdRef.current + 1;
-    fullSnapshotRequestIdRef.current = requestId;
-    fullSnapshotAbortRef.current?.abort();
-    const controller = new AbortController();
-    fullSnapshotAbortRef.current = controller;
-    const baselineSequence = agentProjection(recordId).lastSequence;
     setContextSnapshotState('restoring');
-    try {
-      const full = await transport.request({
-        pathId: 'agent.session.snapshot',
-        params: { sessionId: recordId },
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted || requestId !== fullSnapshotRequestIdRef.current) return;
-      const current = agentProjection(recordId);
-      const hasNewerActivity = current.lastSequence !== baselineSequence
-        || Boolean(latestActiveTurnId(current))
-        || Object.keys(current.optimisticByClientMessageId).length > 0;
-      if (hasNewerActivity) {
-        setContextSnapshotState('partial');
-        return;
-      }
-      useAgentLiveStore.getState().hydrate(recordId, full);
-      setContextSnapshotState(undefined);
-      setError('');
-    } catch (reason) {
-      if (controller.signal.aborted || requestId !== fullSnapshotRequestIdRef.current) return;
-      setContextSnapshotState('partial');
-      setError(errorText(reason));
-    } finally {
-      if (requestId === fullSnapshotRequestIdRef.current) {
-        fullSnapshotAbortRef.current = undefined;
-      }
-    }
-  }, [liveActive, recordId, transport]);
-
-  useEffect(() => () => {
-    fullSnapshotRequestIdRef.current += 1;
-    fullSnapshotAbortRef.current?.abort();
-    fullSnapshotAbortRef.current = undefined;
-  }, [liveActive, recordId]);
+    const loaded = await loadAgentSnapshotRef.current({ view: 'full' });
+    if (!loaded) setContextSnapshotState('partial');
+  }, [liveActive]);
 
   const loadControlCatalog = useCallback(async (signal?: AbortSignal) => {
     if ((!liveActive && !signal) || signal?.aborted) return;
@@ -383,6 +291,86 @@ export function PawSessionWorkspace({
     }
   }, [liveActive, recordId, transport]);
 
+  const refreshControlCatalog = useCallback(() => {
+    if (evaluationSnapshot || !liveActive) return;
+    catalogAbortRef.current?.abort();
+    const controller = new AbortController();
+    catalogAbortRef.current = controller;
+    void loadControlCatalog(controller.signal).finally(() => {
+      if (catalogAbortRef.current === controller) catalogAbortRef.current = undefined;
+    });
+  }, [evaluationSnapshot, liveActive, loadControlCatalog]);
+
+  const loadAgentSnapshot = useAgentLiveSession({
+    sessionId: recordId,
+    transport,
+    active: liveActive,
+    live: liveActive && !evaluationSnapshot,
+    snapshotView: evaluationSnapshot ? 'full' : 'recent',
+    onLoadingChange: setLoading,
+    onSnapshot: (snapshot) => {
+      setContextSnapshotState(snapshot.view === 'recent' ? 'partial' : undefined);
+      setError('');
+      refreshControlCatalog();
+    },
+    onSnapshotError: (failure) => {
+      setContextSnapshotState('partial');
+      setError(errorText(failure.error));
+      if (failure.recoverable) refreshControlCatalog();
+    },
+    onEvent: (event) => {
+      pulsePawCompositionForRuntimeEvent('agent', event.eventType);
+      if (event.eventType === 'snapshot_required') return;
+      const completedMessage = asRecord(asRecord(event.payload).message);
+      if (
+        event.eventType === 'message_completed'
+        && completedMessage.role === 'assistant'
+        && completedMessage.status === 'completed'
+      ) {
+        if (terminalSnapshotTimerRef.current !== undefined) {
+          window.clearTimeout(terminalSnapshotTimerRef.current);
+        }
+        terminalSnapshotTimerRef.current = window.setTimeout(() => {
+          terminalSnapshotTimerRef.current = undefined;
+          void loadAgentSnapshotRef.current({
+            preserveAfterSequence: event.sequence,
+          });
+        }, 350);
+      }
+      const runtimeWindow = runtimeToolWindow(event);
+      if (runtimeWindow && shouldAutoOpenRuntimeToolWindow(runtimeWindow)) {
+        desktop?.openWindow(runtimeWindow);
+      }
+      if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
+        if (terminalSnapshotTimerRef.current !== undefined) {
+          window.clearTimeout(terminalSnapshotTimerRef.current);
+          terminalSnapshotTimerRef.current = undefined;
+        }
+        setStopping(false);
+        setError('');
+        void loadAgentSnapshotRef.current({
+          preserveAfterSequence: event.sequence,
+        });
+        onSessionActivity?.();
+      }
+    },
+    onConnectionError: (_sessionId, reason) => {
+      setStopping(false);
+      setContextSnapshotState('partial');
+      setError(errorText(reason));
+    },
+  });
+  loadAgentSnapshotRef.current = loadAgentSnapshot;
+
+  useEffect(() => () => {
+    catalogAbortRef.current?.abort();
+    catalogAbortRef.current = undefined;
+    if (terminalSnapshotTimerRef.current !== undefined) {
+      window.clearTimeout(terminalSnapshotTimerRef.current);
+      terminalSnapshotTimerRef.current = undefined;
+    }
+  }, [liveActive, recordId]);
+
   async function reconcileSessionForAction(): Promise<SessionSummary | undefined> {
     let canonical = record;
     try {
@@ -411,113 +399,7 @@ export function PawSessionWorkspace({
     }
   }
 
-  useEffect(() => {
-    let mounted = true;
-    let unsubscribe: () => void = () => {};
-    let terminalSnapshotTimer: number | undefined;
-    const controller = new AbortController();
-    if (!liveActive) {
-      return () => {
-        mounted = false;
-        controller.abort();
-      };
-    }
-    useAgentLiveStore.getState().ensure(recordId);
-    if (evaluationSnapshot) {
-      void loadSnapshot(false, controller.signal);
-      return () => {
-        mounted = false;
-        controller.abort();
-      };
-    }
-    // Streaming text_delta bursts coalesce into one store commit per batching
-    // interval (same contract as the standalone Agent feature). Every
-    // non-delta event flushes pending deltas before its own commit, so the
-    // visible timeline order never changes — only the per-token React render
-    // and layout passes collapse to at most one per frame.
-    const batcher = createAgentDeltaBatcher((events) => {
-      if (!mounted) return;
-      const needsSnapshot = useAgentLiveStore.getState().applyEvents(recordId, events);
-      if (needsSnapshot) void loadSnapshot(true, controller.signal);
-    });
-    void (async () => {
-      const loaded = await loadSnapshot(false, controller.signal);
-      if (!mounted || !loaded) return;
-      /* The bounded recent transcript owns first paint. Model, command and
-         Tool catalogs decorate an already usable composer and must not
-         compete with that one latency-critical request. */
-      void loadControlCatalog(controller.signal);
-      unsubscribe = transport.subscribe<UiAgentEvent>(
-        {
-          pathId: 'agent.session.events',
-          params: { sessionId: recordId },
-          lastEventId: agentProjection(recordId).resumeToken,
-        },
-        {
-          next: (event) => {
-            if (!mounted) return;
-            pulsePawCompositionForRuntimeEvent('agent', event.eventType);
-            if (event.eventType === 'snapshot_required') {
-              batcher.flush();
-              useAgentLiveStore.getState().applyEvents(recordId, [event]);
-              void loadSnapshot(true, controller.signal);
-              return;
-            }
-            batcher.push(event);
-            const completedMessage = asRecord(asRecord(event.payload).message);
-            if (
-              event.eventType === 'message_completed'
-              && completedMessage.role === 'assistant'
-              && completedMessage.status === 'completed'
-            ) {
-              // `message_completed` and `turn_completed` are adjacent durable
-              // Runtime events. A reconnect in that narrow gap can show the
-              // final answer while leaving the optimistic user turn spinning.
-              // Give the terminal event one paint to arrive; if it does not,
-              // a quiet authoritative snapshot reconciles the orphan without
-              // guessing that every assistant message ends a Tool Loop.
-              if (terminalSnapshotTimer !== undefined) {
-                window.clearTimeout(terminalSnapshotTimer);
-              }
-              terminalSnapshotTimer = window.setTimeout(() => {
-                terminalSnapshotTimer = undefined;
-                if (mounted) void loadSnapshot(true, controller.signal);
-              }, 350);
-            }
-            const runtimeWindow = runtimeToolWindow(event);
-            if (runtimeWindow && shouldAutoOpenRuntimeToolWindow(runtimeWindow)) {
-              desktop?.openWindow(runtimeWindow);
-            }
-            if (event.eventType === 'turn_completed' || event.eventType === 'turn_failed') {
-              if (terminalSnapshotTimer !== undefined) {
-                window.clearTimeout(terminalSnapshotTimer);
-                terminalSnapshotTimer = undefined;
-              }
-              setStopping(false);
-              setError('');
-              // Terminal reconciliation stays on the bounded recent view.
-              // Full history is an explicit user action and never gates input.
-              void loadSnapshot(true, controller.signal);
-              onSessionActivity?.();
-            }
-          },
-          error: (reason) => {
-            if (!mounted) return;
-            setStopping(false);
-            setContextSnapshotState('partial');
-            setError(errorText(reason));
-          },
-        },
-      );
-    })();
-    return () => {
-      mounted = false;
-      controller.abort();
-      if (terminalSnapshotTimer !== undefined) window.clearTimeout(terminalSnapshotTimer);
-      batcher.clear();
-      unsubscribe();
-    };
-  }, [desktop, evaluationSnapshot, liveActive, loadControlCatalog, loadSnapshot, onSessionActivity, recordId, runtimeToolWindow, transport]);
+
 
   /* A prompt that failOptimistic just marked failed already has one recovery
      surface: the timeline's failed-turn card, carrying the same reason plus
@@ -571,7 +453,7 @@ export function PawSessionWorkspace({
     }
     if (isAgentTurnConflict(reason)) {
       store.discardOptimistic(recordId, clientMessageId);
-      void loadSnapshot(true);
+      void loadAgentSnapshot();
       options.restoreInput?.();
       options.onAdmissionRolledBack?.();
       setError('上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
@@ -628,10 +510,10 @@ export function PawSessionWorkspace({
         });
         /* The rewrite is accepted; rebuilding the visible history is the quiet
            snapshot's job and never holds the composer. */
-        void loadSnapshot(true);
+        void loadAgentSnapshot();
       } catch (reason) {
         useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
-        await loadSnapshot(true).catch(() => undefined);
+        await loadAgentSnapshot().catch(() => undefined);
         setDraft(value);
         setAttachments(selectedAttachments);
         setEditState(target);
@@ -669,7 +551,7 @@ export function PawSessionWorkspace({
           body: { instructions: value.slice('/compact'.length).trim() },
         });
         setDraft('');
-        await loadSnapshot(true);
+        await loadAgentSnapshot();
       } catch (reason) { setError(errorText(reason)); }
       finally { setSending(false); }
       return;
@@ -730,11 +612,11 @@ export function PawSessionWorkspace({
         });
         if (isCancelledPromptAdmission(response)) {
           useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
-          void loadSnapshot(true);
+          void loadAgentSnapshot();
           return;
         }
         useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
-        void loadSnapshot(true);
+        void loadAgentSnapshot();
       } catch (reason) {
         if (effectiveDelivery !== 'prompt' && isAgentSessionIdleFailure(reason)) {
           // The projection can be one terminal event behind the Runtime. If a
@@ -762,11 +644,11 @@ export function PawSessionWorkspace({
             });
             if (isCancelledPromptAdmission(retryResponse)) {
               useAgentLiveStore.getState().discardOptimistic(recordId, retryClientMessageId);
-              void loadSnapshot(true);
+              void loadAgentSnapshot();
               return;
             }
             useAgentLiveStore.getState().acknowledgeOptimistic(recordId, retryClientMessageId, Date.now());
-            void loadSnapshot(true);
+            void loadAgentSnapshot();
           } catch (retryReason) {
             settlePromptAdmissionFailure(retryClientMessageId, retryReason, { restoreInput });
           }
@@ -932,11 +814,11 @@ export function PawSessionWorkspace({
         });
         if (isCancelledPromptAdmission(response)) {
           useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
-          void loadSnapshot(true);
+          void loadAgentSnapshot();
           return;
         }
         useAgentLiveStore.getState().acknowledgeOptimistic(recordId, clientMessageId, Date.now());
-        void loadSnapshot(true);
+        void loadAgentSnapshot();
       } catch (reason) {
         settlePromptAdmissionFailure(clientMessageId, reason, {
           onAdmissionRolledBack,
@@ -1027,7 +909,7 @@ export function PawSessionWorkspace({
         body: { decision: decision === 'approved' ? 'approve' : 'reject', payloadSha256 },
       });
       setRequestedApproval(undefined);
-      await loadSnapshot(true);
+      await loadAgentSnapshot();
     } catch (reason) {
       setError(errorText(reason));
       throw reason;
@@ -1129,7 +1011,7 @@ export function PawSessionWorkspace({
       const updated = asSession(response.session);
       if (updated) onSessionUpdated(updated);
       await loadControlCatalog();
-      await loadSnapshot(true);
+      await loadAgentSnapshot();
       setError('');
     } catch (reason) { setError(errorText(reason)); }
   }
@@ -1406,6 +1288,7 @@ export function PawSessionWorkspace({
                 showConversationNavigation={!embedded}
                 userMessagePresentation={embedded ? 'request-tail' : 'full'}
                 sessionId={recordId}
+                includeRoomPublicPosts={Boolean(workspaceRecord.roomParticipant)}
                 persona={persona}
                 loading={loading}
                 modelSelectionAvailable={!evaluationSnapshot && Boolean(catalog)}
@@ -1480,7 +1363,7 @@ export function PawSessionWorkspace({
                 {error === SESSION_WORKSPACE_MISSING_TEXT ? (
                   <button onClick={() => void manageWorkspaceRoots()} type="button">选择工作目录</button>
                 ) : (
-                  <button onClick={() => { setError(''); void loadSnapshot(); }} type="button">重新同步</button>
+                  <button onClick={() => { setError(''); void loadAgentSnapshot(); }} type="button">重新同步</button>
                 )}
                 {!evaluationSnapshot ? <TraceAgentHandoffButton
                   handoff={{
@@ -1792,24 +1675,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isRecentAgentSnapshot(value: unknown): boolean {
-  return isRecord(value)
-    && value.snapshotScope === 'recent'
-    && value.partial === true;
-}
-
-function recentAgentSnapshotIsPresentable(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const status = typeof value.status === 'string' ? value.status : '';
-  if (status === 'active' || status === 'busy') return true;
-  const items = Array.isArray(value.items)
-    ? value.items
-    : Array.isArray(value.messages)
-      ? value.messages
-      : [];
-  const last = items.at(-1);
-  return !(isRecord(last) && last.role === 'user');
-}
 
 
 function isCommand(value: string, command: string): boolean {

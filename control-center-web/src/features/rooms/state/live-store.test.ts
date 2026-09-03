@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { RoomEventPage, RoomEventSnapshot } from '@/contracts/room-reducer';
+import type { RoomConversationSnapshot, RoomEventPage, RoomEventSnapshot } from '@/contracts/room-reducer';
 import { roomEventFixture } from '@/test/fixtures/events';
 
 import { selectActivePublicRoomTurn } from '../runtime/room-execution-lanes';
@@ -65,6 +65,25 @@ describe('Room live store', () => {
     expect(roomProjection('room-1')).toBe(confirmed);
     expect(roomProjection('room-1').resumeToken).toBe('room-1:1');
     expect(useRoomLiveStore.getState().roomRevisions['room-1']).toBe(revision);
+  });
+
+  it('hydrates a cold message-first snapshot without replacing a warm rich projection', () => {
+    const store = useRoomLiveStore.getState();
+    const initial = roomConversationSnapshot(
+      [roomEventFixture(1, 'user_message', { messageId: 'message-1', text: '消息优先' })],
+      50,
+    );
+
+    expect(store.replayConversationSnapshot('room-1', initial)).toBe(true);
+    expect(roomProjection('room-1').lastSequence).toBe(50);
+    expect(roomProjection('room-1').messagesById['message-1']?.text).toBe('消息优先');
+
+    const warm = roomProjection('room-1');
+    expect(store.replayConversationSnapshot(
+      'room-1',
+      roomConversationSnapshot([], 60),
+    )).toBe(false);
+    expect(roomProjection('room-1')).toBe(warm);
   });
 
   it('prepends bounded history pages and preserves them across a newer snapshot', () => {
@@ -229,4 +248,24 @@ function roomHistorySnapshot(
     resumeToken: `room-1:${lastSequence}`,
     truncated: firstSequence > 1,
   } as unknown as RoomEventSnapshot;
+}
+
+function roomConversationSnapshot(
+  events: RoomConversationSnapshot['events'],
+  cursorSequence: number,
+): RoomConversationSnapshot {
+  return {
+    schemaVersion: 'rag-ime.agent-room-conversation-snapshot.v1',
+    ok: true,
+    room: {
+      id: 'room-1',
+      lastEventSequence: cursorSequence,
+    },
+    events,
+    firstEventSequence: events[0]?.sequence ?? 0,
+    cursorSequence,
+    resumeToken: cursorSequence ? `room-1:${cursorSequence}` : '',
+    deferredEventCount: Math.max(0, cursorSequence - events.length),
+    truncated: false,
+  } as unknown as RoomConversationSnapshot;
 }

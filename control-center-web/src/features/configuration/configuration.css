@@ -446,6 +446,137 @@
   transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger {
+  display: grid;
+  min-width: 0;
+  min-height: calc(var(--control-height-lg) + var(--space-1));
+  align-content: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-radius: var(--radius-2) var(--radius-2) 0 0;
+  text-align: left;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger:focus-visible,
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger strong,
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger strong {
+  color: var(--color-text-primary);
+  font-size: var(--text-ui);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger small {
+  color: var(--color-text-tertiary);
+  font-size: var(--text-label);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--text-label-lh);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__panel {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+  padding-block: var(--space-4) 0;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__heading {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__heading > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__heading strong {
+  color: var(--color-text-primary);
+  font-size: var(--text-subsection);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__heading small {
+  color: var(--color-text-tertiary);
+  font-size: var(--text-label);
+  line-height: var(--text-label-lh);
+  overflow-wrap: anywhere;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list {
+  border-block: 1px solid var(--color-border);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch-field {
+  min-width: 0;
+  padding: var(--space-2) var(--space-1);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch-field + .ui-switch-field {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch-field__copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch-field__description {
+  line-height: var(--text-label-lh);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch:disabled {
+  cursor: not-allowed;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__actions {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-soft);
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__actions p,
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__inheritance,
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__state {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-label);
+  line-height: var(--line-height-body);
+  overflow-wrap: anywhere;
+}
+
+:is(main, section)[data-route-id='configuration'] .configuration-skill-routing__actions p {
+  max-width: 70ch;
+}
+
 @media (hover: hover) and (pointer: fine) {
   :is(main, section)[data-route-id='configuration'] .configuration-section-nav button:hover {
     background: var(--color-surface-subtle);
@@ -456,6 +587,10 @@
     border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
     background: color-mix(in srgb, var(--color-accent-soft) 40%, var(--color-surface));
     color: var(--color-text-primary);
+  }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger:hover:not(:disabled):not([data-state='active']) {
+    background: var(--color-surface-subtle);
   }
 }
 
@@ -521,12 +656,43 @@
   :is(main, section)[data-route-id='configuration'] .configuration-portability .ui-button { min-height: 44px; }
 
   :is(main, section)[data-route-id='configuration'] .configuration-search input { height: 44px; }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-bottom: 0;
+  }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-2);
+  }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger::after {
+    display: none;
+  }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger[data-state='active'] {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+    background: var(--color-accent-soft);
+  }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__actions .ui-button {
+    width: 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   :is(main, section)[data-route-id='configuration'] .configuration-section-nav button,
   :is(main, section)[data-route-id='configuration'] .configuration-destinations button,
   :is(main, section)[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row,
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger,
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__tabs .ui-tabs__trigger::after,
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch,
+  :is(main, section)[data-route-id='configuration'] .configuration-skill-routing__list .ui-switch__thumb,
   :is(main, section)[data-route-id='configuration'] .configuration-transfer > summary svg { transition: none; }
 }
 
@@ -543,6 +709,24 @@
   :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
   :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button { min-height: 44px; align-items: center; border: 1px solid var(--color-border); }
   :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-section-nav button[aria-current='page'] { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border)); }
+
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-bottom: 0;
+  }
+
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__tabs .ui-tabs__trigger {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-2);
+  }
+
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__tabs .ui-tabs__trigger::after { display: none; }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__tabs .ui-tabs__trigger[data-state='active'] {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+    background: var(--color-accent-soft);
+  }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__actions { grid-template-columns: minmax(0, 1fr); }
+  :is(main, section)[data-route-id='configuration'][data-paw-os-app] .configuration-skill-routing__actions .ui-button { width: 100%; }
 }
 
 /* UR-102 settings-configuration semantic typography */

@@ -109,6 +109,7 @@ class ControlPathId(str, Enum):
     AGENT_ROOMS_CREATE = "agent.rooms.create"
     AGENT_ROOM_GET = "agent.room.get"
     AGENT_ROOM_SNAPSHOT = "agent.room.snapshot"
+    AGENT_ROOM_CONVERSATION_SNAPSHOT = "agent.room.conversationSnapshot"
     AGENT_ROOM_HISTORY = "agent.room.history"
     AGENT_ROOM_ARCHIVE = "agent.room.archive"
     AGENT_ROOM_PARTICIPANT_ADD = "agent.room.participant.add"
@@ -853,6 +854,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOMS_CREATE, ControlMethod.POST, "/api/agent/rooms", "/control/v1/agent/rooms", body={"title", "roomKind", "avatar", "description", "scenarioPrompt", "participants", "routingPolicy", "routingConfig", "moderatorRoleId", "workspaceRoots", "executionMode", "permissionPolicy", "workspaceScopeConfirmation", "dangerousModeConfirmation", "ownerAppId", "surfaceKey"}, required_body={"participants"}),
         _route(ControlPathId.AGENT_ROOM_GET, ControlMethod.GET, "/api/agent/rooms/{roomId}", "/control/v1/agent/rooms/{roomId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/snapshot", "/control/v1/agent/rooms/{roomId}/snapshot", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
+        _route(ControlPathId.AGENT_ROOM_CONVERSATION_SNAPSHOT, ControlMethod.GET, "/api/agent/rooms/{roomId}/conversation", "/control/v1/agent/rooms/{roomId}/conversation", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM),
         _route(ControlPathId.AGENT_ROOM_HISTORY, ControlMethod.GET, "/api/agent/rooms/{roomId}/history", "/control/v1/agent/rooms/{roomId}/history", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"beforeSequence", "limit"}),
         _route(ControlPathId.AGENT_COLLABORATION_PROFILE_GET, ControlMethod.GET, "/api/agent/collaboration-profiles/{profileId}", "/control/v1/agent/collaboration-profiles/{profileId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params={"profileId"}),
         _route(ControlPathId.AGENT_COLLABORATION_PROFILE_COMMAND, ControlMethod.POST, "/api/agent/collaboration-profiles/commands", "/control/v1/agent/collaboration-profiles/commands", scopes=[ControlScope.AGENT_WRITE, ControlScope.AGENT_APPROVE], remote_safe=True, body={"schemaVersion", "commandId", "action", "idempotencyKey", "actorRef", "profileId", "candidateId", "contentHash", "expectedPointerRevision", "activationScope", "adminConfirmation", "payload", "createdAtMs"}, required_body={"schemaVersion", "commandId", "action", "idempotencyKey", "actorRef", "payload", "createdAtMs"}, remote_body={"schemaVersion", "commandId", "action", "idempotencyKey", "actorRef", "profileId", "candidateId", "contentHash", "expectedPointerRevision", "activationScope", "adminConfirmation", "payload", "createdAtMs"}, remote_required_body={"schemaVersion", "commandId", "action", "idempotencyKey", "actorRef", "payload", "createdAtMs"}),

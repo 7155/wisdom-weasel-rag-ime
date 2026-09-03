@@ -97,6 +97,9 @@ class RoomManagementService:
     def snapshot(self, room_id: str) -> dict[str, object]:
         return self.lifecycle.snapshot(room_id)
 
+    def conversation_snapshot(self, room_id: str) -> dict[str, object]:
+        return self.lifecycle.conversation_snapshot(room_id)
+
     def history(
         self,
         room_id: str,

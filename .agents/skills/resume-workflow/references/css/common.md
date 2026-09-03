@@ -115,7 +115,7 @@ p, li {
 生成后必须对实际导出的 PDF 运行：
 
 ```bash
-python skills/resume-builder/scripts/validate_resume.py --html <resume.html> --pdf <resume.pdf> --check-layout --min-fill-ratio 0.78 --json
+python skills/resume-workflow/scripts/validate_resume.py --html <resume.html> --pdf <resume.pdf> --check-layout --min-fill-ratio 0.78 --json
 ```
 
 - 目标是 1 页、页面占用率至少 78%，并让顶部和底部留白接近；`page fill` 和 `vertical balance` 是版式警告，不是补写事实的理由。

@@ -181,6 +181,7 @@ export function createPreviewTransport(): MockControlTransport {
   }));
   let companionConfigurationRevision = 1;
   let modelRouting = previewDefaultModelRouting();
+  let skillRouting = previewDefaultSkillRouting();
   let capabilityGlobalPreferences: Record<string, string> = {};
   let capabilityProjectPreferences: Record<string, Record<string, string>> = {};
   const capabilitySessionPreferences = new Map<string, Record<string, string>>();
@@ -769,6 +770,7 @@ export function createPreviewTransport(): MockControlTransport {
     companionConfigurationRevision,
     defaultCompanion,
     modelRouting,
+    skillRouting,
     capabilityGlobalPreferences,
     capabilityProjectPreferences,
   );
@@ -777,6 +779,7 @@ export function createPreviewTransport(): MockControlTransport {
     if (Number(body.expectedRevision) !== companionConfigurationRevision) throw new Error('Preview companion configuration changed.');
     const changes = record(body.changes);
     const modelRouteChange = Object.entries(changes).find(([key]) => key.startsWith('modelRouting.'));
+    const skillRouteChange = Object.entries(changes).find(([key]) => key.startsWith('skillRouting.'));
     if (modelRouteChange) {
       const routeId = modelRouteChange[0].slice('modelRouting.'.length);
       if (!Object.hasOwn(modelRouting, routeId)) throw new Error('Preview model route is invalid.');
@@ -787,6 +790,30 @@ export function createPreviewTransport(): MockControlTransport {
       modelRouting = {
         ...modelRouting,
         [routeId]: { modelProfile, thinkingLevel },
+      };
+    } else if (skillRouteChange) {
+      const scenario = skillRouteChange[0].slice('skillRouting.'.length) as PreviewSkillScenario;
+      const requestedSkillRoute = skillRouteChange[1];
+      if (!Object.hasOwn(skillRouting, scenario)) throw new Error('Preview Skill scenario is invalid.');
+      if (
+        !Array.isArray(requestedSkillRoute)
+        || requestedSkillRoute.some((name) => typeof name !== 'string' || !name.trim())
+      ) {
+        throw new Error('Preview Skill route is invalid.');
+      }
+      const names = requestedSkillRoute.map((name) => name.trim());
+      if (
+        new Set(names).size !== names.length
+        || names.some((name) => {
+          const owner = PREVIEW_PRIVATE_SKILL_SCENARIOS[name];
+          return owner !== undefined && owner !== scenario;
+        })
+      ) {
+        throw new Error('Preview Skill route contains an invalid private Skill.');
+      }
+      skillRouting = {
+        ...skillRouting,
+        [scenario]: [...names].sort(),
       };
     } else if (Object.hasOwn(changes, 'sessionDefaults.capabilityDisclosurePreferences')) {
       capabilityGlobalPreferences = previewCapabilityPreferences(changes['sessionDefaults.capabilityDisclosurePreferences']);
@@ -806,6 +833,7 @@ export function createPreviewTransport(): MockControlTransport {
       companionConfigurationRevision,
       defaultCompanion,
       modelRouting,
+      skillRouting,
       capabilityGlobalPreferences,
       capabilityProjectPreferences,
     );
@@ -1215,6 +1243,12 @@ export function createPreviewTransport(): MockControlTransport {
     const snapshot = previewRoomSnapshots.get(roomId);
     if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
     return snapshot;
+  };
+  routes['agent.room.conversationSnapshot'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    return previewRoomConversationSnapshot(snapshot);
   };
   routes['agent.room.topic.create'] = (request: ControlRequest) => {
     const roomId = stringValue(record(request.params).roomId);
@@ -1630,6 +1664,10 @@ function previewResponse(pathId: ControlPathId): unknown {
       return { ok: true, rooms: [previewRoomSnapshot('room-preview').room] };
     case 'agent.room.snapshot':
       return (request: ControlRequest) => previewRoomSnapshot(String(request.params?.roomId ?? 'room-preview'));
+    case 'agent.room.conversationSnapshot':
+      return (request: ControlRequest) => previewRoomConversationSnapshot(
+        previewRoomSnapshot(String(request.params?.roomId ?? 'room-preview')) as unknown as Record<string, unknown>,
+      );
     case 'agent.roles.list':
       return { ok: true, roles: [] };
     case 'agent.tools.list':
@@ -2754,6 +2792,70 @@ function previewSkillItems(): Record<string, unknown>[] {
       sizeBytes: 286,
       management: 'inspect_only',
       managementReason: 'Project Skill 由工作区发现，没有独立的 Package 生命周期。',
+      actions: [],
+    },
+    {
+      skillId: 'systematic-debugging',
+      name: 'systematic-debugging',
+      description: '通过可复现证据定位跨层或间歇性故障。',
+      sourceKind: 'bundled',
+      resourcePath: 'integrations/pi/skills/systematic-debugging/SKILL.md',
+      enabled: null,
+      installed: true,
+      installState: 'bundled',
+      digest: `sha256:${'4'.repeat(64)}`,
+      contentRevision: `sha256:${'4'.repeat(64)}`,
+      sizeBytes: 364,
+      management: 'inspect_only',
+      managementReason: 'Bundled Skill 由 Pi Runtime 提供，没有独立的启用开关。',
+      actions: [],
+    },
+    {
+      skillId: 'facilitate-room',
+      name: 'facilitate-room',
+      description: '负责 Room 内的协作编排、工作分配与结果收束。',
+      sourceKind: 'bundled',
+      resourcePath: 'integrations/pi/skills/facilitate-room/SKILL.md',
+      enabled: null,
+      installed: true,
+      installState: 'bundled',
+      digest: `sha256:${'5'.repeat(64)}`,
+      contentRevision: `sha256:${'5'.repeat(64)}`,
+      sizeBytes: 392,
+      management: 'inspect_only',
+      managementReason: 'Bundled Skill 由 Pi Runtime 提供，没有独立的启用开关。',
+      actions: [],
+    },
+    {
+      skillId: 'trace-agent-diagnostics',
+      name: 'trace-agent-diagnostics',
+      description: '为 Trace Agent 提供诊断、证据核对与受控修复流程。',
+      sourceKind: 'bundled',
+      resourcePath: 'integrations/pi/skills/trace-agent-diagnostics/SKILL.md',
+      enabled: null,
+      installed: true,
+      installState: 'bundled',
+      digest: `sha256:${'6'.repeat(64)}`,
+      contentRevision: `sha256:${'6'.repeat(64)}`,
+      sizeBytes: 408,
+      management: 'inspect_only',
+      managementReason: 'Bundled Skill 由 Pi Runtime 提供，没有独立的启用开关。',
+      actions: [],
+    },
+    {
+      skillId: 'agent-eval-room-optimizer',
+      name: 'agent-eval-room-optimizer',
+      description: '为 Agent Lab 的评测实验优化协作策略与证据回路。',
+      sourceKind: 'bundled',
+      resourcePath: 'integrations/pi/skills/agent-eval-room-optimizer/SKILL.md',
+      enabled: null,
+      installed: true,
+      installState: 'bundled',
+      digest: `sha256:${'7'.repeat(64)}`,
+      contentRevision: `sha256:${'7'.repeat(64)}`,
+      sizeBytes: 416,
+      management: 'inspect_only',
+      managementReason: 'Bundled Skill 由 Pi Runtime 提供，没有独立的启用开关。',
       actions: [],
     },
   ];
@@ -4002,10 +4104,19 @@ function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defau
     : 'off';
 }
 
+type PreviewSkillScenario = 'ordinary' | 'room' | 'trace' | 'agentLab';
+
+const PREVIEW_PRIVATE_SKILL_SCENARIOS: Readonly<Partial<Record<string, PreviewSkillScenario>>> = {
+  'facilitate-room': 'room',
+  'trace-agent-diagnostics': 'trace',
+  'agent-eval-room-optimizer': 'agentLab',
+};
+
 function previewCompanionConfiguration(
   revision: number,
   defaults: { roleId: string; roleVersion: string },
   modelRouting: Record<string, { modelProfile: string; thinkingLevel: string }>,
+  skillRouting: Record<PreviewSkillScenario, string[]>,
   capabilityGlobalPreferences: Record<string, string>,
   capabilityProjectPreferences: Record<string, Record<string, string>>,
 ): Record<string, unknown> {
@@ -4020,6 +4131,7 @@ function previewCompanionConfiguration(
           capabilityDisclosurePreferences: capabilityGlobalPreferences,
         },
         modelRouting,
+        skillRouting,
         capabilityDisclosure: {
           projectPreferences: capabilityProjectPreferences,
         },
@@ -4039,6 +4151,16 @@ function previewDefaultModelRouting(): Record<string, { modelProfile: string; th
     modelProfile: 'inherit',
     thinkingLevel: 'inherit',
   }]));
+}
+
+function previewDefaultSkillRouting(): Record<PreviewSkillScenario, string[]> {
+  const general = ['systematic-debugging'];
+  return {
+    ordinary: [...general],
+    room: [...general, 'facilitate-room'].sort(),
+    trace: [...general, 'trace-agent-diagnostics'].sort(),
+    agentLab: [...general, 'agent-eval-room-optimizer'].sort(),
+  };
 }
 
 function previewCreatedRoomSnapshot(
@@ -4209,6 +4331,29 @@ function previewWorkspaceRead(path: string): Record<string, unknown> {
     nextOffset: new TextEncoder().encode(content).byteLength,
   };
 }
+
+function previewRoomConversationSnapshot(
+  snapshot: Record<string, unknown>,
+): Record<string, unknown> {
+  const room = record(snapshot.room);
+  const allEvents = Array.isArray(snapshot.events)
+    ? snapshot.events.map(record)
+    : [];
+  const events = allEvents.filter((event) => event.eventType !== 'participant_activity');
+  const cursorSequence = Number(room.lastEventSequence ?? snapshot.lastSequence ?? 0);
+  return {
+    schemaVersion: 'rag-ime.agent-room-conversation-snapshot.v1',
+    ok: true,
+    room,
+    events,
+    firstEventSequence: Number(events[0]?.sequence ?? 0),
+    cursorSequence,
+    resumeToken: cursorSequence > 0 ? `${String(room.id ?? '')}:${cursorSequence}` : '',
+    deferredEventCount: allEvents.length - events.length,
+    truncated: snapshot.truncated === true,
+  };
+}
+
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

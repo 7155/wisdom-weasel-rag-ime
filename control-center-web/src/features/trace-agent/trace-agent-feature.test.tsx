@@ -306,7 +306,7 @@ describe('TraceAgentFeature', () => {
     expect(prompt).not.toContain('trace:handoff');
   });
 
-  it('shows transcript and Trace failure evidence, then starts a read-only Skill-bound diagnostic Session', async () => {
+  it('shows transcript and Trace failure evidence, then starts a full-trust Skill-bound diagnostic Session with unrestricted reads', async () => {
     const user = userEvent.setup();
     const routes: string[] = [];
     const transport = traceAgentTransport();
@@ -336,24 +336,38 @@ describe('TraceAgentFeature', () => {
 
     const createRequest = transport.requests.find(({ request }) => request.pathId === 'agent.sessions.create')?.request;
     expect(createRequest?.body).toMatchObject({
-      mode: 'assistant',
+      mode: 'coordinator',
       _modelRoute: 'traceDiagnostic',
-      executionMode: 'read_only',
-      toolProfileVersion: 'control-center-v1',
-      workspaceRoots: [],
+      surfaceKind: 'extension_app',
+      ownerAppId: 'extension:trace-agent',
+      surfaceKey: 'diagnostic',
+      toolProfileVersion: 'control-center-auto-approve-v1',
+      executionMode: 'full_trust',
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+      workspaceRoots: ['/'],
+      toolAllowlistMode: 'profile',
+      projectContextEnabled: true,
+      piSkillsEnabled: true,
+      codexSkillsEnabled: true,
     });
     const modeRequest = transport.requests.find(({ request }) => request.pathId === 'agent.session.mode.update')?.request;
-    expect(modeRequest?.body).toMatchObject({
-      mode: 'assistant',
-      executionMode: 'read_only',
-      projectContextEnabled: false,
+    expect(modeRequest?.body).toEqual({
+      mode: 'coordinator',
+      toolProfileVersion: 'control-center-auto-approve-v1',
+      executionMode: 'full_trust',
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+      workspaceRoots: ['/'],
+      toolAllowlistMode: 'profile',
+      projectContextEnabled: true,
       piSkillsEnabled: true,
-      codexSkillsEnabled: false,
+      codexSkillsEnabled: true,
     });
     const promptRequest = transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request;
     expect(promptRequest?.body).toMatchObject({ delivery: 'prompt' });
     expect(String((promptRequest?.body as Record<string, unknown> | undefined)?.message)).toContain(TRACE_AGENT_SKILL_REF);
     expect(String((promptRequest?.body as Record<string, unknown> | undefined)?.message)).toContain('session-source');
+    expect(String((promptRequest?.body as Record<string, unknown> | undefined)?.message)).toContain('无需逐项审批');
+    expect(String((promptRequest?.body as Record<string, unknown> | undefined)?.message)).toContain('根目录 /');
 
     const report = screen.getByRole('region', { name: 'Trace 诊断报告' });
     const diagnosticTimeline = await within(report).findByRole('region', { name: '诊断 Agent 对话与报告' });
@@ -593,7 +607,7 @@ describe('TraceAgentFeature', () => {
     await user.click(room);
     const selected = await screen.findByRole('region', { name: '已选择诊断对象' });
     const timeline = within(selected).getByRole('region', { name: '原始对话时间线' });
-    expect(timeline).toHaveTextContent('用户 · Room 用户问题');
+    await waitFor(() => expect(timeline).toHaveTextContent('用户 · Room 用户问题'));
     expect(timeline).toHaveTextContent('思考摘要 · 协作者核对分工');
     expect(timeline).toHaveTextContent('工具开始 · 读取 WorkItem');
     expect(timeline).toHaveTextContent('工具完成 · WorkItem 读取完成');
@@ -757,6 +771,9 @@ describe('TraceAgentFeature', () => {
     expect(createRequests).toHaveLength(2);
     expect(createRequests[1]?.request.body).toEqual({
       title: '修复 Trace 诊断 · 失败的对话',
+      surfaceKind: 'extension_app',
+      ownerAppId: 'extension:trace-agent',
+      surfaceKey: 'repair',
       mode: 'coordinator',
       toolProfileVersion: 'control-center-auto-approve-v1',
       executionMode: 'full_trust',
@@ -1073,7 +1090,7 @@ describe('TraceAgentFeature', () => {
     await user.click(await screen.findByRole('tab', { name: 'Room 协作' }));
     const timeline = await screen.findByRole('region', { name: '原始对话时间线' });
     expect(timeline).not.toHaveTextContent('Room 用户问题');
-    expect(timeline).toHaveTextContent('Room 已发布进展');
+    await waitFor(() => expect(timeline).toHaveTextContent('Room 已发布进展'));
     const loadOlder = within(timeline).getByRole('button', { name: '从 Room history 加载更早' });
     await user.click(loadOlder);
 
@@ -1131,7 +1148,7 @@ describe('TraceAgentFeature', () => {
 
     await user.click(await screen.findByRole('tab', { name: 'Room 协作' }));
     const timeline = await screen.findByRole('region', { name: '原始对话时间线' });
-    await user.click(within(timeline).getByRole('button', { name: '从 Room history 加载更早' }));
+    await user.click(await within(timeline).findByRole('button', { name: '从 Room history 加载更早' }));
     await waitFor(() => expect(within(timeline).getAllByTestId('trace-agent-timeline-entry')).toHaveLength(6));
 
     await user.click(screen.getByRole('button', { name: '刷新对象' }));
@@ -2480,6 +2497,12 @@ function roomSnapshot() {
       routingPolicy: 'moderator' as const,
       moderatorParticipantId: 'participant-1',
       workspaceRoots: [] as [],
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1' as const,
+        room: { executionMode: 'read_only' as const },
+        partner: { executionMode: 'inherit' as const },
+        toolAgent: { executionMode: 'inherit' as const },
+      },
       createdAtMs: 1,
       updatedAtMs: 110,
       lastEventSequence: 6,

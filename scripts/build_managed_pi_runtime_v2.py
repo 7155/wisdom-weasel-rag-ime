@@ -142,6 +142,128 @@ _SESSION_RUNTIME_SOURCE_KEYS = (
     "packageCatalog",
     "packageManager",
 )
+# Product builds must keep the reviewed Pi worktree clean, while Skill routing
+# is a PAW policy that must execute inside the Host loader. Apply this
+# fail-closed overlay only to the copied build input. This script is included
+# in the content-addressed Runtime version digest.
+_RUNTIME_HOST_SOURCE_OVERLAYS: dict[
+    str,
+    tuple[tuple[str, str], ...],
+] = {
+    "src/pi-session.ts": (
+        (
+            "\tactivePluginDir: string;\n\tskillPaths: string[];",
+            "\tactivePluginDir: string;\n"
+            "\tskillPaths: string[];\n"
+            "\tskillAllowlist?: string[];",
+        ),
+        (
+            "\t\tconst skillPromptFocus = "
+            "roomSkillPromptFocus(options.roomSkillPolicy) ?? [];\n"
+            "\t\tconst toolPromptFocus = "
+            "roomToolPromptFocus(options.roomSkillPolicy) ?? [];",
+            "\t\tconst skillPromptFocus = "
+            "roomSkillPromptFocus(options.roomSkillPolicy) ?? [];\n"
+            "\t\tconst allowedSkillNames = options.skillAllowlist === undefined\n"
+            "\t\t\t? undefined\n"
+            "\t\t\t: new Set(options.skillAllowlist);\n"
+            "\t\tconst toolPromptFocus = "
+            "roomToolPromptFocus(options.roomSkillPolicy) ?? [];",
+        ),
+        (
+            "\t\t\t\t\t\tskills: base.skills.filter(\n"
+            "\t\t\t\t\t\t\t(skill) => skill.sourceInfo.scope === "
+            '"temporary" || skill.sourceInfo.origin === "package",\n'
+            "\t\t\t\t\t\t),",
+            "\t\t\t\t\t\tskills: base.skills\n"
+            "\t\t\t\t\t\t\t.filter(\n"
+            "\t\t\t\t\t\t\t\t(skill) => skill.sourceInfo.scope === "
+            '"temporary" || skill.sourceInfo.origin === "package",\n'
+            "\t\t\t\t\t\t\t)\n"
+            "\t\t\t\t\t\t\t.filter(\n"
+            "\t\t\t\t\t\t\t\t(skill) => allowedSkillNames === undefined\n"
+            "\t\t\t\t\t\t\t\t\t|| allowedSkillNames.has(skill.name),\n"
+            "\t\t\t\t\t\t\t),",
+        ),
+    ),
+    "src/runtime-host.ts": (
+        (
+            "\tif (typeof value !== \"boolean\") {\n"
+            "\t\tthrow new RuntimeProtocolError("
+            '"INVALID_PARAMS", `${key} must be a boolean`);\n'
+            "\t}\n"
+            "\treturn value;\n"
+            "}\n\n"
+            "function requiredBoolean",
+            "\tif (typeof value !== \"boolean\") {\n"
+            "\t\tthrow new RuntimeProtocolError("
+            '"INVALID_PARAMS", `${key} must be a boolean`);\n'
+            "\t}\n"
+            "\treturn value;\n"
+            "}\n\n"
+            "function optionalSkillAllowlist("
+            "params: Record<string, unknown>): string[] | undefined {\n"
+            "\tconst value = params.skillAllowlist;\n"
+            "\tif (value === undefined || value === null) return undefined;\n"
+            "\tif (!Array.isArray(value) || value.length > 128) {\n"
+            "\t\tthrow new RuntimeProtocolError("
+            '"INVALID_PARAMS", "skillAllowlist must be an array of at most 128 Skill names");\n'
+            "\t}\n"
+            "\tconst names: string[] = [];\n"
+            "\tconst seen = new Set<string>();\n"
+            "\tfor (const item of value) {\n"
+            "\t\tif (typeof item !== \"string\") {\n"
+            "\t\t\tthrow new RuntimeProtocolError("
+            '"INVALID_PARAMS", "skillAllowlist must contain only Skill names");\n'
+            "\t\t}\n"
+            "\t\tconst name = item.trim();\n"
+            "\t\tif (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name) "
+            "|| seen.has(name)) {\n"
+            "\t\t\tthrow new RuntimeProtocolError("
+            '"INVALID_PARAMS", "skillAllowlist contains an invalid or duplicate Skill name");\n'
+            "\t\t}\n"
+            "\t\tseen.add(name);\n"
+            "\t\tnames.push(name);\n"
+            "\t}\n"
+            "\treturn names;\n"
+            "}\n\n"
+            "function requiredBoolean",
+        ),
+        (
+            "\t\t\t\t\t\tsessionControlState: true,\n"
+            "\t\t\t\t\t\tsessionSnapshot: true,",
+            "\t\t\t\t\t\tsessionControlState: true,\n"
+            "\t\t\t\t\t\tsessionSkillAllowlist: true,\n"
+            "\t\t\t\t\t\tsessionSnapshot: true,",
+        ),
+        (
+            "\t\t\t\t\t\tcodexSkillsEnabled: optionalBoolean("
+            'params, "codexSkillsEnabled"),\n'
+            "\t\t\t\t\t\tmodelRuntime: this.modelRuntime,",
+            "\t\t\t\t\t\tcodexSkillsEnabled: optionalBoolean("
+            'params, "codexSkillsEnabled"),\n'
+            "\t\t\t\t\t\tskillAllowlist: optionalSkillAllowlist(params),\n"
+            "\t\t\t\t\t\tmodelRuntime: this.modelRuntime,",
+        ),
+    ),
+    "src/tool-bridge.ts": (
+        (
+            "const ROOM_DELEGATION_GATEWAY_REQUEST_TIMEOUT_MS = 300_000;",
+            "const DELEGATION_GATEWAY_REQUEST_TIMEOUT_MS = 300_000;",
+        ),
+        (
+            'if (options.gatewayTimeoutMs !== undefined || toolName !== "room_partner") return options;',
+            "if (\n"
+            "\t\toptions.gatewayTimeoutMs !== undefined\n"
+            "\t\t|| (toolName !== \"room_partner\" && toolName !== \"agents\")\n"
+            ") return options;",
+        ),
+        (
+            "gatewayTimeoutMs: ROOM_DELEGATION_GATEWAY_REQUEST_TIMEOUT_MS,",
+            "gatewayTimeoutMs: DELEGATION_GATEWAY_REQUEST_TIMEOUT_MS,",
+        ),
+    ),
+}
 _OAUTH_RUNTIME_MODULES = {
     "anthropic.ts": (
         "packages/ai/src/auth/oauth/anthropic.ts",
@@ -210,6 +332,50 @@ def _runtime_host_root(pi_root: Path) -> Path:
     # The Runtime Host was moved out of the old Pi package tree. Keep one
     # source of truth so a stale checkout can never be selected implicitly.
     return pi_root / "integrations" / "rag-ime-runtime-host"
+
+
+def _prepare_runtime_host_overlay(
+    package_root: Path,
+    destination: Path,
+    *,
+    pi_root: Path,
+) -> Path:
+    """Copy the pinned Runtime Host and apply product-owned guarded patches."""
+
+    if destination.exists() or destination.is_symlink():
+        raise ManagedPiRuntimeError(
+            f"Runtime Host overlay destination already exists: {destination}"
+        )
+    shutil.copytree(package_root, destination, symlinks=True)
+    node_modules = destination / "node_modules"
+    if node_modules.exists() or node_modules.is_symlink():
+        raise ManagedPiRuntimeError(
+            "Runtime Host source unexpectedly contains node_modules"
+        )
+    source_node_modules = pi_root / "node_modules"
+    if not source_node_modules.is_dir():
+        raise ManagedPiRuntimeError(
+            f"Pi worktree dependencies are unavailable: {source_node_modules}"
+        )
+    node_modules.symlink_to(source_node_modules, target_is_directory=True)
+
+    for relative_path, replacements in _RUNTIME_HOST_SOURCE_OVERLAYS.items():
+        source_path = destination / relative_path
+        if not source_path.is_file():
+            raise ManagedPiRuntimeError(
+                f"Runtime Host overlay source is missing: {relative_path}"
+            )
+        source = source_path.read_text(encoding="utf-8")
+        for before, after in replacements:
+            matches = source.count(before)
+            if matches != 1:
+                raise ManagedPiRuntimeError(
+                    "Runtime Host overlay anchor mismatch for "
+                    f"{relative_path}: expected 1 match, found {matches}"
+                )
+            source = source.replace(before, after, 1)
+        source_path.write_text(source, encoding="utf-8")
+    return destination
 
 
 def _pi_worktree_error(pi_root: Path) -> str:
@@ -469,6 +635,34 @@ def _hash_tree(path: Path) -> bytes:
         digest.update(item.relative_to(path).as_posix().encode("utf-8"))
         digest.update(item.read_bytes())
     return digest.digest()
+
+
+_BUNDLED_OVERLAY_SOURCE_ROOT = b"/rag-ime-managed/runtime-host"
+
+
+def _normalize_bundled_overlay_paths(
+    bundle: Path,
+    overlay_package_root: Path,
+) -> int:
+    """Remove ephemeral overlay paths that make identical Host builds differ."""
+
+    payload = bundle.read_bytes()
+    replacements = 0
+    source_roots = {
+        str(overlay_package_root).encode("utf-8"),
+        str(overlay_package_root.resolve()).encode("utf-8"),
+    }
+    for source_root in source_roots:
+        occurrences = payload.count(source_root)
+        if not occurrences:
+            continue
+        payload = payload.replace(
+            source_root,
+            _BUNDLED_OVERLAY_SOURCE_ROOT,
+        )
+        replacements += occurrences
+    bundle.write_bytes(payload)
+    return replacements
 
 
 def _product_skill_dirs(
@@ -1570,6 +1764,7 @@ def _smoke_runtime(node: Path, entrypoint: Path) -> dict[str, object]:
         or result.get("protocolVersion") != "2"
         or not isinstance(capabilities, dict)
         or not capabilities.get("multiSession")
+        or not capabilities.get("sessionSkillAllowlist")
     ):
         raise ManagedPiRuntimeError("managed Pi Runtime Host smoke test did not negotiate protocol v2")
     return response
@@ -1718,19 +1913,31 @@ def main(argv: list[str] | None = None) -> int:
                 runtime_dir / "session-runtime-host-contract.json",
             )
             bundled_entrypoint = runtime_dir / "cli.mjs"
-            _run(
-                [
-                    str(esbuild),
-                    str(package_root / "src" / "cli.ts"),
-                    "--bundle",
-                    "--platform=node",
-                    "--format=esm",
-                    "--target=node22",
-                    f"--outfile={bundled_entrypoint}",
-                    f'--banner:js={_runtime_host_banner(product_skills, routing_catalog["collisionPolicy"])}',
-                ],
-                cwd=pi_root,
-            )
+            with tempfile.TemporaryDirectory(
+                prefix="rag-ime-runtime-host-overlay-"
+            ) as overlay_root:
+                overlay_package_root = _prepare_runtime_host_overlay(
+                    package_root,
+                    Path(overlay_root) / "runtime-host",
+                    pi_root=pi_root,
+                )
+                _run(
+                    [
+                        str(esbuild),
+                        str(overlay_package_root / "src" / "cli.ts"),
+                        "--bundle",
+                        "--platform=node",
+                        "--format=esm",
+                        "--target=node22",
+                        f"--outfile={bundled_entrypoint}",
+                        f'--banner:js={_runtime_host_banner(product_skills, routing_catalog["collisionPolicy"])}',
+                    ],
+                    cwd=pi_root,
+                )
+                _normalize_bundled_overlay_paths(
+                    bundled_entrypoint,
+                    overlay_package_root,
+                )
             bundled_entrypoint.chmod(0o755)
 
             # The Runtime Host is the managed Session RPC entrypoint, not the

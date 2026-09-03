@@ -82,6 +82,7 @@ from .agent_runtime_driver import (
     CompactionObserver,
     RuntimeDriverContext,
     SessionContextProvider,
+    SkillAllowlistProvider,
 )
 from .agent_roles import PersonaManifest, agent_role
 from .agent_sessions import AgentSessionStore
@@ -819,6 +820,7 @@ class PiRuntimeDriverFactory:
             media_resolver=context.media_resolver,
             session_context_provider=session_context_provider,
             tool_manifest_provider=context.tool_manifest_provider,
+            skill_allowlist_provider=context.skill_allowlist_provider,
             compaction_observer=context.compaction_observer,
         )
 
@@ -1053,6 +1055,7 @@ class PiRuntimeManager:
         media_resolver: Callable[[str, str, str], str] | None = None,
         session_context_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
         tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
+        skill_allowlist_provider: SkillAllowlistProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
     ) -> None:
         self.config = config
@@ -1061,6 +1064,7 @@ class PiRuntimeManager:
         self._media_resolver = media_resolver
         self._session_context_provider = session_context_provider
         self._tool_manifest_provider = tool_manifest_provider
+        self._skill_allowlist_provider = skill_allowlist_provider
         self._compaction_observer = compaction_observer
         self._lifecycle_lock = threading.RLock()
         self._lock = threading.RLock()
@@ -1137,6 +1141,7 @@ class PiRuntimeManager:
                 "conversationRewrite": False,
                 "tools": bool(self.config.extension_path),
                 "imageAttachments": True,
+                "sessionSkillAllowlist": False,
                 "coordinator": set(_COORDINATOR_TOOLS).issubset(set(self.config.tools)),
                 "modelConfigured": self.config.model_configured,
             },
@@ -1151,6 +1156,10 @@ class PiRuntimeManager:
             raise PiRuntimeError("Pi runtime is disabled")
         if not self.config.model_configured:
             raise PiRuntimeError(self.config.model_configuration_error or "Pi model is not configured")
+        if self._skill_allowlist_provider is not None:
+            raise PiRuntimeError(
+                "Pi Runtime protocol v1 does not support per-Session Skill allowlists"
+            )
         session = dict(self.sessions.get(session_id))
         runtime_binding = self.sessions.runtime_binding(session_id)
         if runtime_binding is not None:

@@ -5,7 +5,7 @@ import {
   isComposerAttachmentMimeType,
   isComposerImageMimeType,
 } from './attachment-policy';
-import type { AgentRoomEventPageV1, AgentRoomSnapshotV1, RoomPostV2 } from './generated';
+import type { AgentRoomConversationSnapshotV1, AgentRoomEventPageV1, AgentRoomSnapshotV1, RoomPostV2 } from './generated';
 import type { UiAgentMessage, UiRoomEvent } from './ui-events';
 import { parseContract, parseRoomEvent, tryParseAgentMessage } from './validators';
 
@@ -167,6 +167,14 @@ export interface RoomSnapshot {
 }
 
 export type RoomEventSnapshot = Omit<AgentRoomSnapshotV1, 'events'> & {
+  events: UiRoomEvent[];
+};
+
+export type RoomConversationSnapshot = Omit<
+AgentRoomConversationSnapshotV1,
+'room' | 'events'
+> & {
+  room: AgentRoomSnapshotV1['room'];
   events: UiRoomEvent[];
 };
 
@@ -660,6 +668,53 @@ export function parseRoomEventSnapshot(value: unknown): RoomEventSnapshot {
   return { ...snapshot, events };
 }
 
+export function parseRoomConversationSnapshot(value: unknown): RoomConversationSnapshot {
+  const envelope = parseContract('agent-room-conversation-snapshot.v1', value);
+  const roomProbe = parseContract('agent-room-snapshot.v1', {
+    schemaVersion: 'rag-ime.agent-room-snapshot.v1',
+    ok: true,
+    room: envelope.room,
+    events: [],
+    firstSequence: 0,
+    lastSequence: 0,
+    resumeToken: '',
+    truncated: false,
+  });
+  const room = roomProbe.room;
+  const events = envelope.events.map((event) => parseRoomEvent(event));
+  if (room.lastEventSequence !== envelope.cursorSequence) {
+    throw new TypeError('Room conversation metadata cursor does not match cursorSequence');
+  }
+  const expectedResumeToken = envelope.cursorSequence
+    ? `${room.id}:${envelope.cursorSequence}`
+    : '';
+  if (envelope.resumeToken !== expectedResumeToken) {
+    throw new TypeError('Room conversation resume token does not match its cursor');
+  }
+  if (events.length === 0) {
+    if (envelope.firstEventSequence !== 0) {
+      throw new TypeError('Empty Room conversation snapshot must use a zero event bound');
+    }
+  } else if (events[0]?.sequence !== envelope.firstEventSequence) {
+    throw new TypeError('Room conversation snapshot first event bound does not match');
+  }
+  let previousSequence = 0;
+  for (const event of events) {
+    if (
+      event.roomId !== room.id
+      || event.sequence <= previousSequence
+      || event.sequence > envelope.cursorSequence
+    ) {
+      throw new TypeError('Room conversation events must be ordered and belong to the room cursor');
+    }
+    if (event.eventType === 'participant_activity') {
+      throw new TypeError('Room conversation snapshot must defer participant activity');
+    }
+    previousSequence = event.sequence;
+  }
+  return { ...envelope, room, events };
+}
+
 export function parseRoomEventPage(value: unknown): RoomEventPage {
   const page = parseContract('agent-room-event-page.v1', value);
   const items = page.items.map((event) => parseRoomEvent(event));
@@ -719,6 +774,44 @@ export function replayRoomEventSnapshot(
   }
   next.lastEventId = snapshot.resumeToken;
   next.resumeToken = snapshot.resumeToken;
+  const clientIds = new Set(
+    Object.values(next.messagesById)
+      .map((message) => message.clientMessageId)
+      .filter((value): value is string => Boolean(value)),
+  );
+  preserveOptimisticMessages(state, next, clientIds);
+  preserveLogicalTurnAliases(state, next);
+  return next;
+}
+
+export function replayRoomConversationSnapshot(
+  state: RoomProjectionState,
+  snapshot: RoomConversationSnapshot,
+): RoomProjectionState {
+  if (state.roomId !== snapshot.room.id) {
+    throw new TypeError('Room conversation snapshot does not belong to the active Room');
+  }
+  let next = createRoomProjection(state.roomId);
+  if (snapshot.room.moderatorParticipantId) {
+    next.moderatorParticipantId = snapshot.room.moderatorParticipantId;
+  }
+  for (const event of snapshot.events) {
+    // Conversation snapshots intentionally omit heavyweight activity events.
+    // Advance to the real event immediately before each retained event so the
+    // normal reducer still validates ordering without mistaking deferral for
+    // transport loss.
+    next.lastSequence = event.sequence - 1;
+    const reduced = reduceRoomEvent(next, event, { snapshotReplay: true });
+    if (reduced.disposition !== 'applied') {
+      throw new TypeError(`Room conversation snapshot replay failed: ${reduced.disposition}`);
+    }
+    next = reduced.state;
+  }
+  next.lastSequence = snapshot.cursorSequence;
+  next.lastEventId = snapshot.resumeToken;
+  next.resumeToken = snapshot.resumeToken;
+  next.needsSnapshot = false;
+  next.gap = undefined;
   const clientIds = new Set(
     Object.values(next.messagesById)
       .map((message) => message.clientMessageId)
@@ -1665,7 +1758,12 @@ function upsertActivity(
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   turn.rootId = text(payload.rootId) || turn.rootId || event.turnId;
   const dispatchId = text(payload.dispatchId);
-  if (dispatchId) {
+  const introducesDispatch = event.eventType === 'route_decision'
+    || (
+      event.eventType === 'participant_activity'
+      && text(payload.activityKind) !== 'work'
+    );
+  if (dispatchId && introducesDispatch) {
     turn.dispatchIds ??= [];
     turn.dispatchParticipantIds ??= {};
     if (!turn.dispatchIds.includes(dispatchId)) turn.dispatchIds.push(dispatchId);
@@ -1803,12 +1901,12 @@ function attachMessage(state: RoomProjectionState, message: RoomMessageProjectio
   const turn = ensureTurn(state, message.turnId, message.createdAtMs);
   turn.rootId = message.rootId || turn.rootId || message.turnId;
   if (message.retryOfRootId) turn.retryOfRootId = message.retryOfRootId;
-  if (message.dispatchId) {
-    turn.dispatchIds ??= [];
+  // A message can carry a Runtime turn/wake correlation in `dispatchId`.
+  // Only route decisions, explicit room_commit publications and terminal
+  // events create execution obligations; otherwise a WorkDocument sync or
+  // final moderator post can invent a dispatch that never becomes terminal.
+  if (message.dispatchId && turn.dispatchIds?.includes(message.dispatchId)) {
     turn.dispatchParticipantIds ??= {};
-    if (!turn.dispatchIds.includes(message.dispatchId)) {
-      turn.dispatchIds.push(message.dispatchId);
-    }
     turn.dispatchParticipantIds[message.dispatchId] = message.participantId ?? '';
   }
   if (!turn.messageIds.includes(message.id)) turn.messageIds.push(message.id);

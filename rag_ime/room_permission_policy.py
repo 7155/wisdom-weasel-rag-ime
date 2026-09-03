@@ -250,7 +250,7 @@ def _validate_policy_authority(policy: Mapping[str, Mapping[str, str]], *, room_
         and _EXECUTION_MODE_RANK[room_mode]
         > _EXECUTION_MODE_RANK[PER_ACTION_EXECUTION_MODE]
     ):
-        raise ValueError("roleplay Rooms cannot elevate Room execution mode")
+        raise ValueError("roleplay Rooms cannot use elevated Room execution mode")
     room_rank = _EXECUTION_MODE_RANK[room_mode]
     partner_mode = policy["partner"]["executionMode"]
     if partner_mode != INHERIT_EXECUTION_MODE and _EXECUTION_MODE_RANK[partner_mode] > room_rank:

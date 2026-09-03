@@ -23,6 +23,11 @@ from .agent_configuration import (
     default_agent_configuration,
     runtime_policy_from_configuration,
 )
+from .agent_skill_routing import (
+    TRACE_AGENT_OWNER_APP_ID,
+    TRACE_AGENT_SURFACE_KEYS,
+    skill_allowlist_for_session,
+)
 from .agent_approval_application import AgentApprovalApplicationService
 from .agent_approval_model import ApprovalModelArbiter
 from .agent_background_jobs import AgentBackgroundJobService
@@ -405,6 +410,7 @@ class AgentService:
                 tool_gateway_token=self.tool_token,
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
+                skill_allowlist_provider=self._runtime_skill_allowlist,
                 compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
@@ -766,7 +772,7 @@ class AgentService:
             ),
         )
         # Report persistence is a backend lifecycle responsibility. The Trace
-        # page may be unmounted while the read-only diagnostic Session
+        # page may be unmounted while the full-trust diagnostic Session
         # finishes, so a terminal Runtime event must reconcile the bound
         # report without relying on a browser poller.
         self._remove_trace_diagnostic_observer = self.events.add_observer(
@@ -1031,6 +1037,41 @@ class AgentService:
         if provider is None:
             return []
         return [dict(item) for item in provider(session)]
+
+    def _runtime_skill_allowlist(
+        self,
+        session: Mapping[str, object],
+    ) -> list[str]:
+        session_id = str(session.get("id") or "").strip()
+        if session_id:
+            session = self.sessions.get(session_id)
+        if (
+            session_id
+            and not str(session.get("ownerAppId") or "").strip()
+            and self.trace_diagnostic_reports.owns_session(session_id)
+        ):
+            # Reports created before Trace Agent Sessions carried durable
+            # surface ownership remain isolated after this clean cutover.
+            session = {
+                **session,
+                "surfaceKind": "extension_app",
+                "ownerAppId": TRACE_AGENT_OWNER_APP_ID,
+                "surfaceKey": "diagnostic",
+            }
+        participant = (
+            self.rooms.participant_for_session(
+                session_id,
+                active_only=False,
+            )
+            if session_id
+            else None
+        )
+        configuration = self.configuration_store.snapshot()["configuration"]
+        return skill_allowlist_for_session(
+            configuration,
+            session,
+            room_participant=isinstance(participant, Mapping),
+        )
 
 
 
@@ -1355,7 +1396,11 @@ class AgentService:
             "runtime.startup",
             "runtime.idleTimeoutSeconds",
         }
-        if runtime_keys.intersection(str(key) for key in changes):
+        runtime_change = bool(runtime_keys.intersection(str(key) for key in changes)) or any(
+            str(key).startswith("skillRouting.")
+            for key in changes
+        )
+        if runtime_change:
             status = self.runtime.runtime_status()
             if status.get("status") in {"starting", "busy"}:
                 raise ValueError("agent runtime settings cannot change during an active turn")
@@ -2139,6 +2184,9 @@ class AgentService:
 
     def room_snapshot(self, room_id: str) -> dict[str, object]:
         return self.room_management.snapshot(room_id)
+
+    def room_conversation_snapshot(self, room_id: str) -> dict[str, object]:
+        return self.room_management.conversation_snapshot(room_id)
 
     def room_history(
         self,
@@ -4126,8 +4174,18 @@ class AgentService:
     ) -> dict[str, object]:
         diagnostic_session_id = _required_text(payload, "diagnosticSessionId")
         session = self.sessions.get(diagnostic_session_id)
-        if str(session.get("executionMode") or "") != "read_only":
-            raise ValueError("Trace diagnostic report requires a read-only diagnostic Session")
+        # A diagnostic report is owned by the dedicated Trace Agent policy:
+        # full-auto coordinator authority is what permits transcript and
+        # external-file reads through the root workspace without per-read
+        # approval. Do not accept an ordinary Session merely because it is
+        # writable.
+        if not _trace_diagnostic_session_policy_active(
+            session,
+            expected_surface_key="diagnostic",
+        ):
+            raise ValueError(
+                "Trace diagnostic report requires the explicit full-trust diagnostic Session policy"
+            )
         inspection = self.trace_diagnostic_inspection(payload)
         title = str(payload.get("title") or "Trace 诊断报告")
         return self.trace_diagnostic_reports.create(
@@ -4269,7 +4327,10 @@ class AgentService:
         expected_revision = _trace_diagnostic_expected_revision(payload)
         repair_session_id = _required_text(payload, "repairSessionId")
         repair_session = self.sessions.get(repair_session_id)
-        if not auto_approve_policy_active(repair_session):
+        if not _trace_diagnostic_session_policy_active(
+            repair_session,
+            expected_surface_key="repair",
+        ):
             raise ValueError(
                 "Trace diagnostic repair handoff requires the unrestricted auto-approve profile"
             )
@@ -5783,6 +5844,7 @@ class AgentService:
                 tool_gateway_token=self.tool_token,
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
+                skill_allowlist_provider=self._runtime_skill_allowlist,
                 compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
@@ -5803,6 +5865,7 @@ class AgentService:
                 tool_gateway_token=self.tool_token,
                 tool_gateway_url=self.tool_gateway_url,
                 tool_manifest_provider=self._runtime_tool_manifest,
+                skill_allowlist_provider=self._runtime_skill_allowlist,
                 compaction_observer=self._checkpoint_runtime_compaction,
             ),
             purpose="interactive",
@@ -6291,6 +6354,34 @@ def _required_text(payload: Mapping[str, object], key: str) -> str:
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
+
+
+def _trace_diagnostic_session_policy_active(
+    session: Mapping[str, object],
+    *,
+    expected_surface_key: str,
+) -> bool:
+    workspace_roots = session.get("workspaceRoots")
+    return (
+        str(session.get("surfaceKind") or "") == "extension_app"
+        and str(session.get("ownerAppId") or "") == TRACE_AGENT_OWNER_APP_ID
+        and expected_surface_key in TRACE_AGENT_SURFACE_KEYS
+        and str(session.get("surfaceKey") or "") == expected_surface_key
+        and str(session.get("mode") or "") == "coordinator"
+        and str(session.get("executionMode") or "") == FULL_TRUST_EXECUTION_MODE
+        and auto_approve_policy_active(session)
+        and isinstance(workspace_roots, list)
+        and "/" in {str(root).strip() for root in workspace_roots}
+        and str(session.get("toolAllowlistMode") or "") == "profile"
+        and all(
+            session.get(key) is True
+            for key in (
+                "projectContextEnabled",
+                "piSkillsEnabled",
+                "codexSkillsEnabled",
+            )
+        )
+    )
 
 
 def _trace_diagnostic_expected_revision(payload: Mapping[str, object]) -> int:

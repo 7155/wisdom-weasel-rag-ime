@@ -26,9 +26,11 @@ from scripts.build_managed_pi_runtime_v2 import (
     _copy_bundled_pi_packages,
     _hash_extension_app_pi_packages,
     _copy_product_skills,
+    _normalize_bundled_overlay_paths,
     _compact_card_length,
     _default_node,
     _product_skill_dirs,
+    _prepare_runtime_host_overlay,
     _resolve_skill_source_collisions,
     _runtime_host_banner,
     _source_revision,
@@ -142,6 +144,115 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
         self.assertIn('key !== "auditReceipt"', source)
         self.assertIn("boundedToolResult(toolCallId", source)
+
+
+    def test_runtime_host_overlay_adds_guarded_session_skill_allowlist(self) -> None:
+        from scripts.build_managed_pi_runtime_v2 import (
+            _RUNTIME_HOST_SOURCE_OVERLAYS,
+        )
+
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-runtime-host-overlay-test-"
+        ) as temporary:
+            pi_root = Path(temporary) / "pi"
+            package_root = pi_root / "integrations" / "rag-ime-runtime-host"
+            (pi_root / "node_modules").mkdir(parents=True)
+            for relative_path, replacements in (
+                _RUNTIME_HOST_SOURCE_OVERLAYS.items()
+            ):
+                source = package_root / relative_path
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(
+                    "\n\n".join(before for before, _after in replacements),
+                    encoding="utf-8",
+                )
+
+            overlay = _prepare_runtime_host_overlay(
+                package_root,
+                Path(temporary) / "overlay",
+                pi_root=pi_root,
+            )
+
+            self.assertTrue((overlay / "node_modules").is_symlink())
+            session_source = (overlay / "src" / "pi-session.ts").read_text(
+                encoding="utf-8"
+            )
+            host_source = (overlay / "src" / "runtime-host.ts").read_text(
+                encoding="utf-8"
+            )
+            tool_bridge_source = (overlay / "src" / "tool-bridge.ts").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("skillAllowlist?: string[];", session_source)
+            self.assertIn("allowedSkillNames.has(skill.name)", session_source)
+            self.assertNotIn(
+                "|| skillPromptFocus.includes(skill.name)",
+                session_source,
+            )
+            self.assertIn("function optionalSkillAllowlist(", host_source)
+            self.assertIn("sessionSkillAllowlist: true", host_source)
+            self.assertIn(
+                "skillAllowlist: optionalSkillAllowlist(params)",
+                host_source,
+            )
+            self.assertIn(
+                'toolName !== "room_partner" && toolName !== "agents"',
+                tool_bridge_source,
+            )
+            self.assertIn(
+                "DELEGATION_GATEWAY_REQUEST_TIMEOUT_MS",
+                tool_bridge_source,
+            )
+            self.assertNotIn(
+                "ROOM_DELEGATION_GATEWAY_REQUEST_TIMEOUT_MS",
+                tool_bridge_source,
+            )
+
+            (package_root / "src" / "pi-session.ts").write_text(
+                "// upstream source drifted\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ManagedPiRuntimeError,
+                "overlay anchor mismatch",
+            ):
+                _prepare_runtime_host_overlay(
+                    package_root,
+                    Path(temporary) / "drifted-overlay",
+                    pi_root=pi_root,
+                )
+
+    def test_bundled_overlay_paths_are_normalized_deterministically(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-runtime-host-bundle-path-"
+        ) as temporary:
+            root = Path(temporary)
+            outputs: list[bytes] = []
+            for suffix in ("first", "second"):
+                overlay = root / suffix / "runtime-host"
+                overlay.mkdir(parents=True)
+                bundle = root / f"{suffix}.mjs"
+                bundle.write_bytes(
+                    b"const source = "
+                    + json.dumps(
+                        str(overlay / "src" / "upstream-compat.ts")
+                    ).encode("utf-8")
+                    + b";\n"
+                )
+
+                replacements = _normalize_bundled_overlay_paths(
+                    bundle,
+                    overlay,
+                )
+
+                self.assertEqual(replacements, 1)
+                outputs.append(bundle.read_bytes())
+
+            self.assertEqual(outputs[0], outputs[1])
+            self.assertIn(
+                b"/rag-ime-managed/runtime-host/src/upstream-compat.ts",
+                outputs[0],
+            )
 
     def test_session_runtime_source_contract_pins_required_session_surfaces(
         self,

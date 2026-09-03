@@ -1463,7 +1463,8 @@ export const contractSchemas = {
           "runtime",
           "sessionDefaults",
           "coordination",
-          "modelRouting"
+          "modelRouting",
+          "skillRouting"
         ],
         "properties": {
           "runtime": {
@@ -1568,6 +1569,30 @@ export const contractSchemas = {
               }
             },
             "additionalProperties": false
+          },
+          "skillRouting": {
+            "type": "object",
+            "required": [
+              "ordinary",
+              "room",
+              "trace",
+              "agentLab"
+            ],
+            "properties": {
+              "ordinary": {
+                "$ref": "#/$defs/skillRoute"
+              },
+              "room": {
+                "$ref": "#/$defs/skillRoute"
+              },
+              "trace": {
+                "$ref": "#/$defs/skillRoute"
+              },
+              "agentLab": {
+                "$ref": "#/$defs/skillRoute"
+              }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -1635,6 +1660,17 @@ export const contractSchemas = {
           }
         },
         "additionalProperties": false
+      },
+      "skillRoute": {
+        "type": "array",
+        "maxItems": 128,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        }
       }
     }
   },
@@ -6779,6 +6815,61 @@ export const contractSchemas = {
             }
           }
         }
+      }
+    }
+  },
+  "agent-room-conversation-snapshot.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-room-conversation-snapshot.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "room",
+      "events",
+      "firstEventSequence",
+      "cursorSequence",
+      "resumeToken",
+      "deferredEventCount",
+      "truncated"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-room-conversation-snapshot.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "room": {
+        "type": "object"
+      },
+      "events": {
+        "type": "array",
+        "maxItems": 2000,
+        "items": {
+          "type": "object"
+        }
+      },
+      "firstEventSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "cursorSequence": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "resumeToken": {
+        "type": "string"
+      },
+      "deferredEventCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "truncated": {
+        "type": "boolean"
       }
     }
   },

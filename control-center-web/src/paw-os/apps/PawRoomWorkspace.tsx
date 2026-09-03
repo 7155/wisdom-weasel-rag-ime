@@ -165,8 +165,11 @@ export function PawRoomWorkspace({
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
   const pageVisible = usePageVisibility();
-  const liveActive = active && pageVisible;
+  // A covered-but-open PAW window is still a live conversation. Focus only
+  // controls interaction/animation; document visibility owns network pause.
+  const liveActive = pageVisible;
   const timelineRef = useRef<HTMLDivElement>(null);
+  const runtimeWarmupSessionIdsRef = useRef(new Set<string>());
   const [draft, setDraft] = useState(initialDraft ?? '');
   const [attachments, setAttachments] = useState<RoomAttachmentReceipt[]>([]);
   const [sending, setSending] = useState(false);
@@ -226,6 +229,9 @@ export function PawRoomWorkspace({
     setCollaborationOpenFailures(new Set());
   }, [recordId]);
   useEffect(() => {
+    runtimeWarmupSessionIdsRef.current.clear();
+  }, [recordId]);
+  useEffect(() => {
     const previousFocus = previousFocusRef.current;
     previousFocusRef.current = collaborationFocusActive;
     if (!previousFocus || collaborationFocusActive) return;
@@ -261,6 +267,35 @@ export function PawRoomWorkspace({
   const participantAliases = useMemo(() => Object.fromEntries(
     focusProjection?.partners.map((partner) => [partner.participantId, partner.celestialName]) ?? [],
   ), [focusProjection]);
+  const prewarmParticipantSession = useCallback((sessionId: string) => {
+    if (!sessionId || runtimeWarmupSessionIdsRef.current.has(sessionId)) return;
+    runtimeWarmupSessionIdsRef.current.add(sessionId);
+    void transport.request({
+      pathId: 'agent.runtime.ensure',
+      body: { sessionId },
+    }).catch(() => {
+      runtimeWarmupSessionIdsRef.current.delete(sessionId);
+    });
+  }, [transport]);
+  const moderatorSessionId = record?.participants.find((participant) => (
+    participant.id === record.moderatorParticipantId
+    && participant.status === 'active'
+  ))?.sessionId ?? '';
+  useEffect(() => {
+    if (!liveActive) return;
+    prewarmParticipantSession(moderatorSessionId);
+  }, [liveActive, moderatorSessionId, prewarmParticipantSession]);
+  useEffect(() => {
+    if (!liveActive || !record || !draft.trim()) return;
+    const mentioned = roomMentionedParticipants(
+      record.participants.filter((participant) => participant.status === 'active'),
+      draft,
+      participantAliases,
+    );
+    for (const participant of mentioned) {
+      prewarmParticipantSession(participant.sessionId);
+    }
+  }, [draft, liveActive, participantAliases, prewarmParticipantSession, record]);
   const turnOrder = useRoomLiveStore(useShallow((state) => {
     const current = state.projections[recordId];
     return current ? selectPublicRoomTurnOrder(current) : [];

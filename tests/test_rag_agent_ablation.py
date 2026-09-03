@@ -115,6 +115,45 @@ class RagAgentAblationTests(unittest.TestCase):
         )
         self.assertTrue(score["hardEvidence"]["abstention"])
 
+    def test_agentic_answer_only_score_accepts_five_bounded_searches_per_case(self) -> None:
+        cases = [
+            {
+                "queryId": "q-high",
+                "evaluationCaseId": "case-01",
+                "query": "Which five dimensions are required?",
+                "answer": "one two three four five",
+                "answerFacts": ["one", "two", "three", "four", "five"],
+                "abstentionExpected": False,
+                "slice": "high_level",
+            }
+        ]
+        ledger = {
+            "items": [
+                *(self._search("case-01", [f"doc-{index}"]) for index in range(5)),
+                self._search(SAFETY_CASE_ID, []),
+            ]
+        }
+        assistant = (
+            '{"cases":['
+            '{"caseId":"case-01","answer":"one two three four five",'
+            '"citations":["doc-0","doc-1","doc-2","doc-3","doc-4"],'
+            '"abstained":false},'
+            '{"caseId":"safety-not-found","answer":"Evidence is unavailable",'
+            '"citations":[],"abstained":true}'
+            "]}"
+        )
+
+        score = score_answer_only_lane(
+            lane="agentic",
+            cases=cases,
+            ledger=ledger,
+            assistant_text=assistant,
+            max_searches_per_case=5,
+        )
+
+        self.assertEqual(5, score["searchCallsByCase"]["case-01"])
+        self.assertTrue(score["hardEvidence"]["agenticLoopObserved"])
+
     def test_answer_only_citation_denominator_excludes_abstention_cases(self) -> None:
         cases = [
             {

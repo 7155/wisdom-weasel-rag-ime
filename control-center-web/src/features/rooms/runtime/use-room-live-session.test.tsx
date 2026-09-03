@@ -3,8 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roomEventFixture } from '@/test/fixtures/events';
 import { MockControlTransport } from '@/test/mock-transport';
 import type { ControlEventObserver, ControlSubscription } from '@/platform/transport';
+import type { UiRoomEvent } from '@/contracts/ui-events';
 import { roomProjection, useRoomLiveStore } from '../state/live-store';
 import { useRoomLiveSession } from './use-room-live-session';
+
+const ROOM_DEFERRED_TEST_DELAY_MS = 120;
 
 afterEach(() => {
   cleanup();
@@ -51,6 +54,132 @@ describe('useRoomLiveSession snapshot recovery', () => {
     rerender({ active: false });
     await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(0));
     expect(transport.subscriptionCalls).toHaveLength(1);
+    unmount();
+  });
+
+  it('shares one authoritative Room stream across simultaneous conversation windows', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': roomSnapshot([]),
+      },
+    });
+    const firstEvents = vi.fn();
+    const secondEvents = vi.fn();
+    const connectionErrors = vi.fn();
+    const callbackDefaults = {
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: connectionErrors,
+      onRecoveryState: vi.fn(),
+    };
+
+    const { unmount } = renderHook(() => {
+      useRoomLiveSession({
+        roomId: 'room-1',
+        transport,
+        ...callbackDefaults,
+        onEvents: firstEvents,
+      });
+      useRoomLiveSession({
+        roomId: 'room-1',
+        transport,
+        ...callbackDefaults,
+        onEvents: secondEvents,
+      });
+    });
+
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.snapshot')).toHaveLength(1);
+    expect(transport.activeSubscriptionCount()).toBe(1);
+
+    const event = roomEventFixture(1, 'participant_activity', {
+      activityKind: 'tool',
+      status: 'running',
+      summary: '正在读取共享记录',
+    });
+    const rawEvent = Object.fromEntries(
+      Object.entries(event).filter(([key]) => key !== 'streamKind'),
+    );
+    let delivered = 0;
+    act(() => {
+      delivered = transport.emit('agent.room.events', rawEvent);
+    });
+    expect(connectionErrors).not.toHaveBeenCalled();
+    expect(delivered).toBe(1);
+    await flushAsyncWork();
+    expect(firstEvents).toHaveBeenCalledWith('room-1', [event]);
+    expect(secondEvents).toHaveBeenCalledWith('room-1', [event]);
+    unmount();
+    expect(transport.activeSubscriptionCount()).toBe(0);
+  });
+
+
+  it('renders conversation events before the deferred Tool snapshot finishes', async () => {
+    vi.useFakeTimers();
+    const events = [
+      roomEventFixture(1, 'user_message', {
+        clientMessageId: 'client-message-first',
+        messageId: 'message-first',
+        text: '先看到消息',
+      }),
+      roomEventFixture(2, 'participant_activity', {
+        activityKind: 'tool',
+        status: 'completed',
+        summary: '稍后补齐工具回执',
+      }),
+      roomEventFixture(3, 'turn_completed', { status: 'completed' }),
+    ];
+    const fullSnapshot = roomSnapshot(events);
+    let resolveFullSnapshot: ((value: typeof fullSnapshot) => void) | undefined;
+    const deferredFullSnapshot = new Promise<typeof fullSnapshot>((resolve) => {
+      resolveFullSnapshot = resolve;
+    });
+    let fullSnapshotCalls = 0;
+    const onLoadingChange = vi.fn();
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.conversationSnapshot': roomConversationSnapshot(
+          [events[0]!, events[2]!],
+          3,
+          1,
+        ),
+        'agent.room.snapshot': () => {
+          fullSnapshotCalls += 1;
+          return deferredFullSnapshot;
+        },
+      },
+    });
+
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange,
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState: vi.fn(),
+      onEvents: vi.fn(),
+    }));
+
+    await flushAsyncWork();
+    expect(transport.subscriptionCalls).toHaveLength(1);
+    expect(fullSnapshotCalls).toBe(0);
+    expect(onLoadingChange).toHaveBeenLastCalledWith(false);
+    expect(roomProjection('room-1').messagesById['message-first']?.text).toBe('先看到消息');
+    expect(roomProjection('room-1').activityOrder).toHaveLength(0);
+
+    await act(async () => vi.advanceTimersByTimeAsync(ROOM_DEFERRED_TEST_DELAY_MS));
+    expect(fullSnapshotCalls).toBe(1);
+    await act(async () => {
+      resolveFullSnapshot?.(fullSnapshot);
+      await deferredFullSnapshot;
+    });
+    await flushAsyncWork();
+    expect(roomProjection('room-1').activityOrder).toHaveLength(1);
+    expect(roomProjection('room-1').messagesById['message-first']?.text).toBe('先看到消息');
     unmount();
   });
 
@@ -304,15 +433,16 @@ describe('useRoomLiveSession snapshot recovery', () => {
 
   it('coalesces repeated manual retries while a snapshot request is active', async () => {
     let snapshotCalls = 0;
-    let resolveFirstSnapshot: ((value: ReturnType<typeof roomSnapshot>) => void) | undefined;
-    const firstSnapshot = new Promise<ReturnType<typeof roomSnapshot>>((resolve) => {
+    const emptyConversation = roomConversationSnapshot([], 0, 0);
+    let resolveFirstSnapshot: ((value: typeof emptyConversation) => void) | undefined;
+    const firstSnapshot = new Promise<typeof emptyConversation>((resolve) => {
       resolveFirstSnapshot = resolve;
     });
     const transport = new MockControlTransport({
       routes: {
-        'agent.room.snapshot': () => {
+        'agent.room.conversationSnapshot': () => {
           snapshotCalls += 1;
-          return snapshotCalls === 1 ? firstSnapshot : roomSnapshot([]);
+          return snapshotCalls === 1 ? firstSnapshot : emptyConversation;
         },
       },
     });
@@ -337,7 +467,7 @@ describe('useRoomLiveSession snapshot recovery', () => {
     });
     expect(snapshotCalls).toBe(1);
     await act(async () => {
-      resolveFirstSnapshot?.(roomSnapshot([]));
+      resolveFirstSnapshot?.(emptyConversation);
       await firstSnapshot;
     });
     await flushAsyncWork();
@@ -429,6 +559,12 @@ function roomSnapshot(events: ReturnType<typeof roomEventFixture>[]) {
       executionMode: 'workspace_managed',
       routingPolicy: 'moderator',
       moderatorParticipantId: 'participant-1',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'workspace_managed' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
       workspaceRoots: ['/Volumes/work/learnA'],
       createdAtMs: 1,
       updatedAtMs: 2,
@@ -468,7 +604,28 @@ function roomSnapshot(events: ReturnType<typeof roomEventFixture>[]) {
     )),
     firstSequence: events[0]?.sequence ?? 0,
     lastSequence,
+
     resumeToken: lastSequence ? `room-1:${lastSequence}` : '',
+    truncated: false,
+  };
+}
+function roomConversationSnapshot(
+  events: readonly UiRoomEvent[],
+  cursorSequence: number,
+  deferredEventCount: number,
+) {
+  const room = roomSnapshot([]).room;
+  return {
+    schemaVersion: 'rag-ime.agent-room-conversation-snapshot.v1',
+    ok: true,
+    room: { ...room, lastEventSequence: cursorSequence },
+    events: events.map((event) => Object.fromEntries(
+      Object.entries(event).filter(([key]) => key !== 'streamKind'),
+    )),
+    firstEventSequence: events[0]?.sequence ?? 0,
+    cursorSequence,
+    resumeToken: cursorSequence ? `room-1:${cursorSequence}` : '',
+    deferredEventCount,
     truncated: false,
   };
 }

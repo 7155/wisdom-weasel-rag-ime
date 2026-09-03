@@ -20,12 +20,12 @@ export const ROOM_PERMISSION_POLICY_SCHEMA_VERSION = 'rag-ime.room-permission-po
 export type RoomPermissionChildExecutionMode = RoomExecutionMode | 'inherit';
 export type RoomPermissionLayer = 'room' | 'partner' | 'toolAgent';
 
-export interface RoomPermissionPolicy {
+export type RoomPermissionPolicy = {
   schemaVersion: typeof ROOM_PERMISSION_POLICY_SCHEMA_VERSION;
   room: { executionMode: RoomExecutionMode };
   partner: { executionMode: RoomPermissionChildExecutionMode };
   toolAgent: { executionMode: RoomPermissionChildExecutionMode };
-}
+};
 
 export interface RoomEffectivePermissionPolicy {
   room: RoomExecutionMode;

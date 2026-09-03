@@ -22,7 +22,11 @@ from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_failure import classify_runtime_failure
 from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_tool_ids import MEMORY_CURATION_TOOL_PROFILE
-from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
+from .agent_runtime_driver import (
+    AgentRuntimeError,
+    CompactionObserver,
+    SkillAllowlistProvider,
+)
 from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
     PiRuntimeConfig,
@@ -548,6 +552,7 @@ class PiRuntimeHostManager:
         media_resolver: Callable[[str, str, str], str] | None = None,
         session_context_provider: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
         tool_manifest_provider: Callable[[Mapping[str, object]], list[Mapping[str, object]]] | None = None,
+        skill_allowlist_provider: SkillAllowlistProvider | None = None,
         compaction_observer: CompactionObserver | None = None,
     ) -> None:
         self.config = config
@@ -558,6 +563,7 @@ class PiRuntimeHostManager:
         self._media_resolver = media_resolver
         self._session_context_provider = session_context_provider
         self._tool_manifest_provider = tool_manifest_provider
+        self._skill_allowlist_provider = skill_allowlist_provider
         self._compaction_observer = compaction_observer
         self._lifecycle_lock = threading.RLock()
         self._model_catalog_lock = threading.Lock()
@@ -680,6 +686,9 @@ class PiRuntimeHostManager:
                     else installed and str(self.config.protocol_version or "") == _PROTOCOL_VERSION
                 ),
                 "transientContext": bool(capabilities.get("transientContext")),
+                "sessionSkillAllowlist": bool(
+                    capabilities.get("sessionSkillAllowlist")
+                ),
                 "persistentDebugContext": bool(capabilities.get("persistentDebugContext")),
                 "runtimePrimitives": _runtime_primitive_capabilities(
                     capabilities.get("runtimePrimitives")
@@ -771,6 +780,37 @@ class PiRuntimeHostManager:
             self._status = "ready"
         return client
 
+    def _session_skill_allowlist(
+        self,
+        session: Mapping[str, object],
+    ) -> list[str] | None:
+        provider = self._skill_allowlist_provider
+        if provider is None:
+            return None
+        values = provider(session)
+        if len(values) > 128:
+            raise PiRuntimeError("Session Skill allowlist contains too many Skills")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            skill_id = str(value).strip()
+            if (
+                not skill_id
+                or len(skill_id) > 128
+                or not skill_id[0].isalnum()
+                or any(
+                    character
+                    not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                    for character in skill_id
+                )
+            ):
+                raise PiRuntimeError("Session Skill allowlist contains an invalid Skill ID")
+            if skill_id in seen:
+                raise PiRuntimeError("Session Skill allowlist contains duplicate Skills")
+            seen.add(skill_id)
+            normalized.append(skill_id)
+        return normalized
+
     def ensure(self, session_id: str) -> dict[str, object]:
         with self._lifecycle_lock:
             if not self.config.model_configured:
@@ -839,6 +879,18 @@ class PiRuntimeHostManager:
                 str(session.get("toolProfileVersion") or "")
                 == MEMORY_CURATION_TOOL_PROFILE
             )
+            skill_allowlist = (
+                []
+                if memory_curation_session
+                else self._session_skill_allowlist(session)
+            )
+            if (
+                skill_allowlist is not None
+                and not bool(self._host_capabilities.get("sessionSkillAllowlist"))
+            ):
+                raise PiRuntimeError(
+                    "Pi Runtime Host does not support per-Session Skill allowlists"
+                )
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,
@@ -868,6 +920,8 @@ class PiRuntimeHostManager:
                     else bool(session.get("codexSkillsEnabled", False))
                 ),
             }
+            if skill_allowlist is not None:
+                params["skillAllowlist"] = skill_allowlist
             session_context = str(session.get("sessionContext") or "").strip()
             if session_context:
                 params["sessionContext"] = session_context
@@ -1300,7 +1354,10 @@ class PiRuntimeHostManager:
             if client_message_id:
                 result["clientMessageId"] = str(client_message_id).strip()
             return result
-        self.ensure(session_id)
+        with self._lock:
+            resident = session_id in self._open_sessions
+        if not resident:
+            self.ensure(session_id)
         client = self._require_client()
         normalized_client_message_id = str(client_message_id).strip()
         cancelled_before_dispatch = False

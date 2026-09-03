@@ -133,7 +133,7 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
-  it('does not initialize an inactive Session and resumes exactly one stream when activated', async () => {
+  it('keeps an inactive but visible Session window live without restarting its stream', async () => {
     const sessionId = 'session-inactive-gate';
     const transport = new StubControlTransport('mock', idleSessionRoutes());
     const props = {
@@ -151,12 +151,8 @@ describe('PAWOS Agent Session structural migration', () => {
       </ControlTransportProvider>,
     );
 
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(transport.requests).toHaveLength(0);
-    expect(transport.subscriptionCount('agent.session.events')).toBe(0);
+    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.snapshot')).toHaveLength(1);
 
     rerender(
       <ControlTransportProvider transport={transport}>
@@ -165,8 +161,7 @@ describe('PAWOS Agent Session structural migration', () => {
         </TooltipProvider>
       </ControlTransportProvider>,
     );
-    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(1));
-    expect(transport.requests.some((request) => request.pathId === 'agent.session.snapshot')).toBe(true);
+    expect(transport.subscriptionCount('agent.session.events')).toBe(1);
 
     rerender(
       <ControlTransportProvider transport={transport}>
@@ -175,7 +170,8 @@ describe('PAWOS Agent Session structural migration', () => {
         </TooltipProvider>
       </ControlTransportProvider>,
     );
-    await waitFor(() => expect(transport.subscriptionCount('agent.session.events')).toBe(0));
+    expect(transport.subscriptionCount('agent.session.events')).toBe(1);
+    expect(transport.requests.filter((request) => request.pathId === 'agent.session.snapshot')).toHaveLength(1);
   });
 
   it('opens an evaluation snapshot as a full read-only transcript without live Runtime controls', async () => {

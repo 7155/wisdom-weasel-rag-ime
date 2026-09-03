@@ -1,6 +1,6 @@
 # 简历内容写作要点
 
-本文件与 [`resume-contract.md`](resume-contract.md) 配套使用，供 `resume-builder` 和 `jd-tailorer` 共同遵循。写作目标是让已知事实更清楚、更容易核验、更贴近目标岗位；不是把不完整的信息包装成完整经历。
+本文件与 [`resume-contract.md`](resume-contract.md) 配套使用，供简历工作流和 `jd-tailorer` 共同遵循。写作目标是让已知事实更清楚、更容易核验、更贴近目标岗位；不是把不完整的信息包装成完整经历。
 
 ## 一、证据优先，而不是数字优先
 
