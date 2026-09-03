@@ -1,4 +1,4 @@
 interface:
   display_name: "Plan Implementation"
-  short_description: "Plan verifiable multi-step work without executing it"
-  default_prompt: "Use $implementation-planning to turn confirmed acceptance into the smallest dependency-aware WorkItems with explicit responsibility and separate operability and requirement-satisfaction checks."
+  short_description: "Plan multi-boundary work without executing or assigning it"
+  default_prompt: "Use $implementation-planning only when a confirmed change needs a dependency-aware plan. Produce the smallest vertical WorkItems, map acceptance to separate operability and requirement-satisfaction checks, identify owner roles, integration order, capabilities, workspace needs, and rollback seams, and leave Agent creation, dispatch, and execution to the supervising Runtime owner."

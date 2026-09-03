@@ -32,16 +32,21 @@ simple coherent work needs no workflow Skill.
 
 - `alignment-and-decision`: a material user-owned choice remains after facts
   have been inspected, or the user explicitly asks for Grill Mode.
-- `implementation-planning`: the confirmed change has multiple dependent
-  steps, owners, shared contracts, integration points, or rollback boundaries.
+- `implementation-planning`: a confirmed change needs a dependency-aware plan
+  across multiple steps, owners, shared contracts, integration points, or
+  rollback seams. It plans only; it does not create or dispatch Agents.
 - `systematic-debugging`: the cause of a failure or regression is not yet
   supported by repeatable evidence.
 - `test-driven-implementation`: the desired behavior, owning seam, and a
   meaningful executable check are already known.
-- `orchestrate-session`: private child Sessions provide a concrete benefit for
-  bounded investigation, implementation, or review.
-- `facilitate-room`: only the designated Room Facilitator coordinating visible
-  Partner responsibilities, integration, optional review, and one final result.
+- `orchestrate-session`: one or more private child Sessions provide concrete
+  leverage while the current Session keeps visible ownership, integration, and
+  the final result. A single useful child is valid; parallel batches require
+  independent work and a material concurrency benefit.
+- `facilitate-room`: only the designated Room Facilitator, and only when the
+  current request truly needs visible independently accountable
+  responsibilities, dependency stages, or useful concurrency. One coherent
+  action stays in the Facilitator without loading a Room workflow.
 - `independent-review`: the user asks for a distinct fixed-scope review or the
   change has enough risk to justify one. It is optional, read-only, and not a
   default quality gate.
@@ -56,7 +61,8 @@ simple coherent work needs no workflow Skill.
 
 Read a Skill body only after its trigger matches. A Partner or Tool Agent uses
 the same task Skills as a standalone Session; Room does not define a second
-workflow suite.
+workflow suite. Runtime context supplies current state, and the live Tool schema
+supplies legal operations; a Skill must not duplicate either as a static manual.
 
 ## Session, Tool Agent, And Room Choice
 

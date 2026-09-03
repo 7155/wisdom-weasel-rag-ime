@@ -1,42 +1,55 @@
 ---
 name: implementation-planning
-description: "Turn a confirmed change into the smallest dependency-aware set of verifiable work items. Use when work spans multiple steps, owners, shared contracts, integration points, or rollback boundaries. Do not use for one coherent action, an unknown failure, an unresolved material choice, or to manufacture parallel tasks; e.g., one localized edit plus its focused test does not need a plan."
+description: "Turn a confirmed change into the smallest dependency-aware plan without executing or assigning it. Use when work spans multiple dependent steps, owner boundaries, shared contracts, integration points, or rollback seams and a plan will materially reduce risk. Do not use for one coherent action, an unknown failure, an unresolved material choice, or to manufacture parallel tasks; e.g., one localized edit plus its focused test needs no plan."
 ---
 
 # Plan Implementation
 
-Plan only as much structure as the work needs. Prefer one coherent Session when it can finish the task safely.
+Produce only the minimum plan needed to make a confirmed change executable.
+Planning describes responsibility and dependency topology; Runtime owns actual
+Sessions, assignments, workspace bindings, and live state.
 
 ## Workflow
 
-1. Read the TaskBrief, acceptance criteria, decisions, relevant ContextRefs, and current implementation seams.
-2. Stop and suggest `alignment-and-decision` only if a newly discovered material user choice prevents a valid plan.
-3. Map each acceptance criterion to an observable implementation seam and to two distinct verification questions: whether the implementation/real path runs, and whether the observed result satisfies the current precise requirement.
-4. Create the smallest vertical work items that produce independently inspectable results; do not use file lists as tasks.
-5. For every work item, record requirement refs, current and accountable owner roles, Session/conversation and WorkDocument refs, acceptance, dependencies, next action, verification responsibility, integration order, and rollback point. Runtime supplies actual identities and live state.
-6. Recommend parallel work only when items are independent and concurrency has a material benefit.
-7. Recommend owner roles, capabilities, and workspace needs; leave actual Agent creation, assignment, reassignment, and workspace binding to the supervising caller.
-8. Update the owned workboard with the accepted plan, material blockers, and next frontier.
-
-## Document Responsibility
-
-- Update the existing workboard or return a proposed delta when write access is absent.
-- Keep runtime state, Agent presence, and workspace status out of prose; reference their Runtime projections.
-- Link decisions, evidence, and affected contracts instead of copying their full contents.
+1. Read the confirmed requirement, acceptance, relevant decisions, ContextRefs,
+   and current implementation seams.
+2. Stop and route to `alignment-and-decision` only when a newly discovered
+   material user-owned choice prevents a valid plan. Route an unknown failure to
+   `systematic-debugging` instead of planning around a guess.
+3. Map every acceptance criterion to an observable implementation seam and two
+   distinct verification questions: whether the implementation or real path
+   runs, and whether the observed result satisfies the current precise
+   requirement.
+4. Create the smallest vertical WorkItems that yield independently inspectable
+   results. Do not use file lists, technology labels, or test/documentation
+   phases as artificial tasks.
+5. Record objective, expected output, acceptance, dependencies, owner role,
+   verification responsibility, integration order, rollback point, exact refs,
+   and capability/workspace needs for each item.
+6. Recommend parallel execution only when items are independent and concurrency
+   has a material benefit. Recommend an independent review only when risk or the
+   user request justifies it.
+7. Return the executable frontier and proposed workboard delta. Leave Agent
+   creation, dispatch, reassignment, and execution to the supervising Session or
+   Room Facilitator.
 
 ## Output
 
 Return the common `AgentResult` envelope with:
 
 ```text
-work items and responsibility fields | two-axis acceptance mapping
-dependencies | executable frontier | integration order | rollback
-review recommendation
-workboard update receipt or proposed delta
+WorkItems and owner roles | acceptance-to-seam mapping
+dependencies | executable frontier | integration order
+operability checks | requirement-satisfaction checks
+capability and workspace needs | rollback points
+review recommendation | proposed workboard delta
 ```
 
 ## Not For
 
-Do not execute work, create Agents, force parallelism, invent a worktree, or introduce a mandatory review or quality-gate stage.
+Do not execute work, create or assign Agents, reproduce a Runtime state machine,
+force parallelism, invent a worktree, or make planning and review mandatory.
 
-Example: a localized behavior change with a known owner and one focused test should proceed directly with the implementation Skill.
+Example: a cross-process contract change with a migration, frontend consumer,
+and rollback boundary benefits from a plan. A localized behavior change with one
+known owner and focused test should proceed directly.
