@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "paw.enterpriseops-csm-suite-v2-overlay.v1",
+  "suiteId": "enterpriseops-csm",
+  "suiteRevision": "enterpriseops-csm-suite-v2",
+  "businessAsOfDate": "2025-11-04",
+  "tasks": {
+    "task_20251205_153330_906_a8eea1c0_8c7a6205": {
+      "sourceTaskSha256": "a6cdaa09c27d7d302efe464f1a4899ab74fa0b09be1592a02a2e51f06f823179",
+      "businessAsOfDate": "2025-11-04",
+      "verifierOverrides": {}
+    },
+    "task_20260101_122222_300_ad5a67e3_3757206c": {
+      "sourceTaskSha256": "ea3619b9d64e2f90458555723bd0e7f8472f485bbaadc7f568902e53c78ab33b",
+      "businessAsOfDate": "2025-11-04",
+      "verifierOverrides": {}
+    },
+    "task_20260102_161510_799_ad5a67e3_7221f3c8": {
+      "sourceTaskSha256": "547e9164b7f69781619de678fc571453eeacd07cf3c13b68b62decfefffafb9b",
+      "businessAsOfDate": "2025-11-04",
+      "additionalSelectedTools": ["find_locations"],
+      "verifierOverrides": {
+        "9": { "contract": "larson-case-assigned-active-worker-v1" },
+        "10": { "contract": "larson-knowledge-exists-v1" },
+        "11": { "contract": "larson-knowledge-resolution-link-v1" },
+        "15": { "contract": "larson-knowledge-owner-country-tenure-v1", "country": "uk" }
+      }
+    }
+  },
+  "overlaySha256": "40ac966afefb0a71bb1f3e04560bdbf4953fac2788ce2ba90e05b86cfe26677b"
+}

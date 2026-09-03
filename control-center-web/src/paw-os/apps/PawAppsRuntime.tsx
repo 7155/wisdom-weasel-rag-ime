@@ -15,6 +15,7 @@ type PawNativeAppId = Extract<PawAppId,
   | 'input-studio'
   | 'app-center'
   | 'system-monitor'
+  | 'eval-lab'
   | 'system-settings'>;
 
 const loadPawAgentApp = () => import('./entries/PawAgentAppEntry');
@@ -104,6 +105,7 @@ function renderApp(appId: PawAppId, entityId?: string, initialRoute?: string, ta
     case 'input-studio':
     case 'app-center':
     case 'system-monitor':
+    case 'eval-lab':
     case 'system-settings':
       return <PawNativeApp appId={appId as PawNativeAppId} initialRoute={initialRoute} />;
   }

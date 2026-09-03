@@ -33,11 +33,15 @@ class ManagementSettingsStore:
         db_path: str | Path,
         *,
         preverified_schema: bool = False,
+        persistent_reads: bool = False,
     ):
         self.db_path = Path(db_path)
         self.preverified_schema = bool(preverified_schema)
+        self._persistent_reads = bool(persistent_reads)
         self._initialized = False
         self._initialize_lock = RLock()
+        self._read_lock = RLock()
+        self._read_connection: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         if self._initialized:
@@ -50,6 +54,27 @@ class ManagementSettingsStore:
                     f"preverified settings database does not exist: {self.db_path}"
                 )
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            if self._persistent_reads:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                try:
+                    if self.preverified_schema:
+                        _require_preverified_management_schema(conn)
+                    else:
+                        ensure_management_tables(conn)
+                        _purge_transport_metadata(conn)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    conn.close()
+                    raise
+                with self._read_lock:
+                    previous = self._read_connection
+                    self._read_connection = conn
+                if previous is not None:
+                    previous.close()
+                self._initialized = True
+                return
             with self._connect() as conn:
                 if self.preverified_schema:
                     _require_preverified_management_schema(conn)
@@ -60,7 +85,7 @@ class ManagementSettingsStore:
 
     def get_settings(self, *, include_sensitive: bool = False) -> dict[str, object]:
         self.initialize()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             return self.get_settings_from_connection(
                 conn,
                 include_sensitive=include_sensitive,
@@ -234,7 +259,7 @@ class ManagementSettingsStore:
         profile: str,
     ) -> int:
         self.initialize()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             current = conn.execute(
                 "SELECT runtime_revision, snapshot_hash FROM runtime_config_state WHERE singleton_id = 1"
             ).fetchone()
@@ -300,7 +325,7 @@ class ManagementSettingsStore:
 
     def list_profiles(self, *, kind: str = "") -> dict[str, object]:
         self.initialize()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM user_profiles
@@ -362,7 +387,7 @@ class ManagementSettingsStore:
 
     def activate_profile_dry_run(self, profile_id: str) -> dict[str, object]:
         self.initialize()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             row = conn.execute("SELECT * FROM user_profiles WHERE profile_id = ? LIMIT 1", (profile_id,)).fetchone()
         if row is None:
             return {"schemaVersion": "rag-ime.user-profile-activate-dry-run.v3", "ok": False, "error": "profile not found", "profileId": profile_id}
@@ -383,7 +408,7 @@ class ManagementSettingsStore:
     def list_vocabulary(self, *, status: str = "", query: str = "") -> dict[str, object]:
         self.initialize()
         q = f"%{query}%"
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM user_vocabulary
@@ -534,6 +559,23 @@ class ManagementSettingsStore:
             yield conn
             conn.commit()
         finally:
+            conn.close()
+
+    @contextmanager
+    def _read_connect(self):
+        with self._read_lock:
+            conn = self._read_connection
+            if conn is not None:
+                yield conn
+                return
+        with self._connect() as fallback:
+            yield fallback
+
+    def close(self) -> None:
+        with self._read_lock:
+            conn = self._read_connection
+            self._read_connection = None
+        if conn is not None:
             conn.close()
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import threading
@@ -68,6 +69,63 @@ class CloudOpsBenchmarkGatewayTests(unittest.TestCase):
         self.assertEqual({"index", "list", "search", "read", "submit"}, evidence_operations)
         self.assertIn("Search", evidence_manifest["description"])
 
+        self.gateway.unbind_session("session-1")
+        self.gateway.bind_session(
+            "session-1",
+            batch_id="batch-1",
+            workflow_profile="evidence-search-v2",
+        )
+        v2_operations = {
+            item["properties"]["op"]["const"]
+            for item in self.gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+        }
+        self.assertEqual({"index", "list", "search", "read", "submit"}, v2_operations)
+
+    def test_evidence_search_v2_enforces_distinct_search_and_list_fallback_budgets(self) -> None:
+        self.gateway.unbind_session("session-1")
+        self.gateway.bind_session(
+            "session-1",
+            batch_id="batch-1",
+            workflow_profile="evidence-search-v2",
+        )
+        case_id = self.case_ids[0]
+
+        first = self._call("search", caseId=case_id, query="probe failed")["result"]
+        second = self._call("search", caseId=case_id, query="restart latency")["result"]
+        self.assertEqual(1, first["workflowBudget"]["searchCalls"])
+        self.assertEqual(2, second["workflowBudget"]["searchCalls"])
+        with self.assertRaisesRegex(ValueError, "duplicate search"):
+            self._call("search", caseId=case_id, query="probe failed")
+        self.assertEqual(
+            "duplicate_search_query",
+            self.gateway.ledger(session_id="session-1")["items"][-1]["stopReason"],
+        )
+        with self.assertRaisesRegex(ValueError, "search budget"):
+            self._call("search", caseId=case_id, query="third distinct query")
+        self.assertEqual(
+            "search_budget_exhausted",
+            self.gateway.ledger(session_id="session-1")["items"][-1]["stopReason"],
+        )
+
+        listed = self._call("list", caseId=case_id, limit=1)["result"]
+        self.assertEqual(1, listed["workflowBudget"]["listCalls"])
+        with self.assertRaisesRegex(ValueError, "list fallback budget"):
+            self._call("list", caseId=case_id, limit=1)
+        self.assertEqual(
+            "list_fallback_budget_exhausted",
+            self.gateway.ledger(session_id="session-1")["items"][-1]["stopReason"],
+        )
+
+        cache_key = listed["items"][0]["cacheKey"]
+        read = self._call("read", caseId=case_id, cacheKey=cache_key)["result"]
+        self.assertEqual(1, read["workflowBudget"]["readCalls"])
+        with self.assertRaisesRegex(ValueError, "duplicate observation read"):
+            self._call("read", caseId=case_id, cacheKey=cache_key)
+        self.assertEqual(
+            "duplicate_observation_read",
+            self.gateway.ledger(session_id="session-1")["items"][-1]["stopReason"],
+        )
+
     def test_search_ranks_discriminating_observations_without_returning_full_values(self) -> None:
         self.gateway.unbind_session("session-1")
         self.gateway.bind_session(
@@ -99,6 +157,133 @@ class CloudOpsBenchmarkGatewayTests(unittest.TestCase):
         self.assertNotIn("query", ledger["args"])
         self.assertEqual(64, len(ledger["args"]["querySha256"]))
 
+    def test_observation_id_profile_never_requires_the_agent_to_copy_a_cache_key(self) -> None:
+        self.gateway.unbind_session("session-1")
+        self.gateway.bind_session(
+            "session-1",
+            batch_id="batch-1",
+            workflow_profile="observation-id-v1",
+        )
+        manifest = self.gateway.runtime_manifests({"id": "session-1"})[0]
+        read_schema = next(
+            item
+            for item in manifest["parameters"]["oneOf"]
+            if item["properties"]["op"]["const"] == "read"
+        )
+        self.assertEqual(["op", "caseId", "observationId"], read_schema["required"])
+        self.assertNotIn("cacheKey", read_schema["properties"])
+
+        case_id = self.case_ids[0]
+        listed = self._call("list", caseId=case_id, limit=1)["result"]
+        descriptor = listed["items"][0]
+        self.assertRegex(descriptor["observationId"], r"^obs_[0-9a-f]{24}$")
+        self.assertNotIn("cacheKey", descriptor)
+
+        read = self._call(
+            "read",
+            caseId=case_id,
+            observationId=descriptor["observationId"],
+        )["result"]
+        self.assertEqual("pod restarted twice", read["observation"])
+        self.assertEqual(descriptor["observationId"], read["observationId"])
+        self.assertNotIn("cacheKey", read)
+        searched = self._call(
+            "search",
+            caseId=case_id,
+            query="pod restarted",
+            limit=2,
+        )["result"]
+        self.assertTrue(searched["items"])
+        self.assertNotIn("cacheKey", json.dumps(searched, sort_keys=True))
+        with self.assertRaisesRegex(ValueError, "observation id"):
+            self._call(
+                "read",
+                caseId=self.case_ids[1],
+                observationId=descriptor["observationId"],
+            )
+
+        case_root = self.root / "blind" / "cases" / "demo" / "runtime" / "1"
+        index_path = case_root / "tool_cache_index.json"
+        cache_path = case_root / "tool_cache.json"
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        stale_key = index[0]["cacheKey"]
+        cache[stale_key] = "pod restarted three times"
+        index[0]["observationSha256"] = hashlib.sha256(
+            cache[stale_key].encode("utf-8")
+        ).hexdigest()
+        index[0]["observationChars"] = len(cache[stale_key])
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+        self.gateway.unbind_session("session-1")
+        self.gateway.bind_session(
+            "session-1",
+            batch_id="batch-1",
+            workflow_profile="observation-id-v1",
+        )
+        with self.assertRaisesRegex(ValueError, "observation id"):
+            self._call(
+                "read",
+                caseId=case_id,
+                observationId=descriptor["observationId"],
+            )
+
+        public_ledger = json.dumps(self.gateway.ledger(session_id="session-1"), sort_keys=True)
+        self.assertNotIn("cacheKey", public_ledger)
+        self.assertIn(descriptor["observationId"], public_ledger)
+
+    def test_observation_id_fails_closed_when_the_suite_snapshot_changes(self) -> None:
+        self.gateway.unbind_session("session-1")
+        self.gateway.bind_session(
+            "session-1",
+            batch_id="batch-1",
+            workflow_profile="observation-id-v1",
+        )
+        case_id = self.case_ids[0]
+        descriptor = self._call("list", caseId=case_id, limit=1)["result"]["items"][0]
+
+        suite_path = self.root / "blind" / "suite.json"
+        suite = json.loads(suite_path.read_text(encoding="utf-8"))
+        suite["sourceRevision"] = "source-revision-v2"
+        suite_path.write_text(json.dumps(suite), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "observation id"):
+            self._call(
+                "read",
+                caseId=case_id,
+                observationId=descriptor["observationId"],
+            )
+
+    def test_observation_id_fails_closed_when_index_metadata_changes(self) -> None:
+        self.gateway.unbind_session("session-1")
+        self.gateway.bind_session(
+            "session-1",
+            batch_id="batch-1",
+            workflow_profile="observation-id-v1",
+        )
+        case_id = self.case_ids[0]
+        descriptor = self._call("list", caseId=case_id, limit=1)["result"]["items"][0]
+
+        index_path = (
+            self.root
+            / "blind"
+            / "cases"
+            / "demo"
+            / "runtime"
+            / "1"
+            / "tool_cache_index.json"
+        )
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index[0]["toolName"] = "RenamedTool"
+        index_path.write_text(json.dumps(index), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "observation id"):
+            self._call(
+                "read",
+                caseId=case_id,
+                observationId=descriptor["observationId"],
+            )
+
     def test_search_truncates_excess_terms_instead_of_rejecting_a_schema_valid_query(self) -> None:
         self.gateway.unbind_session("session-1")
         self.gateway.bind_session(
@@ -122,6 +307,8 @@ class CloudOpsBenchmarkGatewayTests(unittest.TestCase):
         ledger = self.gateway.ledger(session_id="session-1")["items"][-1]
         self.assertNotIn("query", ledger["args"])
         self.assertEqual(64, len(ledger["args"]["querySha256"]))
+        self.assertEqual(12, ledger["resultSummary"]["usedTermCount"])
+        self.assertEqual(4, ledger["resultSummary"]["ignoredTermCount"])
 
     def test_index_list_and_read_are_batch_scoped_and_do_not_leak_paths_or_gold(self) -> None:
         indexed = self._call("index")["result"]

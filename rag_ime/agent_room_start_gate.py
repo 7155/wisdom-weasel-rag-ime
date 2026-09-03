@@ -30,6 +30,25 @@ class AgentRoomStartGateStore:
             ).fetchone()
         return _payload(row) if row is not None else None
 
+    def confirmed_room_ids(self) -> list[str]:
+        """Return durable Room ids whose one-time start gate was confirmed.
+
+        The Room execution overlay lives on participant Sessions, so a Host
+        restart must be able to restore it from the Room-owned confirmation
+        authority instead of asking for every Tool action again.
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT room_id
+                FROM agent_room_start_gates
+                WHERE status = 'confirmed'
+                ORDER BY confirmed_at_ms ASC, room_id ASC
+                """
+            ).fetchall()
+        return [str(row["room_id"]) for row in rows]
+
     def claim(
         self,
         *,

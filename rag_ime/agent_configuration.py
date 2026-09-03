@@ -121,9 +121,17 @@ def runtime_policy_from_configuration(
 class AgentConfigurationStore:
     """Durable Agent-Kernel desired state with optimistic concurrency."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        persistent_reads: bool = False,
+    ) -> None:
         self.db_path = Path(db_path)
+        self._persistent_reads = bool(persistent_reads)
         self._initialize_lock = threading.RLock()
+        self._read_lock = threading.RLock()
+        self._read_connection: sqlite3.Connection | None = None
         self._initialized = False
 
     def initialize(self, seed: Mapping[str, object]) -> None:
@@ -143,7 +151,12 @@ class AgentConfigurationStore:
             if self._initialized:
                 return
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as conn:
+            manager = (
+                self._persistent_connection()
+                if self._persistent_reads
+                else self._connect()
+            )
+            with manager as conn:
                 apply_database_migrations(conn)
                 row = conn.execute(
                     "SELECT * FROM agent_configuration_state WHERE singleton_id = 1"
@@ -285,7 +298,7 @@ class AgentConfigurationStore:
 
     def snapshot(self) -> dict[str, object]:
         self._require_initialized()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             row = self._state_row(conn)
             last_sequence = self._last_sequence(conn)
         return _snapshot_payload(row, last_sequence=last_sequence)
@@ -526,6 +539,41 @@ class AgentConfigurationStore:
             conn.rollback()
             raise
         finally:
+            conn.close()
+
+    @contextmanager
+    def _persistent_connection(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            conn.close()
+            raise
+        else:
+            with self._read_lock:
+                previous = self._read_connection
+                self._read_connection = conn
+            if previous is not None:
+                previous.close()
+
+    @contextmanager
+    def _read_connect(self) -> Iterator[sqlite3.Connection]:
+        with self._read_lock:
+            conn = self._read_connection
+            if conn is not None:
+                yield conn
+                return
+        with self._connect() as fallback:
+            yield fallback
+
+    def close(self) -> None:
+        with self._read_lock:
+            conn = self._read_connection
+            self._read_connection = None
+        if conn is not None:
             conn.close()
 
 

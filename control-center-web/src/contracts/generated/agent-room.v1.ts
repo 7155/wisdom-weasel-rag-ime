@@ -13,6 +13,8 @@ export interface AgentRoomV1 {
   avatar?: string;
   description?: string;
   scenarioPrompt?: string;
+  ownerAppId?: string;
+  surfaceKey?: string;
   routingPolicy:
     'manual_mentions' | 'moderator' | 'sequential' | 'natural' | 'parallel' | 'invite_only';
   routingConfig?: {
@@ -34,6 +36,7 @@ export interface AgentRoomV1 {
     | [string, string, string]
     | [string, string, string, string]
     | [string, string, string, string, string];
+  permissionPolicy: RoomPermissionPolicy;
   executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
   createdAtMs: number;
   updatedAtMs: number;
@@ -183,4 +186,16 @@ export interface AgentRoomV1 {
   startGate?: {
     [k: string]: unknown;
   } | null;
+}
+export interface RoomPermissionPolicy {
+  schemaVersion: 'rag-ime.room-permission-policy.v1';
+  room: RoomPermissionLayer;
+  partner: RoomPermissionLowerLayer;
+  toolAgent: RoomPermissionLowerLayer;
+}
+export interface RoomPermissionLayer {
+  executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
+}
+export interface RoomPermissionLowerLayer {
+  executionMode: 'inherit' | 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
 }

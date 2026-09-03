@@ -140,6 +140,11 @@ describe('Minecraft harness conversation depth', () => {
     expect(container).not.toHaveTextContent('agent_goal');
     expect(container).not.toHaveTextContent('work_documents');
     expect(container).not.toHaveTextContent('workspace_job');
+    const stackToggle = screen.getByRole('button', {
+      name: new RegExp(`全部展开工具与思考步骤，共 ${activities.length} 项`),
+    });
+    expect(stackToggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(stackToggle);
     expect(screen.getAllByRole('treeitem').length).toBe(activities.length);
 
     const partnerRow = screen.getByRole('button', { name: /^协作发言，/ });

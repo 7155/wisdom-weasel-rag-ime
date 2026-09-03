@@ -40,6 +40,23 @@ class _RoomEvents:
     def has_projection(self, projection_key: str) -> bool:
         return projection_key in self.projections
 
+    def list_events(
+        self,
+        room_id: str,
+        **_kwargs: object,
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "eventId": f"{room_id}:{index}",
+                "roomId": room_id,
+                "turnId": str(event.get("turn_id") or ""),
+                "eventType": str(event.get("event_type") or ""),
+                "payload": event.get("payload") or {},
+            }
+            for index, event in enumerate(self.published, start=1)
+        ]
+
+
 
 class _RoomWorkLedger:
     def __init__(self) -> None:
@@ -648,6 +665,7 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             "id": "room-a",
             "status": "active",
             "activeTopicId": "topic-a",
+            "moderatorParticipantId": source["id"],
             "participants": [source, target],
         }
         events = _RoomEvents()
@@ -965,12 +983,15 @@ class RoomPartnerApplicationTest(unittest.TestCase):
             "id": "room-a",
             "status": "active",
             "activeTopicId": "topic-a",
+            "moderatorParticipantId": participant["id"],
+            "participants": [participant],
         }
         events = _RoomEvents()
         service = RoomPartnerApplicationService(
             rooms=SimpleNamespace(
                 participant_for_session=lambda *_args, **_kwargs: participant,
                 get=lambda _room_id: room,
+                list_events=events.list_events,
             ),
             room_turns=SimpleNamespace(
                 active_turn=lambda _session_id: ("root-a", "dispatch-a"),
@@ -989,17 +1010,6 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         )
 
         participant["collaborationRole"] = "implementer"
-        with self.assertRaisesRegex(ValueError, "only the Room Facilitator"):
-            service.execute(
-                "room-a:s1",
-                {
-                    "op": "post",
-                    "kind": "result",
-                    "content": "伙伴不能发布 Root 终态。",
-                },
-                tool_call_id="tool:partner-final",
-            )
-        participant["collaborationRole"] = "coordinator"
         receipt = service.execute(
             "room-a:s1",
             {
@@ -1033,16 +1043,202 @@ class RoomPartnerApplicationTest(unittest.TestCase):
         self.assertTrue(
             events.has_projection("room-terminal-result:room-a:root-a")
         )
-        replay = service.execute(
+        same_replay = service.execute(
             "room-a:s1",
             {
                 "op": "post",
                 "kind": "result",
-                "content": "不应形成第二个 Room 终态。",
+                "content": "同一 Tool 调用的安全重试。",
             },
-            tool_call_id="tool:room-final-replay",
+            tool_call_id="tool:room-final",
         )
-        self.assertIs(replay["published"], False)
+        self.assertIs(same_replay["published"], False)
+        self.assertEqual(same_replay["postId"], post["postId"])
+        self.assertEqual(same_replay["eventId"], "room-a:1")
+        self.assertIs(same_replay["idempotentReplay"], True)
+        with self.assertRaisesRegex(ValueError, "already has a typed result"):
+            service.execute(
+                "room-a:s1",
+                {
+                    "op": "post",
+                    "kind": "result",
+                    "content": "不应形成第二个 Room 终态。",
+                },
+                tool_call_id="tool:room-final-replay",
+            )
+        self.assertEqual(len(events.published), 1)
+
+
+    def test_result_requires_all_sibling_work_and_persisted_moderator(
+        self,
+    ) -> None:
+        moderator = {
+            "id": "room-a:p1",
+            "roomId": "room-a",
+            "sessionId": "room-a:s1",
+            "displayName": "主持者",
+            "status": "active",
+            "collaborationRole": "implementer",
+        }
+        first_partner = {
+            "id": "room-a:p2",
+            "roomId": "room-a",
+            "sessionId": "room-a:s2",
+            "displayName": "伙伴一",
+            "status": "active",
+            "collaborationRole": "implementer",
+        }
+        second_partner = {
+            "id": "room-a:p3",
+            "roomId": "room-a",
+            "sessionId": "room-a:s3",
+            "displayName": "伙伴二",
+            "status": "active",
+            "collaborationRole": "implementer",
+        }
+        participants = {
+            str(item["sessionId"]): item
+            for item in (moderator, first_partner, second_partner)
+        }
+        room = {
+            "id": "room-a",
+            "status": "active",
+            "activeTopicId": "topic-a",
+            "moderatorParticipantId": moderator["id"],
+            "participants": list(participants.values()),
+        }
+        events = _RoomEvents()
+        ledger = _RoomWorkLedger()
+        service = RoomPartnerApplicationService(
+            rooms=SimpleNamespace(
+                participant_for_session=lambda session_id, **_kwargs: participants.get(
+                    session_id
+                ),
+                get=lambda _room_id: room,
+            ),
+            room_turns=SimpleNamespace(
+                active_turn=lambda _session_id: ("root-a", "dispatch-a"),
+            ),
+            runtime_status=lambda: {},
+            sessions=SimpleNamespace(),
+            room_events=events,
+            room_target_idle=lambda *_args, **_kwargs: True,
+            begin_room_turn=lambda *_args, **_kwargs: None,
+            room_dispatch=SimpleNamespace(),
+            cancel_room_turn=lambda *_args, **_kwargs: None,
+            abort_session=lambda *_args, **_kwargs: {},
+            room_topic_for_turn=lambda _root_id: "topic-a",
+            room_work=ledger,
+        )
+        work_items = [
+            service._create_delegated_work(
+                room_id="room-a",
+                root_id="root-a",
+                topic_id="topic-a",
+                tool_call_id="tool:delegate-one",
+                source=moderator,
+                target=first_partner,
+                task="核对第一条路径",
+                expected_output="第一条路径证据",
+                acceptance_criteria=["记录调用链"],
+            ),
+            service._create_delegated_work(
+                room_id="room-a",
+                root_id="root-a",
+                topic_id="topic-a",
+                tool_call_id="tool:delegate-two",
+                source=moderator,
+                target=second_partner,
+                task="核对第二条路径",
+                expected_output="第二条路径证据",
+                acceptance_criteria=["记录边界"],
+            ),
+        ]
+        for index, work in enumerate(work_items, start=1):
+            ledger.submit(
+                "room-a:s1",
+                {
+                    "workId": work["id"],
+                    "resultSummary": f"伙伴交付 {index}",
+                    "evidenceRefs": [f"test:evidence-{index}"],
+                },
+            )
+        ledger.accept(
+            "room-a:s1",
+            {
+                "workId": work_items[0]["id"],
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:accepted-one"],
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "every WorkItem"):
+            service.execute(
+                "room-a:s1",
+                {
+                    "op": "post",
+                    "kind": "result",
+                    "content": "不能绕过尚未验收的兄弟 WorkItem。",
+                },
+                tool_call_id="tool:partial-final",
+            )
+        self.assertEqual(events.published, [])
+
+        ledger.accept(
+            "room-a:s1",
+            {
+                "workId": work_items[1]["id"],
+                "operabilityVerdict": "passed",
+                "requirementVerdict": "satisfied",
+                "evidenceRefs": ["test:accepted-two"],
+            },
+        )
+        final = service.execute(
+            "room-a:s1",
+            {
+                "op": "post",
+                "kind": "result",
+                "content": "主持者汇总全部兄弟 WorkItem。",
+            },
+            tool_call_id="tool:moderator-final",
+        )
+        self.assertIs(final["published"], True)
+        with self.assertRaisesRegex(ValueError, "already has a typed result"):
+            service.execute(
+                "room-a:s1",
+                {
+                    "op": "post",
+                    "kind": "result",
+                    "content": "重复的主持者终态。",
+                },
+                tool_call_id="tool:moderator-final-replay",
+            )
+
+        first_final = events.published[0]["payload"]["post"]  # type: ignore[index]
+        self.assertEqual(first_final["authorActorRef"], moderator["id"])
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in events.published
+                    if event["payload"]["post"]["kind"] == "result"  # type: ignore[index]
+                ]
+            ),
+            1,
+        )
+
+        second_partner["collaborationRole"] = "coordinator"
+        with self.assertRaisesRegex(ValueError, "only the Room Facilitator"):
+            service.execute(
+                "room-a:s2",
+                {
+                    "op": "post",
+                    "kind": "result",
+                    "content": "被重新标为 coordinator 的伙伴不能发布终态。",
+                },
+                tool_call_id="tool:non-moderator-final",
+            )
         self.assertEqual(len(events.published), 1)
 
 

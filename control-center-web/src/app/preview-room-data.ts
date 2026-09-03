@@ -60,6 +60,7 @@ export function previewRoomSnapshot(roomId: string) {
     postId: string,
     participantId: string,
     dispatchId: string,
+    kind: string,
     content: string,
     createdAtMs: number,
     blocks?: Record<string, unknown>[],
@@ -71,7 +72,7 @@ export function previewRoomSnapshot(roomId: string) {
     generation: 0,
     dispatchId,
     authorActorRef: participantId,
-    kind: 'result',
+    kind,
     visibility: 'room',
     content,
     idempotencyKey: postId,
@@ -116,26 +117,9 @@ export function previewRoomSnapshot(roomId: string) {
       rootId, dispatchId: 'dispatch-present',
       post: roomPost(
         'room-post-present', 'participant-present', 'dispatch-present',
+        'progress',
         '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
         now + 7,
-        /* The same managed report a Session turn delivers. Room routes results
-           through the identical AgentBlocks renderer, so this is what proves
-           the two workspaces share one result language rather than merely
-           looking alike. Room post blocks carry the full agent-block.v1 shape
-           — summary/source/visibility/digest/ref/generation are all required,
-           and a post whose blocks fail validation is dropped whole. */
-        [
-          roomPostBlock('room-post-text', 'text', 'markdown', '结果说明', {
-            text: '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
-          }),
-          roomPostBlock('room-post-report', 'file', 'file', '词库健康报告', {
-            mediaId: 'media_previewreport01',
-            name: 'lexicon-health-report.html',
-            mimeType: 'text/html',
-            byteSize: PREVIEW_REPORT_BYTES,
-            sha256: 'c'.repeat(64),
-          }),
-        ],
       ),
     }),
     event(8, 'participant_activity', 'participant-present', {
@@ -177,6 +161,7 @@ export function previewRoomSnapshot(roomId: string) {
       rootId, dispatchId: 'dispatch-firstlight',
       post: roomPost(
         'room-post-firstlight', 'participant-firstlight', 'dispatch-firstlight',
+        'work_result',
         '我核对了工作目录和授权边界：需要确认的操作会等你，公开消息也不会重复出现。',
         now + 13,
       ),
@@ -199,7 +184,34 @@ export function previewRoomSnapshot(roomId: string) {
     event(15, 'turn_completed', 'participant-firstlight', {
       rootId, dispatchId: 'dispatch-firstlight', summary: '依赖数据检查完成',
     }),
-    event(16, 'turn_completed', null, { rootId, summary: '协作检查完成' }),
+    event(16, 'room_post', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present',
+      post: roomPost(
+        'room-post-final', 'participant-present', 'dispatch-present',
+        'result',
+        '两个实现分支已完成，整合版本已准备交给独立伙伴复核。',
+        now + 16,
+        /* The same managed report a Session turn delivers. Room routes results
+           through the identical AgentBlocks renderer, so this is what proves
+           the two workspaces share one result language rather than merely
+           looking alike. Room post blocks carry the full agent-block.v1 shape
+           — summary/source/visibility/digest/ref/generation are all required,
+           and a post whose blocks fail validation is dropped whole. */
+        [
+          roomPostBlock('room-post-text', 'text', 'markdown', '结果说明', {
+            text: '两个实现分支已完成，整合版本已准备交给独立伙伴复核。',
+          }),
+          roomPostBlock('room-post-report', 'file', 'file', '词库健康报告', {
+            mediaId: 'media_previewreport01',
+            name: 'lexicon-health-report.html',
+            mimeType: 'text/html',
+            byteSize: PREVIEW_REPORT_BYTES,
+            sha256: 'c'.repeat(64),
+          }),
+        ],
+      ),
+    }),
+    event(17, 'turn_completed', null, { rootId, summary: '协作检查完成' }),
   ];
   return {
     schemaVersion: 'rag-ime.agent-room-snapshot.v1',
@@ -209,7 +221,13 @@ export function previewRoomSnapshot(roomId: string) {
       id: roomId,
       title: '迁移作战室',
       status: 'active',
-      executionMode: 'workspace_managed',
+      executionMode: 'full_trust',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
       roomKind: 'collaboration',
       avatar: 'briefcase',
       description: '验证并行实现、整合依赖与独立复核',

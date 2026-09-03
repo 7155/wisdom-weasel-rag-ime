@@ -72,6 +72,7 @@ function PawDesktopSurface() {
   const desktopRef = useRef<HTMLDivElement>(null);
   const gridLayout = usePawDesktopGridLayout();
   const installation = usePawExtensionInstallation();
+  const initialExtensionRouteConsumed = useRef(false);
   const persistedIconPositions = usePawDesktopStore((state) => state.wayfinder.iconPositions);
   const activeWindowId = usePawDesktopStore((state) => state.activeWindowId);
   const activeAppId = usePawDesktopStore((state) => (
@@ -111,7 +112,13 @@ function PawDesktopSurface() {
     state.setExtensionAppGate(installation.status, installation.enabledExtensionIds);
   }, [api, installation.enabledExtensionIds, installation.status]);
   useEffect(() => {
-    if (!installation.ready) return;
+    if (!installation.ready || initialExtensionRouteConsumed.current) return;
+    /* The initial route arrives before Package inventory can authorize an
+     * Extension App, so consume that pending deep-link once when inventory
+     * first becomes ready. Later ready -> loading -> ready polling cycles are
+     * background state changes, not launch intent: a user-closed App must stay
+     * closed until an icon, Dock item or new route explicitly opens it. */
+    initialExtensionRouteConsumed.current = true;
     const route = window.location.hash.replace(/^#/, '');
     const app = pawAppForPath(route);
     if (!app || !isPawExtensionAppId(app.id) || !installation.enabledExtensionIds.has(app.id)) return;

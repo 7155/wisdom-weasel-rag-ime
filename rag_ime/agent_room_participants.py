@@ -11,7 +11,6 @@ from .agent_execution_policy import (
     PER_ACTION_EXECUTION_MODE,
     WORKSPACE_MANAGED_EXECUTION_MODE,
     canonical_tool_profile,
-    normalize_execution_mode,
     unrestricted_workspace_policy_active,
 )
 from .agent_rooms import (
@@ -28,6 +27,10 @@ from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
     FULL_ACCESS_TOOL_PROFILE,
+)
+from .room_permission_policy import (
+    normalize_room_permission_policy,
+    resolve_room_permission_policy,
 )
 from .agent_workspace_roots import system_wide_workspace_roots
 
@@ -85,9 +88,10 @@ def project_room_participant_policy(
     *,
     mode: str | None = None,
     execution_mode: str | None = None,
+    permission_policy: Mapping[str, object] | None = None,
     workspace_roots: Iterable[object] | None = None,
 ) -> RoomParticipantPolicy:
-    """Project one Room kind/mode pair into the participant Session policy."""
+    """Project one Room permission layer into the participant Session policy."""
 
     room_kind = str(room.get("roomKind") or "collaboration")
     participant_mode = mode or (
@@ -95,16 +99,31 @@ def project_room_participant_policy(
         if room_kind == "collaboration"
         else "assistant"
     )
-    normalized_execution_mode = normalize_execution_mode(
-        room.get("executionMode")
-        if execution_mode is None
-        else execution_mode,
-        default=(
-            WORKSPACE_MANAGED_EXECUTION_MODE
-            if room_kind == "collaboration"
-            else PER_ACTION_EXECUTION_MODE
+    configured_policy = (
+        permission_policy
+        if permission_policy is not None
+        else room.get("permissionPolicy")
+    )
+    normalized_policy = normalize_room_permission_policy(
+        configured_policy,
+        room_kind=room_kind,
+        current=room,
+        legacy_execution_mode=(
+            room.get("executionMode")
+            if configured_policy is None
+            else None
         ),
     )
+    if execution_mode is not None:
+        normalized_policy = normalize_room_permission_policy(
+            {
+                **normalized_policy,
+                "room": {"executionMode": execution_mode},
+            },
+            room_kind=room_kind,
+        )
+    effective_policy = resolve_room_permission_policy(normalized_policy)
+    normalized_execution_mode = effective_policy["partner"]["executionMode"]
     if room_kind == "collaboration":
         if normalized_execution_mode == PER_ACTION_EXECUTION_MODE:
             profile = FULL_ACCESS_TOOL_PROFILE

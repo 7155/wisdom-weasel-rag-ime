@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -15,7 +17,12 @@ class ContractValidationError(ValueError):
 
 
 def load_contract(name: str) -> dict[str, object]:
-    path = CONTRACTS_DIR / name
+    return deepcopy(_load_contract_cached(CONTRACTS_DIR, name))
+
+
+@lru_cache(maxsize=256)
+def _load_contract_cached(contracts_dir: Path, name: str) -> dict[str, object]:
+    path = contracts_dir / name
     if not path.is_file():
         raise ValueError(f"unknown JSON contract: {name}")
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -117,13 +124,27 @@ def validate_json_schema(
 
 
 def validate_contract(payload: object, contract: str | JsonSchema) -> None:
-    schema = validate_json_schema(
-        load_contract(contract) if isinstance(contract, str) else contract
+    schema = (
+        _validated_contract_cached(CONTRACTS_DIR, contract)
+        if isinstance(contract, str)
+        else validate_json_schema(contract)
     )
     errors: list[str] = []
     _validate(payload, schema, root=schema, path="$", errors=errors)
     if errors:
         raise ContractValidationError("; ".join(errors[:8]))
+
+
+@lru_cache(maxsize=256)
+def _validated_contract_cached(contracts_dir: Path, name: str) -> JsonSchema:
+    return validate_json_schema(_load_contract_cached(contracts_dir, name))
+
+
+def clear_contract_cache() -> None:
+    """Forget named contract resources after a deliberate on-disk replacement."""
+
+    _validated_contract_cached.cache_clear()
+    _load_contract_cached.cache_clear()
 
 
 def _validate(

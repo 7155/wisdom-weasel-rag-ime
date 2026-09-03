@@ -85,7 +85,7 @@
         "title",
         "status",
         "executionMode",
-        "routingPolicy",
+        "permissionPolicy",
         "moderatorParticipantId",
         "workspaceRoots",
         "createdAtMs",
@@ -109,10 +109,13 @@
           "type": "string",
           "enum": ["read_only", "per_action", "workspace_managed", "full_trust"]
         },
+        "permissionPolicy": {"$ref": "#/$defs/roomPermissionPolicy"},
         "roomKind": {"type": "string", "enum": ["collaboration", "roleplay"]},
         "avatar": {"type": "string", "maxLength": 80},
         "description": {"type": "string", "maxLength": 500},
         "scenarioPrompt": {"type": "string", "maxLength": 8000},
+        "ownerAppId": {"type": "string", "pattern": "^$|^extension:[a-z0-9][a-z0-9-]{0,63}$"},
+        "surfaceKey": {"type": "string", "pattern": "^$|^[a-z0-9][a-z0-9._-]{0,63}$"},
         "routingPolicy": {
           "type": "string",
           "enum": ["manual_mentions", "moderator", "sequential", "natural", "parallel", "invite_only"]
@@ -155,6 +158,42 @@
         "startGate": {
           "type": ["object", "null"],
           "additionalProperties": true
+        }
+      }
+    },
+    "roomPermissionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "room", "partner", "toolAgent"],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "rag-ime.room-permission-policy.v1"
+        },
+        "room": {"$ref": "#/$defs/roomPermissionLayer"},
+        "partner": {"$ref": "#/$defs/roomPermissionLowerLayer"},
+        "toolAgent": {"$ref": "#/$defs/roomPermissionLowerLayer"}
+      }
+    },
+    "roomPermissionLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionMode"],
+      "properties": {
+        "executionMode": {
+          "type": "string",
+          "enum": ["read_only", "per_action", "workspace_managed", "full_trust"]
+        }
+      }
+    },
+    "roomPermissionLowerLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionMode"],
+      "properties": {
+        "executionMode": {
+          "type": "string",
+          "enum": ["inherit", "read_only", "per_action", "workspace_managed", "full_trust"]
         }
       }
     },

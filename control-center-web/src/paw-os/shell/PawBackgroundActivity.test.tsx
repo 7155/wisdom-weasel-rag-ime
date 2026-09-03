@@ -39,7 +39,7 @@ describe('PawBackgroundActivity', () => {
       'agent.sessions.list': { ok: true, items: [
         session('memory-maintenance', '自动记忆整理', 'busy'),
         session('conversation', '整理 PAWOS 桌面', 'busy'),
-        session('room-partner', '桌面协作 · Agent 1', 'busy', 'room-running'),
+        session('room-partner', '桌面协作 · Agent 1', 'busy', { roomId: 'room-running' }),
         session('idle', '已经空闲', 'idle'),
       ] },
       'agent.rooms.list': { ok: true, items: [{
@@ -90,10 +90,127 @@ describe('PawBackgroundActivity', () => {
     expect(await screen.findByText('整理 PAWOS 桌面 已结束运行')).toBeInTheDocument();
   });
 
+  it('keeps one terminal Session notification when stale polling replays the same run transition', async () => {
+    let status = 'busy';
+    let updatedAtMs = 20;
+    const lastTerminalTurnId = 'turn:trace-session:1';
+    renderActivity(new MockControlTransport({ routes: {
+      'agent.sessions.list': () => ({
+        ok: true,
+        items: [session('trace-session', 'Trace 诊断', status, { lastTerminalTurnId, updatedAtMs })],
+      }),
+      'agent.rooms.list': { ok: true, items: [] },
+    } }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+
+    status = 'idle';
+    updatedAtMs = 30;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+    await screen.findByRole('button', { name: '通知中心，1 条通知' });
+
+    status = 'busy';
+    updatedAtMs = 20;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+    status = 'idle';
+    updatedAtMs = 35;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+
+    const trigger = await screen.findByRole('button', { name: '通知中心，1 条通知' });
+    fireEvent.click(trigger);
+    const panel = screen.getByRole('region', { name: '通知中心' });
+    expect(within(panel).getAllByText('Trace 诊断 已结束运行')).toHaveLength(1);
+  });
+
+  it('retains separate terminal notifications for two real Session runs', async () => {
+    let status = 'busy';
+    let updatedAtMs = 20;
+    let lastTerminalTurnId = 'turn:conversation:1';
+    renderActivity(new MockControlTransport({ routes: {
+      'agent.sessions.list': () => ({
+        ok: true,
+        items: [session('conversation', '持续优化', status, { lastTerminalTurnId, updatedAtMs })],
+      }),
+      'agent.rooms.list': { ok: true, items: [] },
+    } }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+
+    status = 'idle';
+    updatedAtMs = 30;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+    await screen.findByRole('button', { name: '通知中心，1 条通知' });
+    status = 'busy';
+    updatedAtMs = 40;
+    lastTerminalTurnId = 'turn:conversation:2';
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+    status = 'idle';
+    updatedAtMs = 30;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+
+    expect(await screen.findByRole('button', { name: '通知中心，2 条通知' })).toBeInTheDocument();
+  });
+
+  it('keys Room notifications by the partner terminal turn, independent of title and later timestamps', async () => {
+    let status = 'busy';
+    let updatedAtMs = 20;
+    let lastTerminalTurnId = 'root:desktop-room:1';
+    renderActivity(new MockControlTransport({ routes: {
+      'agent.sessions.list': () => ({
+        ok: true,
+        items: [session('room-partner', '桌面协作 · Agent 1', status, {
+          roomId: 'room-running',
+          lastTerminalTurnId,
+          updatedAtMs,
+        })],
+      }),
+      'agent.rooms.list': { ok: true, items: [{
+        id: 'room-running',
+        title: '桌面协作',
+        status: 'active',
+        updatedAtMs: 30,
+        workspaceRoots: ['/work/paw'],
+        participants: [],
+        workItems: [],
+      }] },
+    } }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+
+    status = 'idle';
+    updatedAtMs = 30;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '通知中心，1 条通知' });
+    status = 'busy';
+    updatedAtMs = 20;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+    status = 'idle';
+    updatedAtMs = 35;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+    await screen.findByRole('button', { name: '通知中心，1 条通知' });
+
+    status = 'busy';
+    lastTerminalTurnId = 'root:desktop-room:2';
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+    status = 'idle';
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+
+    expect(await screen.findByRole('button', { name: '通知中心，2 条通知' })).toBeInTheDocument();
+  });
+
   it('warns when a running Room participant faults instead of reporting a normal finish', async () => {
     let status = 'busy';
     renderActivity(new MockControlTransport({ routes: {
-      'agent.sessions.list': () => ({ ok: true, items: [session('room-partner', '桌面协作 · Agent 1', status, 'room-running')] }),
+      'agent.sessions.list': () => ({
+        ok: true,
+        items: [session('room-partner', '桌面协作 · Agent 1', status, { roomId: 'room-running' })],
+      }),
       'agent.rooms.list': { ok: true, items: [{
         id: 'room-running',
         title: '桌面协作',
@@ -137,6 +254,71 @@ describe('PawBackgroundActivity', () => {
     expect(await screen.findByText('自动记忆整理 需要处理')).toBeInTheDocument();
     expect(screen.getByText(/provider down/)).toBeInTheDocument();
   });
+
+  it('keeps one actionable warning when the same Memory timeout is replayed', async () => {
+    let state = 'running';
+    let updatedAtMs = 42;
+    renderActivity(new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+      'agent.rooms.list': { ok: true, items: [] },
+      'agent.memoryMaintenance.run': () => ({
+        ok: state === 'running',
+        job: {
+          jobId: 'memory-maintenance:timeout-1',
+          state,
+          error: state === 'expired' ? 'settlement timeout' : '',
+          updatedAtMs,
+        },
+      }),
+    } }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+
+    state = 'expired';
+    updatedAtMs = 80;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+    await screen.findByRole('button', { name: '通知中心，1 条通知' });
+    state = 'running';
+    updatedAtMs = 42;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+    state = 'expired';
+    updatedAtMs = 80;
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '1 个后台工作正在运行' })).not.toBeInTheDocument());
+
+    const trigger = await screen.findByRole('button', { name: '通知中心，1 条通知' });
+    fireEvent.click(trigger);
+    const panel = screen.getByRole('region', { name: '通知中心' });
+    expect(within(panel).getAllByText('自动记忆整理 需要处理')).toHaveLength(1);
+    expect(within(panel).getByText(/settlement timeout/)).toBeInTheDocument();
+  });
+
+  it('retains separate Memory notifications for different run ids with identical copy', async () => {
+    let state = 'running';
+    let jobId = 'memory-maintenance:run-1';
+    renderActivity(new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, items: [] },
+      'agent.rooms.list': { ok: true, items: [] },
+      'agent.memoryMaintenance.run': () => ({
+        ok: true,
+        job: { jobId, state, updatedAtMs: 42 },
+      }),
+    } }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+
+    state = 'completed';
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '通知中心，1 条通知' });
+    jobId = 'memory-maintenance:run-2';
+    state = 'running';
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+    await screen.findByRole('button', { name: '1 个后台工作正在运行' });
+    state = 'completed';
+    fireEvent.click(screen.getByRole('button', { name: '刷新后台目录' }));
+
+    expect(await screen.findByRole('button', { name: '通知中心，2 条通知' })).toBeInTheDocument();
+  });
 });
 
 function renderActivity(transport: MockControlTransport) {
@@ -144,7 +326,11 @@ function renderActivity(transport: MockControlTransport) {
     <GlobalFeedbackProvider>
       <ControlTransportProvider transport={transport}>
         <PawDesktopProvider>
-          <PawWorkDirectoryProvider maintenancePollIntervalMs={60_000} pollIntervalMs={60_000}>
+          <PawWorkDirectoryProvider
+            initialPollDelayMs={0}
+            maintenancePollIntervalMs={60_000}
+            pollIntervalMs={60_000}
+          >
             <PawBackgroundActivity />
             <PawNotificationCenter />
             <RefreshProbe />
@@ -166,7 +352,12 @@ function WindowProbe() {
   return <output data-testid="open-window-ids">{ids}</output>;
 }
 
-function session(id: string, title: string, status: string, roomId?: string) {
+function session(
+  id: string,
+  title: string,
+  status: string,
+  options: { roomId?: string; lastTerminalTurnId?: string; updatedAtMs?: number } = {},
+) {
   return {
     id,
     title,
@@ -175,8 +366,9 @@ function session(id: string, title: string, status: string, roomId?: string) {
     roleId: 'default',
     roleVersion: '1',
     roleBookRevisionId: 'r1',
-    updatedAtMs: 20,
+    updatedAtMs: options.updatedAtMs ?? 20,
     workspaceRoots: ['/work/paw'],
-    ...(roomId ? { roomParticipant: { roomId } } : {}),
+    ...(options.lastTerminalTurnId ? { lastTerminalTurnId: options.lastTerminalTurnId } : {}),
+    ...(options.roomId ? { roomParticipant: { roomId: options.roomId } } : {}),
   };
 }

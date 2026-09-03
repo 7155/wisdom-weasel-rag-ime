@@ -40,7 +40,17 @@ import {
   selectRoomTurnExecution,
   type RoomExecutionLane,
 } from './runtime/room-execution-lanes';
-import type { RoomArtifact, RoomSummary, RoomWorkItem, RoomWorkState } from './room-types';
+import {
+  effectiveRoomPermissionPolicy,
+  parseRoomPermissionPolicy,
+  type RoomArtifact,
+  type RoomSummary,
+  type RoomWorkItem,
+  type RoomWorkState,
+} from './room-types';
+import {
+  roomPermissionLayerPresentation,
+} from './room-presentation';
 import { roomParticipantPlanetName } from './room-participant-identity';
 import {
   type RoomTaskSessionFact,
@@ -382,7 +392,19 @@ function AssignmentOverview({ partners, room }: { partners: PartnerProjection[];
 }
 
 function roomSubagentParents(room: RoomSummary) {
-  const writableRoom = room.executionMode !== 'read_only' && Boolean(room.workspaceRoots?.length);
+  const permissionPolicy = parseRoomPermissionPolicy(room.permissionPolicy, room.roomKind);
+  const effectiveToolAgentMode = permissionPolicy
+    ? effectiveRoomPermissionPolicy(permissionPolicy).toolAgent
+    : undefined;
+  const toolAgentPresentation = permissionPolicy
+    ? roomPermissionLayerPresentation(
+        permissionPolicy,
+        'toolAgent',
+        room.roomKind ?? 'collaboration',
+      )
+    : undefined;
+  const canWrite = effectiveToolAgentMode !== undefined
+    && effectiveToolAgentMode !== 'read_only';
   return room.participants
     .filter((participant) => participant.status === 'active' && participant.sessionId)
     .sort((left, right) => {
@@ -396,7 +418,11 @@ function roomSubagentParents(room: RoomSummary) {
       detail: participant.id === room.moderatorParticipantId
         ? 'Root 主持'
         : roomCollaborationRoleLabel(participant.collaborationRole),
-      canWrite: writableRoom && participant.collaborationRole !== 'reviewer',
+      canWrite,
+      defaultAccess: canWrite ? 'write' as const : 'read_only' as const,
+      accessPolicyDetail: toolAgentPresentation
+        ? `卫星 / Tool Agent 配置 ${toolAgentPresentation.configuredLabel}，生效 ${toolAgentPresentation.effectiveLabel}，${toolAgentPresentation.inheritanceLabel}`
+        : 'Room 分层权限不可用；为避免猜测，写入选择已关闭',
       workspaceRoots: room.workspaceRoots ?? [],
     }));
 }

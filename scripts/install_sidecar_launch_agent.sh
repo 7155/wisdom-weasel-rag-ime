@@ -23,6 +23,10 @@ PI_SKILLS_SOURCE_DIR="$PI_INTEGRATION_SOURCE_DIR/skills"
 PI_INIT_PROMPT_SOURCE="$PI_INTEGRATION_SOURCE_DIR/prompts/init.md"
 VERTICAL_AGENT_SOURCE_DIR="$ROOT/examples/vertical_agents"
 VERTICAL_AGENT_INSTALL_DIR="$APP_CODE_DIR/examples/vertical_agents"
+EVAL_LAB_SOURCE_DIR="$ROOT/eval/interview-metrics"
+EVAL_LAB_INSTALL_DIR="$APP_CODE_DIR/eval/interview-metrics"
+EVAL_LAB_IMPORTER_SOURCE="$ROOT/scripts/import_agent_lab_experiments.py"
+EVAL_LAB_IMPORTER_TARGET="$APP_CODE_DIR/scripts/import_agent_lab_experiments.py"
 MANAGED_PI_SKILLS_DIR="$APP_SUPPORT_DIR/Agent/config/skills"
 MANAGED_PI_PROMPTS_DIR="$APP_SUPPORT_DIR/Agent/config/prompts"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
@@ -299,6 +303,27 @@ mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
 rm -f "$INSTALL_MARKER"
 rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
+if [[ ! -f "$EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json" ]]; then
+  echo "missing Agent Lab projection ledger: $EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json" >&2
+  exit 1
+fi
+if [[ ! -f "$EVAL_LAB_IMPORTER_SOURCE" ]]; then
+  echo "missing Agent Lab public projection module: $EVAL_LAB_IMPORTER_SOURCE" >&2
+  exit 1
+fi
+rm -rf -- "$EVAL_LAB_INSTALL_DIR"
+mkdir -p "$EVAL_LAB_INSTALL_DIR/runs"
+mkdir -p "$(dirname "$EVAL_LAB_IMPORTER_TARGET")"
+cp "$EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json" "$EVAL_LAB_INSTALL_DIR/agent-experiments.v1.json"
+cp "$EVAL_LAB_IMPORTER_SOURCE" "$EVAL_LAB_IMPORTER_TARGET"
+if [[ -d "$EVAL_LAB_SOURCE_DIR/runs" ]]; then
+  while IFS= read -r receipt; do
+    cp "$receipt" "$EVAL_LAB_INSTALL_DIR/runs/$(basename "$receipt")"
+  done < <(
+    find "$EVAL_LAB_SOURCE_DIR/runs" -maxdepth 1 -type f \
+      -name 'agent-lab-optimal-path-*.json' -print | LC_ALL=C sort
+  )
+fi
 rm -rf "$VERTICAL_AGENT_INSTALL_DIR"
 mkdir -p "$(dirname "$VERTICAL_AGENT_INSTALL_DIR")"
 cp -R "$VERTICAL_AGENT_SOURCE_DIR" "$VERTICAL_AGENT_INSTALL_DIR"
@@ -829,6 +854,12 @@ env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"] = os.environ.get(
 env_vars["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"] = os.environ.get(
     "RAG_IME_POST_COMMIT_PRESENTATION_STREAM",
     "0",
+)
+# Let both HTTP services bind before the Sidecar begins heavyweight embedding
+# initialization. An explicit install-time value remains authoritative.
+env_vars["RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS"] = (
+    os.environ.get("RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS", "").strip()
+    or "60"
 )
 for key in (
     "RAG_IME_PI_EXECUTABLE",

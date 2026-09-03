@@ -425,6 +425,221 @@ describe('RoomEventReducer', () => {
 
     expect(state.turnsById['room-turn-1'].status).toBe('completed');
   });
+  it('keeps a formal Root running through coordinator wait/progress and partner evidence', () => {
+    const coordinatorRoute = wireRoomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-coordinator',
+      targetParticipantId: 'participant-1',
+    });
+    const partnerRoute = wireRoomEvent(2, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-partner',
+      targetParticipantId: 'participant-2',
+    });
+    partnerRoute.participantId = 'participant-2';
+    partnerRoute.sourceSessionId = 'session-room-2';
+    const coordinatorWait = wireRoomEvent(3, 'participant_activity', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-coordinator',
+      sourceEventId: 'session-room-1:wait',
+      sourceEventType: 'user_input_required',
+      requestKind: 'user_input_required',
+      method: 'select',
+      options: ['继续', '停止'],
+      status: 'waiting',
+      summary: '等待伙伴结果',
+    });
+    const coordinatorProgress = wireRoomEvent(4, 'participant_activity', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-coordinator',
+      sourceEventId: 'session-room-1:progress',
+      sourceEventType: 'current_progress',
+      state: 'running',
+      summary: '正在汇总伙伴工作结果',
+    });
+    const partnerResult = wireRoomEvent(5, 'room_post', {
+      post: formalRoomPost(
+        'partner-work-result',
+        '伙伴交付证据',
+        'dispatch-partner',
+        'work_result',
+      ),
+    });
+    partnerResult.participantId = 'participant-2';
+    partnerResult.sourceSessionId = 'session-room-2';
+    const partnerTerminal = wireRoomEvent(6, 'turn_completed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-partner',
+      status: 'completed',
+    });
+    partnerTerminal.participantId = 'participant-2';
+    partnerTerminal.sourceSessionId = 'session-room-2';
+    const coordinatorTerminal = wireRoomEvent(7, 'turn_completed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-coordinator',
+      status: 'completed',
+    });
+
+    const state = reduceRoomEvents(createRoomProjection('room-1'), [
+      coordinatorRoute,
+      partnerRoute,
+      coordinatorWait,
+      coordinatorProgress,
+      partnerResult,
+      partnerTerminal,
+      coordinatorTerminal,
+    ].map((event) => parseRoomEvent(event)));
+
+    expect(state.turnsById['room-turn-1']).toMatchObject({
+      status: 'running',
+      terminalDispatchIds: ['dispatch-partner', 'dispatch-coordinator'],
+    });
+    expect(state.messageOrder).toEqual(['partner-work-result']);
+    expect(state.messagesById['partner-work-result']).toMatchObject({
+      postKind: 'work_result',
+      text: '伙伴交付证据',
+    });
+    expect(state.messagesById['coordinator-final']).toBeUndefined();
+  });
+
+  it('replays one moderator final whether it arrives before or after terminal lanes', () => {
+    const orders = [
+      [
+        'final',
+        'root-terminal',
+        'partner-terminal',
+        'coordinator-terminal',
+      ],
+      [
+        'partner-terminal',
+        'coordinator-terminal',
+        'root-terminal',
+        'final',
+      ],
+    ] as const;
+
+    for (const order of orders) {
+      const events = formalTerminalOrdering(order);
+      const live = reduceRoomEvents(
+        createRoomProjection('room-1'),
+        events.map((event) => parseRoomEvent(event)),
+      );
+      const snapshot = parseRoomEventSnapshot(roomSnapshotFixture(events));
+      const replayed = replayRoomEventSnapshot(createRoomProjection('room-1'), snapshot);
+
+      expect(replayed.moderatorParticipantId).toBe('participant-1');
+      for (const state of [live, replayed]) {
+        expect(state.turnsById['room-turn-1']?.status).toBe('completed');
+        expect(new Set(state.turnsById['room-turn-1']?.terminalDispatchIds)).toEqual(
+          new Set(['dispatch-partner', 'dispatch-coordinator']),
+        );
+        expect(state.messageOrder).toEqual([
+          'partner-work-result',
+          'coordinator-final',
+        ]);
+        expect(Object.values(state.messagesById)).toHaveLength(2);
+        expect(state.diagnostics.filter(
+          (item) => item.eventType === 'room_event_after_root_terminal',
+        )).toHaveLength(0);
+      }
+    }
+  });
+
+  it('requires the persisted moderator for the formal final while retaining partner results', () => {
+    const terminalEvents = formalTerminalOrdering([
+      'partner-terminal',
+      'coordinator-terminal',
+      'root-terminal',
+    ]);
+    const terminalSnapshot = parseRoomEventSnapshot(roomSnapshotFixture(terminalEvents));
+    let state = replayRoomEventSnapshot(createRoomProjection('room-1'), terminalSnapshot);
+
+    const partnerResult = wireRoomEvent(7, 'room_post', {
+      post: formalRoomPost(
+        'partner-result-post',
+        '伙伴误发的最终样式消息',
+        'dispatch-partner',
+        'result',
+      ),
+    });
+    partnerResult.participantId = 'participant-2';
+    partnerResult.sourceSessionId = 'session-room-2';
+    state = reduceRoomEvent(state, parseRoomEvent(partnerResult)).state;
+
+    expect(state.turnsById['room-turn-1'].status).toBe('running');
+    expect(state.messageOrder).toEqual([
+      'partner-work-result',
+      'partner-result-post',
+    ]);
+
+    const moderatorResult = wireRoomEvent(8, 'room_post', {
+      post: formalRoomPost(
+        'moderator-result-post',
+        '主持者最终报告',
+        'dispatch-coordinator',
+        'result',
+      ),
+    });
+    state = reduceRoomEvent(state, parseRoomEvent(moderatorResult)).state;
+
+    expect(state.turnsById['room-turn-1'].status).toBe('completed');
+    expect(state.messageOrder).toEqual([
+      'partner-work-result',
+      'partner-result-post',
+      'moderator-result-post',
+    ]);
+    expect(state.messageOrder.filter(
+      (id) => state.messagesById[id]?.postKind === 'result'
+        && state.messagesById[id]?.participantId === 'participant-1',
+    )).toHaveLength(1);
+  });
+
+  it('keeps Light completion and immediate formal failure/abort behavior', () => {
+    const lightRoute = wireRoomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-light',
+      targetParticipantId: 'participant-1',
+    });
+    const lightTerminal = wireRoomEvent(2, 'turn_completed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-light',
+      status: 'completed',
+    });
+    const light = reduceRoomEvents(createRoomProjection('room-1'), [
+      lightRoute,
+      lightTerminal,
+    ].map((event) => parseRoomEvent(event)));
+    expect(light.turnsById['room-turn-1'].status).toBe('completed');
+
+    const formalEvidence = formalTerminalOrdering([
+      'partner-terminal',
+    ]).slice(0, 4);
+    const failedRoot = wireRoomEvent(5, 'turn_failed', {
+      rootId: 'room-turn-1',
+      error: '主持者失败',
+    });
+    failedRoot.participantId = null;
+    failedRoot.sourceSessionId = '';
+    const failed = reduceRoomEvents(createRoomProjection('room-1'), [
+      ...formalEvidence,
+      failedRoot,
+    ].map((event) => parseRoomEvent(event)));
+    expect(failed.turnsById['room-turn-1'].status).toBe('failed');
+
+    const abortedRoot = wireRoomEvent(5, 'turn_completed', {
+      rootId: 'room-turn-1',
+      status: 'aborted',
+      aborted: true,
+    });
+    abortedRoot.participantId = null;
+    abortedRoot.sourceSessionId = '';
+    const aborted = reduceRoomEvents(createRoomProjection('room-1'), [
+      ...formalEvidence,
+      abortedRoot,
+    ].map((event) => parseRoomEvent(event)));
+    expect(aborted.turnsById['room-turn-1'].status).toBe('aborted');
+  });
+
 
   it('keeps two concurrent dispatches from the same Agent in separate execution lanes', () => {
     const routeOne = roomEvent(1, 'route_decision', {
@@ -619,6 +834,36 @@ describe('RoomEventReducer', () => {
 
     expect(merged.messageOrder).toEqual(['room-user-1']);
     expect(unknown.diagnostics[0]).toMatchObject({ eventType: 'future_room_vote' });
+  });
+
+  it('reconciles replayed participant steer messages by their causal clientActionId', () => {
+    const first = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'user_message', {
+        messageId: 'steer-user-first',
+        clientActionId: 'room-steer-action-1',
+        rootId: 'room-turn-1',
+        text: '先停止旧方向，只验证 Stop。',
+        delivery: 'steer',
+      }),
+    ).state;
+    const replayed = reduceRoomEvent(
+      first,
+      roomEvent(2, 'user_message', {
+        messageId: 'steer-user-replayed',
+        clientActionId: 'room-steer-action-1',
+        rootId: 'room-turn-1',
+        text: '先停止旧方向，只验证 Stop。',
+        delivery: 'steer',
+      }),
+    ).state;
+
+    expect(replayed.messageOrder).toEqual(['steer-user-replayed']);
+    expect(replayed.turnsById['room-turn-1'].messageIds).toEqual(['steer-user-replayed']);
+    expect(replayed.messagesById['steer-user-replayed']).toMatchObject({
+      clientMessageId: 'room-steer-action-1',
+      text: '先停止旧方向，只验证 Stop。',
+    });
   });
 
   it('shows an optimistic turn as queued before the router accepts it', () => {
@@ -2018,6 +2263,12 @@ function roomSnapshotFixture(
       id: 'room-1',
       title: '快照 Room',
       status: 'active',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'workspace_managed' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
       executionMode: 'workspace_managed',
       routingPolicy: 'moderator',
       moderatorParticipantId: 'participant-1',
@@ -2077,6 +2328,102 @@ function roomPost(postId: string, content: string, dispatchId: string) {
     idempotencyKey: postId,
     publicationSource: { kind: 'room_commit', ref: `commit:${postId}` },
     createdAtMs: 20,
+  };
+}
+
+function formalTerminalOrdering(
+  order: readonly ('final' | 'partner-terminal' | 'coordinator-terminal' | 'root-terminal')[],
+) {
+  const coordinatorRoute = wireRoomEvent(1, 'route_decision', {
+    rootId: 'room-turn-1',
+    dispatchId: 'dispatch-coordinator',
+    targetParticipantId: 'participant-1',
+  });
+  const partnerRoute = wireRoomEvent(2, 'route_decision', {
+    rootId: 'room-turn-1',
+    dispatchId: 'dispatch-partner',
+    targetParticipantId: 'participant-2',
+  });
+  partnerRoute.participantId = 'participant-2';
+  partnerRoute.sourceSessionId = 'session-room-2';
+  const partnerResult = wireRoomEvent(3, 'room_post', {
+    post: formalRoomPost(
+      'partner-work-result',
+      '伙伴交付证据',
+      'dispatch-partner',
+      'work_result',
+      'participant-2',
+    ),
+  });
+  partnerResult.participantId = 'participant-2';
+  partnerResult.sourceSessionId = 'session-room-2';
+
+  const terminalEvent = (name: (typeof order)[number], sequence: number) => {
+    if (name === 'final') {
+      return wireRoomEvent(sequence, 'room_post', {
+        post: formalRoomPost(
+          'coordinator-final',
+          '主持者最终报告',
+          'dispatch-coordinator',
+          'result',
+        ),
+      });
+    }
+    if (name === 'partner-terminal') {
+      const event = wireRoomEvent(sequence, 'turn_completed', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-partner',
+        status: 'completed',
+      });
+      event.participantId = 'participant-2';
+      event.sourceSessionId = 'session-room-2';
+      return event;
+    }
+    if (name === 'coordinator-terminal') {
+      return wireRoomEvent(sequence, 'turn_completed', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-coordinator',
+        status: 'completed',
+      });
+    }
+    const event = wireRoomEvent(sequence, 'turn_completed', {
+      rootId: 'room-turn-1',
+      status: 'completed',
+    });
+    event.participantId = null;
+    event.sourceSessionId = '';
+    return event;
+  };
+
+  return [
+    coordinatorRoute,
+    partnerRoute,
+    partnerResult,
+    ...order.map((name, index) => terminalEvent(name, index + 4)),
+  ];
+}
+
+function formalRoomPost(
+  postId: string,
+  content: string,
+  dispatchId: string,
+  kind: 'result' | 'work_result',
+  authorParticipantId = 'participant-1',
+) {
+  return {
+    ...roomPost(postId, content, dispatchId),
+    authorActorRef: authorParticipantId,
+    kind,
+    publicationSource: {
+      kind: kind === 'work_result' ? 'room_post' : 'runtime_projection',
+      ref: `${kind}:${postId}`,
+    },
+    ...(kind === 'work_result' ? {
+      workResult: {
+        proposedOperabilityVerdict: 'passed',
+        proposedRequirementVerdict: 'satisfied',
+      },
+    } : {}),
   };
 }
 

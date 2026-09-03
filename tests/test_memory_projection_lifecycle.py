@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from threading import Event
 from unittest.mock import Mock, patch
+from urllib.request import urlopen
 
 from rag_ime.debug_server import (
     DebugImeService,
+    DebugRequestHandler,
     DebugServerConfig,
     _memory_projection_worker_enabled,
     run_debug_server,
@@ -116,6 +122,13 @@ class MemoryProjectionLifecycleTests(unittest.TestCase):
         self.addCleanup(service.close)
 
         service.start_background_services()
+        self.assertTrue(
+            _wait_until(
+                lambda: "thread creation failed"
+                in str(service.memory_projection_status()["lastError"]),
+                timeout_s=2,
+            )
+        )
         health = service.health()
 
         self.assertTrue(health["ok"])
@@ -205,6 +218,496 @@ class MemoryProjectionLifecycleTests(unittest.TestCase):
         server.server_close.assert_called_once_with()
         service.close.assert_called_once_with()
 
+    def test_blocking_embedding_warmup_does_not_block_gateway_health_or_sessions(self) -> None:
+        provider = _BlockingWarmupEmbeddingProvider()
+        constructed = Event()
+        result: dict[str, DebugImeService] = {}
+
+        def construct() -> None:
+            with patch(
+                "rag_ime.debug_server.embedding_provider_from_env",
+                return_value=provider,
+            ):
+                result["service"] = DebugImeService(
+                    DebugServerConfig(
+                        db_path=self.db_path,
+                        seed_if_empty=False,
+                        server_name="agent gateway",
+                    )
+                )
+            constructed.set()
+
+        constructor = threading.Thread(target=construct, daemon=True)
+        constructor.start()
+        try:
+            self.assertTrue(
+                constructed.wait(timeout=5),
+                "embedding warmup blocked DebugImeService construction before bind",
+            )
+        finally:
+            provider.release.set()
+            constructor.join(timeout=5)
+        service = result["service"]
+        self.addCleanup(service.close)
+        self.assertEqual(service.health()["embeddingWarmup"]["status"], "pending")
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = service
+        Handler.static_dir = Path(self.temporary.name)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        try:
+            provider.release.clear()
+            service.start_background_services()
+            thread.start()
+            self.assertTrue(provider.entered.wait(timeout=1))
+            base_url = f"http://127.0.0.1:{server.server_port}"
+            with urlopen(f"{base_url}/api/health", timeout=2) as response:
+                health = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                f"{base_url}/api/agent/sessions?limit=1",
+                timeout=2,
+            ) as response:
+                sessions = json.loads(response.read().decode("utf-8"))
+
+            self.assertEqual(health["embeddingWarmup"]["status"], "running")
+            self.assertTrue(sessions["ok"])
+            self.assertEqual(sessions["schemaVersion"], "rag-ime.agent-session-list.v1")
+        finally:
+            provider.release.set()
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertTrue(_wait_until(
+            lambda: service.health()["embeddingWarmup"]["status"] == "complete",
+            timeout_s=2,
+        ))
+        self.assertTrue(service.health()["embeddingWarmup"]["ok"])
+
+    def test_blocking_startup_reconciliation_does_not_block_health_or_sessions(
+        self,
+    ) -> None:
+        reconciliation_entered = Event()
+        reconciliation_release = Event()
+        constructed = Event()
+        result: dict[str, DebugImeService] = {}
+
+        def blocking_reconcile(_service: object, **_kwargs: object) -> None:
+            reconciliation_entered.set()
+            if not reconciliation_release.wait(timeout=15):
+                raise TimeoutError("startup reconciliation was not released")
+
+        def construct() -> None:
+            result["service"] = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+            constructed.set()
+
+        with patch(
+            "rag_ime.work_documents.WorkDocumentService.reconcile",
+            new=blocking_reconcile,
+        ):
+            constructor = threading.Thread(target=construct, daemon=True)
+            constructor.start()
+            try:
+                self.assertTrue(
+                    constructed.wait(timeout=5),
+                    "startup reconciliation blocked service construction before bind",
+                )
+                service = result["service"]
+                self.addCleanup(service.close)
+
+                class Handler(DebugRequestHandler):
+                    pass
+
+                Handler.service = service
+                Handler.static_dir = Path(self.temporary.name)
+                server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                service.start_background_services()
+                self.assertTrue(reconciliation_entered.wait(timeout=2))
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with urlopen(f"{base_url}/api/health", timeout=2) as response:
+                    health = json.loads(response.read().decode("utf-8"))
+                with urlopen(
+                    f"{base_url}/api/agent/sessions?limit=1",
+                    timeout=2,
+                ) as response:
+                    sessions = json.loads(response.read().decode("utf-8"))
+
+                self.assertTrue(health["ok"])
+                self.assertEqual(health["startupRecovery"]["status"], "running")
+                self.assertTrue(sessions["ok"])
+                self.assertEqual(
+                    sessions["schemaVersion"],
+                    "rag-ime.agent-session-list.v1",
+                )
+            finally:
+                reconciliation_release.set()
+                constructor.join(timeout=5)
+                if "server" in locals():
+                    server.shutdown()
+                    thread.join(timeout=2)
+                    server.server_close()
+
+        self.assertTrue(
+            _wait_until(
+                lambda: service.health()["startupRecovery"]["status"]
+                == "complete",
+                timeout_s=2,
+            )
+        )
+
+    def test_heavy_startup_jobs_use_one_serial_background_lane(self) -> None:
+        provider = _BlockingWarmupEmbeddingProvider()
+        maintenance_entered = Event()
+        maintenance_release = Event()
+        with patch(
+            "rag_ime.debug_server.embedding_provider_from_env",
+            return_value=provider,
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+        self.addCleanup(service.close)
+        run_maintenance = service.core.run_startup_maintenance
+
+        def blocking_maintenance() -> None:
+            maintenance_entered.set()
+            if not maintenance_release.wait(timeout=15):
+                raise TimeoutError("startup maintenance was not released")
+            run_maintenance()
+
+        service.core.run_startup_maintenance = blocking_maintenance  # type: ignore[method-assign]
+        service.start_background_services()
+        try:
+            self.assertTrue(maintenance_entered.wait(timeout=2))
+            self.assertEqual(
+                service.embedding_warmup_status()["status"],
+                "pending",
+            )
+            self.assertFalse(provider.entered.wait(timeout=0.1))
+        finally:
+            maintenance_release.set()
+
+        self.assertTrue(provider.entered.wait(timeout=2))
+        self.assertEqual(service.embedding_warmup_status()["status"], "running")
+        provider.release.set()
+        self.assertTrue(
+            _wait_until(
+                lambda: service.embedding_warmup_status()["status"]
+                == "complete",
+                timeout_s=2,
+            )
+        )
+
+    def test_repeated_health_session_and_room_reads_reuse_open_schema(self) -> None:
+        service = DebugImeService(
+            DebugServerConfig(
+                db_path=self.db_path,
+                seed_if_empty=False,
+                server_name="agent gateway",
+            )
+        )
+        self.addCleanup(service.close)
+        session_store = service.agent.sessions
+        room_store = service.agent.rooms
+        core = service.core
+
+        with (
+            patch.object(
+                session_store,
+                "_connect",
+                wraps=session_store._connect,
+            ) as session_connections,
+            patch.object(
+                room_store,
+                "_connect",
+                wraps=room_store._connect,
+            ) as room_connections,
+            patch.object(
+                core,
+                "_connect",
+                wraps=core._connect,
+            ) as core_connections,
+            patch(
+                "sqlite3.connect",
+                wraps=sqlite3.connect,
+            ) as sqlite_connections,
+        ):
+            for _ in range(2):
+                health = service.health()
+                sessions = service.agent.list_sessions(
+                    {"limit": 20, "projectionOnly": True}
+                )
+                rooms = service.agent.list_rooms(
+                    {"limit": 20, "projectionOnly": True}
+                )
+                self.assertTrue(health["ok"])
+                self.assertTrue(sessions["ok"])
+                self.assertTrue(rooms["ok"])
+
+        self.assertEqual(session_connections.call_count, 0)
+        self.assertEqual(room_connections.call_count, 0)
+        self.assertEqual(core_connections.call_count, 0)
+        self.assertEqual(sqlite_connections.call_count, 0)
+
+    def test_startup_recovery_failure_is_observable_without_breaking_health(
+        self,
+    ) -> None:
+        with patch(
+            "rag_ime.work_documents.WorkDocumentService.reconcile",
+            side_effect=RuntimeError("recovery failed"),
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+            self.addCleanup(service.close)
+            self.assertEqual(service.startup_recovery_status()["status"], "pending")
+            service.start_background_services()
+            self.assertTrue(
+                _wait_until(
+                    lambda: service.startup_recovery_status()["status"]
+                    == "failed",
+                    timeout_s=2,
+                )
+            )
+
+        health = service.health()
+        self.assertTrue(health["ok"])
+        self.assertEqual(health["startupRecovery"]["status"], "failed")
+        self.assertEqual(health["startupRecovery"]["error"], "RuntimeError")
+
+    def test_gateway_owned_agent_recovery_is_skipped_in_sidecar(self) -> None:
+        with (
+            patch.dict(
+                "rag_ime.debug_server.os.environ",
+                {"RAG_IME_AGENT_GATEWAY_ENABLED": "1"},
+            ),
+            patch(
+                "rag_ime.work_documents.WorkDocumentService.reconcile",
+                side_effect=AssertionError(
+                    "passive Sidecar must not run Agent recovery"
+                ),
+            ),
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="sidecar server",
+                )
+            )
+            self.addCleanup(service.close)
+            core_maintenance = Mock(
+                side_effect=AssertionError(
+                    "passive Sidecar must not run Core maintenance"
+                )
+            )
+            service.core.run_startup_maintenance = core_maintenance  # type: ignore[method-assign]
+            service.start_background_services()
+            self.assertTrue(
+                _wait_until(
+                    lambda: service.startup_recovery_status()["status"]
+                    == "complete",
+                    timeout_s=2,
+                )
+            )
+
+        agent_recovery = service.startup_recovery_status()["components"][
+            "agentRecovery"
+        ]
+        self.assertFalse(agent_recovery["enabled"])
+        self.assertEqual(agent_recovery["status"], "complete")
+        self.assertEqual(agent_recovery["skippedReason"], "not_execution_owner")
+        core_recovery = service.startup_recovery_status()["components"][
+            "coreMaintenance"
+        ]
+        self.assertFalse(core_recovery["enabled"])
+        self.assertEqual(core_recovery["skippedReason"], "not_execution_owner")
+        core_maintenance.assert_not_called()
+        service.close()
+
+    def test_embedding_warmup_failure_is_visible_without_breaking_health(self) -> None:
+        provider = _FailingWarmupEmbeddingProvider()
+        with patch(
+            "rag_ime.debug_server.embedding_provider_from_env",
+            return_value=provider,
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+        self.addCleanup(service.close)
+
+        self.assertEqual(service.health()["embeddingWarmup"]["status"], "pending")
+        service.start_background_services()
+        self.assertTrue(_wait_until(
+            lambda: service.health()["embeddingWarmup"]["status"] == "failed",
+            timeout_s=2,
+        ))
+        health = service.health()
+        self.assertTrue(health["ok"])
+        self.assertFalse(health["embeddingWarmup"]["ok"])
+        self.assertEqual(health["embeddingWarmup"]["error"], "RuntimeError")
+
+    def test_embedding_warmup_delay_stays_pending_before_running(self) -> None:
+        provider = _BlockingWarmupEmbeddingProvider()
+        with (
+            patch(
+                "rag_ime.debug_server.embedding_provider_from_env",
+                return_value=provider,
+            ),
+            patch.dict(
+                "rag_ime.debug_server.os.environ",
+                {"RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS": "0.2"},
+            ),
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+        self.addCleanup(service.close)
+
+        started = time.perf_counter()
+        service.start_background_services()
+        elapsed = time.perf_counter() - started
+        delayed = service.health()["embeddingWarmup"]
+
+        self.assertLess(elapsed, 0.1)
+        self.assertEqual(delayed["status"], "pending")
+        self.assertEqual(delayed["delayMs"], 200)
+        self.assertFalse(provider.entered.wait(timeout=0.05))
+        self.assertTrue(provider.entered.wait(timeout=1))
+        self.assertEqual(
+            service.health()["embeddingWarmup"]["status"],
+            "running",
+        )
+        provider.release.set()
+        self.assertTrue(
+            _wait_until(
+                lambda: service.health()["embeddingWarmup"]["status"]
+                == "complete",
+                timeout_s=2,
+            )
+        )
+
+    def test_close_cancels_pending_embedding_warmup_delay(self) -> None:
+        provider = _BlockingWarmupEmbeddingProvider()
+        with (
+            patch(
+                "rag_ime.debug_server.embedding_provider_from_env",
+                return_value=provider,
+            ),
+            patch.dict(
+                "rag_ime.debug_server.os.environ",
+                {"RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS": "0.15"},
+            ),
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+
+        service.start_background_services()
+        pending = service.health()["embeddingWarmup"]
+        self.assertEqual(pending["status"], "pending")
+        self.assertEqual(pending["delayMs"], 150)
+        service.close()
+
+        self.assertFalse(provider.entered.wait(timeout=0.25))
+
+    def test_delayed_embedding_warmup_failure_is_visible(self) -> None:
+        provider = _FailingWarmupEmbeddingProvider()
+        with (
+            patch(
+                "rag_ime.debug_server.embedding_provider_from_env",
+                return_value=provider,
+            ),
+            patch.dict(
+                "rag_ime.debug_server.os.environ",
+                {"RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS": "1"},
+            ),
+        ):
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=self.db_path,
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+        self.addCleanup(service.close)
+
+        service.start_background_services()
+        pending = service.embedding_warmup_status()
+        self.assertEqual(pending["status"], "pending")
+        self.assertEqual(pending["delayMs"], 1_000)
+        self.assertFalse(provider.entered.wait(timeout=0.1))
+        self.assertTrue(provider.entered.wait(timeout=2))
+        self.assertTrue(
+            _wait_until(
+                lambda: service.health()["embeddingWarmup"]["status"]
+                == "failed",
+                timeout_s=2,
+            )
+        )
+        self.assertEqual(
+            service.health()["embeddingWarmup"]["error"],
+            "RuntimeError",
+        )
+
+    def test_embedding_warmup_delay_is_bounded_nonnegative(self) -> None:
+        reports: list[dict[str, object]] = []
+        for configured in ("-5", "999999"):
+            provider = _BlockingWarmupEmbeddingProvider()
+            with (
+                patch(
+                    "rag_ime.debug_server.embedding_provider_from_env",
+                    return_value=provider,
+                ),
+                patch.dict(
+                    "rag_ime.debug_server.os.environ",
+                    {"RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS": configured},
+                ),
+            ):
+                service = DebugImeService(
+                    DebugServerConfig(
+                        db_path=Path(self.temporary.name) / f"delay-{configured}.sqlite",
+                        seed_if_empty=False,
+                        server_name="agent gateway",
+                    )
+                )
+            reports.append(service.health()["embeddingWarmup"])
+            service.close()
+
+        self.assertEqual(reports[0]["delayMs"], 0)
+        self.assertEqual(reports[1]["delayMs"], 300_000)
+
 
 class _FailingProjectionWorker:
     def __init__(self) -> None:
@@ -224,6 +727,31 @@ class _FailingProjectionWorker:
             "lastError": "",
             "lastReport": {},
         }
+
+
+class _BlockingWarmupEmbeddingProvider:
+    fingerprint = "mlx-bert:test-blocking:cfg-test"
+
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+
+    def embed_query(self, _text: str) -> list[float]:
+        self.entered.set()
+        if not self.release.wait(timeout=15):
+            raise TimeoutError("blocking embedding warmup was not released")
+        return [0.25, 0.75]
+
+
+class _FailingWarmupEmbeddingProvider:
+    fingerprint = "mlx-bert:test-failing:cfg-test"
+
+    def __init__(self) -> None:
+        self.entered = Event()
+
+    def embed_query(self, _text: str) -> list[float]:
+        self.entered.set()
+        raise RuntimeError("embedding warmup failed")
 
 
 def _insert_phrase(conn: sqlite3.Connection, memory_id: str, text: str) -> None:

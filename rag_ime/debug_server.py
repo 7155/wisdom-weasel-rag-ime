@@ -6,6 +6,7 @@ import hmac
 import inspect
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import re
@@ -19,7 +20,7 @@ from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Event, RLock, current_thread, main_thread
+from threading import Event, RLock, Thread, Timer, current_thread, main_thread
 from typing import Any, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
@@ -256,6 +257,7 @@ GLOBAL_MEMORY_CATALOG_CONSOLIDATION_INSTRUCTION = (
     "memberships. The dedicated memory-catalog-consolidation curator and its "
     "independent verifier must reject every other operation."
 )
+_MAX_EMBEDDING_WARMUP_DELAY_SECONDS = 300.0
 
 
 def _host_is_loopback(host: str) -> bool:
@@ -449,7 +451,13 @@ class DebugImeService:
         self._lifecycle_lock = RLock()
         self._closed = False
         self._memory_projection_start_error = ""
-        self.settings_store = ManagementSettingsStore(config.db_path)
+        self._background_startup_thread: Thread | None = None
+        self._background_startup_timer: Timer | None = None
+        self._embedding_warmup_delay_s = _embedding_warmup_delay_seconds()
+        self.settings_store = ManagementSettingsStore(
+            config.db_path,
+            persistent_reads=True,
+        )
         self.settings_store.initialize()
         self.voice_support_directory = resolve_voice_support_directory(config.db_path)
         self.voice_hotwords = VoiceHotwordConfigStore(self.voice_support_directory)
@@ -505,6 +513,7 @@ class DebugImeService:
             # second Host in the 8766 Sidecar and faults the Gateway.
             wake_scheduler_enabled=config.server_name == "agent gateway",
             runtime_execution_owner=self._agent_runtime_execution_owner,
+            defer_startup_recovery=True,
         )
         self._memory_runtime_restart_recovery = (
             reconcile_stale_memory_runtime_sessions(
@@ -569,8 +578,10 @@ class DebugImeService:
         self._predictor_status_cache: dict[bool, _PredictorStatusCacheEntry] = {}
         self._predictor_status_lock = RLock()
         if isinstance(self.core, LocalSqliteCoreClient):
-            self.core.initialize()
-        self._embedding_warmup_report = self._warm_embedding_provider()
+            self.core.enable_persistent_reads()
+            self.core.initialize(perform_maintenance=False)
+        self._embedding_warmup_report = self._initial_embedding_warmup_report()
+        self._startup_recovery_report = self._initial_startup_recovery_report()
         self.runtime_config_resolver = RuntimeConfigResolver(self.settings_store, environ=os.environ)
         self.management = ManagementService(
             db_path=config.db_path,
@@ -746,19 +757,7 @@ class DebugImeService:
     def start_background_services(self) -> None:
         """Start non-critical workers after the HTTP listener owns the process."""
 
-        with self._lifecycle_lock:
-            if self._closed:
-                return
-            worker = self.memory_projection_worker
-        if worker is None:
-            return
-        try:
-            self._memory_projection_start_error = ""
-            worker.start()
-        except Exception as exc:  # pragma: no cover - thread start failure is platform-specific
-            # Projection lag is observable but must not take down IME/management
-            # request handling.
-            self._memory_projection_start_error = _safe_debug_error(exc)
+        self._start_background_startup_lane()
 
     def close(self) -> None:
         """Stop process-owned workers and release service resources once."""
@@ -767,7 +766,11 @@ class DebugImeService:
             if self._closed:
                 return
             self._closed = True
+            background_startup_timer = self._background_startup_timer
+            self._background_startup_timer = None
             worker = self.memory_projection_worker
+        if background_startup_timer is not None:
+            background_startup_timer.cancel()
         if worker is not None:
             try:
                 worker.stop()
@@ -776,6 +779,8 @@ class DebugImeService:
                 # remaining executors and provider clients.
                 pass
         resources = (
+            self.core,
+            self.settings_store,
             self.system_terminal,
             self.memory_maintenance_jobs,
             self.active_rag,
@@ -826,7 +831,8 @@ class DebugImeService:
             "predictor": self._predictor_status(probe_capabilities=False),
             "suggestionCache": self._suggestion_cache_stats(),
             "vectorStats": self._vector_index_stats(),
-            "embeddingWarmup": self._embedding_warmup_report,
+            "embeddingWarmup": self.embedding_warmup_status(),
+            "startupRecovery": self.startup_recovery_status(),
             "vectorAutoRebuild": self._vector_auto_rebuild_status(),
             "memoryProjection": self.memory_projection_status(),
         }
@@ -1060,7 +1066,7 @@ class DebugImeService:
             "timeline": timeline,
         }
 
-    def _warm_embedding_provider(self) -> dict[str, object]:
+    def _initial_embedding_warmup_report(self) -> dict[str, object]:
         provider = getattr(self.core, "embedding_provider", None)
         fingerprint = str(getattr(provider, "fingerprint", "") or "")
         enabled_value = os.environ.get("RAG_IME_EMBEDDING_WARMUP", "1").strip().lower()
@@ -1068,8 +1074,10 @@ class DebugImeService:
         report: dict[str, object] = {
             "schemaVersion": "rag-ime.embedding-warmup.v1",
             "enabled": enabled,
+            "status": "pending" if enabled else "complete",
             "providerFingerprint": fingerprint,
             "ok": False,
+            "delayMs": int(round(self._embedding_warmup_delay_s * 1_000)),
             "elapsedMs": 0,
             "modelElapsedMs": 0,
             "vectorCacheElapsedMs": 0,
@@ -1078,6 +1086,239 @@ class DebugImeService:
         }
         if not enabled or provider is None:
             report["skippedReason"] = "provider_not_local_mlx" if provider is not None else "provider_missing"
+        return report
+
+    def embedding_warmup_status(self) -> dict[str, object]:
+        with self._lifecycle_lock:
+            return dict(self._embedding_warmup_report)
+
+    def _initial_startup_recovery_report(self) -> dict[str, object]:
+        core_pending = (
+            self.core.startup_maintenance_pending()
+            if isinstance(self.core, LocalSqliteCoreClient)
+            and self._agent_runtime_execution_owner
+            else False
+        )
+        agent_status_loader = getattr(self.agent, "startup_recovery_status", None)
+        agent_status = (
+            agent_status_loader()
+            if callable(agent_status_loader)
+            else {
+                "enabled": False,
+                "status": "complete",
+                "ok": True,
+                "skippedReason": "unsupported_agent_service",
+            }
+        )
+        agent_pending = str(agent_status.get("status") or "") == "pending"
+        enabled = core_pending or agent_pending
+        return {
+            "schemaVersion": "rag-ime.startup-recovery.v1",
+            "enabled": enabled,
+            "status": "pending" if enabled else "complete",
+            "ok": not enabled,
+            "delayMs": int(round(self._embedding_warmup_delay_s * 1_000)),
+            "error": "",
+            "components": {
+                "coreMaintenance": {
+                    "enabled": (
+                        isinstance(self.core, LocalSqliteCoreClient)
+                        and self._agent_runtime_execution_owner
+                    ),
+                    "status": "pending" if core_pending else "complete",
+                    **(
+                        {}
+                        if self._agent_runtime_execution_owner
+                        else {"skippedReason": "not_execution_owner"}
+                    ),
+                },
+                "agentRecovery": dict(agent_status),
+            },
+        }
+
+    def startup_recovery_status(self) -> dict[str, object]:
+        with self._lifecycle_lock:
+            report = copy.deepcopy(self._startup_recovery_report)
+        return report
+
+    def _run_startup_recovery(self) -> None:
+        try:
+            if (
+                isinstance(self.core, LocalSqliteCoreClient)
+                and self._agent_runtime_execution_owner
+            ):
+                self.core.run_startup_maintenance()
+            agent_recovery = getattr(self.agent, "run_startup_recovery", None)
+            if callable(agent_recovery):
+                agent_recovery()
+        except Exception as exc:
+            with self._lifecycle_lock:
+                self._startup_recovery_report = {
+                    **self._startup_recovery_report,
+                    "status": "failed",
+                    "ok": False,
+                    "error": exc.__class__.__name__,
+                    "components": self._startup_recovery_components(),
+                }
+            return
+        with self._lifecycle_lock:
+            self._startup_recovery_report = {
+                **self._startup_recovery_report,
+                "status": "complete",
+                "ok": True,
+                "error": "",
+                "components": self._startup_recovery_components(),
+            }
+
+    def _startup_recovery_components(self) -> dict[str, object]:
+        agent_status_loader = getattr(self.agent, "startup_recovery_status", None)
+        agent_status = (
+            agent_status_loader()
+            if callable(agent_status_loader)
+            else {
+                "enabled": False,
+                "status": "complete",
+                "ok": True,
+                "skippedReason": "unsupported_agent_service",
+            }
+        )
+        return {
+            "coreMaintenance": {
+                "enabled": (
+                    isinstance(self.core, LocalSqliteCoreClient)
+                    and self._agent_runtime_execution_owner
+                ),
+                "status": (
+                    "pending"
+                    if isinstance(self.core, LocalSqliteCoreClient)
+                    and self._agent_runtime_execution_owner
+                    and self.core.startup_maintenance_pending()
+                    else "complete"
+                ),
+                **(
+                    {}
+                    if self._agent_runtime_execution_owner
+                    else {"skippedReason": "not_execution_owner"}
+                ),
+            },
+            "agentRecovery": dict(agent_status),
+        }
+
+    def _start_background_startup_lane(self) -> None:
+        with self._lifecycle_lock:
+            if (
+                self._closed
+                or self._background_startup_thread is not None
+                or self._background_startup_timer is not None
+            ):
+                return
+            has_pending_heavy_work = (
+                self._startup_recovery_report.get("status") == "pending"
+                or self._embedding_warmup_report.get("status") == "pending"
+            )
+            if self._embedding_warmup_delay_s <= 0 or not has_pending_heavy_work:
+                timer = None
+            else:
+                timer = Timer(
+                    self._embedding_warmup_delay_s,
+                    self._begin_background_startup_lane,
+                )
+                timer.name = "rag-ime-background-startup-delay"
+                timer.daemon = True
+                self._background_startup_timer = timer
+        if timer is None:
+            self._begin_background_startup_lane()
+            return
+        try:
+            timer.start()
+        except Exception as exc:  # pragma: no cover - thread start failure is platform-specific
+            with self._lifecycle_lock:
+                if self._background_startup_timer is timer:
+                    self._background_startup_timer = None
+                self._fail_pending_background_startup(exc)
+
+    def _begin_background_startup_lane(self) -> None:
+        with self._lifecycle_lock:
+            self._background_startup_timer = None
+            if self._closed or self._background_startup_thread is not None:
+                return
+            if self._startup_recovery_report.get("status") == "pending":
+                self._startup_recovery_report = {
+                    **self._startup_recovery_report,
+                    "status": "running",
+                    "ok": False,
+                    "error": "",
+                }
+            thread = Thread(
+                target=self._run_background_startup_lane,
+                name="rag-ime-background-startup",
+                daemon=True,
+            )
+            self._background_startup_thread = thread
+        try:
+            thread.start()
+        except Exception as exc:  # pragma: no cover - thread start failure is platform-specific
+            with self._lifecycle_lock:
+                self._background_startup_thread = None
+                self._fail_pending_background_startup(exc)
+
+    def _fail_pending_background_startup(self, exc: Exception) -> None:
+        if self._startup_recovery_report.get("status") in {"pending", "running"}:
+            self._startup_recovery_report = {
+                **self._startup_recovery_report,
+                "status": "failed",
+                "ok": False,
+                "error": exc.__class__.__name__,
+            }
+        if self._embedding_warmup_report.get("status") == "pending":
+            self._embedding_warmup_report = {
+                **self._embedding_warmup_report,
+                "status": "failed",
+                "error": exc.__class__.__name__,
+            }
+
+    def _run_background_startup_lane(self) -> None:
+        if self._startup_recovery_report.get("status") in {"pending", "running"}:
+            self._run_startup_recovery()
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            run_embedding_warmup = (
+                self._embedding_warmup_report.get("status") == "pending"
+            )
+            if run_embedding_warmup:
+                self._embedding_warmup_report = {
+                    **self._embedding_warmup_report,
+                    "status": "running",
+                }
+        if run_embedding_warmup:
+            self._run_embedding_warmup()
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+        self._start_memory_projection_worker()
+
+    def _start_memory_projection_worker(self) -> None:
+        worker = self.memory_projection_worker
+        if worker is None:
+            return
+        try:
+            self._memory_projection_start_error = ""
+            worker.start()
+        except Exception as exc:  # pragma: no cover - thread start failure is platform-specific
+            self._memory_projection_start_error = _safe_debug_error(exc)
+
+    def _run_embedding_warmup(self) -> None:
+        report = self._warm_embedding_provider()
+        with self._lifecycle_lock:
+            self._embedding_warmup_report = report
+
+    def _warm_embedding_provider(self) -> dict[str, object]:
+        report = self._initial_embedding_warmup_report()
+        report["status"] = "running"
+        provider = getattr(self.core, "embedding_provider", None)
+        if not report["enabled"] or provider is None:
+            report["status"] = "complete"
             return report
         started = time.perf_counter()
         try:
@@ -1091,6 +1332,7 @@ class DebugImeService:
         except Exception as exc:  # pragma: no cover - fail-open runtime guard
             report.update(
                 {
+                    "status": "failed",
                     "elapsedMs": int((time.perf_counter() - started) * 1000),
                     "error": exc.__class__.__name__,
                 }
@@ -1098,6 +1340,7 @@ class DebugImeService:
             return report
         report.update(
             {
+                "status": "complete",
                 "ok": bool(vector) and bool(vector_cache_report.get("ok")),
                 "elapsedMs": int((time.perf_counter() - started) * 1000),
                 "modelElapsedMs": model_elapsed_ms,
@@ -8080,6 +8323,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "surfaceKind": _query_first(query, "surfaceKind"),
                         "ownerAppId": _query_first(query, "ownerAppId"),
                         "surfaceKey": _query_first(query, "surfaceKey"),
+                        "projectionOnly": _query_first(query, "projectionOnly"),
                     }
                 ),
             )
@@ -8267,6 +8511,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "limit": _query_first(query, "limit"),
                         "beforeUpdatedAtMs": _query_first(query, "beforeUpdatedAtMs"),
                         "beforeId": _query_first(query, "beforeId"),
+                        "projectionOnly": _query_first(query, "projectionOnly"),
+                        "ownerAppId": _query_first(query, "ownerAppId"),
+                        "surfaceKey": _query_first(query, "surfaceKey"),
                     }
                 ),
             )
@@ -11175,6 +11422,16 @@ def _float_or_default(value: object, default: float) -> float:
         except ValueError:
             return default
     return default
+
+
+def _embedding_warmup_delay_seconds() -> float:
+    configured = _float_or_default(
+        os.environ.get("RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS", "0"),
+        0.0,
+    )
+    if not math.isfinite(configured):
+        return 0.0
+    return max(0.0, min(_MAX_EMBEDDING_WARMUP_DELAY_SECONDS, configured))
 
 
 def _cleanup_review_status(payload: dict[str, object]) -> str:

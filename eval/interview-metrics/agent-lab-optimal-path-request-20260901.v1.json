@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "rag-ime.agent-lab-path-search-request.v1",
+  "searchId": "enterpriseops-csm-optimal-path-20260901-v1",
+  "title": "EnterpriseOps CSM · Validation 最优路径搜索",
+  "objective": {
+    "userNeed": "完成全部客户支持任务，在质量不回退的前提下平衡 Tool 调用、延迟和 API 成本。",
+    "metrics": [
+      {
+        "name": "taskSuccessRate",
+        "direction": "max",
+        "weight": 0.55,
+        "class": "quality",
+        "scale": 1,
+        "nonRegression": true
+      },
+      {
+        "name": "verifierPassRate",
+        "direction": "max",
+        "weight": 0.25,
+        "class": "quality",
+        "scale": 1,
+        "nonRegression": true
+      },
+      {
+        "name": "toolCalls",
+        "direction": "min",
+        "weight": 0.05,
+        "class": "efficiency",
+        "scale": 100
+      },
+      {
+        "name": "latencyMs",
+        "direction": "min",
+        "weight": 0.15,
+        "class": "efficiency",
+        "scale": 1000000
+      },
+      {
+        "name": "apiCostUsd",
+        "direction": "min",
+        "weight": 0.1,
+        "class": "cost",
+        "scale": 1
+      }
+    ],
+    "gates": [
+      {
+        "name": "all tasks complete",
+        "metric": "taskSuccessRate",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "name": "all verifiers pass",
+        "metric": "verifierPassRate",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "name": "no tool failures",
+        "metric": "failedToolCalls",
+        "operator": "lte",
+        "value": 0
+      },
+      {
+        "name": "temporary databases cleaned",
+        "metric": "allDatabasesCleaned",
+        "operator": "eq",
+        "value": 1
+      }
+    ],
+    "selectionPolicy": "lexicographic_pareto"
+  },
+  "frozenControls": [
+    {
+      "name": "suite",
+      "value": "enterpriseops-csm-suite-v2"
+    },
+    {
+      "name": "split",
+      "value": "validation"
+    },
+    {
+      "name": "cases",
+      "value": "3 tasks / 31 host-private verifiers"
+    },
+    {
+      "name": "gold_and_seed",
+      "value": "same temporary database seed; gold hidden from Agent"
+    },
+    {
+      "name": "held_out",
+      "value": "sealed and not consumed by path search"
+    }
+  ],
+  "baseline": {
+    "nodeId": "sol-suite-v2-baseline",
+    "parentNodeId": null,
+    "changedFactor": "baseline",
+    "configRevision": "state-contract-v1-baseline-overlay",
+    "frozenControlHash": "b5dce5bbc1589e8dae367da85c2ef34f80e2097288fe6ee6f035cb0c48dc7e39",
+    "metrics": {
+      "taskSuccessRate": 0.6666666667,
+      "verifierPassRate": 0.9032258065,
+      "failedToolCalls": 0,
+      "allDatabasesCleaned": 1,
+      "toolCalls": 72,
+      "latencyMs": 529349.673,
+      "apiCostUsd": 3.089711
+    },
+    "evidenceRefs": [
+      "eval/interview-metrics/runs/enterpriseops-csm-suite-v2-validation-winner-20260901.v1.json",
+      "eval/interview-metrics/runs/agent-lab-cost-sol-baseline-20260901.v1.json"
+    ],
+    "status": "eligible"
+  },
+  "candidates": [
+    {
+      "nodeId": "sol-state-contract",
+      "parentNodeId": "sol-suite-v2-baseline",
+      "changedFactor": "workflow",
+      "configRevision": "state-contract-v1-suite-v2-final",
+      "frozenControlHash": "b5dce5bbc1589e8dae367da85c2ef34f80e2097288fe6ee6f035cb0c48dc7e39",
+      "metrics": {
+        "taskSuccessRate": 1,
+        "verifierPassRate": 1,
+        "failedToolCalls": 0,
+      "allDatabasesCleaned": 1,
+      "toolCalls": 64,
+      "latencyMs": 758437.096,
+      "apiCostUsd": 4.08523
+      },
+    "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-suite-v2-validation-winner-20260901.v1.json",
+        "eval/interview-metrics/runs/agent-lab-cost-sol-state-contract-20260901.v1.json"
+      ],
+      "status": "eligible"
+    },
+    {
+      "nodeId": "luna-state-contract",
+      "parentNodeId": "sol-state-contract",
+      "changedFactor": "model",
+      "configRevision": "gpt-5.6-luna-max-state-contract-validation",
+      "frozenControlHash": "b5dce5bbc1589e8dae367da85c2ef34f80e2097288fe6ee6f035cb0c48dc7e39",
+      "metrics": {
+        "taskSuccessRate": 1,
+        "verifierPassRate": 1,
+        "failedToolCalls": 0,
+      "allDatabasesCleaned": 1,
+      "toolCalls": 66,
+      "latencyMs": 959310.002
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-luna-max-validation-20260901.v1.json"
+      ],
+      "status": "eligible"
+    }
+  ]
+}

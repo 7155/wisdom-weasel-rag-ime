@@ -334,6 +334,9 @@ environment.update({
     "RAG_IME_AGENT_GATEWAY_WEB_DIST": os.environ["WEB_INSTALL_DIR"],
     "RAG_IME_AGENT_TOOL_URL": f"http://127.0.0.1:{os.environ['PORT']}/api/agent/tool/execute",
 })
+# The Gateway must bind immediately. It starts from the Sidecar environment
+# for shared provider settings, but never inherits the Sidecar's warmup delay.
+environment["RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS"] = "0"
 if os.environ["DEBUG_CONTEXT_DIR"]:
     environment["RAG_IME_PI_DEBUG_CONTEXT_DIR"] = os.environ["DEBUG_CONTEXT_DIR"]
     environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"] = os.environ["DEBUG_CONTEXT_MAX_BYTES"]

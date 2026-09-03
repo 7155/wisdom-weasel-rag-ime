@@ -1,0 +1,560 @@
+#!/usr/bin/env python3
+"""Small, dependency-light HTML/PDF resume validator."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Any
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
+class Check:
+    def __init__(self, name: str, status: str, message: str):
+        self.name = name
+        self.status = status
+        self.message = message
+
+    def as_dict(self) -> dict[str, str]:
+        return {"name": self.name, "status": self.status, "message": self.message}
+
+
+class ResumeHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.h1_count = 0
+        self.h1_text: list[str] = []
+        self.sections: list[dict[str, Any]] = []
+        self.visible_parts: list[str] = []
+        self._ignored_depth = 0
+        self._svg_depth = 0
+        self._section_stack: list[dict[str, Any]] = []
+        self._h1_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in {"script", "style", "template"}:
+            self._ignored_depth += 1
+        if tag == "svg":
+            self._svg_depth += 1
+        if tag == "h1":
+            self.h1_count += 1
+            self._h1_depth += 1
+        if tag == "section":
+            section = {"has_h2": False}
+            self.sections.append(section)
+            self._section_stack.append(section)
+        if tag == "h2" and self._section_stack:
+            self._section_stack[-1]["has_h2"] = True
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag == "section" and self._section_stack:
+            self._section_stack.pop()
+        if tag == "h1" and self._h1_depth:
+            self._h1_depth -= 1
+        if tag == "svg" and self._svg_depth:
+            self._svg_depth -= 1
+        if tag in {"script", "style", "template"} and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._ignored_depth or self._svg_depth:
+            return
+        if data.strip():
+            self.visible_parts.append(data)
+            if self._h1_depth:
+                self.h1_text.append(data)
+
+
+def add(checks: list[Check], name: str, status: str, message: str) -> None:
+    checks.append(Check(name, status, message))
+
+
+def file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def parse_renderer(value: str) -> dict[str, str]:
+    name, separator, version = value.rpartition("@")
+    if not separator or not name or not version:
+        raise ValueError("renderer must use NAME@VERSION, for example playwright@1.62.1")
+    return {"name": name, "version": version}
+
+
+def verify_manifest_record(
+    manifest: dict[str, Any], html_path: Path | None, pdf_path: Path | None, renderer_value: str | None,
+    checks: list[Check],
+) -> None:
+    if manifest.get("schemaVersion") != 1:
+        add(checks, "manifest schema", "fail", "schemaVersion must be 1")
+    renderer = manifest.get("renderer")
+    if not isinstance(renderer, dict) or not all(
+        isinstance(renderer.get(key), str) and renderer[key] and renderer[key] != "unknown"
+        for key in ("name", "version")
+    ):
+        add(checks, "manifest renderer", "fail", "renderer must contain non-empty name and version")
+    elif renderer_value:
+        try:
+            expected_renderer = parse_renderer(renderer_value)
+        except ValueError as exc:
+            add(checks, "manifest renderer", "fail", str(exc))
+        else:
+            add(
+                checks,
+                "manifest renderer",
+                "pass" if renderer == expected_renderer else "fail",
+                "renderer matches" if renderer == expected_renderer else "renderer does not match",
+            )
+
+    validation = manifest.get("validation")
+    stored_checks = validation.get("checks") if isinstance(validation, dict) else None
+    validation_is_deliverable = False
+    valid_statuses = {"pass", "warn", "fail", "degraded"}
+    checks_are_valid = isinstance(stored_checks, list) and all(
+        isinstance(item, dict) and item.get("status") in valid_statuses for item in stored_checks
+    )
+    if not checks_are_valid:
+        add(checks, "manifest validation", "fail", "validation.checks must be a list of checks with valid statuses")
+    else:
+        expected_deliverable = not any(item["status"] in {"fail", "degraded"} for item in stored_checks)
+        consistent = (
+            isinstance(validation.get("ok"), bool)
+            and isinstance(validation.get("deliverable"), bool)
+            and validation["ok"] == validation["deliverable"] == expected_deliverable
+        )
+        validation_is_deliverable = consistent and expected_deliverable
+        add(
+            checks,
+            "manifest validation",
+            "pass" if consistent else "fail",
+            "validation result matches recorded checks" if consistent else "validation.ok/deliverable contradict recorded checks",
+        )
+
+    if manifest.get("status") != "valid" or not validation_is_deliverable:
+        add(checks, "manifest status", "fail", "manifest is not a valid deliverable")
+    html_record = manifest.get("html") if isinstance(manifest.get("html"), dict) else {}
+    html_matches = bool(
+        html_path
+        and html_record.get("path")
+        and Path(html_record["path"]).resolve() == html_path.resolve()
+        and html_record.get("sha256") == file_hash(html_path)
+    )
+    add(
+        checks, "manifest HTML hash", "pass" if html_matches else "fail",
+        "HTML path and hash match the validated manifest" if html_matches else "HTML path or hash does not match the validated manifest",
+    )
+    pdf_record = manifest.get("pdf") if isinstance(manifest.get("pdf"), dict) else {}
+    pdf_matches = bool(
+        pdf_path
+        and pdf_record.get("path")
+        and Path(pdf_record["path"]).resolve() == pdf_path.resolve()
+        and pdf_record.get("sha256") == file_hash(pdf_path)
+    )
+    add(
+        checks, "manifest PDF hash", "pass" if pdf_matches else "fail",
+        "PDF path and hash match the validated manifest" if pdf_matches else "PDF path or hash does not match the validated manifest",
+    )
+
+
+def check_html_overflow(path: Path, layout_script: Path, checks: list[Check]) -> None:
+    try:
+        result = subprocess.run(
+            ["node", str(layout_script), "--html", str(path)],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=60,
+        )
+        measurement = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        add(checks, "overflow measurement", "degraded", f"Playwright layout measurement unavailable: {exc}")
+        return
+    status = measurement.get("status")
+    if status not in {"pass", "fail", "degraded"}:
+        status = "degraded"
+    add(checks, "overflow measurement", status, measurement.get("message", "layout measurement returned no message"))
+
+
+def read_html(path: Path, checks: list[Check]) -> str | None:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        add(checks, "HTML file", "fail", f"cannot read {path}: {exc}")
+        return None
+    try:
+        html = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        add(checks, "UTF-8", "fail", f"HTML is not valid UTF-8: {exc}")
+        return None
+    add(checks, "UTF-8", "pass", "HTML decoded as UTF-8")
+    return html
+
+
+def validate_html(html: str, mode: str, required: list[str], checks: list[Check]) -> None:
+    parser = ResumeHTMLParser()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception as exc:  # HTMLParser is permissive, but malformed input must report clearly.
+        add(checks, "HTML parsing", "fail", f"could not parse HTML: {exc}")
+        return
+
+    lang = re.search(r"<html\b[^>]*\blang\s*=\s*([\"'])(.*?)\1", html, re.I | re.S)
+    if lang and lang.group(2).strip():
+        add(checks, "HTML lang", "pass", f"lang={lang.group(2).strip()}")
+    else:
+        add(checks, "HTML lang", "fail", "<html> must have a non-empty lang attribute")
+
+    if parser.h1_count == 1:
+        add(checks, "exactly one h1", "pass", "found exactly one h1")
+    else:
+        add(checks, "exactly one h1", "fail", f"found {parser.h1_count} h1 elements")
+
+    if parser.sections and all(section["has_h2"] for section in parser.sections):
+        add(checks, "section headings", "pass", "every section has an h2")
+    elif parser.sections:
+        missing = sum(not section["has_h2"] for section in parser.sections)
+        add(checks, "section headings", "fail", f"{missing} section(s) do not have an h2")
+    else:
+        add(checks, "section headings", "warn", "no section elements found")
+
+    visible_text = " ".join(parser.visible_parts).strip()
+    if visible_text and " ".join(parser.h1_text).strip():
+        add(checks, "text content", "pass", "key content is present as HTML text, not only img/svg")
+    else:
+        add(checks, "text content", "fail", "key content must be extractable HTML text, not only img/svg")
+
+    for text in required:
+        if text in visible_text:
+            add(checks, f"required text: {text}", "pass", "found in HTML text")
+        else:
+            add(checks, f"required text: {text}", "fail", "required text is missing from HTML text")
+
+    if mode == "visual":
+        if re.search(r"(?:fonts\.googleapis\.com|@import\s+url\s*\(\s*['\"]?https?://|@font-face[\s\S]{0,500}url\s*\(\s*https?://)", html, re.I):
+            add(checks, "external fonts", "warn", "external font resources may make rendering non-reproducible")
+        relative = re.findall(
+            r"<(?:link|img|script)\b[^>]*(?:href|src)\s*=\s*['\"](?!https?://|data:|#|/)([^'\"]+)",
+            html,
+            re.I,
+        )
+        if relative:
+            add(checks, "relative resources", "warn", "relative resources may depend on the working directory")
+    else:
+        ats_rules = [
+            (r"<img\b", "img", "ATS mode rejects img elements"),
+            (r"<svg\b", "svg", "ATS mode rejects svg elements"),
+            (r"<table\b", "table", "ATS mode rejects table layout"),
+            (r"overflow(?:-x|-y)?\s*:\s*hidden\b", "overflow hidden", "ATS mode rejects overflow hidden"),
+        ]
+        for pattern, name, message in ats_rules:
+            if re.search(pattern, html, re.I):
+                add(checks, name, "fail", message)
+        multi_column = re.search(
+            r"(?:grid-template-columns\s*:\s*(?:repeat\s*\(\s*[2-9]|[^;{}]*\S+\s+\S+)|column-count\s*:\s*[2-9]|columns\s*:\s*[2-9])",
+            html,
+            re.I,
+        )
+        if multi_column:
+            add(checks, "multi-column CSS", "fail", "ATS mode rejects obvious multi-column CSS")
+        toolbar_fixed = re.search(
+            r"(?:toolbar[^{]{0,120}\{[^}]*position\s*:\s*fixed|position\s*:\s*fixed[^}]{0,120}toolbar)",
+            html,
+            re.I | re.S,
+        )
+        if toolbar_fixed:
+            add(checks, "fixed toolbar", "fail", "ATS mode rejects position: fixed toolbar")
+
+
+def pdf_literal_text(data: bytes) -> str:
+    raw = data.decode("latin-1", errors="ignore")
+    pieces: list[str] = []
+    for match in re.finditer(r"\(((?:\\.|[^()\\])*)\)\s*T[Jj]", raw):
+        value = match.group(1)
+        value = re.sub(r"\\([\\()])", r"\1", value)
+        value = value.replace(r"\n", "\n").replace(r"\r", "\r")
+        pieces.append(value)
+    return "\n".join(pieces)
+
+
+def measure_pdf_text_bounds(page: Any) -> tuple[float, float] | None:
+    """Return the top and bottom text bounds in PDF coordinates."""
+    bounds: list[tuple[float, float]] = []
+
+    def visit_text(
+        text: str,
+        cm: Any,
+        tm: Any,
+        _font_dict: Any,
+        font_size: Any,
+    ) -> None:
+        if not text.strip():
+            return
+        try:
+            y = (float(tm[4]) * float(cm[1])) + (float(tm[5]) * float(cm[3])) + float(cm[5])
+            size = float(font_size or 10)
+        except (TypeError, ValueError, IndexError):
+            return
+        bounds.append((y + size, y - (size * 0.25)))
+
+    try:
+        page.extract_text(visitor_text=visit_text)
+    except Exception:
+        return None
+    if not bounds:
+        return None
+    return max(item[0] for item in bounds), min(item[1] for item in bounds)
+
+
+def validate_pdf(
+    path: Path,
+    required: list[str],
+    checks: list[Check],
+    check_layout: bool = False,
+    min_fill_ratio: float = 0.78,
+    page_margin_pt: float = 28.35,
+    bottom_safe_pt: float = 12.0,
+) -> None:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        add(checks, "PDF file", "fail", f"cannot read {path}: {exc}")
+        return
+
+    text = ""
+    page_count: int | None = None
+    reader: Any = None
+    dependency_error: str | None = None
+    try:
+        from pypdf import PdfReader  # Optional dependency; fallback below remains stdlib-only.
+
+        reader = PdfReader(str(path))
+        page_count = len(reader.pages)
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except ImportError as exc:
+        dependency_error = str(exc)
+        page_count = len(re.findall(rb"/Type\s*/Page(?:\s|/|>)", data))
+        text = pdf_literal_text(data)
+    except Exception as exc:
+        dependency_error = str(exc)
+        page_count = len(re.findall(rb"/Type\s*/Page(?:\s|/|>)", data))
+        text = pdf_literal_text(data)
+
+    if page_count == 1:
+        add(checks, "PDF page count", "pass", "1 page")
+    elif page_count and page_count > 1:
+        add(checks, "PDF page count", "fail", f"expected 1 page, found {page_count}")
+    else:
+        add(checks, "PDF page count", "fail", "no PDF pages detected")
+    if text.strip():
+        add(checks, "PDF text extraction", "pass", "text can be extracted")
+    else:
+        add(checks, "PDF text extraction", "fail", "no extractable text found")
+    for value in required:
+        if value in text:
+            add(checks, f"required text: {value}", "pass", "found in PDF text")
+        else:
+            add(checks, f"required text: {value}", "fail", "required text is missing from PDF text")
+
+    if check_layout:
+        if reader is None:
+            add(
+                checks,
+                "PDF layout dependency",
+                "degraded",
+                f"pypdf layout parsing unavailable: {dependency_error or 'unknown error'}; install requirements-test.txt and retry",
+            )
+        if page_count != 1:
+            add(checks, "page fill", "fail", "layout check requires exactly one readable PDF page")
+        elif reader is None:
+            add(checks, "page fill", "degraded", "无法从当前 PDF 解析页面占用率，不可作为已验证交付物")
+        else:
+            bounds = measure_pdf_text_bounds(reader.pages[0])
+            if bounds is None:
+                add(checks, "page fill", "warn", "无法从 PDF 文本测量页面占用率")
+            else:
+                top_y, bottom_y = bounds
+                page_height = float(reader.pages[0].mediabox.height)
+                printable_height = page_height - (2 * page_margin_pt)
+                occupied_height = (page_height - page_margin_pt) - bottom_y
+                fill_ratio = occupied_height / printable_height if printable_height > 0 else 0
+                top_space = max((page_height - page_margin_pt) - top_y, 0)
+                bottom_space = max(bottom_y - page_margin_pt, 0)
+                imbalance = abs(top_space - bottom_space)
+                if imbalance > 56.7:
+                    add(
+                        checks,
+                        "vertical balance",
+                        "warn",
+                        f"上下留白差 {imbalance:.1f}pt，建议让上下间距更接近",
+                    )
+                else:
+                    add(
+                        checks,
+                        "vertical balance",
+                        "pass",
+                        f"上下留白差 {imbalance:.1f}pt",
+                    )
+                if bottom_y < page_margin_pt:
+                    add(
+                        checks,
+                        "bottom safety",
+                        "fail",
+                        f"内容已超出可打印底部安全区（bottom={bottom_y:.1f}pt）",
+                    )
+                elif (bottom_y - page_margin_pt) < bottom_safe_pt:
+                    add(
+                        checks,
+                        "bottom safety",
+                        "warn",
+                        f"底部安全余量仅 {bottom_y - page_margin_pt:.1f}pt",
+                    )
+                else:
+                    add(
+                        checks,
+                        "bottom safety",
+                        "pass",
+                        f"底部安全余量 {bottom_y - page_margin_pt:.1f}pt",
+                    )
+                fill_message = f"页面占用率 {fill_ratio:.0%}（目标 ≥ {min_fill_ratio:.0%}）"
+                if fill_ratio < min_fill_ratio:
+                    add(checks, "page fill", "warn", f"{fill_message}，页面偏空")
+                else:
+                    add(checks, "page fill", "pass", fill_message)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Validate HTML/PDF resume output")
+    parser.add_argument("--html", type=Path)
+    parser.add_argument("--mode", choices=("visual", "ats"), default="visual")
+    parser.add_argument("--pdf", type=Path)
+    parser.add_argument("--required-text", nargs="+", default=[], metavar="TEXT")
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--check-overflow", action="store_true")
+    parser.add_argument(
+        "--layout-script",
+        type=Path,
+        default=Path(__file__).with_name("measure_resume_layout.mjs"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--check-layout",
+        action="store_true",
+        help="check one-page layout, printable bottom safety, and text fill ratio",
+    )
+    parser.add_argument(
+        "--min-fill-ratio",
+        type=float,
+        default=0.78,
+        help="warn when measurable PDF text occupies less than this ratio of the printable height",
+    )
+    parser.add_argument("--manifest", type=Path, help="write an HTML/PDF delivery manifest")
+    parser.add_argument("--verify-manifest", type=Path, help="verify hashes in an existing delivery manifest")
+    parser.add_argument("--renderer", help="renderer identity in NAME@VERSION form")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    checks: list[Check] = []
+    if not args.html and not args.pdf:
+        add(checks, "input", "fail", "provide --html and/or --pdf")
+    if args.html:
+        html = read_html(args.html, checks)
+        if html is not None:
+            validate_html(html, args.mode, args.required_text, checks)
+            if args.check_overflow:
+                check_html_overflow(args.html, args.layout_script, checks)
+    if args.pdf:
+        validate_pdf(
+            args.pdf,
+            args.required_text,
+            checks,
+            check_layout=args.check_layout,
+            min_fill_ratio=args.min_fill_ratio,
+        )
+
+    if args.verify_manifest:
+        try:
+            manifest = json.loads(args.verify_manifest.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                raise ValueError("manifest root must be an object")
+            verify_manifest_record(manifest, args.html, args.pdf, args.renderer, checks)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            add(checks, "manifest", "fail", f"cannot verify manifest: {exc}")
+
+    has_failures = any(check.status == "fail" for check in checks)
+    degraded = any(check.status == "degraded" for check in checks)
+    deliverable = not has_failures and not degraded
+    ok = deliverable
+    report = {
+        "ok": ok,
+        "deliverable": deliverable,
+        "checks": [check.as_dict() for check in checks],
+        "summary": {
+            "pass": sum(check.status == "pass" for check in checks),
+            "warn": sum(check.status == "warn" for check in checks),
+            "fail": sum(check.status == "fail" for check in checks),
+            "degraded": sum(check.status == "degraded" for check in checks),
+        },
+    }
+    if args.manifest:
+        if not args.html or not args.pdf:
+            add(checks, "manifest inputs", "fail", "manifest generation requires both --html and --pdf")
+            deliverable = False
+            report["ok"] = False
+            report["deliverable"] = False
+        try:
+            renderer = parse_renderer(args.renderer or "")
+        except ValueError as exc:
+            renderer = {"name": "unknown", "version": "unknown"}
+            add(checks, "manifest renderer", "degraded", str(exc))
+            deliverable = False
+            report["ok"] = False
+            report["deliverable"] = False
+        report["checks"] = [check.as_dict() for check in checks]
+        report["summary"] = {
+            "pass": sum(check.status == "pass" for check in checks),
+            "warn": sum(check.status == "warn" for check in checks),
+            "fail": sum(check.status == "fail" for check in checks),
+            "degraded": sum(check.status == "degraded" for check in checks),
+        }
+        record = {
+            "schemaVersion": 1,
+            "status": "valid" if deliverable else "invalid",
+            "html": {"path": str(args.html.resolve()), "sha256": file_hash(args.html)} if args.html else None,
+            "pdf": {"path": str(args.pdf.resolve()), "sha256": file_hash(args.pdf)} if args.pdf else None,
+            "renderer": renderer,
+            "validation": report,
+        }
+        args.manifest.parent.mkdir(parents=True, exist_ok=True)
+        args.manifest.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.as_json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        for check in checks:
+            print(f"[{check.status.upper()}] {check.name}: {check.message}")
+    if any(check.status == "fail" for check in checks):
+        return 1
+    if any(check.status == "degraded" for check in checks):
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

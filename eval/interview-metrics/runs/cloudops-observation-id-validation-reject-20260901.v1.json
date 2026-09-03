@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "paw.cloudops-observation-id-validation-reject.v1",
+  "runId": "cloudops-observation-id-validation-reject-20260901-v1",
+  "status": "validation_rejected",
+  "measuredAt": "2026-09-01",
+  "frozenIdentity": {
+    "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-a1bb684fe6",
+    "runtimeManifestSha256": "4ff63aa5b77d620b70f9e430a009d93450a8a297e9602d3bcc96820fe7b29211",
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "split": "validation",
+    "heldOutObserved": false
+  },
+  "candidate": {
+    "trialId": "cloudops-paw-observation-id-root-20260901-v4",
+    "workflowProfile": "observation-id-v1",
+    "reportSha256": "70387feee063a20637f7f8374dd4b307250316baf44e80fa9a16ea337bfd468a",
+    "artifactJournalSha256": "dc8594b23b068e9dfefe3483402278b1747dc5032f58778632ab6281db04dc03"
+  },
+  "comparison": {
+    "baseline": {
+      "ca": 1.0,
+      "jra": 0.8333333333333334,
+      "top3Jra": 0.8333333333333334,
+      "toolCalls": 98,
+      "failedToolCalls": 0,
+      "elapsedMs": 1356582
+    },
+    "observationIdCandidate": {
+      "ca": 0.5,
+      "fa": 0.5833333333333334,
+      "jra": 0.4166666666666667,
+      "top3Jra": 0.5,
+      "answerCoverage": 1.0,
+      "toolCalls": 94,
+      "searchCalls": 23,
+      "listCalls": 9,
+      "readCalls": 56,
+      "failedToolCalls": 0,
+      "elapsedMs": 1248603,
+      "usageAvailable": false
+    },
+    "delta": {
+      "caAbsolute": -0.5,
+      "jraAbsolute": -0.4166666666666667,
+      "top3JraAbsolute": -0.33333333333333337,
+      "toolCallsAbsolute": -4,
+      "toolCallsRelative": -0.04081632653061224,
+      "elapsedMsAbsolute": -107979,
+      "elapsedRelative": -0.07959636793057846
+    }
+  },
+  "failedCases": [
+    "boutique/runtime/1",
+    "boutique/codedefect/1",
+    "boutique/performance/1",
+    "trainticket/runtime/1",
+    "trainticket/service/1",
+    "trainticket/performance/1",
+    "trainticket/performance/2"
+  ],
+  "decision": {
+    "result": "reject_and_stop",
+    "toolContractResult": "passed",
+    "qualityResult": "failed",
+    "reasons": [
+      "all 12 cases produced answers and the short observationId path completed with zero Tool failures",
+      "Tool calls remained within the predeclared ceiling, but CA, JRA and Top3JRA all regressed materially from the frozen baseline",
+      "the Tool-only change did not preserve diagnosis quality, so the baseline remains the Validation incumbent",
+      "the predeclared stop rule forbids a fifth tuning run on this Validation suite"
+    ],
+    "incumbent": "cloudops-paw-baseline-root-20260901-v3"
+  },
+  "verification": {
+    "answerCount": 12,
+    "batchCount": 3,
+    "allReadsUsedObservationId": true,
+    "publicCacheKeyReads": 0,
+    "candidateInstalled": false,
+    "heldOutObserved": false
+  },
+  "claim": {
+    "allowed": "On the same 12-case CloudOps Validation suite, the short observationId Tool contract eliminated the v3 cache-key Tool failure and completed 94 calls with zero Tool errors, but diagnosis quality regressed to CA 0.50, JRA 0.4167 and Top3JRA 0.50. The candidate was rejected and the frozen baseline remains incumbent.",
+    "forbidden": "The observationId candidate improved CloudOps diagnosis quality, passed Validation, reduced token cost, consumed Held-out, was installed, or justifies another tuning run on the same Validation suite."
+  }
+}

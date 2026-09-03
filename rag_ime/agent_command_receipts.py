@@ -164,7 +164,7 @@ class AgentCommandReceiptStore:
 
             if str(row["payload_sha256"]) != digest:
                 raise _new_command_required_conflict(
-                    "clientMessageId was already used for a different command payload",
+                    "clientMessageId belongs to a different command",
                     client_message_id=client_message_id,
                 )
             state = str(row["state"])
@@ -234,7 +234,7 @@ class AgentCommandReceiptStore:
                 )
             if str(row["payload_sha256"]) != digest:
                 raise _new_command_required_conflict(
-                    "clientMessageId was already used for a different command payload",
+                    "clientMessageId belongs to a different command",
                     client_message_id=client_message_id,
                 )
             state = str(row["state"])
@@ -355,7 +355,7 @@ class AgentCommandReceiptStore:
             return None
         if str(row["payload_sha256"]) != digest:
             raise _new_command_required_conflict(
-                "clientMessageId was already used for a different command payload",
+                "clientMessageId belongs to a different command",
                 client_message_id=client_message_id,
             )
         if str(row["state"]) != "pending":

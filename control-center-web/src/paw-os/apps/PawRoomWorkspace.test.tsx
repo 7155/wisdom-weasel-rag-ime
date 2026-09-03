@@ -82,6 +82,53 @@ describe('PAWOS Room collaboration tools', () => {
     expect(await screen.findByRole('textbox', { name: '协作消息' })).toHaveValue('@Mars ');
   });
 
+  it('shows submitted partner results separately while the Room still awaits its Root terminal', async () => {
+    const source = previewRoomSnapshot('room-partner-results');
+    const events = source.events.slice(0, 13);
+    const room = { ...source.room, lastEventSequence: 13 };
+    const snapshot = {
+      ...source,
+      room,
+      events,
+      lastSequence: 13,
+      resumeToken: 'room-partner-results:13',
+    };
+
+    renderRoom(900, vi.fn(), room as unknown as RoomSummary, snapshot);
+
+    await screen.findByRole('textbox', { name: '协作消息' });
+    await waitFor(() => expect(useRoomLiveStore.getState().projections[source.room.id]?.lastSequence).toBe(13));
+    expect(document.querySelector('.paw-room-workspace__runtime')).toHaveTextContent('伙伴已提交，等待 Root');
+    expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('2 伙伴已提交结果');
+    expect(screen.queryByText('Room 已完成')).not.toBeInTheDocument();
+    const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
+    expect(within(rounds).getByRole('region', { name: 'Earth 主控汇报' })).toBeInTheDocument();
+    expect(within(rounds).queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '停止整轮协作' })).not.toBeInTheDocument();
+  });
+
+  it('labels a Room sync failure offline while retaining the last Room metadata', async () => {
+    const source = previewRoomSnapshot('room-offline');
+    renderRoom(
+      900,
+      vi.fn(),
+      source.room as unknown as RoomSummary,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      undefined,
+      undefined,
+      true,
+      true,
+    );
+
+    await waitFor(() => expect(document.querySelector('.paw-room-workspace__runtime')).toHaveTextContent('同步离线 · 历史已保留'));
+    expect(document.querySelector('.paw-room-workspace')).toHaveAttribute('data-status', 'failed');
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Room 当前协作' })).toHaveTextContent('任务图依赖验证');
+  });
+
   it('binds a normal Room message to the active executable WorkItem', async () => {
     const user = userEvent.setup();
     const { room, transport } = renderRoom(900);
@@ -145,7 +192,7 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.getByLabelText('待发送附件')).toHaveTextContent('start-scope.png');
     expect(useRoomLiveStore.getState().projections[room.id]?.optimisticByClientMessageId)
       .toEqual({});
-    expect(transport.requests.at(-1)?.request).toMatchObject({
+    expect(transport.requests.find(({ request }) => request.pathId === 'agent.room.startGate.confirm')?.request).toMatchObject({
       pathId: 'agent.room.startGate.confirm',
       body: { gateId: 'room-gate:preview', decision: 'reject' },
     });
@@ -160,10 +207,10 @@ describe('PAWOS Room collaboration tools', () => {
 
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
     expect(within(primaryNavigation).getAllByRole('button')).toHaveLength(4);
-    for (const label of ['任务表', '协同模式', '公开记录', '星空']) {
+    for (const label of ['任务', '协同模式', '公开记录', '星空']) {
       expect(within(primaryNavigation).getByRole('button', { name: label })).toHaveAttribute('aria-label', label);
     }
-    expect(within(primaryNavigation).getByRole('button', { name: '任务表' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(primaryNavigation).getByRole('button', { name: '任务' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(primaryNavigation).getByRole('button', { name: '协同模式' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '公开记录' })).toHaveAttribute('aria-pressed', 'false');
     expect(within(primaryNavigation).getByRole('button', { name: '星空' })).toHaveAttribute('aria-pressed', 'false');
@@ -172,9 +219,10 @@ describe('PAWOS Room collaboration tools', () => {
 
     const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
     expect(within(rounds).getByText('并行实现 Room 任务图与依赖数据，整合后交给独立伙伴复核。')).toBeInTheDocument();
-    expect(within(rounds).getByRole('region', { name: 'Venus 当前任务' })).toBeInTheDocument();
+    expect(within(rounds).queryByRole('table')).not.toBeInTheDocument();
     expect(within(rounds).getByRole('region', { name: 'Earth 最终结果' })).toBeInTheDocument();
     expect(within(rounds).getByRole('region', { name: 'Mars 最终结果' })).toBeInTheDocument();
+    expect(within(rounds).getByRole('region', { name: 'Venus 当前任务' })).toBeInTheDocument();
     expect(screen.queryByRole('log', { name: 'Room 公开对话' })).not.toBeInTheDocument();
     expect(openWindow).not.toHaveBeenCalled();
 
@@ -210,14 +258,109 @@ describe('PAWOS Room collaboration tools', () => {
     expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-panel', 'none');
     expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-view', 'rounds');
-    expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(null);
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-collaboration-mode', 'true');
+    expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(`room:${room.id}`);
+    expect(within(primaryNavigation).getByRole('button', { name: '协同模式' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(primaryNavigation).getByRole('button', { name: '协同模式' })).toHaveFocus();
+
+    await user.click(within(primaryNavigation).getByRole('button', { name: '任务' }));
+    expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(null);
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-collaboration-mode', 'false');
+    expect(within(primaryNavigation).getByRole('button', { name: '任务' })).toHaveAttribute('aria-pressed', 'true');
 
     /* Default conversation path pays nothing for the sky: no region, no
      * canvas, and the starfield module itself was never evaluated. */
     expect(screen.queryByRole('region', { name: 'Room 星空' })).not.toBeInTheDocument();
     expect(starfieldChunk.evaluated).toBe(false);
   });
+  it('opens a participant observer after the inline panel closes while Room focus remains desktop-owned', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn();
+    const rendered = renderRoom(
+      900,
+      openWindow,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(),
+      undefined,
+      undefined,
+      true,
+      false,
+      'session-window',
+      'room:room-preview',
+    );
+    await screen.findByRole('textbox', { name: '协作消息' });
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    await waitFor(() => expect(openWindow).toHaveBeenCalledTimes(3));
+    openWindow.mockClear();
+
+    await user.click(screen.getByRole('button', { name: '关闭协作态势' }));
+    expect(rendered.container.querySelector('.paw-room-workspace')).toHaveAttribute('data-collaboration-mode', 'true');
+    const rounds = screen.getByRole('region', { name: 'Room 行星任务表' });
+    const mars = within(rounds).getByRole('region', { name: 'Mars 最终结果' });
+    await user.click(within(mars).getByRole('button', { name: '打开 Mars Session' }));
+
+    expect(openWindow).toHaveBeenCalledWith(expect.objectContaining({
+      background: false,
+      target: expect.objectContaining({
+        kind: 'participant',
+        id: 'participant-firstlight',
+      }),
+    }));
+  });
+
+  it('closes only the inline panel when Escape is handled inside the aside', async () => {
+    const user = userEvent.setup();
+    const setCollaborationFocusGroup = vi.fn();
+    const { container } = renderRoom(900, vi.fn(), undefined, undefined, undefined, undefined, setCollaborationFocusGroup);
+    await screen.findByRole('textbox', { name: '协作消息' });
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+
+    fireEvent.keyDown(tools, { bubbles: true, key: 'Escape' });
+
+    expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
+    expect(container.querySelector('.paw-room-workspace')).toHaveAttribute('data-collaboration-mode', 'true');
+    expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith('room:room-preview');
+  });
+
+  it('keeps same-Room desktop focus and inline posture across a workspace rerender', async () => {
+    const user = userEvent.setup();
+    const rendered = renderRoom(900, vi.fn(), undefined, undefined, undefined, undefined, vi.fn(), undefined, undefined, true, false, 'session-window', 'room:room-preview');
+    await screen.findByRole('textbox', { name: '协作消息' });
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    expect(screen.getByRole('complementary', { name: 'Room 协作态势' })).toBeInTheDocument();
+
+    rendered.setDesktopFocusGroup('room:room-preview');
+
+    expect(screen.getByRole('complementary', { name: 'Room 协作态势' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '协同模式' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('clears stale panel and participant selection when global focus exits this Room', async () => {
+    const user = userEvent.setup();
+    const rendered = renderRoom(900, vi.fn(), undefined, undefined, undefined, undefined, vi.fn(), undefined, undefined, true, false, 'session-window', 'room:room-preview');
+    await screen.findByRole('textbox', { name: '协作消息' });
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    const mars = within(tools).getByRole('button', { name: /^Mars，/ });
+    await user.click(mars);
+    expect(mars).toHaveAttribute('aria-pressed', 'true');
+
+    rendered.setDesktopFocusGroup(null);
+
+    expect(screen.queryByRole('complementary', { name: 'Room 协作态势' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '协同模式' })).toHaveAttribute('aria-pressed', 'false');
+    expect(rendered.container.querySelector('.paw-room-workspace')).toHaveAttribute('data-collaboration-mode', 'false');
+
+    rendered.setDesktopFocusGroup('room:room-preview');
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    const reopenedTools = screen.getByRole('complementary', { name: 'Room 协作态势' });
+    expect(within(reopenedTools).getByRole('button', { name: /^Mars，/ })).not.toHaveAttribute('aria-pressed', 'true');
+  });
+
 
   it('moves collaboration tool focus and selection with horizontal tablist keys', async () => {
     const user = userEvent.setup();
@@ -318,6 +461,33 @@ describe('PAWOS Room collaboration tools', () => {
     }));
   });
 
+  it('keeps participant process inspection inside an App-owned Room when requested', async () => {
+    const user = userEvent.setup();
+    const openWindow = vi.fn();
+    renderRoom(
+      900,
+      openWindow,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      false,
+      'room-transcript',
+    );
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    const marsResult = screen.getByRole('region', { name: 'Mars 最终结果' });
+    await user.click(within(marsResult).getByRole('button', { name: '打开 Mars Session' }));
+
+    expect(openWindow).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '公开记录' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Room 公开对话')).toBeInTheDocument();
+  });
+
   it('resumes a blocked WorkItem through the active Root and keeps failure retryable', async () => {
     const user = userEvent.setup();
     const completed = previewRoomSnapshot('room-blocked-resume');
@@ -351,6 +521,9 @@ describe('PAWOS Room collaboration tools', () => {
     );
     await screen.findByRole('textbox', { name: '协作消息' });
 
+    /* The current owner is Venus even though Earth remains accountable and
+       acts as the Root. Recovery belongs to the owner row; the Root actor is
+       asserted separately on the command below. */
     const resume = screen.getByRole('button', { name: '恢复 Venus 并重新分派' });
     await user.click(resume);
     await waitFor(() => expect(transport.requests.some(({ request }) => (
@@ -470,7 +643,7 @@ describe('PAWOS Room collaboration tools', () => {
     await screen.findByRole('textbox', { name: '协作消息' });
     const primaryNavigation = screen.getByRole('navigation', { name: 'Room 工作台视图' });
 
-    for (const view of ['任务表', '公开记录', '星空'] as const) {
+    for (const view of ['任务', '公开记录', '星空'] as const) {
       await user.click(within(primaryNavigation).getByRole('button', { name: '协同模式' }));
       await waitFor(() => expect(setCollaborationFocusGroup).toHaveBeenLastCalledWith(`room:${room.id}`));
       await user.click(within(primaryNavigation).getByRole('button', { name: view }));
@@ -588,9 +761,8 @@ describe('PAWOS Room collaboration tools', () => {
     // Room: an OS-drawn popup opening over the PAWOS window.
     expect(governance.querySelector('select')).toBeNull();
 
-    // Every picker used to spell its own choices out, so a member row saying
-    // 实现与验证 sat beside a picker saying 实现, and the 空间设置 header saying
-    // 每次确认 sat beside a picker saying 逐项确认.
+    // Every picker draws from the same user-facing vocabulary; the member row
+    // still exposes the longer responsibility description beside its picker.
     const roleRow = governance.querySelector('.paw-room-governance__members article') as HTMLElement;
     const memberName = within(roleRow).getByRole('combobox').getAttribute('aria-label')?.replace(' 的分工', '') ?? '';
     expect(within(roleRow).getByRole('combobox')).toHaveTextContent(roleRow.querySelector('small')?.textContent ?? '');
@@ -608,7 +780,7 @@ describe('PAWOS Room collaboration tools', () => {
     ))).toBe(true));
   });
 
-  it('offers only the two full-system collaboration permissions while displaying legacy state', async () => {
+  it('edits all three Room permission layers without falling back to the legacy projection', async () => {
     const user = userEvent.setup();
     const { container, transport } = renderRoom(900);
     await screen.findByRole('textbox', { name: '协作消息' });
@@ -617,23 +789,87 @@ describe('PAWOS Room collaboration tools', () => {
     const tools = screen.getByRole('complementary', { name: 'Room 协作态势' });
     await user.click(within(tools).getByRole('tab', { name: '治理' }));
     const governance = container.querySelector('.paw-room-governance') as HTMLElement;
-    const permission = within(governance).getByRole('combobox', { name: 'Room 执行权限' });
+    const roomPermission = within(governance).getByRole('combobox', {
+      name: 'Room 边界配置模式',
+    });
+    const partnerPermission = within(governance).getByRole('combobox', {
+      name: '行星 / Partner配置模式',
+    });
+    const toolAgentPermission = within(governance).getByRole('combobox', {
+      name: '卫星 / Tool Agent配置模式',
+    });
 
-    expect(permission).toHaveTextContent('工作区托管');
-    await user.click(permission);
-    const listbox = await screen.findByRole('listbox');
-    expect(within(listbox).getAllByRole('option')).toHaveLength(2);
-    expect(within(listbox).getByRole('option', { name: '全权限' })).toBeInTheDocument();
-    expect(within(listbox).getByRole('option', { name: '全自动' })).toBeInTheDocument();
-    expect(within(listbox).queryByRole('option', { name: '工作区托管' })).not.toBeInTheDocument();
+    expect(governance.querySelector('select')).toBeNull();
+    expect(roomPermission).toHaveTextContent('全自动');
+    expect(partnerPermission).toHaveTextContent('继承（Inherit）');
+    expect(toolAgentPermission).toHaveTextContent('继承（Inherit）');
+    expect(governance).toHaveTextContent('整个系统（/）；所选项目只提供上下文');
+    expect(governance).toHaveTextContent('继承 Room 边界');
+
+    await user.click(partnerPermission);
+    let listbox = await screen.findByRole('listbox');
     await user.click(within(listbox).getByRole('option', { name: '全权限' }));
+    await user.click(toolAgentPermission);
+    listbox = await screen.findByRole('listbox');
+    expect(within(listbox).getByRole('option', { name: '全自动' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    await user.click(within(listbox).getByRole('option', { name: '只读' }));
 
-    expect(governance).toHaveTextContent('整个系统与所有 Tool 可用；有影响的操作逐项请求确认');
+    expect(governance).toHaveTextContent('未继承，直接配置');
     await user.click(within(governance).getByRole('button', { name: '保存' }));
-    await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.room.archive')).toBe(true));
-    const request = transport.requests.find(({ request: item }) => item.pathId === 'agent.room.archive')?.request;
-    expect(request?.body).toMatchObject({ executionMode: 'per_action' });
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.room.archive'),
+    ).toBe(true));
+    const request = transport.requests.find(
+      ({ request: item }) => item.pathId === 'agent.room.archive',
+    )?.request;
+    expect(request?.body).toMatchObject({
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'per_action' },
+        toolAgent: { executionMode: 'read_only' },
+      },
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+    });
+    expect(request?.body).not.toHaveProperty('executionMode');
     expect(request?.body).not.toHaveProperty('workspaceScopeConfirmation');
+  });
+
+  it('keeps a legacy Room permission policy visibly unavailable and omits guessed authority', async () => {
+    const user = userEvent.setup();
+    const previewRoom = previewRoomSnapshot('room-legacy-policy').room;
+    const legacyRoom = {
+      ...previewRoom,
+      executionMode: 'full_trust',
+      permissionPolicy: undefined,
+    } as unknown as RoomSummary;
+    const { container, transport } = renderRoom(900, vi.fn(), legacyRoom);
+    await screen.findByRole('textbox', { name: '协作消息' });
+
+    await user.click(screen.getByRole('button', { name: '协同模式' }));
+    await user.click(within(
+      screen.getByRole('complementary', { name: 'Room 协作态势' }),
+    ).getByRole('tab', { name: '治理' }));
+    const governance = container.querySelector('.paw-room-governance') as HTMLElement;
+    expect(within(governance).getByLabelText('Room 分层权限不可用')).toHaveTextContent(
+      '界面不会猜测或补成全权限',
+    );
+    expect(within(governance).queryByRole('combobox', {
+      name: 'Room 边界配置模式',
+    })).not.toBeInTheDocument();
+
+    await user.click(within(governance).getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.room.archive'),
+    ).toBe(true));
+    const request = transport.requests.find(
+      ({ request: item }) => item.pathId === 'agent.room.archive',
+    )?.request;
+    expect(request?.body).not.toHaveProperty('permissionPolicy');
+    expect(request?.body).not.toHaveProperty('executionMode');
   });
 
   it('does not initialize an inactive Room surface', async () => {
@@ -683,6 +919,9 @@ function renderRoom(
   messageResponse?: Record<string, unknown>,
   initialError?: string,
   active = true,
+  snapshotFailure = false,
+  participantProcessLocation: 'session-window' | 'room-transcript' = 'session-window',
+  collaborationFocusGroup?: string | null,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const room = record ?? previewRoomSnapshot('room-preview').room as unknown as RoomSummary;
@@ -691,6 +930,9 @@ function renderRoom(
   const send = transport.request.bind(transport);
   transport.request = async <Response = unknown>(request: ControlRequest): Promise<Response> => {
     requests.push({ request });
+    if (snapshotFailure && request.pathId === 'agent.room.snapshot') {
+      throw new Error('Room sync offline');
+    }
     if (snapshotOverride && request.pathId === 'agent.room.snapshot') {
       return snapshotOverride as Response;
     }
@@ -705,43 +947,51 @@ function renderRoom(
     }
     return send<Response>(request);
   };
+  const focusState = { value: collaborationFocusGroup };
+  const renderSurface = () => (
+    <QueryClientProvider client={queryClient}>
+      <ControlTransportProvider transport={transport}>
+        <PawOsDesktopProvider collaborationFocusGroup={focusState.value} openWindow={openWindow} setCollaborationFocusGroup={setCollaborationFocusGroup}>
+          <TooltipProvider>
+            <PawWindowFrame
+              active
+              appId="agent"
+              bounds={{ x: 0, y: 0, width, height: 720 }}
+              onBoundsCommit={() => undefined}
+              onClose={() => undefined}
+              onFocus={() => undefined}
+              onMinimize={() => undefined}
+              onToggleMaximize={() => undefined}
+              title={`Room ${width}`}
+              windowChrome="agent-room"
+              windowId={`room-${width}`}
+              zIndex={10}
+            >
+              <PawRoomWorkspace
+                active={active}
+                initialDraft={initialDraft}
+                initialError={initialError}
+                participantProcessLocation={participantProcessLocation}
+                personas={[]}
+                record={room}
+                recordId={room.id}
+                onRoomUpdated={vi.fn()}
+              />
+            </PawWindowFrame>
+          </TooltipProvider>
+        </PawOsDesktopProvider>
+      </ControlTransportProvider>
+    </QueryClientProvider>
+  );
+  const rendered = render(renderSurface());
   return {
     transport: { requests },
     controlTransport: transport,
-    ...render(
-      <QueryClientProvider client={queryClient}>
-        <ControlTransportProvider transport={transport}>
-          <PawOsDesktopProvider openWindow={openWindow} setCollaborationFocusGroup={setCollaborationFocusGroup}>
-            <TooltipProvider>
-              <PawWindowFrame
-                active
-                appId="agent"
-                bounds={{ x: 0, y: 0, width, height: 720 }}
-                onBoundsCommit={() => undefined}
-                onClose={() => undefined}
-                onFocus={() => undefined}
-                onMinimize={() => undefined}
-                onToggleMaximize={() => undefined}
-                title={`Room ${width}`}
-                windowChrome="agent-room"
-                windowId={`room-${width}`}
-                zIndex={10}
-              >
-                <PawRoomWorkspace
-                  active={active}
-                  initialDraft={initialDraft}
-                  initialError={initialError}
-                  personas={[]}
-                  record={room}
-                  recordId={room.id}
-                  onRoomUpdated={vi.fn()}
-                />
-              </PawWindowFrame>
-            </TooltipProvider>
-          </PawOsDesktopProvider>
-        </ControlTransportProvider>
-      </QueryClientProvider>,
-    ),
+    ...rendered,
+    setDesktopFocusGroup: (next: string | null | undefined) => {
+      focusState.value = next;
+      rendered.rerender(renderSurface());
+    },
     room,
   };
 }

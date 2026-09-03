@@ -475,7 +475,16 @@ class ControlCenterCutoverTests(unittest.TestCase):
         build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn('if [[ "$CHANNEL" == "release" && "$SOURCE_DIRTY" == "true" ]]', build)
+        self.assertIn('if [[ "$CHANNEL" == "release"', build)
+        self.assertIn('&& "$SOURCE_DIRTY" == "true"', build)
+        self.assertIn('&& ! ( "$ACTION" == "install-release"', build)
+        self.assertIn('"${RAG_IME_ALLOW_DIRTY_INSTALL:-0}" == "1"', build)
+
+        footprint = (
+            ROOT / "scripts" / "check_control_center_footprint.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"${RAG_IME_ALLOW_DIRTY_INSTALL:-0}"', footprint)
+        self.assertIn('expected_dirty = allow_dirty == "1"', footprint)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Eval Room Optimizer"
+  short_description: "Ask for missing data, then run a proof-bounded Agent Lab evaluation"
+  default_prompt: "Use $agent-eval-room-optimizer as an interactive Agent Lab guide: ask for missing data and user choices first, freeze a comparable Validation contract, then route one evidence-backed candidate through a real Room and Host verifier."

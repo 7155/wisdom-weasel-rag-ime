@@ -4,6 +4,7 @@ import sessionSubagentCss from '../../features/agent/delegation/session-subagent
 import configurationCss from '../../features/configuration/configuration.css?raw';
 import contextDebugCss from '../../features/context-debug/context-debug.css?raw';
 import diagnosticsCss from '../../features/diagnostics/diagnostics.css?raw';
+import evolutionReportCss from '../../features/evolution-report/evolution-report.css?raw';
 import filesCss from '../../features/files/paw-os-files-app.css?raw';
 import filesSource from '../../features/files/PawOsFilesApp.tsx?raw';
 import activityTimelineCss from '../../features/memory/activity-timeline.css?raw';
@@ -66,6 +67,11 @@ const semanticReceipts: ReadonlyArray<{
       { css: diagnosticsCss, marker: 'monitor-diagnostics', selectors: [":is(main, section)[data-route-id='diagnostics'][data-paw-os-app]"] },
     ],
     sizes: [13, 14, 15],
+  },
+  {
+    app: 'Evolution Report',
+    blocks: [{ css: evolutionReportCss, marker: 'standalone-evolution', selectors: [":is(main, section).evolution-report[data-route-id='evolution-report'][data-report-surface='standalone']"] }],
+    sizes: [13],
   },
   {
     app: 'Settings',
@@ -808,6 +814,22 @@ describe('PAWOS semantic type roles', () => {
     expect(appCss).toMatch(/\.paw-room-governance article strong\s*\{[^}]*font-size:\s*14px;/s);
     expect(appCss).toMatch(/\.paw-room-governance article small\s*\{[^}]*font-size:\s*12px;/s);
     expect(appCss).toMatch(/\.paw-room-governance \.ui-select__trigger, \.paw-room-governance input\s*\{[^}]*font-size:\s*13px;/s);
+  });
+
+  it('keeps inactive collaboration satellites opaque and text-readable', () => {
+    expect(roomMigratedCss).not.toContain('filter: saturate(.82)');
+    expect(roomMigratedCss).not.toContain('opacity: .88');
+    expect(roomMigratedCss).toMatch(
+      /\.paw-window-shell\[data-frame-mode='planet'\] > \.paw-planet-surface\s*\{[^}]*background:\s*#fff;[^}]*color:\s*#202834;/s,
+    );
+  });
+
+  it('reserves an in-bounds final column for the Agent Home send button', () => {
+    expect(agentNextCss).toMatch(
+      /\.an-composer-foot\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*max-content repeat\(3, minmax\(0, 1fr\)\) 32px;/s,
+    );
+    expect(agentNextCss).toMatch(/\.an-anchor\s*\{[^}]*min-width:\s*0;/s);
+    expect(agentNextCss).toMatch(/\.an-send\s*\{[^}]*margin-left:\s*0;[^}]*justify-self:\s*end;/s);
   });
 
   it('keeps the Room task-sheet readable, scrollable, and collaboration reachable in narrow windows', () => {

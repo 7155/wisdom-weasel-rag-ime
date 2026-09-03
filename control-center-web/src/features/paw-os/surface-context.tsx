@@ -27,7 +27,7 @@ export type PawOsWindowRequest = {
   background?: boolean;
 };
 
-type PawOsDesktopControls = {
+export type PawOsDesktopControls = {
   openWindow: (request: PawOsWindowRequest) => void;
   openApp?: (appId: PawOsDesktopAppId, initialRoute?: string) => void;
   openRoute?: (route: string) => void;
@@ -36,6 +36,8 @@ type PawOsDesktopControls = {
     target?: Extract<PawOsWindowTarget, { kind: 'session' | 'room' }>,
   ) => void;
   bindRoomMain?: (target: Extract<PawOsWindowTarget, { kind: 'room' }>) => void;
+  /** Desktop-owned focus state; App surfaces may observe but never own it. */
+  readonly collaborationFocusGroup?: string | null;
   setCollaborationFocusGroup?: (group: string | null) => void;
   closeWindow?: (windowId: string) => void;
 };
@@ -46,6 +48,7 @@ export function PawOsDesktopProvider({
   children,
   bindAgentMain,
   bindRoomMain,
+  collaborationFocusGroup,
   setCollaborationFocusGroup,
   closeWindow,
   openApp,
@@ -55,13 +58,14 @@ export function PawOsDesktopProvider({
   children: ReactNode;
   bindAgentMain?: PawOsDesktopControls['bindAgentMain'];
   bindRoomMain?: PawOsDesktopControls['bindRoomMain'];
+  collaborationFocusGroup?: PawOsDesktopControls['collaborationFocusGroup'];
   setCollaborationFocusGroup?: PawOsDesktopControls['setCollaborationFocusGroup'];
   closeWindow?: PawOsDesktopControls['closeWindow'];
   openApp?: PawOsDesktopControls['openApp'];
   openRoute?: PawOsDesktopControls['openRoute'];
   openWindow: PawOsDesktopControls['openWindow'];
 }) {
-  const value = useMemo(() => ({ bindAgentMain, bindRoomMain, setCollaborationFocusGroup, closeWindow, openApp, openRoute, openWindow }), [bindAgentMain, bindRoomMain, setCollaborationFocusGroup, closeWindow, openApp, openRoute, openWindow]);
+  const value = useMemo(() => ({ bindAgentMain, bindRoomMain, collaborationFocusGroup, setCollaborationFocusGroup, closeWindow, openApp, openRoute, openWindow }), [bindAgentMain, bindRoomMain, collaborationFocusGroup, setCollaborationFocusGroup, closeWindow, openApp, openRoute, openWindow]);
   return <PawOsDesktopContext.Provider value={value}>{children}</PawOsDesktopContext.Provider>;
 }
 

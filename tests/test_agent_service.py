@@ -210,35 +210,6 @@ class AgentServiceTests(unittest.TestCase):
             ],
             "judgeScores": [],
             "findings": [],
-            "presentation": {
-                "headline": "证据不足，无法归因。",
-                "impact": "任务完成状态保持未知。",
-                "primaryFindingId": "",
-                "knownFacts": [],
-                "evidenceGaps": [
-                    {
-                        "gap": "缺少权威完成回执。",
-                        "consequence": "无法判断任务是否完成。",
-                        "howToObtain": "重新执行并冻结终态回执。",
-                    }
-                ],
-                "causalNodes": [],
-                "expectedStageCount": 0,
-                "recordedStageReceiptEvidenceIds": [],
-                "failureAttribution": {
-                    "primaryLayer": "unknown",
-                    "summary": "五层归因均缺少足够证据。",
-                    "layers": [
-                        {
-                            "layer": layer,
-                            "verdict": "unknown",
-                            "explanation": "缺少冻结证据。",
-                            "evidenceIds": [],
-                        }
-                        for layer in ("tool", "skill", "template", "workflow", "model")
-                    ],
-                },
-            },
         }
         public_snapshot = {
             "ok": True,
@@ -562,6 +533,10 @@ class AgentServiceTests(unittest.TestCase):
 
         listed = self.service.list_sessions()
         self.assertEqual(listed["items"][0]["id"], session_id)
+        directory_item = self.service.list_sessions({"projectionOnly": True})["items"][0]
+        self.assertEqual(directory_item["id"], session_id)
+        self.assertNotIn("sessionFile", directory_item)
+        self.assertNotIn("runtimeBinding", directory_item)
         renamed = self.service.update_session(session_id, {"title": "检索会话"})
         self.assertEqual(renamed["session"]["title"], "检索会话")
         archived = self.service.update_session(session_id, {"archived": True})
@@ -2647,6 +2622,10 @@ class AgentServiceTests(unittest.TestCase):
                     "response": {"success": True},
                 },
             ) as prompt,
+            patch.object(
+                self.service.sessions,
+                "invalidate_recent_message_projection",
+            ) as invalidate_recent,
         ):
             response = self.service.rewrite_session(
                 session_id,
@@ -2661,6 +2640,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["sessionId"], session_id)
         self.assertEqual(response["entryId"], "entry-user-1")
         rewind.assert_called_once_with(session_id, entry_id="entry-user-1")
+        invalidate_recent.assert_called_once_with(session_id)
         self.assertEqual(prompt.call_args.args[0], session_id)
         runtime_message = str(prompt.call_args.args[1])
         self.assertTrue(runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
@@ -3620,7 +3600,10 @@ class AgentServiceTests(unittest.TestCase):
             "turnId": "root:recent",
             "sequence": 1,
             "createdAtMs": 10,
-            "payload": {"text": "先显示正在发生的工作"},
+            "payload": {
+                "text": "先显示正在发生的工作",
+                "clientMessageId": "room-client-recent",
+            },
         }
         for index in range(80):
             self.service.events.publish(
@@ -3667,6 +3650,10 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             [item["id"] for item in response["items"]],
             ["room-event:room:user:recent"],
+        )
+        self.assertEqual(
+            response["items"][0]["clientMessageId"],
+            "room-client-recent",
         )
 
     def test_recent_room_message_snapshot_never_loads_full_room_history(
@@ -3913,33 +3900,389 @@ class AgentServiceTests(unittest.TestCase):
             ["busy"],
         )
 
-    def test_recent_view_keeps_ordinary_session_on_full_snapshot_contract(
+    def test_recent_view_keeps_ordinary_session_off_the_full_runtime_restore(
         self,
     ) -> None:
         session = self.service.create_session(
             {"title": "普通 Session 近期请求"}
         )["session"]
         session_id = str(session["id"])
-        runtime_snapshot = {
-            "messages": [],
-            "toolHistoryEvents": [],
-            "telemetry": None,
-            "messageQueue": None,
+        for index in range(80):
+            self.service.events.publish(
+                session_id,
+                "reasoning_summary",
+                {"summary": f"普通 Session 近期进展 {index + 1}"},
+                turn_id="turn:recent-session",
+                created_at_ms=100 + index,
+            )
+        recent_message = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "recent:assistant",
+            "sessionId": session_id,
+            "turnId": "history:recent:user",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [{
+                "id": "history:recent:user:text:0",
+                "type": "text",
+                "status": "completed",
+                "presentationKind": "markdown",
+                "data": {"text": "最近一轮已经完成"},
+            }],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 100,
+            "completedAtMs": 100,
         }
-        with patch.object(
-            self.service.runtime,
-            "session_snapshot",
-            create=True,
-            return_value=runtime_snapshot,
-        ) as session_snapshot:
+        with (
+            patch.object(
+                self.service.runtime,
+                "recent_session_snapshot",
+                create=True,
+                return_value={"messages": [recent_message]},
+            ) as recent_snapshot,
+            patch.object(
+                self.service.runtime,
+                "session_snapshot",
+                create=True,
+                side_effect=AssertionError(
+                    "recent ordinary Session snapshot must not restore Pi transcript"
+                ),
+            ),
+            patch.object(
+                self.service.runtime,
+                "messages",
+                create=True,
+                side_effect=AssertionError(
+                    "recent ordinary Session snapshot must not load full messages"
+                ),
+            ),
+        ):
             response = self.service.message_snapshot.messages(
                 session_id,
                 view="recent",
             )
 
-        session_snapshot.assert_called_once_with(session_id)
-        self.assertNotIn("snapshotScope", response)
-        self.assertNotIn("partial", response)
+        recent_snapshot.assert_called_once_with(session_id)
+        self.assertEqual(response["snapshotScope"], "recent")
+        self.assertTrue(response["partial"])
+        self.assertEqual(len(response["liveEvents"]), 48)
+        self.assertEqual(response["recentFromSequence"], 33)
+        self.assertEqual(response["lastSequence"], 80)
+        self.assertEqual(response["resumeToken"], f"{session_id}:80")
+        self.assertEqual(
+            [item["id"] for item in response["items"]],
+            ["recent:assistant"],
+        )
+
+    def test_recent_view_restores_unpersisted_active_text_stream(self) -> None:
+        session = self.service.create_session(
+            {"title": "近期快照恢复当前输出"}
+        )["session"]
+        session_id = str(session["id"])
+        turn_id = "turn:recent-active-stream"
+        self.service.sessions.set_status(session_id, "busy")
+        durable = self.service.events.publish(
+            session_id,
+            "status_changed",
+            {"status": "busy"},
+            turn_id=turn_id,
+        )
+        for index in range(100):
+            self.service.events.publish(
+                session_id,
+                "text_delta",
+                {
+                    "messageId": f"{turn_id}:assistant",
+                    "blockId": f"{turn_id}:assistant:text",
+                    "contentIndex": 0,
+                    "delta": f"chunk-{index};",
+                    "replaceBlock": index == 0,
+                },
+                turn_id=turn_id,
+            )
+
+        with patch.object(
+            self.service.runtime,
+            "recent_session_snapshot",
+            create=True,
+            return_value={"messages": [], "toolHistoryEvents": []},
+        ):
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        self.assertEqual(
+            self.service.sessions.max_event_sequence(session_id),
+            durable.sequence,
+        )
+        self.assertEqual(response["lastSequence"], 101)
+        self.assertEqual(response["resumeToken"], f"{session_id}:101")
+        deltas = [
+            event
+            for event in response["liveEvents"]
+            if event["eventType"] == "text_delta"
+        ]
+        self.assertEqual(len(deltas), 1)
+        self.assertTrue(deltas[0]["payload"]["replaceBlock"])
+        self.assertEqual(
+            deltas[0]["payload"]["delta"],
+            "".join(f"chunk-{index};" for index in range(100)),
+        )
+
+    def test_recent_room_view_restores_unpersisted_active_text_stream(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "Room 近期快照恢复当前输出"}
+        )["session"]
+        session_id = str(session["id"])
+        turn_id = "turn:recent-room-active-stream"
+        self.service.sessions.set_status(session_id, "busy")
+        durable = self.service.events.publish(
+            session_id,
+            "status_changed",
+            {"status": "busy"},
+            turn_id=turn_id,
+        )
+        for index in range(100):
+            self.service.events.publish(
+                session_id,
+                "text_delta",
+                {
+                    "messageId": f"{turn_id}:assistant",
+                    "blockId": f"{turn_id}:assistant:text",
+                    "contentIndex": 0,
+                    "delta": f"room-{index};",
+                    "replaceBlock": index == 0,
+                },
+                turn_id=turn_id,
+            )
+
+        with patch.object(
+            self.service.message_snapshot,
+            "_room_recent_public_messages",
+            return_value={"participantId": "participant:recent", "events": []},
+        ):
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        self.assertEqual(
+            self.service.sessions.max_event_sequence(session_id),
+            durable.sequence,
+        )
+        self.assertEqual(response["lastSequence"], 101)
+        self.assertEqual(response["resumeToken"], f"{session_id}:101")
+        deltas = [
+            event
+            for event in response["liveEvents"]
+            if event["eventType"] == "text_delta"
+        ]
+        self.assertEqual(len(deltas), 1)
+        self.assertTrue(deltas[0]["payload"]["replaceBlock"])
+        self.assertEqual(
+            deltas[0]["payload"]["delta"],
+            "".join(f"room-{index};" for index in range(100)),
+        )
+
+    def test_recent_view_restores_bounded_durable_tool_progress(self) -> None:
+        session = self.service.create_session({"title": "近期工具进度"})["session"]
+        session_id = str(session["id"])
+        history = [
+            AgentEventEnvelope(
+                event_id=f"{session_id}:history:reasoning",
+                session_id=session_id,
+                turn_id="history:user",
+                sequence=1,
+                created_at_ms=100,
+                event_type="reasoning_summary",
+                payload={"summary": "正在核对文件", "items": ["正在核对文件"], "state": "completed"},
+                resume_token=f"{session_id}:history:reasoning",
+            ).to_payload(),
+            AgentEventEnvelope(
+                event_id=f"{session_id}:history:tool",
+                session_id=session_id,
+                turn_id="history:user",
+                sequence=2,
+                created_at_ms=110,
+                event_type="tool_finished",
+                payload={"toolCallId": "tool:recent", "toolName": "workspace_read", "isError": False},
+                resume_token=f"{session_id}:history:tool",
+            ).to_payload(),
+        ]
+        with patch.object(
+            self.service.runtime,
+            "recent_session_snapshot",
+            create=True,
+            return_value={"messages": [], "toolHistoryEvents": history},
+        ):
+            response = self.service.message_snapshot.messages(session_id, view="recent")
+
+        self.assertEqual(
+            [event["eventId"] for event in response["liveEvents"]],
+            [event["eventId"] for event in history],
+        )
+
+    def test_recent_view_keeps_durable_pending_user_after_long_live_activity(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "刷新后仍显示当前问题"}
+        )["session"]
+        session_id = str(session["id"])
+        self.service.sessions.set_status(session_id, "busy")
+        for index in range(80):
+            self.service.events.publish(
+                session_id,
+                "reasoning_summary",
+                {"summary": f"后台步骤 {index + 1}"},
+                turn_id="turn:pending-refresh",
+                created_at_ms=100 + index,
+            )
+        pending_user = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "recent:pending-user",
+            "sessionId": session_id,
+            "turnId": "history:pending-user",
+            "role": "user",
+            "status": "completed",
+            "blocks": [{
+                "id": "recent:pending-user:text:0",
+                "type": "text",
+                "status": "completed",
+                "presentationKind": "markdown",
+                "data": {"text": "刷新后也要保留这一条问题"},
+            }],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 90,
+            "completedAtMs": 90,
+        }
+        with (
+            patch.object(
+                self.service.runtime,
+                "recent_session_snapshot",
+                create=True,
+                return_value={"messages": [pending_user]},
+            ),
+            patch.object(
+                self.service.runtime,
+                "runtime_status",
+                return_value={
+                    "status": "busy",
+                    "activeSessionId": session_id,
+                    "activeSessionIds": [session_id],
+                    "openSessionIds": [session_id],
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "session_snapshot",
+                create=True,
+                side_effect=AssertionError(
+                    "recent pending-user projection must not restore full history"
+                ),
+            ),
+        ):
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        self.assertEqual(len(response["liveEvents"]), 48)
+        self.assertEqual(
+            [item["id"] for item in response["items"]],
+            ["recent:pending-user"],
+        )
+        self.assertEqual(response["status"], "busy")
+
+    def test_recent_view_reconciles_stale_busy_session_from_local_runtime_status(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "停止后残留忙碌状态"}
+        )["session"]
+        session_id = str(session["id"])
+        self.service.sessions.set_status(session_id, "busy")
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "runtime_status",
+                return_value={
+                    "status": "ready",
+                    "activeSessionId": session_id,
+                    "activeSessionIds": [],
+                    "openSessionIds": [session_id],
+                },
+            ) as runtime_status,
+            patch.object(
+                self.service.runtime,
+                "session_snapshot",
+                create=True,
+                side_effect=AssertionError(
+                    "recent reconciliation must not restore the Pi transcript"
+                ),
+            ),
+        ):
+            response = self.service.message_snapshot.messages(
+                session_id,
+                view="recent",
+            )
+
+        runtime_status.assert_called_once_with()
+        self.assertEqual(response["status"], "idle")
+        self.assertTrue(response["runtimeQuiescent"])
+        self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+
+    def test_recent_view_keeps_only_the_exact_runtime_session_busy(self) -> None:
+        target = self.service.create_session({"title": "近期状态目标"})[
+            "session"
+        ]
+        peer = self.service.create_session({"title": "真实后台回合"})[
+            "session"
+        ]
+        target_id = str(target["id"])
+        peer_id = str(peer["id"])
+        self.service.sessions.set_status(target_id, "busy")
+
+        with patch.object(
+            self.service.runtime,
+            "runtime_status",
+            return_value={
+                "status": "busy",
+                "activeSessionId": peer_id,
+                "activeSessionIds": [peer_id],
+                "openSessionIds": [target_id, peer_id],
+            },
+        ):
+            stale_target = self.service.message_snapshot.messages(
+                target_id,
+                view="recent",
+            )
+
+        self.assertEqual(stale_target["status"], "idle")
+        self.service.sessions.set_status(target_id, "busy")
+        with patch.object(
+            self.service.runtime,
+            "runtime_status",
+            return_value={
+                "status": "busy",
+                "activeSessionId": target_id,
+                "activeSessionIds": [target_id, peer_id],
+                "openSessionIds": [target_id, peer_id],
+            },
+        ):
+            live_target = self.service.message_snapshot.messages(
+                target_id,
+                view="recent",
+            )
+
+        self.assertEqual(live_target["status"], "busy")
+        self.assertEqual(self.service.sessions.get(target_id)["status"], "busy")
 
     def test_room_message_snapshot_projects_public_conversation_once(
         self,
@@ -5326,12 +5669,15 @@ class AgentServiceTests(unittest.TestCase):
             first["commandReceipt"],
         )
         self.assertEqual(replay["turnId"], first["turnId"])
-        with self.assertRaisesRegex(ValueError, "different command payload"):
+        with self.assertRaisesRegex(ValueError, "different command"):
             self.service.prompt(
                 session_id,
-                {"message": "不能复用标识", "clientMessageId": "device-command-1"},
+                {
+                    "message": "不能复用标识",
+                    "clientMessageId": "device-command-1",
+                },
             )
-        with self.assertRaisesRegex(ValueError, "different command payload"):
+        with self.assertRaisesRegex(ValueError, "different command"):
             self.service.prompt(
                 session_id,
                 {

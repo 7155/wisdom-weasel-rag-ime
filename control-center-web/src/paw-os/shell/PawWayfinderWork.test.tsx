@@ -557,7 +557,7 @@ describe('PawWayfinderWork', () => {
     });
     render(
       <ControlTransportProvider transport={transport}>
-        <PawDesktopProvider><PawWorkDirectoryProvider pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider></PawDesktopProvider>
+        <PawDesktopProvider><PawWorkDirectoryProvider initialPollDelayMs={0} pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider></PawDesktopProvider>
       </ControlTransportProvider>,
     );
 
@@ -635,7 +635,7 @@ describe('PawWayfinderWork', () => {
           'agent.rooms.list': { ok: true, items: [] },
         },
       })}>
-        <PawDesktopProvider><PawWorkDirectoryProvider pollIntervalMs={60_000}><SelectionHarness /></PawWorkDirectoryProvider></PawDesktopProvider>
+        <PawDesktopProvider><PawWorkDirectoryProvider initialPollDelayMs={0} pollIntervalMs={60_000}><SelectionHarness /></PawWorkDirectoryProvider></PawDesktopProvider>
       </ControlTransportProvider>,
     );
 
@@ -734,7 +734,7 @@ describe('PawWayfinderWork', () => {
     } });
     render(
       <ControlTransportProvider transport={transport}>
-        <PawDesktopProvider><PawWorkDirectoryProvider pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider></PawDesktopProvider>
+        <PawDesktopProvider><PawWorkDirectoryProvider initialPollDelayMs={0} pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider></PawDesktopProvider>
       </ControlTransportProvider>,
     );
 
@@ -751,7 +751,7 @@ function renderPanel(options: MockControlTransportOptions) {
   return render(
     <ControlTransportProvider transport={new MockControlTransport(options)}>
       <PawDesktopProvider>
-        <PawWorkDirectoryProvider pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider>
+        <PawWorkDirectoryProvider initialPollDelayMs={0} pollIntervalMs={60_000}><PawWayfinderWork /></PawWorkDirectoryProvider>
       </PawDesktopProvider>
     </ControlTransportProvider>,
   );

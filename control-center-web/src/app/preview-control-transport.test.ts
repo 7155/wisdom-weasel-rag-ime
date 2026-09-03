@@ -501,7 +501,12 @@ describe('preview control transport', () => {
         routingPolicy: 'natural',
         routingConfig: { maxResponders: 1, naturalJitter: 0, fallbackParticipantId: '' },
         workspaceRoots: ['/Volumes/work/learnA'],
-        executionMode: 'workspace_managed',
+        permissionPolicy: {
+          schemaVersion: 'rag-ime.room-permission-policy.v1',
+          room: { executionMode: 'workspace_managed' },
+          partner: { executionMode: 'inherit' },
+          toolAgent: { executionMode: 'inherit' },
+        },
         participants: [
           {
             roleId: 'companion-present-v1',
@@ -525,6 +530,13 @@ describe('preview control transport', () => {
       title: '发布前检查',
       status: 'active',
       workspaceRoots: ['/Volumes/work/learnA'],
+      executionMode: 'workspace_managed',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'workspace_managed' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
       participants: [
         expect.objectContaining({ displayName: '澄·今', collaborationRole: 'coordinator' }),
         expect.objectContaining({ displayName: '澄·初', collaborationRole: 'researcher' }),

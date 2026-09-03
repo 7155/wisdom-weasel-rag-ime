@@ -32,13 +32,17 @@ export const PAW_WINDOW_MIN_WIDTH = 280;
 export const PAW_WINDOW_MIN_HEIGHT = 210;
 
 /* Ordinary window bounds are `.paw-window-layer` coordinates. The menu bar
-   sits above that layer (`--paw-menu-h`); the Dock is a resident overlay, so
-   it never steals usable window height. Collaboration focus deliberately uses
-   the same Dock-free plane; its viewport helper is kept separate below. */
+   sits above that layer (`--paw-menu-h`). The resident Dock remains visually
+   above windows, so an ordinary frame stops before its 62px shelf, 12px floor
+   offset and 4px air gap. Maximized and collaboration-focus layouts hide the
+   Dock and deliberately keep the complete menu-below plane. */
 const PAW_MENU_BAR_HEIGHT = 34;
 const PAW_WINDOW_AREA_INSET = 8;
+const PAW_DOCK_HEIGHT = 62;
+const PAW_DOCK_BOTTOM = 12;
+const PAW_DOCK_WINDOW_GAP = 4;
+const PAW_DOCK_SAFE_BOTTOM = PAW_DOCK_HEIGHT + PAW_DOCK_BOTTOM + PAW_DOCK_WINDOW_GAP;
 const PAW_WINDOW_REACHABLE_GRIP_WIDTH = 120;
-const PAW_WINDOW_TITLEBAR_HEIGHT = 40;
 const EMPTY_EXTENSION_IDS: ReadonlySet<PawExtensionAppId> = new Set<PawExtensionAppId>();
 
 /** Usable size of the window layer itself, in layer coordinates. */
@@ -53,8 +57,7 @@ export function pawWindowLayerSize(): { width: number; height: number } {
 
 /**
  * The collaboration layer is the whole usable desktop. Its mode bar is
- * inside that layer; the ordinary desktop uses the same full menu-below plane
- * because its Dock is an overlay rather than a reserved gutter.
+ * inside that layer and collaboration focus hides the resident Dock.
  */
 export function pawFocusWindowLayerSize(): { width: number; height: number } {
   const width = typeof window === 'undefined' ? 1280 : window.innerWidth;
@@ -65,14 +68,15 @@ export function pawFocusWindowLayerSize(): { width: number; height: number } {
   };
 }
 
-/** The inset rectangle an ordinary desktop window may occupy. */
+/** The inset rectangle an ordinary desktop window may occupy without putting
+ * its bottom controls under the resident Dock's pointer plane. */
 export function pawWindowArea(): PawWindowBounds {
   const layer = pawWindowLayerSize();
   return {
     x: PAW_WINDOW_AREA_INSET,
     y: PAW_WINDOW_AREA_INSET,
     width: Math.max(PAW_WINDOW_MIN_WIDTH, layer.width - PAW_WINDOW_AREA_INSET * 2),
-    height: Math.max(PAW_WINDOW_MIN_HEIGHT, layer.height - PAW_WINDOW_AREA_INSET * 2),
+    height: Math.max(PAW_WINDOW_MIN_HEIGHT, layer.height - PAW_WINDOW_AREA_INSET - PAW_DOCK_SAFE_BOTTOM),
   };
 }
 
@@ -88,10 +92,11 @@ export function fitPawWindowBounds(bounds: PawWindowBounds, area: PawWindowBound
   };
 }
 
-/** Keep an ordinary window recoverable without forcing its entire frame into
- * the OS canvas. A deliberate drag may leave content partially outside the
- * canvas, but at least one 120px titlebar grip and a full titlebar row remain
- * reachable. Width/height still shrink when the desktop itself gets smaller. */
+/** Keep an ordinary window recoverable without forcing its full width into
+ * the OS canvas. A deliberate horizontal drag may leave content partially
+ * outside, but at least one 120px titlebar grip remains reachable. Vertically
+ * the complete frame stays in the safe area so its final controls cannot fall
+ * behind the Dock. Width/height still shrink with the desktop. */
 export function fitReachablePawWindowBounds(
   bounds: PawWindowBounds,
   area: PawWindowBounds = pawWindowArea(),
@@ -99,16 +104,12 @@ export function fitReachablePawWindowBounds(
   const width = Math.min(area.width, Math.max(Math.min(PAW_WINDOW_MIN_WIDTH, area.width), bounds.width));
   const height = Math.min(area.height, Math.max(Math.min(PAW_WINDOW_MIN_HEIGHT, area.height), bounds.height));
   const horizontalGrip = Math.min(PAW_WINDOW_REACHABLE_GRIP_WIDTH, width);
-  const titlebarGrip = Math.min(PAW_WINDOW_TITLEBAR_HEIGHT, height);
   return {
     x: Math.min(
       Math.max(area.x - width + horizontalGrip, bounds.x),
       area.x + area.width - horizontalGrip,
     ),
-    y: Math.min(
-      Math.max(area.y, bounds.y),
-      area.y + area.height - titlebarGrip,
-    ),
+    y: Math.min(Math.max(area.y, bounds.y), area.y + area.height - height),
     width,
     height,
   };
@@ -171,13 +172,22 @@ export type PawPersistedWayfinderState = Omit<PawWayfinderState, 'layoutVersion'
 export type PawDesktopSnapshot = Pick<PawDesktopState, 'windows' | 'stack' | 'activeWindowId'> & {
   dockAppIds?: PawAppId[];
   wayfinder?: PawPersistedWayfinderState;
+  collaborationFocusGroup?: string | null;
+  collaborationFocusReturnWindowId?: string | null;
 };
-
 export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRoute?: string, snapshot?: PawDesktopSnapshot): PawDesktopStore {
   const initialWindows = extensionGatedWindows(snapshot?.windows ?? {}, EMPTY_EXTENSION_IDS);
   const initialStack = (snapshot?.stack ?? []).filter((windowId) => Boolean(initialWindows[windowId]));
   const initialActiveWindowId = snapshot?.activeWindowId && initialWindows[snapshot.activeWindowId]
     ? snapshot.activeWindowId
+    : null;
+  const initialFocusGroup = persistedFocusGroup(initialWindows, snapshot?.collaborationFocusGroup);
+  const persistedReturnWindowId = snapshot?.collaborationFocusReturnWindowId;
+  const initialFocusReturnWindowId = initialFocusGroup
+    && typeof persistedReturnWindowId === 'string'
+    && initialWindows[persistedReturnWindowId]
+    && !initialWindows[persistedReturnWindowId].minimized
+    ? persistedReturnWindowId
     : null;
   const initialDockAppIds = snapshot?.dockAppIds ? [...snapshot.dockAppIds] : [...pawDockAppIds];
   const store = createStore<PawDesktopState>((set, get) => ({
@@ -193,8 +203,8 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
       archived: snapshot?.wayfinder?.archived ?? [],
       projectAssignments: snapshot?.wayfinder?.projectAssignments ?? {},
     },
-    collaborationFocusGroup: null,
-    collaborationFocusReturnWindowId: null,
+    collaborationFocusGroup: initialFocusGroup,
+    collaborationFocusReturnWindowId: initialFocusReturnWindowId,
     launchpadOpen: false,
     overviewOpen: false,
     extensionAppGate: { status: 'unavailable', enabledExtensionIds: EMPTY_EXTENSION_IDS },
@@ -346,9 +356,12 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
           ? orphanedSatelliteIds(rebound, leftGroup, windowId)
           : new Set<string>();
         if (!orphaned.size) {
+          const focusSurvives = !leavingFocusedRoom
+            || (state.collaborationFocusGroup !== null
+              && hasVisibleFocusOwner(rebound.windows, state.collaborationFocusGroup));
           return {
             windows: rebound.windows,
-            ...(leavingFocusedRoom ? {
+            ...(leavingFocusedRoom && !focusSurvives ? {
               collaborationFocusGroup: null,
               collaborationFocusReturnWindowId: null,
             } : {}),
@@ -400,7 +413,7 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
         const stack = state.stack.filter((id) => id !== windowId);
         const windows = { ...state.windows, [windowId]: { ...node, minimized: true } };
         const collaborationFocusGroup = state.collaborationFocusGroup
-          && Object.values(windows).some((candidate) => !candidate.minimized && satelliteGroup(candidate.target) === state.collaborationFocusGroup)
+          && hasVisibleFocusOwner(windows, state.collaborationFocusGroup)
           ? state.collaborationFocusGroup
           : null;
         return {
@@ -409,6 +422,9 @@ export function createPawDesktopStore(initialAppId?: PawAppId | null, initialRou
           activeWindowId: stack.at(-1) ?? null,
           collaborationFocusGroup,
           collaborationFocusReturnWindowId: collaborationFocusGroup
+            && state.collaborationFocusReturnWindowId
+            && windows[state.collaborationFocusReturnWindowId]
+            && !windows[state.collaborationFocusReturnWindowId].minimized
             ? state.collaborationFocusReturnWindowId
             : null,
         };
@@ -648,6 +664,40 @@ function backgroundStack(stack: string[], windowId: string, activeWindowId: stri
   return next;
 }
 
+function hasVisibleFocusOwner(windows: Record<string, PawWindowNode>, group: string): boolean {
+  if (group.startsWith('room:')) {
+    const roomId = group.slice('room:'.length);
+    return Boolean(roomId) && Object.values(windows).some((node) => (
+      !node.minimized
+      && node.appId === 'agent'
+      && node.target?.kind === 'room'
+      && !node.target.panel
+      && node.target.id === roomId
+    ));
+  }
+  if (group.startsWith('session:')) {
+    const sessionId = group.slice('session:'.length);
+    return Boolean(sessionId) && Object.values(windows).some((node) => (
+      !node.minimized
+      && node.appId === 'agent'
+      && node.target?.kind === 'session'
+      && node.target.id === sessionId
+    ));
+  }
+  return false;
+}
+
+function persistedFocusGroup(
+  windows: Record<string, PawWindowNode>,
+  group: string | null | undefined,
+): string | null {
+  return typeof group === 'string'
+    && group.startsWith('room:')
+    && hasVisibleFocusOwner(windows, group)
+    ? group
+    : null;
+}
+
 function closeWindowsWhere(
   state: PawDesktopState,
   shouldClose: (node: PawWindowNode) => boolean,
@@ -661,14 +711,13 @@ function closeWindowsWhere(
   );
   const stack = state.stack.filter((windowId) => !closing.has(windowId));
   const collaborationFocusGroup = state.collaborationFocusGroup
-    && Object.values(windows).some((node) => (
-      !node.minimized && satelliteGroup(node.target) === state.collaborationFocusGroup
-    ))
+    && hasVisibleFocusOwner(windows, state.collaborationFocusGroup)
     ? state.collaborationFocusGroup
     : null;
   const focusReturnWindowId = collaborationFocusGroup
     && state.collaborationFocusReturnWindowId
     && windows[state.collaborationFocusReturnWindowId]
+    && !windows[state.collaborationFocusReturnWindowId].minimized
     ? state.collaborationFocusReturnWindowId
     : null;
   return {

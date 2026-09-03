@@ -25,6 +25,10 @@ import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-backgroun
 import type { AgentApprovalV1 } from '@/contracts/generated/agent-approval.v1';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
+import {
+  defaultRoomPermissionPolicy,
+  parseRoomPermissionPolicy,
+} from '@/features/rooms/room-types';
 import { createPreviewHistoryRoutes } from './preview-history-routes';
 import { createPreviewWorkDocumentRoutes } from './preview-work-document-routes';
 import {
@@ -51,6 +55,7 @@ import {
   previewConfigurationValues,
   previewLexiconReview,
 } from './preview-input-data';
+import { previewEvalLabEvidence, previewEvalLabRuns } from './preview-eval-lab-data';
 
 /**
  * The mock transport has one broadcast event bus for convenience. Preview
@@ -1177,11 +1182,20 @@ export function createPreviewTransport(): MockControlTransport {
   );
   routes['agent.rooms.list'] = (request: ControlRequest) => {
     const includeArchived = record(request.query).includeArchived === true;
+    const query = record(request.query);
+    const ownerAppId = Object.prototype.hasOwnProperty.call(query, 'ownerAppId')
+      ? stringValue(query.ownerAppId)
+      : null;
+    const surfaceKey = Object.prototype.hasOwnProperty.call(query, 'surfaceKey')
+      ? stringValue(query.surfaceKey)
+      : null;
     return {
       ok: true,
       rooms: [...previewRoomSnapshots.values()]
         .map((snapshot) => record(snapshot.room))
-        .filter((room) => includeArchived || room.status !== 'archived'),
+        .filter((room) => includeArchived || room.status !== 'archived')
+        .filter((room) => ownerAppId === null || stringValue(room.ownerAppId) === ownerAppId)
+        .filter((room) => surfaceKey === null || stringValue(room.surfaceKey) === surfaceKey),
     };
   };
   routes['agent.rooms.create'] = (request: ControlRequest) => {
@@ -1522,6 +1536,10 @@ function previewManagedFile(request: ControlRequest): Record<string, unknown> {
 
 function previewResponse(pathId: ControlPathId): unknown {
   switch (pathId) {
+    case 'agent.eval-lab.runs':
+      return () => previewEvalLabRuns();
+    case 'agent.eval-lab.evidence':
+      return (request: ControlRequest) => previewEvalLabEvidence({ query: record(request.query) as Record<string, string> });
     case 'observability.snapshot':
       return (request: ControlRequest) =>
         previewObservationSnapshot(record(request.query));
@@ -4028,6 +4046,12 @@ function previewCreatedRoomSnapshot(
   body: Record<string, unknown>,
 ): Record<string, unknown> {
   const now = Date.now();
+  const roomKind = stringValue(body.roomKind) === 'roleplay' ? 'roleplay' : 'collaboration';
+  const requestedPermissionPolicy = parseRoomPermissionPolicy(body.permissionPolicy, roomKind);
+  if (body.permissionPolicy !== undefined && !requestedPermissionPolicy) {
+    throw new Error('Room 分层权限策略无效。');
+  }
+  const permissionPolicy = requestedPermissionPolicy ?? defaultRoomPermissionPolicy(roomKind);
   const requestedParticipants = Array.isArray(body.participants)
     ? body.participants.map(record)
     : [];
@@ -4057,15 +4081,18 @@ function previewCreatedRoomSnapshot(
     id: roomId,
     title: stringValue(body.title),
     status: 'active',
-    roomKind: stringValue(body.roomKind) || 'collaboration',
+    roomKind,
     avatar: stringValue(body.avatar),
     description: stringValue(body.description),
     scenarioPrompt: stringValue(body.scenarioPrompt),
+    ownerAppId: stringValue(body.ownerAppId),
+    surfaceKey: stringValue(body.surfaceKey),
     routingPolicy: stringValue(body.routingPolicy) || 'natural',
     routingConfig: record(body.routingConfig),
     moderatorParticipantId: participants[0]!.id,
     workspaceRoots,
-    executionMode: stringValue(body.executionMode) || 'workspace_managed',
+    executionMode: permissionPolicy.room.executionMode,
+    permissionPolicy,
     createdAtMs: now,
     updatedAtMs: now,
     lastEventSequence: 0,

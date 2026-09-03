@@ -27,6 +27,13 @@ _CALL_FIELDS = frozenset(
     {"schemaVersion", "sessionId", "tool", "toolCallId", "sourceLoopId", "args", "loadReceiptId"}
 )
 _OPERATIONS = ("index", "list", "search", "read", "submit")
+_WORKFLOW_PROFILES = frozenset(
+    {"baseline-v1", "evidence-search-v1", "evidence-search-v2", "observation-id-v1"}
+)
+_SEARCH_WORKFLOW_PROFILES = frozenset(
+    {"evidence-search-v1", "evidence-search-v2", "observation-id-v1"}
+)
+_BOUNDED_WORKFLOW_PROFILES = frozenset({"evidence-search-v2", "observation-id-v1"})
 _CASE_ID = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
 _FAULT_OBJECT = re.compile(r"(app|node)/[A-Za-z0-9._-]+\Z")
 _TOOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,119}\Z")
@@ -149,6 +156,7 @@ class CloudOpsBlindSuite:
             cases[case_id] = case
         self._suite = suite
         self._contract = contract
+        self._suite_path = suite_path
         self._cases = cases
         self._suite_sha256 = _sha256(suite)
         self._contract_sha256 = _sha256(contract)
@@ -212,7 +220,7 @@ class CloudOpsBlindSuite:
     ) -> dict[str, object]:
         index = self._validated_index(case_id)
         selected = [
-            self._public_descriptor(item)
+            self._public_descriptor(case_id, item)
             for item in index
             if isinstance(item, Mapping)
             and (not tool_name or str(item.get("toolName") or "") == tool_name)
@@ -273,7 +281,7 @@ class CloudOpsBlindSuite:
                 matched_terms += int(matched)
             if matched_terms == 0:
                 continue
-            item = self._public_descriptor(descriptor)
+            item = self._public_descriptor(case_id, descriptor)
             item["matchScore"] = score
             item["matchedTermCount"] = matched_terms
             ranked.append((score, tool_name, cache_key, item))
@@ -290,16 +298,45 @@ class CloudOpsBlindSuite:
             "truncated": len(ranked) > len(items),
         }
 
-    def read_observation(self, case_id: str, cache_key: str) -> dict[str, object]:
+    def read_observation(
+        self,
+        case_id: str,
+        cache_key: str = "",
+        *,
+        observation_id: str = "",
+    ) -> dict[str, object]:
+        if bool(cache_key) == bool(observation_id):
+            raise ValueError("CloudOps read requires exactly one cache key or observation id")
+        if observation_id:
+            self._assert_suite_snapshot()
+            if re.fullmatch(r"obs_[0-9a-f]{24}", observation_id) is None:
+                raise ValueError("CloudOps observation id is invalid")
         index = self._validated_index(case_id)
-        descriptor = next(
-            (
-                dict(item)
-                for item in index
-                if isinstance(item, Mapping) and item.get("cacheKey") == cache_key
-            ),
-            None,
-        )
+        if observation_id:
+            descriptor = next(
+                (
+                    dict(item)
+                    for item in index
+                    if isinstance(item, Mapping)
+                    and hmac.compare_digest(
+                        self._observation_id(case_id, item),
+                        observation_id,
+                    )
+                ),
+                None,
+            )
+            if descriptor is None:
+                raise ValueError("CloudOps observation id is not present in the assigned case")
+            cache_key = str(descriptor.get("cacheKey") or "")
+        else:
+            descriptor = next(
+                (
+                    dict(item)
+                    for item in index
+                    if isinstance(item, Mapping) and item.get("cacheKey") == cache_key
+                ),
+                None,
+            )
         if descriptor is None:
             raise ValueError("CloudOps cache key is not present in the blind index")
         cache = _read_json(self._case_root(case_id) / "tool_cache.json")
@@ -311,17 +348,32 @@ class CloudOpsBlindSuite:
         digest = _sha256(observation)
         if digest != str(descriptor.get("observationSha256") or ""):
             raise ValueError("CloudOps observation hash does not match its blind index")
+        if len(observation) != descriptor.get("observationChars"):
+            raise ValueError("CloudOps observation character count does not match its blind index")
         identity = _sha256({"suite": self.suite_sha256, "case": case_id, "observation": digest})
         return {
             "schemaVersion": "paw.cloudops-observation.v1",
             "caseId": case_id,
             "cacheKey": cache_key,
+            "observationId": self._observation_id(case_id, descriptor),
             "toolName": str(descriptor.get("toolName") or cache_key.split(":", 1)[0]),
             "observation": observation,
             "observationChars": len(observation),
             "observationSha256": digest,
             "evidenceId": f"evidence:cloudops:{identity[:32]}",
         }
+
+    def _assert_suite_snapshot(self) -> None:
+        try:
+            current = _read_json(self._suite_path)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                "CloudOps observation id is stale because the blind suite changed"
+            ) from exc
+        if not isinstance(current, dict) or _sha256(current) != self._suite_sha256:
+            raise ValueError(
+                "CloudOps observation id is stale because the blind suite changed"
+            )
 
     def validate_answers(self, batch_id: str, value: object) -> list[dict[str, object]]:
         if not isinstance(value, list):
@@ -432,12 +484,35 @@ class CloudOpsBlindSuite:
             result.append(descriptor)
         return result
 
-    @staticmethod
-    def _public_descriptor(descriptor: Mapping[str, object]) -> dict[str, object]:
-        return {
+    def _public_descriptor(
+        self,
+        case_id: str,
+        descriptor: Mapping[str, object],
+    ) -> dict[str, object]:
+        result = {
             key: descriptor[key]
             for key in ("cacheKey", "toolName", "observationChars", "observationSha256")
         }
+        result["observationId"] = self._observation_id(case_id, descriptor)
+        return result
+
+    def _observation_id(
+        self,
+        case_id: str,
+        descriptor: Mapping[str, object],
+    ) -> str:
+        return "obs_" + _sha256(
+            {
+                "suite": self.suite_sha256,
+                "case": case_id,
+                "index": {
+                    "cacheKey": str(descriptor.get("cacheKey") or ""),
+                    "toolName": str(descriptor.get("toolName") or ""),
+                    "observationChars": descriptor.get("observationChars"),
+                    "observationSha256": str(descriptor.get("observationSha256") or ""),
+                },
+            }
+        )[:24]
 
     def _validated_batches(
         self, batches: Mapping[str, Sequence[str]] | None
@@ -473,6 +548,9 @@ class CloudOpsBenchmarkGateway:
         self._bindings: dict[str, tuple[str, str]] = {}
         self._binding_receipts: dict[str, str] = {}
         self._read_counts: dict[tuple[str, str], int] = {}
+        self._search_query_hashes: dict[tuple[str, str], set[str]] = {}
+        self._list_counts: dict[tuple[str, str], int] = {}
+        self._read_cache_key_hashes: dict[tuple[str, str], set[str]] = {}
         self._answers: dict[str, list[dict[str, object]]] = {}
         self._ledger: list[dict[str, object]] = []
 
@@ -486,7 +564,7 @@ class CloudOpsBenchmarkGateway:
         normalized = str(session_id or "").strip()
         if not normalized:
             raise ValueError("CloudOps Session id is required")
-        if workflow_profile not in {"baseline-v1", "evidence-search-v1"}:
+        if workflow_profile not in _WORKFLOW_PROFILES:
             raise ValueError("CloudOps workflow profile is unsupported")
         assigned = self.suite.assigned_case_ids(batch_id)
         receipt = {
@@ -512,6 +590,15 @@ class CloudOpsBenchmarkGateway:
         with self._lock:
             removed = self._bindings.pop(normalized, None) is not None
             self._binding_receipts.pop(normalized, None)
+            self._search_query_hashes = {
+                key: value for key, value in self._search_query_hashes.items() if key[0] != normalized
+            }
+            self._list_counts = {
+                key: value for key, value in self._list_counts.items() if key[0] != normalized
+            }
+            self._read_cache_key_hashes = {
+                key: value for key, value in self._read_cache_key_hashes.items() if key[0] != normalized
+            }
         return removed
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[dict[str, object]]:
@@ -520,7 +607,12 @@ class CloudOpsBenchmarkGateway:
             binding = self._bindings.get(session_id)
             if binding is None:
                 return []
-        return [self._manifest(include_search=binding[1] == "evidence-search-v1")]
+        return [
+            self._manifest(
+                include_search=binding[1] in _SEARCH_WORKFLOW_PROFILES,
+                observation_ids=binding[1] == "observation-id-v1",
+            )
+        ]
 
     def execute(self, payload: Mapping[str, object]) -> dict[str, object]:
         request = self._request(payload)
@@ -534,12 +626,31 @@ class CloudOpsBenchmarkGateway:
         if binding is None or not receipt_id:
             raise ValueError("cloudops_benchmark is not bound to this evaluation Session")
         batch_id, workflow_profile = binding
-        if operation == "search" and workflow_profile != "evidence-search-v1":
+        if operation == "search" and workflow_profile not in _SEARCH_WORKFLOW_PROFILES:
             raise ValueError("CloudOps search is unavailable for this workflow profile")
         started_at_ms = int(time.time() * 1_000)
         started_ns = time.perf_counter_ns()
+        reservation: tuple[str, tuple[str, str], str] | None = None
         try:
-            result = self._execute_operation(session_id, batch_id, operation, args)
+            reservation = self._check_workflow_budget(
+                session_id,
+                workflow_profile=workflow_profile,
+                operation=operation,
+                args=args,
+            )
+            result = self._execute_operation(
+                session_id,
+                batch_id,
+                workflow_profile,
+                operation,
+                args,
+            )
+            self._commit_workflow_budget(reservation)
+            if workflow_profile in _BOUNDED_WORKFLOW_PROFILES and operation in {"list", "search", "read"}:
+                result = dict(result)
+                result["workflowBudget"] = self._workflow_budget(session_id, str(args.get("caseId") or ""))
+            if workflow_profile == "observation-id-v1":
+                result = self._without_cache_keys(result)
         except Exception as exc:
             self._record(
                 request,
@@ -570,6 +681,77 @@ class CloudOpsBenchmarkGateway:
             "result": result,
         }
 
+    def _check_workflow_budget(
+        self,
+        session_id: str,
+        *,
+        workflow_profile: str,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> tuple[str, tuple[str, str], str] | None:
+        if workflow_profile not in _BOUNDED_WORKFLOW_PROFILES or operation not in {"search", "list", "read"}:
+            return None
+        case_id = str(args.get("caseId") or "")
+        key = (session_id, case_id)
+        with self._lock:
+            if operation == "list":
+                if self._list_counts.get(key, 0) >= 1:
+                    raise ValueError("CloudOps list fallback budget exhausted")
+                return ("list", key, "")
+            if operation == "read":
+                cache_key_sha256 = _sha256(
+                    str(args.get("observationId") or args.get("cacheKey") or "")
+                )
+                if cache_key_sha256 in self._read_cache_key_hashes.get(key, set()):
+                    raise ValueError("CloudOps duplicate observation read is not allowed")
+                return ("read", key, cache_key_sha256)
+            normalized = " ".join(str(args.get("query") or "").strip().lower().split())
+            query_sha256 = _sha256(normalized)
+            prior = self._search_query_hashes.get(key, set())
+            if query_sha256 in prior:
+                raise ValueError("CloudOps duplicate search query is not allowed")
+            if len(prior) >= 2:
+                raise ValueError("CloudOps search budget exhausted")
+            return ("search", key, query_sha256)
+
+    def _commit_workflow_budget(
+        self,
+        reservation: tuple[str, tuple[str, str], str] | None,
+    ) -> None:
+        if reservation is None:
+            return
+        operation, key, value = reservation
+        with self._lock:
+            if operation == "list":
+                self._list_counts[key] = self._list_counts.get(key, 0) + 1
+            elif operation == "read":
+                self._read_cache_key_hashes.setdefault(key, set()).add(value)
+            else:
+                self._search_query_hashes.setdefault(key, set()).add(value)
+
+    def _workflow_budget(self, session_id: str, case_id: str) -> dict[str, int]:
+        key = (session_id, case_id)
+        with self._lock:
+            return {
+                "searchCalls": len(self._search_query_hashes.get(key, set())),
+                "searchLimit": 2,
+                "listCalls": self._list_counts.get(key, 0),
+                "listLimit": 1,
+                "readCalls": self._read_counts.get(key, 0),
+                "readLimit": self.max_reads_per_case,
+            }
+
+    @staticmethod
+    def _without_cache_keys(result: Mapping[str, object]) -> dict[str, object]:
+        public = deepcopy(dict(result))
+        public.pop("cacheKey", None)
+        items = public.get("items")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    item.pop("cacheKey", None)
+        return public
+
     def answers(self, session_id: str) -> list[dict[str, object]]:
         with self._lock:
             return deepcopy(self._answers.get(str(session_id), []))
@@ -593,6 +775,7 @@ class CloudOpsBenchmarkGateway:
         self,
         session_id: str,
         batch_id: str,
+        workflow_profile: str,
         operation: str,
         args: Mapping[str, object],
     ) -> dict[str, object]:
@@ -638,13 +821,18 @@ class CloudOpsBenchmarkGateway:
                     query=str(args.get("query") or ""),
                     limit=raw_limit,
                 )
-            self._only_fields(args, {"op", "caseId", "cacheKey"})
             key = (session_id, case_id)
             with self._lock:
                 used = self._read_counts.get(key, 0)
                 if used >= self.max_reads_per_case:
                     raise ValueError("CloudOps observation read budget exhausted")
-            result = self.suite.read_observation(case_id, str(args.get("cacheKey") or ""))
+            if workflow_profile == "observation-id-v1":
+                self._only_fields(args, {"op", "caseId", "observationId"})
+                observation_id = str(args.get("observationId") or "")
+                result = self.suite.read_observation(case_id, observation_id=observation_id)
+            else:
+                self._only_fields(args, {"op", "caseId", "cacheKey"})
+                result = self.suite.read_observation(case_id, str(args.get("cacheKey") or ""))
             with self._lock:
                 used = self._read_counts.get(key, 0)
                 if used >= self.max_reads_per_case:
@@ -709,13 +897,16 @@ class CloudOpsBenchmarkGateway:
                     "originalToolName": cache_key.split(":", 1)[0],
                 }
             )
+        if "observationId" in args:
+            summary["observationId"] = str(args.get("observationId") or "")
         result_summary: dict[str, object] = {}
         if result is not None:
             for key in (
                 "caseId", "batchId", "answerCount", "answersSha256", "accepted",
                 "total", "nextCursor", "totalMatches", "truncated",
+                "usedTermCount", "ignoredTermCount",
                 "observationChars", "observationSha256",
-                "evidenceId", "toolName",
+                "observationId", "evidenceId", "toolName",
             ):
                 if key in result:
                     result_summary[key] = result[key]
@@ -726,6 +917,8 @@ class CloudOpsBenchmarkGateway:
                 result_summary["returned"] = len(result.get("items") or [])
             if operation == "search":
                 result_summary["returned"] = len(result.get("items") or [])
+            if isinstance(result.get("workflowBudget"), Mapping):
+                result_summary["workflowBudget"] = dict(result["workflowBudget"])
         item = {
             "sessionId": str(request["sessionId"]),
             "batchId": batch_id,
@@ -741,9 +934,27 @@ class CloudOpsBenchmarkGateway:
             "ok": error is None,
             "errorType": "" if error is None else type(error).__name__,
             "errorFingerprint": "" if error is None else "sha256:" + _sha256(f"{type(error).__name__}:{error}"),
+            "stopReason": self._stop_reason(error),
         }
         with self._lock:
             self._ledger.append(item)
+
+    @staticmethod
+    def _stop_reason(error: Exception | None) -> str:
+        if error is None:
+            return ""
+        message = str(error).lower()
+        if "duplicate search" in message:
+            return "duplicate_search_query"
+        if "search budget" in message:
+            return "search_budget_exhausted"
+        if "list fallback budget" in message:
+            return "list_fallback_budget_exhausted"
+        if "duplicate observation read" in message:
+            return "duplicate_observation_read"
+        if "read budget" in message:
+            return "read_budget_exhausted"
+        return "tool_error"
 
     @staticmethod
     def _request(payload: Mapping[str, object]) -> dict[str, object]:
@@ -770,7 +981,7 @@ class CloudOpsBenchmarkGateway:
         }
 
     @staticmethod
-    def _manifest(*, include_search: bool) -> dict[str, object]:
+    def _manifest(*, include_search: bool, observation_ids: bool = False) -> dict[str, object]:
         prediction = {
             "type": "object",
             "additionalProperties": False,
@@ -811,10 +1022,29 @@ class CloudOpsBenchmarkGateway:
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                 },
             },
-            {
-                "type": "object", "additionalProperties": False, "required": ["op", "caseId", "cacheKey"],
-                "properties": {"op": {"const": "read"}, "caseId": {"type": "string"}, "cacheKey": {"type": "string", "minLength": 1}},
-            },
+            (
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "caseId", "observationId"],
+                    "properties": {
+                        "op": {"const": "read"},
+                        "caseId": {"type": "string"},
+                        "observationId": {"type": "string", "pattern": r"^obs_[0-9a-f]{24}$"},
+                    },
+                }
+                if observation_ids
+                else {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "caseId", "cacheKey"],
+                    "properties": {
+                        "op": {"const": "read"},
+                        "caseId": {"type": "string"},
+                        "cacheKey": {"type": "string", "minLength": 1},
+                    },
+                }
+            ),
             {
                 "type": "object", "additionalProperties": False, "required": ["op", "answers"],
                 "properties": {"op": {"const": "submit"}, "answers": {"type": "array", "items": answer}},

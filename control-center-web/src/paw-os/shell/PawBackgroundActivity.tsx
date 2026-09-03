@@ -124,13 +124,16 @@ function useRuntimeCompletionNotices({
   sessions: ReturnType<typeof usePawWorkDirectory>['sessions'];
 }) {
   const previousRef = useRef<Map<string, BackgroundActivityItem> | null>(null);
+  const previousSessionsRef = useRef<typeof sessions | null>(null);
   useEffect(() => {
     const current = new Map(running.map((item) => [item.key, item]));
     const previous = previousRef.current;
     if (!previous) {
       previousRef.current = current;
+      previousSessionsRef.current = sessions;
       return;
     }
+    const previousSessions = previousSessionsRef.current ?? [];
     const nextPrevious = new Map(current);
     for (const [key, item] of previous) {
       if (current.has(key)) continue;
@@ -149,6 +152,13 @@ function useRuntimeCompletionNotices({
          only a still-present canonical object may close a live notification. */
       if (item.kind === 'maintenance' && maintenanceJob?.id !== item.id) continue;
       if (item.kind !== 'maintenance' && !session && !room) continue;
+      const terminalPartner = item.kind === 'room' ? sessions.find((candidate) => (
+        candidate.roomParticipant?.roomId === item.id
+        && candidate.status !== 'busy'
+        && previousSessions.some((previousSession) => (
+          previousSession.id === candidate.id && previousSession.status === 'busy'
+        ))
+      )) : undefined;
       const failedPartner = item.kind === 'room' && sessions.some((candidate) => (
         candidate.roomParticipant?.roomId === item.id && candidate.status === 'faulted'
       ));
@@ -157,7 +167,7 @@ function useRuntimeCompletionNotices({
         || room?.workItems?.some((workItem) => workItem.state === 'blocked')
         || (item.kind === 'maintenance' && (maintenanceJob?.state === 'failed' || maintenanceJob?.state === 'expired'));
       publishGlobalNotice({
-        id: `runtime-transition:${key}:${Date.now()}`,
+        id: runtimeCompletionNoticeId({ item, maintenanceJob, room, session, terminalPartner }),
         title: needsAttention ? `${item.title} 需要处理` : `${item.title} 已结束运行`,
         message: item.kind === 'maintenance'
           ? needsAttention
@@ -172,5 +182,59 @@ function useRuntimeCompletionNotices({
       });
     }
     previousRef.current = nextPrevious;
+    if (sessionStatusFresh) previousSessionsRef.current = sessions;
   }, [maintenanceJob, maintenanceStatusFresh, roomStatusFresh, rooms, running, sessionStatusFresh, sessions]);
+}
+
+/**
+ * A poll is transport activity, not a new user event. Use the Runtime's stable
+ * causal identity so later metadata updates replace the same notice. Titles,
+ * summaries and timestamps are mutable presentation data, never identity.
+ */
+function runtimeCompletionNoticeId({
+  item,
+  maintenanceJob,
+  room,
+  session,
+  terminalPartner,
+}: {
+  item: BackgroundActivityItem;
+  maintenanceJob: ReturnType<typeof usePawWorkDirectory>['maintenanceJob'];
+  room: ReturnType<typeof usePawWorkDirectory>['rooms'][number] | undefined;
+  session: ReturnType<typeof usePawWorkDirectory>['sessions'][number] | undefined;
+  terminalPartner: ReturnType<typeof usePawWorkDirectory>['sessions'][number] | undefined;
+}): string {
+  if (item.kind === 'maintenance') {
+    const job = maintenanceJob?.id === item.id ? maintenanceJob : undefined;
+    return `runtime-transition:maintenance:${job?.id || item.id}:${job?.state || 'terminal'}`;
+  }
+  if (item.kind === 'session') {
+    const identity = terminalCausalIdentity(session);
+    return `runtime-transition:session:${item.id}:${identity || 'unidentified-terminal'}`;
+  }
+  if (terminalPartner) {
+    const identity = terminalCausalIdentity(terminalPartner);
+    return `runtime-transition:room:${item.id}:${terminalPartner.id}:${identity || 'unidentified-terminal'}`;
+  }
+  const roomIdentity = terminalCausalIdentity(room);
+  return `runtime-transition:room:${item.id}:${roomIdentity || 'unidentified-terminal'}`;
+}
+
+const TERMINAL_CAUSAL_ID_FIELDS = [
+  'lastTerminalTurnId',
+  'terminalEventId',
+  'turnId',
+  'rootId',
+  'runId',
+  'traceId',
+] as const;
+
+function terminalCausalIdentity(value: unknown): string {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '';
+  const record = value as Record<string, unknown>;
+  for (const field of TERMINAL_CAUSAL_ID_FIELDS) {
+    const identity = typeof record[field] === 'string' ? record[field].trim() : '';
+    if (identity) return `${field}:${identity}`;
+  }
+  return '';
 }

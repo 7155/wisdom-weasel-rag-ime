@@ -1,0 +1,288 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-luna-max-validation-reject.v1",
+  "runId": "enterprise-rag-answer-evidence-luna-max-v20-20260902",
+  "status": "rejected",
+  "evaluationScope": "validation-only",
+  "evaluationMode": "answer-only",
+  "heldOutEvaluated": false,
+  "heldOutConsumed": false,
+  "decision": "reject",
+  "formalAcceptanceEligible": false,
+  "formalAcceptancePassed": false,
+  "heldOutGateProduced": false,
+  "cleanupPassed": true,
+  "localOnly": true,
+  "uploaded": false,
+  "startedAtMs": 1788326117162,
+  "completedAtMs": 1788327761781,
+  "elapsedMs": 1644619,
+  "change": {
+    "axis": "model",
+    "before": "openai-codex/gpt-5.6-sol / max",
+    "after": "openai-codex/gpt-5.6-luna / max",
+    "frozen": [
+      "Prompt",
+      "Skill",
+      "Tool",
+      "Workflow",
+      "Context and RAG corpus/index",
+      "Validation split",
+      "host-private qrels/evidence manifest",
+      "answer-case selection",
+      "answer-evidence judge contract"
+    ],
+    "candidateRuntimePayload": "build/managed-pi-runtime/luna-output-budget-compat-920e42b9c",
+    "candidateRuntimeInstalled": false
+  },
+  "hashes": {
+    "rawReportFileSha256": "d87cafef857701d8e4a5ad8756aeffa81541fac26404a3f7fc80d7c287832644",
+    "reportSha256": "f294596ea73c88eeceb258148bf6a9dede2ded41f36895df9315ea8a7fa22c22",
+    "sourcePreparedSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "sourceAnswerCasesSha256": "b886a12ba4c28d19243fb1d53b3b881206d769bf36fcea512547ca8be55ce0ec",
+    "sourceRetrievalReportSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+    "answerEvidenceQrelsSha256": "95ca80c5cf33eb30f905825d0c65e33ae164322bc6bec0f245663159641ac8d1",
+    "preparedDatasetSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb",
+    "answerCaseManifestSha256": "f154bbc55dba2733e10e0ebac91da6af50493565e688b19e80327bc028f21c96",
+    "answerCaseSetSha256": "6c764fff56980920c7fcd83bc17ebfca50f2444012cbe674740e6dc738d75853",
+    "selectedAnswerCaseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+    "evidenceManifestSha256": "9ce7930d9ad93324725654742ff73e4ba6f4dbc015c0be187288451426e0ebff",
+    "promptConfigSha256": "e9016d65752d0ce036c81559d523c92049fe16731aa715e1b30ea937b5ad31c0",
+    "skillSha256": "2f5e7233c979da746bc447ec1254bb2dfb3257a5f2ab0a44e14d877285bf18c8",
+    "runtimeContractSha256": "4b06e83192477d1e3240794702ae798a7fa9da3f40199db0ae232ee377dea0e9",
+    "modelRoutingIdentitySha256": "e05474eeee213bd606c9fcb2b646fa61c2c84ce5c1f4bdbb9fbce5937a021f2c",
+    "agentConfigSha256": "ab8c6fc139b040a5d27b4abc437760537eb61e39cc279351ef3873da9e1fba65",
+    "runtimeIdentitySha256": "0e67e50dc4816410c82f51528748856fda902720223552d7bec24cf2e6c2d2e1",
+    "runtimeManifestSha256": "d8a077d70f05d5d3f262835f5c60f6bb51d35d999a3e66fee026f186d19f2d54",
+    "runtimeEntrypointSha256": "5037914db8afc3ab8f4ce3c0c92c3cff8648e1026f31e045cea1d875c66c1855",
+    "runtimeNodeSha256": "27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1",
+    "runtimeToolSetSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120",
+    "installedRuntimePointerSha256": "c3430bbd2520bc6a4ae5a41778c254ab28295705d70728d340e0f493c3b944c1"
+  },
+  "evidenceContract": {
+    "name": "host-private-fact-qrels-exact-source-chunk-v1",
+    "highLevelCaseCount": 2,
+    "verifiedRequiredFactCount": 9,
+    "unavailableRequiredFactCount": 0,
+    "supportGroupCount": 11,
+    "sourceChunkQuoteBindingCount": 13,
+    "qrelsVisibleToAgentOrJudge": false,
+    "judgeContract": "crud-rag-cited-evidence-correctness-v4",
+    "judgeModel": "openai-codex/gpt-5.6-luna",
+    "judgeThinking": "max",
+    "judgeFeedbackToAgent": false,
+    "retrievalQrelAccess": false
+  },
+  "dataset": {
+    "benchmarkId": "enterprise-rag-smoke-04256c7b5b46-local-slice-6e4ebaf07f",
+    "corpusDocuments": 5101,
+    "corpusChunks": 29846,
+    "validationQueryCount": 16,
+    "selectedAnswerCaseCount": 4,
+    "selectedAnswerCaseIds": ["qst_0474", "qst_0477", "qst_0488", "qst_0492"],
+    "validationSplitSha256": "b030721445f14df0bc5b69dd046a99687c5d846aa42d7c2f318e33f44d6fa6a3",
+    "heldOutLabelsOpened": false,
+    "heldOutAuthorization": false
+  },
+  "retrievalReference": {
+    "receipt": "eval/interview-metrics/runs/enterprise-rag-validation-20260831.v1.json",
+    "winnerConfigSha256": "11d259402bbf92d8961aeaa6fc77d846be7af9ef336af7bd380f21d9bf428c39",
+    "candidateChangedRetrieval": false,
+    "lexicalFloor": {"mrr": 0.604167, "ndcgAt10": 0.612801, "recallAt10": 0.671875},
+    "winner": {"mrr": 0.867188, "ndcgAt10": 0.887203, "recallAt10": 0.955357}
+  },
+  "reproduction": {
+    "command": "./.venv/bin/python -c 'import sys; import scripts.run_rag_agent_ablation as m; m._EVALUATION_MODEL=\"gpt-5.6-luna\"; sys.argv=[\"run_rag_agent_ablation.py\",\"--prepared\",\"artifacts/smoke-v1/host/prepared.json\",\"--answer-cases\",\"artifacts/smoke-v1/host/task-cases.json\",\"--answer-evidence-qrels\",\".rag-ime-data/eval/host/validation-answer-evidence-qrels-v1.json\",\"--retrieval-report\",\"results/validation-bge-qwen3-rerank-v1.json\",\"--output\",\".rag-ime-data/eval/results/validation-answer-evidence-luna-max-v20.json\",\"--private-root\",\".rag-ime-data/runs/rag-agent-ablation-luna-max-v20\",\"--source-agent-config\",\".rag-ime-data/runs/rag-agent-ablation-v10-resume/run-ak_nb8xv/agent/config\",\"--evaluation-split\",\"validation\",\"--answer-only\",\"--slice-cases-per-split\",\"16\",\"--distractor-limit\",\"5000\",\"--agent-case-limit\",\"4\",\"--lane-attempts\",\"1\",\"--timeout-seconds\",\"420\",\"--reranker-model\",\"../models/Qwen3-Reranker-0.6B-4bit-5f324548\",\"--reranker-revision\",\"5f324548f1d20c2b5a450f126fc6ef2fb1126524\",\"--reranker-cache\",\"runs/validation-answer-evidence-v18/reranker-cache\",\"--pi-runtime-payload\",\"build/managed-pi-runtime/luna-output-budget-compat-920e42b9c\"]; process.exitCode=m.main()'",
+    "status": "report_completed_then_wrapper_exit_1",
+    "providerCallsProduced": true,
+    "wrapperExitReason": "The Python wrapper used process.exitCode as a bare name after m.main() had written the valid report; this post-report NameError does not invalidate the report.",
+    "noHeldOutCommandIssued": true
+  },
+  "runtime": {
+    "model": "openai-codex/gpt-5.6-luna",
+    "thinking": "max",
+    "provider": "openai-codex",
+    "piVersion": "0.84.2",
+    "sourceCommit": "920e42b9c19f341ff398dd8211a9a57962b003c1",
+    "sourceAccess": "explicit-verified-payload-v1",
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-luna-output-budget-compat",
+    "installedCurrentVersion": "pi-0.84.2-bc9765ca7d93-raghost-1414cdd9a1",
+    "installedCurrentManifestSha256": "3041eb53bd289cddd21221648dc2b77bac9b5bcab35832317a89bc9cdd55d990",
+    "installedCurrentPointerSha256": "c3430bbd2520bc6a4ae5a41778c254ab28295705d70728d340e0f493c3b944c1",
+    "writableStateScope": "benchmark-run-root-only"
+  },
+  "lanes": {
+    "baseline": {
+      "metrics": {
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "highLevelFactCoverage": 0.6666666666666666,
+        "citationFactCoverage": 0.2222222222222222,
+        "answerableCitationSupportRate": 0.0,
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "citationResolutionRate": 1.0,
+        "toolSuccessRate": 1.0,
+        "outputProtocolRate": 1.0
+      },
+      "usage": {"latencyMs": 51577.706, "tokens": 25778, "toolCalls": 6, "searchCalls": 5},
+      "failedHardGates": ["citationResolution"],
+      "terminalEvent": "turn_completed",
+      "sessionSha256": "0900af5347ebf2085e4119c310ef329736f2fd3b28f9fb8e0744b1c80b0e3a76",
+      "turnSha256": "61ba2ef9dc8206e59abe1d9dc88a4007864a4075195c8bcb23444bf183e1b4cd",
+      "cases": [
+        {"caseId": "case-01", "queryId": "qst_0474", "judge": false, "reason": "incomplete", "answerSuccess": false, "answerFactCoverage": 0.4, "citationFactCoverage": 0.0, "citationSupport": false, "citationResolution": true, "citationTokens": ["K3"], "citationSourceIds": ["dsid_e22f3cff77dd4fd3bee54fa8c4a99aac"], "answerSha256": "ed1709f52d03f367563010715f7510d22cfccbdbe10b9fe478372f20af6d5c2c"},
+        {"caseId": "case-02", "queryId": "qst_0477", "judge": true, "reason": "correct", "answerSuccess": true, "answerFactCoverage": 1.0, "citationFactCoverage": 0.5, "citationSupport": false, "citationResolution": true, "citationTokens": ["K1"], "citationSourceIds": ["dsid_dbd29f9393f149fbb696c9a5614dc875"], "answerSha256": "13c9133dc3ebad6600882648aa017078407c16a42a71b794996062f2274ab76f"},
+        {"caseId": "case-03", "queryId": "qst_0488", "judge": true, "reason": "correct_abstention", "answerSuccess": true, "abstained": true, "abstentionCorrect": true, "answerSha256": "237a052b92e379fa9cb5759db8d24a290d28470dfc235ce8675f3a53ddca22c5"},
+        {"caseId": "case-04", "queryId": "qst_0492", "judge": true, "reason": "correct_abstention", "answerSuccess": true, "abstained": true, "abstentionCorrect": true, "answerSha256": "237a052b92e379fa9cb5759db8d24a290d28470dfc235ce8675f3a53ddca22c5"}
+      ]
+    },
+    "skill": {
+      "metrics": {
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "highLevelFactCoverage": 0.6666666666666666,
+        "citationFactCoverage": 0.2222222222222222,
+        "answerableCitationSupportRate": 0.0,
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "citationResolutionRate": 1.0,
+        "toolSuccessRate": 1.0,
+        "outputProtocolRate": 1.0
+      },
+      "usage": {"latencyMs": 208063.982, "tokens": 74769, "toolCalls": 7, "searchCalls": 5},
+      "failedHardGates": ["citationResolution"],
+      "terminalEvent": "turn_completed",
+      "sessionSha256": "e8d7b4a7cedcfe965d23b2fddc603fbbaf7e0fba90a3c08fc1ba9013252ca5b8",
+      "turnSha256": "0f4b4481e46ee55da8113affc0882db27f39b2f1ff9906236fe3e2c57f11993c",
+      "cases": [
+        {"caseId": "case-01", "queryId": "qst_0474", "judge": false, "reason": "incomplete", "answerSuccess": false, "answerFactCoverage": 0.4, "citationFactCoverage": 0.0, "citationSupport": false, "citationResolution": true, "citationTokens": ["K3", "K10"], "citationSourceIds": ["dsid_e22f3cff77dd4fd3bee54fa8c4a99aac", "dsid_c820386683ba4151a09702382e932a79"], "answerSha256": "cda07b55596f09c0ed35ec86c4990725c80c415fb6b4d00c4ac3a273223c4aaf"},
+        {"caseId": "case-02", "queryId": "qst_0477", "judge": true, "reason": "correct", "answerSuccess": true, "answerFactCoverage": 1.0, "citationFactCoverage": 0.5, "citationSupport": false, "citationResolution": true, "citationTokens": ["K1"], "citationSourceIds": ["dsid_dbd29f9393f149fbb696c9a5614dc875"], "answerSha256": "df74d501d6232af31ee4af16e723be75956f4d2ab159d1f3cfadf2306089f071"},
+        {"caseId": "case-03", "queryId": "qst_0488", "judge": true, "reason": "correct_abstention", "answerSuccess": true, "abstained": true, "abstentionCorrect": true, "answerSha256": "237a052b92e379fa9cb5759db8d24a290d28470dfc235ce8675f3a53ddca22c5"},
+        {"caseId": "case-04", "queryId": "qst_0492", "judge": true, "reason": "correct_abstention", "answerSuccess": true, "abstained": true, "abstentionCorrect": true, "answerSha256": "237a052b92e379fa9cb5759db8d24a290d28470dfc235ce8675f3a53ddca22c5"}
+      ]
+    },
+    "tuned": {
+      "metrics": {
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "highLevelFactCoverage": 0.6666666666666666,
+        "citationFactCoverage": 0.2222222222222222,
+        "answerableCitationSupportRate": 0.0,
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "citationResolutionRate": 1.0,
+        "toolSuccessRate": 1.0,
+        "outputProtocolRate": 1.0
+      },
+      "usage": {"latencyMs": 182436.769, "tokens": 88941, "toolCalls": 7, "searchCalls": 5},
+      "failedHardGates": ["citationResolution"],
+      "terminalEvent": "turn_completed",
+      "sessionSha256": "2af00eb8e16f68c3805a9115e6061d76e6ffb08b291bbae79e30e13c6e57efae",
+      "turnSha256": "e20f216cd4a8d01d54a6cd4c8cb55f4968e3d6e9c39be4aa83b08c0cafbb0f2e",
+      "cases": [
+        {"caseId": "case-01", "queryId": "qst_0474", "judge": false, "reason": "incomplete", "answerSuccess": false, "answerFactCoverage": 0.4, "citationFactCoverage": 0.0, "citationSupport": false, "citationResolution": true, "citationTokens": ["K3", "K10"], "citationSourceIds": ["dsid_e22f3cff77dd4fd3bee54fa8c4a99aac", "dsid_c820386683ba4151a09702382e932a79"], "answerSha256": "cc6cf11a17a2e87339f47e8eeb59d1879f6b243c4327c9875466786a8c688bbc"},
+        {"caseId": "case-02", "queryId": "qst_0477", "judge": true, "reason": "correct", "answerSuccess": true, "answerFactCoverage": 1.0, "citationFactCoverage": 0.5, "citationSupport": false, "citationResolution": true, "citationTokens": ["K1"], "citationSourceIds": ["dsid_dbd29f9393f149fbb696c9a5614dc875"], "answerSha256": "38e31c5419f118b1b77dc2eeeeb61a5d049dd43b091ab72a0ace7a19f76fb340"},
+        {"caseId": "case-03", "queryId": "qst_0488", "judge": true, "reason": "correct_abstention", "answerSuccess": true, "abstained": true, "abstentionCorrect": true, "answerSha256": "237a052b92e379fa9cb5759db8d24a290d28470dfc235ce8675f3a53ddca22c5"},
+        {"caseId": "case-04", "queryId": "qst_0492", "judge": true, "reason": "correct_abstention", "answerSuccess": true, "abstained": true, "abstentionCorrect": true, "answerSha256": "237a052b92e379fa9cb5759db8d24a290d28470dfc235ce8675f3a53ddca22c5"}
+      ]
+    },
+    "agentic": {
+      "metrics": {
+        "answerJudgeCorrectnessRate": 0.0,
+        "answerSuccessRate": 0.0,
+        "highLevelFactCoverage": 0.0,
+        "citationFactCoverage": 0.0,
+        "answerableCitationSupportRate": 0.0,
+        "abstentionAccuracy": 0.5,
+        "abstentionF1": 0.0,
+        "infoNotFoundAbstentionRecall": 0.0,
+        "citationResolutionRate": 1.0,
+        "toolSuccessRate": 1.0,
+        "outputProtocolRate": 0.0
+      },
+      "usage": {"latencyMs": 420642.371, "tokens": 7713, "tokensComplete": false, "toolCalls": 12, "searchCalls": 7},
+      "failedHardGates": ["abstention", "agenticPolicy", "citationResolution", "terminalCompletion", "toolContract"],
+      "runtimeFailureCategory": "harness_error",
+      "protocolError": "assistant output is not a JSON object with cases[]",
+      "terminalEvent": null,
+      "delegationReceiptsPassed": false,
+      "parentQueryPolicyPassed": false,
+      "coverageAuditPassed": false,
+      "sessionSha256": "ed2220f0cd124a22c28b7796a07863c8043a94081c6e213c03e98ed0725551ee",
+      "turnSha256": "330aa58e64206c85947382adf6321681752efb940a0fdb4bba51a994f55b1224",
+      "subagentUsageTokens": 7713,
+      "subagentRetrievalObserved": false,
+      "cases": [
+        {"caseId": "case-01", "queryId": "qst_0474", "judge": false, "reason": "incomplete", "answerSuccess": false, "answerFactCoverage": 0.0, "citationFactCoverage": 0.0, "citationSupport": false, "citationResolution": true, "answerSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        {"caseId": "case-02", "queryId": "qst_0477", "judge": false, "reason": "incomplete", "answerSuccess": false, "answerFactCoverage": 0.0, "citationFactCoverage": 0.0, "citationSupport": false, "citationResolution": true, "answerSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        {"caseId": "case-03", "queryId": "qst_0488", "judge": false, "reason": "abstention_mismatch", "answerSuccess": false, "abstained": false, "abstentionCorrect": false, "answerSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+        {"caseId": "case-04", "queryId": "qst_0492", "judge": false, "reason": "abstention_mismatch", "answerSuccess": false, "abstained": false, "abstentionCorrect": false, "answerSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+      ]
+    }
+  },
+  "answerJudge": {
+    "accepted": true,
+    "assistantOutputSha256": "d8ff1eb85494cb4ec9740a29fa6ae6f575ce4b60a0b9cfcf5b68fc60f63e71c8",
+    "promptSha256": "8bce7e60d3e6a1d2f8459112d19cabc0ab93b87d3f966385933cafda08e2d6ec",
+    "rubricSha256": "7131b924268446703225e8e2d0f1c12572bb3e4a1afeea436b9ddc44ae96711c",
+    "latencyMs": 59833.954,
+    "tokens": 13143,
+    "toolCalls": 0,
+    "terminalEvent": "turn_completed",
+    "referenceAnswerAccessAfterGeneration": true,
+    "judgeFeedbackToAgent": false,
+    "retrievalQrelAccess": false,
+    "evidenceRetentionUploaded": false
+  },
+  "comparison": {
+    "reference": {
+      "runId": "enterprise-rag-answer-validation-v16-20260901",
+      "model": "openai-codex/gpt-5.6-sol",
+      "thinking": "max",
+      "reportFile": ".rag-ime-data/eval/results/validation-answer-formal-v16.json",
+      "reportFileSha256": "c076602279c53c5aedee93bdb8f1fa6cb235b9c94064b90efb4f0c1cee366556",
+      "reportSha256": "490c6663228ac85e2ff886d58648b0f92fc921e03dc08adca9b69704c8a36810"
+    },
+    "qualityDeltaLunaMinusSol": {
+      "baseline": {"answerJudgeCorrectnessRate": 0.0, "answerSuccessRate": 0.0, "highLevelFactCoverage": 0.0, "citationFactCoverage": 0.0, "answerableCitationSupportRate": 0.0, "abstentionAccuracy": 0.0, "abstentionF1": 0.0, "infoNotFoundAbstentionRecall": 0.0, "toolSuccessRate": 0.0, "outputProtocolRate": 0.0, "citationResolutionRate": 0.0},
+      "skill": {"answerJudgeCorrectnessRate": 0.0, "answerSuccessRate": 0.0, "highLevelFactCoverage": 0.0, "citationFactCoverage": 0.0, "answerableCitationSupportRate": 0.0, "abstentionAccuracy": 0.0, "abstentionF1": 0.0, "infoNotFoundAbstentionRecall": 0.0, "toolSuccessRate": 0.0, "outputProtocolRate": 0.0, "citationResolutionRate": 0.0},
+      "tuned": {"answerJudgeCorrectnessRate": 0.0, "answerSuccessRate": 0.0, "highLevelFactCoverage": 0.0, "citationFactCoverage": 0.0, "answerableCitationSupportRate": 0.0, "abstentionAccuracy": 0.0, "abstentionF1": 0.0, "infoNotFoundAbstentionRecall": 0.0, "toolSuccessRate": 0.0, "outputProtocolRate": 0.0, "citationResolutionRate": 0.0},
+      "agentic": {"answerJudgeCorrectnessRate": 0.0, "answerSuccessRate": 0.0, "highLevelFactCoverage": 0.0, "citationFactCoverage": 0.0, "answerableCitationSupportRate": 0.0, "abstentionAccuracy": 0.0, "abstentionF1": 0.0, "infoNotFoundAbstentionRecall": 0.0, "toolSuccessRate": 0.0, "outputProtocolRate": -1.0, "citationResolutionRate": 0.0}
+    },
+    "usageDeltaLunaMinusSol": {
+      "baseline": {"latencyMs": -12115.48, "latencyPercent": -19.02, "tokens": 394, "tokensPercent": 1.55, "toolCalls": 0},
+      "skill": {"latencyMs": -16416.0, "latencyPercent": -7.31, "tokens": 6365, "tokensPercent": 9.31, "toolCalls": 0},
+      "tuned": {"latencyMs": -28229.551, "latencyPercent": -13.4, "tokens": 6470, "tokensPercent": 7.85, "toolCalls": 0},
+      "agentic": {"latencyMs": -179962.585, "latencyPercent": -29.96, "tokens": null, "tokensDeltaUnavailableReason": "Sol agentic token field is an incomplete failure placeholder", "toolCalls": -1}
+    },
+    "qualityInterpretation": "Luna and Sol are quality-identical on baseline, Skill and tuned under this frozen contract; both retain the citation-resolution hard-gate failure. Luna Agentic matches Sol's already-failed Agentic quality metrics and hard-gate failures, so it remains unacceptable; it also fails additional gates relative to Luna's non-Agentic lanes.",
+    "usageInterpretation": "Usage is observed in the candidate report, but no frozen USD price snapshot or Provider bill is bound; cost and cost savings are therefore unreported. Agentic Sol tokens are not a valid zero baseline."
+  },
+  "transcriptEvidence": {
+    "managedRunRoot": ".rag-ime-data/runs/rag-agent-ablation-luna-max-v20",
+    "rawJsonlRetained": false,
+    "cleanupObservation": "The runner cleaned the run-owned managed Session JSONL sandbox after completion; lane sessionSha256 and turnSha256 remain in this receipt and the raw report.",
+    "transcriptFabrication": false,
+    "providerUsageRetained": true,
+    "publicReceiptDoesNotClaimRawTranscript": true
+  },
+  "failureAttribution": {
+    "nonAgentic": "Citation presence and exact citation resolution passed, but the host-private source/chunk/quote check found zero answerable citation support; this is an answer-evidence contract failure, not a retrieval-only score.",
+    "agentic": "The delegation Tool receipt was an error; parent query policy and coverage audit failed, then the lane emitted no valid JSON object with cases[] and no terminal completion. This is a Runtime/Agentic harness failure, with no valid quality or zero-token claim.",
+    "candidateRuntime": "The source-local Luna output-budget compatibility payload was used explicitly for this run and was not installed or activated as the product runtime."
+  },
+  "evidenceRefs": [
+    ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-v20.json",
+    "eval/interview-metrics/runs/enterprise-rag-answer-evidence-validation-reject-20260901.v1.json",
+    "scripts/run_rag_agent_ablation.py",
+    "tests/test_run_rag_agent_ablation.py",
+    "build/managed-pi-runtime/luna-output-budget-compat-920e42b9c/manifest.json"
+  ],
+  "claim": {
+    "allowed": "A validation-only Luna Max model candidate was run once against the same frozen Enterprise RAG answer/evidence contract as Sol v16. Baseline, Skill and tuned preserved the Sol quality metrics but still failed citation resolution; Agentic failed additional abstention, policy, terminal and Tool-contract gates. The candidate is retained as Reject evidence.",
+    "forbidden": "Held-out success or consumption, production Knowledge mutation, installed runtime, quality improvement, Agentic zero-token usage, Provider-billed USD savings, or raw transcript retention after sandbox cleanup."
+  }
+}

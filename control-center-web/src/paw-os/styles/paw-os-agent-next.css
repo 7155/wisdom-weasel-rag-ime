@@ -74,7 +74,8 @@
    can shed chip labels the same way Session pickers do (PF-CM-009/017). */
 .an-composer-foot {
   container: an-home-composer / inline-size;
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content repeat(3, minmax(0, 1fr)) 32px;
   align-items: center;
   gap: 8px;
   min-height: 49px;
@@ -89,12 +90,13 @@
 .an-seg button:hover { color: var(--an-ink); }
 .an-mode-seg button[aria-checked="true"] { background: var(--an-paper-bright); color: var(--an-ink); box-shadow: 0 1px 3px rgba(24, 32, 43, .12); }
 .an-seg button[aria-selected="true"] { background: var(--an-ink); color: var(--an-paper-bright); }
-.an-anchor { position: relative; display: inline-flex; }
+.an-anchor { position: relative; min-width: 0; width: 100%; display: inline-flex; }
 .an-chip {
+  width: 100%;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 190px;
+  max-width: none;
   height: 30px;
   padding: 0 10px;
   overflow: hidden;
@@ -106,7 +108,7 @@
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: border-color 140ms ease, background 140ms ease, max-width 180ms var(--an-ease-out), padding 160ms ease;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
 }
 .an-chip:hover,
 .an-chip[aria-expanded="true"] { border-color: var(--an-rule-strong); background: var(--an-paper-soft); }
@@ -116,7 +118,7 @@
 .an-chip-text,
 .an-chip-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-chip-detail { flex: none; color: var(--an-ink-3); }
-.an-send { display: grid; width: 32px; height: 32px; margin-left: auto; flex: none; place-items: center; border: 0; border-radius: 8px; background: var(--an-ink); color: var(--an-paper-bright); transition: transform 180ms var(--an-spring), opacity 140ms ease, background 140ms ease; }
+.an-send { display: grid; width: 32px; height: 32px; margin-left: 0; justify-self: end; place-items: center; border: 0; border-radius: 8px; background: var(--an-ink); color: var(--an-paper-bright); transition: transform 180ms var(--an-spring), opacity 140ms ease, background 140ms ease; }
 .an-send:hover:not(:disabled) { background: var(--an-cobalt); transform: translateY(-2px); }
 .an-send:active:not(:disabled) { transform: translateY(0) scale(.96); }
 .an-send:disabled { opacity: .34; }
@@ -430,8 +432,6 @@
 
 @container paw-agent-shell (max-width: 860px) {
   .an-home-wrap { padding-inline: 22px; }
-  .an-composer-foot { align-items: flex-start; flex-wrap: wrap; }
-  .an-send { margin-left: auto; }
 }
 
 @container paw-agent-shell (max-width: 680px) {

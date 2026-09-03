@@ -55,6 +55,8 @@ const canonicalPathIds = [
   'agent.provider.oauth.cancel',
   'agent.configuration.get',
   'agent.configuration.update',
+  'agent.eval-lab.runs',
+  'agent.eval-lab.evidence',
   'agent.sessions.list',
   'agent.sessions.create',
   'agent.sessions.surface.ensure',

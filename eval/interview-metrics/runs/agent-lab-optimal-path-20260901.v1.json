@@ -1,0 +1,214 @@
+{
+  "baseline": {
+    "changedFactor": "baseline",
+    "configRevision": "state-contract-v1-baseline-overlay",
+    "evidenceRefs": [
+      "eval/interview-metrics/runs/enterpriseops-csm-suite-v2-validation-winner-20260901.v1.json",
+      "eval/interview-metrics/runs/agent-lab-cost-sol-baseline-20260901.v1.json"
+    ],
+    "frozenControlHash": "b5dce5bbc1589e8dae367da85c2ef34f80e2097288fe6ee6f035cb0c48dc7e39",
+    "metrics": {
+      "allDatabasesCleaned": 1.0,
+      "apiCostUsd": 3.089711,
+      "failedToolCalls": 0.0,
+      "latencyMs": 529349.673,
+      "taskSuccessRate": 0.6666666667,
+      "toolCalls": 72.0,
+      "verifierPassRate": 0.9032258065
+    },
+    "nodeId": "sol-suite-v2-baseline",
+    "parentNodeId": null,
+    "status": "eligible"
+  },
+  "candidates": [
+    {
+      "changedFactor": "workflow",
+      "configRevision": "state-contract-v1-suite-v2-final",
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-suite-v2-validation-winner-20260901.v1.json",
+        "eval/interview-metrics/runs/agent-lab-cost-sol-state-contract-20260901.v1.json"
+      ],
+      "frozenControlHash": "b5dce5bbc1589e8dae367da85c2ef34f80e2097288fe6ee6f035cb0c48dc7e39",
+      "metrics": {
+        "allDatabasesCleaned": 1.0,
+        "apiCostUsd": 4.08523,
+        "failedToolCalls": 0.0,
+        "latencyMs": 758437.096,
+        "taskSuccessRate": 1.0,
+        "toolCalls": 64.0,
+        "verifierPassRate": 1.0
+      },
+      "nodeId": "sol-state-contract",
+      "parentNodeId": "sol-suite-v2-baseline",
+      "reason": "all required hard and quality gates passed",
+      "status": "eligible"
+    },
+    {
+      "changedFactor": "model",
+      "configRevision": "gpt-5.6-luna-max-state-contract-validation",
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-luna-max-validation-20260901.v1.json"
+      ],
+      "frozenControlHash": "b5dce5bbc1589e8dae367da85c2ef34f80e2097288fe6ee6f035cb0c48dc7e39",
+      "metrics": {
+        "allDatabasesCleaned": 1.0,
+        "failedToolCalls": 0.0,
+        "latencyMs": 959310.002,
+        "taskSuccessRate": 1.0,
+        "toolCalls": 66.0,
+        "verifierPassRate": 1.0
+      },
+      "nodeId": "luna-state-contract",
+      "parentNodeId": "sol-state-contract",
+      "reason": "all required hard and quality gates passed",
+      "status": "eligible"
+    }
+  ],
+  "claim": {
+    "limitations": [
+      "结果只代表本次声明的搜索空间和冻结控制，不是全局最优证明。",
+      "Validation 用于路径选择；不得把本回执改写为 Held-out 或生产结论。"
+    ],
+    "status": "best_known",
+    "summary": "当前选中路径为 sol-state-contract，在声明搜索空间内通过门禁且综合效用最高。"
+  },
+  "frozenControls": [
+    {
+      "name": "suite",
+      "value": "enterpriseops-csm-suite-v2"
+    },
+    {
+      "name": "split",
+      "value": "validation"
+    },
+    {
+      "name": "cases",
+      "value": "3 tasks / 31 host-private verifiers"
+    },
+    {
+      "name": "gold_and_seed",
+      "value": "same temporary database seed; gold hidden from Agent"
+    },
+    {
+      "name": "held_out",
+      "value": "sealed and not consumed by path search"
+    }
+  ],
+  "generatedAtMs": 1788261838671,
+  "hardGates": [
+    {
+      "name": "all tasks complete",
+      "reason": "taskSuccessRate=1，门槛 gte 1。",
+      "status": "pass"
+    },
+    {
+      "name": "all verifiers pass",
+      "reason": "verifierPassRate=1，门槛 gte 1。",
+      "status": "pass"
+    },
+    {
+      "name": "no tool failures",
+      "reason": "failedToolCalls=0，门槛 lte 0。",
+      "status": "pass"
+    },
+    {
+      "name": "temporary databases cleaned",
+      "reason": "allDatabasesCleaned=1，门槛 eq 1。",
+      "status": "pass"
+    },
+    {
+      "name": "quality_non_regression:taskSuccessRate",
+      "reason": "baseline=0.666667，candidate=1。",
+      "status": "pass"
+    },
+    {
+      "name": "quality_non_regression:verifierPassRate",
+      "reason": "baseline=0.903226，candidate=1。",
+      "status": "pass"
+    }
+  ],
+  "objective": {
+    "gates": [
+      {
+        "metric": "taskSuccessRate",
+        "name": "all tasks complete",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "metric": "verifierPassRate",
+        "name": "all verifiers pass",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "metric": "failedToolCalls",
+        "name": "no tool failures",
+        "operator": "lte",
+        "value": 0
+      },
+      {
+        "metric": "allDatabasesCleaned",
+        "name": "temporary databases cleaned",
+        "operator": "eq",
+        "value": 1
+      }
+    ],
+    "metrics": [
+      {
+        "class": "quality",
+        "direction": "max",
+        "name": "taskSuccessRate",
+        "nonRegression": true,
+        "scale": 1,
+        "weight": 0.55
+      },
+      {
+        "class": "quality",
+        "direction": "max",
+        "name": "verifierPassRate",
+        "nonRegression": true,
+        "scale": 1,
+        "weight": 0.25
+      },
+      {
+        "class": "efficiency",
+        "direction": "min",
+        "name": "toolCalls",
+        "scale": 100,
+        "weight": 0.05
+      },
+      {
+        "class": "efficiency",
+        "direction": "min",
+        "name": "latencyMs",
+        "scale": 1000000,
+        "weight": 0.15
+      },
+      {
+        "class": "cost",
+        "direction": "min",
+        "name": "apiCostUsd",
+        "scale": 1,
+        "weight": 0.1
+      }
+    ],
+    "selectionPolicy": "lexicographic_pareto",
+    "userNeed": "完成全部客户支持任务，在质量不回退的前提下平衡 Tool 调用、延迟和 API 成本。"
+  },
+  "schemaVersion": "rag-ime.agent-lab-path-search.v1",
+  "searchId": "enterpriseops-csm-optimal-path-20260901-v1",
+  "selectedPath": [
+    {
+      "decision": "baseline",
+      "nodeId": "sol-suite-v2-baseline",
+      "reason": "用户指定的比较基线。"
+    },
+    {
+      "decision": "keep",
+      "nodeId": "sol-state-contract",
+      "reason": "all required hard and quality gates passed"
+    }
+  ],
+  "title": "EnterpriseOps CSM · Validation 最优路径搜索"
+}

@@ -98,6 +98,9 @@ const TRACE_DIAGNOSTIC_REPORT_ID = /\btrace-report:[a-f0-9]{32}\b/iu;
 type TraceDiagnosticReceiptData = {
   reportId: string;
   summary: string;
+  impact: string;
+  repair: string;
+  technicalDetail: string;
 };
 
 function traceDiagnosticResultReceipt(source: string): TraceDiagnosticReceiptData | null {
@@ -113,9 +116,24 @@ function traceDiagnosticResultReceipt(source: string): TraceDiagnosticReceiptDat
     if (result.schemaVersion !== 'rag-ime.trace-diagnostic-result.v1') return null;
     const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
     if (!summary) return null;
+    const hardGates = Array.isArray(result.hardGates) ? result.hardGates : [];
+    const failedGate = hardGates
+      .map(recordValue)
+      .find((gate) => ['failed', 'blocked'].includes(stringValue(gate.status)));
+    const findings = Array.isArray(result.findings) ? result.findings.map(recordValue) : [];
+    const primaryFinding = findings[0] ?? {};
     return {
       reportId: source.match(TRACE_DIAGNOSTIC_REPORT_ID)?.[0] ?? '',
       summary,
+      impact: stringValue(failedGate?.reason)
+        || '影响范围还需要在报告中核对，Trace 不会把未知当成事实。',
+      repair: stringValue(primaryFinding.candidateRepair)
+        || '已经保留证据和修复边界；确认后可以交给独立修复 Agent 处理。',
+      technicalDetail: [
+        stringValue(primaryFinding.observation),
+        stringValue(primaryFinding.conclusion),
+        stringValue(primaryFinding.hypothesis),
+      ].filter(Boolean).join(' '),
     };
   } catch {
     return null;
@@ -123,8 +141,11 @@ function traceDiagnosticResultReceipt(source: string): TraceDiagnosticReceiptDat
 }
 
 function TraceDiagnosticReceipt({
+  impact,
   reportId,
+  repair,
   summary,
+  technicalDetail,
 }: TraceDiagnosticReceiptData) {
   const desktop = usePawOsDesktop();
   const route = reportId
@@ -140,9 +161,18 @@ function TraceDiagnosticReceipt({
         <CheckCircle2 size={18} />
       </span>
       <div>
-        <strong>结构化诊断已提交</strong>
-        <p>{summary}</p>
-        <small>{reportId || '完整结果保存在 Trace Agent 报告列表中'}</small>
+        <strong>诊断完成</strong>
+        <dl className="agent-trace-diagnostic-receipt__summary">
+          <div><dt>发生了什么</dt><dd>{summary}</dd></div>
+          <div><dt>对你的影响</dt><dd>{impact}</dd></div>
+          <div><dt>Trace 可以怎么修复</dt><dd>{repair}</dd></div>
+          <div><dt>下一步</dt><dd>先打开报告核对证据；确认后再交给独立修复 Agent，修复后用新 Trace 复检。</dd></div>
+        </dl>
+        <details className="agent-trace-diagnostic-receipt__details">
+          <summary>技术细节与报告编号</summary>
+          {technicalDetail ? <p>{technicalDetail}</p> : null}
+          <small>{reportId || '完整结果保存在 Trace Agent 报告列表中'}</small>
+        </details>
       </div>
       <button
         className="agent-trace-diagnostic-receipt__action"
@@ -154,6 +184,16 @@ function TraceDiagnosticReceipt({
       </button>
     </div>
   );
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function renderProgressiveChunk(context: ProgressiveChunkRenderContext, sessionId: string) {

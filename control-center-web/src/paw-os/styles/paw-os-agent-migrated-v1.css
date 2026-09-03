@@ -321,6 +321,52 @@
   font-variant-numeric: tabular-nums;
 }
 
+.paw-desktop-root .paw-session-workspace__snapshot-label {
+  align-items: center;
+  background: color-mix(in srgb, var(--paw-success) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--paw-success) 20%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--paw-success) 78%, var(--paw-ink));
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 6px;
+  padding: 5px 9px;
+}
+
+.paw-desktop-root .paw-session-workspace__composer[data-read-only='true'] {
+  background: linear-gradient(transparent, var(--paw-panel-strong) 24%);
+}
+
+.paw-desktop-root .paw-session-workspace__snapshot-notice {
+  align-items: center;
+  background: color-mix(in srgb, var(--paw-panel) 90%, var(--paw-success) 10%);
+  border: 1px solid color-mix(in srgb, var(--paw-success) 18%, var(--paw-line));
+  border-radius: 14px;
+  color: var(--paw-ink);
+  display: flex;
+  gap: 10px;
+  margin: 0 auto;
+  max-width: 760px;
+  padding: 11px 14px;
+  width: 100%;
+}
+
+.paw-desktop-root .paw-session-workspace__snapshot-notice > svg {
+  color: var(--paw-success);
+  flex: none;
+}
+
+.paw-desktop-root .paw-session-workspace__snapshot-notice > span {
+  display: grid;
+  gap: 2px;
+}
+
+.paw-desktop-root .paw-session-workspace__snapshot-notice small {
+  color: var(--paw-muted);
+  font-size: 12px;
+}
+
 .paw-desktop-root .paw-session-workspace__runtime > span > i {
   background: var(--paw-chat-ok);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--paw-chat-ok) 12%, transparent);

@@ -1248,6 +1248,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertEqual(
             skill_names,
             sorted({
+                "agent-eval-room-optimizer",
                 "alignment-and-decision",
                 "bootstrap-project-context",
                 "ego-browser",

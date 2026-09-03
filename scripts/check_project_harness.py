@@ -211,8 +211,42 @@ def validate_release_candidate_scope(root: Path) -> list[str]:
         errors.append("release candidate scope summary.pathCount is stale")
     if summary_payload.get("dispositionCounts") != disposition_counts:
         errors.append("release candidate scope summary.dispositionCounts is stale")
-    if summary_payload.get("groupCounts") != group_counts:
+    summary_group_counts = summary_payload.get("groupCounts")
+    if summary_group_counts != group_counts:
         errors.append("release candidate scope summary.groupCounts is stale")
+
+    group_definitions = payload.get("groups")
+    if not isinstance(group_definitions, dict):
+        errors.append("release candidate scope groups must be an object")
+        group_definitions = {}
+    summary_group_counts_payload = (
+        summary_group_counts if isinstance(summary_group_counts, dict) else {}
+    )
+    missing_count = object()
+    for group in sorted(
+        set(group_counts) | set(group_definitions) | set(summary_group_counts_payload)
+    ):
+        definition = group_definitions.get(group, missing_count)
+        declared_count = (
+            definition.get("pathCount", missing_count)
+            if isinstance(definition, dict)
+            else missing_count
+        )
+        summary_count = summary_group_counts_payload.get(group, missing_count)
+        actual_count = group_counts.get(group, 0)
+        if declared_count != actual_count or summary_count != actual_count:
+            declared_label = (
+                "missing" if declared_count is missing_count else repr(declared_count)
+            )
+            summary_label = (
+                "missing" if summary_count is missing_count else repr(summary_count)
+            )
+            errors.append(
+                f"release candidate scope group count mismatch for {group}: "
+                f"groups.{group}.pathCount={declared_label}, "
+                f"summary.groupCounts.{group}={summary_label}, "
+                f"actual item membership={actual_count}"
+            )
     unclassified = sum(
         1
         for item in raw_items

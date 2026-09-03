@@ -51,7 +51,10 @@ SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
   SOURCE_DIRTY="true"
 fi
-if [[ "$CHANNEL" == "release" && "$SOURCE_DIRTY" == "true" ]]; then
+if [[ "$CHANNEL" == "release" \
+  && "$SOURCE_DIRTY" == "true" \
+  && ! ( "$ACTION" == "install-release" \
+    && "${RAG_IME_ALLOW_DIRTY_INSTALL:-0}" == "1" ) ]]; then
   echo "refusing formal Electron release build from dirty source" >&2
   exit 1
 fi

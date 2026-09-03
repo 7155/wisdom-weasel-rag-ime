@@ -56,7 +56,17 @@ import {
   MAX_COMPOSER_ATTACHMENTS,
   normalizeComposerAttachmentMimeType,
 } from '@/contracts/attachment-policy';
-import type { RoomSummary } from '@/features/rooms/room-types';
+import {
+  defaultRoomPermissionPolicy,
+  roomPermissionPolicyNeedsDangerousConfirmation,
+  roomPermissionPolicyNeedsWorkspaceConfirmation,
+  type RoomPermissionPolicy,
+  type RoomSummary,
+} from '@/features/rooms/room-types';
+import {
+  RoomPermissionPolicyEditor,
+  roomPermissionLayerPresentation,
+} from '@/features/rooms/room-presentation';
 import { roomPlanetName } from '@/features/rooms/room-participant-identity';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
@@ -143,6 +153,9 @@ export function PawAgentHome({
   const [modelReference, setModelReference] = useState(preferences.modelReference || defaultModel);
   const [thinking, setThinking] = useState(preferences.thinking);
   const [roomParticipantOverride, setRoomParticipantOverride] = useState<number | null>(null);
+  const [roomPermissionPolicy, setRoomPermissionPolicy] = useState<RoomPermissionPolicy>(
+    () => defaultRoomPermissionPolicy('collaboration'),
+  );
   const [optionsPanel, setOptionsPanel] = useState<OptionsPanel>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -192,7 +205,18 @@ export function PawAgentHome({
     for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
     return [...groups.entries()];
   }, [models]);
-  const permission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
+  const sessionPermission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
+  const roomPermission = roomPermissionLayerPresentation(
+    roomPermissionPolicy,
+    'room',
+    'collaboration',
+  );
+  const permissionLabel = mode === 'room'
+    ? `${roomPermission.effectiveLabel} · 分层`
+    : sessionPermission.label;
+  const permissionMode = mode === 'room'
+    ? roomPermissionPolicy.room.executionMode
+    : executionMode;
 
   // 继续工作按真实更新时间取最近四条，而不是按目录返回顺序截断。
   const recents = useMemo(() => [
@@ -319,6 +343,12 @@ export function PawAgentHome({
       ? 'control-center-auto-approve-v1'
       : 'control-center-full-access-v1';
     const workspaceRoots = unrestrictedWorkspaceRoots(workspaceRoot);
+    const roomWorkspaceRoots = (
+      roomPermissionPolicy.room.executionMode === 'per_action'
+      || roomPermissionPolicy.room.executionMode === 'full_trust'
+    )
+      ? workspaceRoots
+      : workspaceRoot ? [workspaceRoot] : [];
     try {
       if (mode === 'session') {
         const response = await transport.request<Record<string, unknown>>({
@@ -398,9 +428,12 @@ export function PawAgentHome({
             })),
             routingPolicy: 'parallel',
             routingConfig: { maxResponders: selectedPersonas.length, naturalJitter: 0, fallbackParticipantId: '' },
-            workspaceRoots,
-            executionMode,
-            ...(executionMode === 'full_trust'
+            workspaceRoots: roomWorkspaceRoots,
+            permissionPolicy: roomPermissionPolicy,
+            ...(roomPermissionPolicyNeedsWorkspaceConfirmation(roomPermissionPolicy)
+              ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+              : {}),
+            ...(roomPermissionPolicyNeedsDangerousConfirmation(roomPermissionPolicy)
               ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
               : {}),
           },
@@ -409,7 +442,12 @@ export function PawAgentHome({
         const roomId = text(rawRoom.id);
         if (!roomId) throw new Error('服务端没有返回可验证的 Room。');
         const clientMessageId = clientId('room');
-        const createdRoom = createdRoomSummary(rawRoom, message, workspaceRoot, selectedPersonas);
+        const createdRoom = createdRoomSummary(
+          rawRoom,
+          message,
+          roomWorkspaceRoots,
+          selectedPersonas,
+        );
         const importedAttachments = await importPendingAttachments({ roomId });
         const attachmentIds = importedAttachments.map((attachment) => attachment.id);
         clearPendingAttachments();
@@ -538,21 +576,30 @@ export function PawAgentHome({
               <span className="an-anchor">
                 <button
                   aria-expanded={optionsPanel === 'permission'}
-                  aria-label={`权限 · ${permission.label}`}
+                  aria-label={`权限 · ${permissionLabel}`}
                   className="an-chip"
                   onClick={() => setOptionsPanel(optionsPanel === 'permission' ? null : 'permission')}
                   ref={(node) => { chipRefs.current.permission = node; }}
-                  title={`权限 · ${permission.label}`}
+                  title={`权限 · ${permissionLabel}`}
                   type="button"
                 >
-                  <PermissionMark mode={executionMode} size={14} />
-                  <span className="an-chip-text">{permission.label}</span>
+                  <PermissionMark mode={permissionMode} size={14} />
+                  <span className="an-chip-text">{permissionLabel}</span>
                   <ChevronDown className="caret" size={13} />
                 </button>
                 {optionsPanel === 'permission' ? (
-                  <div className="an-menu" role="menu">
-                    <div className="an-menu-title">权限模式</div>
-                    {PERMISSION_PRESETS.map((item) => (
+                  <div className="an-menu" role={mode === 'session' ? 'menu' : undefined}>
+                    <div className="an-menu-title">
+                      {mode === 'room' ? 'Room 三层权限' : '权限模式'}
+                    </div>
+                    {mode === 'room' ? (
+                      <RoomPermissionPolicyEditor
+                        compact
+                        onChange={setRoomPermissionPolicy}
+                        policy={roomPermissionPolicy}
+                        roomKind="collaboration"
+                      />
+                    ) : PERMISSION_PRESETS.map((item) => (
                       <button
                         aria-checked={item.executionMode === executionMode}
                         className="an-menu-item"
@@ -861,7 +908,7 @@ function createdSessionSummary(
 function createdRoomSummary(
   raw: Record<string, unknown>,
   firstMessage: string,
-  workspaceRoot: string,
+  fallbackWorkspaceRoots: string[],
   selectedPersonas: AgentPersonaV1[],
 ): RoomSummary {
   return {
@@ -877,8 +924,8 @@ function createdRoomSummary(
       ? raw.participants
       : selectedPersonas.map((persona, ordinal) => ({ id: persona.roleId, ordinal })),
     workspaceRoots: Array.isArray(raw.workspaceRoots)
-      ? unrestrictedWorkspaceRoots(...(raw.workspaceRoots as string[]))
-      : unrestrictedWorkspaceRoots(workspaceRoot),
+      ? raw.workspaceRoots.filter((value): value is string => typeof value === 'string')
+      : fallbackWorkspaceRoots,
   } as RoomSummary;
 }
 

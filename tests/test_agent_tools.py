@@ -2693,6 +2693,38 @@ class ControlToolGatewayTests(unittest.TestCase):
             },
             schema,
         )
+
+        validate_contract(
+            {
+                "op": "delegate",
+                "tasks": [
+                    {
+                        "agent": "researcher",
+                        "task": "批量调查",
+                        "expectedOutput": "调查结果",
+                        "acceptanceCriteria": ["给出证据"],
+                    }
+                ],
+                "contextMode": "fresh",
+            },
+            schema,
+        )
+        with self.assertRaisesRegex(ValueError, "additionalProperties|contextMode"):
+            validate_contract(
+                {
+                    "op": "delegate",
+                    "tasks": [
+                        {
+                            "agent": "researcher",
+                            "task": "批量调查",
+                            "expectedOutput": "调查结果",
+                            "acceptanceCriteria": ["给出证据"],
+                            "contextMode": "fresh",
+                        }
+                    ],
+                },
+                schema,
+            )
         with self.assertRaisesRegex(ValueError, "exactly one allowed schema|forbidden"):
             validate_contract(
                 {

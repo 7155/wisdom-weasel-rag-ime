@@ -275,6 +275,13 @@ class AgentSessionBranchingService:
         # Invalidate only after Pi has appended the replacement user message.
         # Invalidating immediately after rewind lets an eager snapshot read the
         # previous durable leaf and resurrect the future branch in the UI.
+        invalidate_recent = getattr(
+            self.sessions,
+            "invalidate_recent_message_projection",
+            None,
+        )
+        if callable(invalidate_recent):
+            invalidate_recent(session_id)
         self.events.invalidate_projection(
             session_id,
             reason="session_rewritten",

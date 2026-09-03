@@ -43,6 +43,23 @@ class AgentRoomStartGateStoreTests(unittest.TestCase):
             self.assertTrue(replay["idempotentReplay"])
             self.assertEqual(replay["gateId"], first["gateId"])
 
+    def test_confirmed_room_ids_only_returns_confirmed_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = AgentRoomStartGateStore(Path(directory) / "agent.sqlite")
+            store.initialize()
+            for suffix in ("pending", "confirmed"):
+                store.claim(
+                    room_id=f"room:{suffix}",
+                    objective_text=f"任务 {suffix}",
+                    client_message_id=f"client:{suffix}",
+                    target_participant_ids=["participant:one"],
+                    work_item_id=f"work:{suffix}",
+                    now_ms=100,
+                )
+            store.confirm("room:confirmed", now_ms=200)
+
+            self.assertEqual(store.confirmed_room_ids(), ["room:confirmed"])
+
 
 class AgentRoomStartGateServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -64,7 +81,7 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
-    def test_first_executable_room_message_dispatches_without_second_confirmation(self) -> None:
+    def test_room_defaults_to_unrestricted_and_first_work_dispatches_without_approval(self) -> None:
         room = self.service.create_room(
             {
                 "title": "Trace 修复",
@@ -91,7 +108,7 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         with patch.object(
             self.service,
             "prompt",
-            return_value={"turnId": "turn:direct"},
+            return_value={"turnId": "turn:one"},
         ) as prompt:
             response = self.service.post_room_message(
                 str(room["id"]),
@@ -116,17 +133,18 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         self.assertTrue(replay["idempotentReplay"])
         self.assertEqual(replay["roomTurnId"], response["roomTurnId"])
         prompt.assert_called_once()
-        self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
-        snapshot = self.service.room_snapshot(str(room["id"]))
-        self.assertIsNone(snapshot["room"]["startGate"])
-        self.assertFalse(
-            any(
-                event["eventType"] == "room_start_confirmation_required"
-                for event in snapshot["events"]
-            )
+        self.assertEqual(
+            {
+                self.service.sessions.get(str(value["sessionId"]))[
+                    "roomExecutionMode"
+                ]
+                for value in room["participants"]
+            },
+            {"room_unrestricted"},
         )
+        self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
 
-    def test_legacy_confirmation_dispatches_original_task_and_is_idempotent(self) -> None:
+    def test_confirmation_dispatches_original_task_and_is_idempotent(self) -> None:
         room = self.service.create_room(
             {
                 "title": "确认后执行",
@@ -150,15 +168,6 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             mime_type="image/png",
             file_name="start-gate.png",
         )["media"]
-        pending = self.service.room_start_gates.claim(
-            room_id=str(room["id"]),
-            objective_text="原任务",
-            client_message_id="client:two",
-            target_participant_ids=[str(participant["id"])],
-            work_item_id=str(work["id"]),
-            attachment_ids=[str(media["mediaId"])],
-            retry_of_root_id="",
-        )
         with (
             patch.object(
                 self.service.runtime,
@@ -167,6 +176,14 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             ),
             patch.object(self.service, "prompt", return_value={"turnId": "turn:confirmed"}) as prompt,
         ):
+            pending = self.service.room_start_gates.claim(
+                room_id=str(room["id"]),
+                objective_text="原任务",
+                work_item_id=str(work["id"]),
+                client_message_id="client:two",
+                target_participant_ids=[str(participant["id"])],
+                attachment_ids=[str(media["mediaId"])],
+            )
             confirmed = self.service.confirm_room_start(
                 str(room["id"]), {"gateId": pending["gateId"], "decision": "confirm"},
             )
@@ -179,8 +196,17 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         self.assertEqual(replay["roomTurnId"], confirmed["roomTurnId"])
         self.assertEqual(prompt.call_args.args[1]["attachments"], [media["mediaId"]])
         prompt.assert_called_once()
+        self.assertEqual(
+            {
+                self.service.sessions.get(str(participant["sessionId"]))[
+                    "roomExecutionMode"
+                ]
+                for participant in room["participants"]
+            },
+            {"room_unrestricted"},
+        )
 
-    def test_confirmed_legacy_gate_does_not_block_a_later_work_item(self) -> None:
+    def test_room_work_items_never_create_repeated_approval_gates(self) -> None:
         room = self.service.create_room(
             {
                 "title": "确认一次后继续执行",
@@ -205,23 +231,14 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             created_by_participant_id=str(participant["id"]), client_message_id="work:second",
             topic_id=str(room["activeTopicId"]), state="active",
         )
-        pending = self.service.room_start_gates.claim(
-            room_id=str(room["id"]),
-            objective_text="执行第一个任务",
-            client_message_id="client:first",
-            target_participant_ids=[str(participant["id"])],
-            work_item_id=str(first_work["id"]),
-            attachment_ids=[],
-            retry_of_root_id="",
-        )
         with patch.object(
             self.service,
             "prompt",
             side_effect=[{"turnId": "turn:first"}, {"turnId": "turn:second"}],
         ) as prompt:
-            first = self.service.confirm_room_start(
+            first = self.service.post_room_message(
                 str(room["id"]),
-                {"gateId": pending["gateId"], "decision": "confirm"},
+                {"message": "第一个任务", "workItemId": first_work["id"], "clientMessageId": "client:first"},
             )
             second = self.service.post_room_message(
                 str(room["id"]),
@@ -232,6 +249,7 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
         self.assertTrue(second["accepted"])
         self.assertEqual(second["phase"], "execution")
         self.assertNotIn("startConfirmation", second)
+        self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
         self.assertEqual(prompt.call_count, 2)
 
     def test_conversation_only_room_message_does_not_create_gate(self) -> None:

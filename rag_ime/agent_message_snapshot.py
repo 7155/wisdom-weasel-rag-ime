@@ -175,6 +175,7 @@ class AgentMessageSnapshotService:
                     session_id,
                     room_projection=room_projection,
                 )
+            return self._recent_session_messages(session_id)
         session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
         snapshot_provider = getattr(
@@ -331,11 +332,18 @@ class AgentMessageSnapshotService:
         session = self.sessions.get(session_id)
         last_sequence = self.sessions.max_event_sequence(session_id)
         replayed, _gap = self.events.replay(session_id)
-        live_events = [
+        # Streaming text deltas are intentionally in-memory only.  They still
+        # advance the live cursor and must survive a recent-view refresh while
+        # Pi is producing the final response.
+        last_sequence = max(
+            last_sequence,
+            max((event.sequence for event in replayed), default=0),
+        )
+        live_events = _compact_text_delta_events([
             event.to_payload()
             for event in replayed
             if event.sequence <= last_sequence
-        ][-_RECENT_LIVE_EVENT_LIMIT:]
+        ])[-_RECENT_LIVE_EVENT_LIMIT:]
         self._append_pending_approvals(
             session_id=session_id,
             live_events=live_events,
@@ -390,6 +398,123 @@ class AgentMessageSnapshotService:
             "lifecycleCancellationAudits": lifecycle_cancellation_audits,
             "snapshotScope": "recent",
             "partial": True,
+            "recentFromSequence": recent_from_sequence,
+        }
+
+    def _recent_session_messages(self, session_id: str) -> dict[str, object]:
+        """Return a bounded first paint without restoring the Pi transcript."""
+
+        # The recent path deliberately avoids ``session_snapshot`` because a
+        # large Pi transcript can make first paint take minutes. Runtime status
+        # is only PAW's in-memory control projection, so it is safe to use here
+        # to retire a database ``busy`` row after the Host has already become
+        # idle. Without this reconciliation a refresh can recreate a permanent
+        # running turn even though cancellation already completed.
+        session = self._reconcile_session_status(
+            session_id,
+            self.sessions.get(session_id),
+        )
+        snapshot_provider = getattr(
+            self.runtime,
+            "recent_session_snapshot",
+            None,
+        )
+        runtime_snapshot = (
+            snapshot_provider(session_id)
+            if callable(snapshot_provider)
+            else None
+        )
+        messages = (
+            [
+                dict(message)
+                for message in runtime_snapshot.get("messages") or []
+                if isinstance(message, Mapping)
+            ]
+            if isinstance(runtime_snapshot, Mapping)
+            else []
+        )
+        last_sequence = self.sessions.max_event_sequence(session_id)
+        replayed, _gap = self.events.replay(session_id)
+        # The durable event journal omits streaming text deltas by design.
+        # Use the in-memory replay high-water mark as well, otherwise recent
+        # snapshots advertise the old cursor and erase Pi's active output.
+        last_sequence = max(
+            last_sequence,
+            max((event.sequence for event in replayed), default=0),
+        )
+        replay_events = [
+            event.to_payload()
+            for event in replayed
+            if event.sequence <= last_sequence
+        ]
+        tool_history_events = (
+            [
+                dict(event)
+                for event in runtime_snapshot.get("toolHistoryEvents") or []
+                if isinstance(event, Mapping)
+            ]
+            if isinstance(runtime_snapshot, Mapping)
+            else []
+        )
+        live_events = (
+            _snapshot_live_events(
+                tool_history_events,
+                replay_events,
+                session_active=str(session.get("status") or "idle")
+                in {"active", "busy"},
+            )
+            if tool_history_events
+            else _compact_text_delta_events(replay_events)
+        )
+        self._append_pending_approvals(
+            session_id=session_id,
+            live_events=live_events,
+            last_sequence=last_sequence,
+        )
+        live_events = live_events[-_RECENT_LIVE_EVENT_LIMIT:]
+        workflow = self._workflow_projector(session_id)
+        background_jobs = self.background_jobs.list(
+            session_id,
+            limit=100,
+        )
+        lifecycle_cancellation_audits = (
+            self.sessions.lifecycle_cancellation_audits(
+                session_id,
+                limit=20,
+            )
+        )
+        recent_from_sequence = min(
+            (
+                int(event.get("sequence") or 0)
+                for event in live_events
+                if int(event.get("sequence") or 0) > 0
+            ),
+            default=last_sequence,
+        )
+        return {
+            "schemaVersion": "rag-ime.agent-message-list.v1",
+            "ok": True,
+            "sessionId": session_id,
+            "items": messages,
+            "status": str(session.get("status") or "idle"),
+            "liveEvents": live_events,
+            "lastSequence": last_sequence,
+            "resumeToken": (
+                f"{session_id}:{last_sequence}"
+                if last_sequence
+                else ""
+            ),
+            "telemetry": None,
+            "messageQueue": None,
+            "todo": workflow["todo"],
+            "goal": workflow["goal"],
+            "actGate": workflow["actGate"],
+            "backgroundJobs": list(background_jobs.get("items") or []),
+            "lifecycleCancellationAudits": lifecycle_cancellation_audits,
+            "snapshotScope": "recent",
+            "partial": True,
+            "runtimeQuiescent": str(session.get("status") or "idle")
+            not in {"active", "busy"},
             "recentFromSequence": recent_from_sequence,
         }
 
@@ -627,6 +752,9 @@ def _project_room_public_messages(
                 created_at_ms=created_at_ms,
                 source_kind="room_event",
                 source_ref=event_id,
+                client_message_id=str(
+                    payload.get("clientMessageId") or ""
+                ),
             )
             projected.append(
                 (
@@ -769,6 +897,7 @@ def _room_text_message(
     created_at_ms: int,
     source_kind: str,
     source_ref: str,
+    client_message_id: str = "",
 ) -> dict[str, object]:
     message: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-message.v1",
@@ -796,6 +925,8 @@ def _room_text_message(
         "createdAtMs": created_at_ms,
         "completedAtMs": created_at_ms,
     }
+    if client_message_id:
+        message["clientMessageId"] = client_message_id
     validate_contract(message, "agent-message.v1.json")
     return message
 

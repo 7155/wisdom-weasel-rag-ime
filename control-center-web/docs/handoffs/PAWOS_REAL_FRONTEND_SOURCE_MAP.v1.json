@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "paw.real-frontend-source-map",
-  "updatedAt": "2026-08-29",
+  "updatedAt": "2026-09-01",
   "entrypoint": "control-center-web/CLOUD_MODEL.md",
   "humanGuide": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md",
   "proofBoundary": "This map proves current source selection and checked build wiring only. It does not prove installation, a running process, foreground interaction, visual acceptance, or completion of a feature.",
@@ -412,9 +412,46 @@
       ],
       "featureSurfaces": [
         "activity and Trace/Eval projection",
+        "external opener for the standalone Evolution Report webpage",
         "context inspection",
         "Trace Agent diagnosis with original conversation and action timeline",
         "diagnostics"
+      ]
+    },
+    {
+      "id": "eval-lab",
+      "label": "Agent Lab",
+      "authority": "production-selected",
+      "showcaseRoutes": [
+        "/eval-lab"
+      ],
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/paw-os/apps/PawAppsRuntime.tsx",
+          "contains": [
+            "case 'eval-lab':",
+            "return <PawNativeApp"
+          ]
+        },
+        {
+          "file": "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+          "contains": [
+            "if (appId === 'eval-lab') return <EvalLabFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
+        "control-center-web/src/features/eval-lab/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/eval-lab/eval-lab.css"
+      ],
+      "featureSurfaces": [
+        "frozen evaluation runs and evidence",
+        "experiment comparison matrix",
+        "best-known path search",
+        "bounded optimization Room launch"
       ]
     },
     {
@@ -582,6 +619,35 @@
     }
   ],
   "nonAppSurfaces": [
+    {
+      "id": "standalone-evolution-report",
+      "authority": "production-selected-standalone-document",
+      "route": "/evolution-report",
+      "selectionChain": [
+        {
+          "file": "control-center-web/src/app/App.tsx",
+          "contains": [
+            "standaloneSurfaceForPath",
+            "<StandaloneEvolutionReportPage />"
+          ]
+        },
+        {
+          "file": "control-center-web/src/features/evolution-report/standalone.tsx",
+          "contains": [
+            "<EvolutionReportFeature />"
+          ]
+        }
+      ],
+      "renderOwners": [
+        "control-center-web/src/app/standalone-surface.ts",
+        "control-center-web/src/features/evolution-report/standalone.tsx",
+        "control-center-web/src/features/evolution-report/index.tsx"
+      ],
+      "styleOwners": [
+        "control-center-web/src/features/evolution-report/evolution-report.css"
+      ],
+      "boundaryNote": "This is a standalone Web document. System Monitor only opens the URL; PAWOS App registries must not claim this path."
+    },
     {
       "id": "wayfinder-project-field",
       "authority": "production-selected-shell-surface",

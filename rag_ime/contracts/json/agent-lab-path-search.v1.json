@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-lab-path-search.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "searchId", "title", "objective", "frozenControls",
+    "baseline", "candidates", "selectedPath", "hardGates", "claim", "generatedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.agent-lab-path-search.v1"},
+    "searchId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "objective": {"$ref": "#/$defs/objective"},
+    "frozenControls": {
+      "type": "array", "minItems": 1, "maxItems": 32,
+      "items": {"$ref": "#/$defs/frozenControl"}
+    },
+    "baseline": {"$ref": "#/$defs/node"},
+    "candidates": {
+      "type": "array", "minItems": 1, "maxItems": 128,
+      "items": {"$ref": "#/$defs/node"}
+    },
+    "selectedPath": {
+      "type": "array", "minItems": 1, "maxItems": 64,
+      "items": {"$ref": "#/$defs/pathStep"}
+    },
+    "hardGates": {
+      "type": "array", "minItems": 1, "maxItems": 32,
+      "items": {"$ref": "#/$defs/gateResult"}
+    },
+    "claim": {"$ref": "#/$defs/claim"},
+    "generatedAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 1600},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "frozenControl": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 100},
+        "value": {"$ref": "#/$defs/text"}
+      }
+    },
+    "metricSpec": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "direction", "weight", "class"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 100},
+        "direction": {"enum": ["max", "min"]},
+        "weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "class": {"enum": ["quality", "reliability", "efficiency", "cost"]},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "nonRegression": {"type": "boolean"}
+      }
+    },
+    "gateSpec": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "metric", "operator", "value"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "metric": {"type": "string", "minLength": 1, "maxLength": 100},
+        "operator": {"enum": ["gte", "lte", "eq"]},
+        "value": {"type": "number"}
+      }
+    },
+    "objective": {
+      "type": "object", "additionalProperties": false,
+      "required": ["userNeed", "metrics", "gates", "selectionPolicy"],
+      "properties": {
+        "userNeed": {"$ref": "#/$defs/text"},
+        "metrics": {
+          "type": "array", "minItems": 1, "maxItems": 32,
+          "items": {"$ref": "#/$defs/metricSpec"}
+        },
+        "gates": {
+          "type": "array", "minItems": 1, "maxItems": 32,
+          "items": {"$ref": "#/$defs/gateSpec"}
+        },
+        "selectionPolicy": {"enum": ["lexicographic_pareto", "weighted_pareto"]}
+      }
+    },
+    "node": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "nodeId", "parentNodeId", "changedFactor", "configRevision", "frozenControlHash",
+        "metrics", "evidenceRefs", "status"
+      ],
+      "properties": {
+        "nodeId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "parentNodeId": {"type": ["string", "null"], "maxLength": 160},
+        "changedFactor": {"type": "string", "minLength": 1, "maxLength": 100},
+        "configRevision": {"type": "string", "minLength": 1, "maxLength": 200},
+        "frozenControlHash": {"$ref": "#/$defs/sha256"},
+        "metrics": {
+          "type": "object", "maxProperties": 64,
+          "additionalProperties": {"type": "number"}
+        },
+        "evidenceRefs": {
+          "type": "array", "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 300}
+        },
+        "status": {"enum": ["eligible", "rejected", "not_evaluated", "unknown"]},
+        "reason": {"$ref": "#/$defs/text"}
+      }
+    },
+    "pathStep": {
+      "type": "object", "additionalProperties": false,
+      "required": ["nodeId", "decision", "reason"],
+      "properties": {
+        "nodeId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "decision": {"enum": ["baseline", "keep", "reject", "not_evaluated", "unknown"]},
+        "reason": {"$ref": "#/$defs/text"}
+      }
+    },
+    "gateResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "status", "reason"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "status": {"enum": ["pass", "fail", "unknown"]},
+        "reason": {"$ref": "#/$defs/text"}
+      }
+    },
+    "claim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "summary", "limitations"],
+      "properties": {
+        "status": {"enum": ["best_known", "blocked", "insufficient_evidence"]},
+        "summary": {"$ref": "#/$defs/text"},
+        "limitations": {
+          "type": "array", "minItems": 1, "maxItems": 16,
+          "items": {"$ref": "#/$defs/text"}
+        }
+      }
+    }
+  }
+}

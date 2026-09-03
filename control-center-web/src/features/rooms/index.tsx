@@ -37,6 +37,7 @@ import {
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import { GenericUserInputCard } from '@/features/agent/review/AgentReviewDialogs';
+import { unrestrictedWorkspaceRoots } from '@/features/agent/composer/permission-policy';
 import { roleItems } from '@/features/agent/types';
 import { useMediaQuery, useModalPanel } from '@/features/agent/overlay-dialog';
 import { publicErrorText } from '@/features/overview/management-ui';
@@ -51,6 +52,7 @@ import {
   roomCollaborationRoleLabel,
 } from './room-copy';
 import {
+  RoomPermissionPolicyEditor,
   participantName,
   pathName,
   recommendedCreateRole,
@@ -58,9 +60,8 @@ import {
   roomAvatarOptions,
   roomCollaborationRoleOptions,
   roomCreateParticipantLabel,
-  roomExecutionModeLabel,
-  roomExecutionModeOptions,
   roomPathName,
+  roomPermissionLayerPresentation,
   roomWorkspaceViewOptions,
   roomWorkStateLabel,
 } from './room-presentation';
@@ -69,14 +70,19 @@ import {
   latestPendingGroupedRoomInput,
   type PendingRoomQuestion,
 } from './room-question';
-import type {
-  RoomCollaborationRole,
-  RoomExecutionMode,
-  RoomKind,
-  RoomParticipant,
-  RoomSummary,
-  RoomWorkItem,
-  RoomWorkState,
+import {
+  defaultRoomPermissionPolicy,
+  parseRoomPermissionPolicy,
+  roomPermissionPoliciesEqual,
+  roomPermissionPolicyNeedsDangerousConfirmation,
+  roomPermissionPolicyNeedsWorkspaceConfirmation,
+  type RoomCollaborationRole,
+  type RoomKind,
+  type RoomParticipant,
+  type RoomPermissionPolicy,
+  type RoomSummary,
+  type RoomWorkItem,
+  type RoomWorkState,
 } from './room-types';
 import { RoomTurn } from './timeline/RoomTurn';
 import {
@@ -93,9 +99,13 @@ export { RoomTurn } from './timeline/RoomTurn';
 export type {
   RoomArtifact,
   RoomCollaborationRole,
+  RoomEffectivePermissionPolicy,
   RoomExecutionMode,
   RoomKind,
   RoomParticipant,
+  RoomPermissionChildExecutionMode,
+  RoomPermissionLayer,
+  RoomPermissionPolicy,
   RoomRoutingPolicy,
   RoomSummary,
   RoomTopic,
@@ -104,6 +114,7 @@ export type {
 } from './room-types';
 
 const emptyRoomTurnIds: string[] = [];
+const NO_ROOM_PROJECT = '__no_room_project__';
 const ROOM_WORK_ITEM_STATES: Record<string, true> = {
   queued: true,
   active: true,
@@ -289,7 +300,9 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
   const [createAvatar, setCreateAvatar] = useState('briefcase');
   const [createDescription, setCreateDescription] = useState('');
   const [createScenarioPrompt, setCreateScenarioPrompt] = useState('');
-  const [createExecutionMode, setCreateExecutionMode] = useState<RoomExecutionMode>('full_trust');
+  const [createPermissionPolicy, setCreatePermissionPolicy] = useState<RoomPermissionPolicy>(
+    () => defaultRoomPermissionPolicy('collaboration'),
+  );
   const [projectPaths, setProjectPaths] = useState<string[]>([]);
   const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([]);
   const [workspacePicking, setWorkspacePicking] = useState(false);
@@ -300,7 +313,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
   const [settingsAvatar, setSettingsAvatar] = useState('members');
   const [settingsDescription, setSettingsDescription] = useState('');
   const [settingsScenarioPrompt, setSettingsScenarioPrompt] = useState('');
-  const [settingsExecutionMode, setSettingsExecutionMode] = useState<RoomExecutionMode>('workspace_managed');
+  const [settingsPermissionPolicy, setSettingsPermissionPolicy] = useState<RoomPermissionPolicy>();
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [memberSavingRoleId, setMemberSavingRoleId] = useState('');
@@ -622,12 +635,12 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     setCatalogLoading(true);
     const roomRequest = transport.request({
       pathId: 'agent.rooms.list',
-      query: { limit: 100, ...(includeArchived ? { includeArchived: true } : {}) },
+      query: { limit: 100, ownerAppId: '', ...(includeArchived ? { includeArchived: true } : {}) },
     });
     const roleRequest = requestRoleCatalog();
     const sessionRequest = transport.request({ pathId: 'agent.sessions.list', query: { limit: 200 } });
     const applyRoomCatalog = (items: RoomSummary[]) => {
-      setRooms(items);
+      setRooms(items.filter((item) => !item.ownerAppId || item.id === initialRoomId));
       setSelectedId((current) => {
         const next = items.some((item) => item.id === current)
           ? current
@@ -660,7 +673,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
       setProjectPaths(uniquePaths([
         ...loadedRooms.flatMap((item) => item.workspaceRoots ?? []),
         ...loadedSessionRoots,
-      ]));
+      ]).filter((path) => path !== '/'));
     }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
   }, [catalogReloadRevision, includeArchived, initialRoomId, transport]);
@@ -709,6 +722,17 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
   });
 
   const room = rooms.find((item) => item.id === selectedId);
+  const storedRoomPermissionPolicy = useMemo(
+    () => parseRoomPermissionPolicy(room?.permissionPolicy, room?.roomKind),
+    [room?.permissionPolicy, room?.roomKind],
+  );
+  const partnerPermissionPresentation = storedRoomPermissionPolicy
+    ? roomPermissionLayerPresentation(
+        storedRoomPermissionPolicy,
+        'partner',
+        room?.roomKind ?? 'collaboration',
+      )
+    : undefined;
   const activeParticipants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
   const participantAliases = Object.fromEntries(
     activeParticipants.map((participant) => [participant.id, roomParticipantPlanetName(participant)]),
@@ -734,10 +758,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     || settingsAvatar !== (room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'))
     || settingsDescription.trim() !== (room.description ?? '').trim()
     || settingsScenarioPrompt.trim() !== (room.scenarioPrompt ?? '').trim()
-    || settingsExecutionMode !== (
-      room.executionMode
-      ?? (room.roomKind === 'roleplay' ? 'per_action' : 'workspace_managed')
-    )
+    || !roomPermissionPoliciesEqual(settingsPermissionPolicy, storedRoomPermissionPolicy)
   ));
 
   async function send(
@@ -953,7 +974,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     setCreateError('');
     setCreateTitle('');
     setCreateRoomKind('collaboration');
-    setCreateExecutionMode('full_trust');
+    setCreatePermissionPolicy(defaultRoomPermissionPolicy('collaboration'));
     setCreateAvatar('briefcase');
     setCreateDescription('');
     setCreateScenarioPrompt('');
@@ -975,7 +996,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
         .filter((roleId) => !timelineDefaults.includes(roleId)),
     ].slice(0, 4);
     setCreateRoomKind(kind);
-    setCreateExecutionMode(kind === 'collaboration' ? 'full_trust' : 'per_action');
+    setCreatePermissionPolicy(defaultRoomPermissionPolicy(kind));
     setCreateAvatar(kind === 'roleplay' ? 'sparkles' : 'briefcase');
     setSelectedRoleIds(defaults);
     setCoordinatorRoleId(defaults[0] ?? '');
@@ -984,7 +1005,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
   async function pickWorkspaceRoot(): Promise<void> {
     if (workspacePicking || creating) return;
     if (!transport.pickFiles) {
-      setCreateError('当前页面不能选择本地工作目录，请在桌面应用中开始协作。');
+      setCreateError('当前页面不能选择本地起始项目，请在桌面应用中选择。');
       return;
     }
     setWorkspacePicking(true);
@@ -1040,10 +1061,6 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
       setCreateError('请选择 2 至 4 位伙伴。');
       return;
     }
-    if (createRoomKind === 'collaboration' && !workspaceRoots.length) {
-      setCreateError('请先选择伙伴可以工作的目录。');
-      return;
-    }
     const title = createTitle.trim();
     if (!title) return;
     setCreating(true);
@@ -1059,12 +1076,17 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
           scenarioPrompt: createScenarioPrompt.trim(),
           participants,
           routingPolicy: createRoomKind === 'collaboration' ? 'parallel' : 'natural',
-          workspaceRoots: createRoomKind === 'collaboration' ? workspaceRoots : [],
-          executionMode: createExecutionMode,
-          ...(createExecutionMode === 'workspace_managed'
+          workspaceRoots: createRoomKind === 'collaboration'
+            ? createPermissionPolicy.room.executionMode === 'per_action'
+              || createPermissionPolicy.room.executionMode === 'full_trust'
+              ? unrestrictedWorkspaceRoots(...workspaceRoots)
+              : uniquePaths(workspaceRoots)
+            : [],
+          permissionPolicy: createPermissionPolicy,
+          ...(roomPermissionPolicyNeedsWorkspaceConfirmation(createPermissionPolicy)
             ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
             : {}),
-          ...(createExecutionMode === 'full_trust'
+          ...(roomPermissionPolicyNeedsDangerousConfirmation(createPermissionPolicy)
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
             : {}),
           routingConfig: { maxResponders: 1, naturalJitter: createRoomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
@@ -1116,7 +1138,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     setSettingsAvatar(room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'));
     setSettingsDescription(room.description ?? '');
     setSettingsScenarioPrompt(room.scenarioPrompt ?? '');
-    setSettingsExecutionMode(room.executionMode ?? (room.roomKind === 'roleplay' ? 'per_action' : 'workspace_managed'));
+    setSettingsPermissionPolicy(storedRoomPermissionPolicy);
     setSettingsError('');
     setSettingsOpen(true);
   }
@@ -1125,9 +1147,10 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
     setSettingsSaving(true);
     setSettingsError('');
     try {
-      const currentExecutionMode = room.executionMode
-        ?? (room.roomKind === 'roleplay' ? 'per_action' : 'workspace_managed');
-      const executionModeChanged = settingsExecutionMode !== currentExecutionMode;
+      const permissionPolicyChanged = !roomPermissionPoliciesEqual(
+        settingsPermissionPolicy,
+        storedRoomPermissionPolicy,
+      );
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.room.archive',
         params: { roomId: room.id },
@@ -1138,13 +1161,15 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
           scenarioPrompt: settingsScenarioPrompt.trim(),
           routingPolicy: room.routingPolicy,
           routingConfig: room.routingConfig ?? { maxResponders: 1, naturalJitter: room.roomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
-          ...(executionModeChanged
-            ? { executionMode: settingsExecutionMode }
-            : {}),
-          ...(executionModeChanged && settingsExecutionMode === 'workspace_managed'
+          ...(settingsPermissionPolicy ? { permissionPolicy: settingsPermissionPolicy } : {}),
+          ...(permissionPolicyChanged
+            && settingsPermissionPolicy
+            && roomPermissionPolicyNeedsWorkspaceConfirmation(settingsPermissionPolicy)
             ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
             : {}),
-          ...(executionModeChanged && settingsExecutionMode === 'full_trust'
+          ...(permissionPolicyChanged
+            && settingsPermissionPolicy
+            && roomPermissionPolicyNeedsDangerousConfirmation(settingsPermissionPolicy)
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
             : {}),
         },
@@ -1512,7 +1537,7 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
           onPickAttachments={() => undefined}
         /> : null}</div>}</div></> : workspaceView === 'sessions' ? <section className="room-session-workspace" aria-label="伙伴与权限">
           <header><span><strong>伙伴与工作权限</strong><small>每位伙伴保留自己的工作上下文；分工负责引导协作，真正能做什么仍由工作目录、工具和你的授权决定。</small></span></header>
-          <div>{activeParticipants.map((participant) => <article key={participant.id}><span><strong>{roomParticipantPlanetName(participant)}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
+          <div>{activeParticipants.map((participant) => <article key={participant.id}><span><strong>{roomParticipantPlanetName(participant)}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {partnerPermissionPresentation ? `${partnerPermissionPresentation.effectiveLabel} · ${partnerPermissionPresentation.inheritanceLabel}` : '分层权限不可用'}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
           {!activeParticipants.length ? <p className="room-empty room-session-workspace__empty">还没有伙伴加入这个协作空间。</p> : null}
         </section> : null}
         <section className="room-execution-workspace room-execution-workspace--cockpit" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
@@ -1542,15 +1567,30 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
           <label className="room-create-field"><span>取个名字 <small>必填</small></span><input maxLength={120} value={createTitle} onChange={(event) => { setCreateTitle(event.target.value); setCreateError(''); }} placeholder={createRoomKind === 'roleplay' ? '例如：深夜茶话会' : '例如：发布前检查'} aria-label="协作空间名称" /></label>
           <fieldset><legend>邀请伙伴 <small>至少 2 位 · {selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona, index) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><span><strong>{roomCandidatePlanetName(index)}<em>{roomCreateParticipantLabel(createRoomKind, checked, persona.roleId, selectedRoleIds, coordinatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
           {createRoomKind === 'collaboration' ? <p className="room-create-role-flow">所有伙伴地位平等，可以直接互相 @、提问和回复；其中一位只在最后负责 Root 汇合与最终回复，不承担消息转发。</p> : null}
-          {createRoomKind === 'collaboration' ? <section className="room-create-projects" aria-label="工作目录">
-            <header><strong>在哪个目录工作</strong><small>必选</small></header>
-            {projectPaths.length ? <RadioGroup.Root aria-label="最近使用的工作目录" value={workspaceRoots[0] ?? ''} onValueChange={(value) => { setWorkspaceRoots([value]); setCreateError(''); }}>{projectPaths.map((path) => <RadioGroup.Item key={path} value={path} title={path}><FolderOpen size={16} /><span><strong>{pathName(path)}</strong><small>{path}</small></span></RadioGroup.Item>)}</RadioGroup.Root> : null}
+          {createRoomKind === 'collaboration' ? <section className="room-create-projects" aria-label="起始项目">
+            <header><strong>起始项目</strong><small>可选，仅用于上下文</small></header>
+            <RadioGroup.Root
+              aria-label="最近使用的起始项目"
+              value={workspaceRoots[0] ?? NO_ROOM_PROJECT}
+              onValueChange={(value) => {
+                setWorkspaceRoots(value === NO_ROOM_PROJECT ? [] : [value]);
+                setCreateError('');
+              }}
+            >
+              <RadioGroup.Item value={NO_ROOM_PROJECT}><MessagesSquare size={16} /><span><strong>不预选项目</strong><small>仍授予整个系统权限</small></span></RadioGroup.Item>
+              {projectPaths.map((path) => <RadioGroup.Item key={path} value={path} title={path}><FolderOpen size={16} /><span><strong>{pathName(path)}</strong><small>{path}</small></span></RadioGroup.Item>)}
+            </RadioGroup.Root>
             {workspaceRoots[0] && !projectPaths.includes(workspaceRoots[0]) ? <div className="room-create-project-picked" title={workspaceRoots.join('\n')}><FolderOpen size={16} /><span><strong>{pathName(workspaceRoots[0])}</strong><small>{workspaceRoots[0]}</small></span></div> : null}
-            <Button type="button" variant="quiet" leadingIcon={workspacePicking ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />} disabled={workspacePicking || creating} onClick={() => void pickWorkspaceRoot()}>{workspaceRoots.length ? '换一个目录' : '选择工作目录'}</Button>
+            <Button type="button" variant="quiet" leadingIcon={workspacePicking ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />} disabled={workspacePicking || creating} onClick={() => void pickWorkspaceRoot()}>{workspaceRoots.length ? '换一个项目' : '选择起始项目'}</Button>
           </section> : null}
-          {createRoomKind === 'collaboration' ? <fieldset><legend>允许伙伴怎样工作</legend><div className="room-kind-options">
-            {roomExecutionModeOptions(createRoomKind).map((option) => <label key={option.value}><input type="radio" name="room-execution-mode" checked={createExecutionMode === option.value} onChange={() => setCreateExecutionMode(option.value)} /><span><ShieldCheck size={17} /><strong>{option.label}</strong><small>{option.description}</small></span></label>)}
-          </div></fieldset> : null}
+          <fieldset>
+            <legend>三层工作权限 <small>只能逐层保持或收窄</small></legend>
+            <RoomPermissionPolicyEditor
+              onChange={setCreatePermissionPolicy}
+              policy={createPermissionPolicy}
+              roomKind={createRoomKind}
+            />
+          </fieldset>
           <Disclosure
             className="room-create-optional"
             summary={<>补充背景与外观 <small>可选</small></>}
@@ -1564,12 +1604,12 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
             </div>
           </Disclosure>
         </form>
-        <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>先不开始</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={(createRoomKind === 'collaboration' && !workspaceRoots.length) || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>{createRoomKind === 'roleplay' ? '开始群聊' : '开始协作'}</Button></DialogFooter>
+        <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>先不开始</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={!createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>{createRoomKind === 'roleplay' ? '开始群聊' : createPermissionPolicy.room.executionMode === 'full_trust' ? '启用全自动并开始协作' : '开始协作'}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={settingsOpen} onOpenChange={(open) => { if (!settingsSaving && !memberSavingRoleId && !memberRemovingId && !memberUpdatingId && !deleting) { setSettingsOpen(open); if (!open) setSettingsError(''); } }}>
       <DialogContent className="room-settings-dialog">
-        <DialogHeader><DialogTitle>设置协作空间</DialogTitle><DialogDescription>{room?.roomKind === 'roleplay' ? '名称和共同背景会在保存后更新；伙伴邀请会单独立即生效。已经发生的对话不会被改写。' : '名称、协作约定和工作权限会在保存后从下一轮生效；伙伴与分工会单独立即更新。'}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>设置协作空间</DialogTitle><DialogDescription>{room?.roomKind === 'roleplay' ? '名称、共同背景和不抬权的分层权限会在保存后更新；伙伴邀请会单独立即生效。已经发生的对话不会被改写。' : '名称、协作约定和工作权限会在保存后从下一轮生效；伙伴与分工会单独立即更新。'}</DialogDescription></DialogHeader>
         <form id="room-settings-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void saveRoomSettings(); }}>
           {settingsError ? <p className="room-dialog-error" role="alert">{settingsError}</p> : null}
           <div className="room-create-pair">
@@ -1577,20 +1617,14 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
             <label className="room-create-field"><span>图标</span><Select aria-label="协作空间图标" onValueChange={setSettingsAvatar} options={roomAvatarOptions()} value={settingsAvatar} /></label>
           </div>
           <label className="room-create-field"><span>简介</span><input maxLength={500} value={settingsDescription} onChange={(event) => setSettingsDescription(event.target.value)} aria-label="协作空间简介" /></label>
-          {room?.roomKind !== 'roleplay' ? (
-            <label className="room-create-field">
-              <span>工作权限</span>
-              <Select
-                aria-label="工作权限"
-                onValueChange={(value) => setSettingsExecutionMode(value as RoomExecutionMode)}
-                options={roomExecutionModeOptions('collaboration').map((option) => ({ value: option.value, label: option.label }))}
-                value={settingsExecutionMode}
-              />
-              <small className="room-create-field__hint">
-                {roomExecutionModeOptions('collaboration').find((option) => option.value === settingsExecutionMode)?.description}
-              </small>
-            </label>
-          ) : null}
+          <fieldset>
+            <legend>三层工作权限 <small>从服务端策略原样载入</small></legend>
+            <RoomPermissionPolicyEditor
+              onChange={settingsPermissionPolicy ? setSettingsPermissionPolicy : undefined}
+              policy={settingsPermissionPolicy}
+              roomKind={room?.roomKind ?? 'collaboration'}
+            />
+          </fieldset>
           <fieldset className="room-member-manager">
             <legend>伙伴 <small>至少 2 位 · {activeParticipants.length}/4</small></legend>
             <p>这里的邀请、移出与分工调整会立即生效，但不会扩大工具权限。新伙伴从下一轮开始参与，不会补读此前的完整对话；任务中仍可随时点名或正式交接。</p>
@@ -1635,7 +1669,8 @@ export function RoomsFeature({ initialRoomId = '', pawOsWorkbench = false }: { i
       <DialogContent><DialogHeader><DialogTitle>先把这个协作空间收起来？</DialogTitle><DialogDescription>“{room?.title}”会从当前列表收起，但对话和交付仍会安全保留在本机。</DialogDescription></DialogHeader>{error ? <p className="room-dialog-error" role="alert">{error}</p> : null}<DialogFooter><Button variant="quiet" disabled={archiving} onClick={() => setArchiveOpen(false)}>保持原样</Button><Button variant="danger" loading={archiving} onClick={() => void updateRoomArchiveState(true)}>收起协作空间</Button></DialogFooter></DialogContent>
     </Dialog>
     <RoomMemberBoundaryDialog
-      executionMode={room?.executionMode}
+      permissionPolicy={room?.permissionPolicy}
+      roomKind={room?.roomKind}
       participant={boundaryParticipant}
       workspaceRoots={room?.workspaceRoots ?? []}
       onClose={() => setBoundaryParticipant(undefined)}

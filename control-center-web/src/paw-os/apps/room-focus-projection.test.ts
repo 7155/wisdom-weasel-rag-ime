@@ -684,4 +684,36 @@ describe('buildRoomFocusProjection', () => {
 
     expect(focus.partners.find((partner) => partner.participantId === 'p-mars')?.state).toBe('failed');
   });
+
+  it('lets a participant terminal receipt override a lagging active WorkItem without completing the Room Root', () => {
+    const marsWork = work({
+      id: 'work-mars',
+      objective: '验证 Mars 的终态回执',
+      currentOwnerParticipantId: 'p-mars',
+      accountableParticipantId: 'p-mars',
+      state: 'active',
+      resultSummary: 'Mars 已提交实现结果',
+    });
+    const projection = createRoomProjection('room-sol');
+    projection.turnOrder = ['turn-root'];
+    projection.turnsById = {
+      'turn-root': {
+        id: 'turn-root',
+        rootId: 'turn-root',
+        status: 'running',
+        messageIds: [],
+        activityIds: [],
+        participantIds: ['p-earth', 'p-mars'],
+        terminalParticipantIds: ['p-mars'],
+        createdAtMs: 10,
+        updatedAtMs: 20,
+      },
+    };
+
+    const focus = buildRoomFocusProjection(room([marsWork]), projection);
+
+    expect(focus.partners.find((partner) => partner.participantId === 'p-mars')?.state).toBe('completed');
+    expect(focus.goal.state).toBe('running');
+    expect(focus.goal.rootResult).toBeUndefined();
+  });
 });

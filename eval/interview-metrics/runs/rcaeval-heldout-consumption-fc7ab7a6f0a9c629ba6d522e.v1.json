@@ -1,0 +1,12 @@
+{
+  "caseManifestSha256": "7d1c654d92b6d092674cee28098b2f4dd8b6e4f583322ada62e2f23b1bc6ef87",
+  "consumptionReceiptSha256": "3ab5c9448de0a70122a0c3d0ef34a470380ecf29e589a050b4aa20beb9df1f4d",
+  "failedCaseCount": 1,
+  "heldOutConsumed": true,
+  "heldOutReportSha256": "95e5a595bb4a54d7701b08a278094fe38014f68c3d6207b5b5f67571f7c9dfe9",
+  "oneShotId": "rcaeval-re1-heldout:cbf9c47341f930f06e2496e6",
+  "profile": "rrf-v2",
+  "promotionReceiptSha256": "cf06c44317448f5f3c0fa9b60710884e66ceabbf08fd905499c475545274fd95",
+  "schemaVersion": "paw.rcaeval-heldout-consumption.v1",
+  "status": "completed"
+}

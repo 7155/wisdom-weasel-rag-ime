@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-lab-experiment.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "experimentId", "revisionSha256", "title", "vertical",
+    "evaluationKind", "status", "claimStatus", "businessProblem", "whyAgent",
+    "dataset", "scoring", "factors", "frozenControls", "baseline", "candidate",
+    "comparison", "star", "claim", "openGaps", "importedAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.agent-lab-experiment.v1"},
+    "experimentId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"},
+    "revisionSha256": {"$ref": "#/$defs/sha256"},
+    "title": {"$ref": "#/$defs/label"},
+    "vertical": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,119}$"},
+    "evaluationKind": {
+      "enum": ["workflow", "rag_retrieval", "answer_evidence", "tool_runtime", "trace_repair", "memory", "model_cost", "other"]
+    },
+    "status": {"enum": ["kept", "rejected", "diagnostic", "open_gap"]},
+    "claimStatus": {"enum": ["headline", "supporting", "diagnostic", "blocked"]},
+    "effectStatus": {"enum": ["improved", "neutral", "regressed", "not_run", "unverified"]},
+    "candidateType": {"enum": ["single_factor", "compound_repair", "baseline", "unknown"]},
+    "businessProblem": {"$ref": "#/$defs/text"},
+    "whyAgent": {"$ref": "#/$defs/text"},
+    "dataset": {"$ref": "#/$defs/dataset"},
+    "scoring": {"$ref": "#/$defs/scoring"},
+    "factors": {
+      "type": "array", "minItems": 1, "maxItems": 16,
+      "items": {"$ref": "#/$defs/factor"}
+    },
+    "frozenControls": {
+      "type": "array", "minItems": 1, "maxItems": 32,
+      "items": {"$ref": "#/$defs/frozenControl"}
+    },
+    "baseline": {"$ref": "#/$defs/runSummary"},
+    "candidate": {"$ref": "#/$defs/runSummary"},
+    "comparison": {"$ref": "#/$defs/comparison"},
+    "star": {"$ref": "#/$defs/star"},
+    "claim": {"$ref": "#/$defs/claim"},
+    "openGaps": {
+      "type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/text"}
+    },
+    "importedAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "label": {"type": "string", "minLength": 1, "maxLength": 200},
+    "text": {"type": "string", "minLength": 1, "maxLength": 1600},
+    "dataset": {
+      "type": "object", "additionalProperties": false,
+      "required": ["datasetId", "split", "caseCount", "unit", "manifestSha256", "heldOutConsumed"],
+      "properties": {
+        "datasetId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "split": {"type": "string", "minLength": 1, "maxLength": 80},
+        "caseCount": {"type": "integer", "minimum": 0},
+        "unit": {"$ref": "#/$defs/text"},
+        "manifestSha256": {"$ref": "#/$defs/sha256"},
+        "heldOutConsumed": {"type": "boolean"}
+      }
+    },
+    "scoring": {
+      "type": "object", "additionalProperties": false,
+      "required": ["primaryMetric", "evaluatorAuthority", "goldHiddenFromAgent", "hardGates"],
+      "properties": {
+        "primaryMetric": {"$ref": "#/$defs/text"},
+        "evaluatorAuthority": {"type": "string", "minLength": 1, "maxLength": 200},
+        "goldHiddenFromAgent": {"type": "boolean"},
+        "hardGates": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/text"}}
+      }
+    },
+    "factor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "before", "after", "reason"],
+      "properties": {
+        "name": {
+          "enum": ["model", "prompt", "skill", "tool", "workflow", "context", "memory_rag", "guardrail", "execution_policy", "human_loop", "pricing"]
+        },
+        "before": {"$ref": "#/$defs/text"},
+        "after": {"$ref": "#/$defs/text"},
+        "reason": {"$ref": "#/$defs/text"}
+      }
+    },
+    "frozenControl": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "value", "reason"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 100},
+        "value": {"$ref": "#/$defs/text"},
+        "reason": {"$ref": "#/$defs/text"}
+      }
+    },
+    "metrics": {
+      "type": "object", "maxProperties": 64,
+      "additionalProperties": {"type": "number"}
+    },
+    "runSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runId", "metrics", "evidenceRefs"],
+      "properties": {
+        "runId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "metrics": {"$ref": "#/$defs/metrics"},
+        "evidenceRefs": {
+          "type": "array", "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 300}
+        },
+        "outputExamples": {
+          "type": "array", "maxItems": 8,
+          "items": {"$ref": "#/$defs/outputExample"}
+        }
+      }
+    },
+    "outputExample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["caseId", "input", "output"],
+      "properties": {
+        "caseId": {"type": "string", "minLength": 1, "maxLength": 120},
+        "input": {"type": "string", "minLength": 1, "maxLength": 600},
+        "output": {"type": "string", "minLength": 1, "maxLength": 1200}
+      }
+    },
+    "metricDelta": {
+      "type": "object", "additionalProperties": false,
+      "required": ["metric", "before", "after", "delta"],
+      "properties": {
+        "metric": {"type": "string", "minLength": 1, "maxLength": 100},
+        "before": {"type": "number"},
+        "after": {"type": "number"},
+        "delta": {"type": "number"}
+      }
+    },
+    "comparison": {
+      "type": "object", "additionalProperties": false,
+      "required": ["decision", "decisionReason", "metricDeltas"],
+      "properties": {
+        "decision": {"type": "string", "minLength": 1, "maxLength": 80},
+        "decisionReason": {"$ref": "#/$defs/text"},
+        "metricDeltas": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/metricDelta"}},
+        "outputComparisons": {
+          "type": "array", "maxItems": 8,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["caseId", "before", "after"],
+            "properties": {
+              "caseId": {"type": "string", "minLength": 1, "maxLength": 120},
+              "before": {"type": "string", "minLength": 1, "maxLength": 1200},
+              "after": {"type": "string", "minLength": 1, "maxLength": 1200}
+            }
+          }
+        }
+      }
+    },
+    "star": {
+      "type": "object", "additionalProperties": false,
+      "required": ["situation", "task", "action", "result"],
+      "properties": {
+        "situation": {"$ref": "#/$defs/text"},
+        "task": {"$ref": "#/$defs/text"},
+        "action": {"$ref": "#/$defs/text"},
+        "result": {"$ref": "#/$defs/text"}
+      }
+    },
+    "claim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resumeBullet", "allowed", "forbidden"],
+      "properties": {
+        "resumeBullet": {"$ref": "#/$defs/text"},
+        "allowed": {"$ref": "#/$defs/text"},
+        "forbidden": {"$ref": "#/$defs/text"}
+      }
+    }
+  }
+}

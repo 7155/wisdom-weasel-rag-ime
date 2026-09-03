@@ -1,0 +1,174 @@
+{
+  "schemaVersion": "rag-ime.agent-lab-path-search-request.v1",
+  "searchId": "enterpriseops-csm-model-cost-20260903-v2",
+  "title": "EnterpriseOps CSM · 质量优先模型成本路径",
+  "objective": {
+    "userNeed": "在任务与 Host-private verifier 质量不回退、临时数据库清理且 usage 可核验的前提下，选择更低成本的任务模型。",
+    "metrics": [
+      {
+        "name": "taskSuccessRate",
+        "direction": "max",
+        "weight": 0.55,
+        "class": "quality",
+        "scale": 1,
+        "nonRegression": true
+      },
+      {
+        "name": "verifierPassRate",
+        "direction": "max",
+        "weight": 0.25,
+        "class": "quality",
+        "scale": 1,
+        "nonRegression": true
+      },
+      {
+        "name": "failedToolCalls",
+        "direction": "min",
+        "weight": 0.05,
+        "class": "reliability",
+        "scale": 10,
+        "nonRegression": true
+      },
+      {
+        "name": "toolCalls",
+        "direction": "min",
+        "weight": 0.03,
+        "class": "efficiency",
+        "scale": 100
+      },
+      {
+        "name": "latencyMs",
+        "direction": "min",
+        "weight": 0.07,
+        "class": "efficiency",
+        "scale": 1200000
+      },
+      {
+        "name": "apiCostUsd",
+        "direction": "min",
+        "weight": 0.05,
+        "class": "cost",
+        "scale": 4
+      }
+    ],
+    "gates": [
+      {
+        "name": "all tasks complete",
+        "metric": "taskSuccessRate",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "name": "all verifiers pass",
+        "metric": "verifierPassRate",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "name": "temporary databases cleaned",
+        "metric": "allDatabasesCleaned",
+        "operator": "eq",
+        "value": 1
+      },
+      {
+        "name": "usage receipt available",
+        "metric": "costReceiptAvailable",
+        "operator": "eq",
+        "value": 1
+      },
+      {
+        "name": "predeclared 80 percent cost target",
+        "metric": "costTargetMet",
+        "operator": "eq",
+        "value": 1
+      }
+    ],
+    "selectionPolicy": "lexicographic_pareto"
+  },
+  "frozenControls": [
+    {
+      "name": "suite",
+      "value": "enterpriseops-csm-suite-v2"
+    },
+    {
+      "name": "split",
+      "value": "validation"
+    },
+    {
+      "name": "cases",
+      "value": "3 tasks / 31 host-private verifiers; manifest d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec"
+    },
+    {
+      "name": "prompt_contract",
+      "value": "5a2bc14cc2eb05badd053061e2345587a08abc4d6e0ad6ca3d7d07a2987f6580"
+    },
+    {
+      "name": "tool_catalog",
+      "value": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077"
+    },
+    {
+      "name": "runner_and_runtime_provenance",
+      "value": "ecd133ef4674a6311807bfa3370638b5717110c81b57ad23de19e076934d1b5a / 97be9f351511b7aefa6c85a1b9e971357cd0b482c8cab517780dd17d7133acaf"
+    },
+    {
+      "name": "thinking_and_timeout",
+      "value": "max / 900 seconds"
+    },
+    {
+      "name": "pricing",
+      "value": "2026-09-01 / source 867c9fe491a9134fc9ac0041f478ec041d7638f41b4022939349c2654075dd56"
+    },
+    {
+      "name": "held_out",
+      "value": "sealed and not consumed by model-cost search"
+    }
+  ],
+  "baseline": {
+    "nodeId": "sol-max-controlled-20260903",
+    "parentNodeId": null,
+    "changedFactor": "baseline",
+    "configRevision": "0ad535eb4c056acba60b4fc43e8cbe2a2f9dc356a5b2f160bfae9a855e9986bd",
+    "frozenControlHash": "e06290e7f9a34c4c4caaafa3c980c89f6630c2e68ec3599d9b3899cc85cb5128",
+    "metrics": {
+      "taskSuccessRate": 1,
+      "verifierPassRate": 1,
+      "failedToolCalls": 1,
+      "allDatabasesCleaned": 1,
+      "costReceiptAvailable": 1,
+      "costTargetMet": 1,
+      "toolCalls": 87,
+      "latencyMs": 1112646.229,
+      "apiCostUsd": 3.243385
+    },
+    "evidenceRefs": [
+      "eval/interview-metrics/runs/enterpriseops-csm-sol-max-validation-20260903.v1.json",
+      "eval/interview-metrics/runs/agent-lab-cost-sol-max-20260903.v1.json"
+    ],
+    "status": "eligible"
+  },
+  "candidates": [
+    {
+      "nodeId": "luna-max-controlled-20260903",
+      "parentNodeId": "sol-max-controlled-20260903",
+      "changedFactor": "model",
+      "configRevision": "7761c5b4f66150a46d122545535de8dc2189c4f6653f23e30391e36081c0de64",
+      "frozenControlHash": "e06290e7f9a34c4c4caaafa3c980c89f6630c2e68ec3599d9b3899cc85cb5128",
+      "metrics": {
+        "taskSuccessRate": 0.6666666666666666,
+        "verifierPassRate": 0.967741935483871,
+        "failedToolCalls": 0,
+        "allDatabasesCleaned": 1,
+        "costReceiptAvailable": 1,
+        "costTargetMet": 0,
+        "toolCalls": 66,
+        "latencyMs": 929656.199,
+        "apiCostUsd": 0.725239
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-luna-max-validation-20260903.v3.json",
+        "eval/interview-metrics/runs/agent-lab-cost-luna-max-20260903.v3.json"
+      ],
+      "status": "eligible"
+    }
+  ]
+}

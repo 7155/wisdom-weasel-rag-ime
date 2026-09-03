@@ -433,6 +433,23 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "status": "checkpointed",
         }
 
+    def test_runtime_status_is_a_local_projection_and_does_not_start_host(
+        self,
+    ) -> None:
+        self.assertIsNone(self.runtime._client)
+        with patch.object(
+            self.runtime,
+            "_host_locked",
+            side_effect=AssertionError(
+                "runtime_status must not start or contact the Pi Host"
+            ),
+        ) as start_host:
+            status = self.runtime.runtime_status()
+
+        start_host.assert_not_called()
+        self.assertIsNone(self.runtime._client)
+        self.assertEqual(status["activeSessionIds"], [])
+
     def test_opening_runtime_does_not_replace_public_message_count_with_provider_entries(
         self,
     ) -> None:
@@ -1568,6 +1585,972 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(context_calls, [])
         self.assertFalse((self.root / "agent" / "host-requests.jsonl").exists())
 
+    def test_recent_snapshot_returns_last_complete_selected_branch_turns_without_host_or_tools(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-selected-branch.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-selected"},
+        ]
+        parent_id = "pi-recent-selected"
+        for index in range(8):
+            user_id = f"recent-user-{index + 1}"
+            answer_id = f"recent-answer-{index + 1}"
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": user_id,
+                    "parentId": parent_id,
+                    "timestamp": 100 + index * 10,
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"问题 {index + 1}"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": answer_id,
+                    "parentId": user_id,
+                    "timestamp": 101 + index * 10,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"回答 {index + 1}"}],
+                    },
+                },
+            ])
+            parent_id = answer_id
+        entries.extend([
+            {
+                "type": "message",
+                "id": "abandoned-answer",
+                "parentId": "recent-user-2",
+                "timestamp": 999,
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "未选择的分支"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "recent-dangling-user",
+                "parentId": parent_id,
+                "timestamp": 1_000,
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "尚未完成的问题"}],
+                },
+            },
+        ])
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-selected",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="recent-dangling-user",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=17,
+        )
+
+        with (
+            patch.object(
+                self.runtime,
+                "_host",
+                side_effect=AssertionError("recent snapshot must not start the Host"),
+            ),
+            patch.object(
+                self.runtime,
+                "session_snapshot",
+                side_effect=AssertionError("recent snapshot must not use full history"),
+            ),
+        ):
+            snapshot = self.runtime.recent_session_snapshot(session_id)
+
+        texts = [
+            block["data"]["text"]
+            for message in snapshot["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(
+            texts,
+            [
+                "问题 4", "回答 4",
+                "问题 5", "回答 5", "问题 6", "回答 6",
+                "问题 7", "回答 7", "问题 8", "回答 8",
+                "尚未完成的问题",
+            ],
+        )
+        self.assertEqual(snapshot["toolHistoryEvents"], [])
+        self.assertNotIn("未选择的分支", json.dumps(snapshot, ensure_ascii=False))
+
+    def test_recent_snapshot_parses_only_a_bounded_tail_of_a_large_linear_transcript(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-large-linear.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-large-linear"},
+        ]
+        parent_id = "pi-recent-large-linear"
+        for index in range(25_000):
+            entry_id = f"large-context-{index + 1}"
+            entries.append({
+                "type": "custom",
+                "id": entry_id,
+                "parentId": parent_id,
+                "payload": "x" * 256,
+            })
+            parent_id = entry_id
+        entries.append({
+            "type": "compaction",
+            "id": "large-compaction-boundary",
+            "parentId": parent_id,
+            "summary": "older context compacted",
+        })
+        parent_id = "large-compaction-boundary"
+        for index in range(8):
+            user_id = f"large-user-{index + 1}"
+            answer_id = f"large-answer-{index + 1}"
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": user_id,
+                    "parentId": parent_id,
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"大对话问题 {index + 1}"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": answer_id,
+                    "parentId": user_id,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"大对话回答 {index + 1}"}],
+                    },
+                },
+            ])
+            parent_id = answer_id
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-large-linear",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor=parent_id,
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=16,
+        )
+        real_loads = json.loads
+        parsed_line_count = 0
+
+        def counted_loads(value, *args, **kwargs):
+            nonlocal parsed_line_count
+            parsed_line_count += 1
+            return real_loads(value, *args, **kwargs)
+
+        with patch("rag_ime.pi_runtime_v2.json.loads", side_effect=counted_loads):
+            snapshot = self.runtime.recent_session_snapshot(session_id)
+
+        texts = [
+            block["data"]["text"]
+            for message in snapshot["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(
+            texts,
+            [
+                "大对话问题 3", "大对话回答 3",
+                "大对话问题 4", "大对话回答 4",
+                "大对话问题 5", "大对话回答 5",
+                "大对话问题 6", "大对话回答 6",
+                "大对话问题 7", "大对话回答 7",
+                "大对话问题 8", "大对话回答 8",
+            ],
+        )
+        self.assertLess(parsed_line_count, 10_000)
+
+    def test_recent_snapshot_falls_back_when_selected_branch_anchor_is_outside_tail(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-anchor-fallback.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-anchor-fallback"},
+            {
+                "type": "message",
+                "id": "selected-user",
+                "parentId": "pi-recent-anchor-fallback",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "保留的分支问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "selected-answer",
+                "parentId": "selected-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "保留的分支回答"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "abandoned-user",
+                "parentId": "pi-recent-anchor-fallback",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "未选择的分支问题"}],
+                },
+            },
+        ]
+        parent_id = "abandoned-user"
+        for index in range(20):
+            entry_id = f"abandoned-context-{index + 1}"
+            entries.append({
+                "type": "custom",
+                "id": entry_id,
+                "parentId": parent_id,
+                "payload": "x" * 256,
+            })
+            parent_id = entry_id
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-anchor-fallback",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="selected-answer",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        with patch(
+            "rag_ime.pi_runtime_v2._RECENT_SESSION_TAIL_SCAN_BYTES",
+            512,
+        ):
+            snapshot = self.runtime.recent_session_snapshot(session_id)
+
+        texts = [
+            block["data"]["text"]
+            for message in snapshot["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(texts, ["保留的分支问题", "保留的分支回答"])
+        self.assertNotIn("未选择的分支问题", texts)
+
+    def test_recent_snapshot_repairs_outside_tail_anchor_once_then_reuses_projection(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-anchor-projection.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-anchor-projection"},
+            {
+                "type": "message",
+                "id": "projected-user",
+                "parentId": "pi-recent-anchor-projection",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "投影保留的问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "projected-answer",
+                "parentId": "projected-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "投影保留的回答"}],
+                },
+            },
+        ]
+        parent_id = "pi-recent-anchor-projection"
+        for index in range(20):
+            entry_id = f"projection-abandoned-{index + 1}"
+            entries.append({
+                "type": "custom",
+                "id": entry_id,
+                "parentId": parent_id,
+                "payload": "x" * 256,
+            })
+            parent_id = entry_id
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-anchor-projection",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="projected-answer",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        with (
+            patch(
+                "rag_ime.pi_runtime_v2._RECENT_SESSION_TAIL_SCAN_BYTES",
+                512,
+            ),
+            patch.object(
+                self.runtime,
+                "_durable_history_snapshot",
+                wraps=self.runtime._durable_history_snapshot,
+            ) as full_snapshot,
+        ):
+            first = self.runtime.recent_session_snapshot(session_id)
+            with patch(
+                "rag_ime.pi_runtime_v2._read_recent_transcript_tail",
+                side_effect=AssertionError(
+                    "persisted projection must avoid a second JSONL scan"
+                ),
+            ):
+                second = self.runtime.recent_session_snapshot(session_id)
+
+        self.assertEqual(first, second)
+        self.assertEqual(full_snapshot.call_count, 1)
+
+    def test_large_append_returns_projection_while_one_background_repair_runs(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-large-append-projection.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-large-append"},
+        ]
+        parent_id = "pi-recent-large-append"
+        for index in range(8):
+            user_id = f"initial-user-{index + 1}"
+            answer_id = f"initial-answer-{index + 1}"
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": user_id,
+                    "parentId": parent_id,
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"初始问题 {index + 1}"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": answer_id,
+                    "parentId": user_id,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"初始回答 {index + 1}"}],
+                    },
+                },
+            ])
+            parent_id = answer_id
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-large-append",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor=parent_id,
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=16,
+        )
+        initial = self.runtime.recent_session_snapshot(session_id)
+
+        appended: list[dict[str, object]] = []
+        for index in range(2_300):
+            entry_id = f"large-append-tool-{index + 1}"
+            appended.append({
+                "type": "custom",
+                "id": entry_id,
+                "parentId": parent_id,
+                "payload": "x" * 1_024,
+            })
+            parent_id = entry_id
+        appended.extend([
+            {
+                "type": "message",
+                "id": "large-append-user",
+                "parentId": parent_id,
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "大追加问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "large-append-answer",
+                "parentId": "large-append-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "大追加回答"}],
+                },
+            },
+        ])
+        with transcript.open("a", encoding="utf-8") as target:
+            target.write(
+                "".join(
+                    json.dumps(entry, ensure_ascii=False) + "\n"
+                    for entry in appended
+                )
+            )
+        self.assertGreater(transcript.stat().st_size, 2 * 1024 * 1024)
+
+        real_full_snapshot = self.runtime._durable_history_snapshot
+        real_projection_save = self.runtime._save_recent_message_projection
+        full_started = threading.Event()
+        release_full = threading.Event()
+        projection_saved = threading.Event()
+        caller_returned = threading.Event()
+        caller_result: list[dict[str, object]] = []
+        errors: list[BaseException] = []
+        full_thread_ids: list[int] = []
+
+        def blocked_full_snapshot(target_session_id: str):
+            full_thread_ids.append(threading.get_ident())
+            full_started.set()
+            if not release_full.wait(timeout=5):
+                raise TimeoutError("test did not release projection repair")
+            return real_full_snapshot(target_session_id)
+
+        def observed_projection_save(*args, **kwargs):
+            saved = real_projection_save(*args, **kwargs)
+            projection_saved.set()
+            return saved
+
+        def read_recent() -> None:
+            try:
+                caller_result.append(
+                    self.runtime.recent_session_snapshot(session_id)
+                )
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                caller_returned.set()
+
+        with (
+            patch.object(
+                self.runtime,
+                "_durable_history_snapshot",
+                side_effect=blocked_full_snapshot,
+            ),
+            patch.object(
+                self.runtime,
+                "_save_recent_message_projection",
+                side_effect=observed_projection_save,
+            ),
+        ):
+            caller = threading.Thread(target=read_recent)
+            caller.start()
+            self.assertTrue(full_started.wait(timeout=2))
+            returned_while_repair_blocked = caller_returned.wait(timeout=0.5)
+            release_full.set()
+            caller.join(timeout=5)
+            self.assertTrue(projection_saved.wait(timeout=5))
+
+        self.assertTrue(returned_while_repair_blocked)
+        self.assertFalse(caller.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(caller_result, [initial])
+        self.assertNotEqual(full_thread_ids, [caller.ident])
+
+        repaired = self.runtime.recent_session_snapshot(session_id)
+        repaired_texts = [
+            block["data"]["text"]
+            for message in repaired["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(repaired_texts[-2:], ["大追加问题", "大追加回答"])
+        replayed, _gap = self.events.replay(session_id)
+        self.assertTrue(any(
+            event.event_type == "snapshot_required"
+            and event.payload.get("reason") == "recent_projection_refreshed"
+            for event in replayed
+        ))
+
+    def test_first_recent_read_returns_proven_suffix_while_legacy_repair_runs(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-first-provisional.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-first-provisional"},
+        ]
+        parent_id = "pi-recent-first-provisional"
+        for index in range(7):
+            user_id = f"legacy-user-{index + 1}"
+            answer_id = f"legacy-answer-{index + 1}"
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": user_id,
+                    "parentId": parent_id,
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"旧问题 {index + 1}"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": answer_id,
+                    "parentId": user_id,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"旧回答 {index + 1}"}],
+                    },
+                },
+            ])
+            parent_id = answer_id
+        for index in range(2_300):
+            entry_id = f"legacy-tool-{index + 1}"
+            entries.append({
+                "type": "custom",
+                "id": entry_id,
+                "parentId": parent_id,
+                "payload": "x" * 1_024,
+            })
+            parent_id = entry_id
+        entries.extend([
+            {
+                "type": "message",
+                "id": "provisional-user",
+                "parentId": parent_id,
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "立即可见的问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "provisional-answer",
+                "parentId": "provisional-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "立即可见的回答"}],
+                },
+            },
+        ])
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-first-provisional",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="provisional-answer",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=16,
+        )
+
+        real_full_snapshot = self.runtime._durable_history_snapshot
+        real_projection_save = self.runtime._save_recent_message_projection
+        full_started = threading.Event()
+        release_full = threading.Event()
+        projection_saved = threading.Event()
+        caller_returned = threading.Event()
+        caller_result: list[dict[str, object]] = []
+
+        def blocked_full_snapshot(target_session_id: str):
+            full_started.set()
+            if not release_full.wait(timeout=5):
+                raise TimeoutError("test did not release first projection repair")
+            return real_full_snapshot(target_session_id)
+
+        def observed_projection_save(*args, **kwargs):
+            saved = real_projection_save(*args, **kwargs)
+            projection_saved.set()
+            return saved
+
+        def read_recent() -> None:
+            caller_result.append(self.runtime.recent_session_snapshot(session_id))
+            caller_returned.set()
+
+        with (
+            patch.object(
+                self.runtime,
+                "_durable_history_snapshot",
+                side_effect=blocked_full_snapshot,
+            ),
+            patch.object(
+                self.runtime,
+                "_save_recent_message_projection",
+                side_effect=observed_projection_save,
+            ),
+        ):
+            caller = threading.Thread(target=read_recent)
+            caller.start()
+            self.assertTrue(full_started.wait(timeout=2))
+            returned_while_repair_blocked = caller_returned.wait(timeout=0.5)
+            release_full.set()
+            caller.join(timeout=5)
+            self.assertTrue(projection_saved.wait(timeout=5))
+
+        self.assertTrue(returned_while_repair_blocked)
+        provisional_texts = [
+            block["data"]["text"]
+            for message in caller_result[0]["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(
+            provisional_texts,
+            ["立即可见的问题", "立即可见的回答"],
+        )
+
+        repaired = self.runtime.recent_session_snapshot(session_id)
+        repaired_texts = [
+            block["data"]["text"]
+            for message in repaired["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(
+            repaired_texts,
+            [
+                "旧问题 3", "旧回答 3", "旧问题 4", "旧回答 4",
+                "旧问题 5", "旧回答 5", "旧问题 6", "旧回答 6",
+                "旧问题 7", "旧回答 7",
+                "立即可见的问题", "立即可见的回答",
+            ],
+        )
+
+    def test_recent_snapshot_projection_invalidates_for_append_and_branch_rewrite(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-projection-invalidation.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-projection-invalidation"},
+            {
+                "type": "message",
+                "id": "base-user",
+                "parentId": "pi-recent-projection-invalidation",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "基础问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "base-answer",
+                "parentId": "base-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "基础回答"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-projection-invalidation",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="base-answer",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+        self.runtime.recent_session_snapshot(session_id)
+
+        appended = [
+            {
+                "type": "compaction",
+                "id": "append-compaction",
+                "parentId": "base-answer",
+                "summary": "older context compacted",
+            },
+            {
+                "type": "message",
+                "id": "append-user",
+                "parentId": "append-compaction",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "追加问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "append-answer",
+                "parentId": "append-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "追加回答"}],
+                },
+            },
+        ]
+        with transcript.open("a", encoding="utf-8") as target:
+            target.write(
+                "".join(
+                    json.dumps(entry, ensure_ascii=False) + "\n"
+                    for entry in appended
+                )
+            )
+
+        projection_refreshed = threading.Event()
+        remove_observer = self.events.add_observer(
+            lambda event: projection_refreshed.set()
+            if event.session_id == session_id
+            and event.event_type == "snapshot_required"
+            and event.payload.get("reason") == "recent_projection_refreshed"
+            else None
+        )
+        stale_append = self.runtime.recent_session_snapshot(session_id)
+        stale_texts = [
+            block["data"]["text"]
+            for message in stale_append["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(stale_texts, ["基础问题", "基础回答"])
+        self.assertTrue(projection_refreshed.wait(timeout=5))
+        remove_observer()
+        compacted_append = self.runtime.recent_session_snapshot(session_id)
+        compacted_append_repeat = self.runtime.recent_session_snapshot(session_id)
+        append_texts = [
+            block["data"]["text"]
+            for message in compacted_append["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(compacted_append, compacted_append_repeat)
+        self.assertEqual(
+            append_texts,
+            ["基础问题", "基础回答", "追加问题", "追加回答"],
+        )
+
+        rewritten_entries = [
+            {
+                "type": "message",
+                "id": "rewrite-user",
+                "parentId": "base-user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "改写问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "rewrite-answer",
+                "parentId": "rewrite-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "改写回答"}],
+                },
+            },
+        ]
+        with transcript.open("a", encoding="utf-8") as target:
+            target.write(
+                "".join(
+                    json.dumps(entry, ensure_ascii=False) + "\n"
+                    for entry in rewritten_entries
+                )
+            )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-projection-invalidation",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="rewrite-answer",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=4,
+        )
+
+        rewritten = self.runtime.recent_session_snapshot(session_id)
+        repeated = self.runtime.recent_session_snapshot(session_id)
+        texts = [
+            block["data"]["text"]
+            for message in rewritten["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+
+        self.assertEqual(rewritten, repeated)
+        self.assertEqual(texts, ["改写问题", "改写回答"])
+        self.assertNotIn("追加回答", texts)
+
+    def test_recent_snapshot_preserves_legacy_flat_transcript_append_order(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-legacy-flat.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-legacy-flat"},
+        ]
+        for index in range(8):
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": f"flat-user-{index + 1}",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"旧问题 {index + 1}"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": f"flat-answer-{index + 1}",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"旧回答 {index + 1}"}],
+                    },
+                },
+            ])
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-legacy-flat",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="flat-answer-8",
+            binding_state="active",
+            metadata={"protocolVersion": "1"},
+            message_count=16,
+        )
+
+        snapshot = self.runtime.recent_session_snapshot(session_id)
+
+        texts = [
+            block["data"]["text"]
+            for message in snapshot["messages"]
+            for block in message["blocks"]
+            if block["type"] == "text"
+        ]
+        self.assertEqual(
+            texts,
+            [
+                "旧问题 3", "旧回答 3", "旧问题 4", "旧回答 4",
+                "旧问题 5", "旧回答 5", "旧问题 6", "旧回答 6",
+                "旧问题 7", "旧回答 7", "旧问题 8", "旧回答 8",
+            ],
+        )
+
+    def test_recent_snapshot_response_is_bounded_and_oversize_transcripts_fail_closed(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-bounded.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, object]] = [
+            {"type": "session", "id": "pi-recent-bounded"},
+        ]
+        parent_id = "pi-recent-bounded"
+        for index in range(8):
+            user_id = f"bounded-user-{index + 1}"
+            answer_id = f"bounded-answer-{index + 1}"
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": user_id,
+                    "parentId": parent_id,
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": f"问题 {index + 1}"}],
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": answer_id,
+                    "parentId": user_id,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{
+                            "type": "text",
+                            "text": f"回答 {index + 1}:" + (
+                                "甲" * (30_000 if index == 7 else 12_000)
+                            ),
+                        }],
+                    },
+                },
+            ])
+            parent_id = answer_id
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-bounded",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor=parent_id,
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=16,
+        )
+
+        snapshot = self.runtime.recent_session_snapshot(session_id)
+        serialized = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+
+        self.assertLessEqual(len(serialized), 64 * 1024)
+        self.assertIn("回答 8:", serialized.decode("utf-8"))
+        self.assertIn("近期快照已截断", serialized.decode("utf-8"))
+        self.assertNotIn("回答 1:", serialized.decode("utf-8"))
+
+        transcript.write_text(
+            json.dumps({"type": "session", "id": "pi-recent-bounded"})
+            + "\n"
+            + ("x" * (8 * 1024 * 1024 + 1))
+            + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            self.runtime.recent_session_snapshot(session_id),
+            {"messages": []},
+        )
+
     def test_host_snapshot_failure_recovers_from_durable_history_instead_of_empty_success(self) -> None:
         session_id = str(self.first["id"])
         transcript = self.root / "sessions" / "host-snapshot-failure.jsonl"
@@ -1742,11 +2725,84 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
 
         snapshot = self.runtime.session_snapshot(session_id)
+        recent = self.runtime.recent_session_snapshot(session_id)
 
         self.assertEqual(
             [message["createdAtMs"] for message in snapshot["messages"]],
             [100, 200],
         )
+        self.assertEqual(
+            [message["createdAtMs"] for message in recent["messages"]],
+            [200],
+        )
+        self.assertEqual(
+            [message["timelineSequence"] for message in recent["messages"]],
+            [2.0],
+        )
+
+    def test_recent_snapshot_keeps_bounded_reasoning_and_tool_progress(self) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "recent-tool-progress.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-recent-tool-progress"},
+            {
+                "type": "message", "id": "recent-tool-user",
+                "parentId": "pi-recent-tool-progress", "timestamp": 100,
+                "message": {"role": "user", "timestamp": 900, "content": [{"type": "text", "text": "检查文件"}]},
+            },
+            {
+                "type": "message", "id": "recent-tool-call", "parentId": "recent-tool-user", "timestamp": 200,
+                "message": {
+                    "role": "assistant", "timestamp": 901,
+                    "content": [{"type": "toolCall", "id": "tool-recent", "name": "workspace_read", "arguments": {"path": "README.md"}}],
+                },
+            },
+            {
+                "type": "message", "id": "recent-tool-result", "parentId": "recent-tool-call", "timestamp": 300,
+                "message": {
+                    "role": "toolResult", "timestamp": 902, "toolCallId": "tool-recent", "toolName": "workspace_read",
+                    "isError": False, "details": {"summary": "读取完成"},
+                },
+            },
+            {
+                "type": "message", "id": "recent-tool-answer", "parentId": "recent-tool-result", "timestamp": 400,
+                "message": {
+                    "role": "assistant", "api": "openai-codex-responses", "timestamp": 903,
+                    "content": [{"type": "thinking", "thinking": "核对读取结果"}, {"type": "text", "text": "检查完成"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-recent-tool-progress",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="recent-tool-answer",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=4,
+        )
+
+        first = self.runtime.recent_session_snapshot(session_id)
+        with patch(
+            "rag_ime.pi_runtime_v2._read_recent_transcript_tail",
+            side_effect=AssertionError("exact recent cache must include progress"),
+        ):
+            second = self.runtime.recent_session_snapshot(session_id)
+
+        self.assertEqual(first, second)
+        self.assertEqual(
+            [event["eventType"] for event in first["toolHistoryEvents"]],
+            ["tool_started", "tool_finished", "reasoning_summary"],
+        )
+        final_message = next(message for message in first["messages"] if message["role"] == "assistant")
+        self.assertEqual(final_message["timelineSequence"], 4.9)
 
     def test_durable_reasoning_precedes_final_inside_one_append_entry(self) -> None:
         session_id = str(self.first["id"])
@@ -2839,6 +3895,76 @@ class PiRuntimeV2Tests(unittest.TestCase):
             1,
         )
 
+    def test_blocked_model_catalog_does_not_hold_session_lifecycle_lock(self) -> None:
+        self.runtime._host()  # noqa: SLF001 - establish only the shared Host
+        client = self.runtime._require_client()
+        original_send = client.send
+        catalog_entered = threading.Event()
+        release_catalog = threading.Event()
+        ensure_done = threading.Event()
+        errors: list[BaseException] = []
+
+        def blocking_models(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method == "models.list":
+                catalog_entered.set()
+                if not release_catalog.wait(timeout=5):
+                    raise TimeoutError("test did not release models.list")
+                return {
+                    "models": [{
+                        "provider": "gpt",
+                        "id": "gpt-5.6-luna",
+                        "name": "GPT-5.6 Luna",
+                        "api": "responses",
+                        "reasoning": True,
+                        "thinkingLevels": ["off", "medium"],
+                        "input": ["text", "image"],
+                        "contextWindow": 1_000_000,
+                        "maxTokens": 128_000,
+                    }],
+                }
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        def read_catalog() -> None:
+            try:
+                self.runtime.available_models()
+            except BaseException as exc:
+                errors.append(exc)
+
+        def ensure_session() -> None:
+            try:
+                self.runtime.ensure(str(self.second["id"]))
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                ensure_done.set()
+
+        with patch.object(client, "send", side_effect=blocking_models):
+            catalog_thread = threading.Thread(target=read_catalog)
+            catalog_thread.start()
+            self.assertTrue(catalog_entered.wait(timeout=2))
+            ensure_thread = threading.Thread(target=ensure_session)
+            ensure_thread.start()
+            lifecycle_completed_while_catalog_blocked = ensure_done.wait(timeout=0.5)
+            release_catalog.set()
+            catalog_thread.join(timeout=5)
+            ensure_thread.join(timeout=5)
+
+        self.assertTrue(lifecycle_completed_while_catalog_blocked)
+        self.assertFalse(catalog_thread.is_alive())
+        self.assertFalse(ensure_thread.is_alive())
+        self.assertEqual(errors, [])
+
     def test_close_session_keeps_other_hosted_sessions_ready(self) -> None:
         first_id = str(self.first["id"])
         second_id = str(self.second["id"])
@@ -3918,6 +5044,126 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ),
             1,
         )
+
+    def test_settlement_lookup_retries_one_timeout_with_the_same_turn_identity(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-settlement-lookup-retry"
+        client_message_id = "memory-request:lookup-retry"
+        runtime_session_id = f"pi-{session_id}"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.client_message_id = client_message_id
+        self.store.set_status(session_id, "busy")
+        settlement = {
+            "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+            "sessionId": session_id,
+            "runtimeSessionId": runtime_session_id,
+            "turnId": turn_id,
+            "clientMessageId": client_message_id,
+            "receipt": {
+                "schemaVersion": "pi.agent-settled.v2",
+                "receiptId": "pi-settled:lookup-retry",
+                "sessionId": runtime_session_id,
+                "runId": turn_id,
+                "scopeId": f"{runtime_session_id}:{turn_id}",
+                "generation": 1,
+                "disposition": "completed",
+                "stopReason": "stop",
+                "settledAtMs": 200,
+                "aborted": False,
+                "pendingOperations": 0,
+                "operations": {
+                    "pending": 0,
+                    "pendingByKind": {},
+                    "registeredByKind": {},
+                },
+                "operationCounts": {},
+                "finalMessage": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": '{"decisions":[]}'}],
+                },
+            },
+        }
+        client = self.runtime._require_client()
+        original_send = client.send
+        lookup_params: list[dict[str, object]] = []
+
+        def transient_lookup(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            if method == "session.settlement.get":
+                lookup_params.append(dict(params or {}))
+                if len(lookup_params) == 1:
+                    raise PiRuntimeError(
+                        "Pi Runtime Host command timed out: session.settlement.get"
+                    )
+                return {"settlement": settlement}
+            return original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+
+        with patch.object(client, "send", side_effect=transient_lookup):
+            result = self.runtime.await_turn_settled(
+                session_id,
+                turn_id,
+                client_message_id=client_message_id,
+                timeout_seconds=2.0,
+            )
+
+        identity = {
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "clientMessageId": client_message_id,
+        }
+        self.assertEqual(lookup_params, [identity, identity])
+        self.assertEqual(result["receipt"]["receiptId"], "pi-settled:lookup-retry")
+
+    def test_settlement_lookup_stops_after_one_timeout_retry(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-settlement-lookup-timeout"
+        client_message_id = "memory-request:lookup-timeout"
+        client = self.runtime._require_client()
+        calls: list[dict[str, object]] = []
+
+        def timed_out_lookup(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            self.assertEqual(method, "session.settlement.get")
+            calls.append(dict(params or {}))
+            raise PiRuntimeError(
+                "Pi Runtime Host command timed out: session.settlement.get"
+            )
+
+        with patch.object(client, "send", side_effect=timed_out_lookup):
+            with self.assertRaisesRegex(
+                TimeoutError,
+                "settlement lookup timed out",
+            ):
+                self.runtime.await_turn_settled(
+                    session_id,
+                    turn_id,
+                    client_message_id=client_message_id,
+                    timeout_seconds=2.0,
+                )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
 
     def test_authoritative_aborted_settlement_projects_idle_abort_once(self) -> None:
         session_id = str(self.first["id"])

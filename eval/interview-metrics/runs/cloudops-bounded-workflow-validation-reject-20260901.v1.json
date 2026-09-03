@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "paw.cloudops-workflow-validation-reject.v1",
+  "runId": "cloudops-bounded-workflow-validation-reject-20260901-v1",
+  "status": "validation_rejected",
+  "measuredAt": "2026-09-01",
+  "frozenIdentity": {
+    "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-a1bb684fe6",
+    "runtimeManifestSha256": "4ff63aa5b77d620b70f9e430a009d93450a8a297e9602d3bcc96820fe7b29211",
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "split": "validation",
+    "heldOutObserved": false
+  },
+  "candidate": {
+    "trialId": "cloudops-paw-evidence-search-root-20260901-v3",
+    "workflowProfile": "evidence-search-v2",
+    "reportSha256": "db8e4de7f3a3926824e4d33fa62f9227d3738958556fa1831fdd7741150fd998",
+    "artifactJournalSha256": "c89b6b43ddb66d35d8205fad5962aed1b59ef615768186c23a5d4d48d96caee5",
+    "artifactSnapshotSha256": "2ee3663a4c79b6f0e168b036a204b7d209dceae71cdba6e3d08d46c005339192"
+  },
+  "comparison": {
+    "baseline": {
+      "ca": 1.0,
+      "jra": 0.8333333333333334,
+      "top3Jra": 0.8333333333333334,
+      "toolCalls": 98,
+      "failedToolCalls": 0,
+      "elapsedMs": 1356582
+    },
+    "boundedWorkflow": {
+      "ca": 0.75,
+      "jra": 0.75,
+      "top3Jra": 0.8333333333333334,
+      "toolCalls": 82,
+      "searchCalls": 22,
+      "listCalls": 8,
+      "readCalls": 46,
+      "failedToolCalls": 1,
+      "elapsedMs": 1175311
+    },
+    "delta": {
+      "caAbsolute": -0.25,
+      "jraAbsolute": -0.08333333333333337,
+      "top3JraAbsolute": 0.0,
+      "toolCallsAbsolute": -16,
+      "toolCallsRelative": -0.16326530612244897,
+      "elapsedMsAbsolute": -181271,
+      "elapsedRelative": -0.13362332686118494
+    }
+  },
+  "failedCases": [
+    {
+      "caseId": "trainticket/service/2",
+      "ca": 0,
+      "fa": 0,
+      "jra": 0,
+      "top3Jra": 1
+    },
+    {
+      "caseId": "trainticket/performance/1",
+      "ca": 0,
+      "fa": 0,
+      "jra": 0,
+      "top3Jra": 0
+    },
+    {
+      "caseId": "trainticket/performance/2",
+      "ca": 0,
+      "fa": 1,
+      "jra": 0,
+      "top3Jra": 0
+    }
+  ],
+  "decision": {
+    "result": "reject",
+    "reasons": [
+      "CA and JRA regressed despite lower Tool count",
+      "one Agent-composed long cache key was absent from the blind index",
+      "only one of three failed cases had a Tool failure, so Tool addressing cannot explain all quality loss"
+    ],
+    "nextFalsification": "replace public long cache keys with deterministic case-scoped observation IDs without changing the reasoning prompt, gold, scorer, cases or budgets"
+  },
+  "verification": {
+    "focusedCloudOpsTestsPassed": 26,
+    "focusedCloudOpsTestsFailed": 0,
+    "candidateInstalled": false,
+    "heldOutObserved": false
+  },
+  "claim": {
+    "allowed": "On the same 12-case CloudOps Validation suite, bounded exploration reduced Tool calls by 16.33% and wall time by 13.36%, but CA and JRA regressed and one long cache-key read failed; the workflow was rejected. The retained failure motivated one final Tool-only observationId falsification.",
+    "forbidden": "The bounded workflow improved diagnosis quality, passed Validation, reduced token cost, consumed Held-out, was installed, or a short observation ID is expected to fix all three quality misses."
+  }
+}

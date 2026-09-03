@@ -1664,7 +1664,7 @@ function finiteCount(value: unknown): number {
 }
 
 /** FX 签收稿的活动栈：一次真实活动一行安静披露（UR-016 原子顺序）。
- *  运行/失败/等待自动展开以保住真实进度与恢复入口，其余点击展开；
+ *  每行保留自己的详情开合；顶部控制可一次收起全部工具与思考步骤。
  *  只投影真实 reducer 活动，不合并、不重排、不发明状态。 */
 export function FxActivityStack({
   activities,
@@ -1679,21 +1679,70 @@ export function FxActivityStack({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
 }) {
+  const firstActivity = activities[0];
+  const disclosureKey = `fx-stack:${sessionId}:${firstActivity?.turnId ?? 'empty'}:${firstActivity?.id ?? 'empty'}`;
+  const longStack = activities.length >= 5;
+  const [stackOpen, setStackOpen] = useActivityDisclosure(
+    disclosureKey,
+    !longStack,
+  );
+  useEffect(() => {
+    if (longStack && !activityDisclosureOverrides.has(disclosureKey)) setStackOpen(false);
+  }, [disclosureKey, longStack, setStackOpen]);
+  const listId = `paw-activity-stack-${useId().replace(/:/gu, '')}`;
   if (!activities.length) return null;
+  const running = activities.some((activity) => activity.status === 'running');
+  const waiting = activities.some((activity) => activity.status === 'waiting');
+  const failedCount = activities.filter((activity) => activity.status === 'failed').length;
+  const compactStatus = [
+    running ? '进行中' : waiting ? '等待确认' : '已完成',
+    failedCount ? `${failedCount} 项失败` : '',
+    `${activities.length} 个步骤`,
+  ].filter(Boolean).join(' · ');
   return (
-    <div aria-label="工具与思考步骤" className="paw-activity-stack" role="group">
-      {activities.map((activity, index) => (
-        <FxActivityDisclosure
-          activity={activity}
-          sessionId={sessionId}
-          key={activity.id}
-          onApprovalDecision={onApprovalDecision}
-          onOpenApproval={onOpenApproval}
-          onRequestPermission={onRequestPermission}
-          position={index + 1}
-          setSize={activities.length}
-        />
-      ))}
+    <div
+      aria-label="工具与思考步骤"
+      className="paw-activity-stack"
+      data-expanded={stackOpen || undefined}
+      role="group"
+    >
+      <div className="paw-activity-stack__toolbar">
+        {!stackOpen ? (
+          <span aria-live="polite" className="paw-activity-stack__status">{compactStatus}</span>
+        ) : null}
+        <button
+          aria-controls={listId}
+          aria-expanded={stackOpen}
+          aria-label={`${stackOpen ? '全部收起' : '全部展开'}工具与思考步骤，共 ${activities.length} 项`}
+          className="paw-activity-stack__toggle"
+          onClick={(event) => toggleDisclosurePreservingAnchor(event, setStackOpen)}
+          onKeyDown={(event) => toggleDisclosureOnKeyPreservingAnchor(event, setStackOpen)}
+          type="button"
+        >
+          <span>{stackOpen ? '全部收起' : '全部展开'}</span>
+          <ChevronRight aria-hidden="true" size={13} />
+        </button>
+      </div>
+      <SmoothDisclosureReveal
+        ariaLabel="工具与思考步骤列表"
+        className="paw-activity-stack__reveal"
+        id={listId}
+        open={stackOpen}
+        role="tree"
+      >
+        {activities.map((activity, index) => (
+          <FxActivityDisclosure
+            activity={activity}
+            sessionId={sessionId}
+            key={activity.id}
+            onApprovalDecision={onApprovalDecision}
+            onOpenApproval={onOpenApproval}
+            onRequestPermission={onRequestPermission}
+            position={index + 1}
+            setSize={activities.length}
+          />
+        ))}
+      </SmoothDisclosureReveal>
     </div>
   );
 }

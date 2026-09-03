@@ -1,0 +1,20 @@
+{
+  "errorFingerprint": "sha256:30f3b33647566e64b15ab52fcbc0c9ff96e094efa3eb5147d6d27cf17efeea4a",
+  "errorType": "NameError",
+  "hostInvocation": {
+    "commandSha256": "5ff338c9975de6f4014f71ab4f0c1f57efed33fc949d995e655fe853bd3d1099",
+    "hostPathsPublished": false,
+    "maxReadsPerCase": 40,
+    "model": "gpt-5.6-luna",
+    "provider": "openai-codex",
+    "schemaVersion": "paw.cloudops-host-invocation.v1",
+    "thinking": "max",
+    "timeoutSeconds": 900.0,
+    "transport": "loopback-http-v1",
+    "trialId": "cloudops-luna-max-baseline-validation-20260902-retry1",
+    "workflowProfile": "baseline-v1"
+  },
+  "schemaVersion": "paw.cloudops-agent-eval-failure.v1",
+  "status": "failed",
+  "trialId": "cloudops-luna-max-baseline-validation-20260902-retry1"
+}

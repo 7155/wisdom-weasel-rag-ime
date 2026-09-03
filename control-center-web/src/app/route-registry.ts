@@ -15,6 +15,8 @@ export type RouteId =
   | 'governance'
   | 'history'
   | 'observability'
+  | 'evolution-report'
+  | 'eval-lab'
   | 'trace-agent'
   | 'context-debug'
   | 'diagnostics'
@@ -26,6 +28,7 @@ export type RouteDefinition = {
   label: string;
   shortLabel: string;
   group: 'work' | 'capability' | 'operations';
+  surface?: 'standalone';
 };
 
 export const routeGroupLabels: Record<RouteDefinition['group'], string> = {
@@ -52,6 +55,8 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'approvals', path: '/approvals', label: '审批中心', shortLabel: '审批', group: 'operations' },
   { id: 'context-debug', path: '/context-debug', label: '上下文检查', shortLabel: '上下文', group: 'operations' },
   { id: 'observability', path: '/observability', label: '运行记录', shortLabel: '运行', group: 'operations' },
+  { id: 'evolution-report', path: '/evolution-report', label: '自我进化实验账本', shortLabel: '实验', group: 'operations', surface: 'standalone' },
+  { id: 'eval-lab', path: '/eval-lab', label: 'Agent Lab', shortLabel: '评测', group: 'operations' },
   { id: 'trace-agent', path: '/trace-agent', label: 'Trace Agent', shortLabel: 'Trace', group: 'operations' },
   { id: 'diagnostics', path: '/diagnostics', label: '问题排查', shortLabel: '排查', group: 'operations' },
   { id: 'configuration', path: '/configuration', label: '设置', shortLabel: '设置', group: 'operations' },

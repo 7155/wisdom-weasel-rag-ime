@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pawDockAppIds } from './app-registry';
 import { pawExtensionApps } from '../extensions/registry';
-import { createPawDesktopStore, pawFocusWindowLayerSize, pawWindowLayerSize } from './desktop-store';
+import { createPawDesktopStore, pawFocusWindowLayerSize, pawWindowArea, pawWindowLayerSize } from './desktop-store';
 
 describe('PAWOS desktop store', () => {
   it('pins and unpins Dock Apps without changing their window lifecycle', () => {
@@ -162,7 +162,7 @@ describe('PAWOS desktop store', () => {
     expect(store.getState().windows.agent).toBe(before);
   });
 
-  it('lets ordinary windows use the full menu-below plane because the Dock is an overlay', () => {
+  it('keeps ordinary window controls above the resident Dock hit plane', () => {
     const originalWidth = window.innerWidth;
     const originalHeight = window.innerHeight;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
@@ -170,6 +170,23 @@ describe('PAWOS desktop store', () => {
     try {
       expect(pawWindowLayerSize()).toEqual({ width: 1440, height: 866 });
       expect(pawFocusWindowLayerSize()).toEqual({ width: 1440, height: 866 });
+      expect(pawWindowArea()).toEqual({ x: 8, y: 8, width: 1424, height: 780 });
+
+      const store = createPawDesktopStore(undefined, undefined, {
+        windows: {
+          agent: {
+            id: 'agent',
+            appId: 'agent',
+            title: 'Agent',
+            bounds: { x: 120, y: 620, width: 980, height: 540 },
+            minimized: false,
+          },
+        },
+        stack: ['agent'],
+        activeWindowId: 'agent',
+      });
+      const fitted = store.getState().windows.agent!.bounds;
+      expect(fitted.y + fitted.height).toBeLessThanOrEqual(788);
     } finally {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });

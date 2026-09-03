@@ -102,6 +102,25 @@ describe('ControlTransportProvider', () => {
     expect(status).toMatchObject({ pendingDraftCount: 1 });
   });
 
+  it('serves a contract-shaped Agent Lab matrix in mock/preview mode', async () => {
+    const transport = createConfiguredControlTransport();
+    const result = await transport.request<Record<string, unknown>>({ pathId: 'agent.eval-lab.runs' });
+
+    expect(result).toMatchObject({
+      schemaVersion: 'rag-ime.eval-lab-run-list.v1',
+      ok: true,
+      experimentTotal: 22,
+      pathSearchTotal: 1,
+    });
+    expect(result.experiments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ experimentId: 'memory.personal-shadow-evaluation.v1', evaluationKind: 'memory' }),
+      expect.objectContaining({ experimentId: 'agent-lab.model-cost.luna-max-validation.v1', evaluationKind: 'model_cost' }),
+    ]));
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: 'enterpriseops-csm-baseline-validation-20260901-v5' }),
+    ]));
+  });
+
   it('provides interactive workflow, plugin, lifecycle and subagent preview fixtures', async () => {
     const transport = createConfiguredControlTransport();
     const workflow = await transport.request<Record<string, unknown>>({

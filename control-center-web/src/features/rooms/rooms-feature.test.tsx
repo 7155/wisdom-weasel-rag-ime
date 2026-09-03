@@ -569,6 +569,11 @@ describe('Rooms experience', () => {
     expect(within(parent).getByRole('option', { name: /Earth · Root 主持/ })).toBeInTheDocument();
     expect(within(parent).getByRole('option', { name: /Mars/ })).toBeInTheDocument();
     expect(await screen.findByRole('radio', { name: /^审阅者/ })).toBeInTheDocument();
+    await user.click(screen.getByText('执行者', { selector: 'strong' }));
+    expect(screen.getByRole('radio', { name: '工作区写入' })).toBeChecked();
+    const policyDetail = screen.getByText(/卫星 \/ Tool Agent 配置/);
+    expect(policyDetail).toHaveTextContent('工作区托管');
+    expect(policyDetail).toHaveTextContent('继承');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(true);
   });
 
@@ -2317,7 +2322,7 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(create).toBeEnabled());
     await user.click(create);
     await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '发布前检查');
-    await user.click(screen.getByRole('button', { name: '开始协作' }));
+    await user.click(screen.getByRole('button', { name: '启用全自动并开始协作' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.rooms.create')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.rooms.create')?.request;
@@ -2339,15 +2344,62 @@ describe('Rooms experience', () => {
         fallbackParticipantId: '',
       },
       routingPolicy: 'parallel',
-      workspaceRoots: ['/Volumes/work/learnA'],
-      executionMode: 'full_trust',
+      workspaceRoots: ['/Volumes/work/learnA', '/'],
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
       dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
     });
     expect(await screen.findByRole('button', { name: '打开协作空间：发布前检查' })).toHaveAttribute('aria-current', 'true');
     expect(screen.queryByRole('dialog', { name: '开始一起做事' })).not.toBeInTheDocument();
   });
 
-  it('requires a project path and preselects a useful collaboration ensemble', async () => {
+  it('submits explicit Partner and Tool Agent narrowing without widening either child', async () => {
+    const created = roomSummary('room-narrowed', '收窄权限 Room');
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.sessions.list': { ok: true, items: [] },
+      'agent.rooms.create': { ok: true, room: created },
+      'agent.room.snapshot': roomSnapshot(created.id, [], created.title),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '收窄权限 Room');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '行星 / Partner配置模式' }),
+      'per_action',
+    );
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' }),
+      'read_only',
+    );
+    await user.click(screen.getByRole('button', { name: '启用全自动并开始协作' }));
+
+    await waitFor(() => expect(
+      transport.requests.some((call) => call.request.pathId === 'agent.rooms.create'),
+    ).toBe(true));
+    const request = transport.requests.find(
+      (call) => call.request.pathId === 'agent.rooms.create',
+    )?.request;
+    expect(request?.body).toMatchObject({
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'per_action' },
+        toolAgent: { executionMode: 'read_only' },
+      },
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+    });
+    expect(request?.body).not.toHaveProperty('executionMode');
+  });
+
+  it('keeps the project optional and preselects a useful collaboration ensemble', async () => {
     const transport = new MockControlTransport({
       pickedFiles: [{ id: 'workspace', name: 'learnA', mimeType: 'inode/directory', byteSize: 0, path: '/Volumes/work/learnA' }],
       routes: {
@@ -2360,7 +2412,9 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
-    expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '无项目协作');
+    expect(screen.getByRole('button', { name: '启用全自动并开始协作' })).toBeEnabled();
+    expect(screen.getByRole('radio', { name: /不预选项目/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /候选行星 1/ })).toHaveAccessibleName(/候选行星 1.*最终汇合与回复/);
     expect(screen.getByRole('checkbox', { name: /候选行星 1/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /候选行星 2/ })).toHaveAccessibleName(/候选行星 2.*实现与验证/);
@@ -2369,11 +2423,13 @@ describe('Rooms experience', () => {
     expect(screen.getByText(/所有伙伴地位平等，可以直接互相 @、提问和回复/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /候选行星 3/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /候选行星 4/ })).toHaveAccessibleName(/候选行星 4.*实现与验证/);
-    expect(screen.getByRole('radio', { name: /全自动/ })).toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Room 边界配置模式' })).toHaveValue('full_trust');
+    expect(screen.getByRole('combobox', { name: '行星 / Partner配置模式' })).toHaveValue('inherit');
+    expect(screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' })).toHaveValue('inherit');
     expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: '发言方式' })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '选择工作目录' }));
+    await user.click(screen.getByRole('button', { name: '选择起始项目' }));
     expect(transport.filePickCalls).toEqual([{
       purpose: 'workspace-root',
       selection: 'directory',
@@ -2388,6 +2444,12 @@ describe('Rooms experience', () => {
       ...roomSummary('room-roleplay', '深夜茶话会'),
       roomKind: 'roleplay' as const,
       executionMode: 'per_action' as const,
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1' as const,
+        room: { executionMode: 'per_action' as const },
+        partner: { executionMode: 'inherit' as const },
+        toolAgent: { executionMode: 'inherit' as const },
+      },
       avatar: 'sparkles',
       scenarioPrompt: '场景在安静的茶室。',
       routingPolicy: 'natural' as const,
@@ -2406,7 +2468,23 @@ describe('Rooms experience', () => {
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
     await user.click(screen.getByRole('radio', { name: /一起聊聊/ }));
     expect(screen.queryByRole('button', { name: '选择工作目录' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: '允许伙伴怎样工作' })).not.toBeInTheDocument();
+    const roleplayRoomPermission = screen.getByRole('combobox', {
+      name: 'Room 边界配置模式',
+    });
+    expect(roleplayRoomPermission).toHaveValue('per_action');
+    expect(within(roleplayRoomPermission).queryByRole('option', {
+      name: '全自动',
+    })).not.toBeInTheDocument();
+    const roleplayPartnerPermission = screen.getByRole('combobox', {
+      name: '行星 / Partner配置模式',
+    });
+    expect(roleplayPartnerPermission).toHaveValue('inherit');
+    expect(within(roleplayPartnerPermission).getByRole('option', {
+      name: '全自动',
+    })).toBeDisabled();
+    expect(screen.getByRole('combobox', {
+      name: '卫星 / Tool Agent配置模式',
+    })).toHaveValue('inherit');
     await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '深夜茶话会');
     const optionalSummary = screen.getByText('补充背景与外观').closest('summary')!;
     const optionalDisclosure = optionalSummary.closest('details')!;
@@ -2430,9 +2508,19 @@ describe('Rooms experience', () => {
       scenarioPrompt: '场景在安静的茶室。',
       routingPolicy: 'natural',
       workspaceRoots: [],
-      executionMode: 'per_action',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'per_action' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
       routingConfig: { maxResponders: 1, naturalJitter: 0.04, fallbackParticipantId: '' },
     });
+    const request = transport.requests.find(
+      (call) => call.request.pathId === 'agent.rooms.create',
+    )?.request;
+    expect(request?.body).not.toHaveProperty('executionMode');
+    expect(request?.body).not.toHaveProperty('dangerousModeConfirmation');
   });
 
   it('restores the collaboration permission default whenever the create dialog reopens', async () => {
@@ -2451,7 +2539,9 @@ describe('Rooms experience', () => {
 
     await user.click(screen.getByRole('button', { name: '开始新的协作' }));
     expect(screen.getByRole('radio', { name: /一起完成任务/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /全自动/ })).toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Room 边界配置模式' })).toHaveValue('full_trust');
+    expect(screen.getByRole('combobox', { name: '行星 / Partner配置模式' })).toHaveValue('inherit');
+    expect(screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' })).toHaveValue('inherit');
   });
 
   it('sends an invite-only turn with a visible mention and structured participant id', async () => {
@@ -2560,6 +2650,12 @@ describe('Rooms experience', () => {
       scenarioPrompt: '旧设定',
       routingPolicy: 'natural' as const,
       workspaceRoots: [],
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1' as const,
+        room: { executionMode: 'per_action' as const },
+        partner: { executionMode: 'inherit' as const },
+        toolAgent: { executionMode: 'inherit' as const },
+      },
     };
     const updated = { ...room, title: '新名称', description: '新简介', scenarioPrompt: '新设定' };
     const snapshot = roomSnapshot(room.id, [], room.title);
@@ -2568,6 +2664,7 @@ describe('Rooms experience', () => {
     snapshot.room.scenarioPrompt = room.scenarioPrompt;
     snapshot.room.routingPolicy = room.routingPolicy;
     snapshot.room.workspaceRoots = room.workspaceRoots;
+    snapshot.room.permissionPolicy = room.permissionPolicy;
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [room] },
       'agent.roles.list': { ok: true, items: previewPersonas },
@@ -2583,7 +2680,19 @@ describe('Rooms experience', () => {
     await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '新名称');
     await user.clear(screen.getByRole('textbox', { name: '协作空间简介' }));
     await user.type(screen.getByRole('textbox', { name: '协作空间简介' }), '新简介');
-    expect(screen.queryByRole('combobox', { name: '工作权限' })).not.toBeInTheDocument();
+    const roleplayRoomPermission = screen.getByRole('combobox', {
+      name: 'Room 边界配置模式',
+    });
+    expect(roleplayRoomPermission).toHaveValue('per_action');
+    expect(within(roleplayRoomPermission).queryByRole('option', {
+      name: '全自动',
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', {
+      name: '行星 / Partner配置模式',
+    })).toHaveValue('inherit');
+    expect(screen.getByRole('combobox', {
+      name: '卫星 / Tool Agent配置模式',
+    })).toHaveValue('inherit');
     await user.clear(screen.getByRole('textbox', { name: '共同背景' }));
     await user.type(screen.getByRole('textbox', { name: '共同背景' }), '新设定');
     await user.click(screen.getByRole('button', { name: '保存更改' }));
@@ -2597,21 +2706,33 @@ describe('Rooms experience', () => {
         description: '新简介',
         scenarioPrompt: '新设定',
         routingPolicy: room.routingPolicy,
+        permissionPolicy: room.permissionPolicy,
       },
     });
     expect(request?.body).not.toHaveProperty('roomKind');
+    expect(request?.body).not.toHaveProperty('executionMode');
+    expect(request?.body).not.toHaveProperty('dangerousModeConfirmation');
   });
 
-  it('switches every Room participant to Luna-arbitrated full automation through the Room policy route', async () => {
+  it('loads and updates the stored three-layer Room policy without using the legacy projection', async () => {
     const room = roomSummary('room-permissions', '持续开发 Room');
-    const fullTrustRoom = { ...room, executionMode: 'full_trust' as const };
+    const fullTrustRoom = {
+      ...room,
+      executionMode: 'full_trust' as const,
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1' as const,
+        room: { executionMode: 'full_trust' as const },
+        partner: { executionMode: 'inherit' as const },
+        toolAgent: { executionMode: 'inherit' as const },
+      },
+    };
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [room] },
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
       'agent.room.archive': (request: ControlRequest) => (
-        request.body as { executionMode?: string } | undefined
-      )?.executionMode === 'full_trust'
+        request.body as { permissionPolicy?: { room?: { executionMode?: string } } } | undefined
+      )?.permissionPolicy?.room?.executionMode === 'full_trust'
         ? { ok: true, room: fullTrustRoom }
         : { ok: true, room },
     } });
@@ -2619,9 +2740,14 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
-    await user.click(screen.getByRole('combobox', { name: '工作权限' }));
-    await user.click(await screen.findByRole('option', { name: '全自动' }));
-    expect(screen.getByText('所有待审批操作由独立审批助手（Luna Max）依据整个协作空间的审批记录自动判定')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Room 边界配置模式' })).toHaveValue('workspace_managed');
+    expect(screen.getByRole('combobox', { name: '行星 / Partner配置模式' })).toHaveValue('inherit');
+    expect(screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' })).toHaveValue('inherit');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Room 边界配置模式' }),
+      'full_trust',
+    );
+    expect(screen.getAllByText('生效：全自动')).toHaveLength(3);
     await user.click(screen.getByRole('button', { name: '保存更改' }));
 
     await waitFor(() => expect(
@@ -2638,10 +2764,48 @@ describe('Rooms experience', () => {
         description: '',
         scenarioPrompt: '',
         routingPolicy: room.routingPolicy,
-        executionMode: 'full_trust',
+        permissionPolicy: {
+          schemaVersion: 'rag-ime.room-permission-policy.v1',
+          room: { executionMode: 'full_trust' },
+          partner: { executionMode: 'inherit' },
+          toolAgent: { executionMode: 'inherit' },
+        },
         dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
       },
     });
+    expect(permissionRequest?.body).not.toHaveProperty('executionMode');
+  });
+
+  it('shows an unavailable migration state for an old Room without guessing a policy', async () => {
+    const legacyRoom = roomSummary('room-legacy-policy', '旧 Room');
+    delete legacyRoom.permissionPolicy;
+    const snapshot = roomSnapshot(legacyRoom.id, [], legacyRoom.title);
+    delete snapshot.room.permissionPolicy;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [legacyRoom] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': snapshot,
+      'agent.room.archive': { ok: true, room: { ...legacyRoom, title: '旧 Room 新名称' } },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
+    expect(screen.getByLabelText('Room 分层权限不可用')).toHaveTextContent(
+      '界面不会猜测或补成全权限',
+    );
+    await user.clear(screen.getByRole('textbox', { name: '协作空间名称' }));
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '旧 Room 新名称');
+    await user.click(screen.getByRole('button', { name: '保存更改' }));
+
+    await waitFor(() => expect(
+      transport.requests.some((call) => call.request.pathId === 'agent.room.archive'),
+    ).toBe(true));
+    const update = transport.requests.find(
+      (call) => call.request.pathId === 'agent.room.archive',
+    )?.request;
+    expect(update?.body).not.toHaveProperty('permissionPolicy');
+    expect(update?.body).not.toHaveProperty('executionMode');
   });
 
   it('adds Venus to an existing Room and can remove the member again', async () => {
@@ -3055,7 +3219,7 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(create).toBeEnabled());
     await user.click(create);
     await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '发布前检查');
-    await user.click(screen.getByRole('button', { name: '开始协作' }));
+    await user.click(screen.getByRole('button', { name: '启用全自动并开始协作' }));
 
     const dialog = screen.getByRole('dialog', { name: '开始一起做事' });
     expect(await screen.findByRole('alert')).toHaveTextContent('协作空间名称已存在');
@@ -3270,12 +3434,15 @@ describe('Rooms experience', () => {
       (call) => call.request.pathId === 'agent.sessions.list',
     )).toHaveLength(sessionListRequestsBeforeBoundary);
     expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query).toEqual({ sessionId: 'room-a:s1' });
-    expect(screen.getByText('工作区托管')).toBeInTheDocument();
+    expect(screen.getByText('行星 / Partner')).toBeInTheDocument();
+    expect(screen.getByText('卫星 / Tool Agent')).toBeInTheDocument();
+    expect(screen.getAllByText('配置：继承（Inherit）')).toHaveLength(2);
+    expect(screen.getAllByText('生效：工作区托管')).toHaveLength(3);
     expect(screen.getAllByText('/Volumes/work/learnA').length).toBeGreaterThan(0);
     expect(screen.queryByRole('radio', { name: '只读' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
     expect(screen.queryByText(/私有 Session：/)).not.toBeInTheDocument();
-    const toolsSummary = screen.getByText(/看看可以使用哪些工具/).closest('summary')!;
+    const toolsSummary = screen.getByText(/看看 Session 暴露了哪些工具/).closest('summary')!;
     const toolsDisclosure = toolsSummary.closest('details')!;
     expect(toolsDisclosure).toHaveClass('ui-disclosure');
     expect(toolsSummary).toHaveAttribute('aria-expanded', 'false');
@@ -4969,6 +5136,12 @@ function roomSummary(roomId: string, title: string): RoomSummary {
     title,
     status: 'active',
     executionMode: 'workspace_managed',
+    permissionPolicy: {
+      schemaVersion: 'rag-ime.room-permission-policy.v1',
+      room: { executionMode: 'workspace_managed' },
+      partner: { executionMode: 'inherit' },
+      toolAgent: { executionMode: 'inherit' },
+    },
     routingPolicy: 'moderator',
     moderatorParticipantId: `${roomId}:p1`,
     workspaceRoots: ['/Volumes/work/learnA'],

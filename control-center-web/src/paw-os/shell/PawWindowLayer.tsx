@@ -67,9 +67,9 @@ export function PawWindowLayer() {
   const wantsWindowGeometry = Boolean(collaborationFocusGroup) || Boolean(participantSignature);
   const windows = usePawDesktopStore(wantsWindowGeometry ? selectWindows : selectNoWindows);
   const ids = useMemo(() => idSignature.split('\u0000').filter(Boolean), [idSignature]);
-  /* Focus and overview frames are laid out in window-layer coordinates. Both
-   * planes use the full menu-below viewport; the resident Dock is an overlay
-   * instead of reserving a permanent gutter. */
+  /* Focus and overview frames are laid out in full window-layer coordinates.
+   * Collaboration focus hides the Dock; ordinary persisted frames are fitted
+   * to the Dock-safe area by desktop-store.ts. */
   const [viewport, setViewport] = useState(() => collaborationFocusGroup ? pawFocusWindowLayerSize() : pawWindowLayerSize());
   const [focusFrameOverrides, setFocusFrameOverrides] = useState<Record<string, PawWindowBounds>>({});
   const [flowLedgerOpen, setFlowLedgerOpen] = useState(false);
@@ -217,7 +217,7 @@ export function PawWindowLayer() {
     }));
   }, [roomFocusRail]);
   return (
-    <FeatureDesktopProvider bindAgentMain={bindAgentMain} bindRoomMain={bindRoomMain} closeWindow={closeWindow} openApp={openFeatureApp} openRoute={openFeatureRoute} openWindow={openFeatureWindow} setCollaborationFocusGroup={setCollaborationFocusGroup}>
+    <FeatureDesktopProvider bindAgentMain={bindAgentMain} bindRoomMain={bindRoomMain} collaborationFocusGroup={collaborationFocusGroup} closeWindow={closeWindow} openApp={openFeatureApp} openRoute={openFeatureRoute} openWindow={openFeatureWindow} setCollaborationFocusGroup={setCollaborationFocusGroup}>
       <div className="paw-window-layer" data-overview={overviewOpen || undefined} data-room-focus={focusedRoomId || undefined}>
         {focusedRoomId ? <>
           <div aria-hidden="true" className="paw-room-focus-plane" />
@@ -1073,16 +1073,23 @@ const PawWindow = memo(function PawWindow({ collaborationFocusGroup, flowState, 
   const target = node?.target;
   const surfaceWidth = focusFrame?.width ?? node?.bounds.width ?? 0;
   const surfaceHeight = Math.max(0, focusFrame?.height ?? node?.bounds.height ?? 0);
+  const inFocus = Boolean(node && collaborationFocusGroup && windowBelongsToFocus(node, collaborationFocusGroup));
+  const shouldHydrateNow = active || overview || inFocus;
+  const [appHydrated, setAppHydrated] = useState(shouldHydrateNow);
+  useEffect(() => {
+    if (shouldHydrateNow) setAppHydrated(true);
+  }, [shouldHydrateNow]);
   const appSurface = useMemo(() => (appId ? (
     <div className="paw-window-route-surface" onClick={openLinkedRoute}>
       <PawOsAppSurfaceProvider active={active && !overview} appId={appId} height={surfaceHeight} width={surfaceWidth} windowId={windowId}>
-        <PawAppProcess appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />
+        {appHydrated || shouldHydrateNow
+          ? <PawAppProcess appId={appId} entityId={entityId} initialRoute={initialRoute} target={target} />
+          : <div aria-hidden="true" className="paw-app-boot"><PawAppIcon appId={appId} size={32} /></div>}
       </PawOsAppSurfaceProvider>
     </div>
-  ) : null), [active, appId, entityId, initialRoute, openLinkedRoute, overview, surfaceHeight, surfaceWidth, target, windowId]);
+  ) : null), [active, appHydrated, appId, entityId, initialRoute, openLinkedRoute, overview, shouldHydrateNow, surfaceHeight, surfaceWidth, target, windowId]);
   if (!node || (node.minimized && !overview)) return null;
   const app = pawApp(node.appId);
-  const inFocus = collaborationFocusGroup ? windowBelongsToFocus(node, collaborationFocusGroup) : false;
   const collaborationRole = collaborationFocusGroup
     ? !inFocus
       ? 'hidden'

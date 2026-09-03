@@ -25,6 +25,11 @@ import type { AgentGoalMutationV1 } from './generated/agent-goal-mutation.v1';
 import type { AgentGoalSettleRequestV1 } from './generated/agent-goal-settle-request.v1';
 import type { AgentGoalSettleResultV1 } from './generated/agent-goal-settle-result.v1';
 import type { AgentGoalUsageV1 } from './generated/agent-goal-usage.v1';
+import type { AgentLabCostReceiptV1 } from './generated/agent-lab-cost-receipt.v1';
+import type { AgentLabCostRequestV1 } from './generated/agent-lab-cost-request.v1';
+import type { AgentLabExperimentV1 } from './generated/agent-lab-experiment.v1';
+import type { AgentLabPathSearchRequestV1 } from './generated/agent-lab-path-search-request.v1';
+import type { AgentLabPathSearchV1 } from './generated/agent-lab-path-search.v1';
 import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
 import type { AgentMemoryEvidenceV1 } from './generated/agent-memory-evidence.v1';
@@ -71,6 +76,7 @@ import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1
 import type { DailyActivityTimelineV1 } from './generated/daily-activity-timeline.v1';
 import type { DailyConversationDigestV1 } from './generated/daily-conversation-digest.v1';
 import type { DeliveryGateObservationV1 } from './generated/delivery-gate-observation.v1';
+import type { EvalLabRunListV1 } from './generated/eval-lab-run-list.v1';
 import type { EvalRunV1 } from './generated/eval-run.v1';
 import type { EvalScheduleCreateV1 } from './generated/eval-schedule-create.v1';
 import type { EvalScheduleErrorV1 } from './generated/eval-schedule-error.v1';
@@ -138,6 +144,7 @@ import type { RoomCommitV2 } from './generated/room-commit.v2';
 import type { RoomCommitV3 } from './generated/room-commit.v3';
 import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
+import type { RoomPermissionPolicyV1 } from './generated/room-permission-policy.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomQualityGateReceiptV1 } from './generated/room-quality-gate-receipt.v1';
 import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
@@ -188,6 +195,11 @@ export type {
   AgentGoalSettleRequestV1,
   AgentGoalSettleResultV1,
   AgentGoalUsageV1,
+  AgentLabCostReceiptV1,
+  AgentLabCostRequestV1,
+  AgentLabExperimentV1,
+  AgentLabPathSearchRequestV1,
+  AgentLabPathSearchV1,
   AgentLifecycleCancellationAuditV1,
   AgentMediaV1,
   AgentMemoryEvidenceV1,
@@ -234,6 +246,7 @@ export type {
   DailyActivityTimelineV1,
   DailyConversationDigestV1,
   DeliveryGateObservationV1,
+  EvalLabRunListV1,
   EvalRunV1,
   EvalScheduleCreateV1,
   EvalScheduleErrorV1,
@@ -301,6 +314,7 @@ export type {
   RoomCommitV3,
   RoomDispatchEnvelopeV2,
   RoomEventEnvelopeV2,
+  RoomPermissionPolicyV1,
   RoomPostV2,
   RoomQualityGateReceiptV1,
   RoomRootExecutionV3,
@@ -352,6 +366,11 @@ export interface ContractTypeMap {
   'agent-goal-settle-request.v1': AgentGoalSettleRequestV1;
   'agent-goal-settle-result.v1': AgentGoalSettleResultV1;
   'agent-goal-usage.v1': AgentGoalUsageV1;
+  'agent-lab-cost-receipt.v1': AgentLabCostReceiptV1;
+  'agent-lab-cost-request.v1': AgentLabCostRequestV1;
+  'agent-lab-experiment.v1': AgentLabExperimentV1;
+  'agent-lab-path-search-request.v1': AgentLabPathSearchRequestV1;
+  'agent-lab-path-search.v1': AgentLabPathSearchV1;
   'agent-lifecycle-cancellation-audit.v1': AgentLifecycleCancellationAuditV1;
   'agent-media.v1': AgentMediaV1;
   'agent-memory-evidence.v1': AgentMemoryEvidenceV1;
@@ -398,6 +417,7 @@ export interface ContractTypeMap {
   'daily-activity-timeline.v1': DailyActivityTimelineV1;
   'daily-conversation-digest.v1': DailyConversationDigestV1;
   'delivery-gate-observation.v1': DeliveryGateObservationV1;
+  'eval-lab-run-list.v1': EvalLabRunListV1;
   'eval-run.v1': EvalRunV1;
   'eval-schedule-create.v1': EvalScheduleCreateV1;
   'eval-schedule-error.v1': EvalScheduleErrorV1;
@@ -465,6 +485,7 @@ export interface ContractTypeMap {
   'room-commit.v3': RoomCommitV3;
   'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
   'room-event-envelope.v2': RoomEventEnvelopeV2;
+  'room-permission-policy.v1': RoomPermissionPolicyV1;
   'room-post.v2': RoomPostV2;
   'room-quality-gate-receipt.v1': RoomQualityGateReceiptV1;
   'room-root-execution.v3': RoomRootExecutionV3;

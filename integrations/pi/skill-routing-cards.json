@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "bundledSkillEntries": 18,
+    "bundledSkillEntries": 19,
     "projectedBundledCards": 6,
     "canonicalCards": 41
   },
@@ -10,6 +10,7 @@
     "bundledWins": {
       "configured": [],
       "pi-installed": [
+        "agent-eval-room-optimizer",
         "alignment-and-decision",
         "bootstrap-project-context",
         "ego-browser",

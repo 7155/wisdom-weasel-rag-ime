@@ -60,6 +60,7 @@ export type AgentSessionV1 = {
   archivedAtMs?: number | null;
   messageCount: number;
   lastMessagePreview?: string;
+  lastTerminalTurnId?: string;
   workspaceRoots: string[];
   shellPolicyVersion?: string;
   [k: string]: unknown;

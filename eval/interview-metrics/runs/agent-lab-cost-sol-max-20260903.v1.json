@@ -1,0 +1,42 @@
+{
+  "authority": "pricing_estimate",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "This is a deterministic estimate from caller-supplied pricing and reported usage, not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "1.9232",
+    "outputCostUsd": "0.87552",
+    "totalCostUsd": "3.243385",
+    "uncachedInputCostUsd": "0.444665"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-sol",
+    "pricingId": "openai-api-gpt-5.6-sol-2026-09-01",
+    "provider": "openai",
+    "publishedDate": "2026-09-01",
+    "rates": {
+      "cachedInputUsd": "0.5",
+      "outputUsd": "30",
+      "uncachedInputUsd": "5"
+    },
+    "sourceSha256": "867c9fe491a9134fc9ac0041f478ec041d7638f41b4022939349c2654075dd56",
+    "sourceUrl": "https://platform.openai.com/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "8ff6c16506285c3421b76d8c17d4cd63c3b39b7b312bad51357aa44c03b1b7ee",
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 3846400,
+    "outputTokens": 29184,
+    "sourceRef": "runtime-db:enterpriseops-csm-sol-max-validation-20260903-v1",
+    "sourceSha256": "b872358786e12f8cb28cf61a9627b4f9037b25850b7f74f0798d2df84833d9f5",
+    "uncachedInputTokens": 88933
+  }
+}

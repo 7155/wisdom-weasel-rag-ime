@@ -321,7 +321,7 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertFalse((support / "predictor.env").exists())
 
-    def test_local_mlx_embedding_is_warmed_before_health_becomes_ready(self) -> None:
+    def test_local_mlx_embedding_warmup_reports_pending_then_complete(self) -> None:
         provider = _WarmupEmbeddingProvider()
         with tempfile.TemporaryDirectory(prefix="rag-ime-embedding-warmup-") as tmp:
             with patch("rag_ime.debug_server.embedding_provider_from_env", return_value=provider):
@@ -332,8 +332,20 @@ class DebugManagementApiTests(unittest.TestCase):
                         predictor=_ManagementPredictionProvider(),
                     )
                 )
+                pending = service.health()["embeddingWarmup"]
+                service.start_background_services()
+                deadline = time.monotonic() + 2
+                while service.health()["embeddingWarmup"]["status"] != "complete":
+                    if time.monotonic() >= deadline:
+                        self.fail("embedding warmup did not complete")
+                    time.sleep(0.01)
                 report = service.health()["embeddingWarmup"]
+                service.close()
 
+        self.assertEqual(pending["status"], "pending")
+        self.assertEqual(pending["delayMs"], 0)
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["delayMs"], 0)
         self.assertTrue(report["enabled"])
         self.assertTrue(report["ok"])
         self.assertEqual(report["dimensions"], 2)
@@ -2302,6 +2314,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
             with urlopen(f"{base_url}/sessions", timeout=5) as response:
                 listed = json.loads(response.read().decode("utf-8"))
+            with urlopen(f"{base_url}/sessions?projectionOnly=1", timeout=5) as response:
+                directory = json.loads(response.read().decode("utf-8"))
             with urlopen(f"{base_url}/runtime", timeout=5) as response:
                 runtime = json.loads(response.read().decode("utf-8"))
             with urlopen(f"{base_url}/roles", timeout=5) as response:
@@ -2732,6 +2746,8 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertTrue(created["ok"])
         self.assertEqual(listed["items"][0]["id"], session_id)
+        self.assertEqual(directory["items"][0]["id"], session_id)
+        self.assertNotIn("sessionFile", directory["items"][0])
         self.assertEqual(runtime["status"], "disabled")
         self.assertEqual(roles["items"][0]["displayName"], "Agent 3")
         self.assertNotIn("systemPrompt", roles["items"][0])

@@ -27,6 +27,35 @@ class InterviewMetricsLedgerTests(unittest.TestCase):
         self.assertTrue(any(item["domain"] == "memory" for item in payload["datasets"]))
         self.assertTrue(any(item["domain"] == "knowledge" for item in payload["datasets"]))
 
+    def test_agent_lab_preview_keeps_report_only_luna_and_expands_candidate_rounds(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        ledger = json.loads(
+            (root / "eval/interview-metrics/evidence-ledger.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        metric_ids = {item["id"] for item in ledger["metrics"]}
+        self.assertTrue({
+            "knowledge.enterprise.tag_reranker.readiness.20260901",
+            "knowledge.enterprise.answer_evidence.luna_max.validation.reject.20260902",
+            "agent.cloudops_candidate.evidence_search.20260901",
+            "agent.cloudops_candidate.observation_id.20260901",
+            "agent.cloudops_candidate.bounded_workflow.20260901",
+            "agent.cloudops_candidate.luna_max.20260902",
+            "memory.maintenance.initial-jsonl-failure.20260902",
+            "memory.maintenance.luna_v1.20260902",
+            "memory.maintenance.luna_v3.20260902",
+            "memory.maintenance.luna_v4.20260902",
+            "memory.maintenance.luna_v5.20260902",
+        } <= metric_ids)
+        preview = (root / "eval/interview-metrics/AGENT_LAB_INTERVIEW_DATA_20260901.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("readable transcriptCount=0", preview)
+        self.assertIn("Reject，仅保留失败回执", preview)
+        self.assertIn("Memory Maintenance Luna v1 → v5", preview)
+        self.assertIn("834.945 s", preview)
+
     def test_claimable_metric_requires_sample_command_and_claim_boundaries(self) -> None:
         payload = {
             "schemaVersion": "paw.interview-metrics-ledger.v1",
@@ -90,6 +119,22 @@ class InterviewMetricsLedgerTests(unittest.TestCase):
             "metric.judge: ai_estimate must not be reportedAs deterministic",
             errors,
         )
+
+    def test_repository_validation_requires_the_agent_experiment_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "paw.interview-metrics-ledger.v1",
+                "sourceRevision": "abc",
+                "evidenceLevels": ["E1", "E2", "E3", "E4", "E5", "E6"],
+                "metrics": [],
+                "runs": [],
+                "datasets": [],
+            }
+
+            errors = validate_interview_metrics(payload, repo_root=root)
+
+        self.assertIn("agentExperimentLedger is required", errors)
 
     def test_workspace_speedup_receipts_reject_a_drifted_claim(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

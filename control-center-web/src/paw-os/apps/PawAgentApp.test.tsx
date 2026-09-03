@@ -604,11 +604,19 @@ describe('PAWOS Agent App', () => {
     const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request;
     expect(create?.body).toMatchObject({
       roomKind: 'collaboration',
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
       participants: expect.arrayContaining([
         expect.objectContaining({ roleId: 'builder' }),
         expect.objectContaining({ roleId: 'reviewer' }),
       ]),
     });
+    expect(create?.body).not.toHaveProperty('executionMode');
     expect(await screen.findByText('Room 工作区 · room-new')).toBeInTheDocument();
   });
 

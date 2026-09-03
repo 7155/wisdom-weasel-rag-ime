@@ -6,7 +6,7 @@ import os
 import re
 import sqlite3
 from collections import OrderedDict
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -173,7 +173,11 @@ class LocalSqliteCoreClient:
         self.v2_governance_filter_enabled = bool(v2_governance_filter_enabled)
         self.memory_v2_enabled = True
         self._initialized = False
+        self._startup_maintenance_complete = False
         self._initialize_lock = RLock()
+        self._persistent_reads = False
+        self._read_lock = RLock()
+        self._read_connection: sqlite3.Connection | None = None
         self._suggestion_cache: OrderedDict[tuple[str, str, str, str, str, str, str, int], tuple[InputSuggestion, ...]] = OrderedDict()
         self._suggestion_cache_lock = RLock()
         self._suggestion_cache_hits = 0
@@ -183,18 +187,73 @@ class LocalSqliteCoreClient:
         self._vector_scan_cache: dict[tuple[object, ...], tuple[list[sqlite3.Row], Any]] = {}
         self._vector_scan_cache_lock = RLock()
 
-    def initialize(self, *, force: bool = False) -> None:
+    def initialize(
+        self,
+        *,
+        force: bool = False,
+        perform_maintenance: bool = True,
+    ) -> None:
         if self._initialized and not force:
             return
         with self._initialize_lock:
             if self._initialized and not force:
                 return
-            self._initialize_database()
+            if self._persistent_reads:
+                conn = self._open_connection(check_same_thread=False)
+                try:
+                    self._initialize_database(
+                        perform_maintenance=perform_maintenance,
+                        connection=conn,
+                    )
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    conn.close()
+                    raise
+                with self._read_lock:
+                    previous = self._read_connection
+                    self._read_connection = conn
+                if previous is not None:
+                    previous.close()
+            else:
+                self._initialize_database(perform_maintenance=perform_maintenance)
             self._initialized = True
+            self._startup_maintenance_complete = perform_maintenance
 
-    def _initialize_database(self) -> None:
-        with self._connect() as conn:
+    def enable_persistent_reads(self) -> None:
+        with self._initialize_lock:
+            self._persistent_reads = True
+            if not self._initialized:
+                return
+            conn = self._open_connection(check_same_thread=False)
+            with self._read_lock:
+                previous = self._read_connection
+                self._read_connection = conn
+            if previous is not None:
+                previous.close()
+
+    def run_startup_maintenance(self) -> None:
+        with self._initialize_lock:
+            if self._startup_maintenance_complete:
+                return
+            self._initialize_database(perform_maintenance=True)
+            self._startup_maintenance_complete = True
+
+    def startup_maintenance_pending(self) -> bool:
+        with self._initialize_lock:
+            return not self._startup_maintenance_complete
+
+    def _initialize_database(
+        self,
+        *,
+        perform_maintenance: bool = True,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        manager = nullcontext(connection) if connection is not None else self._connect()
+        with manager as conn:
             ensure_memory_v2_schema(conn)
+            if not perform_maintenance:
+                return
             conn.executescript(
                 """
                 DELETE FROM memory_state
@@ -1699,13 +1758,13 @@ class LocalSqliteCoreClient:
 
     def event_count(self) -> int:
         self.initialize()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM input_events").fetchone()
         return int(row["count"])
 
     def action_count(self) -> int:
         self.initialize()
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS count FROM memory_actions").fetchone()
         return int(row["count"])
 
@@ -1726,7 +1785,7 @@ class LocalSqliteCoreClient:
     def vector_index_stats(self) -> dict[str, object]:
         self.initialize()
         fingerprint = self.embedding_provider.fingerprint
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             total = int(conn.execute("SELECT COUNT(*) AS count FROM memory_vectors").fetchone()["count"])
             active = int(
                 conn.execute(
@@ -2293,13 +2352,7 @@ class LocalSqliteCoreClient:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._harden_storage_permissions()
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        self._harden_storage_permissions()
+        conn = self._open_connection()
         try:
             yield conn
             conn.commit()
@@ -2307,6 +2360,40 @@ class LocalSqliteCoreClient:
             conn.rollback()
             raise
         finally:
+            conn.close()
+
+    def _open_connection(
+        self,
+        *,
+        check_same_thread: bool = True,
+    ) -> sqlite3.Connection:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._harden_storage_permissions()
+        conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=check_same_thread,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        self._harden_storage_permissions()
+        return conn
+
+    @contextmanager
+    def _read_connect(self) -> Iterator[sqlite3.Connection]:
+        with self._read_lock:
+            conn = self._read_connection
+            if conn is not None:
+                yield conn
+                return
+        with self._connect() as fallback:
+            yield fallback
+
+    def close(self) -> None:
+        with self._read_lock:
+            conn = self._read_connection
+            self._read_connection = None
+        if conn is not None:
             conn.close()
 
     def _harden_storage_permissions(self) -> None:

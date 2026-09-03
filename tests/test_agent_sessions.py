@@ -71,6 +71,23 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get(session_id)["modelProfile"], "pi/default")
         self.assertEqual(self.store.list()[0]["modelProfile"], "pi/default")
 
+    def test_directory_page_omits_runtime_and_policy_payloads(self) -> None:
+        created = self.store.create(
+            title="快速目录",
+            mode="coordinator",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=100,
+        )
+
+        item = self.store.list_page(projection_only=True)["items"][0]
+
+        self.assertEqual(item["id"], created["id"])
+        self.assertEqual(item["title"], "快速目录")
+        self.assertEqual(item["workspaceRoots"], [str(Path(self.tmp.name).resolve())])
+        self.assertNotIn("sessionFile", item)
+        self.assertNotIn("runtimeBinding", item)
+        self.assertNotIn("allowedTools", item)
+
     def test_evaluation_snapshot_is_a_visible_read_only_session_kind(self) -> None:
         snapshot = self.store.create(
             title="EnterpriseOps Validation · Task 1",
@@ -88,6 +105,49 @@ class AgentSessionStoreTests(unittest.TestCase):
             [item["id"] for item in self.store.list()],
         )
         validate_contract(snapshot, "agent-session.v1.json")
+
+    def test_list_projects_latest_terminal_turn_identity_independent_of_session_updates(
+        self,
+    ) -> None:
+        session = self.store.create(title="terminal identity", created_at_ms=100)
+        session_id = str(session["id"])
+        self.store.record_runtime_event(
+            event_id="event:terminal:first",
+            session_id=session_id,
+            turn_id="turn:first",
+            sequence=1,
+            event_type="turn_completed",
+            created_at_ms=110,
+        )
+        self.store.record_runtime_event(
+            event_id="event:non-terminal",
+            session_id=session_id,
+            turn_id="turn:first",
+            sequence=2,
+            event_type="memory_checkpointed",
+            created_at_ms=120,
+        )
+
+        first = self.store.list()[0]
+        self.assertEqual(first["lastTerminalTurnId"], "turn:first")
+        self.store.set_status(session_id, "idle", updated_at_ms=900)
+        self.assertEqual(
+            self.store.list()[0]["lastTerminalTurnId"],
+            "turn:first",
+        )
+
+        self.store.record_runtime_event(
+            event_id="event:terminal:second",
+            session_id=session_id,
+            turn_id="turn:second",
+            sequence=3,
+            event_type="turn_failed",
+            created_at_ms=910,
+        )
+        self.assertEqual(
+            self.store.list()[0]["lastTerminalTurnId"],
+            "turn:second",
+        )
 
     def test_retired_builtin_role_ids_are_read_only_compatibility_aliases(
         self,

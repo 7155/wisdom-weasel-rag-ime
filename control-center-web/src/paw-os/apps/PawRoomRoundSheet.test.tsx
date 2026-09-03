@@ -136,6 +136,45 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
+  it('keeps a completed coordinator progress post as a normal report, not a submitted final', () => {
+    const room = roomWith([
+      participant('participant-earth', 'session-earth', 0),
+      participant('participant-mars', 'session-mars', 1),
+    ]);
+    const projection = projectionWithProgress('主控正在等待伙伴交付');
+    projection.turnsById['turn-1'] = {
+      ...projection.turnsById['turn-1']!,
+      participantIds: ['participant-earth', 'participant-mars'],
+      activityIds: ['activity-earth', 'activity-mars'],
+      terminalParticipantIds: ['participant-earth'],
+    };
+    projection.activitiesById['activity-earth'] = {
+      ...projection.activitiesById['activity-earth']!,
+      status: 'completed',
+    };
+    projection.activitiesById['activity-mars'] = activityForParticipant(
+      projection.activitiesById['activity-earth']!,
+      'activity-mars',
+      'participant-mars',
+      'session-mars',
+      'Mars 仍在执行',
+    );
+    projection.activitiesById['activity-mars'] = {
+      ...projection.activitiesById['activity-mars']!,
+      status: 'running',
+    };
+    projection.activityOrder = ['activity-earth', 'activity-mars'];
+    appendCoordinatorPost(projection, 'progress', '主控正在等待伙伴交付');
+
+    render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
+
+    const summary = screen.getByRole('region', { name: 'Earth 主控汇报' });
+    expect(summary).toHaveTextContent('主控正在等待伙伴交付');
+    expect(summary).not.toHaveTextContent('最终结果');
+    expect(summary).not.toHaveTextContent('已提交');
+    expect(screen.queryByRole('region', { name: 'Earth 最终结果' })).not.toBeInTheDocument();
+  });
+
   it('keeps the coordinator report visible after every worker submits a result', () => {
     const room = roomWith([
       participant('participant-earth', 'session-earth', 0),
@@ -200,6 +239,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       'Venus 正在执行',
     );
     projection.activityOrder = ['activity-earth', 'activity-mars', 'activity-venus'];
+    appendCoordinatorPost(
+      projection,
+      'result',
+      '主控汇报：已确认两位伙伴的当前进展。',
+    );
 
     render(<PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />);
 
@@ -436,6 +480,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
         },
       },
     };
+    appendCoordinatorPost(
+      accepted,
+      'result',
+      '验收完成，结果已写入 /work/paw/final-result.md。',
+    );
     rerender(
       <PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={accepted} room={acceptedRoom} />,
     );
@@ -478,6 +527,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       },
     };
     projection.activityOrder = ['activity-earth', 'activity-mars'];
+    appendCoordinatorPost(
+      projection,
+      'result',
+      'Earth 已提交最终结果。',
+    );
 
     const { container } = render(
       <PawRoomRoundSheet onOpenParticipant={vi.fn()} projection={projection} room={room} />,
@@ -697,6 +751,7 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       role: 'assistant',
       status: 'completed',
       text: '已写入 /work/paw/summary.md。',
+      postKind: 'result',
       createdAtMs: 4,
     };
     projection.messageOrder = ['user-1', 'assistant-1'];
@@ -746,6 +801,11 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       status: 'completed',
       terminalParticipantIds: ['participant-earth'],
     };
+    appendCoordinatorPost(
+      projection,
+      'result',
+      '验收通过，详见 docs/final-result.md。',
+    );
 
     render(
       <TooltipProvider>
@@ -787,6 +847,19 @@ describe('PawRoomRoundSheet (UR-170/172)', () => {
       status: 'completed',
       terminalParticipantIds: ['participant-earth'],
     };
+    appendCoordinatorPost(
+      projection,
+      'result',
+      [
+        '查看 [报告](docs/report.md)，并保留 `docs/inline.md`。',
+        '',
+        '```text',
+        'docs/fenced.md',
+        '```',
+        '',
+        '补充见 docs/appendix.md。',
+      ].join('\n'),
+    );
 
     render(
       <TooltipProvider>
@@ -1063,6 +1136,38 @@ function activityForParticipant(
       task: `${summary} · 任务`,
     },
   };
+}
+
+function appendCoordinatorPost(
+  projection: RoomProjectionState,
+  postKind: 'progress' | 'wait' | 'result',
+  text: string,
+  createdAtMs = 5,
+): void {
+  const messageId = `coordinator-post-${postKind}`;
+  const turn = projection.turnsById['turn-1'];
+  if (!turn) throw new Error('test fixture turn is missing');
+  projection.turnsById['turn-1'] = {
+    ...turn,
+    messageIds: [...turn.messageIds, messageId],
+  };
+  projection.messagesById[messageId] = {
+    id: messageId,
+    roomId: 'room-a',
+    turnId: 'turn-1',
+    participantId: 'participant-earth',
+    sourceSessionId: 'session-earth',
+    role: 'assistant',
+    status: 'completed',
+    text,
+    projectionKind: 'post',
+    postKind,
+    rootId: 'turn-1',
+    dispatchId: 'dispatch-earth',
+    createdAtMs,
+    completedAtMs: createdAtMs,
+  };
+  projection.messageOrder = [...projection.messageOrder, messageId];
 }
 
 function roomWith(participants: RoomParticipant[]): RoomSummary {

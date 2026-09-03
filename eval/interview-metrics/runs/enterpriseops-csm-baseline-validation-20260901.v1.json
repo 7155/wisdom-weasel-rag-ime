@@ -1,0 +1,417 @@
+{
+  "databaseIdentityVisibleToAgent": false,
+  "evaluationContract": {
+    "contractSha256": "15c44e08e783cc984f620592c7773ef49d29d7c67a3f52ad01eb70aec36349ba",
+    "model": "gpt-5.6-sol",
+    "promptContract": [
+      {
+        "promptSha256": "83a01e46a32ba9aa96fda8a4ac5d57f9f1a386fdc804c1ff88888056e2ce8cba",
+        "taskId": "task_20251205_153330_906_a8eea1c0_8c7a6205"
+      },
+      {
+        "promptSha256": "eb71ea1fd6743f92ef006db029ab1336c14196b56b2811eca2c46bc5826de684",
+        "taskId": "task_20260101_122222_300_ad5a67e3_3757206c"
+      },
+      {
+        "promptSha256": "c06dc621b743853afa22112b15c26e5f5682ab506527cfeb01f60478246ab577",
+        "taskId": "task_20260102_161510_799_ad5a67e3_7221f3c8"
+      }
+    ],
+    "promptContractSha256": "a61ae4b16bb30ec5ddba0233c82a81ec3cab126dc0b88cb5e0be9710006f5c06",
+    "provider": "openai-codex",
+    "runnerSha256": "d482cec0439242cc3281cca5b3c19502e1148d6c8258808abc7d49696a358041",
+    "runtimeIdentitySha256": "e3bd71bac16e36a3246032c0ef892676e41777ebe9f35cebc175051f2120436c",
+    "schemaVersion": "paw.enterpriseops-csm-evaluation-contract.v1",
+    "split": "validation",
+    "taskManifestSha256": "2d70094b4b01dcd954d09f1d8f7c2728c8d0f15c23980df206f3e8f6aed8f283",
+    "thinking": "high",
+    "timeoutSeconds": 900.0,
+    "toolCatalogSha256": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077",
+    "workflowProfile": "baseline-v1"
+  },
+  "excluded": [
+    {
+      "reason": "missing_seed",
+      "seedPathSha256": "f59b8cc56ac40053115fa4c2877c113a128a0fd88c374f8f48f1f1621d09b3c7",
+      "taskId": "task_20251209_132736_542_99ba2325_6705caf4"
+    }
+  ],
+  "goldVisibleToAgent": false,
+  "lane": {
+    "allDatabasesDeleted": true,
+    "failedToolCalls": 0,
+    "latencyMs": 935.121,
+    "taskCount": 3,
+    "taskSuccessCount": 0,
+    "taskSuccessRate": 0.0,
+    "tasks": [
+      {
+        "databaseDeleted": true,
+        "failedToolCalls": 0,
+        "latencyMs": 555.552,
+        "modelIdentitySha256": "f6a05635da30901eaf577e838c414a432d416382c2d71124bb797783fbc1aa5a",
+        "runtimeErrorType": "RuntimeError",
+        "sessionIdSha256": "d80e7c186cf0ea4ed5b70c134ab2826640e8b33a587d64218349b31f550db202",
+        "successfulToolCalls": 0,
+        "taskId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+        "terminalEvent": "",
+        "toolCalls": 0,
+        "turnIdSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "usage": {
+          "available": false
+        },
+        "verifier": {
+          "failedVerifierNames": [
+            "01:update_entitlement",
+            "02:update_entitlement",
+            "04:create_new_case",
+            "05:create_new_case",
+            "06:create_new_case",
+            "07:create_new_case",
+            "08:create_new_case",
+            "09:link_new_case_sla",
+            "10:link_new_case_sla",
+            "11:update_entitlement"
+          ],
+          "overallSuccess": false,
+          "passRate": 0.09090909090909091,
+          "passed": 1,
+          "total": 11
+        },
+        "verifierResults": [
+          {
+            "actualSha256": "87b513ee15c8ac6a75f18b1f8c6ee627d874760cc5c1cbb63924f376818f075a",
+            "expectedSha256": "c30480ed8c645054a609de88213423c9b6839d9c71958fba143b341d8bde84b5",
+            "name": "01:update_entitlement",
+            "passed": false
+          },
+          {
+            "actualSha256": "4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5",
+            "expectedSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "name": "02:update_entitlement",
+            "passed": false
+          },
+          {
+            "actualSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "03:update_entitlement",
+            "passed": true
+          },
+          {
+            "actualSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "expectedSha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+            "name": "04:create_new_case",
+            "passed": false
+          },
+          {
+            "actualSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "expectedSha256": "bfba7033571d606f3c2ff0415b3a26ddbfbf1f1884e5c391333a5470efbfe4a3",
+            "name": "05:create_new_case",
+            "passed": false
+          },
+          {
+            "actualSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "expectedSha256": "4ec9599fc203d176a301536c2e091a19bc852759b255bd6818810a42c5fed14a",
+            "name": "06:create_new_case",
+            "passed": false
+          },
+          {
+            "actualSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "expectedSha256": "8cd2510271575d8430c05368315a87b9c4784c7389a47496080c1e615a2a00b6",
+            "name": "07:create_new_case",
+            "passed": false
+          },
+          {
+            "actualSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "expectedSha256": "01734f4123dcfb812b4d096361bd06c4779d26138d67bbc7fc6882776c170daf",
+            "name": "08:create_new_case",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "09:link_new_case_sla",
+            "passed": false
+          },
+          {
+            "actualSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "expectedSha256": "01734f4123dcfb812b4d096361bd06c4779d26138d67bbc7fc6882776c170daf",
+            "name": "10:link_new_case_sla",
+            "passed": false
+          },
+          {
+            "actualSha256": "fe6d3468cf5c74d8ec2a95b40f2e05338c37a4202f8fad692d2b64a9cf9b468a",
+            "expectedSha256": "9b97ac5e767e5393cd0eed09a8e51b6f3775eba38f792593ea016e8ba9e996b0",
+            "name": "11:update_entitlement",
+            "passed": false
+          }
+        ]
+      },
+      {
+        "databaseDeleted": true,
+        "failedToolCalls": 0,
+        "latencyMs": 181.111,
+        "modelIdentitySha256": "88dcd5153f70f9e1a5d4d386734e2b99fddb7c9ca4071520b4824671609d4998",
+        "runtimeErrorType": "RuntimeError",
+        "sessionIdSha256": "be0a75ef72f860d7b0eff493aad8fbcf2327bb8f9e40b58c443865dab8740059",
+        "successfulToolCalls": 0,
+        "taskId": "task_20260101_122222_300_ad5a67e3_3757206c",
+        "terminalEvent": "",
+        "toolCalls": 0,
+        "turnIdSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "usage": {
+          "available": false
+        },
+        "verifier": {
+          "failedVerifierNames": [
+            "01:Confirm the support contract for Wayne Enterprises is created with correct attributes",
+            "02:Confirm the premium 24×7 entitlement exists under Wayne Enterprises with product linkage",
+            "03:Confirm the high-priority phone case was created as NEW then moved to IN_PROGRESS under an active primary contact",
+            "04:Confirm the case is linked to 'SLA Response - High' (RESPONSE metric) and is in_progress",
+            "05:Confirm the entitlement is properly linked to the new 2026 support contract"
+          ],
+          "overallSuccess": false,
+          "passRate": 0.0,
+          "passed": 0,
+          "total": 5
+        },
+        "verifierResults": [
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "01:Confirm the support contract for Wayne Enterprises is created with correct attributes",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "02:Confirm the premium 24×7 entitlement exists under Wayne Enterprises with product linkage",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "03:Confirm the high-priority phone case was created as NEW then moved to IN_PROGRESS under an active primary contact",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "04:Confirm the case is linked to 'SLA Response - High' (RESPONSE metric) and is in_progress",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "05:Confirm the entitlement is properly linked to the new 2026 support contract",
+            "passed": false
+          }
+        ]
+      },
+      {
+        "databaseDeleted": true,
+        "failedToolCalls": 0,
+        "latencyMs": 198.458,
+        "modelIdentitySha256": "7d1dc22ca4ff341f1dee59a8d80262967e7c3df2a41b7a20c3af65290fcd2317",
+        "runtimeErrorType": "RuntimeError",
+        "sessionIdSha256": "fba68b335fcec98b29fd1d1fed273a42c229e84971a43084dc4335ccfab4cae7",
+        "successfulToolCalls": 0,
+        "taskId": "task_20260102_161510_799_ad5a67e3_7221f3c8",
+        "terminalEvent": "",
+        "toolCalls": 0,
+        "turnIdSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "usage": {
+          "available": false
+        },
+        "verifier": {
+          "failedVerifierNames": [
+            "03:Verify the London location for Larson PLC exists",
+            "04:Verify the portal user for Elsa Larson",
+            "05:Verify the Elsa Larson contact",
+            "06:Verify the SUSE installed product record",
+            "07:Verify the support contract for 2026",
+            "08:Verify the premium 24x7 entitlement",
+            "09:Verify the case and its SLA linkage",
+            "10:Verify the knowledge article exists",
+            "11:Verify the knowledge article was correctly linked to the case as a resolution",
+            "12:Verify the Larson Operations Desk group exists",
+            "13:Verify Elsa Larson is a member of Larson Operations Desk",
+            "14:Verify the solution proposal notification was sent",
+            "15:Verify KB owner selection rule (min +44 agent/manager)"
+          ],
+          "overallSuccess": false,
+          "passRate": 0.13333333333333333,
+          "passed": 2,
+          "total": 15
+        },
+        "verifierResults": [
+          {
+            "actualSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "01:Verify the SUSE product exists",
+            "passed": true
+          },
+          {
+            "actualSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "02:Verify the Larson PLC account exists",
+            "passed": true
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "03:Verify the London location for Larson PLC exists",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "04:Verify the portal user for Elsa Larson",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "05:Verify the Elsa Larson contact",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "06:Verify the SUSE installed product record",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "07:Verify the support contract for 2026",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "08:Verify the premium 24x7 entitlement",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "09:Verify the case and its SLA linkage",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "10:Verify the knowledge article exists",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "11:Verify the knowledge article was correctly linked to the case as a resolution",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "12:Verify the Larson Operations Desk group exists",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "13:Verify Elsa Larson is a member of Larson Operations Desk",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "14:Verify the solution proposal notification was sent",
+            "passed": false
+          },
+          {
+            "actualSha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+            "expectedSha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "name": "15:Verify KB owner selection rule (min +44 agent/manager)",
+            "passed": false
+          }
+        ]
+      }
+    ],
+    "toolCalls": 0,
+    "verifierCount": 31,
+    "verifierPassCount": 3,
+    "verifierPassRate": 0.0967741935483871,
+    "workflowProfile": "baseline-v1"
+  },
+  "liveToolCount": 89,
+  "manifest": {
+    "domain": "csm",
+    "manifestSha256": "2d70094b4b01dcd954d09f1d8f7c2728c8d0f15c23980df206f3e8f6aed8f283",
+    "rawVerifierCount": 31,
+    "schemaVersion": "paw.enterpriseops-csm-task-manifest.v1",
+    "split": "validation",
+    "taskCount": 3,
+    "taskIds": [
+      "task_20251205_153330_906_a8eea1c0_8c7a6205",
+      "task_20260101_122222_300_ad5a67e3_3757206c",
+      "task_20260102_161510_799_ad5a67e3_7221f3c8"
+    ],
+    "tasks": [
+      {
+        "rawVerifierCount": 11,
+        "seedSha256": "71c8e714b920a0f67abd16f06c29818284b741608e0fa3f1a28c1f331aa9e6dc",
+        "selectedToolCount": 11,
+        "selectedToolsSha256": "f99fa653188b30f0f7e70739535867fc3f118ccf9a38a941fd60f63e7d874585",
+        "taskConfigSha256": "a6cdaa09c27d7d302efe464f1a4899ab74fa0b09be1592a02a2e51f06f823179",
+        "taskId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+        "userPromptSha256": "bd9feface09531fcb620e22c3d967692875a854303c06de26fa0f39e5ac70ef5"
+      },
+      {
+        "rawVerifierCount": 5,
+        "seedSha256": "71c8e714b920a0f67abd16f06c29818284b741608e0fa3f1a28c1f331aa9e6dc",
+        "selectedToolCount": 10,
+        "selectedToolsSha256": "aa94b81d1f39352f99f33afe4c9d04216a75f37fe3efa12f1f660e563250df22",
+        "taskConfigSha256": "ea3619b9d64e2f90458555723bd0e7f8472f485bbaadc7f568902e53c78ab33b",
+        "taskId": "task_20260101_122222_300_ad5a67e3_3757206c",
+        "userPromptSha256": "ecc0d91b552131e1107f8d21a272f5dea30dfc32d06b92e974546460480ee4ef"
+      },
+      {
+        "rawVerifierCount": 15,
+        "seedSha256": "71c8e714b920a0f67abd16f06c29818284b741608e0fa3f1a28c1f331aa9e6dc",
+        "selectedToolCount": 19,
+        "selectedToolsSha256": "7fa4cc1d0d49c4221fb7cee8bf1e0917c7d4513f2f315730eb8ecc42cacecbd5",
+        "taskConfigSha256": "547e9164b7f69781619de678fc571453eeacd07cf3c13b68b62decfefffafb9b",
+        "taskId": "task_20260102_161510_799_ad5a67e3_7221f3c8",
+        "userPromptSha256": "01a292ff66cbcaa1da954f25e937dc1c22e8296cdc8426ebc52295ef7cdbc4f4"
+      }
+    ]
+  },
+  "reportSha256": "9a907e28ed9ba20a37dce491dabe45450364942b1e14856142dafd485ee9193a",
+  "runtimeIdentity": {
+    "entrypointSha256": "d1bf7bb341d248f8e241e69a1782d0a591061da530dfa65f69024c9299b3cbd6",
+    "extensionSha256": "f0a06ecd627e76e602417989d36c47a75f56744bfafdc0ae8641ec23db899b04",
+    "identitySha256": "e3bd71bac16e36a3246032c0ef892676e41777ebe9f35cebc175051f2120436c",
+    "installActionPerformed": false,
+    "manifestSha256": "4ff63aa5b77d620b70f9e430a009d93450a8a297e9602d3bcc96820fe7b29211",
+    "model": "gpt-5.6-sol",
+    "nodeSha256": "27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1",
+    "piVersion": "0.84.2",
+    "protocolVersion": "2",
+    "provider": "openai-codex",
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-a1bb684fe6",
+    "schemaVersion": "paw.cloudops-runtime-candidate.v1",
+    "sourceConfigFiles": [
+      "auth.json",
+      "models-store.json",
+      "models.json",
+      "settings.json"
+    ],
+    "toolProfileSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120"
+  },
+  "schemaVersion": "paw.enterpriseops-csm-eval.v1",
+  "seedVisibleToAgent": false,
+  "split": "validation",
+  "status": "completed",
+  "verifierDuplicateNamesCollapsed": false
+}

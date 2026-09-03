@@ -30,6 +30,7 @@ export type WayfinderWorkSessionSource = {
   updatedAtMs: number;
   workspaceRoots?: string[];
   lastMessagePreview?: string;
+  lastTerminalTurnId?: string;
   roomParticipant?: { roomId?: string } | null;
 };
 
@@ -255,9 +256,9 @@ function sessionRow(session: WayfinderWorkSessionSource, fresh: boolean): Wayfin
     updatedAtMs: session.updatedAtMs,
     activity,
     runtimeRunning: fresh && session.status === 'busy',
-    statusLabel: activity === 'unknown' ? '状态未知' : activity === 'running' ? '进行中' : activity === 'attention' ? '需要处理' : '就绪',
+    statusLabel: activity === 'unknown' ? '已离线' : activity === 'running' ? '进行中' : activity === 'attention' ? '需要处理' : '就绪',
     detail: activity === 'unknown'
-      ? '正在同步当前状态'
+      ? '同步中断，显示最近记录'
       : session.status === 'busy'
       ? publicPreview(session.lastMessagePreview, '当前公开内容') || '当前进度不可用'
       : session.status === 'faulted'
@@ -295,8 +296,8 @@ function roomRow(room: WayfinderWorkRoomSource, status: {
     updatedAtMs: room.updatedAtMs,
     activity,
     runtimeRunning: status.recordFresh && status.runtimeFresh && status.running,
-    statusLabel: activity === 'unknown' ? '状态未知' : activity === 'attention' ? '需要处理' : activity === 'running' ? '进行中' : '就绪',
-    detail: activity === 'unknown' ? '正在同步当前状态' : roomWorkDetail(room.workItems),
+    statusLabel: activity === 'unknown' ? '已离线' : activity === 'attention' ? '需要处理' : activity === 'running' ? '进行中' : '就绪',
+    detail: activity === 'unknown' ? '同步中断，显示最近记录' : roomWorkDetail(room.workItems),
     agents: (room.participants ?? [])
       .filter((participant) => participant.status !== 'removed')
       .sort((left, right) => (left.ordinal ?? 0) - (right.ordinal ?? 0))

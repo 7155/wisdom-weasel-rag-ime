@@ -11,6 +11,7 @@ import { ThemeProvider } from '@/design/themes';
 import { useFilePreviewStore } from '@/features/agent/file-preview/file-preview-store';
 import { ProductIdentityProvider } from '@/features/identity/product-identity';
 import { resolveFrontendProduct, type FrontendProduct } from './frontend-product';
+import { standaloneSurfaceForPath } from './standalone-surface';
 import '@/design/tokens.css';
 import '@/design/typography.css';
 import '@/design/workspace.css';
@@ -31,7 +32,28 @@ const LegacyProductApp = lazy(async () => ({
   default: (await import('./LegacyProductApp')).LegacyProductApp,
 }));
 
+const StandaloneEvolutionReportPage = lazy(async () => ({
+  default: (await import('@/features/evolution-report/standalone')).StandaloneEvolutionReportPage,
+}));
+
 export function App({ frontendProduct }: { frontendProduct?: FrontendProduct } = {}) {
+  const standaloneSurface = standaloneSurfaceForPath(
+    typeof window === 'undefined' ? '/' : window.location.pathname,
+  );
+  if (standaloneSurface === 'evolution-report') {
+    return (
+      <ThemeProvider forcedTheme="light">
+        <PawOsAppearanceProvider>
+          <MotionProvider>
+            <Suspense fallback={<ProductLoading />}>
+              <StandaloneEvolutionReportPage />
+            </Suspense>
+          </MotionProvider>
+        </PawOsAppearanceProvider>
+      </ThemeProvider>
+    );
+  }
+
   const product = frontendProduct ?? resolveFrontendProduct({
     configured: import.meta.env.VITE_PAW_FRONTEND,
     search: typeof window === 'undefined' ? '' : window.location.search,

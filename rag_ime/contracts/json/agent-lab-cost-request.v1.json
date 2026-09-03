@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-lab-cost-request.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "pricingIdentity", "usage"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.agent-lab-cost-request.v1"},
+    "pricingIdentity": {"$ref": "#/$defs/pricingIdentity"},
+    "usage": {"$ref": "#/$defs/usage"},
+    "billedReceipt": {"$ref": "#/$defs/billedReceipt"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$"
+    },
+    "evidenceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "decimalUsd": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "rates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uncachedInputUsd", "cachedInputUsd", "outputUsd"],
+      "properties": {
+        "uncachedInputUsd": {"$ref": "#/$defs/decimalUsd"},
+        "cachedInputUsd": {"$ref": "#/$defs/decimalUsd"},
+        "outputUsd": {"$ref": "#/$defs/decimalUsd"}
+      }
+    },
+    "pricingIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pricingId", "provider", "model", "currency", "unit", "rates",
+        "publishedDate", "sourceUrl", "sourceSha256"
+      ],
+      "properties": {
+        "pricingId": {"$ref": "#/$defs/identity"},
+        "provider": {"$ref": "#/$defs/identity"},
+        "model": {"$ref": "#/$defs/identity"},
+        "currency": {"const": "USD"},
+        "unit": {"const": "per_million_tokens"},
+        "rates": {"$ref": "#/$defs/rates"},
+        "publishedDate": {
+          "type": "string",
+          "pattern": "^20[0-9]{2}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 1000,
+          "pattern": "^https://[^\\s]+$"
+        },
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available", "uncachedInputTokens", "cachedInputTokens",
+        "outputTokens", "sourceRef", "sourceSha256"
+      ],
+      "properties": {
+        "available": {"const": true},
+        "uncachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "cachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "outputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "sourceRef": {"$ref": "#/$defs/evidenceRef"},
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
+      },
+      "anyOf": [
+        {"properties": {"uncachedInputTokens": {"minimum": 1}}},
+        {"properties": {"cachedInputTokens": {"minimum": 1}}},
+        {"properties": {"outputTokens": {"minimum": 1}}}
+      ]
+    },
+    "billedReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "totalUsd", "receiptRef", "receiptSha256"],
+      "properties": {
+        "currency": {"const": "USD"},
+        "totalUsd": {"$ref": "#/$defs/decimalUsd"},
+        "receiptRef": {"$ref": "#/$defs/evidenceRef"},
+        "receiptSha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

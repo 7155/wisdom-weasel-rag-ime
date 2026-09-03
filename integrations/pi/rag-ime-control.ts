@@ -1267,7 +1267,7 @@ const toolSpecs: ToolSpec[] = [
     },
     guidelines: [
       "只能使用 catalog 返回的固定 Agent；每项任务必须写明有界 expectedOutput 和一到八条 acceptanceCriteria，可选 outputSchema；单批最多两个任务、最大深度 2，不得请求加载市场自定义代码。",
-      "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
+      "fresh 只携带任务，fork 继承当前会话上下文；contextMode 是整个 delegate 请求的根级字段，禁止在 tasks[] 子项重复设置；涉及当前讨论的复核或规划时才使用 fork。",
       "delegate 默认 wait=false：只返回持久回执，父 Session 继续执行；仅在用户明确要求同步等待结果时才传 wait=true。不要使用或加载会阻塞父回合的单数 subagent 包。",
       "用户明确要求先规划再执行时，优先委派只读 planner：它只返回带依赖、风险、产物和验收证据的方案；用户确认后再把可执行步骤写入 todo，不能把规划结果当作已经执行。",
       "Todo 只作为可选导航；未显式传入 todoTask 时，delegate 必须独立启动，不得因 Todo 存在而拒绝或自动绑定。",
@@ -2444,6 +2444,7 @@ function parametersFor(spec: ToolSpec) {
         type: "array",
         minItems: 1,
         maxItems: 2,
+        description: "批量委派；contextMode 仅在请求根级设置，不属于 tasks[] 子项。",
         items: {
           type: "object",
           additionalProperties: false,
@@ -2505,7 +2506,11 @@ function parametersFor(spec: ToolSpec) {
         maxLength: 240,
         description: "可选导航链接；仅在确实需要将子 Agent 工作定位到当前 Todo 时传入。",
       },
-      contextMode: { type: "string", enum: ["fresh", "fork"] },
+      contextMode: {
+        type: "string",
+        enum: ["fresh", "fork"],
+        description: "委派请求级上下文模式；不要在 tasks[] 子项中重复设置。",
+      },
       wait: {
         type: "boolean",
         default: false,

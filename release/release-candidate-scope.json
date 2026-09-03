@@ -19,11 +19,11 @@
     },
     "control_center_release_ui": {
       "description": "User-visible Control Center release redesign, recovery paths, accessibility, and regression coverage.",
-      "pathCount": 916
+      "pathCount": 930
     },
     "session_room_skill_flow": {
       "description": "Pi-native Session/Room composition, compact Skills, routing cards, and installed-runtime synchronization.",
-      "pathCount": 555
+      "pathCount": 549
     },
     "desktop_semantic_accessibility": {
       "description": "Accessibility-only semantic desktop bridge, bounded find, metrics, smoke target, and foreground verifier.",
@@ -31,7 +31,7 @@
     },
     "memory_curation": {
       "description": "Owner-scoped memory curation and source/pagination correctness.",
-      "pathCount": 61
+      "pathCount": 49
     },
     "room_kernel_cleanup": {
       "description": "Removal of obsolete heavy-Kernel-specific test obligations without rewriting immutable migrations.",
@@ -47,20 +47,20 @@
     }
   },
   "summary": {
-    "pathCount": 1614,
+    "pathCount": 1610,
     "dispositionCounts": {
       "delete_old_implementation": 38,
-      "keep_release": 1576
+      "keep_release": 1572
     },
     "groupCounts": {
-      "control_center_release_ui": 916,
+      "control_center_release_ui": 930,
       "desktop_semantic_accessibility": 19,
       "installation_reliability": 18,
-      "memory_curation": 61,
+      "memory_curation": 49,
       "project_harness": 40,
       "release_scope": 3,
       "room_kernel_cleanup": 2,
-      "session_room_skill_flow": 555
+      "session_room_skill_flow": 549
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -78,7 +78,7 @@
     }
   ],
   "verification": {
-    "projectHarness": "bounded docs and exact 1614-path inventory prepared from the base-to-HEAD candidate; installation and foreground acceptance remain separate gates",
+    "projectHarness": "bounded docs and exact 1581-path inventory prepared from the candidate index; final HEAD check follows the exact commit",
     "focusedSkillAndPromptTests": "38 passed",
     "pythonFullSuiteShards": "3245 tests across four shards; one shard exposed only 3 stale voice UI copy assertions, and its corrected voice module reran 8/8 passed",
     "databaseMigrationsAfterChecksumRestore": "20 passed",
@@ -92,7 +92,7 @@
     "installedLunaRoomCanary": "passed: two ordinary Luna Pi Sessions, one successful room_partner child start/completion and result, exactly one Root final, live Room Tool turn aborted with one terminal, refresh stable",
     "focusedSessionRoomBackendTests": "126 passed across Agent Tools, runtime contracts, and delegation; Room Partner application 3/3 passed",
     "sourceRoomParallelCanary": "passed on isolated source Gateway port 8878 with gpt-5.4: one delegate_batch wave, two child starts before either completion, two distinct child dispatches, exact Partner markers, one published result, and one root terminal",
-    "releaseScopeCoverage": "1614/1614 candidate paths classified; 1576 retained and 38 old implementations deleted",
+    "releaseScopeCoverage": "1581/1581 candidate paths classified; 1543 retained and 38 old implementations deleted",
     "repositoryPublicAudit": "Current 2026-08-31 repository-only audit found no missing required files, forbidden candidates, secret-shape hits, or machine-path hits. Repository readiness additionally requires the final clean commit; distribution readiness separately requires foreground acceptance, an unblocked product status, and a verified distribution release manifest.",
     "localInstall": "not yet refreshed for this candidate",
     "foregroundAcceptance": "not yet refreshed for this candidate",
@@ -11264,144 +11264,116 @@
       "reason": "Keep defect-count uniqueness, category boundary and evidence-reference checks."
     },
     {
-      "path": "control-center-web/src/contracts/generated/agent-memory-maintenance-status.v1.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "control-center-web/src/features/agent/composer/tool-policy.ts",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Session, Room, permission, generated-contract, or append-only schema dependency required by this Agent authority cutover."
-    },
-    {
-      "path": "control-center-web/src/features/agent/public-error.test.ts",
+      "path": "control-center-web/docs/pawos/EVOLUTION_REPORT_DESIGN.md",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Keep the user-visible Agent or Trace recovery regression coverage in the source candidate."
+      "reason": "Keep the PAWOS evolution report and its bounded explanatory design contract."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_213_213.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS requirement ledger extension."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_214_214.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted PAWOS requirement ledger extension."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_215_220.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted Session, Room, Composer and installation requirements."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_221_222.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted Trace workspace and comprehension requirements."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_223_224.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted notification and Stop lifecycle requirements."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_225_225.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the accepted Trace report reading-order requirement."
+    },
+    {
+      "path": "control-center-web/src/app/standalone-surface.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the standalone report surface boundary regression."
+    },
+    {
+      "path": "control-center-web/src/app/standalone-surface.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the PAW-external standalone report surface boundary."
+    },
+    {
+      "path": "control-center-web/src/features/evolution-report/evolution-report.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the standalone evolution report presentation."
+    },
+    {
+      "path": "control-center-web/src/features/evolution-report/evolution-report.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the evolution report content and evidence-boundary regression."
+    },
+    {
+      "path": "control-center-web/src/features/evolution-report/index.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the evolution report route owner."
+    },
+    {
+      "path": "control-center-web/src/features/evolution-report/report-data.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the privacy-safe frozen evolution metrics and explanations."
+    },
+    {
+      "path": "control-center-web/src/features/evolution-report/standalone.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the external standalone report bootstrap regression."
+    },
+    {
+      "path": "control-center-web/src/features/evolution-report/standalone.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Keep the external standalone report bootstrap."
     },
     {
       "path": "control-center-web/src/features/trace-agent/report-redesign.test.ts",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
-      "reason": "Keep the user-visible Agent or Trace recovery regression coverage in the source candidate."
-    },
-    {
-      "path": "rag_ime/contracts/json/agent-memory-maintenance-status.v1.json",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "rag_ime/db/migrations/0180_agent_evaluation_snapshots.sql",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Session, Room, permission, generated-contract, or append-only schema dependency required by this Agent authority cutover."
-    },
-    {
-      "path": "rag_ime/db/migrations/0181_agent_recent_message_projections.sql",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Session, Room, permission, generated-contract, or append-only schema dependency required by this Agent authority cutover."
-    },
-    {
-      "path": "rag_ime/db/migrations/0182_agent_lab_experiments.sql",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Session, Room, permission, generated-contract, or append-only schema dependency required by this Agent authority cutover."
-    },
-    {
-      "path": "rag_ime/db/migrations/0183_agent_room_surfaces.sql",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Session, Room, permission, generated-contract, or append-only schema dependency required by this Agent authority cutover."
-    },
-    {
-      "path": "rag_ime/db/migrations/0184_memory_catalog_consolidation.sql",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "rag_ime/db/migrations/0185_memory_catalog_consolidation_leases.sql",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "rag_ime/memory_catalog_scheduler.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "rag_ime/memory_curation.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "scripts/memory_book_maintenance_launch.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "tests/fixtures/agent/agent-memory-maintenance-status.json",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "tests/test_json_contracts.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "session_room_skill_flow",
-      "reason": "Keep the Session, Room, permission, generated-contract, or append-only schema dependency required by this Agent authority cutover."
-    },
-    {
-      "path": "tests/test_memory_book_compiler.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "tests/test_memory_book_maintenance_scripts.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "tests/test_memory_catalog_scheduler.py",
-      "status": "added",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
-    },
-    {
-      "path": "tests/test_memory_curation.py",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "memory_curation",
-      "reason": "Keep the governed weekly whole-catalog Memory consolidation contract, implementation, migration, or regression evidence."
+      "reason": "Keep the Trace report ten-second scan-layer and collapsed-appendix regression."
     }
   ]
 }

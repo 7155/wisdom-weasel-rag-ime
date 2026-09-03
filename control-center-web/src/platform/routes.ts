@@ -388,7 +388,20 @@ export const CONTROL_ROUTES = {
       'surfaceKind',
       'ownerAppId',
       'surfaceKey',
+      'projectionOnly',
     ],
+  },
+  'agent.eval-lab.runs': {
+    method: 'GET',
+    path: '/api/agent/eval-lab/runs',
+    // The local feature guard owns this seam until the generated contract is
+    // added; the route must still remain visible to native/HTTP capability
+    // negotiation now.
+  },
+  'agent.eval-lab.evidence': {
+    method: 'GET',
+    path: '/api/agent/eval-lab/evidence',
+    query: ['runId', 'taskIndex'],
   },
   'agent.sessions.create': {
     method: 'POST',
@@ -684,7 +697,7 @@ export const CONTROL_ROUTES = {
   'agent.rooms.list': {
     method: 'GET',
     path: '/api/agent/rooms',
-    query: ['includeArchived', 'limit', 'beforeUpdatedAtMs', 'beforeId'],
+    query: ['includeArchived', 'limit', 'beforeUpdatedAtMs', 'beforeId', 'projectionOnly', 'ownerAppId', 'surfaceKey'],
   },
   'agent.rooms.create': {
     method: 'POST',
@@ -700,9 +713,11 @@ export const CONTROL_ROUTES = {
       'routingConfig',
       'moderatorRoleId',
       'workspaceRoots',
-      'executionMode',
+      'permissionPolicy',
       'workspaceScopeConfirmation',
       'dangerousModeConfirmation',
+      'ownerAppId',
+      'surfaceKey',
     ],
     requiredBody: ['participants'],
   },
@@ -738,7 +753,7 @@ export const CONTROL_ROUTES = {
       'routingPolicy',
       'routingConfig',
       'moderatorParticipantId',
-      'executionMode',
+      'permissionPolicy',
       'workspaceRoots',
       'workspaceScopeConfirmation',
       'dangerousModeConfirmation',

@@ -127,6 +127,114 @@ describe('SubagentLaunchPanel', () => {
       allowedTools: ['knowledge'],
     }));
   });
+
+  it('defaults a Room-bound Tool Agent to inherited write access and allows an explicit narrow launch', async () => {
+    const transport = new StubControlTransport('mock', {
+      'agent.subagents.templates': {
+        ok: true,
+        items: [template('worker', '执行者', 'read_only', ['read_only', 'write'])],
+      },
+      'agent.subagents.create': {
+        ok: true,
+        batch: { runs: [{ id: 'run:room-worker' }] },
+      },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={queryClient}>
+          <SubagentLaunchPanel
+            availableTools={[]}
+            parents={[{
+              sessionId: 'session:room-partner',
+              label: 'Earth',
+              canWrite: true,
+              defaultAccess: 'write',
+              accessPolicyDetail: '卫星 / Tool Agent 配置 继承（Inherit），生效 全自动，继承行星 / Partner',
+              workspaceRoots: ['/workspace'],
+            }]}
+            surface="room"
+          />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('radio', { name: '工作区写入' })).toBeChecked();
+    expect(screen.getByText(/卫星 \/ Tool Agent 配置 继承（Inherit），生效 全自动/)).toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '只读' }));
+    await user.type(screen.getByRole('textbox', { name: '子 Agent 有界任务' }), '只读核对实现');
+    await user.type(screen.getByRole('textbox', { name: '子 Agent 预期交付' }), '核对结论');
+    await user.type(screen.getByRole('textbox', { name: '子 Agent 验收条件' }), '不得写入');
+    await user.click(screen.getByRole('button', { name: '启动子 Agent' }));
+
+    await waitFor(() => expect(
+      transport.requests.some((item) => item.pathId === 'agent.subagents.create'),
+    ).toBe(true));
+    expect(
+      transport.requests.find((item) => item.pathId === 'agent.subagents.create')?.body,
+    ).toEqual(expect.objectContaining({
+      sessionId: 'session:room-partner',
+      access: 'read_only',
+    }));
+  });
+
+  it('keeps the standalone Session launch on the template default and disables Room escalation', async () => {
+    const standaloneTransport = new StubControlTransport('mock', {
+      'agent.subagents.templates': {
+        ok: true,
+        items: [template('worker', '执行者', 'read_only', ['read_only', 'write'])],
+      },
+    });
+    const standaloneClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { unmount } = render(
+      <ControlTransportProvider transport={standaloneTransport}>
+        <QueryClientProvider client={standaloneClient}>
+          <SubagentLaunchPanel
+            availableTools={[]}
+            parents={[{
+              sessionId: 'session:standalone',
+              label: 'Standalone',
+              canWrite: true,
+              defaultAccess: 'write',
+            }]}
+          />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('radio', { name: '只读' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: '工作区写入' })).toBeEnabled();
+    unmount();
+
+    const roomTransport = new StubControlTransport('mock', {
+      'agent.subagents.templates': {
+        ok: true,
+        items: [template('worker', '执行者', 'write', ['read_only', 'write'])],
+      },
+    });
+    const roomClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <ControlTransportProvider transport={roomTransport}>
+        <QueryClientProvider client={roomClient}>
+          <SubagentLaunchPanel
+            availableTools={[]}
+            parents={[{
+              sessionId: 'session:bounded-room',
+              label: 'Mars',
+              canWrite: false,
+              defaultAccess: 'read_only',
+              accessPolicyDetail: '卫星 / Tool Agent 生效 只读',
+            }]}
+            surface="room"
+          />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByRole('radio', { name: '只读' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: '工作区写入' })).toBeDisabled();
+  });
 });
 
 function template(

@@ -138,6 +138,12 @@ export interface RoomTurnProjection {
 
 export interface RoomProjectionState {
   roomId: string;
+  /**
+   * Authoritative Room moderator identity. This is populated from a replayed
+   * Room snapshot when available; legacy event-only projections intentionally
+   * leave it absent and trust the typed result post.
+   */
+  moderatorParticipantId?: string;
   lastSequence: number;
   lastEventId: string;
   resumeToken: string;
@@ -243,7 +249,6 @@ export function reduceRoomEvent(
   next.lastEventId = event.eventId;
   next.resumeToken = event.resumeToken;
   const payload = publicRoomPayload(event.payload);
-
   if (isUnroutedParticipantSessionEvent(next, event, payload)) {
     appendDiagnostic(next, {
       id: `${event.eventId}:unrouted-session-event`,
@@ -256,16 +261,24 @@ export function reduceRoomEvent(
     return { state: next, disposition: 'applied' };
   }
 
+
   if (isExecutionEventAfterRootTerminal(next, event, payload)) {
-    appendDiagnostic(next, {
-      id: `${event.eventId}:after-root-terminal`,
-      streamKind: 'room',
-      eventType: 'room_event_after_root_terminal',
-      summary: 'A late Room execution event was ignored after the Root terminal fence.',
-      sequence: event.sequence,
-      payload,
-    });
-    return { state: next, disposition: 'applied' };
+    if (isAwaitedRoomFinal(next, event, payload)) {
+      // A formal Root can be terminal before its moderator's typed final
+      // publication is replayed. Admit that one awaited post so the final
+      // projection can complete the Root; all other late execution remains
+      // fenced and diagnostic.
+    } else {
+      appendDiagnostic(next, {
+        id: `${event.eventId}:after-root-terminal`,
+        streamKind: 'room',
+        eventType: 'room_event_after_root_terminal',
+        summary: 'A late Room execution event was ignored after the Root terminal fence.',
+        sequence: event.sequence,
+        payload,
+      });
+      return { state: next, disposition: 'applied' };
+    }
   }
 
   switch (event.eventType) {
@@ -595,6 +608,9 @@ export function applyRoomSnapshot(
   snapshot: RoomSnapshot,
 ): RoomProjectionState {
   const next = createRoomProjection(state.roomId);
+  if (state.moderatorParticipantId) {
+    next.moderatorParticipantId = state.moderatorParticipantId;
+  }
   next.lastSequence = Math.max(0, snapshot.lastSequence);
   next.lastEventId = snapshot.resumeToken;
   next.resumeToken = snapshot.resumeToken;
@@ -687,6 +703,9 @@ export function replayRoomEventSnapshot(
     throw new TypeError('Room snapshot does not belong to the active Room');
   }
   let next = createRoomProjection(state.roomId);
+  if (snapshot.room.moderatorParticipantId) {
+    next.moderatorParticipantId = snapshot.room.moderatorParticipantId;
+  }
   if (snapshot.firstSequence > 1) next.lastSequence = snapshot.firstSequence - 1;
   for (const event of snapshot.events) {
     const reduced = reduceRoomEvent(next, event, { snapshotReplay: true });
@@ -833,7 +852,11 @@ function applyUserMessage(
   event: UiRoomEvent,
   payload: Record<string, unknown>,
 ): void {
-  const clientMessageId = text(payload.clientMessageId);
+  // A normal Room send is keyed by `clientMessageId`; an in-flight steer uses
+  // the same causal contract under `clientActionId`. Treat both as the one
+  // user-authored publication identity so a replay with a fresh event/message
+  // id replaces its earlier projection instead of printing another bubble.
+  const clientMessageId = text(payload.clientMessageId) || text(payload.clientActionId);
   const retryOfRootId = text(payload.retryOfRootId);
   const attachments = roomAttachmentReceipts(payload.attachmentReceipts, event.roomId);
   const rawAnswerText = text(payload.text ?? payload.message);
@@ -1229,6 +1252,13 @@ function applyRoomPost(
     upsertMessage(state, message, clientMessageId);
   }
   markPublishedDispatchTerminal(state, event, post);
+  if (
+    (post.kind === 'work_result' || post.kind === 'result')
+    && hasFormalWorkResultEvidence(state, post.rootId)
+  ) {
+    const turn = state.turnsById[post.rootId];
+    if (turn) settleRootWhenAllDispatchesTerminal(state, turn, event.createdAtMs);
+  }
 }
 
 
@@ -1840,6 +1870,16 @@ function completeParticipantTurn(
 ): void {
   const participantId = event.participantId ?? '';
   if (!participantId && !dispatchId) {
+    const turn = ensureTurn(state, event.turnId, nowMs);
+    if (
+      status === 'completed'
+      && hasFormalWorkResultEvidence(state, turn.rootId || turn.id)
+      && !formalRootReady(state, turn)
+    ) {
+      turn.status = 'running';
+      turn.updatedAtMs = Math.max(turn.updatedAtMs, nowMs);
+      return;
+    }
     completeTurn(state, event.turnId, status, nowMs, failure);
     return;
   }
@@ -1952,7 +1992,49 @@ function settleRootWhenAllDispatchesTerminal(
     : dispatchIds.some((dispatchId) => abortedDispatchIds.has(dispatchId))
       ? 'aborted'
       : 'completed';
+  if (status === 'completed' && !formalRootReady(state, turn)) {
+    turn.status = 'running';
+    return;
+  }
   completeTurn(state, turn.id, status, nowMs, turn.failure);
+}
+function formalRootReady(state: RoomProjectionState, turn: RoomTurnProjection): boolean {
+  const rootId = turn.rootId || turn.id;
+  if (!hasFormalWorkResultEvidence(state, rootId)) return true;
+  const dispatchIds = turn.dispatchIds ?? [];
+  if (
+    dispatchIds.length === 0
+    || !dispatchIds.every((dispatchId) => turn.terminalDispatchIds?.includes(dispatchId))
+  ) return false;
+  return hasModeratorFinalReport(state, rootId);
+}
+
+function hasFormalWorkResultEvidence(
+  state: RoomProjectionState,
+  rootId: string,
+): boolean {
+  return Object.values(state.messagesById).some((message) => (
+    message.role === 'assistant'
+    && message.projectionKind === 'post'
+    && message.postKind === 'work_result'
+    && (message.rootId === rootId || message.turnId === rootId)
+  ));
+}
+
+function hasModeratorFinalReport(
+  state: RoomProjectionState,
+  rootId: string,
+): boolean {
+  return Object.values(state.messagesById).some((message) => (
+    message.role === 'assistant'
+    && message.projectionKind === 'post'
+    && message.postKind === 'result'
+    && (message.rootId === rootId || message.turnId === rootId)
+    && (
+      !state.moderatorParticipantId
+      || message.participantId === state.moderatorParticipantId
+    )
+  ));
 }
 
 function completeTurn(
@@ -2199,6 +2281,26 @@ function isExecutionEventAfterRootTerminal(
   const post = record(payload.post);
   const rootId = text(payload.rootId) || text(post.rootId) || event.turnId;
   return state.turnsById[rootId]?.rootTerminalAtMs != null;
+}
+function isAwaitedRoomFinal(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): boolean {
+  if (event.eventType !== 'room_post') return false;
+  const post = record(payload.post);
+  if (text(post.kind) !== 'result') return false;
+  const rootId = text(payload.rootId) || text(post.rootId) || event.turnId;
+  const turn = state.turnsById[rootId];
+  if (
+    !turn
+    || turn.status !== 'completed'
+    || turn.rootTerminalAtMs == null
+    || !hasFormalWorkResultEvidence(state, rootId)
+    || hasModeratorFinalReport(state, rootId)
+  ) return false;
+  return !state.moderatorParticipantId
+    || event.participantId === state.moderatorParticipantId;
 }
 
 function isUnroutedParticipantSessionEvent(

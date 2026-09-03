@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from threading import RLock
 from typing import Callable, Iterable, Mapping, cast
 from urllib.parse import quote
 
@@ -75,19 +76,81 @@ SELECT
     b.updated_at_ms AS runtime_binding_updated_at_ms,
     tp.allowed_tools_json AS allowed_tools_json,
     tp.disclosure_preferences_json AS disclosure_preferences_json,
-    tp.policy_revision AS policy_revision
+    tp.policy_revision AS policy_revision,
+    COALESCE((
+        SELECT terminal.turn_id
+        FROM agent_runtime_events AS terminal
+        WHERE terminal.session_id = s.id
+          AND terminal.event_type IN ('turn_completed', 'turn_failed')
+          AND terminal.turn_id <> ''
+        ORDER BY terminal.sequence DESC
+        LIMIT 1
+    ), '') AS last_terminal_turn_id
 FROM agent_sessions AS s
 LEFT JOIN agent_runtime_bindings AS b ON b.session_id = s.id
 LEFT JOIN agent_session_tool_policies AS tp ON tp.session_id = s.id
 """
 
+_SESSION_DIRECTORY_SELECT = """
+SELECT
+    s.id,
+    s.title,
+    s.session_mode,
+    s.status,
+    s.session_kind,
+    s.surface_kind,
+    s.owner_app_id,
+    s.surface_key,
+    s.role_id,
+    s.role_version,
+    s.model_profile,
+    s.thinking_level,
+    s.tool_profile_version,
+    s.execution_mode,
+    s.room_execution_mode,
+    s.workspace_scope_sha256,
+    s.workspace_scope_granted_at_ms,
+    s.project_context_enabled,
+    s.pi_skills_enabled,
+    s.codex_skills_enabled,
+    s.updated_at_ms,
+    s.message_count,
+    s.last_message_preview,
+    s.workspace_roots_json
+FROM agent_sessions AS s
+"""
+
 
 class AgentSessionStore:
-    def __init__(self, db_path: str | Path):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        persistent_reads: bool = False,
+    ):
         self.db_path = Path(db_path)
+        self._persistent_reads = bool(persistent_reads)
+        self._read_lock = RLock()
+        self._read_connection: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._persistent_reads:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                apply_database_migrations(conn)
+                conn.commit()
+            except BaseException:
+                conn.close()
+                raise
+            with self._read_lock:
+                previous = self._read_connection
+                self._read_connection = conn
+            if previous is not None:
+                previous.close()
+            return
         with self._connect() as conn:
             apply_database_migrations(conn)
 
@@ -403,6 +466,7 @@ class AgentSessionStore:
         surface_kind: str | None = None,
         owner_app_id: str = "",
         surface_key: str = "",
+        projection_only: bool = False,
     ) -> dict[str, object]:
         """Return a stable page of Sessions ordered by recency.
 
@@ -457,18 +521,23 @@ class AgentSessionStore:
             )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query_params.append(bounded_limit + 1)
-        with self._connect() as conn:
+        select = _SESSION_DIRECTORY_SELECT if projection_only else _SESSION_SELECT
+        with self._read_connect() as conn:
             rows = conn.execute(
-                f"{_SESSION_SELECT} {where} "
+                f"{select} {where} "
                 "ORDER BY s.updated_at_ms DESC, s.id DESC LIMIT ?",  # noqa: S608
                 query_params,
             ).fetchall()
         has_more = len(rows) > bounded_limit
         page_rows = rows[:bounded_limit]
-        items = [
-            _session_payload(row, _joined_runtime_binding(row))
-            for row in page_rows
-        ]
+        items = (
+            [_session_directory_payload(row) for row in page_rows]
+            if projection_only
+            else [
+                _session_payload(row, _joined_runtime_binding(row))
+                for row in page_rows
+            ]
+        )
         next_updated_at_ms = (
             int(page_rows[-1]["updated_at_ms"])
             if has_more and page_rows
@@ -639,6 +708,146 @@ class AgentSessionStore:
                 (session_id,),
             ).fetchone()
         return _runtime_binding_payload(row) if row is not None else None
+
+    def recent_message_projection(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        """Read one bounded, non-authoritative recent-message projection."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT transcript_ref, external_session_id, branch_anchor,
+                       transcript_device, transcript_inode, transcript_size,
+                       transcript_mtime_ns, transcript_boundary_sha256,
+                       messages_json, updated_at_ms
+                FROM agent_recent_message_projections
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            decoded = json.loads(str(row["messages_json"] or "[]"))
+        except json.JSONDecodeError:
+            return None
+        if isinstance(decoded, list):
+            # v1 cached only messages and cannot restore ordering metadata or
+            # Tool/thinking progress. Treat it as stale acceleration data so
+            # the bounded transcript reader replaces it with the v2 envelope.
+            return None
+        if isinstance(decoded, Mapping):
+            raw_messages = decoded.get("messages")
+            raw_tool_history_events = decoded.get("toolHistoryEvents")
+        else:
+            return None
+        if not isinstance(raw_messages, list) or not all(
+            isinstance(message, Mapping)
+            for message in raw_messages
+        ):
+            return None
+        if not isinstance(raw_tool_history_events, list) or not all(
+            isinstance(event, Mapping)
+            for event in raw_tool_history_events
+        ):
+            return None
+        return {
+            "transcriptRef": str(row["transcript_ref"]),
+            "externalSessionId": str(row["external_session_id"]),
+            "branchAnchor": str(row["branch_anchor"]),
+            "transcriptDevice": int(row["transcript_device"]),
+            "transcriptInode": int(row["transcript_inode"]),
+            "transcriptSize": int(row["transcript_size"]),
+            "transcriptMtimeNs": int(row["transcript_mtime_ns"]),
+            "transcriptBoundarySha256": str(
+                row["transcript_boundary_sha256"]
+            ),
+            "messages": [dict(message) for message in raw_messages],
+            "toolHistoryEvents": [
+                dict(event) for event in raw_tool_history_events
+            ],
+            "updatedAtMs": int(row["updated_at_ms"]),
+        }
+
+    def save_recent_message_projection(
+        self,
+        session_id: str,
+        *,
+        transcript_ref: str,
+        external_session_id: str,
+        branch_anchor: str,
+        transcript_device: int,
+        transcript_inode: int,
+        transcript_size: int,
+        transcript_mtime_ns: int,
+        transcript_boundary_sha256: str,
+        messages: Sequence[Mapping[str, object]],
+        tool_history_events: Sequence[Mapping[str, object]] = (),
+        updated_at_ms: int | None = None,
+    ) -> None:
+        """Replace the cache only for one exact immutable transcript view."""
+
+        normalized_messages = [dict(message) for message in messages]
+        normalized_tool_history_events = [
+            dict(event) for event in tool_history_events
+        ]
+        encoded = json.dumps(
+            {
+                "messages": normalized_messages,
+                "toolHistoryEvents": normalized_tool_history_events,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(encoded.encode("utf-8")) > 64 * 1024:
+            raise ValueError("recent message projection exceeds 64 KiB")
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_recent_message_projections(
+                    session_id, transcript_ref, external_session_id,
+                    branch_anchor, transcript_device, transcript_inode,
+                    transcript_size, transcript_mtime_ns,
+                    transcript_boundary_sha256, messages_json, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    transcript_ref = excluded.transcript_ref,
+                    external_session_id = excluded.external_session_id,
+                    branch_anchor = excluded.branch_anchor,
+                    transcript_device = excluded.transcript_device,
+                    transcript_inode = excluded.transcript_inode,
+                    transcript_size = excluded.transcript_size,
+                    transcript_mtime_ns = excluded.transcript_mtime_ns,
+                    transcript_boundary_sha256 = excluded.transcript_boundary_sha256,
+                    messages_json = excluded.messages_json,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    session_id,
+                    str(transcript_ref),
+                    str(external_session_id),
+                    str(branch_anchor),
+                    int(transcript_device),
+                    int(transcript_inode),
+                    max(0, int(transcript_size)),
+                    max(0, int(transcript_mtime_ns)),
+                    str(transcript_boundary_sha256),
+                    encoded,
+                    timestamp,
+                ),
+            )
+
+    def invalidate_recent_message_projection(self, session_id: str) -> None:
+        """Drop a derived recent window before an in-place branch rewrite."""
+
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM agent_recent_message_projections WHERE session_id = ?",
+                (session_id,),
+            )
 
     def bind_runtime_session(
         self,
@@ -3075,6 +3284,23 @@ class AgentSessionStore:
         finally:
             conn.close()
 
+    @contextmanager
+    def _read_connect(self) -> Iterator[sqlite3.Connection]:
+        with self._read_lock:
+            conn = self._read_connection
+            if conn is not None:
+                yield conn
+                return
+        with self._connect() as fallback:
+            yield fallback
+
+    def close(self) -> None:
+        with self._read_lock:
+            conn = self._read_connection
+            self._read_connection = None
+        if conn is not None:
+            conn.close()
+
 
 def _session_payload(
     row: sqlite3.Row,
@@ -3171,6 +3397,7 @@ def _session_payload(
         "archivedAtMs": int(row["archived_at_ms"]) if row["archived_at_ms"] is not None else None,
         "messageCount": int(row["message_count"]),
         "lastMessagePreview": str(row["last_message_preview"] or ""),
+        "lastTerminalTurnId": str(row["last_terminal_turn_id"] or ""),
         "workspaceRoots": [str(value) for value in roots if str(value).strip()],
         "shellPolicyVersion": str(row["shell_policy_version"]),
     }
@@ -3178,6 +3405,29 @@ def _session_payload(
         payload["runtimeBinding"] = dict(runtime_binding)
     validate_contract(payload, "agent-session.v1.json")
     return payload
+
+
+def _session_directory_payload(row: sqlite3.Row) -> dict[str, object]:
+    roots = json.loads(str(row["workspace_roots_json"] or "[]"))
+    return {
+        "schemaVersion": "rag-ime.agent-session-directory-entry.v1",
+        "id": str(row["id"]),
+        "title": str(row["title"]),
+        "mode": str(row["session_mode"]),
+        "status": str(row["status"]),
+        "sessionKind": str(row["session_kind"]),
+        "surfaceKind": str(row["surface_kind"]),
+        "ownerAppId": str(row["owner_app_id"]),
+        "surfaceKey": str(row["surface_key"]),
+        "roleId": canonical_agent_role_id(row["role_id"]),
+        "roleVersion": str(row["role_version"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+        "messageCount": int(row["message_count"]),
+        "lastMessagePreview": str(row["last_message_preview"] or ""),
+        "workspaceRoots": [
+            str(value) for value in roots if str(value).strip()
+        ],
+    }
 
 
 def _joined_runtime_binding(row: sqlite3.Row) -> dict[str, object] | None:

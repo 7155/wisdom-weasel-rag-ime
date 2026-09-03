@@ -40,6 +40,8 @@ export interface RoomRoundTaskRow {
   /** The authoritative blocked WorkItem to pass to the Room resume command. */
   blockedWorkItemId?: string;
   result?: string;
+  /** Explicit kind of the moderator assistant RoomPost represented by `result`, when present. */
+  postKind?: RoomMessageProjection['postKind'];
   evidenceRefs: string[];
   history: RoomRoundRowEvent[];
   updatedAtMs: number;
@@ -157,10 +159,20 @@ function roundRow({
   const currentTurns = participantHistoryTurns.filter((historyTurn) => historyTurn.id === turnId);
   const currentHistory = rowHistory(currentActivities, currentMessages, currentTurns, currentWorkItems);
   const latestCurrent = currentHistory.at(-1);
-  const resultMessage = [...currentMessages]
+  const orderedCurrentMessages = [...currentMessages]
     .sort(compareRoomMessages)
-    .reverse()
+    .reverse();
+  const latestCompletedMessage = orderedCurrentMessages
     .find((message) => message.status === 'completed' && Boolean(message.text.trim()));
+  const isModerator = participant.id === room.moderatorParticipantId;
+  const coordinatorResultMessage = isModerator
+    ? orderedCurrentMessages.find((message) => (
+      message.status === 'completed'
+      && message.postKind === 'result'
+      && Boolean(message.text.trim())
+    ))
+    : undefined;
+  const resultMessage = coordinatorResultMessage ?? latestCompletedMessage;
   const workResult = [...currentWorkItems]
     .reverse()
     .map((work) => work.resultSummary.trim())
@@ -219,6 +231,7 @@ function roundRow({
     ...(blockerReason ? { blockerReason } : {}),
     ...(blockerNextStep ? { blockerNextStep } : {}),
     ...(blockedWorkItemId ? { blockedWorkItemId } : {}),
+    ...(isModerator && resultMessage?.postKind ? { postKind: resultMessage.postKind } : {}),
     ...(resultMessage?.text.trim() || workResult
       ? { result: compactMarkdown(resultMessage?.text.trim() || workResult || '') }
       : {}),

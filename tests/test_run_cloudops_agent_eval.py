@@ -21,6 +21,7 @@ from scripts.run_cloudops_agent_eval import (
     _batch_prompt,
     _candidate_runtime_config,
     _normalize_trial_id,
+    _numeric_usage,
     _public_host_invocation,
     _sum_usage,
     _token_usage,
@@ -54,6 +55,7 @@ class _FakeAgentService:
         self.events = _Events(self)
         self.created: list[str] = []
         self.updated: list[tuple[str, dict[str, object]]] = []
+        self.lifecycle_calls: list[tuple[str, str]] = []
         self.event_rows: dict[str, list[_Event]] = {}
         self.manifest_provider = None
 
@@ -63,22 +65,34 @@ class _FakeAgentService:
     def create_session(self, payload: dict[str, object]) -> dict[str, object]:
         session_id = f"agent:cloudops:{len(self.created) + 1}"
         self.created.append(session_id)
+        self.lifecycle_calls.append(("create", session_id))
         return {"session": {"id": session_id, **payload}}
 
     def update_session(self, session_id: str, payload: dict[str, object]) -> None:
         self.updated.append((session_id, dict(payload)))
+        self.lifecycle_calls.append(("update", session_id))
+
+    def select_thinking_level(self, session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        self.lifecycle_calls.append(("select", session_id))
+        return {
+            "ok": True,
+            "sessionId": session_id,
+            "thinkingLevel": payload["level"],
+        }
 
     def ensure_runtime(self, payload: dict[str, object]) -> dict[str, object]:
+        self.lifecycle_calls.append(("ensure", str(payload["sessionId"])))
         return {
             "ok": True,
             "sessionId": payload["sessionId"],
             "state": {
                 "model": {"provider": "openai-codex", "id": "gpt-5.6-sol"},
-                "thinkingLevel": "max",
+                "thinkingLevel": "",
             },
         }
 
     def prompt(self, session_id: str, payload: dict[str, object]) -> dict[str, object]:
+        self.lifecycle_calls.append(("prompt", session_id))
         turn_id = f"turn:{session_id.rsplit(':', 1)[-1]}"
         indexed = self._call(session_id, turn_id, "index")["result"]
         answers = []
@@ -144,6 +158,42 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
         self.assertIn("network evidence", prompt)
         self.assertIn("Empty application logs", prompt)
         self.assertIn("do not distinguish", prompt)
+
+    def test_evidence_search_v2_localizes_component_before_cause_and_bounds_exploration(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="evidence-search-v2",
+        )
+
+        self.assertIn("localize the fault object first", prompt)
+        self.assertIn("Do not promote an app or pod fault to a node", prompt)
+        self.assertIn("at most two distinct search calls per case", prompt)
+        self.assertIn("one list fallback", prompt)
+        self.assertIn("six exact observation reads", prompt)
+        self.assertIn("closest competing diagnosis", prompt)
+
+    def test_observation_id_profile_keeps_v3_reasoning_contract_and_changes_only_tool_addressing(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="observation-id-v1",
+        )
+
+        self.assertIn("localize the fault object first", prompt)
+        self.assertIn("at most two distinct search calls per case", prompt)
+        self.assertIn("Use observationId returned by list or search", prompt)
+        self.assertNotIn("GetAlerts", prompt)
 
     def test_trial_id_is_a_bounded_basename_not_a_path(self) -> None:
         self.assertEqual("cloudops-run.v1", _normalize_trial_id("cloudops-run.v1"))
@@ -347,6 +397,10 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
                 artifact_store=artifacts,
                 now_ms=lambda: 1_700_000_000_000,
                 timeout_seconds=1,
+                runtime_identity={
+                    "provider": "openai-codex",
+                    "model": "gpt-5.6-sol",
+                },
             )
 
             self.assertEqual(3, len(service.created))
@@ -380,6 +434,19 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
                     for _session_id, payload in service.updated
                 )
             )
+            for session_id in service.created:
+                self.assertEqual(
+                    [
+                        ("ensure", session_id),
+                        ("select", session_id),
+                        ("prompt", session_id),
+                    ],
+                    [
+                        call
+                        for call in service.lifecycle_calls
+                        if call[1] == session_id and call[0] in {"ensure", "select", "prompt"}
+                    ],
+                )
 
             aggregate_eval = eval_store.get(report["aggregateEvalRunId"])
             self.assertEqual({"accuracy": 0.9166666666666666}, aggregate_eval["metrics"])
@@ -401,6 +468,9 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
             self.assertIn("trial_completed", event_types)
             terminal_record = next(record for record in records if record["eventType"] == "trial_completed")
             self.assertEqual(12, len(terminal_record["payload"]["answers"]))
+            self.assertTrue(terminal_record["payload"]["usage"]["available"])
+            self.assertEqual(12, len(terminal_record["payload"]["perCase"]))
+            self.assertEqual(set(case_ids), {item["case_id"] for item in terminal_record["payload"]["perCase"]})
 
             public = json.dumps(report, sort_keys=True)
             self.assertNotIn(str(root), public)
@@ -480,13 +550,46 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
         self.assertEqual({"available": False}, _token_usage([]))
         self.assertEqual(
             {"available": False},
+            _token_usage(
+                [{"usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0}}]
+            ),
+        )
+        self.assertEqual(
+            {"available": False},
             _sum_usage([{"usage": {"available": False}}]),
         )
+        self.assertIsNone(_numeric_usage({"available": False}))
         projected = _token_usage(
             [{"usage": {"input": 3, "output": 2, "cacheRead": 5, "totalTokens": 10}}]
         )
         self.assertTrue(projected["available"])
         self.assertEqual(10, projected["totalTokens"])
+
+    def test_nested_runtime_usage_and_token_named_fields_are_projected(self) -> None:
+        self.assertEqual(
+            {
+                "available": True,
+                "input": 7,
+                "output": 3,
+                "cacheRead": 11,
+                "cacheWrite": 2,
+                "totalTokens": 23,
+            },
+            _token_usage([
+                {
+                    "eventType": "provider_request_completed",
+                    "payload": {
+                        "usage": {
+                            "inputTokens": 7,
+                            "outputTokens": 3,
+                            "cacheReadTokens": 11,
+                            "cacheWriteTokens": 2,
+                            "totalTokens": 23,
+                        }
+                    },
+                }
+            ]),
+        )
 
 
 if __name__ == "__main__":

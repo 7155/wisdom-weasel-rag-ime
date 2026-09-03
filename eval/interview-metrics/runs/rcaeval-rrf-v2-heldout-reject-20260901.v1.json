@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "paw.rcaeval-heldout-decision.v1",
+  "status": "rejected_after_one_shot_heldout",
+  "benchmark": "RCAEval",
+  "suite": "RE1",
+  "split": "held-out",
+  "profile": "rrf-v2",
+  "sample": {
+    "caseCount": 225,
+    "repetitions": [3, 4, 5],
+    "failedCaseCount": 1,
+    "failedCasePolicy": "failed case remains in the denominator and contributes zero"
+  },
+  "validation": {
+    "caseCount": 150,
+    "decision": "promoted_to_one_shot_heldout",
+    "baseline": {
+      "service": {"AC@1": 0.6866666666666666, "AC@3": 0.8866666666666667, "AC@5": 0.9466666666666667},
+      "fineGrained": {"AC@1": 0.38, "AC@3": 0.6333333333333333, "AC@5": 0.7}
+    },
+    "candidate": {
+      "service": {"AC@1": 0.7, "AC@3": 0.8933333333333333, "AC@5": 0.9666666666666667},
+      "fineGrained": {"AC@1": 0.41333333333333333, "AC@3": 0.6333333333333333, "AC@5": 0.7333333333333333}
+    }
+  },
+  "heldOut": {
+    "baseline": {
+      "service": {"AC@1": 0.7288888888888889, "AC@3": 0.9155555555555556, "AC@5": 0.9644444444444444},
+      "fineGrained": {"AC@1": 0.4177777777777778, "AC@3": 0.6666666666666666, "AC@5": 0.7111111111111111}
+    },
+    "candidate": {
+      "service": {"AC@1": 0.6622222222222223, "AC@3": 0.8977777777777778, "AC@5": 0.9644444444444444},
+      "fineGrained": {"AC@1": 0.4266666666666667, "AC@3": 0.6444444444444445, "AC@5": 0.72}
+    },
+    "absoluteDelta": {
+      "service": {"AC@1": -0.06666666666666665, "AC@3": -0.01777777777777778, "AC@5": 0.0},
+      "fineGrained": {"AC@1": 0.00888888888888889, "AC@3": -0.022222222222222143, "AC@5": 0.008888888888888835}
+    },
+    "relativeDeltaPercent": {
+      "service": {"AC@1": -9.14634146341463, "AC@3": -1.9417475728155345, "AC@5": 0.0},
+      "fineGrained": {"AC@1": 2.1276595744680855, "AC@3": -3.3333333333333215, "AC@5": 1.2499999999999925}
+    },
+    "promotionGate": {
+      "passed": false,
+      "primaryServiceAc1StrictImprovement": false,
+      "noRegressionAcrossSixMetrics": false
+    }
+  },
+  "decision": {
+    "result": "reject",
+    "incumbent": "baro",
+    "reason": "RRF-v2 improved two fine-grained metrics but regressed the primary service AC@1 and fine-grained AC@3 on the one-shot Held-out cohort.",
+    "heldOutMayRunAgain": false
+  },
+  "evidence": {
+    "validationBaselineReportSha256": "851265ebbfcfb089cd0b0120e6e107655d20b11733d5889df49a5b27872eb6c1",
+    "validationCandidateReportSha256": "cbf9c47341f930f06e2496e6e255628dacf30fa7e4ed023adbab9df4f0e18977",
+    "promotionReceiptSha256": "cf06c44317448f5f3c0fa9b60710884e66ceabbf08fd905499c475545274fd95",
+    "heldOutReportSha256": "95e5a595bb4a54d7701b08a278094fe38014f68c3d6207b5b5f67571f7c9dfe9",
+    "heldOutPrivateEvaluationSha256": "8aff51a2bc7404941c820da35cddb62d3ec8bbba53674d5db2b19003eaf6efc6",
+    "consumptionReceiptSha256": "3ab5c9448de0a70122a0c3d0ef34a470380ecf29e589a050b4aa20beb9df1f4d",
+    "runnerSha256": "333effd2e063a074320e67edf7bb8afc4def236beadeed7766ac3a029f0a8d1e",
+    "environmentSha256": "7bf0200c20d211b82d165d326ee42d7070ce23980b9b2f15dfd3c3c2435d310e",
+    "sourceSha256": "06b2cee861b04edf58f968d462812a03afeb286e998753d3d28ae55fea495f1a",
+    "datasetSnapshotSha256": "c49a288920dbba2e8e724679a14636d5c7eb2b45426bba14007ef79a6c0ab1bb"
+  },
+  "claim": {
+    "allowed": "在 RCAEval RE1 的 150 条 Validation 上，RRF-v2 六项指标无回退并获得一次性 Held-out 资格；在 225 条 Held-out 上 service AC@1 相对下降 9.15%，因此候选被自动拒绝并保留 Baro baseline。",
+    "forbidden": "RRF-v2 提升了生产事故根因定位、Held-out 已改善、可以继续在同一 Held-out 上调参，或该算法已经安装到 PAWOS。"
+  }
+}

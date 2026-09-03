@@ -88,6 +88,119 @@ describe('PawOsSatelliteHost', () => {
     expect(screen.getByRole('button', { name: '查看子 Agent Trace' })).toBeInTheDocument();
   });
 
+  it('fences stale active satellite state with a terminal console run and production lifecycle events', async () => {
+    const listRun = sampleRun();
+    const completedRun = {
+      ...listRun,
+      state: 'completed' as const,
+      result: { summary: '子 Agent 已交付' },
+      updatedAtMs: 120,
+      completedAtMs: 120,
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.subagents.list': { tree: { roots: [{ run: listRun, children: [] }] } },
+      'agent.subagent.console': {
+        run: completedRun,
+        conversation: { items: [] },
+        activity: [
+          {
+            id: 'event:bookkeeping',
+            eventType: 'heartbeat',
+            createdAtMs: 99,
+            payload: {},
+          },
+          {
+            id: 'event:reasoning',
+            eventType: 'reasoning_summary',
+            createdAtMs: 100,
+            payload: { source: 'provider_reasoning_summary', state: 'running', summary: '正在思考旧摘要' },
+          },
+          {
+            id: 'event:tool-finished',
+            eventType: 'tool_finished',
+            createdAtMs: 101,
+            payload: { toolName: 'read', result: { summary: '读取完成' } },
+          },
+          {
+            id: 'event:turn-completed',
+            eventType: 'turn_completed',
+            createdAtMs: 102,
+            payload: {},
+          },
+        ],
+        inbox: [],
+      },
+    } });
+
+    renderSatellite(transport, {
+      kind: 'subagent', id: listRun.id, sessionId: 'session-parent', title: listRun.task,
+    });
+
+    const statusline = await screen.findByLabelText('当前工作与状态');
+    expect(statusline).toHaveAttribute('data-state', 'completed');
+    expect(statusline).toHaveTextContent('已完成');
+    expect(screen.queryByRole('img', { name: '正在思考' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: '执行中' })).not.toBeInTheDocument();
+
+    const timeline = screen.getByRole('log', { name: '子 Agent 实现子 Agent 卫星窗 公开对话与运行事件' });
+    await userEvent.setup().click(screen.getByRole('button', { name: /运行记录/ }));
+    expect(timeline.querySelector("article[data-event-type='heartbeat']")).toHaveAttribute('data-status', 'unknown');
+    expect(timeline.querySelector("article[data-event-type='reasoning_summary']")).toHaveAttribute('data-status', 'completed');
+    expect(timeline.querySelector("article[data-event-type='tool_finished']")).toHaveAttribute('data-status', 'completed');
+    expect(timeline.querySelector("article[data-event-type='turn_completed']")).toHaveAttribute('data-status', 'completed');
+  });
+
+  it('keeps the terminal console projection after a completed list refresh and remount', async () => {
+    const activeRun = sampleRun();
+    const completedRun = {
+      ...activeRun,
+      state: 'completed' as const,
+      result: { summary: '持久化交付结果' },
+      updatedAtMs: 220,
+      completedAtMs: 220,
+    };
+    const activity = [{
+      id: 'event:reasoning',
+      eventType: 'reasoning_summary',
+      createdAtMs: 100,
+      payload: { source: 'provider_reasoning_summary', state: 'running', summary: '历史思考摘要' },
+    }, {
+      id: 'event:turn-completed',
+      eventType: 'turn_completed',
+      createdAtMs: 101,
+      payload: {},
+    }];
+    const listSnapshots = [activeRun, completedRun];
+    let listRequestCount = 0;
+    const transport = new MockControlTransport({ routes: {
+      'agent.subagents.list': () => ({
+        tree: { roots: [{ run: listSnapshots[Math.min(listRequestCount++, listSnapshots.length - 1)], children: [] }] },
+      }),
+      'agent.subagent.console': {
+        run: completedRun,
+        conversation: { items: [] },
+        activity,
+        inbox: [],
+      },
+    } });
+    const target = {
+      kind: 'subagent' as const, id: activeRun.id, sessionId: 'session-parent', title: activeRun.task,
+    };
+
+    const first = renderSatellite(transport, target);
+    expect(await screen.findByLabelText('当前工作与状态')).toHaveAttribute('data-state', 'completed');
+    first.unmount();
+    renderSatellite(transport, target);
+    await userEvent.setup().click(await screen.findByRole('button', { name: /运行记录/ }));
+    expect(await screen.findByText('历史思考摘要')).toBeInTheDocument();
+
+    const statusline = await screen.findByLabelText('当前工作与状态');
+    expect(statusline).toHaveAttribute('data-state', 'completed');
+    expect(statusline).toHaveTextContent('已完成');
+    expect(screen.queryByRole('img', { name: '正在思考' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: '执行中' })).not.toBeInTheDocument();
+  });
+
   it('surfaces the failed run reason and traces the exact subagent run', async () => {
     const run = {
       ...sampleRun(),

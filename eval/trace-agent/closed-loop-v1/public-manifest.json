@@ -1,0 +1,329 @@
+{
+  "schemaVersion": "paw.trace-closed-loop-public-manifest.v1",
+  "suiteId": "paw-trace-closed-loop-historical-replay-v1",
+  "title": "PAW Trace Closed-Loop Historical Replay v1",
+  "purpose": "post_evaluation_ui",
+  "notAgentInput": true,
+  "split": "historical_replay",
+  "caseCount": 3,
+  "targetLayerCoverage": {
+    "system_prompt": 0,
+    "tool": 2,
+    "workflow": 0,
+    "skill": 1
+  },
+  "cases": [
+    {
+      "caseId": "PI-CODEX-WIRE-001",
+      "title": "Codex provider request-field compatibility",
+      "targetLayer": "tool",
+      "detectedBy": {
+        "actorType": "trace_agent",
+        "attributionStatus": "verified",
+        "evidenceId": "evidence:pi-wire:trace-diagnosis",
+        "boundary": "The read-only Trace Agent independently named the incompatible field; it did not apply the Runtime repair."
+      },
+      "proposedBy": {
+        "actorType": "trace_agent",
+        "attributionStatus": "verified",
+        "evidenceId": "evidence:pi-wire:candidate-repair",
+        "boundary": "The Trace Agent produced an unapplied candidate repair."
+      },
+      "authorizedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "The public receipt does not carry the authorization actor receipt."
+      },
+      "implementedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "The public receipt proves a two-file TDD repair but does not identify the implementing Agent."
+      },
+      "verifiedBy": [
+        {
+          "actorType": "test_runner",
+          "attributionStatus": "verified",
+          "evidenceId": "evidence:pi-wire:focused-tests",
+          "boundary": "Focused candidate tests moved from 37 passed and one failed to 38 passed."
+        },
+        {
+          "actorType": "trace_agent",
+          "attributionStatus": "verified",
+          "evidenceId": "evidence:pi-wire:post-repair-trace",
+          "boundary": "The source-local candidate completed the same read-only Trace path."
+        }
+      ],
+      "before": {
+        "status": "failed",
+        "summary": "The same Codex request failed over HTTP streaming and WebSocket before any diagnostic Skill or Tool call completed.",
+        "metrics": {
+          "httpCompleted": false,
+          "websocketCompleted": false,
+          "traceToolCalls": 0
+        }
+      },
+      "finding": {
+        "summary": "A request field unsupported by the Codex backend was added by the provider adapter.",
+        "evidence": [
+          {
+            "evidenceId": "evidence:pi-wire:provider-ab",
+            "sourceType": "runtime_receipt",
+            "sha256": "1ffdd4750b3c17f21c1836a53f7bfffccb3f3f6bc8c9c5e5f9a5705f0ab16f5f",
+            "summary": "Same-payload transport A/B isolated the incompatible request field."
+          },
+          {
+            "evidenceId": "evidence:pi-wire:trace-diagnosis",
+            "sourceType": "trace_receipt",
+            "sha256": "606b06c8fc45ce6806c4c967ad2445c0fdda820479137f7dd9b6e93f9eb01df7",
+            "summary": "A fresh read-only Trace run independently produced the same diagnosis."
+          }
+        ]
+      },
+      "candidateChange": {
+        "status": "implemented_source_local_candidate",
+        "targetLayer": "tool",
+        "summary": "Omit the unsupported request field for the Codex provider adapter while leaving other provider contracts unchanged.",
+        "boundaries": [
+          "The candidate was not installed.",
+          "The in-product Trace Agent did not implement the repair."
+        ]
+      },
+      "after": {
+        "status": "completed",
+        "summary": "Both transport variants completed, focused tests passed, and the same Trace path produced a persisted report.",
+        "metrics": {
+          "httpCompleted": true,
+          "websocketCompleted": true,
+          "focusedTestsPassed": 38,
+          "focusedTestsFailed": 0,
+          "traceToolCalls": 2
+        }
+      },
+      "delta": {
+        "originalFailureCleared": true,
+        "regressionDetected": false,
+        "metrics": {
+          "focusedTestFailureDelta": -1,
+          "traceToolCallDelta": 2
+        }
+      },
+      "decision": {
+        "value": "Keep",
+        "reasonCodes": ["original_failure_cleared", "focused_regression_passed"]
+      },
+      "boundaries": [
+        "Source-local candidate evidence does not prove installation or foreground acceptance."
+      ]
+    },
+    {
+      "caseId": "TRACE-SKILL-ENV-001",
+      "title": "Trace diagnostic exact-envelope contract",
+      "targetLayer": "skill",
+      "detectedBy": {
+        "actorType": "eval_agent",
+        "attributionStatus": "verified",
+        "evidenceId": "evidence:trace-skill:retained-rejections",
+        "boundary": "Two retained finalize failures exposed the output-contract mismatch."
+      },
+      "proposedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "The public receipt does not identify which supervisor or repair Agent authored the exact-envelope proposal."
+      },
+      "authorizedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "No public authorization actor receipt is retained."
+      },
+      "implementedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "The Skill diff is verified, but its implementing Agent is not identified by the public receipt."
+      },
+      "verifiedBy": [
+        {
+          "actorType": "test_runner",
+          "attributionStatus": "verified",
+          "evidenceId": "evidence:trace-skill:focused-tests",
+          "boundary": "Twenty-two focused tests passed after the Skill change."
+        },
+        {
+          "actorType": "trace_agent",
+          "attributionStatus": "verified",
+          "evidenceId": "evidence:trace-skill:completed-report",
+          "boundary": "A fresh neutral read-only Trace Session produced a valid persisted report."
+        }
+      ],
+      "before": {
+        "status": "failed",
+        "summary": "Two Trace report attempts reached finalize but were rejected for envelope drift, including a numeric confidence value.",
+        "metrics": {
+          "contractRejectedReports": 2,
+          "persistedValidReports": 0
+        }
+      },
+      "finding": {
+        "summary": "The diagnostic Skill described the report semantically but did not pin the only legal top-level envelope and confidence enum.",
+        "evidence": [
+          {
+            "evidenceId": "evidence:trace-skill:retained-rejections",
+            "sourceType": "evaluation_receipt",
+            "sha256": "a483a2391f8024584cb099495f91a2e65a1e80ccb2ded162f189a23e7c4bb993",
+            "summary": "The retained validation receipt records both distinct contract rejections."
+          },
+          {
+            "evidenceId": "evidence:trace-skill:completed-report",
+            "sourceType": "trace_receipt",
+            "sha256": "3316812f28c8d97b2aedab60ed7a1c0f76cfb3f805eb9dc7dc8225f8d6aa4a88",
+            "summary": "The post-change Trace Session completed without unsupported findings."
+          }
+        ]
+      },
+      "candidateChange": {
+        "status": "implemented_source_local_candidate",
+        "targetLayer": "skill",
+        "summary": "Add a mandatory exact-envelope checklist with fixed top-level keys, no extra properties, string confidence values, and unknown-preserving empty evidence behavior.",
+        "boundaries": [
+          "Runtime schema semantics were not changed.",
+          "Invalid reports were not coerced into valid ones."
+        ]
+      },
+      "after": {
+        "status": "completed",
+        "summary": "A fresh read-only Session completed Skill load and inspection, then persisted a valid report while preserving missing usage as unknown.",
+        "metrics": {
+          "focusedTestsPassed": 22,
+          "focusedTestsFailed": 0,
+          "persistedValidReports": 1,
+          "unsupportedFindings": 0
+        }
+      },
+      "delta": {
+        "originalFailureCleared": true,
+        "regressionDetected": false,
+        "metrics": {
+          "contractRejectedReportDelta": -2,
+          "persistedValidReportDelta": 1
+        }
+      },
+      "decision": {
+        "value": "Keep",
+        "reasonCodes": ["exact_envelope_restored", "unknown_boundary_preserved"]
+      },
+      "boundaries": [
+        "The candidate was source-local, dirty-source-derived, and not an installed release."
+      ]
+    },
+    {
+      "caseId": "CLOUDOPS-OBS-ID-001",
+      "title": "CloudOps observation addressing contract",
+      "targetLayer": "tool",
+      "detectedBy": {
+        "actorType": "eval_agent",
+        "attributionStatus": "verified",
+        "evidenceId": "evidence:obs-id:bounded-failure",
+        "boundary": "The retained bounded-workflow receipt isolated one Tool-addressing failure without attributing every quality miss to it."
+      },
+      "proposedBy": {
+        "actorType": "eval_agent",
+        "attributionStatus": "verified",
+        "evidenceId": "evidence:obs-id:next-falsification",
+        "boundary": "The receipt predeclared a Tool-only short-identifier falsification."
+      },
+      "authorizedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "The public receipts do not identify the authorizing actor."
+      },
+      "implementedBy": {
+        "actorType": "unknown",
+        "attributionStatus": "unknown",
+        "evidenceId": "",
+        "boundary": "The candidate implementation exists, but no public actor receipt attributes it."
+      },
+      "verifiedBy": [
+        {
+          "actorType": "eval_agent",
+          "attributionStatus": "verified",
+          "evidenceId": "evidence:obs-id:validation-reject",
+          "boundary": "The same frozen Validation suite verified Tool success and diagnosis-quality regression."
+        }
+      ],
+      "before": {
+        "status": "rejected",
+        "summary": "One Agent-composed long cache key was absent from the blind index; the bounded workflow also missed quality cases for unrelated reasons.",
+        "metrics": {
+          "failedToolCalls": 1,
+          "ca": 0.75,
+          "jra": 0.75,
+          "top3Jra": 0.8333333333333334
+        }
+      },
+      "finding": {
+        "summary": "The public Tool contract required the Agent to transcribe a long opaque address into a later read call.",
+        "evidence": [
+          {
+            "evidenceId": "evidence:obs-id:bounded-failure",
+            "sourceType": "evaluation_receipt",
+            "sha256": "d3383a4766e94f1795272b9a1fb3520e7f2dd247806a0833cae58b1695006542",
+            "summary": "The before receipt separates the single addressing failure from the broader quality misses."
+          },
+          {
+            "evidenceId": "evidence:obs-id:validation-reject",
+            "sourceType": "evaluation_receipt",
+            "sha256": "9270a5f5554520429d29eb0a8edca5c48729d8d3d0fe5de7594e0cb7a7b93940",
+            "summary": "The after receipt records zero Tool failures and material diagnosis regressions."
+          }
+        ]
+      },
+      "candidateChange": {
+        "status": "implemented_source_local_candidate",
+        "targetLayer": "tool",
+        "summary": "Replace public long cache keys with deterministic case-scoped observation identifiers while resolving private cache keys inside the Tool owner.",
+        "boundaries": [
+          "The reasoning prompt, gold, scorer, cases, and declared budgets remained frozen.",
+          "The candidate was not installed."
+        ]
+      },
+      "after": {
+        "status": "rejected",
+        "summary": "All reads used short observation identifiers and no Tool call failed, but diagnosis quality regressed materially.",
+        "metrics": {
+          "failedToolCalls": 0,
+          "ca": 0.5,
+          "jra": 0.4166666666666667,
+          "top3Jra": 0.5
+        }
+      },
+      "delta": {
+        "originalFailureCleared": true,
+        "regressionDetected": true,
+        "metrics": {
+          "failedToolCallDelta": -1,
+          "caDelta": -0.25,
+          "jraDelta": -0.3333333333333333,
+          "top3JraDelta": -0.33333333333333337
+        }
+      },
+      "decision": {
+        "value": "Reject",
+        "reasonCodes": ["tool_failure_cleared", "protected_quality_regressed"]
+      },
+      "boundaries": [
+        "Local Tool-contract success does not establish product-level workflow improvement."
+      ]
+    }
+  ],
+  "boundaries": [
+    "These are known historical replay cases, not blind or Held-out evidence.",
+    "The public manifest is a post-evaluation UI projection and must never be supplied as diagnosis input.",
+    "Host-private span, owner, evidence-group, and supported-conclusion gold is intentionally absent.",
+    "Unknown actor attribution is preserved instead of assigning supervisor work to the Trace Agent."
+  ]
+}

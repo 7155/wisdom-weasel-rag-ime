@@ -200,6 +200,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_DEEPSEEK_ACTIVE_RAG": "1",
                 "RAG_IME_DEEPSEEK_ACTIVE_RAG_MAX_TOKENS": "1536",
             }
+            env.pop("RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS", None)
             result = subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
                 cwd=root,
@@ -214,6 +215,41 @@ class LaunchAgentScriptTests(unittest.TestCase):
             self.assertIn("dry-run", result.stdout)
             self.assertTrue((app_dir / "rag_ime").is_dir())
             self.assertTrue((app_dir / "sidecar_launch.py").is_file())
+            eval_lab_dir = app_dir / "eval" / "interview-metrics"
+            self.assertTrue((eval_lab_dir / "agent-experiments.v1.json").is_file())
+            self.assertTrue(
+                (app_dir / "scripts" / "import_agent_lab_experiments.py").is_file()
+            )
+            self.assertTrue(
+                (
+                    eval_lab_dir
+                    / "runs"
+                    / "agent-lab-optimal-path-20260901.v1.json"
+                ).is_file()
+            )
+            projection = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import json, sys; "
+                        "sys.path.insert(0, sys.argv[1]); "
+                        "from rag_ime.eval_lab import EvalLabProjection; "
+                        "print(json.dumps(EvalLabProjection(sys.argv[2], "
+                        "source_ledger_path=sys.argv[3]).list_runs()))"
+                    ),
+                    str(app_dir),
+                    str(Path(tmp) / "eval-lab-installed.sqlite"),
+                    str(eval_lab_dir / "agent-experiments.v1.json"),
+                ],
+                cwd=app_dir,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            projection_payload = json.loads(projection.stdout)
+            self.assertEqual(projection_payload["experimentTotal"], 21)
+            self.assertEqual(projection_payload["pathSearchTotal"], 1)
             init_prompt = (
                 Path(tmp)
                 / "Library"
@@ -253,6 +289,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_BASE_URL"], "http://127.0.0.1:18000")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_MODEL"], "bge-small-zh")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_WARMUP"], "0")
+        self.assertEqual(
+            payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS"],
+            "60",
+        )
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_CANDIDATES"], "48")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_WEIGHT"], "1.7")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_VECTOR_AUTO_REBUILD_LIMIT"], "5000")
@@ -481,6 +521,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                             "RAG_IME_PI_DEBUG_CONTEXT_DIR": "/stale/debug-context",
                             "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "1073741824",
                             "RAG_IME_DEEPSEEK_MODEL": "deepseek-v4-flash",
+                            "RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS": "60",
                         },
                     },
                     handle,
@@ -538,6 +579,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             str(app_support / "app" / "control-center-web" / "dist"),
         )
         self.assertEqual(launch_env["RAG_IME_DEEPSEEK_MODEL"], "deepseek-v4-flash")
+        self.assertEqual(launch_env["RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS"], "0")
         self.assertNotIn("RAG_IME_PI_EXECUTABLE", launch_env)
         self.assertNotIn("RAG_IME_PI_NODE", launch_env)
         self.assertNotIn("RAG_IME_PI_EXTENSION", launch_env)
@@ -882,7 +924,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
 
         self.assertEqual(sys.executable, payload["EnvironmentVariables"]["RAG_IME_KNOWLEDGE_PYTHON"])
 
-    def test_install_sidecar_launch_agent_allows_explicit_v1_budget_override(self) -> None:
+    def test_install_sidecar_launch_agent_allows_explicit_v1_budget_and_warmup_delay_overrides(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-v1-budget-test-") as tmp:
             env = {
@@ -891,6 +933,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 "RAG_IME_PYTHON": sys.executable,
                 "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
                 "RAG_IME_POST_COMMIT_MODEL_BUDGET_MS": "1250",
+                "RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS": "17",
             }
             subprocess.run(
                 ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
@@ -905,6 +948,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 payload = plistlib.load(fh)
 
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"], "1250")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_EMBEDDING_WARMUP_DELAY_SECONDS"], "17")
 
     def test_install_sidecar_launch_agent_preserves_predictor_config_but_resets_product_defaults(self) -> None:
         root = Path(__file__).resolve().parents[1]

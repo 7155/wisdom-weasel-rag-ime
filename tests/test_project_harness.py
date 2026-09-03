@@ -67,5 +67,66 @@ class ProjectHarnessTests(unittest.TestCase):
         self.assertTrue(any("misses base-to-HEAD paths: new.txt" in error for error in errors))
 
 
+    def test_release_scope_rejects_stale_group_path_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "release").mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            base = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            scope = {
+                "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
+                "source": {"baseCommit": base},
+                "groups": {
+                    "release_group": {
+                        "description": "Focused regression fixture.",
+                        "pathCount": 0,
+                    }
+                },
+                "summary": {
+                    "pathCount": 1,
+                    "dispositionCounts": {"keep_release": 1},
+                    "groupCounts": {"release_group": 1},
+                    "unclassifiedPathCount": 0,
+                    "otherWorkNotInReleasePathCount": 0,
+                },
+                "items": [
+                    {
+                        "path": "new.txt",
+                        "status": "added",
+                        "disposition": "keep_release",
+                        "group": "release_group",
+                        "reason": "Regression fixture item.",
+                    }
+                ],
+            }
+            (root / "release" / "release-candidate-scope.json").write_text(
+                json.dumps(scope), encoding="utf-8"
+            )
+            (root / "new.txt").write_text("new\n", encoding="utf-8")
+            subprocess.run(["git", "add", "new.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "new"], cwd=root, check=True)
+
+            errors = validate_release_candidate_scope(root)
+
+        self.assertIn(
+            "release candidate scope group count mismatch for release_group: "
+            "groups.release_group.pathCount=0, "
+            "summary.groupCounts.release_group=1, "
+            "actual item membership=1",
+            errors,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

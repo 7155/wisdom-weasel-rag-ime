@@ -2,6 +2,7 @@
   "schemaVersion": "paw.interview-metrics-ledger.v1",
   "generatedAt": "2026-09-01",
   "sourceRevision": "17bcf08ca3bd4a7780960ffa1ac230698fe80717",
+  "agentExperimentLedger": "eval/interview-metrics/agent-experiments.v1.json",
   "workingTreeSnapshot": {
     "dirty": true,
     "scope": "The 2026-08-31 workspace contains concurrent PAWOS, Trace and RAG experiment changes. The Enterprise RAG receipt records the exact runner hash observed immediately after completion and does not pretend that the raw report captured a clean source revision.",
@@ -269,7 +270,10 @@
       "measurementKind": "mixed",
       "measuredAt": "2026-09-01",
       "values": {
-        "answerCaseCount": 4,
+        "agentCaseCount": 4,
+        "answerableCaseCount": 2,
+        "highLevelFactCount": 9,
+        "verifiedRequiredFactCount": 9,
         "laneCount": 4,
         "verifiedRequiredFacts": 9,
         "evidenceSupportGroups": 11,
@@ -317,6 +321,101 @@
         "the evidence contract changed from earlier token-overlap receipts, so pre-v16 and v16 answer-quality values are not a valid before/after delta",
         "the Agentic token field is incomplete because the lane failed before a complete usage receipt",
         "Held-out stayed closed and no production or foreground path was exercised"
+      ]
+    },
+    {
+      "id": "knowledge.enterprise.answer_evidence.luna_max.validation.reject.20260902",
+      "domain": "knowledge",
+      "title": "Enterprise RAG Luna Max answer-evidence Validation candidate Reject",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "changedLayer": "model",
+        "candidateModel": "openai-codex/gpt-5.6-luna",
+        "thinking": "max",
+        "agentCaseCount": 4,
+        "answerableCaseCount": 2,
+        "highLevelFactCount": 9,
+        "verifiedRequiredFactCount": 9,
+        "laneCount": 4,
+        "baselineCorrectCases": 2,
+        "skillCorrectCases": 2,
+        "tunedCorrectCases": 2,
+        "agenticCorrectCases": 0,
+        "verifiedRequiredFacts": 9,
+        "evidenceSupportGroups": 11,
+        "sourceChunkQuoteBindings": 13,
+        "unavailableRequiredFacts": 0,
+        "baselineAnswerJudgeCorrectnessRate": 0.5,
+        "skillAnswerJudgeCorrectnessRate": 0.5,
+        "tunedAnswerJudgeCorrectnessRate": 0.5,
+        "agenticAnswerJudgeCorrectnessRate": 0.0,
+        "baselineCitationFactCoverage": 0.2222222222222222,
+        "skillCitationFactCoverage": 0.2222222222222222,
+        "tunedCitationFactCoverage": 0.2222222222222222,
+        "agenticCitationFactCoverage": 0.0,
+        "baselineAnswerableCitationSupportRate": 0.0,
+        "skillAnswerableCitationSupportRate": 0.0,
+        "tunedAnswerableCitationSupportRate": 0.0,
+        "agenticAnswerableCitationSupportRate": 0.0,
+        "baselineAbstentionAccuracy": 1.0,
+        "skillAbstentionAccuracy": 1.0,
+        "tunedAbstentionAccuracy": 1.0,
+        "agenticAbstentionAccuracy": 0.5,
+        "baselineLatencyMs": 51577.706,
+        "skillLatencyMs": 208063.982,
+        "tunedLatencyMs": 182436.769,
+        "agenticLatencyMs": 420642.371,
+        "baselineTokens": 25778,
+        "skillTokens": 74769,
+        "tunedTokens": 88941,
+        "agenticTokens": 7713,
+        "agenticTokensComplete": false,
+        "baselineToolCalls": 6,
+        "skillToolCalls": 7,
+        "tunedToolCalls": 7,
+        "agenticToolCalls": 12,
+        "baselineFailedHardGates": ["citationResolution"],
+        "skillFailedHardGates": ["citationResolution"],
+        "tunedFailedHardGates": ["citationResolution"],
+        "agenticFailedHardGates": ["abstention", "agenticPolicy", "citationResolution", "terminalCompletion", "toolContract"],
+        "agenticRuntimeFailureCategory": "harness_error",
+        "allLanesRejected": true,
+        "candidateRuntimeInstalled": false,
+        "heldOutConsumed": false,
+        "usdCostReported": false,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 4,
+        "unit": "the same frozen Validation answer cases across Sol v16 and Luna Max baseline, Skill, tuned and Agentic lanes",
+        "requiredFacts": 9
+      },
+      "reproduction": {
+        "command": "See eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-validation-20260902.v1.json reproduction.command for the exact executed command and post-report wrapper exit detail.",
+        "status": "completed once on Validation; report written, public receipt retained, Held-out gate not created"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-validation-20260902.v1.json",
+        ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-v20.json",
+        "eval/interview-metrics/runs/enterprise-rag-answer-evidence-validation-reject-20260901.v1.json",
+        "build/managed-pi-runtime/luna-output-budget-compat-920e42b9c/manifest.json",
+        "scripts/run_rag_agent_ablation.py",
+        "tests/test_run_rag_agent_ablation.py"
+      ],
+      "claim": {
+        "allowed": "在同一冻结 corpus/split/qrels/answer-case 与 answer-evidence contract 上只替换 Model 为 Luna Max，Validation 的 baseline、Skill、tuned 质量与 Sol v16 持平但均保留 citation-resolution hard gate；Agentic 失败更多硬门禁，因此候选 Reject 并保留 per-case output/evidence/judge hash 与 usage receipt。",
+        "forbidden": "held-out 已运行或通过、Luna 已上线/安装、质量提升、Agentic 使用 0 token、Provider 账单或 USD 成本节省、或 run-owned sandbox cleanup 后仍有原始 transcript 文件。"
+      },
+      "limitations": [
+        "four Validation answer cases are diagnostic and do not support general model-quality claims",
+        "the public receipt records output/evidence/judge hashes and lane session/turn hashes; run-owned raw JSONL was cleaned after completion",
+        "Agentic token usage is incomplete and must not be compared to Sol's zero failure placeholder",
+        "observed latency/token deltas include the source-local compatibility runtime envelope and are descriptive, not a pure model-causal claim",
+        "no frozen USD price snapshot or Provider bill is bound, so cost and savings are intentionally unreported",
+        "Held-out remained closed and no production Knowledge mutation or runtime installation occurred"
       ]
     },
     {
@@ -999,6 +1098,59 @@
       ]
     },
     {
+      "id": "agent.cloudops_candidate_falsification.20260901",
+      "domain": "agent",
+      "title": "CloudOps v1-v4 Tool-contract repair and workflow rejection sequence",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "candidateTrials": 4,
+        "formalCandidatesRejected": 3,
+        "toolContractDefectsClosed": 3,
+        "baselineCa": 1.0,
+        "baselineJra": 0.8333333333333334,
+        "baselineTop3Jra": 0.8333333333333334,
+        "baselineToolCalls": 98,
+        "v4AnswerCoverage": 1.0,
+        "v4Ca": 0.5,
+        "v4Jra": 0.4166666666666667,
+        "v4Top3Jra": 0.5,
+        "v4ToolCalls": 94,
+        "v4FailedToolCalls": 0,
+        "heldOutObserved": false,
+        "installActionPerformed": false
+      },
+      "sample": {
+        "count": 12,
+        "unit": "the same frozen CloudOps Validation cases reused across the baseline and each candidate trial"
+      },
+      "reproduction": {
+        "command": "Run the append-only baseline and v1-v4 workflow profiles with the same suite, runtime identity, provider, model, thinking level, gold and host-only scorer; apply the predeclared acceptance gates after each completed trial.",
+        "status": "v1-v4 failure and rejection artifacts retained; v4 completed and triggered the predeclared stop rule"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json",
+        "eval/interview-metrics/runs/cloudops-evidence-search-validation-reject-20260901.v1.json",
+        "eval/interview-metrics/runs/cloudops-bounded-workflow-validation-reject-20260901.v1.json",
+        "eval/interview-metrics/runs/cloudops-observation-id-validation-reject-20260901.v1.json",
+        "rag_ime/cloudops_benchmark_agent.py",
+        "scripts/run_cloudops_agent_eval.py",
+        "tests/test_cloudops_benchmark_agent.py",
+        "tests/test_run_cloudops_agent_eval.py"
+      ],
+      "claim": {
+        "allowed": "Four append-only candidate trials on the same 12-case CloudOps Validation exposed and closed three Tool/Eval contract defects. The final short observationId path completed 94/94 Tool calls, but diagnosis quality regressed to CA 0.50, JRA 0.4167 and Top3JRA 0.50, so it was rejected and the baseline remained incumbent.",
+        "forbidden": "v4 improved diagnosis quality, all four candidates produced formal scores, Tool reliability implies workflow accuracy, token cost improved, Held-out was consumed, the candidate was installed, or another v5 run is justified on the same Validation suite."
+      },
+      "limitations": [
+        "v1 terminated before a formal score; v2 retained a host score but failed Eval persistence before the usage projection fix",
+        "v3 and v4 satisfied different Tool-contract checks but both failed the business-quality gate",
+        "the same Validation suite was used for falsification, so no candidate may be promoted without a separately gated one-shot Held-out run"
+      ]
+    },
+    {
       "id": "agent.zhanggui_extension_candidate.sandbox.20260901",
       "domain": "agent",
       "title": "掌柜问数 Extension App source binding and offline sandbox receipt",
@@ -1147,19 +1299,19 @@
       "measurementKind": "deterministic",
       "measuredAt": "2026-09-01",
       "values": {
-        "closedLoopDefects": 8,
+        "closedLoopDefects": 11,
         "mainRepositoryValidationBacked": 3,
-        "sourceLocalCandidateBacked": 5,
-        "additionalSourceTestOnlyRepairs": 3,
+        "sourceLocalCandidateBacked": 8,
+        "additionalSourceTestOnlyRepairs": 5,
         "skillIssuesFound": 3,
         "skillIssuesStructurallyFixed": 2,
         "skillIssuesDiagnosedOnly": 1,
-        "workflowImprovements": 5,
-        "toolRuntimeContractImprovements": 6,
+        "workflowImprovements": 6,
+        "toolRuntimeContractImprovements": 9,
         "overlappingCategoriesMayNotBeSummed": true
       },
       "sample": {
-        "count": 8,
+        "count": 11,
         "unit": "unique root causes with retained failure or rejection evidence plus a repair and verification boundary"
       },
       "reproduction": {
@@ -1171,13 +1323,69 @@
         "tests/test_trace_defect_ledger.py"
       ],
       "claim": {
-        "allowed": "Across the PAW Trace/Eval, Enterprise RAG and CloudOps validation chains, eight unique contract defects have retained failure evidence plus a repair and verification boundary; three are backed by main-repository Validation/control-plane evidence and five by non-installed source-local candidate replay. The inventory also records three Skill issues, five workflow improvements and six Tool/Runtime contract improvements, but these categories overlap and are not added together.",
-        "forbidden": "Trace Agent autonomously found and fixed all eight defects, tests or retry counts equal defect counts, source-local candidates were installed, or 8 + 3 + 5 + 6 is a valid total."
+        "allowed": "Across the PAW Trace/Eval, Enterprise RAG and CloudOps validation chains, eleven unique contract defects have retained failure evidence plus a repair and verification boundary; three are backed by main-repository Validation/control-plane evidence and eight by non-installed source-local candidate replay. The inventory also records three Skill issues, six workflow improvements and nine Tool/Runtime contract improvements, but these categories overlap and are not added together.",
+        "forbidden": "Trace Agent autonomously found and fixed all eleven defects, tests or retry counts equal defect counts, source-local candidates were installed, or 11 + 3 + 6 + 9 is a valid total."
       },
       "limitations": [
-        "five closed-loop defects are verified only on non-installed source-local candidates",
-        "three additional repairs remain source/test-only and are excluded from the eight-defect headline",
+        "eight closed-loop defects are verified only on non-installed source-local candidates",
+        "five additional repairs remain source/test-only and are excluded from the eleven-defect headline",
         "the defect, Skill, workflow and Tool/Runtime categories overlap"
+      ]
+    },
+    {
+      "id": "data-agent.enterpriseops-csm.validation.20260901",
+      "domain": "data-agent",
+      "title": "EnterpriseOps CSM Trace-driven harness repair and workflow rejection",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "validationTaskCount": 3,
+        "rawVerifierCount": 31,
+        "liveMcpToolCount": 89,
+        "invalidPlumbingTaskSuccessRate": 0.0,
+        "invalidPlumbingVerifierPassRate": 0.0967741935483871,
+        "repairedBaselineTaskSuccessRate": 0.3333333333333333,
+        "repairedBaselineVerifierPassRate": 0.8387096774193549,
+        "harnessRepairPercentagePointIncrease": 74.19354838709677,
+        "baselineToolCalls": 47,
+        "baselineFailedToolCalls": 0,
+        "candidateTaskSuccessRate": 0.3333333333333333,
+        "candidateVerifierPassRate": 0.8387096774193549,
+        "candidateToolCalls": 54,
+        "candidateFailedToolCalls": 1,
+        "candidateToolCallIncreasePercent": 14.893617021276595,
+        "candidateLatencyIncreasePercent": 24.936571363521697,
+        "runnerContractDefectsFound": 11,
+        "heldOutConsumed": false,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 3,
+        "unit": "frozen EnterpriseOps CSM Validation tasks",
+        "rawVerifiers": 31
+      },
+      "reproduction": {
+        "command": "python3 scripts/run_enterpriseops_csm_eval.py --split validation --workflow-profile baseline-v1 ...; repeat with --workflow-profile state-contract-v1; validate eval/interview-metrics/runs/enterpriseops-csm-validation-summary-20260901.v1.json",
+        "status": "completed on source-local candidate; workflow candidate rejected and Held-out remained closed"
+      },
+      "evidenceRefs": [
+        "scripts/run_enterpriseops_csm_eval.py",
+        "tests/test_run_enterpriseops_csm_eval.py",
+        "eval/interview-metrics/runs/enterpriseops-csm-validation-summary-20260901.v1.json",
+        "eval/interview-metrics/runs/enterpriseops-csm-validation-summary-20260901.v1.json"
+      ],
+      "claim": {
+        "allowed": "On three frozen EnterpriseOps CSM Validation tasks with 31 raw host-private SQL verifiers, Trace-driven harness repairs restored 47 real business Tool calls and moved verifier pass rate from an invalid 3/31 plumbing result to a repaired 26/31 baseline. On the repaired contract, state-contract-v1 tied baseline at 33.33 percent task success and 83.87 percent verifier pass while using more Tool calls and wall-clock time, so it was rejected without opening Held-out.",
+        "forbidden": "The business workflow improved by 74.19 percentage points, state-contract-v1 improved quality, Held-out passed, all 89 tools were freely selected by the Agent, or the source-local candidate was installed."
+      },
+      "limitations": [
+        "the 74.19 percentage-point delta compares a broken plumbing run with a repaired harness and is not a workflow-quality comparison",
+        "the workflow comparison contains only three Validation tasks",
+        "task-selected oracle Tool schemas were visible to the Agent",
+        "the Runtime candidate was external and not installed",
+        "Held-out was never opened"
       ]
     },
     {
@@ -1239,6 +1447,419 @@
       "evidenceRefs": [
         "release/product-status.json",
         "scripts/verify_squirrel_foreground_trace.sh"
+      ]
+    },
+    {
+      "id": "agent.cloudops_candidate.evidence_search.20260901",
+      "domain": "agent",
+      "title": "CloudOps evidence-search candidate round (Reject)",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "changedLayer": "workflow",
+        "baselineCa": 1.0,
+        "candidateCa": 0.8333333333333334,
+        "baselineJra": 0.8333333333333334,
+        "candidateJra": 0.8333333333333334,
+        "candidateTop3Jra": 1.0,
+        "baselineToolCalls": 98,
+        "candidateToolCalls": 189,
+        "candidateSearchCalls": 106,
+        "candidateListCalls": 15,
+        "candidateReadCalls": 62,
+        "candidateFailedToolCalls": 0,
+        "baselineElapsedMs": 1356582,
+        "candidateElapsedMs": 996035,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 12,
+        "unit": "same frozen CloudOps Validation cases"
+      },
+      "reproduction": {
+        "command": "jq '.comparison' eval/interview-metrics/runs/cloudops-evidence-search-validation-reject-20260901.v1.json",
+        "status": "receipt retained; no Provider rerun"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-evidence-search-validation-reject-20260901.v1.json"
+      ],
+      "claim": {
+        "allowed": "Evidence-search workflow raised Top3JRA from 0.8333 to 1.0 and reduced elapsed time 26.58%, but CA fell to 0.8333 while Tool calls rose 92.86%; it was rejected.",
+        "forbidden": "A quality improvement, a cost saving, or a promotion claim based on Top3JRA alone."
+      },
+      "limitations": [
+        "same Validation suite was used for falsification",
+        "token/provider usage was unavailable",
+        "Held-out and installation were not performed"
+      ]
+    },
+    {
+      "id": "agent.cloudops_candidate.observation_id.20260901",
+      "domain": "agent",
+      "title": "CloudOps observationId Tool-contract candidate round (Reject)",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "changedLayer": "tool",
+        "baselineCa": 1.0,
+        "candidateCa": 0.5,
+        "baselineFa": 0.8333333333333334,
+        "candidateFa": 0.5833333333333334,
+        "baselineJra": 0.8333333333333334,
+        "candidateJra": 0.4166666666666667,
+        "baselineTop3Jra": 0.8333333333333334,
+        "candidateTop3Jra": 0.5,
+        "candidateAnswerCoverage": 1.0,
+        "baselineToolCalls": 98,
+        "candidateToolCalls": 94,
+        "candidateFailedToolCalls": 0,
+        "baselineElapsedMs": 1356582,
+        "candidateElapsedMs": 1248603,
+        "usageAvailable": false,
+        "publicCacheKeyReads": 0,
+        "decision": "reject_and_stop"
+      },
+      "sample": {
+        "count": 12,
+        "unit": "same frozen CloudOps Validation cases"
+      },
+      "reproduction": {
+        "command": "jq '.comparison,.verification' eval/interview-metrics/runs/cloudops-observation-id-validation-reject-20260901.v1.json",
+        "status": "receipt retained; predeclared stop rule fired"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-observation-id-validation-reject-20260901.v1.json"
+      ],
+      "claim": {
+        "allowed": "The observationId Tool path completed all 12 answers with zero Tool failures and four fewer Tool calls, but CA/JRA/Top3JRA materially regressed; the Tool-only candidate was rejected and no fifth run was opened.",
+        "forbidden": "Tool reliability implies diagnosis quality, or the lower Tool count proves efficiency/cost improvement."
+      },
+      "limitations": [
+        "provider usage was unavailable",
+        "quality and Tool metrics are from one Validation falsification round",
+        "Held-out and installation were not performed"
+      ]
+    },
+    {
+      "id": "agent.cloudops_candidate.bounded_workflow.20260901",
+      "domain": "agent",
+      "title": "CloudOps bounded workflow candidate round (Reject)",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "deterministic",
+      "measuredAt": "2026-09-01",
+      "values": {
+        "changedLayer": "workflow",
+        "baselineCa": 1.0,
+        "candidateCa": 0.75,
+        "baselineJra": 0.8333333333333334,
+        "candidateJra": 0.75,
+        "baselineTop3Jra": 0.8333333333333334,
+        "candidateTop3Jra": 0.8333333333333334,
+        "baselineToolCalls": 98,
+        "candidateToolCalls": 82,
+        "candidateSearchCalls": 22,
+        "candidateListCalls": 8,
+        "candidateReadCalls": 46,
+        "candidateFailedToolCalls": 1,
+        "baselineElapsedMs": 1356582,
+        "candidateElapsedMs": 1175311,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 12,
+        "unit": "same frozen CloudOps Validation cases"
+      },
+      "reproduction": {
+        "command": "jq '.comparison,.failedCases' eval/interview-metrics/runs/cloudops-bounded-workflow-validation-reject-20260901.v1.json",
+        "status": "receipt retained; no Provider rerun"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-bounded-workflow-validation-reject-20260901.v1.json"
+      ],
+      "claim": {
+        "allowed": "Bounded workflow reduced Tool calls 16.33% and elapsed time 13.36%, but CA fell to 0.75, JRA to 0.75 and one read failed; it was rejected.",
+        "forbidden": "A workflow quality improvement or cost saving from fewer Tool calls."
+      },
+      "limitations": [
+        "one of three failed cases had a Tool failure, so Tool addressing does not explain all quality loss",
+        "provider usage was unavailable",
+        "Held-out and installation were not performed"
+      ]
+    },
+    {
+      "id": "agent.cloudops_candidate.luna_max.20260902",
+      "domain": "agent",
+      "title": "CloudOps Luna Max model-only candidate round (Reject; report-only)",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "changedLayer": "model",
+        "candidateModel": "gpt-5.6-luna",
+        "thinking": "max",
+        "sessionReceipts": 3,
+        "readableTranscriptCount": 0,
+        "transcriptToolCalls": 278,
+        "failedTranscriptToolCalls": 14,
+        "inputTokens": 916112,
+        "outputTokens": 57057,
+        "cacheReadTokens": 18809344,
+        "latencyMs": 1718516,
+        "thirdBatchTimeout": 1,
+        "abortTimeout": 1,
+        "hostFormalCaJraAvailable": 0,
+        "heldOutConsumed": false,
+        "sourceLocal": true,
+        "installed": false,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 3,
+        "unit": "CloudOps Luna report/session receipts; readable transcript count is zero"
+      },
+      "reproduction": {
+        "command": "jq '.' eval/interview-metrics/runs/cloudops-luna-max-baseline-validation-20260902.v1.json",
+        "status": "failure receipt retained; no formal CA/JRA and no Provider rerun"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-luna-max-baseline-validation-20260902.v1.json"
+      ],
+      "claim": {
+        "allowed": "The model-only CloudOps Luna candidate retains three session/receipt observations, 278 transcript Tool observations, 14 failures, token counts and 1,718,516 ms, with third-batch and abort timeouts; it is Reject report-only evidence.",
+        "forbidden": "CloudOps CA/JRA quality regression, model quality, cost savings, readable conversations, Held-out generalization, or installed stability."
+      },
+      "limitations": [
+        "Host formal CA/JRA was unavailable, so no business quality delta is computed",
+        "the checked-in public receipt has no readable transcript; session/receipt count is not transcript count",
+        "no frozen USD price or billed usage is available"
+      ]
+    },
+    {
+      "id": "memory.maintenance.initial-jsonl-failure.20260902",
+      "domain": "memory",
+      "title": "Memory maintenance initial JSONL failure boundary (834.945 s)",
+      "status": "diagnostic",
+      "evidenceLevel": "E1",
+      "measurementKind": "status",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "elapsedSeconds": 834.945,
+        "failureType": "incomplete JSONL receipt",
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 1,
+        "unit": "historical Memory maintenance failure boundary"
+      },
+      "reproduction": {
+        "command": "Read the retained Memory Maintenance experiment card and subsequent v1/v3/v4/v5 receipts; do not rerun Provider.",
+        "status": "historical boundary only; no standalone raw receipt is exposed"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/agent-experiments.v1.json",
+        "eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v1.json"
+      ],
+      "claim": {
+        "allowed": "The retained experiment history records a real 834.945-second maintenance attempt ending with an incomplete JSONL boundary; it is retained as the pre-repair failure context.",
+        "forbidden": "A replay, quality score, Provider cost, or production Memory failure conclusion beyond the recorded boundary."
+      },
+      "limitations": [
+        "the standalone raw failure transcript is not a checked-in public artifact",
+        "no model-quality or retrieval score is inferred from elapsed time"
+      ]
+    },
+    {
+      "id": "memory.maintenance.luna_v1.20260902",
+      "domain": "memory",
+      "title": "Memory Maintenance Luna v1 shadow candidate (Reject)",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "changedLayer": "replay",
+        "result": "iterate",
+        "fixtureCases": 5,
+        "durableCases": 4,
+        "nonMemoryControls": 1,
+        "fixturePassed": true,
+        "rollbackPassed": true,
+        "replayAttempted": true,
+        "replayPassed": false,
+        "replayReusedOutputs": false,
+        "replayIdenticalState": false,
+        "vectorCoverage": 0.0,
+        "curatedAtomCount": 7,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 5,
+        "unit": "same private-shadow five-case fixture"
+      },
+      "reproduction": {
+        "command": "Read eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v1.json; do not rerun Provider.",
+        "status": "receipt retained"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v1.json"
+      ],
+      "claim": {
+        "allowed": "v1 passed its five deterministic fixture cases and rollback, but replay did not reuse model outputs or restore identical state; the replay layer remained unclosed and the candidate was rejected.",
+        "forbidden": "A Memory quality improvement, dense retrieval success, production mutation, or cost claim."
+      },
+      "limitations": [
+        "private-shadow only",
+        "vector coverage was 0.0",
+        "raw model outputs are not exposed"
+      ]
+    },
+    {
+      "id": "memory.maintenance.luna_v3.20260902",
+      "domain": "memory",
+      "title": "Memory Maintenance Luna v3 shadow candidate (Reject)",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "changedLayer": "workflow_snapshot_reuse",
+        "result": "iterate",
+        "fixtureCases": 5,
+        "durableCases": 4,
+        "nonMemoryControls": 1,
+        "fixturePassed": true,
+        "rollbackPassed": true,
+        "replayPassed": false,
+        "replayUsedExactSnapshot": true,
+        "replayRestoredBeforeState": true,
+        "replayReusedOutputs": true,
+        "replayIdenticalState": true,
+        "vectorCoverage": 0.0,
+        "curatedAtomCount": 6,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 5,
+        "unit": "same private-shadow five-case fixture"
+      },
+      "reproduction": {
+        "command": "Read eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v3.json; do not rerun Provider.",
+        "status": "receipt retained"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v3.json"
+      ],
+      "claim": {
+        "allowed": "v3 changed the replay workflow to retain an exact pre-run snapshot and reuse content-addressed outputs; it restored identical state, but its replay gate still reported false, so the candidate remained rejected.",
+        "forbidden": "A Memory quality regression, dense retrieval success, production mutation, or cost claim."
+      },
+      "limitations": [
+        "private-shadow only",
+        "vector coverage was 0.0",
+        "the receipt does not expose a formal Provider cost"
+      ]
+    },
+    {
+      "id": "memory.maintenance.luna_v4.20260902",
+      "domain": "memory",
+      "title": "Memory Maintenance Luna v4 shadow candidate (Reject)",
+      "status": "diagnostic",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "changedLayer": "unknown",
+        "result": "pass",
+        "fixtureCases": 5,
+        "durableCases": 4,
+        "nonMemoryControls": 1,
+        "fixturePassed": true,
+        "rollbackPassed": true,
+        "replayPassed": true,
+        "replayUsedExactSnapshot": true,
+        "replayReusedOutputs": true,
+        "replayIdenticalState": true,
+        "vectorCoverage": 0.0,
+        "curatedAtomCount": 7,
+        "decision": "reject"
+      },
+      "sample": {
+        "count": 5,
+        "unit": "same private-shadow five-case fixture"
+      },
+      "reproduction": {
+        "command": "Read eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v4.json; do not rerun Provider.",
+        "status": "receipt retained"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v4.json"
+      ],
+      "claim": {
+        "allowed": "v4 passed fixture, rollback and replay gates, but its recorded vector coverage remained 0.0; because the receipt retained no code diff, the exact implementation change that flipped replay remains unknown.",
+        "forbidden": "A dense retrieval success, production Memory acceptance, Held-out result, or cost claim."
+      },
+      "limitations": [
+        "private-shadow only",
+        "vector coverage remained 0.0",
+        "no installed Gateway or foreground acceptance was evaluated"
+      ]
+    },
+    {
+      "id": "memory.maintenance.luna_v5.20260902",
+      "domain": "memory",
+      "title": "Memory Maintenance Luna v5 shadow winner (Keep)",
+      "status": "supporting",
+      "evidenceLevel": "E2",
+      "measurementKind": "mixed",
+      "measuredAt": "2026-09-02",
+      "values": {
+        "changedLayer": "compound_repair",
+        "result": "passed",
+        "fixtureCases": 5,
+        "durableCases": 4,
+        "nonMemoryControls": 1,
+        "fixturePassed": true,
+        "rollbackPassed": true,
+        "replayPassed": true,
+        "replayReusedModelRequests": true,
+        "replayIdenticalState": true,
+        "vectorCoverage": 1.0,
+        "projectionFresh": true,
+        "projectionBacklog": 0,
+        "currentAtomCount": 6,
+        "governedCurrentAtomCount": 6,
+        "modelDecisionCount": 5,
+        "receiptJsonValid": 1,
+        "modelTokensAvailable": false,
+        "decision": "keep",
+        "heldOutConsumed": false,
+        "productionMutationPerformed": false
+      },
+      "sample": {
+        "count": 5,
+        "unit": "same private-shadow five-case fixture"
+      },
+      "reproduction": {
+        "command": "Read eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v5.json; do not rerun Provider.",
+        "status": "private-shadow receipt retained; winner is not a production promotion"
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/memory-maintenance-luna-max-validation-20260902.v5.json"
+      ],
+      "claim": {
+        "allowed": "v5 is the private-shadow Keep: five fixture decisions, four durable recall cases and one non-memory control passed after a compound repair added a deterministic dense provider and a valid JSON receipt writer; dense coverage, rollback and exact replay gates are closed.",
+        "forbidden": "Production Memory repair, Held-out generalization, rank-1 claims, USD savings, or installed foreground acceptance."
+      },
+      "limitations": [
+        "private-shadow Validation only",
+        "the receipt has no frozen USD price or billed Provider usage",
+        "source-local candidate was not installed and production database was not opened"
       ]
     }
   ],

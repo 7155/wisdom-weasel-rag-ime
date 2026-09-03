@@ -2799,6 +2799,1579 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-lab-cost-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-lab-cost-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "authority",
+      "pricingIdentity",
+      "usage",
+      "estimate",
+      "billing",
+      "boundaries",
+      "receiptSha256"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-lab-cost-receipt.v1"
+      },
+      "authority": {
+        "const": "pricing_estimate"
+      },
+      "pricingIdentity": {
+        "$ref": "#/$defs/pricingIdentity"
+      },
+      "usage": {
+        "$ref": "#/$defs/usage"
+      },
+      "estimate": {
+        "$ref": "#/$defs/estimate"
+      },
+      "billing": {
+        "$ref": "#/$defs/billing"
+      },
+      "boundaries": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 8,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      },
+      "receiptSha256": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "$defs": {
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "identity": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$"
+      },
+      "evidenceRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "rateDecimalUsd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+      },
+      "amountDecimalUsd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+      },
+      "rates": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uncachedInputUsd",
+          "cachedInputUsd",
+          "outputUsd"
+        ],
+        "properties": {
+          "uncachedInputUsd": {
+            "$ref": "#/$defs/rateDecimalUsd"
+          },
+          "cachedInputUsd": {
+            "$ref": "#/$defs/rateDecimalUsd"
+          },
+          "outputUsd": {
+            "$ref": "#/$defs/rateDecimalUsd"
+          }
+        }
+      },
+      "pricingIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pricingId",
+          "provider",
+          "model",
+          "currency",
+          "unit",
+          "rates",
+          "publishedDate",
+          "sourceUrl",
+          "sourceSha256"
+        ],
+        "properties": {
+          "pricingId": {
+            "$ref": "#/$defs/identity"
+          },
+          "provider": {
+            "$ref": "#/$defs/identity"
+          },
+          "model": {
+            "$ref": "#/$defs/identity"
+          },
+          "currency": {
+            "const": "USD"
+          },
+          "unit": {
+            "const": "per_million_tokens"
+          },
+          "rates": {
+            "$ref": "#/$defs/rates"
+          },
+          "publishedDate": {
+            "type": "string",
+            "pattern": "^20[0-9]{2}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$"
+          },
+          "sourceUrl": {
+            "type": "string",
+            "minLength": 9,
+            "maxLength": 1000,
+            "pattern": "^https://[^\\s]+$"
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "available",
+          "uncachedInputTokens",
+          "cachedInputTokens",
+          "outputTokens",
+          "sourceRef",
+          "sourceSha256"
+        ],
+        "properties": {
+          "available": {
+            "const": true
+          },
+          "uncachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "outputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "sourceRef": {
+            "$ref": "#/$defs/evidenceRef"
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "estimate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uncachedInputCostUsd",
+          "cachedInputCostUsd",
+          "outputCostUsd",
+          "totalCostUsd"
+        ],
+        "properties": {
+          "uncachedInputCostUsd": {
+            "$ref": "#/$defs/amountDecimalUsd"
+          },
+          "cachedInputCostUsd": {
+            "$ref": "#/$defs/amountDecimalUsd"
+          },
+          "outputCostUsd": {
+            "$ref": "#/$defs/amountDecimalUsd"
+          },
+          "totalCostUsd": {
+            "$ref": "#/$defs/amountDecimalUsd"
+          }
+        }
+      },
+      "billingNotProvided": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "const": "not_provided"
+          }
+        }
+      },
+      "billingProvided": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "currency",
+          "totalUsd",
+          "receiptRef",
+          "receiptSha256"
+        ],
+        "properties": {
+          "status": {
+            "const": "provided"
+          },
+          "currency": {
+            "const": "USD"
+          },
+          "totalUsd": {
+            "$ref": "#/$defs/amountDecimalUsd"
+          },
+          "receiptRef": {
+            "$ref": "#/$defs/evidenceRef"
+          },
+          "receiptSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "billing": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/billingNotProvided"
+          },
+          {
+            "$ref": "#/$defs/billingProvided"
+          }
+        ]
+      }
+    }
+  },
+  "agent-lab-cost-request.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-lab-cost-request.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "pricingIdentity",
+      "usage"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-lab-cost-request.v1"
+      },
+      "pricingIdentity": {
+        "$ref": "#/$defs/pricingIdentity"
+      },
+      "usage": {
+        "$ref": "#/$defs/usage"
+      },
+      "billedReceipt": {
+        "$ref": "#/$defs/billedReceipt"
+      }
+    },
+    "$defs": {
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "identity": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$"
+      },
+      "evidenceRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "decimalUsd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+      },
+      "rates": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "uncachedInputUsd",
+          "cachedInputUsd",
+          "outputUsd"
+        ],
+        "properties": {
+          "uncachedInputUsd": {
+            "$ref": "#/$defs/decimalUsd"
+          },
+          "cachedInputUsd": {
+            "$ref": "#/$defs/decimalUsd"
+          },
+          "outputUsd": {
+            "$ref": "#/$defs/decimalUsd"
+          }
+        }
+      },
+      "pricingIdentity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pricingId",
+          "provider",
+          "model",
+          "currency",
+          "unit",
+          "rates",
+          "publishedDate",
+          "sourceUrl",
+          "sourceSha256"
+        ],
+        "properties": {
+          "pricingId": {
+            "$ref": "#/$defs/identity"
+          },
+          "provider": {
+            "$ref": "#/$defs/identity"
+          },
+          "model": {
+            "$ref": "#/$defs/identity"
+          },
+          "currency": {
+            "const": "USD"
+          },
+          "unit": {
+            "const": "per_million_tokens"
+          },
+          "rates": {
+            "$ref": "#/$defs/rates"
+          },
+          "publishedDate": {
+            "type": "string",
+            "pattern": "^20[0-9]{2}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$"
+          },
+          "sourceUrl": {
+            "type": "string",
+            "minLength": 9,
+            "maxLength": 1000,
+            "pattern": "^https://[^\\s]+$"
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "usage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "available",
+          "uncachedInputTokens",
+          "cachedInputTokens",
+          "outputTokens",
+          "sourceRef",
+          "sourceSha256"
+        ],
+        "properties": {
+          "available": {
+            "const": true
+          },
+          "uncachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "outputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "sourceRef": {
+            "$ref": "#/$defs/evidenceRef"
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "uncachedInputTokens": {
+                "minimum": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "cachedInputTokens": {
+                "minimum": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "outputTokens": {
+                "minimum": 1
+              }
+            }
+          }
+        ]
+      },
+      "billedReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "currency",
+          "totalUsd",
+          "receiptRef",
+          "receiptSha256"
+        ],
+        "properties": {
+          "currency": {
+            "const": "USD"
+          },
+          "totalUsd": {
+            "$ref": "#/$defs/decimalUsd"
+          },
+          "receiptRef": {
+            "$ref": "#/$defs/evidenceRef"
+          },
+          "receiptSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    }
+  },
+  "agent-lab-experiment.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-lab-experiment.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "experimentId",
+      "revisionSha256",
+      "title",
+      "vertical",
+      "evaluationKind",
+      "status",
+      "claimStatus",
+      "businessProblem",
+      "whyAgent",
+      "dataset",
+      "scoring",
+      "factors",
+      "frozenControls",
+      "baseline",
+      "candidate",
+      "comparison",
+      "star",
+      "claim",
+      "openGaps",
+      "importedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-lab-experiment.v1"
+      },
+      "experimentId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"
+      },
+      "revisionSha256": {
+        "$ref": "#/$defs/sha256"
+      },
+      "title": {
+        "$ref": "#/$defs/label"
+      },
+      "vertical": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,119}$"
+      },
+      "evaluationKind": {
+        "enum": [
+          "workflow",
+          "rag_retrieval",
+          "answer_evidence",
+          "tool_runtime",
+          "trace_repair",
+          "memory",
+          "model_cost",
+          "other"
+        ]
+      },
+      "status": {
+        "enum": [
+          "kept",
+          "rejected",
+          "diagnostic",
+          "open_gap"
+        ]
+      },
+      "claimStatus": {
+        "enum": [
+          "headline",
+          "supporting",
+          "diagnostic",
+          "blocked"
+        ]
+      },
+      "effectStatus": {
+        "enum": [
+          "improved",
+          "neutral",
+          "regressed",
+          "not_run",
+          "unverified"
+        ]
+      },
+      "candidateType": {
+        "enum": [
+          "single_factor",
+          "compound_repair",
+          "baseline",
+          "unknown"
+        ]
+      },
+      "businessProblem": {
+        "$ref": "#/$defs/text"
+      },
+      "whyAgent": {
+        "$ref": "#/$defs/text"
+      },
+      "dataset": {
+        "$ref": "#/$defs/dataset"
+      },
+      "scoring": {
+        "$ref": "#/$defs/scoring"
+      },
+      "factors": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": {
+          "$ref": "#/$defs/factor"
+        }
+      },
+      "frozenControls": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 32,
+        "items": {
+          "$ref": "#/$defs/frozenControl"
+        }
+      },
+      "baseline": {
+        "$ref": "#/$defs/runSummary"
+      },
+      "candidate": {
+        "$ref": "#/$defs/runSummary"
+      },
+      "comparison": {
+        "$ref": "#/$defs/comparison"
+      },
+      "star": {
+        "$ref": "#/$defs/star"
+      },
+      "claim": {
+        "$ref": "#/$defs/claim"
+      },
+      "openGaps": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "importedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1600
+      },
+      "dataset": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "datasetId",
+          "split",
+          "caseCount",
+          "unit",
+          "manifestSha256",
+          "heldOutConsumed"
+        ],
+        "properties": {
+          "datasetId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "split": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "caseCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unit": {
+            "$ref": "#/$defs/text"
+          },
+          "manifestSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "heldOutConsumed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "scoring": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "primaryMetric",
+          "evaluatorAuthority",
+          "goldHiddenFromAgent",
+          "hardGates"
+        ],
+        "properties": {
+          "primaryMetric": {
+            "$ref": "#/$defs/text"
+          },
+          "evaluatorAuthority": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "goldHiddenFromAgent": {
+            "type": "boolean"
+          },
+          "hardGates": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/$defs/text"
+            }
+          }
+        }
+      },
+      "factor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "before",
+          "after",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "enum": [
+              "model",
+              "prompt",
+              "skill",
+              "tool",
+              "workflow",
+              "context",
+              "memory_rag",
+              "guardrail",
+              "execution_policy",
+              "human_loop",
+              "pricing"
+            ]
+          },
+          "before": {
+            "$ref": "#/$defs/text"
+          },
+          "after": {
+            "$ref": "#/$defs/text"
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "frozenControl": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "value",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "value": {
+            "$ref": "#/$defs/text"
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "metrics": {
+        "type": "object",
+        "maxProperties": 64,
+        "additionalProperties": {
+          "type": "number"
+        }
+      },
+      "runSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "runId",
+          "metrics",
+          "evidenceRefs"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "metrics": {
+            "$ref": "#/$defs/metrics"
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "outputExamples": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/outputExample"
+            }
+          }
+        }
+      },
+      "outputExample": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseId",
+          "input",
+          "output"
+        ],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "input": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "output": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          }
+        }
+      },
+      "metricDelta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metric",
+          "before",
+          "after",
+          "delta"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "before": {
+            "type": "number"
+          },
+          "after": {
+            "type": "number"
+          },
+          "delta": {
+            "type": "number"
+          }
+        }
+      },
+      "comparison": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision",
+          "decisionReason",
+          "metricDeltas"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "decisionReason": {
+            "$ref": "#/$defs/text"
+          },
+          "metricDeltas": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/$defs/metricDelta"
+            }
+          },
+          "outputComparisons": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "caseId",
+                "before",
+                "after"
+              ],
+              "properties": {
+                "caseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "before": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1200
+                },
+                "after": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1200
+                }
+              }
+            }
+          }
+        }
+      },
+      "star": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "situation",
+          "task",
+          "action",
+          "result"
+        ],
+        "properties": {
+          "situation": {
+            "$ref": "#/$defs/text"
+          },
+          "task": {
+            "$ref": "#/$defs/text"
+          },
+          "action": {
+            "$ref": "#/$defs/text"
+          },
+          "result": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "claim": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resumeBullet",
+          "allowed",
+          "forbidden"
+        ],
+        "properties": {
+          "resumeBullet": {
+            "$ref": "#/$defs/text"
+          },
+          "allowed": {
+            "$ref": "#/$defs/text"
+          },
+          "forbidden": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    }
+  },
+  "agent-lab-path-search-request.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-lab-path-search-request.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "searchId",
+      "title",
+      "objective",
+      "frozenControls",
+      "baseline",
+      "candidates"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-lab-path-search-request.v1"
+      },
+      "searchId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "objective": {
+        "$ref": "#/$defs/objective"
+      },
+      "frozenControls": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 32,
+        "items": {
+          "$ref": "#/$defs/frozenControl"
+        }
+      },
+      "baseline": {
+        "$ref": "#/$defs/node"
+      },
+      "candidates": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 128,
+        "items": {
+          "$ref": "#/$defs/node"
+        }
+      }
+    },
+    "$defs": {
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1600
+      },
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "frozenControl": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "value": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "metricSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "direction",
+          "weight",
+          "class"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "direction": {
+            "enum": [
+              "max",
+              "min"
+            ]
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "class": {
+            "enum": [
+              "quality",
+              "reliability",
+              "efficiency",
+              "cost"
+            ]
+          },
+          "scale": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "nonRegression": {
+            "type": "boolean"
+          }
+        }
+      },
+      "gateSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "metric",
+          "operator",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "operator": {
+            "enum": [
+              "gte",
+              "lte",
+              "eq"
+            ]
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      },
+      "objective": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "userNeed",
+          "metrics",
+          "gates",
+          "selectionPolicy"
+        ],
+        "properties": {
+          "userNeed": {
+            "$ref": "#/$defs/text"
+          },
+          "metrics": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/$defs/metricSpec"
+            }
+          },
+          "gates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/$defs/gateSpec"
+            }
+          },
+          "selectionPolicy": {
+            "enum": [
+              "lexicographic_pareto",
+              "weighted_pareto"
+            ]
+          }
+        }
+      },
+      "node": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodeId",
+          "parentNodeId",
+          "changedFactor",
+          "configRevision",
+          "frozenControlHash",
+          "metrics",
+          "evidenceRefs",
+          "status"
+        ],
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "parentNodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160
+          },
+          "changedFactor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "configRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "frozenControlHash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "metrics": {
+            "type": "object",
+            "maxProperties": 64,
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "status": {
+            "enum": [
+              "eligible",
+              "rejected",
+              "not_evaluated",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    }
+  },
+  "agent-lab-path-search.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-lab-path-search.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "searchId",
+      "title",
+      "objective",
+      "frozenControls",
+      "baseline",
+      "candidates",
+      "selectedPath",
+      "hardGates",
+      "claim",
+      "generatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-lab-path-search.v1"
+      },
+      "searchId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "objective": {
+        "$ref": "#/$defs/objective"
+      },
+      "frozenControls": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 32,
+        "items": {
+          "$ref": "#/$defs/frozenControl"
+        }
+      },
+      "baseline": {
+        "$ref": "#/$defs/node"
+      },
+      "candidates": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 128,
+        "items": {
+          "$ref": "#/$defs/node"
+        }
+      },
+      "selectedPath": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "items": {
+          "$ref": "#/$defs/pathStep"
+        }
+      },
+      "hardGates": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 32,
+        "items": {
+          "$ref": "#/$defs/gateResult"
+        }
+      },
+      "claim": {
+        "$ref": "#/$defs/claim"
+      },
+      "generatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1600
+      },
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "frozenControl": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "value": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "metricSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "direction",
+          "weight",
+          "class"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "direction": {
+            "enum": [
+              "max",
+              "min"
+            ]
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "class": {
+            "enum": [
+              "quality",
+              "reliability",
+              "efficiency",
+              "cost"
+            ]
+          },
+          "scale": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "nonRegression": {
+            "type": "boolean"
+          }
+        }
+      },
+      "gateSpec": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "metric",
+          "operator",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "operator": {
+            "enum": [
+              "gte",
+              "lte",
+              "eq"
+            ]
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      },
+      "objective": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "userNeed",
+          "metrics",
+          "gates",
+          "selectionPolicy"
+        ],
+        "properties": {
+          "userNeed": {
+            "$ref": "#/$defs/text"
+          },
+          "metrics": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/$defs/metricSpec"
+            }
+          },
+          "gates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "$ref": "#/$defs/gateSpec"
+            }
+          },
+          "selectionPolicy": {
+            "enum": [
+              "lexicographic_pareto",
+              "weighted_pareto"
+            ]
+          }
+        }
+      },
+      "node": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodeId",
+          "parentNodeId",
+          "changedFactor",
+          "configRevision",
+          "frozenControlHash",
+          "metrics",
+          "evidenceRefs",
+          "status"
+        ],
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "parentNodeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160
+          },
+          "changedFactor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "configRevision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "frozenControlHash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "metrics": {
+            "type": "object",
+            "maxProperties": 64,
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "status": {
+            "enum": [
+              "eligible",
+              "rejected",
+              "not_evaluated",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "pathStep": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodeId",
+          "decision",
+          "reason"
+        ],
+        "properties": {
+          "nodeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "decision": {
+            "enum": [
+              "baseline",
+              "keep",
+              "reject",
+              "not_evaluated",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "gateResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "unknown"
+            ]
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      },
+      "claim": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "summary",
+          "limitations"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "best_known",
+              "blocked",
+              "insufficient_evidence"
+            ]
+          },
+          "summary": {
+            "$ref": "#/$defs/text"
+          },
+          "limitations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/$defs/text"
+            }
+          }
+        }
+      }
+    }
+  },
   "agent-lifecycle-cancellation-audit.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-lifecycle-cancellation-audit.v1",
@@ -5724,7 +7297,7 @@ export const contractSchemas = {
           "title",
           "status",
           "executionMode",
-          "routingPolicy",
+          "permissionPolicy",
           "moderatorParticipantId",
           "workspaceRoots",
           "createdAtMs",
@@ -5762,6 +7335,9 @@ export const contractSchemas = {
               "full_trust"
             ]
           },
+          "permissionPolicy": {
+            "$ref": "#/$defs/roomPermissionPolicy"
+          },
           "roomKind": {
             "type": "string",
             "enum": [
@@ -5780,6 +7356,14 @@ export const contractSchemas = {
           "scenarioPrompt": {
             "type": "string",
             "maxLength": 8000
+          },
+          "ownerAppId": {
+            "type": "string",
+            "pattern": "^$|^extension:[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "surfaceKey": {
+            "type": "string",
+            "pattern": "^$|^[a-z0-9][a-z0-9._-]{0,63}$"
           },
           "routingPolicy": {
             "type": "string",
@@ -5866,6 +7450,68 @@ export const contractSchemas = {
               "null"
             ],
             "additionalProperties": true
+          }
+        }
+      },
+      "roomPermissionPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "room",
+          "partner",
+          "toolAgent"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.room-permission-policy.v1"
+          },
+          "room": {
+            "$ref": "#/$defs/roomPermissionLayer"
+          },
+          "partner": {
+            "$ref": "#/$defs/roomPermissionLowerLayer"
+          },
+          "toolAgent": {
+            "$ref": "#/$defs/roomPermissionLowerLayer"
+          }
+        }
+      },
+      "roomPermissionLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionMode"
+        ],
+        "properties": {
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          }
+        }
+      },
+      "roomPermissionLowerLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionMode"
+        ],
+        "properties": {
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
           }
         }
       },
@@ -6214,6 +7860,7 @@ export const contractSchemas = {
       "moderatorParticipantId",
       "workspaceRoots",
       "executionMode",
+      "permissionPolicy",
       "createdAtMs",
       "updatedAtMs",
       "lastEventSequence",
@@ -6258,6 +7905,14 @@ export const contractSchemas = {
       "scenarioPrompt": {
         "type": "string",
         "maxLength": 8000
+      },
+      "ownerAppId": {
+        "type": "string",
+        "pattern": "^$|^extension:[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "surfaceKey": {
+        "type": "string",
+        "pattern": "^$|^[a-z0-9][a-z0-9._-]{0,63}$"
       },
       "routingPolicy": {
         "type": "string",
@@ -6317,6 +7972,9 @@ export const contractSchemas = {
           "minLength": 1
         }
       },
+      "permissionPolicy": {
+        "$ref": "#/$defs/roomPermissionPolicy"
+      },
       "executionMode": {
         "type": "string",
         "enum": [
@@ -6373,6 +8031,70 @@ export const contractSchemas = {
           "null"
         ],
         "additionalProperties": true
+      }
+    },
+    "$defs": {
+      "roomPermissionPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "room",
+          "partner",
+          "toolAgent"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.room-permission-policy.v1"
+          },
+          "room": {
+            "$ref": "#/$defs/roomPermissionLayer"
+          },
+          "partner": {
+            "$ref": "#/$defs/roomPermissionLowerLayer"
+          },
+          "toolAgent": {
+            "$ref": "#/$defs/roomPermissionLowerLayer"
+          }
+        }
+      },
+      "roomPermissionLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionMode"
+        ],
+        "properties": {
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          }
+        }
+      },
+      "roomPermissionLowerLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionMode"
+        ],
+        "properties": {
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          }
+        }
       }
     }
   },
@@ -7283,6 +9005,10 @@ export const contractSchemas = {
       },
       "lastMessagePreview": {
         "type": "string"
+      },
+      "lastTerminalTurnId": {
+        "type": "string",
+        "maxLength": 240
       },
       "workspaceRoots": {
         "type": "array",
@@ -11078,6 +12804,535 @@ export const contractSchemas = {
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
+      }
+    }
+  },
+  "eval-lab-run-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.eval-lab-run-list.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "ok",
+      "items",
+      "total",
+      "experiments",
+      "experimentTotal"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.eval-lab-run-list.v1"
+      },
+      "ok": {
+        "const": true
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "$ref": "#/$defs/run"
+        }
+      },
+      "total": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "experiments": {
+        "type": "array",
+        "maxItems": 500,
+        "items": {
+          "type": "object",
+          "required": [
+            "schemaVersion",
+            "experimentId",
+            "revisionSha256"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "rag-ime.agent-lab-experiment.v1"
+            },
+            "experimentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revisionSha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      },
+      "experimentTotal": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "pathSearches": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "$ref": "#/$defs/pathSearch"
+        }
+      },
+      "pathSearchTotal": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "sha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "task": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sessionId",
+          "title",
+          "taskAlias",
+          "taskIndex",
+          "taskSucceeded",
+          "terminalEvent",
+          "verifierPassed",
+          "verifierTotal",
+          "toolCalls",
+          "failedToolCalls",
+          "latencyMs"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "pattern": "^agent:"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "taskAlias": {
+            "type": "string",
+            "minLength": 1
+          },
+          "taskIndex": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "taskSucceeded": {
+            "type": "boolean"
+          },
+          "terminalEvent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verifierPassed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verifierTotal": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "toolCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedToolCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latencyMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "explanation": {
+            "$ref": "#/$defs/explanation"
+          }
+        }
+      },
+      "explanation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "caseId",
+          "businessRequest",
+          "agentOutcome",
+          "acceptance"
+        ],
+        "properties": {
+          "caseId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "businessRequest": {
+            "$ref": "#/$defs/normalizedText"
+          },
+          "agentOutcome": {
+            "$ref": "#/$defs/normalizedSummary"
+          },
+          "acceptance": {
+            "$ref": "#/$defs/acceptance"
+          }
+        }
+      },
+      "normalizedText": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "normalizedText"
+        ],
+        "properties": {
+          "normalizedText": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          }
+        }
+      },
+      "normalizedSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "normalizedSummary"
+        ],
+        "properties": {
+          "normalizedSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          }
+        }
+      },
+      "acceptance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "passed",
+          "total",
+          "items"
+        ],
+        "properties": {
+          "passed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/$defs/acceptanceItem"
+            }
+          }
+        }
+      },
+      "acceptanceItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "status",
+          "failureOwner",
+          "explanation"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,79}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "partial",
+              "unknown"
+            ]
+          },
+          "failureOwner": {
+            "enum": [
+              null,
+              "prompt_context",
+              "evaluator_gold",
+              "agent",
+              "unknown"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 240
+          }
+        }
+      },
+      "run": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "runId",
+          "title",
+          "suiteId",
+          "split",
+          "workflowProfile",
+          "status",
+          "taskCount",
+          "taskSuccessCount",
+          "taskSuccessRate",
+          "verifierPassCount",
+          "verifierCount",
+          "verifierPassRate",
+          "toolCalls",
+          "failedToolCalls",
+          "latencyMs",
+          "sourceDatabaseSha256",
+          "sourceReportSha256",
+          "createdAtMs",
+          "updatedAtMs",
+          "tasks"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.eval-lab-run.v1"
+          },
+          "runId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suiteId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "split": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workflowProfile": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "completed"
+            ]
+          },
+          "taskCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "taskSuccessCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "taskSuccessRate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "verifierPassCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verifierCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "verifierPassRate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "toolCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedToolCalls": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "latencyMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "sourceDatabaseSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "sourceReportSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tasks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/$defs/task"
+            }
+          }
+        }
+      },
+      "pathSearch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "searchId",
+          "title",
+          "objectiveSummary",
+          "metricSummary",
+          "frozenControlCount",
+          "selectedNodeId",
+          "selectedPath",
+          "claimStatus",
+          "claimSummary",
+          "candidates",
+          "generatedAtMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.agent-lab-path-search.v1"
+          },
+          "searchId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "objectiveSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1600
+          },
+          "metricSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1600
+          },
+          "frozenControlCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "selectedNodeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "selectedPath": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "nodeId",
+                "decision",
+                "reason"
+              ],
+              "properties": {
+                "nodeId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "decision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 40
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1600
+                }
+              }
+            }
+          },
+          "claimStatus": {
+            "enum": [
+              "best_known",
+              "blocked",
+              "insufficient_evidence"
+            ]
+          },
+          "claimSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1600
+          },
+          "candidates": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "nodeId",
+                "changedFactor",
+                "status",
+                "metrics",
+                "reason"
+              ],
+              "properties": {
+                "nodeId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                "changedFactor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "status": {
+                  "enum": [
+                    "eligible",
+                    "rejected",
+                    "not_evaluated",
+                    "unknown"
+                  ]
+                },
+                "metrics": {
+                  "type": "object",
+                  "maxProperties": 64,
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1600
+                }
+              }
+            }
+          },
+          "generatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     }
   },
@@ -19844,6 +22099,72 @@ export const contractSchemas = {
       },
       "payload": {
         "type": "object"
+      }
+    }
+  },
+  "room-permission-policy.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.room-permission-policy.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "room",
+      "partner",
+      "toolAgent"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.room-permission-policy.v1"
+      },
+      "room": {
+        "$ref": "#/$defs/roomPermissionLayer"
+      },
+      "partner": {
+        "$ref": "#/$defs/roomPermissionLowerLayer"
+      },
+      "toolAgent": {
+        "$ref": "#/$defs/roomPermissionLowerLayer"
+      }
+    },
+    "$defs": {
+      "roomPermissionLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionMode"
+        ],
+        "properties": {
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          }
+        }
+      },
+      "roomPermissionLowerLayer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "executionMode"
+        ],
+        "properties": {
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          }
+        }
       }
     }
   },

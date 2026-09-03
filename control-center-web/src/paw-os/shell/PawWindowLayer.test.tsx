@@ -644,6 +644,34 @@ describe('PAWOS compositor window frame', () => {
     expect(appProcessRenders.get('agent') ?? 0).toBe(agentBefore);
   });
 
+  it('hydrates only the active restored App until another window is focused', async () => {
+    const windows = {
+      agent: desktopWindowNode('agent', 'agent'),
+      files: desktopWindowNode('files', 'files'),
+    };
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows,
+      stack: ['agent', 'files'],
+      activeWindowId: 'files',
+    }));
+    render(
+      <ControlTransportProvider transport={createPreviewTransport()}>
+        <PawDesktopProvider>
+          <CaptureDesktopApi />
+          <PawWindowLayer />
+        </PawDesktopProvider>
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByLabelText('files窗口');
+    expect(appProcessRenders.get('files') ?? 0).toBeGreaterThan(0);
+    expect(appProcessRenders.get('agent') ?? 0).toBe(0);
+
+    act(() => capturedDesktopApi!.getState().focusWindow('agent'));
+    await waitFor(() => expect(appProcessRenders.get('agent') ?? 0).toBeGreaterThan(0));
+    expect(appProcessRenders.get('files') ?? 0).toBeGreaterThan(0);
+  });
+
   it('marks the desktop root for the exact duration of a drag or resize so the wallpaper can pause', () => {
     const { container } = render(
       <div className="paw-desktop-root">

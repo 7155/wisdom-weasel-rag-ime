@@ -184,9 +184,9 @@ describe('projectWayfinderWork', () => {
       sessions: [session({ id: 'session-stale', title: '状态过期 Session', status: 'busy' })],
     });
 
-    expect(view.projects.flatMap((project) => project.items).map((item) => item.statusLabel)).toEqual([
-      '状态未知',
-      '状态未知',
+    expect(view.projects.flatMap((project) => project.items).map((item) => [item.statusLabel, item.detail])).toEqual([
+      ['已离线', '同步中断，显示最近记录'],
+      ['已离线', '同步中断，显示最近记录'],
     ]);
     expect(projectRunningWayfinderWork({
       nowMs: NOW,

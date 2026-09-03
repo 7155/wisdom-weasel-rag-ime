@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-lab-cost-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "authority", "pricingIdentity", "usage", "estimate",
+    "billing", "boundaries", "receiptSha256"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.agent-lab-cost-receipt.v1"},
+    "authority": {"const": "pricing_estimate"},
+    "pricingIdentity": {"$ref": "#/$defs/pricingIdentity"},
+    "usage": {"$ref": "#/$defs/usage"},
+    "estimate": {"$ref": "#/$defs/estimate"},
+    "billing": {"$ref": "#/$defs/billing"},
+    "boundaries": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "items": {"type": "string", "minLength": 1, "maxLength": 400}
+    },
+    "receiptSha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]*$"
+    },
+    "evidenceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "rateDecimalUsd": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "amountDecimalUsd": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "rates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uncachedInputUsd", "cachedInputUsd", "outputUsd"],
+      "properties": {
+        "uncachedInputUsd": {"$ref": "#/$defs/rateDecimalUsd"},
+        "cachedInputUsd": {"$ref": "#/$defs/rateDecimalUsd"},
+        "outputUsd": {"$ref": "#/$defs/rateDecimalUsd"}
+      }
+    },
+    "pricingIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pricingId", "provider", "model", "currency", "unit", "rates",
+        "publishedDate", "sourceUrl", "sourceSha256"
+      ],
+      "properties": {
+        "pricingId": {"$ref": "#/$defs/identity"},
+        "provider": {"$ref": "#/$defs/identity"},
+        "model": {"$ref": "#/$defs/identity"},
+        "currency": {"const": "USD"},
+        "unit": {"const": "per_million_tokens"},
+        "rates": {"$ref": "#/$defs/rates"},
+        "publishedDate": {
+          "type": "string",
+          "pattern": "^20[0-9]{2}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 1000,
+          "pattern": "^https://[^\\s]+$"
+        },
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available", "uncachedInputTokens", "cachedInputTokens",
+        "outputTokens", "sourceRef", "sourceSha256"
+      ],
+      "properties": {
+        "available": {"const": true},
+        "uncachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "cachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "outputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "sourceRef": {"$ref": "#/$defs/evidenceRef"},
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uncachedInputCostUsd", "cachedInputCostUsd", "outputCostUsd",
+        "totalCostUsd"
+      ],
+      "properties": {
+        "uncachedInputCostUsd": {"$ref": "#/$defs/amountDecimalUsd"},
+        "cachedInputCostUsd": {"$ref": "#/$defs/amountDecimalUsd"},
+        "outputCostUsd": {"$ref": "#/$defs/amountDecimalUsd"},
+        "totalCostUsd": {"$ref": "#/$defs/amountDecimalUsd"}
+      }
+    },
+    "billingNotProvided": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {"status": {"const": "not_provided"}}
+    },
+    "billingProvided": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "currency", "totalUsd", "receiptRef", "receiptSha256"],
+      "properties": {
+        "status": {"const": "provided"},
+        "currency": {"const": "USD"},
+        "totalUsd": {"$ref": "#/$defs/amountDecimalUsd"},
+        "receiptRef": {"$ref": "#/$defs/evidenceRef"},
+        "receiptSha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "billing": {
+      "oneOf": [
+        {"$ref": "#/$defs/billingNotProvided"},
+        {"$ref": "#/$defs/billingProvided"}
+      ]
+    }
+  }
+}

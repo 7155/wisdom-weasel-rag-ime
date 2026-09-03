@@ -245,7 +245,7 @@ def _assert_expected_runtime(
     *,
     provider: str,
     model: str,
-    thinking_level: str,
+    thinking_level: str | None,
 ) -> None:
     state = receipt.get("state")
     selected = state.get("model") if isinstance(state, Mapping) else None
@@ -254,7 +254,7 @@ def _assert_expected_runtime(
     actual_thinking = str(state.get("thinkingLevel") or "") if isinstance(state, Mapping) else ""
     if (actual_provider, actual_model) != (str(provider), str(model)):
         raise RuntimeError("CloudOps evaluation model route drifted from the frozen Runtime identity")
-    if actual_thinking != str(thinking_level):
+    if thinking_level is not None and actual_thinking != str(thinking_level):
         raise RuntimeError("CloudOps evaluation thinking level drifted from the frozen Runtime identity")
 
 
@@ -287,7 +287,12 @@ def run_cloudops_agent_eval(
         raise ValueError("CloudOps P0 runner requires the frozen 3x4 batch plan")
     if any(len(suite.assigned_case_ids(batch_id)) != 4 for batch_id in suite.batch_ids):
         raise ValueError("CloudOps P0 runner requires exactly four cases per batch")
-    if workflow_profile not in {"baseline-v1", "evidence-search-v1"}:
+    if workflow_profile not in {
+        "baseline-v1",
+        "evidence-search-v1",
+        "evidence-search-v2",
+        "observation-id-v1",
+    }:
         raise ValueError("CloudOps workflow profile is unsupported")
     artifact_store.initialize()
     batch_plan = {
@@ -404,8 +409,20 @@ def run_cloudops_agent_eval(
                     ensured,
                     provider=expected_provider,
                     model=expected_model,
-                    thinking_level=thinking_level,
+                    thinking_level=None,
                 )
+            thinking_receipt = service.select_thinking_level(
+                session_id,
+                {"level": thinking_level},
+            )
+            if str(thinking_receipt.get("thinkingLevel") or "") != thinking_level:
+                raise RuntimeError(
+                    "CloudOps evaluation thinking level drifted from the frozen Runtime identity"
+                )
+            ensured = {
+                "runtime": ensured,
+                "thinkingSelection": thinking_receipt,
+            }
             receipt = service.prompt(
                 session_id,
                 {
@@ -507,7 +524,9 @@ def run_cloudops_agent_eval(
             "scoreSha256": _sha256(score),
             "answers": merged_answers,
             "metrics": metrics,
+            "perCase": [dict(per_case[case_id]) for case_id in suite.case_ids],
             "processSignals": process_signals,
+            "usage": total_usage,
             "signals": signals,
             "traceIds": [*batch_trace_ids, aggregate_trace_id],
             "evalRunIds": [*batch_eval_ids, aggregate_eval_id],
@@ -728,6 +747,21 @@ def _batch_prompt(
     )
     if workflow_profile == "baseline-v1":
         return base
+    if workflow_profile in {"evidence-search-v2", "observation-id-v1"}:
+        prompt = (
+            base
+            + " For each case, localize the fault object first, then discriminate the root cause. "
+            "Do not promote an app or pod fault to a node without direct node-fault evidence; a healthy "
+            "Ready node with Flannel up is counterevidence for a node fault, not proof that no pod network "
+            "delay exists. Use at most two distinct search calls per case, at most one list fallback, and at "
+            "most six exact observation reads. Before any additional retrieval, name the two diagnoses that "
+            "the next observation will distinguish; if it will not add a new evidenceId, stop exploring. "
+            "Top-1 must have direct support plus counterevidence against the closest competing diagnosis; "
+            "use Top-2 and Top-3 to preserve residual uncertainty."
+        )
+        if workflow_profile == "observation-id-v1":
+            prompt += " Use observationId returned by list or search for every read; never construct or infer one."
+        return prompt
     if workflow_profile != "evidence-search-v1":
         raise ValueError("CloudOps workflow profile is unsupported")
     return (
@@ -834,20 +868,32 @@ def _validated_score(
 
 def _token_usage(events: list[Mapping[str, object]]) -> dict[str, object]:
     totals = {key: 0 for key in _USAGE_KEYS}
-    available = False
+    observed = False
     for event in events:
         usage = event.get("usage")
         if not isinstance(usage, Mapping):
+            payload = event.get("payload")
+            usage = payload.get("usage") if isinstance(payload, Mapping) else None
+        if not isinstance(usage, Mapping):
             continue
-        for key in totals:
-            value = usage.get(key)
+        aliases = {
+            "input": ("input", "inputTokens"),
+            "output": ("output", "outputTokens"),
+            "cacheRead": ("cacheRead", "cacheReadTokens"),
+            "cacheWrite": ("cacheWrite", "cacheWriteTokens"),
+            "totalTokens": ("totalTokens",),
+        }
+        for key, names in aliases.items():
+            value = next((usage.get(name) for name in names if usage.get(name) is not None), None)
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                 totals[key] += value
-                available = True
-    if not available:
+                observed = True
+    if not observed:
         return {"available": False}
     if totals["totalTokens"] == 0:
         totals["totalTokens"] = totals["input"] + totals["output"] + totals["cacheRead"] + totals["cacheWrite"]
+    if not any(totals.values()):
+        return {"available": False}
     return {"available": True, **totals}
 
 
@@ -868,9 +914,9 @@ def _sum_usage(batch_results: list[Mapping[str, object]]) -> dict[str, object]:
     return {"available": True, **result} if available else {"available": False}
 
 
-def _numeric_usage(value: object) -> dict[str, int]:
+def _numeric_usage(value: object) -> dict[str, int] | None:
     if not isinstance(value, Mapping) or value.get("available") is not True:
-        return {}
+        return None
     return {
         key: int(value[key])
         for key in _USAGE_KEYS
@@ -1034,7 +1080,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-reads-per-case", type=int, default=40)
     parser.add_argument(
         "--workflow-profile",
-        choices=("baseline-v1", "evidence-search-v1"),
+        choices=(
+            "baseline-v1",
+            "evidence-search-v1",
+            "evidence-search-v2",
+            "observation-id-v1",
+        ),
         default="baseline-v1",
     )
     parser.add_argument("--transport", choices=("spool", "loopback"), default="spool")

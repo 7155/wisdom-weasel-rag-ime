@@ -2,7 +2,7 @@
 
 This document answers “which requirements are complete?” without changing the
 meaning ledger set indexed by [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The
-nineteen requirement volumes own user meaning; this index owns explicit assessment and evidence
+twenty-six requirement volumes own user meaning; this index owns explicit assessment and evidence
 links. Runtime, Git, installation, and foreground state remain authoritative in
 their own projections and receipts.
 
@@ -41,17 +41,17 @@ Evidence levels describe scope, not a completion ladder. For example, E2 does
 not prove E4–E6, and a screenshot without an authoritative run identity does
 not prove the Runtime path.
 
-## Current honest summary — 2026-08-30
+## Current honest summary — 2026-09-01
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
-| All requirements | `208 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-211` remain unassessed. |
-| Current P0 requirements | 177 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
-| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-211` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
+| All requirements | `222 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-225` remain unassessed. |
+| Current P0 requirements | 182 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
+| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-225` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
 | Install / Runtime / foreground | No E4, E5, or E6 receipt is linked here | Do not claim installed or foreground acceptance from source, tests, builds, or screenshots. |
 
 This conservative baseline is intentional. It does not say that no code exists;
-it says 208 requirements have not yet been individually assessed against fresh,
+it says 222 requirements have not yet been individually assessed against fresh,
 linked evidence in this index. Closing the three documentation/Demo delivery
 requirements does not promote their preview receipts to E4–E6.
 
@@ -388,7 +388,20 @@ not inferred status.
     "UR-209": {},
     "UR-210": {},
     "UR-211": {},
-    "UR-212": {}
+    "UR-212": {},
+    "UR-213": {},
+    "UR-214": {},
+    "UR-215": {},
+    "UR-216": {},
+    "UR-217": {},
+    "UR-218": {},
+    "UR-219": {},
+    "UR-220": {},
+    "UR-221": {},
+    "UR-222": {},
+    "UR-223": {},
+    "UR-224": {},
+    "UR-225": {}
   }
 }
 ```

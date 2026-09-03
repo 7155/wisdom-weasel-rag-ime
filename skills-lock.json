@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "skills": {
+    "jd-tailorer": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/jd-tailorer/SKILL.md",
+      "computedHash": "5d5fa00257f1d571fb245d6e742ddc768a58f8f4edfbe278dd33b4b7e76f6ae2"
+    },
+    "job-description-analyzer": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/job-description-analyzer/SKILL.md",
+      "computedHash": "3a3682ac645526774b3c558beaae11fe7b0dc3029db4f6ddb2014ad7c09b7f81"
+    },
+    "resume-ats-optimizer": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/resume-ats-optimizer/SKILL.md",
+      "computedHash": "3336ffca1fa1260cd3b4cde1667308c6af6e0598434add3fcf2436f39f9b9b4c"
+    },
+    "resume-builder": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/resume-builder/SKILL.md",
+      "computedHash": "fb1d70ab8575c7645650f77062a14da6907278ae19089a0fdfbbc355e9d1b17b"
+    },
+    "resume-bullet-writer": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/resume-bullet-writer/SKILL.md",
+      "computedHash": "8f3b60a7ffe13ccec6b5a2d255e6abc4f1c97e193a9a3214b874624225821029"
+    },
+    "resume-version-manager": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/resume-version-manager/SKILL.md",
+      "computedHash": "a538c3992f054cc8ce3fdc9d8322f4f4801ead4086a5c90fd26665ebf6682ff9"
+    },
+    "resume-workflow": {
+      "source": "Chasen-Liao/resume-skills",
+      "sourceType": "github",
+      "skillPath": "skills/resume-workflow/SKILL.md",
+      "computedHash": "8b557db2c22ebfae4fd2bd534c56b6813c409114e43c27e39b84af80a290c880"
+    }
+  }
+}

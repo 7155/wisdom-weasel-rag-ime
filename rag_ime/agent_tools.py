@@ -2086,7 +2086,10 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
         "type": "array",
         "minItems": 1,
         "maxItems": 2,
-        "description": "批量委派；也可以改用 agent、version、task 提交单项任务。",
+        "description": (
+            "批量委派；也可以改用 agent、version、task 提交单项任务。"
+            " contextMode 仅在请求根级设置，不属于 tasks[] 子项。"
+        ),
         "items": {
             "type": "object",
             "additionalProperties": False,
@@ -2154,9 +2157,16 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
             },
         },
     },
-    "contextMode": {"type": "string", "enum": ["fresh", "fork"]},
+    "contextMode": {
+        "type": "string",
+        "enum": ["fresh", "fork"],
+        "description": "委派请求级上下文模式；不要在 tasks[] 子项中重复设置。",
+    },
     "forkEntryId": {"type": "string", "minLength": 1, "maxLength": 240},
-    "wait": {"type": "boolean"},
+    "wait": {
+        "type": "boolean",
+        "description": "默认不等待；仅显式 true 才等待终态并返回完整结果。",
+    },
     "batchId": {"type": "string", "minLength": 1, "maxLength": 240},
     "artifactId": {"type": "string", "minLength": 1, "maxLength": 240},
     "reason": {"type": "string", "minLength": 1, "maxLength": 2_000},

@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -26,6 +27,11 @@ from .agent_room_routing import (
 from .agent_room_work import work_item_payload
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
+from .room_permission_policy import (
+    normalize_room_permission_policy,
+    room_permission_policy_columns,
+    room_permission_policy_from_row,
+)
 
 
 ROOM_EVENT_TYPES = frozenset(
@@ -53,6 +59,8 @@ ROOM_SNAPSHOT_EVENT_LIMIT = 200
 ROOM_HISTORY_PAGE_LIMIT = 200
 MAX_ACTIVE_ROOM_PARTICIPANTS = 8
 MAX_ROOM_WORKSPACE_ROOTS = 5
+_ROOM_OWNER_APP_ID_RE = re.compile(r"^extension:[a-z0-9][a-z0-9-]{0,63}$")
+_ROOM_SURFACE_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 ROOM_COLLABORATION_ROLES = frozenset(
     {
         "coordinator",
@@ -80,13 +88,38 @@ class AgentParticipantNotFound(KeyError):
 class AgentRoomStore:
     """Persistent cross-session room timeline with a JSONL audit mirror."""
 
-    def __init__(self, db_path: str | Path, *, room_dir: str | Path | None = None):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        room_dir: str | Path | None = None,
+        persistent_reads: bool = False,
+    ):
         self.db_path = Path(db_path)
         self.room_dir = Path(room_dir) if room_dir is not None else self.db_path.parent / "Agent" / "rooms"
+        self._persistent_reads = bool(persistent_reads)
+        self._read_lock = threading.RLock()
+        self._read_connection: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.room_dir.mkdir(parents=True, exist_ok=True)
+        if self._persistent_reads:
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                apply_database_migrations(conn)
+                conn.commit()
+            except BaseException:
+                conn.close()
+                raise
+            with self._read_lock:
+                previous = self._read_connection
+                self._read_connection = conn
+            if previous is not None:
+                previous.close()
+            return
         with self._connect() as conn:
             apply_database_migrations(conn)
 
@@ -103,17 +136,31 @@ class AgentRoomStore:
         description: str = "",
         scenario_prompt: str = "",
         routing_config: Mapping[str, object] | None = None,
+        permission_policy: Mapping[str, object] | None = None,
+        execution_mode: str | None = None,
+        owner_app_id: str = "",
+        surface_key: str = "",
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         normalized_title = " ".join(str(title).split())[:120]
         if not normalized_title:
             raise ValueError("agent room title must not be empty")
-        policy = normalize_routing_policy(routing_policy)
+        routing = normalize_routing_policy(routing_policy)
         kind = normalize_room_kind(room_kind)
+        room_policy = normalize_room_permission_policy(
+            permission_policy,
+            room_kind=kind,
+            legacy_execution_mode=execution_mode,
+        )
+        permission_columns = room_permission_policy_columns(room_policy)
         config = normalize_routing_config(routing_config)
         normalized_avatar = " ".join(str(avatar or "members").split())[:80] or "members"
         normalized_description = " ".join(str(description or "").split())[:500]
         normalized_scenario = str(scenario_prompt or "").strip()[:8_000]
+        normalized_owner_app_id, normalized_surface_key = _room_surface_identity(
+            owner_app_id,
+            surface_key,
+        )
         values = [dict(item) for item in participants]
         if not 2 <= len(values) <= MAX_ACTIVE_ROOM_PARTICIPANTS:
             raise ValueError(
@@ -141,13 +188,14 @@ class AgentRoomStore:
                     room_file, workspace_roots_json, room_kind, avatar, description,
                     scenario_prompt, routing_mode, routing_config_json,
                     next_speaker_ordinal, active_topic_id, config_revision,
-                    created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?)
+                    execution_mode, partner_execution_mode, tool_agent_execution_mode,
+                    owner_app_id, surface_key, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     room_id,
                     normalized_title,
-                    _legacy_policy(policy),
+                    _legacy_policy(routing),
                     moderator_id,
                     str(room_file),
                     json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
@@ -155,9 +203,14 @@ class AgentRoomStore:
                     normalized_avatar,
                     normalized_description,
                     normalized_scenario,
-                    policy,
+                    routing,
                     json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
                     topic_id,
+                    permission_columns["execution_mode"],
+                    permission_columns["partner_execution_mode"],
+                    permission_columns["tool_agent_execution_mode"],
+                    normalized_owner_app_id,
+                    normalized_surface_key,
                     timestamp,
                     timestamp,
                 ),
@@ -221,9 +274,8 @@ class AgentRoomStore:
             raise AgentRoomNotFound(room_id)
         participants = conn.execute(
             """
-            SELECT p.*, s.execution_mode AS session_execution_mode
+            SELECT p.*
             FROM agent_room_participants AS p
-            LEFT JOIN agent_sessions AS s ON s.id = p.session_id
             WHERE room_id = ? ORDER BY ordinal ASC
             """,
             (room_id,),
@@ -281,12 +333,16 @@ class AgentRoomStore:
         limit: int = 100,
         before_updated_at_ms: int | None = None,
         before_id: str | None = None,
+        owner_app_id: str | None = None,
+        surface_key: str | None = None,
     ) -> list[dict[str, object]]:
         page = self.list_page(
             include_archived=include_archived,
             limit=limit,
             before_updated_at_ms=before_updated_at_ms,
             before_id=before_id,
+            owner_app_id=owner_app_id,
+            surface_key=surface_key,
         )
         return cast(list[dict[str, object]], page["items"])
 
@@ -297,6 +353,8 @@ class AgentRoomStore:
         limit: int = 100,
         before_updated_at_ms: int | None = None,
         before_id: str | None = None,
+        owner_app_id: str | None = None,
+        surface_key: str | None = None,
     ) -> dict[str, object]:
         """Return a keyset-paginated Room listing.
 
@@ -305,6 +363,12 @@ class AgentRoomStore:
         """
         bounded = max(1, min(int(limit), 200))
         clauses = [] if include_archived else ["status = 'active'"]
+        normalized_owner = _optional_room_owner(owner_app_id)
+        normalized_surface = _optional_room_surface_key(surface_key)
+        if normalized_owner is not None:
+            clauses.append("owner_app_id = ?")
+        if normalized_surface is not None:
+            clauses.append("surface_key = ?")
         normalized_before_id = str(before_id or "").strip()
         if before_updated_at_ms is not None and normalized_before_id:
             clauses.append(
@@ -313,20 +377,24 @@ class AgentRoomStore:
             )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query_params: list[object] = []
+        if normalized_owner is not None:
+            query_params.append(normalized_owner)
+        if normalized_surface is not None:
+            query_params.append(normalized_surface)
         if before_updated_at_ms is not None and normalized_before_id:
             query_params.extend(
                 [before_updated_at_ms, before_updated_at_ms, normalized_before_id]
             )
         query_params.append(bounded + 1)
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             rows = conn.execute(
                 f"SELECT id, updated_at_ms FROM agent_rooms {where} "
                 "ORDER BY updated_at_ms DESC, id DESC LIMIT ?",  # noqa: S608
                 query_params,
             ).fetchall()
-        has_more = len(rows) > bounded
-        page_rows = rows[:bounded]
-        items = [self.get(str(row["id"])) for row in page_rows]
+            has_more = len(rows) > bounded
+            page_rows = rows[:bounded]
+            items = [self._get(conn, str(row["id"])) for row in page_rows]
         next_updated_at_ms = (
             int(page_rows[-1]["updated_at_ms"])
             if has_more and page_rows
@@ -347,6 +415,171 @@ class AgentRoomStore:
             "nextBeforeUpdatedAtMs": next_updated_at_ms,
             "nextBeforeId": next_id,
             "nextCursor": next_cursor,
+        }
+
+    def list_directory_page(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+        before_updated_at_ms: int | None = None,
+        before_id: str | None = None,
+        owner_app_id: str | None = None,
+        surface_key: str | None = None,
+    ) -> dict[str, object]:
+        """Return the desktop Room projection without N full Room hydrations."""
+        bounded = max(1, min(int(limit), 200))
+        clauses = [] if include_archived else ["status = 'active'"]
+        normalized_owner = _optional_room_owner(owner_app_id)
+        normalized_surface = _optional_room_surface_key(surface_key)
+        if normalized_owner is not None:
+            clauses.append("owner_app_id = ?")
+        if normalized_surface is not None:
+            clauses.append("surface_key = ?")
+        params: list[object] = []
+        if normalized_owner is not None:
+            params.append(normalized_owner)
+        if normalized_surface is not None:
+            params.append(normalized_surface)
+        normalized_before_id = str(before_id or "").strip()
+        if before_updated_at_ms is not None and normalized_before_id:
+            clauses.append(
+                "(updated_at_ms < ? OR (updated_at_ms = ? AND id < ?))"
+            )
+            params.extend(
+                [before_updated_at_ms, before_updated_at_ms, normalized_before_id]
+            )
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(bounded + 1)
+        with self._read_connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, title, status, routing_policy, routing_mode,
+                       moderator_participant_id, workspace_roots_json,
+                       room_kind, execution_mode, partner_execution_mode,
+                       tool_agent_execution_mode,
+                       owner_app_id, surface_key, updated_at_ms
+                FROM agent_rooms {where}
+                ORDER BY updated_at_ms DESC, id DESC LIMIT ?
+                """,  # noqa: S608 - clauses are fixed internal SQL
+                params,
+            ).fetchall()
+            has_more = len(rows) > bounded
+            page_rows = rows[:bounded]
+            room_ids = [str(row["id"]) for row in page_rows]
+            participants_by_room: dict[str, list[dict[str, object]]] = {
+                room_id: [] for room_id in room_ids
+            }
+            work_by_room: dict[str, list[dict[str, object]]] = {
+                room_id: [] for room_id in room_ids
+            }
+            if room_ids:
+                placeholders = ",".join("?" for _ in room_ids)
+                participant_rows = conn.execute(
+                    f"""
+                    SELECT id, room_id, session_id, role_id, role_version,
+                           display_name, collaboration_role_key,
+                           collaboration_role, participant_status, ordinal
+                    FROM agent_room_participants
+                    WHERE room_id IN ({placeholders})
+                    ORDER BY room_id, ordinal
+                    """,  # noqa: S608 - placeholders are generated, values bound
+                    room_ids,
+                ).fetchall()
+                for participant in participant_rows:
+                    participants_by_room[str(participant["room_id"])].append(
+                        {
+                            "schemaVersion": "rag-ime.agent-participant.v1",
+                            "id": str(participant["id"]),
+                            "roomId": str(participant["room_id"]),
+                            "sessionId": str(participant["session_id"]),
+                            "roleId": canonical_agent_role_id(participant["role_id"]),
+                            "roleVersion": str(participant["role_version"]),
+                            "displayName": str(participant["display_name"]),
+                            "collaborationRole": str(
+                                participant["collaboration_role_key"]
+                                or participant["collaboration_role"]
+                                or "implementer"
+                            ),
+                            "status": str(participant["participant_status"]),
+                            "ordinal": int(participant["ordinal"]),
+                        }
+                    )
+                work_rows = conn.execute(
+                    f"""
+                    SELECT room_id, state, objective, result_summary,
+                           blocker_json, updated_at_ms
+                    FROM (
+                        SELECT room_id, state, objective, result_summary,
+                               blocker_json, updated_at_ms,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY room_id
+                                   ORDER BY CASE state
+                                       WHEN 'blocked' THEN 0
+                                       WHEN 'active' THEN 1
+                                       WHEN 'review' THEN 2
+                                       WHEN 'queued' THEN 3
+                                       WHEN 'failed' THEN 4
+                                       WHEN 'done' THEN 5
+                                       ELSE 6
+                                   END,
+                                   updated_at_ms DESC
+                               ) AS directory_rank
+                        FROM agent_room_work_items
+                        WHERE room_id IN ({placeholders})
+                    )
+                    WHERE directory_rank = 1
+                    """,  # noqa: S608 - placeholders are generated, values bound
+                    room_ids,
+                ).fetchall()
+                for work in work_rows:
+                    blocker = json.loads(str(work["blocker_json"] or "{}"))
+                    work_by_room[str(work["room_id"])].append(
+                        {
+                            "state": str(work["state"]),
+                            "objective": str(work["objective"] or ""),
+                            "resultSummary": str(work["result_summary"] or ""),
+                            "blocker": dict(blocker) if isinstance(blocker, Mapping) else {},
+                            "updatedAtMs": int(work["updated_at_ms"]),
+                        }
+                    )
+        items = [
+            {
+                "schemaVersion": "rag-ime.agent-room-directory-entry.v1",
+                "id": str(row["id"]),
+                "routingPolicy": str(row["routing_mode"] or row["routing_policy"]),
+                "executionMode": str(row["execution_mode"] or ""),
+                "permissionPolicy": room_permission_policy_from_row(row),
+                "moderatorParticipantId": str(row["moderator_participant_id"] or ""),
+                "ownerAppId": str(row["owner_app_id"] or ""),
+                "surfaceKey": str(row["surface_key"] or ""),
+                "workspaceRoots": [
+                    str(value)
+                    for value in json.loads(str(row["workspace_roots_json"] or "[]"))
+                    if str(value).strip()
+                ],
+                "updatedAtMs": int(row["updated_at_ms"]),
+                "participants": participants_by_room[str(row["id"])],
+                "workItems": work_by_room[str(row["id"])],
+            }
+            for row in page_rows
+        ]
+        next_updated_at_ms = (
+            int(page_rows[-1]["updated_at_ms"])
+            if has_more and page_rows
+            else None
+        )
+        next_id = str(page_rows[-1]["id"]) if has_more and page_rows else None
+        return {
+            "items": items,
+            "hasMore": has_more,
+            "nextBeforeUpdatedAtMs": next_updated_at_ms,
+            "nextBeforeId": next_id,
+            "nextCursor": (
+                {"beforeUpdatedAtMs": next_updated_at_ms, "beforeId": next_id}
+                if has_more
+                else None
+            ),
         }
 
     def archive(self, room_id: str, *, archived: bool, updated_at_ms: int | None = None) -> dict[str, object]:
@@ -817,6 +1050,8 @@ class AgentRoomStore:
             "moderatorParticipantId",
             "activeTopicId",
             "workspaceRoots",
+            "permissionPolicy",
+            "executionMode",
         }
         unknown = set(values) - allowed
         if unknown:
@@ -828,6 +1063,23 @@ class AgentRoomStore:
             if isinstance(item, Mapping) and item.get("status") == "active"
         }
         updates: dict[str, object] = {}
+        permission_policy: dict[str, object] | None = None
+        if "permissionPolicy" in values:
+            permission_policy = normalize_room_permission_policy(
+                values.get("permissionPolicy"),
+                room_kind=current.get("roomKind", "collaboration"),
+                current=current,
+                legacy_execution_mode=values.get("executionMode"),
+            )
+        elif "executionMode" in values:
+            permission_policy = normalize_room_permission_policy(
+                None,
+                room_kind=current.get("roomKind", "collaboration"),
+                current=current,
+                legacy_execution_mode=values.get("executionMode"),
+            )
+        if permission_policy is not None:
+            updates.update(room_permission_policy_columns(permission_policy))
         if "title" in values:
             title = " ".join(str(values.get("title") or "").split())[:120]
             if not title:
@@ -990,7 +1242,7 @@ class AgentRoomStore:
             else ""
         )
         placeholders = ", ".join("?" for _ in normalized_ids)
-        with self._connect() as conn:
+        with self._read_connect() as conn:
             rows = conn.execute(
                 f"""
                 SELECT p.* FROM agent_room_participants p
@@ -1760,6 +2012,148 @@ class AgentRoomStore:
             ).fetchall()
         return [_room_event_payload(row) for row in rows]
 
+    def list_events_for_turn(
+        self,
+        room_id: str,
+        turn_id: str,
+        *,
+        event_types: Sequence[str] = (),
+        after_sequence: int = 0,
+        limit: int = 500,
+    ) -> list[dict[str, object]]:
+        """Read one turn without decoding unrelated retained Room events."""
+
+        self.get(room_id)
+        normalized_types = tuple(
+            dict.fromkeys(str(value or "").strip() for value in event_types)
+        )
+        unsupported = set(normalized_types) - ROOM_EVENT_TYPES
+        if unsupported:
+            raise ValueError(
+                f"unsupported agent room event type: {sorted(unsupported)[0]}"
+            )
+        bounded = max(1, min(int(limit), 2000))
+        query = """
+            SELECT * FROM agent_room_events
+            WHERE room_id = ? AND turn_id = ? AND sequence > ?
+        """
+        parameters: list[object] = [
+            room_id,
+            str(turn_id or ""),
+            max(0, int(after_sequence)),
+        ]
+        if normalized_types:
+            placeholders = ", ".join("?" for _ in normalized_types)
+            query += f" AND event_type IN ({placeholders})"
+            parameters.extend(normalized_types)
+        query += " ORDER BY sequence ASC LIMIT ?"
+        parameters.append(bounded)
+        with self._connect() as conn:
+            rows = conn.execute(query, parameters).fetchall()
+        return [_room_event_payload(row) for row in rows]
+
+    def list_recovery_events_for_dispatches(
+        self,
+        room_id: str,
+        turn_id: str,
+        *,
+        dispatch_ids: Sequence[str],
+        limit: int = 500,
+    ) -> list[dict[str, object]]:
+        """Read only recovery events that name an expected child dispatch."""
+
+        self.get(room_id)
+        normalized_dispatch_ids = tuple(
+            dict.fromkeys(
+                value
+                for value in (
+                    str(dispatch_id or "").strip()
+                    for dispatch_id in dispatch_ids
+                )
+                if value
+            )
+        )
+        if not normalized_dispatch_ids:
+            return []
+        bounded = max(1, min(int(limit), 2000))
+        dispatch_ids_json = json.dumps(
+            normalized_dispatch_ids,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                WITH expected_dispatches(dispatch_id) AS (
+                    SELECT CAST(value AS TEXT) FROM json_each(?)
+                )
+                SELECT * FROM agent_room_events
+                WHERE room_id = ?
+                  AND turn_id = ?
+                  AND event_type IN (
+                      'room_post',
+                      'participant_message',
+                      'participant_activity'
+                  )
+                  AND (
+                      json_extract(payload_json, '$.post.dispatchId') IN (
+                          SELECT dispatch_id FROM expected_dispatches
+                      )
+                      OR json_extract(payload_json, '$.data.dispatchId') IN (
+                          SELECT dispatch_id FROM expected_dispatches
+                      )
+                      OR json_extract(payload_json, '$.data.childDispatchId') IN (
+                          SELECT dispatch_id FROM expected_dispatches
+                      )
+                      OR json_extract(payload_json, '$.dispatchId') IN (
+                          SELECT dispatch_id FROM expected_dispatches
+                      )
+                      OR json_extract(payload_json, '$.childDispatchId') IN (
+                          SELECT dispatch_id FROM expected_dispatches
+                      )
+                  )
+                ORDER BY sequence ASC LIMIT ?
+                """,
+                (
+                    dispatch_ids_json,
+                    room_id,
+                    str(turn_id or ""),
+                    bounded,
+                ),
+            ).fetchall()
+        return [_room_event_payload(row) for row in rows]
+
+    def has_typed_result(self, room_id: str, turn_id: str) -> bool:
+        """Check the authoritative typed Root result without scanning the room."""
+
+        self.get(room_id)
+        normalized_turn_id = str(turn_id or "")
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_room_events
+                WHERE room_id = ?
+                  AND turn_id = ?
+                  AND event_type = 'room_post'
+                  AND json_extract(payload_json, '$.post.kind') = 'result'
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (room_id, normalized_turn_id),
+            ).fetchone()
+        if row is None:
+            return False
+        event = _room_event_payload(row)
+        payload = event.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        post = payload.get("post")
+        return (
+            str(event.get("roomId") or "") == room_id
+            and str(event.get("turnId") or "") == normalized_turn_id
+            and str(event.get("eventType") or "") == "room_post"
+            and isinstance(post, Mapping)
+            and str(post.get("kind") or "") == "result"
+        )
+
     def history_page(
         self,
         room_id: str,
@@ -1829,9 +2223,8 @@ class AgentRoomStore:
                 raise AgentRoomNotFound(room_id)
             participant_rows = conn.execute(
                 """
-                SELECT p.*, s.execution_mode AS session_execution_mode
+                SELECT p.*
                 FROM agent_room_participants AS p
-                LEFT JOIN agent_sessions AS s ON s.id = p.session_id
                 WHERE room_id = ? ORDER BY ordinal ASC
                 """,
                 (room_id,),
@@ -1999,6 +2392,23 @@ class AgentRoomStore:
             conn.close()
 
     @contextmanager
+    def _read_connect(self) -> Iterator[sqlite3.Connection]:
+        with self._read_lock:
+            conn = self._read_connection
+            if conn is not None:
+                yield conn
+                return
+        with self._connect() as fallback:
+            yield fallback
+
+    def close(self) -> None:
+        with self._read_lock:
+            conn = self._read_connection
+            self._read_connection = None
+        if conn is not None:
+            conn.close()
+
+    @contextmanager
     def write_transaction(self) -> Iterator[sqlite3.Connection]:
         """Share one immediate transaction across Room and Session stores."""
 
@@ -2145,6 +2555,7 @@ def _room_payload(
     start_gate: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     routing_policy = str(row["routing_mode"] or row["routing_policy"])
+    permission_policy = room_permission_policy_from_row(row)
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-room.v1",
         "id": str(row["id"]),
@@ -2154,7 +2565,10 @@ def _room_payload(
         "avatar": str(row["avatar"] or "members"),
         "description": str(row["description"] or ""),
         "scenarioPrompt": str(row["scenario_prompt"] or ""),
-        "executionMode": _room_execution_mode(participants),
+        "ownerAppId": str(row["owner_app_id"] or ""),
+        "surfaceKey": str(row["surface_key"] or ""),
+        "executionMode": permission_policy["room"]["executionMode"],
+        "permissionPolicy": permission_policy,
         "routingPolicy": routing_policy,
         "routingConfig": normalize_routing_config(
             json.loads(str(row["routing_config_json"] or "{}"))
@@ -2195,23 +2609,6 @@ def _room_start_gate_payload(row: sqlite3.Row | None) -> dict[str, object] | Non
     }
 
 
-def _room_execution_mode(participants: Sequence[sqlite3.Row]) -> str:
-    active = {
-        str(row["session_execution_mode"])
-        for row in participants
-        if (
-            str(row["participant_status"] or "") == "active"
-            and "session_execution_mode" in row.keys()
-            and row["session_execution_mode"]
-        )
-    }
-    if len(active) == 1:
-        return next(iter(active))
-    # A mixed participant policy is never treated as trusted. Lifecycle repair
-    # will converge it before the next managed Dispatch. Missing Session rows
-    # are ignored above so a surviving participant still carries the Room mode
-    # into missing-session repair.
-    return "per_action"
 
 
 def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
@@ -2280,6 +2677,34 @@ def _workspace_roots(values: Sequence[str]) -> list[str]:
         if normalized not in roots:
             roots.append(normalized)
     return roots
+
+
+def _room_surface_identity(owner_app_id: object, surface_key: object) -> tuple[str, str]:
+    owner = str(owner_app_id or "").strip()
+    key = str(surface_key or "").strip()
+    if owner and not _ROOM_OWNER_APP_ID_RE.fullmatch(owner):
+        raise ValueError("room ownerAppId must be an extension App id")
+    if key and not _ROOM_SURFACE_KEY_RE.fullmatch(key):
+        raise ValueError("room surfaceKey is invalid")
+    if key and not owner:
+        raise ValueError("room surfaceKey requires ownerAppId")
+    return owner, key
+
+
+def _optional_room_owner(value: object) -> str | None:
+    if value is None:
+        return None
+    owner, _ = _room_surface_identity(value, "")
+    return owner
+
+
+def _optional_room_surface_key(value: object) -> str | None:
+    if value is None:
+        return None
+    key = str(value or "").strip()
+    if key and not _ROOM_SURFACE_KEY_RE.fullmatch(key):
+        raise ValueError("room surfaceKey is invalid")
+    return key
 
 
 def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:

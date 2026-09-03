@@ -34,6 +34,26 @@ describe('selectRoomTurnExecution', () => {
     expect(selectActivePublicRoomTurn(projection)?.id).toBe('latest-root');
   });
 
+  it('clears the active Room turn as soon as every real dispatch is terminal even if the Root receipt is late', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-late');
+    projection.turnsById['root-late'] = {
+      id: 'root-late', rootId: 'root-late', status: 'running',
+      messageIds: [], activityIds: [],
+      participantIds: ['earth', 'mars'],
+      terminalParticipantIds: ['earth', 'mars'],
+      dispatchIds: ['dispatch-earth', 'dispatch-mars'],
+      terminalDispatchIds: ['dispatch-earth', 'dispatch-mars'],
+      dispatchParticipantIds: {
+        'dispatch-earth': 'earth',
+        'dispatch-mars': 'mars',
+      },
+      createdAtMs: 1, updatedAtMs: 4,
+    };
+
+    expect(selectActivePublicRoomTurn(projection)).toBeUndefined();
+  });
+
   it('projects an active Pi Session dispatch into the task overview without a WorkItem', () => {
     const projection = createRoomProjection('room-1');
     projection.turnOrder.push('root-1');

@@ -42,12 +42,13 @@ grep -q 'Content-Security-Policy' "$WEB_RESOURCES/index.html"
 ! grep -R -E -q 'unsafe-eval|new Function|require\("|eval\(' "$WEB_RESOURCES"
 "$ROOT/scripts/check_control_center_web_dist.sh" \
   "$WEB_RESOURCES" http production "$EXPECTED_COMMIT" >/dev/null
-python3 - "$ROOT" "$WEB_RESOURCES" "$MARKER" "$EXPECTED_COMMIT" <<'PY'
+python3 - "$ROOT" "$WEB_RESOURCES" "$MARKER" "$EXPECTED_COMMIT" "${RAG_IME_ALLOW_DIRTY_INSTALL:-0}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-root, dist_path, marker_path, expected_commit = sys.argv[1:]
+root, dist_path, marker_path, expected_commit, allow_dirty = sys.argv[1:]
+expected_dirty = allow_dirty == "1"
 sys.path.insert(0, root)
 from rag_ime.release_staging import content_tree_digest
 
@@ -57,8 +58,8 @@ if marker.get("bundleId") != "com.rag-ime.control":
     raise SystemExit("web control bundle marker has the wrong bundle id")
 if marker.get("sourceCommit") != expected_commit:
     raise SystemExit("web control bundle marker has the wrong source commit")
-if marker.get("sourceDirty") is not False or marker.get("gitDirty") is not False:
-    raise SystemExit("web control bundle marker is not a clean release build")
+if marker.get("sourceDirty") is not expected_dirty or marker.get("gitDirty") is not expected_dirty:
+    raise SystemExit("web control bundle marker dirty state does not match the requested install mode")
 if marker.get("ui") != "control-center-web" or marker.get("channel") != "release":
     raise SystemExit("web control bundle marker is not a release build")
 if marker.get("frontendProduct") != "paw-os":
@@ -79,7 +80,7 @@ if marker.get("browserPartition") != "persist:paw-browser" or marker.get("sameOr
     raise SystemExit("web control bundle marker has an invalid Browser session boundary")
 if marker.get("provenance") != {
     "sourceCommit": expected_commit,
-    "sourceDirty": False,
+    "sourceDirty": expected_dirty,
     "frontendProduct": "paw-os",
     "bundleId": "com.rag-ime.control",
     "frontendTransport": "http",

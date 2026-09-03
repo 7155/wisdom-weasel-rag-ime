@@ -14,9 +14,10 @@ import type { WayfinderWorkRoomSource } from './wayfinder-work-projection';
 
 const SESSION_LIMIT = 100;
 const ROOM_LIMIT = 100;
-const DEFAULT_POLL_INTERVAL_MS = 7_500;
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_MAINTENANCE_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_ACTIVE_MAINTENANCE_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_INITIAL_POLL_DELAY_MS = 1_200;
 const MINIMUM_FRESHNESS_MS = 30_000;
 
 type PawWorkDirectoryValue = {
@@ -57,11 +58,13 @@ const PawWorkDirectoryContext = createContext<PawWorkDirectoryValue | null>(null
  */
 export function PawWorkDirectoryProvider({
   children,
+  initialPollDelayMs = DEFAULT_INITIAL_POLL_DELAY_MS,
   maintenancePollIntervalMs = DEFAULT_MAINTENANCE_POLL_INTERVAL_MS,
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   runningMaintenancePollIntervalMs = DEFAULT_ACTIVE_MAINTENANCE_POLL_INTERVAL_MS,
 }: {
   children: ReactNode;
+  initialPollDelayMs?: number;
   maintenancePollIntervalMs?: number;
   pollIntervalMs?: number;
   runningMaintenancePollIntervalMs?: number;
@@ -78,15 +81,13 @@ export function PawWorkDirectoryProvider({
   const [sessionStatusFresh, setSessionStatusFresh] = useState(false);
   const [roomStatusFresh, setRoomStatusFresh] = useState(false);
   const directoryAbortRef = useRef<AbortController | null>(null);
+  const directoryScheduleResetRef = useRef<() => void>(() => undefined);
   const maintenanceAbortRef = useRef<AbortController | null>(null);
   const directoryGenerationRef = useRef(0);
   const maintenanceGenerationRef = useRef(0);
   const loadedRef = useRef(false);
-  const sessionSuccessAtRef = useRef(0);
-  const roomSuccessAtRef = useRef(0);
   const maintenanceSuccessAtRef = useRef(0);
   const maintenanceRunningRef = useRef(false);
-  const freshnessMs = Math.max(MINIMUM_FRESHNESS_MS, pollIntervalMs * 3);
   const maintenanceFreshnessMs = Math.max(MINIMUM_FRESHNESS_MS, maintenancePollIntervalMs * 2);
 
   const refreshDirectory = useCallback(async () => {
@@ -96,32 +97,29 @@ export function PawWorkDirectoryProvider({
     directoryAbortRef.current = controller;
     if (!loadedRef.current) setLoading(true);
     const [sessionResult, roomResult] = await Promise.allSettled([
-      transport.request({ pathId: 'agent.sessions.list', query: { limit: SESSION_LIMIT }, signal: controller.signal }),
-      transport.request({ pathId: 'agent.rooms.list', query: { limit: ROOM_LIMIT }, signal: controller.signal }),
+      transport.request({ pathId: 'agent.sessions.list', query: { limit: SESSION_LIMIT, projectionOnly: 1 }, signal: controller.signal }),
+      transport.request({ pathId: 'agent.rooms.list', query: { limit: ROOM_LIMIT, projectionOnly: 1 }, signal: controller.signal }),
     ]);
     if (controller.signal.aborted || generation !== directoryGenerationRef.current) return;
-    const now = Date.now();
     if (sessionResult.status === 'fulfilled') {
-      sessionSuccessAtRef.current = now;
       setSessionStatusFresh(true);
       setSessions((current) => sameDirectoryValue(current, sessionItems(sessionResult.value)));
     } else {
-      setSessionStatusFresh(sessionSuccessAtRef.current > 0 && now - sessionSuccessAtRef.current <= freshnessMs);
+      setSessionStatusFresh(false);
     }
     if (roomResult.status === 'fulfilled') {
-      roomSuccessAtRef.current = now;
       setRoomStatusFresh(true);
       setRooms((current) => sameDirectoryValue(current, pawWorkRoomSources(roomResult.value)));
     } else {
-      setRoomStatusFresh(roomSuccessAtRef.current > 0 && now - roomSuccessAtRef.current <= freshnessMs);
+      setRoomStatusFresh(false);
     }
-    setFailed(sessionResult.status === 'rejected' && roomResult.status === 'rejected');
+    setFailed(sessionResult.status === 'rejected' && roomResult.status === 'rejected' && !loadedRef.current);
     if (!loadedRef.current) {
       loadedRef.current = true;
       setLoaded(true);
       setLoading(false);
     }
-  }, [freshnessMs, transport]);
+  }, [transport]);
 
   const refreshMaintenance = useCallback(async () => {
     const generation = ++maintenanceGenerationRef.current;
@@ -154,6 +152,11 @@ export function PawWorkDirectoryProvider({
   }, [maintenanceFreshnessMs, transport]);
 
   const refresh = useCallback(async () => {
+    if (document.visibilityState === 'hidden') return;
+    /* Explicit user/terminal refresh is immediate, but also restarts the
+     * passive window so it cannot be followed milliseconds later by a stale
+     * scheduled poll (especially noisy while Runtime is offline). */
+    directoryScheduleResetRef.current();
     await Promise.all([refreshDirectory(), refreshMaintenance()]);
   }, [refreshDirectory, refreshMaintenance]);
 
@@ -163,6 +166,10 @@ export function PawWorkDirectoryProvider({
     const schedule = () => {
       if (stopped || document.visibilityState === 'hidden') return;
       timer = window.setTimeout(() => { void tick(); }, Math.max(1_000, pollIntervalMs));
+    };
+    const restartSchedule = () => {
+      window.clearTimeout(timer);
+      if (!stopped && document.visibilityState !== 'hidden') schedule();
     };
     const tick = async () => {
       await refreshDirectory();
@@ -176,15 +183,25 @@ export function PawWorkDirectoryProvider({
       }
       void tick();
     };
-    if (document.visibilityState !== 'hidden') void tick();
+    if (document.visibilityState !== 'hidden') {
+      if (initialPollDelayMs > 0) {
+        timer = window.setTimeout(() => { void tick(); }, initialPollDelayMs);
+      } else {
+        void tick();
+      }
+    }
+    directoryScheduleResetRef.current = restartSchedule;
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       stopped = true;
       window.clearTimeout(timer);
       directoryAbortRef.current?.abort();
+      if (directoryScheduleResetRef.current === restartSchedule) {
+        directoryScheduleResetRef.current = () => undefined;
+      }
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [pollIntervalMs, refreshDirectory]);
+  }, [initialPollDelayMs, pollIntervalMs, refreshDirectory]);
 
   useEffect(() => {
     let stopped = false;
@@ -208,7 +225,13 @@ export function PawWorkDirectoryProvider({
       }
       void tick();
     };
-    if (document.visibilityState !== 'hidden') void tick();
+    if (document.visibilityState !== 'hidden') {
+      if (initialPollDelayMs > 0) {
+        timer = window.setTimeout(() => { void tick(); }, initialPollDelayMs);
+      } else {
+        void tick();
+      }
+    }
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       stopped = true;
@@ -216,7 +239,7 @@ export function PawWorkDirectoryProvider({
       maintenanceAbortRef.current?.abort();
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [maintenancePollIntervalMs, refreshMaintenance, runningMaintenancePollIntervalMs]);
+  }, [initialPollDelayMs, maintenancePollIntervalMs, refreshMaintenance, runningMaintenancePollIntervalMs]);
 
   const value = useMemo<PawWorkDirectoryValue>(() => ({
     failed,

@@ -94,18 +94,22 @@ export function PawRoomRoundSheet({
     <section aria-label="Room 行星任务表" className="paw-room-rounds" ref={roundsRef}>
       {sheets.map((sheet, index) => {
         const open = sheetDisclosure[sheet.id] ?? index === sheets.length - 1;
-        const resultRows = sheet.rows.filter(isStandaloneResult);
+        const resultRows = sheet.rows.filter((row) => isStandaloneResult(row, room));
         const workerAssignmentExists = sheet.rows.some((row) => (
           !isCoordinatorRow(row, room)
           && (row.assigned || resultRows.includes(row))
         ));
         /* The moderator/coordinator owns the user-facing synthesis. It is a
            Room-level answer, not one more parallel work item, so keep it out
-           of the worker table even when several planets are executing. */
-        const coordinatorRows = workerAssignmentExists ? sheet.rows.filter((row) => (
+           of the worker table even when several planets are executing. An
+           explicit progress/wait post is also a coordinator report when it is
+           the only visible lane; activity-only rows retain the existing
+           standalone task presentation. */
+        const coordinatorRows = sheet.rows.filter((row) => (
           !resultRows.includes(row)
           && isCoordinatorSummaryRow(row, room)
-        )) : [];
+          && (workerAssignmentExists || Boolean(row.postKind))
+        ));
         const taskRows = sheet.rows.filter((row) => (
           row.assigned
           && !resultRows.includes(row)
@@ -480,14 +484,22 @@ function TaskPlanetRows({
   );
 }
 
-function isStandaloneResult(row: RoomRoundTaskRow): boolean {
-  return row.state === 'completed' && Boolean(row.result || row.evidenceRefs.length);
+function isStandaloneResult(row: RoomRoundTaskRow, room: RoomSummary): boolean {
+  if (row.state !== 'completed') return false;
+  /* A coordinator's WorkItem result or untyped assistant message is evidence,
+     not the Room's final report. Only the persisted moderator's typed result
+     post can open the standalone final card. Worker result/evidence cards keep
+     their existing projection rules. */
+  if (isCoordinatorRow(row, room)) {
+    return row.postKind === 'result' && Boolean(row.result);
+  }
+  return Boolean(row.result || row.evidenceRefs.length);
 }
 
+
 function isCoordinatorSummaryRow(row: RoomRoundTaskRow, room: RoomSummary): boolean {
-  /* moderatorParticipantId is the persisted authority. The role label is a
-     compatibility fallback for older Room snapshots that did not persist the
-     moderator id on the participant roster. */
+  /* moderatorParticipantId is the persisted authority; mutable role labels
+     never confer final-report ownership. */
   const isCoordinator = isCoordinatorRow(row, room);
   /* An idle coordinator still belongs to the roster and must keep the
      unassigned Grill Me surface. Only move it to the synthesis card after
@@ -507,8 +519,7 @@ function isCoordinatorSummaryRow(row: RoomRoundTaskRow, room: RoomSummary): bool
 }
 
 function isCoordinatorRow(row: RoomRoundTaskRow, room: RoomSummary): boolean {
-  return row.participantId === room.moderatorParticipantId
-    || row.role === '最终汇合与回复';
+  return row.participantId === room.moderatorParticipantId;
 }
 
 function StandaloneCoordinatorSummary({

@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paw.trace-closed-loop-public-manifest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suiteId",
+    "title",
+    "purpose",
+    "notAgentInput",
+    "split",
+    "caseCount",
+    "targetLayerCoverage",
+    "cases",
+    "boundaries"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "paw.trace-closed-loop-public-manifest.v1"
+    },
+    "suiteId": {
+      "const": "paw-trace-closed-loop-historical-replay-v1"
+    },
+    "title": {"$ref": "#/$defs/publicText", "maxLength": 160},
+    "purpose": {"const": "post_evaluation_ui"},
+    "notAgentInput": {"const": true},
+    "split": {"const": "historical_replay"},
+    "caseCount": {"const": 3},
+    "targetLayerCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system_prompt", "tool", "workflow", "skill"],
+      "properties": {
+        "system_prompt": {"type": "integer", "minimum": 0},
+        "tool": {"type": "integer", "minimum": 0},
+        "workflow": {"type": "integer", "minimum": 0},
+        "skill": {"type": "integer", "minimum": 0}
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"$ref": "#/$defs/case"}
+    },
+    "boundaries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/publicText", "maxLength": 320}
+    }
+  },
+  "$defs": {
+    "publicText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600,
+      "not": {
+        "pattern": "(?:/Volumes/|/Users/|/private/|/tmp/|/var/|/opt/|file://|\\.jsonl(?:\\b|$)|\\bSELECT\\s)"
+      }
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actorType", "attributionStatus", "evidenceId", "boundary"],
+      "properties": {
+        "actorType": {
+          "type": "string",
+          "enum": [
+            "trace_agent",
+            "eval_agent",
+            "user",
+            "supervisor_agent",
+            "repair_agent",
+            "test_runner",
+            "runtime",
+            "unknown"
+          ]
+        },
+        "attributionStatus": {
+          "type": "string",
+          "enum": ["verified", "unknown"]
+        },
+        "evidenceId": {"type": "string", "maxLength": 160},
+        "boundary": {"$ref": "#/$defs/publicText", "maxLength": 320}
+      }
+    },
+    "metricValue": {
+      "oneOf": [
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"},
+        {"$ref": "#/$defs/publicText"}
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/metricValue"}
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "sourceType", "sha256", "summary"],
+      "properties": {
+        "evidenceId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "sourceType": {
+          "type": "string",
+          "enum": [
+            "evaluation_receipt",
+            "runtime_receipt",
+            "trace_receipt",
+            "test_receipt"
+          ]
+        },
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "summary": {"$ref": "#/$defs/publicText", "maxLength": 320}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "title",
+        "targetLayer",
+        "detectedBy",
+        "proposedBy",
+        "authorizedBy",
+        "implementedBy",
+        "verifiedBy",
+        "before",
+        "finding",
+        "candidateChange",
+        "after",
+        "delta",
+        "decision",
+        "boundaries"
+      ],
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9-]+-[0-9]{3}$"
+        },
+        "title": {"$ref": "#/$defs/publicText", "maxLength": 160},
+        "targetLayer": {
+          "type": "string",
+          "enum": ["system_prompt", "tool", "workflow", "skill"]
+        },
+        "detectedBy": {"$ref": "#/$defs/actor"},
+        "proposedBy": {"$ref": "#/$defs/actor"},
+        "authorizedBy": {"$ref": "#/$defs/actor"},
+        "implementedBy": {"$ref": "#/$defs/actor"},
+        "verifiedBy": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/actor"}
+        },
+        "before": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "summary", "metrics"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["failed", "rejected", "incomplete"]
+            },
+            "summary": {"$ref": "#/$defs/publicText"},
+            "metrics": {"$ref": "#/$defs/metrics"}
+          }
+        },
+        "finding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary", "evidence"],
+          "properties": {
+            "summary": {"$ref": "#/$defs/publicText"},
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"$ref": "#/$defs/evidence"}
+            }
+          }
+        },
+        "candidateChange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "targetLayer", "summary", "boundaries"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "proposed",
+                "authorized",
+                "implemented_source",
+                "implemented_source_local_candidate",
+                "not_implemented"
+              ]
+            },
+            "targetLayer": {
+              "type": "string",
+              "enum": ["system_prompt", "tool", "workflow", "skill"]
+            },
+            "summary": {"$ref": "#/$defs/publicText"},
+            "boundaries": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/publicText", "maxLength": 320}
+            }
+          }
+        },
+        "after": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "summary", "metrics"],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["completed", "rejected", "partially_verified"]
+            },
+            "summary": {"$ref": "#/$defs/publicText"},
+            "metrics": {"$ref": "#/$defs/metrics"}
+          }
+        },
+        "delta": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["originalFailureCleared", "regressionDetected", "metrics"],
+          "properties": {
+            "originalFailureCleared": {"type": "boolean"},
+            "regressionDetected": {"type": "boolean"},
+            "metrics": {"$ref": "#/$defs/metrics"}
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "reasonCodes"],
+          "properties": {
+            "value": {
+              "type": "string",
+              "enum": ["Keep", "Reject", "Rollback"]
+            },
+            "reasonCodes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "^[a-z0-9_]+$"
+              }
+            }
+          }
+        },
+        "boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/publicText", "maxLength": 320}
+        }
+      }
+    }
+  }
+}

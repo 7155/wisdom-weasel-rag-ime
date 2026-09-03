@@ -15,4 +15,10 @@ describe('tool presentation', () => {
     expect(toolIntentPrompt('workspace_read', '工作区读取')).toBe('帮我读取这个项目文件');
     expect(toolIntentPrompt('custom_tool', '自定义检查')).toBe('帮我用自定义检查处理');
   });
+
+  it('uses explicit business labels for EnterpriseOps evaluation tools', () => {
+    expect(publicToolName('find_user')).toBe('查找用户');
+    expect(publicToolName('update_entitlement')).toBe('更新服务权益');
+    expect(publicToolName('link_new_case_sla')).toBe('关联工单 SLA');
+  });
 });

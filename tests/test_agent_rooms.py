@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime import agent_rooms as agent_rooms_module
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_rooms import AgentRoomEventHub, AgentRoomStore
 from rag_ime.agent_service import AgentService
@@ -86,6 +87,27 @@ class AgentRoomTests(unittest.TestCase):
         stored = json.loads(room_files[0].read_text(encoding="utf-8").strip())
         self.assertEqual(stored["eventId"], event["eventId"])
         self.assertEqual(stat.S_IMODE(room_files[0].stat().st_mode), 0o600)
+
+    def test_directory_page_reads_bounded_room_projection(self) -> None:
+        room = self.store.create(
+            title="快速 Room 目录",
+            routing_policy="manual_mentions",
+            workspace_roots=[self.root],
+            participants=[
+                self._participant("companion-present-v1", "Agent A"),
+                self._participant("companion-future-v1", "Agent B"),
+            ],
+            created_at_ms=10,
+        )
+
+        item = self.store.list_directory_page(limit=100)["items"][0]
+
+        self.assertEqual(item["id"], room["id"])
+        self.assertEqual(item["workspaceRoots"], [str(self.root.resolve())])
+        self.assertEqual([value["displayName"] for value in item["participants"]], ["Agent A", "Agent B"])
+        self.assertNotIn("scenarioPrompt", item)
+        self.assertNotIn("topics", item)
+        self.assertNotIn("artifacts", item)
 
     def test_room_storage_contract_accepts_four_context_roots_plus_system_root(
         self,
@@ -434,6 +456,157 @@ class AgentRoomTests(unittest.TestCase):
             [event["sequence"] for event in snapshot["events"]],
             list(range(3, 103)),
         )
+
+    def test_turn_event_lookup_does_not_parse_unrelated_room_events(self) -> None:
+        room = self.store.create(
+            title="定向恢复",
+            routing_policy="moderator",
+            participants=[
+                self._participant("companion-present-v1", "澄"),
+                self._participant("companion-firstlight-v1", "Hermes"),
+            ],
+        )
+        room_id = str(room["id"])
+        for index in range(20):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="participant_status",
+                turn_id=f"unrelated:{index}",
+                payload={"status": "working"},
+            )
+        expected = self.store.append_event(
+            room_id=room_id,
+            event_type="participant_status",
+            turn_id="root:target",
+            payload={"status": "completed"},
+        )
+        self.store.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            turn_id="root:target",
+            payload={"text": "same turn, unrelated event type"},
+        )
+
+        with patch(
+            "rag_ime.agent_rooms._room_event_payload",
+            wraps=agent_rooms_module._room_event_payload,
+        ) as parse_event:
+            events = self.store.list_events_for_turn(
+                room_id,
+                "root:target",
+                event_types=("participant_status",),
+                limit=2_000,
+            )
+
+        self.assertEqual(events, [expected])
+        self.assertEqual(parse_event.call_count, 1)
+
+    def test_typed_result_lookup_only_parses_matching_result_candidate(self) -> None:
+        room = self.store.create(
+            title="结果恢复",
+            routing_policy="moderator",
+            participants=[
+                self._participant("companion-present-v1", "澄"),
+                self._participant("companion-firstlight-v1", "Hermes"),
+            ],
+        )
+        room_id = str(room["id"])
+        for index in range(20):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="room_post",
+                turn_id=f"unrelated:{index}",
+                payload={"post": {"kind": "result"}},
+            )
+        self.store.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            turn_id="root:target",
+            payload={"post": {"kind": "progress"}},
+        )
+        self.store.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            turn_id="root:target",
+            payload={"post": {"kind": "result"}},
+        )
+
+        with patch(
+            "rag_ime.agent_rooms._room_event_payload",
+            wraps=agent_rooms_module._room_event_payload,
+        ) as parse_event:
+            present = self.store.has_typed_result(
+                room_id,
+                "root:target",
+            )
+
+        self.assertTrue(present)
+        self.assertEqual(parse_event.call_count, 1)
+
+    def test_recovery_dispatch_lookup_does_not_parse_same_turn_unrelated_activity(
+        self,
+    ) -> None:
+        room = self.store.create(
+            title="恢复派发",
+            routing_policy="moderator",
+            participants=[
+                self._participant("companion-present-v1", "澄"),
+                self._participant("companion-firstlight-v1", "Hermes"),
+            ],
+        )
+        room_id = str(room["id"])
+        for index in range(100):
+            self.store.append_event(
+                room_id=room_id,
+                event_type="participant_activity",
+                turn_id="root:target",
+                payload={
+                    "activityKind": "child",
+                    "phase": "completed",
+                    "childDispatchId": f"unrelated:{index}",
+                },
+            )
+        expected_post = self.store.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            turn_id="root:target",
+            payload={
+                "post": {
+                    "kind": "work_result",
+                    "dispatchId": "room-child:expected",
+                }
+            },
+        )
+        expected_message = self.store.append_event(
+            room_id=room_id,
+            event_type="participant_message",
+            turn_id="root:target",
+            payload={"data": {"dispatchId": "room-child:expected"}},
+        )
+        expected_activity = self.store.append_event(
+            room_id=room_id,
+            event_type="participant_activity",
+            turn_id="root:target",
+            payload={
+                "activityKind": "child",
+                "phase": "completed",
+                "data": {"childDispatchId": "room-child:expected"},
+            },
+        )
+
+        with patch(
+            "rag_ime.agent_rooms._room_event_payload",
+            wraps=agent_rooms_module._room_event_payload,
+        ) as parse_event:
+            events = self.store.list_recovery_events_for_dispatches(
+                room_id,
+                "root:target",
+                dispatch_ids=("room-child:expected",),
+                limit=2_000,
+            )
+
+        self.assertEqual(events, [expected_post, expected_message, expected_activity])
+        self.assertEqual(parse_event.call_count, 3)
 
     def test_history_page_walks_the_retained_prefix_without_unbounded_snapshot(self) -> None:
         room = self.store.create(
@@ -863,6 +1036,25 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_room_directory_projection_skips_full_room_payload(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "快速 Room 目录",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+
+        item = self.service.list_rooms({"projectionOnly": True})["items"][0]
+
+        self.assertEqual(item["id"], room["id"])
+        self.assertNotIn("scenarioPrompt", item)
+        self.assertNotIn("topics", item)
+        self.assertNotIn("artifacts", item)
+
     def test_room_requires_a_workspace_before_participant_sessions_are_created(self) -> None:
         with self.assertRaisesRegex(ValueError, "authorized workspace"):
             self.service.create_room(
@@ -876,6 +1068,35 @@ class AgentRoomServiceTests(unittest.TestCase):
                 }
             )
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_agent_lab_read_only_room_is_app_owned_and_hidden_from_ordinary_room_list(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Agent Lab · 评测向导",
+                "roomKind": "collaboration",
+                "workspaceRoots": [],
+                "executionMode": "read_only",
+                "ownerAppId": "extension:agent-lab",
+                "surfaceKey": "wizard",
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1", "collaborationRole": "coordinator"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1", "collaborationRole": "reviewer"},
+                ],
+            }
+        )["room"]
+
+        self.assertEqual(room["ownerAppId"], "extension:agent-lab")
+        self.assertEqual(room["surfaceKey"], "wizard")
+        self.assertEqual(room["workspaceRoots"], [])
+        participant_session = self.service.sessions.get(str(room["participants"][0]["sessionId"]))
+        self.assertEqual(participant_session["surfaceKind"], "extension_app")
+        self.assertEqual(participant_session["ownerAppId"], "extension:agent-lab")
+        self.assertEqual(participant_session["surfaceKey"], "wizard")
+
+        self.assertEqual(self.service.list_rooms({"ownerAppId": ""})["items"], [])
+        owned = self.service.list_rooms({"ownerAppId": "extension:agent-lab"})["items"]
+        self.assertEqual([item["id"] for item in owned], [room["id"]])
+        self.assertEqual(owned[0]["surfaceKey"], "wizard")
 
     def test_room_rejects_a_removed_workspace_before_creating_participant_sessions(self) -> None:
         with self.assertRaisesRegex(

@@ -19,7 +19,7 @@ import {
 } from './PawWindowLayer';
 
 describe('PAWOS collaboration focus', () => {
-  it('follows the real visible satellite lifecycle and clears when the satellite is minimized', () => {
+  it('keeps Room focus ownership separate from satellite classification', () => {
     const participant = windowNode('participant-window', {
       kind: 'participant',
       id: 'participant-a',
@@ -39,6 +39,32 @@ describe('PAWOS collaboration focus', () => {
     expect(isCollaborationSatellite(windowNode('room-main', {
       kind: 'room', id: 'room-a', title: 'Room A',
     }))).toBe(false);
+  });
+
+  it('keeps focus while closing or minimizing satellites when the Room main survives', () => {
+    const store = createPawDesktopStore();
+    const mainId = store.getState().openApp('agent', {
+      entityId: 'room-a',
+      target: { kind: 'room', id: 'room-a', title: 'Room A' },
+    });
+    const participantId = store.getState().openApp('agent', {
+      entityId: 'participant-a',
+      target: { kind: 'participant', id: 'participant-a', roomId: 'room-a', title: '伙伴 A' },
+    });
+    store.getState().setCollaborationFocusGroup('room:room-a');
+
+    store.getState().closeWindow(participantId);
+    expect(store.getState().collaborationFocusGroup).toBe('room:room-a');
+
+    const secondParticipantId = store.getState().openApp('agent', {
+      entityId: 'participant-b',
+      target: { kind: 'participant', id: 'participant-b', roomId: 'room-a', title: '伙伴 B' },
+    });
+    store.getState().minimizeWindow(secondParticipantId);
+    expect(store.getState().collaborationFocusGroup).toBe('room:room-a');
+
+    store.getState().closeWindow(mainId);
+    expect(store.getState().collaborationFocusGroup).toBeNull();
   });
 
   it('enters and exits an explicit Room focus mode without mutating ordinary window bounds', () => {

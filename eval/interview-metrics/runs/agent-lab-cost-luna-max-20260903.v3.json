@@ -1,0 +1,42 @@
+{
+  "authority": "pricing_estimate",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "This is a deterministic estimate from caller-supplied pricing and reported usage, not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "0.3392",
+    "outputCostUsd": "0.202116",
+    "totalCostUsd": "0.725239",
+    "uncachedInputCostUsd": "0.183923"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-luna",
+    "pricingId": "openai-api-gpt-5.6-luna-2026-09-01",
+    "provider": "openai",
+    "publishedDate": "2026-09-01",
+    "rates": {
+      "cachedInputUsd": "0.1",
+      "outputUsd": "6",
+      "uncachedInputUsd": "1"
+    },
+    "sourceSha256": "867c9fe491a9134fc9ac0041f478ec041d7638f41b4022939349c2654075dd56",
+    "sourceUrl": "https://platform.openai.com/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "0ed92ce51678bd48809b85b430f8370636c934893ae4aa3b33b47c63ee503c2d",
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 3392000,
+    "outputTokens": 33686,
+    "sourceRef": "runtime-db:enterpriseops-csm-luna-max-validation-20260903-v3",
+    "sourceSha256": "e5ae76742703e09ce6e66b5b20431e1f42283e684c71e13079240bb940f95056",
+    "uncachedInputTokens": 183923
+  }
+}

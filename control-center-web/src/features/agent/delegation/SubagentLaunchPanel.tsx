@@ -26,6 +26,8 @@ export interface SubagentParentOption {
   label: string;
   detail?: string;
   canWrite?: boolean;
+  defaultAccess?: 'read_only' | 'write';
+  accessPolicyDetail?: string;
   workspaceRoots?: string[];
   piSkillsEnabled?: boolean;
   codexSkillsEnabled?: boolean;
@@ -140,11 +142,14 @@ function SubagentLaunchForm({
     if (!supportedModes.includes(contextMode)) {
       setContextMode(supportedModes.includes('fresh') ? 'fresh' : supportedModes[0]);
     }
-    const nextAccess = template.allowedAccess.includes(template.defaultAccess)
-      ? template.defaultAccess
+    const requestedAccess = surface === 'room'
+      ? parent?.defaultAccess ?? 'read_only'
+      : template.defaultAccess;
+    const nextAccess = template.allowedAccess.includes(requestedAccess)
+      ? requestedAccess
       : template.allowedAccess[0];
     setAccess(nextAccess === 'write' && !parent?.canWrite ? 'read_only' : nextAccess);
-  }, [parent?.canWrite, template?.templateId]);
+  }, [parent?.canWrite, parent?.defaultAccess, surface, template?.templateId]);
 
   useEffect(() => {
     const ids = new Set(tools.map((item) => item.id));
@@ -207,7 +212,7 @@ function SubagentLaunchForm({
   return <section className="subagent-launch" data-surface={surface}>
     <header className="subagent-launch__header">
       <span className="subagent-launch__mark"><Bot size={18} /></span>
-      <span><strong>子 Agent 启动配置</strong><small>配置属于 Session；Room 只引用启动收据与运行树。</small></span>
+      <span><strong>子 Agent 启动配置</strong><small>{surface === 'room' ? 'Room 卫星层提供上限和默认；启动配置固化在父 Session。' : '配置属于 Session；Room 只引用启动收据与运行树。'}</small></span>
       <em><Braces size={13} />结构化交付</em>
     </header>
 
@@ -223,7 +228,7 @@ function SubagentLaunchForm({
     </label> : null}
 
     <fieldset className="subagent-launch__templates">
-      <legend>责任模板 <small>模板决定默认边界，不是装饰标签</small></legend>
+      <legend>责任模板 <small>{surface === 'room' ? '模板限定能力；Room 分层权限决定继承的工作默认值' : '模板决定默认边界，不是装饰标签'}</small></legend>
       <div role="radiogroup" aria-label="子 Agent 模板">
         {templates.map((item) => <label key={item.templateId} data-selected={item.templateId === template?.templateId}>
           <input
@@ -264,7 +269,16 @@ function SubagentLaunchForm({
           onValueChange={setAccess}
           value={access}
         />
-        <small>{template.allowedAccess.length === 1 ? `${template.displayName}固定只读。` : writable ? '仍受父 Session 工作区与原生审批约束。' : '可以核对，但不能修改文件或执行写操作。'}</small>
+        <small>
+          {surface === 'room' && parent?.accessPolicyDetail
+            ? `${parent.accessPolicyDetail}；`
+            : ''}
+          {template.allowedAccess.length === 1
+            ? `${template.displayName}固定只读。`
+            : writable
+              ? '本次按父层上限写入；仍受原生审批与系统硬边界约束。'
+              : '本次已显式收窄为只读，不能修改文件或执行写操作。'}
+        </small>
       </PolicyField>
     </div> : null}
 

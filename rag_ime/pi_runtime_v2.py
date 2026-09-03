@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -559,7 +560,10 @@ class PiRuntimeHostManager:
         self._tool_manifest_provider = tool_manifest_provider
         self._compaction_observer = compaction_observer
         self._lifecycle_lock = threading.RLock()
+        self._model_catalog_lock = threading.Lock()
         self._lock = threading.RLock()
+        self._recent_projection_refreshes: set[str] = set()
+        self._recent_projection_threads: set[threading.Thread] = set()
         self._client: PiRuntimeHostClient | None = None
         self._states: dict[str, _HostedSessionState] = {}
         self._open_sessions: set[str] = set()
@@ -1485,6 +1489,7 @@ class PiRuntimeHostManager:
         bounded_timeout = max(1.0, min(3_600.0, float(timeout_seconds)))
         deadline = time.monotonic() + bounded_timeout
         client = self._require_client()
+        settlement_get_timeout_retries = 0
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1504,9 +1509,24 @@ class PiRuntimeHostManager:
                     ),
                 )
             except PiRuntimeError as exc:
-                if time.monotonic() >= deadline:
+                lookup_timed_out = str(exc) == (
+                    "Pi Runtime Host command timed out: "
+                    "session.settlement.get"
+                )
+                if (
+                    lookup_timed_out
+                    and settlement_get_timeout_retries < 1
+                    and time.monotonic() < deadline
+                ):
+                    # One idempotent lookup retry uses the exact same product
+                    # turn identity.  It covers a transient Host response gap
+                    # without extending the caller's deadline or replaying the
+                    # model request.
+                    settlement_get_timeout_retries += 1
+                    continue
+                if lookup_timed_out:
                     raise TimeoutError(
-                        "Pi Session turn settlement timed out"
+                        "Pi Session settlement lookup timed out"
                     ) from exc
                 raise
             persisted = current.get("settlement")
@@ -1766,12 +1786,15 @@ class PiRuntimeHostManager:
             if not path_is_within(transcript, session_root):
                 return None
             stat = transcript.stat()
-            if not transcript.is_file() or stat.st_size > 64 * 1024 * 1024:
+            if not transcript.is_file() or stat.st_size > _DURABLE_TRANSCRIPT_MAX_BYTES:
                 return None
             entries: list[dict[str, object]] = []
             with transcript.open("r", encoding="utf-8") as source:
                 for index, line in enumerate(source):
-                    if index >= 200_000 or len(line) > 8 * 1024 * 1024:
+                    if (
+                        index >= _DURABLE_TRANSCRIPT_MAX_LINES
+                        or len(line) > _DURABLE_TRANSCRIPT_MAX_LINE_BYTES
+                    ):
                         return None
                     try:
                         value = json.loads(line)
@@ -1828,6 +1851,81 @@ class PiRuntimeHostManager:
                     "followUpMode": "",
                 },
             }
+        except (KeyError, OSError, ValueError):
+            return None
+
+    def _recent_durable_history_messages(
+        self,
+        session_id: str,
+    ) -> tuple[
+        list[dict[str, object]],
+        list[dict[str, object]],
+        bool,
+    ] | None:
+        """Read a proven recent branch window without scanning the full JSONL.
+
+        A tail is usable only when it contains the exact selected leaf and its
+        parent chain either reaches the Session header or contains one extra
+        complete public turn beyond the visible window.  Anything ambiguous
+        falls back to ``_durable_history_snapshot``.
+        """
+
+        try:
+            session = self.sessions.get(session_id)
+            binding = self.sessions.runtime_binding(session_id) or {}
+            raw_path = str(
+                binding.get("transcriptRef")
+                or session.get("sessionFile")
+                or ""
+            ).strip()
+            if not raw_path:
+                return None
+            candidate = Path(raw_path).expanduser()
+            if candidate.is_symlink():
+                return None
+            transcript = candidate.resolve(strict=True)
+            session_root = self.config.session_dir.expanduser().resolve(
+                strict=False
+            )
+            if not path_is_within(transcript, session_root):
+                return None
+            stat = transcript.stat()
+            if (
+                not transcript.is_file()
+                or stat.st_size > _DURABLE_TRANSCRIPT_MAX_BYTES
+            ):
+                return None
+            tail = _read_recent_transcript_tail(transcript, stat.st_size)
+            if tail is None:
+                return None
+            header, entries = tail
+            external_session_id = str(
+                binding.get("externalSessionId")
+                or session.get("piSessionId")
+                or ""
+            )
+            if (
+                str(header.get("type") or "") == "session"
+                and external_session_id
+                and str(header.get("id") or "") != external_session_id
+            ):
+                return None
+            leaf_id = str(binding.get("branchAnchor") or "")
+            binding_updated_at_ms = as_integer(binding.get("updatedAtMs"))
+            if stat.st_mtime_ns // 1_000_000 > binding_updated_at_ms:
+                leaf_id = _latest_entry_id(entries)
+            elif leaf_id and not any(
+                str(entry.get("id") or "") == leaf_id
+                for entry in entries
+            ):
+                return None
+            if not leaf_id:
+                leaf_id = _latest_entry_id(entries)
+            return _recent_messages_from_proven_tail(
+                entries,
+                leaf_id=leaf_id,
+                header_id=str(header.get("id") or ""),
+            )
         except (KeyError, OSError, ValueError):
             return None
 
@@ -2038,6 +2136,347 @@ class PiRuntimeHostManager:
             "telemetry": dict(telemetry) if isinstance(telemetry, Mapping) else None,
             "messageQueue": message_queue,
         }
+
+    def recent_session_snapshot(self, session_id: str) -> dict[str, object]:
+        """Project a bounded durable first paint without contacting Pi Host.
+
+        The append-only transcript is the only authority used here. Missing,
+        untrusted, malformed, or oversized transcript state therefore yields
+        an honestly empty window; this read never falls through to the live
+        Host or the full historical Tool-event reconstruction.
+        """
+
+        projection_identity = self._recent_projection_identity(session_id)
+        cached_projection = self._recent_projected_messages(
+            session_id,
+            projection_identity,
+        )
+        if cached_projection is not None:
+            cached_messages, cached_tool_history, exact = cached_projection
+            if not exact:
+                self._schedule_recent_projection_refresh(
+                    session_id,
+                    projection_identity,
+                )
+            return {
+                "messages": cached_messages,
+                "toolHistoryEvents": cached_tool_history,
+            }
+
+        recent_candidate = self._recent_durable_history_messages(session_id)
+        if recent_candidate is None:
+            durable = self._durable_history_snapshot(session_id)
+            if durable is None:
+                return {"messages": []}
+            raw_messages = durable.get("messages")
+            if not isinstance(raw_messages, list):
+                return {"messages": []}
+            raw_entries = (
+                list(durable.get("entries") or [])
+                if isinstance(durable.get("entries"), list)
+                else []
+            )
+        else:
+            raw_messages, raw_entries, complete_window = recent_candidate
+            if not complete_window:
+                messages = _recent_public_message_window(
+                    raw_messages,
+                    session_id=session_id,
+                    media_resolver=self._media_resolver,
+                    raw_entries=raw_entries,
+                )
+                tool_history_events = _recent_tool_history_events(
+                    raw_messages,
+                    raw_entries=raw_entries,
+                    projected_messages=messages,
+                    session_id=session_id,
+                )
+                self._schedule_recent_projection_refresh(
+                    session_id,
+                    projection_identity,
+                )
+                return {
+                    "messages": messages,
+                    "toolHistoryEvents": tool_history_events,
+                }
+        messages = _recent_public_message_window(
+            raw_messages,
+            session_id=session_id,
+            media_resolver=self._media_resolver,
+            raw_entries=raw_entries,
+        )
+        tool_history_events = _recent_tool_history_events(
+            raw_messages,
+            raw_entries=raw_entries,
+            projected_messages=messages,
+            session_id=session_id,
+        )
+        self._save_recent_message_projection(
+            session_id,
+            projection_identity,
+            messages,
+            tool_history_events,
+        )
+        return {
+            "messages": messages,
+            "toolHistoryEvents": tool_history_events,
+        }
+
+    def _recent_projection_identity(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        """Resolve the exact immutable file view that may reuse a projection."""
+
+        try:
+            session = self.sessions.get(session_id)
+            binding = self.sessions.runtime_binding(session_id) or {}
+            raw_path = str(
+                binding.get("transcriptRef")
+                or session.get("sessionFile")
+                or ""
+            ).strip()
+            if not raw_path:
+                return None
+            candidate = Path(raw_path).expanduser()
+            if candidate.is_symlink():
+                return None
+            transcript = candidate.resolve(strict=True)
+            session_root = self.config.session_dir.expanduser().resolve(
+                strict=False
+            )
+            if not path_is_within(transcript, session_root):
+                return None
+            stat = transcript.stat()
+            if (
+                not transcript.is_file()
+                or stat.st_size > _DURABLE_TRANSCRIPT_MAX_BYTES
+            ):
+                return None
+            return {
+                "transcriptRef": transcript.as_posix(),
+                "externalSessionId": str(
+                    binding.get("externalSessionId")
+                    or session.get("piSessionId")
+                    or ""
+                ),
+                "branchAnchor": str(binding.get("branchAnchor") or ""),
+                "transcriptDevice": int(stat.st_dev),
+                "transcriptInode": int(stat.st_ino),
+                "transcriptSize": int(stat.st_size),
+                "transcriptMtimeNs": int(stat.st_mtime_ns),
+                "transcriptBoundarySha256": _transcript_boundary_sha256(
+                    transcript,
+                    int(stat.st_size),
+                ),
+            }
+        except (KeyError, OSError, ValueError):
+            return None
+
+    def _recent_projected_messages(
+        self,
+        session_id: str,
+        identity: Mapping[str, object] | None,
+    ) -> tuple[
+        list[dict[str, object]],
+        list[dict[str, object]],
+        bool,
+    ] | None:
+        if identity is None:
+            return None
+        reader = getattr(self.sessions, "recent_message_projection", None)
+        if not callable(reader):
+            return None
+        try:
+            projection = reader(session_id)
+        except Exception:
+            return None
+        if not isinstance(projection, Mapping):
+            return None
+        stable_identity_keys = (
+            "transcriptRef",
+            "externalSessionId",
+            "branchAnchor",
+            "transcriptDevice",
+            "transcriptInode",
+        )
+        if any(
+            projection.get(key) != identity.get(key)
+            for key in stable_identity_keys
+        ):
+            return None
+        projected_size = as_integer(projection.get("transcriptSize"))
+        current_size = as_integer(identity.get("transcriptSize"))
+        projected_mtime_ns = as_integer(projection.get("transcriptMtimeNs"))
+        current_mtime_ns = as_integer(identity.get("transcriptMtimeNs"))
+        exact = (
+            projected_size == current_size
+            and projected_mtime_ns == current_mtime_ns
+            and projection.get("transcriptBoundarySha256")
+            == identity.get("transcriptBoundarySha256")
+        )
+        monotonic_append = (
+            current_size > projected_size
+            and current_mtime_ns >= projected_mtime_ns
+            and str(projection.get("transcriptBoundarySha256") or "")
+            == _transcript_boundary_sha256(
+                Path(str(identity["transcriptRef"])),
+                projected_size,
+            )
+        )
+        if not exact and not monotonic_append:
+            return None
+        messages = projection.get("messages")
+        if not isinstance(messages, list) or not all(
+            isinstance(message, Mapping)
+            for message in messages
+        ):
+            return None
+        tool_history_events = projection.get("toolHistoryEvents")
+        if not isinstance(tool_history_events, list) or not all(
+            isinstance(event, Mapping)
+            for event in tool_history_events
+        ):
+            return None
+        return (
+            [dict(message) for message in messages],
+            [dict(event) for event in tool_history_events],
+            exact,
+        )
+
+    def _schedule_recent_projection_refresh(
+        self,
+        session_id: str,
+        identity: Mapping[str, object] | None,
+    ) -> None:
+        if identity is None:
+            return
+        with self._lock:
+            if session_id in self._recent_projection_refreshes:
+                return
+            self._recent_projection_refreshes.add(session_id)
+        worker = threading.Thread(
+            target=self._refresh_recent_message_projection,
+            args=(session_id, dict(identity)),
+            name=f"pi-recent-projection-{session_id[-12:]}",
+            daemon=True,
+        )
+        with self._lock:
+            self._recent_projection_threads.add(worker)
+        try:
+            worker.start()
+        except Exception:
+            with self._lock:
+                self._recent_projection_refreshes.discard(session_id)
+                self._recent_projection_threads.discard(worker)
+
+    def _refresh_recent_message_projection(
+        self,
+        session_id: str,
+        identity: Mapping[str, object],
+    ) -> None:
+        saved = False
+        try:
+            recent_candidate = self._recent_durable_history_messages(session_id)
+            raw_messages = (
+                recent_candidate[0]
+                if recent_candidate is not None and recent_candidate[2]
+                else None
+            )
+            raw_entries = (
+                recent_candidate[1]
+                if recent_candidate is not None and recent_candidate[2]
+                else []
+            )
+            if raw_messages is None:
+                durable = self._durable_history_snapshot(session_id)
+                if durable is None:
+                    return
+                raw_messages = durable.get("messages")
+                if not isinstance(raw_messages, list):
+                    return
+                raw_entries = (
+                    list(durable.get("entries") or [])
+                    if isinstance(durable.get("entries"), list)
+                    else []
+                )
+            messages = _recent_public_message_window(
+                raw_messages,
+                session_id=session_id,
+                media_resolver=self._media_resolver,
+                raw_entries=raw_entries,
+            )
+            tool_history_events = _recent_tool_history_events(
+                raw_messages,
+                raw_entries=raw_entries,
+                projected_messages=messages,
+                session_id=session_id,
+            )
+            saved = self._save_recent_message_projection(
+                session_id,
+                identity,
+                messages,
+                tool_history_events,
+            )
+        except Exception:
+            # A repair is secondary to the already-returned recent window.
+            # The next read may retry; never leak a daemon traceback or turn a
+            # cache failure into a Runtime failure.
+            saved = False
+        finally:
+            with self._lock:
+                self._recent_projection_refreshes.discard(session_id)
+                self._recent_projection_threads.discard(
+                    threading.current_thread()
+                )
+        if not saved:
+            return
+        try:
+            self.events.publish(
+                session_id,
+                "snapshot_required",
+                {"reason": "recent_projection_refreshed"},
+                turn_id="",
+            )
+        except Exception:
+            return
+
+    def _save_recent_message_projection(
+        self,
+        session_id: str,
+        identity: Mapping[str, object] | None,
+        messages: list[dict[str, object]],
+        tool_history_events: list[dict[str, object]],
+    ) -> bool:
+        if identity is None:
+            return False
+        writer = getattr(self.sessions, "save_recent_message_projection", None)
+        if not callable(writer):
+            return False
+        refreshed = self._recent_projection_identity(session_id)
+        if refreshed != identity:
+            return False
+        try:
+            writer(
+                session_id,
+                transcript_ref=str(identity["transcriptRef"]),
+                external_session_id=str(identity["externalSessionId"]),
+                branch_anchor=str(identity["branchAnchor"]),
+                transcript_device=int(identity["transcriptDevice"]),
+                transcript_inode=int(identity["transcriptInode"]),
+                transcript_size=int(identity["transcriptSize"]),
+                transcript_mtime_ns=int(identity["transcriptMtimeNs"]),
+                transcript_boundary_sha256=str(
+                    identity["transcriptBoundarySha256"]
+                ),
+                messages=messages,
+                tool_history_events=tool_history_events,
+            )
+            return True
+        except Exception:
+            # The projection is an acceleration only. Its failure cannot make
+            # the canonical Pi transcript unavailable to the conversation UI.
+            return False
 
     def debug_context(self, session_id: str, turn_id: str = "") -> dict[str, object]:
         with self._lock:
@@ -2445,7 +2884,12 @@ class PiRuntimeHostManager:
         # concurrently. Pi's catalog refresh may perform Provider discovery, so
         # coalesce those reads and keep one short-lived Pi-confirmed snapshot.
         # This cache never selects a model or fabricates capabilities.
-        with self._lifecycle_lock:
+        # Provider discovery is not a Host lifecycle transition. Holding the
+        # lifecycle lock across ``models.list`` lets an optional picker refresh
+        # block Session open/prompt admission for the full Provider timeout.
+        # Host creation remains lifecycle-fenced; only catalog singleflight has
+        # its own lock after the shared Host has been admitted.
+        with self._model_catalog_lock:
             now = time.monotonic()
             with self._lock:
                 if (
@@ -2458,7 +2902,7 @@ class PiRuntimeHostManager:
                         for model in self._available_models_cache
                     ]
             try:
-                catalog = self._host_locked().send(
+                catalog = self._host().send(
                     "models.list",
                     timeout=max(30.0, self.config.command_timeout_seconds),
                 )
@@ -3377,8 +3821,13 @@ class PiRuntimeHostManager:
                 self._completion_sinks.clear()
                 self._states.clear()
                 self._status = "stopped" if self.config.enabled else "disabled"
+                projection_threads = tuple(self._recent_projection_threads)
             if client is not None:
                 client.stop()
+            current_thread = threading.current_thread()
+            for thread in projection_threads:
+                if thread is not current_thread:
+                    thread.join(timeout=2)
             for session_id in session_ids:
                 try:
                     self.sessions.set_status(session_id, "idle")
@@ -4780,6 +5229,341 @@ def _pi_durable_branch_messages(
         messages.append(message)
         message_entries.append(entry)
     return messages, message_entries
+
+
+def _read_recent_transcript_tail(
+    transcript: Path,
+    file_size: int,
+) -> tuple[dict[str, object], list[dict[str, object]]] | None:
+    """Read the Session header and one bounded suffix of complete JSONL rows."""
+
+    with transcript.open("rb") as source:
+        header_line = source.readline(_DURABLE_TRANSCRIPT_MAX_LINE_BYTES + 1)
+        if (
+            not header_line
+            or len(header_line) > _DURABLE_TRANSCRIPT_MAX_LINE_BYTES
+        ):
+            return None
+        try:
+            raw_header = json.loads(header_line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(raw_header, Mapping):
+            return None
+        header_end = source.tell()
+        tail_start = max(
+            header_end,
+            max(0, int(file_size) - _RECENT_SESSION_TAIL_SCAN_BYTES),
+        )
+        source.seek(tail_start)
+        data = source.read(_RECENT_SESSION_TAIL_SCAN_BYTES)
+    if tail_start > header_end:
+        first_newline = data.find(b"\n")
+        if first_newline < 0:
+            return None
+        data = data[first_newline + 1 :]
+    entries: list[dict[str, object]] = []
+    for line in data.splitlines():
+        if len(line) > _DURABLE_TRANSCRIPT_MAX_LINE_BYTES:
+            return None
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        except UnicodeDecodeError:
+            return None
+        if isinstance(value, Mapping):
+            entries.append(dict(value))
+    return dict(raw_header), entries
+
+
+def _transcript_boundary_sha256(transcript: Path, end_offset: int) -> str:
+    """Fingerprint a bounded prefix boundary to prove monotonic append."""
+
+    bounded_end = max(0, int(end_offset))
+    start = max(0, bounded_end - _RECENT_TRANSCRIPT_BOUNDARY_BYTES)
+    with transcript.open("rb") as source:
+        source.seek(start)
+        payload = source.read(bounded_end - start)
+    if len(payload) != bounded_end - start:
+        raise OSError("transcript changed while reading append boundary")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _latest_entry_id(entries: list[dict[str, object]]) -> str:
+    return next(
+        (
+            str(entry.get("id") or "")
+            for entry in reversed(entries)
+            if str(entry.get("id") or "")
+        ),
+        "",
+    )
+
+
+def _recent_messages_from_proven_tail(
+    entries: list[dict[str, object]],
+    *,
+    leaf_id: str,
+    header_id: str,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    bool,
+] | None:
+    # Older Pi transcripts are flat append-order logs. Their last entry is not
+    # a branch leaf, so the bounded suffix cannot prove which earlier messages
+    # belong to the visible recent window. Preserve the legacy full-read path.
+    if not any(str(entry.get("parentId") or "") for entry in entries):
+        return None
+    by_id = {
+        str(entry.get("id") or ""): entry
+        for entry in entries
+        if str(entry.get("id") or "")
+    }
+    if not leaf_id or leaf_id not in by_id:
+        return None
+    branch: list[dict[str, object]] = []
+    visited: set[str] = set()
+    cursor = leaf_id
+    complete = False
+    while cursor:
+        if cursor == header_id:
+            complete = True
+            break
+        if cursor in visited:
+            return None
+        visited.add(cursor)
+        entry = by_id.get(cursor)
+        if entry is None:
+            break
+        branch.append(entry)
+        cursor = str(entry.get("parentId") or "")
+    if not cursor:
+        complete = True
+    if not branch:
+        return None
+    selected_entries = list(reversed(branch))
+    messages, _message_entries = _pi_durable_branch_messages(
+        selected_entries,
+        leaf_id=leaf_id,
+    )
+    if complete or _completed_public_turn_count(messages) > _RECENT_SESSION_TURN_LIMIT:
+        return messages, selected_entries, True
+    # The selected leaf and every entry back to the bounded-tail edge are
+    # proven. This suffix is safe for an immediate partial first paint; a
+    # background authoritative repair fills older turns and publishes the
+    # existing snapshot_required control event. A missing leaf still returns
+    # None above and never guesses a branch.
+    return (messages, selected_entries, False) if messages else None
+
+
+def _completed_public_turn_count(raw_messages: list[object]) -> int:
+    completed = 0
+    current_started = False
+    current_completed = False
+    for value in raw_messages:
+        if not isinstance(value, Mapping) or not pi_message_is_public(value):
+            continue
+        role = str(value.get("role") or "assistant").strip().lower()
+        opens_turn = role == "user" and not pi_message_continues_public_turn(value)
+        if opens_turn and current_started:
+            if current_completed:
+                completed += 1
+            current_completed = False
+        current_started = True
+        if role == "assistant" and pi_message_completes_public_turn(value):
+            current_completed = True
+    if current_started and current_completed:
+        completed += 1
+    return completed
+
+
+def _recent_public_message_window(
+    raw_messages: list[object],
+    *,
+    session_id: str,
+    media_resolver: Callable[[str, str, str], str] | None,
+    raw_entries: list[object] | None = None,
+    maximum_turns: int = _RECENT_SESSION_TURN_LIMIT,
+    maximum_messages: int = _RECENT_SESSION_MESSAGE_LIMIT,
+    maximum_response_bytes: int = _RECENT_SESSION_RESPONSE_BYTES,
+) -> list[dict[str, object]]:
+    """Return recent complete turns plus the current durable user anchor.
+
+    A hard refresh can happen after Pi has appended the user's message but
+    before the assistant has completed the turn.  Omitting that final user
+    row makes the refreshed conversation look as if the send never happened,
+    especially once a long Tool run pushes the original live event out of the
+    bounded event tail.  Keep only the public user rows from that one pending
+    turn; assistant progress continues to come from live events.
+    """
+
+    entry_timestamps = _pi_history_entry_timestamps(raw_entries or [])
+    entry_ordinals = _pi_history_entry_ordinals(raw_entries or [])
+    turns: list[tuple[list[dict[str, object]], bool]] = []
+    current: list[dict[str, object]] = []
+    current_completed = False
+    for value in raw_messages:
+        if not isinstance(value, Mapping) or not pi_message_is_public(value):
+            continue
+        raw = dict(value)
+        fingerprint = _pi_history_message_fingerprint(raw)
+        timestamp_queue = entry_timestamps.get(fingerprint)
+        ordinal_queue = entry_ordinals.get(fingerprint)
+        if timestamp_queue:
+            raw["timestamp"] = timestamp_queue.popleft()
+        if ordinal_queue:
+            raw["_recentTimelineSequence"] = float(ordinal_queue.popleft())
+        role = str(raw.get("role") or "assistant").strip().lower()
+        opens_turn = role == "user" and not pi_message_continues_public_turn(raw)
+        if opens_turn and current:
+            turns.append((current, current_completed))
+            current = []
+            current_completed = False
+        current.append(raw)
+        if role == "assistant" and pi_message_completes_public_turn(raw):
+            current_completed = True
+    if current:
+        turns.append((current, current_completed))
+
+    turn_limit = max(1, min(int(maximum_turns), _RECENT_SESSION_TURN_LIMIT))
+    eligible_turns: list[list[dict[str, object]]] = [
+        messages
+        for messages, completed in turns
+        if completed
+    ]
+    if turns and not turns[-1][1]:
+        pending_user_rows = [
+            message
+            for message in turns[-1][0]
+            if str(message.get("role") or "").strip().lower() == "user"
+        ]
+        if pending_user_rows:
+            eligible_turns.append(pending_user_rows)
+    selected_turns = eligible_turns[-turn_limit:]
+    selected_reversed: list[list[dict[str, object]]] = []
+    selected_message_count = 0
+    for raw_turn in reversed(selected_turns):
+        first = raw_turn[0]
+        first_id = pi_message_id(first, "history")
+        turn_id = f"history:{first_id}"
+        projected: list[dict[str, object]] = []
+        for raw in raw_turn:
+            payload = pi_message_payload(
+                raw,
+                session_id=session_id,
+                turn_id=turn_id,
+                media_resolver=media_resolver,
+                message_id=pi_message_id(raw, "history"),
+            ).to_payload()
+            timeline_sequence = raw.get("_recentTimelineSequence")
+            if isinstance(timeline_sequence, float):
+                payload["timelineSequence"] = (
+                    timeline_sequence + 0.9
+                    if str(raw.get("role") or "assistant").lower() == "assistant"
+                    else timeline_sequence
+                )
+            projected.append(payload)
+        if (
+            not projected
+            or selected_message_count + len(projected) > maximum_messages
+        ):
+            break
+        candidate = [
+            *projected,
+            *[
+                message
+                for turn in reversed(selected_reversed)
+                for message in turn
+            ],
+        ]
+        encoded = json.dumps(
+            {"messages": candidate},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > maximum_response_bytes and not selected_reversed:
+            # The newest turn is the first-paint anchor.  A single long answer
+            # must not turn a valid recent response into an empty screen or
+            # force the UI back onto the blocking full-history path.
+            projected = _compact_recent_turn(projected)
+            candidate = projected
+            encoded = json.dumps(
+                {"messages": candidate},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        if len(encoded) > maximum_response_bytes:
+            break
+        selected_reversed.append(projected)
+        selected_message_count += len(projected)
+
+    return [
+        message
+        for turn in reversed(selected_reversed)
+        for message in turn
+    ]
+
+
+def _recent_tool_history_events(
+    raw_messages: list[object],
+    *,
+    raw_entries: list[object],
+    projected_messages: list[dict[str, object]],
+    session_id: str,
+) -> list[dict[str, object]]:
+    """Keep only bounded activity belonging to the visible recent turns."""
+
+    visible_turn_ids = {
+        str(message.get("turnId") or "")
+        for message in projected_messages
+        if str(message.get("turnId") or "")
+    }
+    if not visible_turn_ids:
+        return []
+    return [
+        event
+        for event in _pi_tool_history_events(
+            raw_messages,
+            session_id=session_id,
+            raw_entries=raw_entries,
+            maximum_tools=_RECENT_SESSION_ACTIVITY_LIMIT,
+            maximum_public_chars=_RECENT_SESSION_ACTIVITY_BYTES,
+        )
+        if str(event.get("turnId") or "") in visible_turn_ids
+    ]
+
+
+def _compact_recent_turn(
+    messages: list[dict[str, object]],
+    *,
+    text_limit: int = 2_048,
+) -> list[dict[str, object]]:
+    """Bound long first-paint text while making the partial projection clear."""
+
+    compacted: list[dict[str, object]] = []
+    marker = "\n\n[近期快照已截断；完整内容仍保留在历史中]"
+    for message in messages:
+        next_message = dict(message)
+        blocks: list[dict[str, object]] = []
+        for value in message.get("blocks") or []:
+            if not isinstance(value, Mapping):
+                continue
+            block = dict(value)
+            data = block.get("data")
+            if isinstance(data, Mapping):
+                next_data = dict(data)
+                text = next_data.get("text")
+                if isinstance(text, str) and len(text) > text_limit:
+                    next_data["text"] = text[:text_limit].rstrip() + marker
+                    next_data["truncated"] = True
+                    next_data["originalChars"] = len(text)
+                block["data"] = next_data
+            blocks.append(block)
+        next_message["blocks"] = blocks
+        compacted.append(next_message)
+    return compacted
 
 
 def _pi_tool_history_events(

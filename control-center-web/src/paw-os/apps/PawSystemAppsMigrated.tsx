@@ -4,6 +4,7 @@ import {
   BookOpen,
   CircleAlert,
   Fingerprint,
+  FlaskConical,
   Gauge,
   History,
   Keyboard,
@@ -95,6 +96,7 @@ type SystemPage = {
   group?: string;
   /** One line of purpose, carried by the stage chrome instead of a hero header. */
   purpose: string;
+  external?: boolean;
 };
 
 const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
@@ -112,6 +114,7 @@ const systemPages: Record<PawSystemAppId, readonly SystemPage[]> = {
   ],
   'system-monitor': [
     { id: 'activity', label: '活动', icon: Activity, route: '/observability', group: '实时', purpose: 'Runtime 正在发生的事件与调用' },
+    { id: 'evolution-report', label: '优化报告', icon: FlaskConical, route: '/evolution-report', group: '实验', purpose: '在独立网页读懂冻结实验、指标与 Keep / Reject 边界', external: true },
     { id: 'context', label: '上下文', icon: Network, route: '/context-debug', group: '排查', purpose: '逐轮查看模型实际收到的上下文' },
     { id: 'trace-agent', label: 'Trace Agent', icon: Search, route: '/trace-agent', group: '排查', purpose: '选择一段对话，让 Agent 解释失败、浪费与改进方向' },
     { id: 'diagnostics', label: '诊断', icon: Gauge, route: '/diagnostics', group: '排查', purpose: '各组件自报的状态与可执行的检查' },
@@ -172,9 +175,11 @@ export function PawSystemAppsMigrated({
           <nav aria-label={`${app.label}页面`}>
             {pages.map((candidate, index) => {
               const Icon = candidate.icon;
-              const current = candidate.id === page.id;
+              const current = !candidate.external && candidate.id === page.id;
               const badge = railSignal && candidate.id === railSignal.pageId ? railSignal.count : 0;
-              const name = badge && railSignal
+              const name = candidate.external
+                ? `${candidate.label}（网页）`
+                : badge && railSignal
                 ? `${candidate.label}（${railSignal.describe(badge)}）`
                 : candidate.label;
               return (
@@ -187,7 +192,9 @@ export function PawSystemAppsMigrated({
                   <button
                     aria-current={current ? 'page' : undefined}
                     aria-label={name}
-                    onClick={() => openPawOsRoute(desktop, candidate.route)}
+                    onClick={() => candidate.external
+                      ? openStandalonePage(candidate.route)
+                      : openPawOsRoute(desktop, candidate.route)}
                     title={name}
                     type="button"
                   >
@@ -291,8 +298,8 @@ function PawAppearanceSettings() {
 }
 
 /**
- * Execution permission as four honest positions, not a dropdown of jargon.
- * Whatever is chosen, R2/R3 operations still stop at the approvals desk.
+ * Execution permission uses the two user-facing coordinator profiles. Legacy
+ * values remain readable in stored settings but are not offered as choices.
  */
 const agentExecutionModes: readonly {
   value: AgentExecutionMode;
@@ -842,15 +849,21 @@ function componentAttentionCount(value: unknown): number {
 }
 
 function systemPageForRoute(pages: readonly SystemPage[], route: string): SystemPage {
-  const exact = pages.find((page) => page.route === route);
+  const internalPages = pages.filter((page) => !page.external);
+  const exact = internalPages.find((page) => page.route === route);
   if (exact) return exact;
   const view = new URLSearchParams(route.split('?', 2)[1] ?? '').get('view');
   if (view) {
-    const byView = pages.find((page) => page.id === view);
+    const byView = internalPages.find((page) => page.id === view);
     if (byView) return byView;
   }
   const path = route.split('?', 1)[0];
-  return pages.find((page) => page.route.split('?', 1)[0] === path) ?? pages[0];
+  return internalPages.find((page) => page.route.split('?', 1)[0] === path) ?? internalPages[0];
+}
+
+function openStandalonePage(path: string): void {
+  const target = new URL(path, window.location.origin).toString();
+  window.open(target, '_blank', 'noopener,noreferrer');
 }
 
 function thinkingLabel(value: string): string {

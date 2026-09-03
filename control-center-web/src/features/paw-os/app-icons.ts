@@ -19,6 +19,7 @@ export const pawOsAppIcons: Record<PawOsAppId, PawOsAppIconComponent> = {
   'input-studio': iconFor('input-studio'),
   'app-center': iconFor('app-center'),
   'system-monitor': iconFor('system-monitor'),
+  'eval-lab': iconFor('eval-lab'),
   'system-settings': iconFor('system-settings'),
   files: iconFor('files'),
   browser: iconFor('browser'),

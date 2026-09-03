@@ -95,6 +95,7 @@ class AgentSessionApplicationService:
             surface_kind=str(value.get("surfaceKind") or "agent"),
             owner_app_id=str(value.get("ownerAppId") or ""),
             surface_key=str(value.get("surfaceKey") or ""),
+            projection_only=_bool(value.get("projectionOnly")),
         )
         sessions = page["items"]
         if not isinstance(sessions, list):

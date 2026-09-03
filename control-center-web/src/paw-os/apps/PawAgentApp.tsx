@@ -124,7 +124,7 @@ export function PawAgentApp({
         },
       }),
       includeRooms
-        ? transport.request({ pathId: 'agent.rooms.list', query: { limit: 100 } })
+        ? transport.request({ pathId: 'agent.rooms.list', query: { limit: 100, ownerAppId: '' } })
         : Promise.resolve(undefined),
       transport.request({ pathId: 'agent.roles.list' }),
       includeRoleModels
@@ -159,7 +159,9 @@ export function PawAgentApp({
         ]);
       }
       if (roomResult.status === 'fulfilled' && roomResult.value !== undefined) {
-        const listed = roomItems(roomResult.value);
+        const listed = roomItems(roomResult.value).filter((item) => (
+          !item.ownerAppId || item.id === (selection.kind === 'room' ? selection.id : '')
+        ));
         const listedIds = new Set(listed.map((item) => item.id));
         for (const id of Object.keys(optimisticRoomsRef.current)) {
           if (listedIds.has(id)) delete optimisticRoomsRef.current[id];

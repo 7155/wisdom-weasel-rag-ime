@@ -131,37 +131,41 @@ implementation choices or live status.
 
 - **Status:** accepted
 - **Decision:** installable Skills, prompts, themes, and extensions use Pi's
-  Package resolver. PAW adds discovery plus confirmed install, update,
-  rollback, and receipts; `plugin-creator` reuses before creating.
-- **Why:** a PAW loader would fork Pi Session bootstrap semantics.
-- **Consequence:** new Sessions load active resources while running Sessions
-  keep their snapshot. An Extension App is visible only while its Package is
-  installed and enabled. PAWOS rolls back frontend code; Pi rolls back Package
-  resources; surface-less Packages remain background capabilities.
+  Package resolver; PAW owns discovery, confirmed lifecycle actions, and
+  receipts.
+- **Why:** a PAW loader would fork Pi bootstrap semantics.
+- **Consequence:** new Sessions load active resources; running Sessions keep
+  their snapshot. PAWOS and Pi roll back their respective layers.
 
 ## D-012 — PAW OS Frontend Stays In The PAW Product Repository
 
 - **Status:** accepted
-- **Decision:** `7155/personal-agent-workbench` owns PAW Runtime and PAWOS;
-  `control-center-web` is the legacy fallback. Tutti is reference-only.
-- **Why:** contracts, adapters, installation, and frontend acceptance need one
-  revision.
-- **Consequence:** product pushes stay in this repository with no Tutti runtime
-  dependency. App identity and presentation persistence remain PAW-owned;
-  Wayfinder is the OS home. Browser selection, commands, permissions, Trace,
-  and Stop stay PAW-owned so human and Agent share one visible page.
+- **Decision:** this repository owns PAW Runtime and PAWOS; Tutti is
+  reference-only and `control-center-web` is the fallback.
+- **Why:** contracts, adapters, installation, and acceptance need one revision.
+- **Consequence:** PAW owns App identity, presentation state, Browser control,
+  permissions, Trace, and Stop without a Tutti runtime dependency.
 
 ## D-013 — Extension App Conversations Are App-Owned Pi Sessions
 
 - **Status:** accepted
-- **Decision:** a conversation started inside an Extension App remains an
-  ordinary Pi Session for execution, transcript, Stop, recovery, approval, and
-  audit, but carries durable App surface ownership. Agent's ordinary list and
-  history search exclude it; only its owning App restores and presents it.
-- **Why:** vertical Apps need their own information architecture and visual
-  language without duplicating Pi or filling Agent with implementation-facing
-  App conversations.
-- **Consequence:** App ownership is persisted and queried explicitly rather
-  than inferred from titles or browser storage. Diagnostics and evaluations
-  may inspect it only through explicit App/Session references, and disabling
-  the App removes its surface without deleting the underlying audit record.
+- **Decision:** Extension App conversations remain ordinary Pi Sessions but
+  carry durable App ownership. Agent lists exclude them; the owning App
+  restores and presents them.
+- **Why:** vertical Apps need distinct information architecture without
+  duplicating Pi or crowding Agent history.
+- **Consequence:** ownership is explicit, diagnostics require App/Session
+  references, and disabling the surface preserves the audit record.
+
+## D-014 — Explicit Agent Permission Profiles Are System-Wide
+
+- **Status:** accepted
+- **Decision:** ordinary Session and Room controls expose paired Full Access
+  (`per_action`) and Full Auto (`full_trust`) profiles. Both authorize `/` and
+  all available Tools/Skills; optional roots are context. Full Access asks
+  before effects; Full Auto approves them.
+- **Why:** stale fences must not narrow an explicit full-system choice.
+- **Consequence:** PAW path, scope, disclosure, allowlist, and preview hashes do
+  not gate these profiles. Schemas, target applicability, atomic race checks,
+  actual Tool availability, macOS TCC, and Unix permissions remain boundaries.
+  Legacy profiles remain readable but are not ordinary choices.

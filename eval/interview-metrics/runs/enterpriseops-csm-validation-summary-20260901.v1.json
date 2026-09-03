@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "paw.enterpriseops-csm-validation-summary.v1",
+  "runId": "enterpriseops-csm-validation-summary-20260901-v1",
+  "status": "completed_with_candidate_reject",
+  "split": "validation",
+  "sample": {
+    "taskCount": 3,
+    "rawVerifierCount": 31,
+    "liveMcpToolCount": 89,
+    "taskManifestSha256": "132baec30d90fd0f95799c110d756db6e728ebe7e5615a1dc8162d05d03f9b41",
+    "toolCatalogSha256": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077"
+  },
+  "harnessRepair": {
+    "comparisonClass": "not_workflow_comparable",
+    "invalidPlumbingReport": {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-baseline-validation-20260901.v1.json",
+      "reportSha256": "9a907e28ed9ba20a37dce491dabe45450364942b1e14856142dafd485ee9193a",
+      "taskSuccessRate": 0.0,
+      "verifierPassRate": 0.0967741935483871,
+      "verifierPassCount": 3,
+      "toolCalls": 0
+    },
+    "repairedBaselineReport": {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-baseline-validation-20260901-v5.v1.json",
+      "reportSha256": "4ff27d4411896918c3c045018f18e90cd9cf86fe49aa79ca229294c574485cfe",
+      "taskSuccessRate": 0.3333333333333333,
+      "verifierPassRate": 0.8387096774193549,
+      "verifierPassCount": 26,
+      "toolCalls": 47,
+      "failedToolCalls": 0,
+      "allDatabasesCleaned": true
+    },
+    "verifierAbsolutePercentagePointIncrease": 74.19354838709677,
+    "allowedInterpretation": "Trace-driven repair of the evaluation and execution chain restored real CSM Tool execution and verifiable state changes.",
+    "forbiddenInterpretation": "The business workflow algorithm improved by 74.19 percentage points."
+  },
+  "workflowComparison": {
+    "comparable": true,
+    "commonRunnerSha256": "651194b824bd83b564da21edba6894c7ce45be34a4c1a51550a71665ff2f09b6",
+    "commonRuntimeIdentitySha256": "e3bd71bac16e36a3246032c0ef892676e41777ebe9f35cebc175051f2120436c",
+    "commonRuntimeProvenanceSha256": "f08ea61784fcd8793ef8f98e31463ade52ad08aaf1e3e0659db2cbe3bcf57c3b",
+    "baseline": {
+      "profile": "baseline-v1",
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-baseline-validation-20260901-v5.v1.json",
+      "reportSha256": "4ff27d4411896918c3c045018f18e90cd9cf86fe49aa79ca229294c574485cfe",
+      "taskSuccessRate": 0.3333333333333333,
+      "verifierPassRate": 0.8387096774193549,
+      "toolCalls": 47,
+      "failedToolCalls": 0,
+      "latencyMs": 376364.146
+    },
+    "candidate": {
+      "profile": "state-contract-v1",
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-state-contract-validation-20260901-v2.v1.json",
+      "reportSha256": "ecbb2172053db356982cca039cbeeedb51ad84b3f8c5ffca596f6b7d1160a1ac",
+      "taskSuccessRate": 0.3333333333333333,
+      "verifierPassRate": 0.8387096774193549,
+      "toolCalls": 54,
+      "failedToolCalls": 1,
+      "latencyMs": 470218.64
+    },
+    "taskSuccessRateDelta": 0.0,
+    "verifierPassRateDelta": 0.0,
+    "toolCallIncreasePercent": 14.893617021276595,
+    "latencyIncreasePercent": 24.936571363521697,
+    "decision": "reject",
+    "heldOutGateCreated": false,
+    "heldOutConsumed": false
+  },
+  "traceRepairLedger": {
+    "path": "eval/interview-metrics/ENTERPRISEOPS_CSM_TRACE_REPAIR_20260901.md",
+    "runnerContractDefectsFound": 11,
+    "sourceOrTestFixed": 11,
+    "livePathRevalidated": 3,
+    "installedRuntimeChanged": false
+  },
+  "claim": {
+    "allowed": "On three frozen EnterpriseOps CSM Validation tasks with 31 raw host-private SQL verifiers, Trace-driven harness repairs restored 47 real business Tool calls and moved verifier pass rate from an invalid 3/31 plumbing result to a repaired 26/31 baseline. On the repaired contract, state-contract-v1 tied baseline at 33.33% task success and 83.87% verifier pass while using 14.89% more Tool calls and 24.94% more wall-clock time, so it was rejected without opening Held-out.",
+    "forbidden": "The business workflow improved by 74.19 percentage points, state-contract-v1 improved quality, Held-out passed, the Agent freely selected from all 89 tools, or the source-local candidate was installed."
+  },
+  "reportSha256": "83b5666f3589a56535058ba6852a69a9344c46eb2f6d2044cfe8db4e4dff2925"
+}

@@ -14,12 +14,16 @@ describe('session and Room list pagination routes', () => {
       'surfaceKind',
       'ownerAppId',
       'surfaceKey',
+      'projectionOnly',
     ]);
     expect(CONTROL_ROUTES['agent.rooms.list'].query).toEqual([
       'includeArchived',
       'limit',
       'beforeUpdatedAtMs',
       'beforeId',
+      'projectionOnly',
+      'ownerAppId',
+      'surfaceKey',
     ]);
 
     expect(() =>
@@ -29,6 +33,7 @@ describe('session and Room list pagination routes', () => {
           limit: 100,
           beforeUpdatedAtMs: 1_000,
           beforeId: 'session:cursor',
+          projectionOnly: 1,
         },
       }),
     ).not.toThrow();
@@ -39,6 +44,7 @@ describe('session and Room list pagination routes', () => {
           limit: 100,
           beforeUpdatedAtMs: 1_000,
           beforeId: 'room:cursor',
+          projectionOnly: 1,
         },
       }),
     ).not.toThrow();

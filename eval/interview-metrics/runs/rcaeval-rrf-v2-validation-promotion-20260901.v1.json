@@ -1,0 +1,56 @@
+{
+  "benchmark": "RCAEval",
+  "candidateConfigSha256": "f6d7faf9e96df3c1e5bf4cb011f6d3f36578e9c3dae863e69953b78bcfe0a383",
+  "candidateProfile": "rrf-v2",
+  "dataSha256": "c0e3cc4f631145cc568580ad597ab84832a967297a904c4144bed64259e008c9",
+  "datasetIndexSha256": "90b52c84bcf24fd81a096076b90f29881a0892bc7f2b72610606e81fb11b2fd6",
+  "datasetSnapshotSha256": "c49a288920dbba2e8e724679a14636d5c7eb2b45426bba14007ef79a6c0ab1bb",
+  "decision": "keep",
+  "environmentSha256": "7bf0200c20d211b82d165d326ee42d7070ce23980b9b2f15dfd3c3c2435d310e",
+  "heldOutAuthorized": true,
+  "heldOutConsumed": false,
+  "oneShotId": "rcaeval-re1-heldout:cbf9c47341f930f06e2496e6",
+  "promotionGate": {
+    "deltas": {
+      "fineGrained.AC@1": 0.033333333333333326,
+      "fineGrained.AC@3": 0.0,
+      "fineGrained.AC@5": 0.033333333333333326,
+      "service.AC@1": 0.013333333333333308,
+      "service.AC@3": 0.006666666666666599,
+      "service.AC@5": 0.020000000000000018
+    },
+    "failedCasePolicyPassed": true,
+    "noRegressionAcrossSixMetrics": true,
+    "passed": true,
+    "primaryServiceAc1StrictImprovement": true,
+    "requiredMetrics": [
+      "service.AC@1",
+      "service.AC@3",
+      "service.AC@5",
+      "fineGrained.AC@1",
+      "fineGrained.AC@3",
+      "fineGrained.AC@5"
+    ]
+  },
+  "promotionReceiptSha256": "cf06c44317448f5f3c0fa9b60710884e66ceabbf08fd905499c475545274fd95",
+  "runnerSha256": "333effd2e063a074320e67edf7bb8afc4def236beadeed7766ac3a029f0a8d1e",
+  "schemaVersion": "paw.rcaeval-promotion.v1",
+  "sourceRevision": "526cdd5818ea9d8c2a34e869ebd637bc6b4fa4b8",
+  "sourceSha256": "06b2cee861b04edf58f968d462812a03afeb286e998753d3d28ae55fea495f1a",
+  "suite": "RE1",
+  "validationBaselinePrivateSha256": "6d58c415d421c99a8c738ccf42b274853ba952278bed7c817ca115dae1d23a02",
+  "validationBaselineReportSha256": "851265ebbfcfb089cd0b0120e6e107655d20b11733d5889df49a5b27872eb6c1",
+  "validationCandidatePrivateSha256": "7004ca3286e4342f028934d7fd946ef5eaa99b5ee639f8967a8aa67b190e401d",
+  "validationCandidateReportSha256": "cbf9c47341f930f06e2496e6e255628dacf30fa7e4ed023adbab9df4f0e18977",
+  "validationCaseManifestSha256": "d12c265cc04a00ddb9dd8bb77d785675601543018c76b6d910b582593f05410f",
+  "validationContractSha256": "727bb2ef5b10a3a7017edf9d916d9d1777e6125a79e8b21a47b06041637ed1e6",
+  "validationMetrics": {
+    "fineGrained.AC@1": 0.41333333333333333,
+    "fineGrained.AC@3": 0.6333333333333333,
+    "fineGrained.AC@5": 0.7333333333333333,
+    "service.AC@1": 0.7,
+    "service.AC@3": 0.8933333333333333,
+    "service.AC@5": 0.9666666666666667
+  },
+  "validationReportSha256": "cbf9c47341f930f06e2496e6e255628dacf30fa7e4ed023adbab9df4f0e18977"
+}

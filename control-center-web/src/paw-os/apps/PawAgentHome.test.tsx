@@ -167,7 +167,67 @@ describe('PAWOS Agent Home 首屏合同', () => {
     await waitFor(() => expect(transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create')).toBe(true));
     const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request;
     expect((create?.body as { participants?: unknown[] }).participants).toHaveLength(5);
-    expect(create?.body).toMatchObject({ routingConfig: { maxResponders: 5 } });
+    expect(create?.body).toMatchObject({
+      routingConfig: { maxResponders: 5 },
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'inherit' },
+        toolAgent: { executionMode: 'inherit' },
+      },
+      dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+    });
+    expect(create?.body).not.toHaveProperty('executionMode');
+  });
+
+  it('shows and submits all Room permission layers while allowing explicit child narrowing', async () => {
+    const user = userEvent.setup();
+    const { transport } = renderHome({
+      personas: [
+        persona('partner-1', '伙伴 1'),
+        persona('partner-2', '伙伴 2'),
+      ],
+    });
+
+    await user.click(screen.getByRole('radio', { name: 'Room' }));
+    const permission = screen.getByRole('button', { name: '权限 · 全自动 · 分层' });
+    expect(permission).toBeInTheDocument();
+    await user.click(permission);
+    expect(screen.getByText('Room 边界')).toBeInTheDocument();
+    expect(screen.getByText('行星 / Partner')).toBeInTheDocument();
+    expect(screen.getByText('卫星 / Tool Agent')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Room 边界配置模式' })).toHaveValue('full_trust');
+    expect(screen.getByRole('combobox', { name: '行星 / Partner配置模式' })).toHaveValue('inherit');
+    expect(screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' })).toHaveValue('inherit');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '行星 / Partner配置模式' }),
+      'per_action',
+    );
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '卫星 / Tool Agent配置模式' }),
+      'read_only',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: '描述你想完成的工作' }),
+      '按分层边界完成任务',
+    );
+    await user.click(screen.getByRole('button', { name: '开始 Room' }));
+
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.rooms.create'),
+    ).toBe(true));
+    const create = transport.requests.find(
+      ({ request }) => request.pathId === 'agent.rooms.create',
+    )?.request;
+    expect(create?.body).toMatchObject({
+      permissionPolicy: {
+        schemaVersion: 'rag-ime.room-permission-policy.v1',
+        room: { executionMode: 'full_trust' },
+        partner: { executionMode: 'per_action' },
+        toolAgent: { executionMode: 'read_only' },
+      },
+    });
+    expect(create?.body).not.toHaveProperty('executionMode');
   });
 });
 

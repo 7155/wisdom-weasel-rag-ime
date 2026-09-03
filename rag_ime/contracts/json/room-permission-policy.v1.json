@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.room-permission-policy.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "room", "partner", "toolAgent"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "rag-ime.room-permission-policy.v1"
+    },
+    "room": {"$ref": "#/$defs/roomPermissionLayer"},
+    "partner": {"$ref": "#/$defs/roomPermissionLowerLayer"},
+    "toolAgent": {"$ref": "#/$defs/roomPermissionLowerLayer"}
+  },
+  "$defs": {
+    "roomPermissionLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionMode"],
+      "properties": {
+        "executionMode": {
+          "type": "string",
+          "enum": ["read_only", "per_action", "workspace_managed", "full_trust"]
+        }
+      }
+    },
+    "roomPermissionLowerLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executionMode"],
+      "properties": {
+        "executionMode": {
+          "type": "string",
+          "enum": ["inherit", "read_only", "per_action", "workspace_managed", "full_trust"]
+        }
+      }
+    }
+  }
+}

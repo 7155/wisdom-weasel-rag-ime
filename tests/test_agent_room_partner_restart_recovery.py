@@ -71,6 +71,7 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
             "id": "room-a",
             "status": "active",
             "activeTopicId": "topic-a",
+            "moderatorParticipantId": self.source["id"],
             "participants": [self.source, self.target],
         }
         self.sessions = _RecoverySessions()
@@ -519,6 +520,97 @@ class AgentRoomPartnerRestartRecoveryTest(unittest.TestCase):
         self.assertEqual(payload["activityKind"], "child")
         self.assertEqual(payload["phase"], "completed")
         self.assertEqual(payload["childDispatchId"], child_dispatch_id)
+
+    def test_reconcile_uses_targeted_turn_events_when_store_supports_them(
+        self,
+    ) -> None:
+        child_dispatch_id = "room-child:targeted-recovery"
+        self._register_prepared(child_dispatch_id=child_dispatch_id)
+        self.dispatches.mark_dispatched(child_dispatch_id)
+        targeted_queries: list[tuple[object, ...]] = []
+
+        def list_events_for_turn(
+            room_id: str,
+            turn_id: str,
+            **options: object,
+        ) -> list[dict[str, object]]:
+            targeted_queries.append((room_id, turn_id, options))
+            return [
+                {
+                    "turnId": turn_id,
+                    "eventType": "participant_activity",
+                    "payload": {
+                        "activityKind": "child",
+                        "phase": "completed",
+                        "childDispatchId": child_dispatch_id,
+                        "summary": "recovered without scanning unrelated events",
+                    },
+                }
+            ]
+
+        self.application.rooms.list_events_for_turn = list_events_for_turn
+        self.application.rooms.list_events = lambda *_args, **_kwargs: self.fail(
+            "targeted recovery must not scan the retained Room timeline"
+        )
+
+        self.application.reconcile()
+
+        recovered = self.dispatches.get(child_dispatch_id)
+        self.assertEqual(recovered["status"], "review")
+        self.assertEqual(len(targeted_queries), 1)
+        self.assertEqual(targeted_queries[0][0:2], ("room-a", "root-a"))
+        self.assertEqual(
+            targeted_queries[0][2]["event_types"],
+            ("room_post", "participant_message", "participant_activity"),
+        )
+
+    def test_reconcile_prefers_expected_dispatch_event_lookup(self) -> None:
+        child_dispatch_id = "room-child:dispatch-targeted-recovery"
+        self._register_prepared(child_dispatch_id=child_dispatch_id)
+        self.dispatches.mark_dispatched(child_dispatch_id)
+        dispatch_queries: list[tuple[object, ...]] = []
+
+        def list_recovery_events_for_dispatches(
+            room_id: str,
+            turn_id: str,
+            **options: object,
+        ) -> list[dict[str, object]]:
+            dispatch_queries.append((room_id, turn_id, options))
+            return [
+                {
+                    "turnId": turn_id,
+                    "eventType": "participant_activity",
+                    "payload": {
+                        "activityKind": "child",
+                        "phase": "completed",
+                        "childDispatchId": child_dispatch_id,
+                        "summary": "recovered from exact dispatch lookup",
+                    },
+                }
+            ]
+
+        self.application.rooms.list_recovery_events_for_dispatches = (
+            list_recovery_events_for_dispatches
+        )
+        self.application.rooms.list_events_for_turn = (
+            lambda *_args, **_kwargs: self.fail(
+                "dispatch-targeted recovery must precede turn-wide lookup"
+            )
+        )
+        self.application.rooms.list_events = lambda *_args, **_kwargs: self.fail(
+            "dispatch-targeted recovery must not scan the Room timeline"
+        )
+
+        self.application.reconcile()
+
+        recovered = self.dispatches.get(child_dispatch_id)
+        self.assertEqual(recovered["status"], "review")
+        self.assertEqual(len(dispatch_queries), 1)
+        self.assertEqual(dispatch_queries[0][0:2], ("room-a", "root-a"))
+        self.assertEqual(
+            dispatch_queries[0][2]["dispatch_ids"],
+            (child_dispatch_id,),
+        )
 
     def test_reconcile_retires_stale_prepared_without_acceptance_evidence(
         self,

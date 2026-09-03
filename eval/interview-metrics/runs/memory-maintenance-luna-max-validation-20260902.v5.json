@@ -1,0 +1,150 @@
+{
+  "claimBoundary": [
+    "private-shadow validation only",
+    "real Luna Max requests and independent verifier retained in private artifacts",
+    "installed Gateway and foreground acceptance are not evaluated"
+  ],
+  "evaluationScope": "validation-only",
+  "evidence": {
+    "appliedAtomSetSha256": "b3b28aabe5459693606968d85291ee9d110727df0b6fba7a353a98ba6e3bc3ab",
+    "appliedStateSha256": "8a3238254bd8b908f9c270fd0050bb86673ea60cf520b2df7a8b78e35d1557f0",
+    "replayAtomSetSha256": "b3b28aabe5459693606968d85291ee9d110727df0b6fba7a353a98ba6e3bc3ab",
+    "replayBaselineSha256": "8b8a10c329d5b0644a09100a1dab52f316ec4fcda74a5a20c66c96fd3ac4b1e0",
+    "syntheticFixtureSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20"
+  },
+  "hardGates": {
+    "heldOutEvaluated": false,
+    "privateShadow": true,
+    "productionDatabaseOpened": false,
+    "productionMutationPerformed": false,
+    "replayVerified": true,
+    "rollbackVerified": true,
+    "sourceShadowUnchanged": true
+  },
+  "heldOutEvaluated": false,
+  "localOnly": true,
+  "metrics": {
+    "curation": {
+      "bookProjectionInSync": true,
+      "currentAtomCount": 6,
+      "governedCurrentAtomCount": 6,
+      "legalLineageCurrentAtomCount": 6,
+      "modelDecisionCount": 5,
+      "ok": true,
+      "sourceCount": 5
+    },
+    "fixture": {
+      "allCandidateEvidence": true,
+      "allStored": true,
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "nonMemoryCaseCount": 1
+    },
+    "recovery": {
+      "replayAtomSetStable": true,
+      "replayPassed": true,
+      "replayRagPassed": true,
+      "replayRestoredAppliedState": true,
+      "replayReusedModelRequests": true,
+      "rollbackPassed": true,
+      "rollbackRagCleared": true,
+      "rollbackRestoredBaseline": true
+    },
+    "retrieval": {
+      "allCasesPassed": true,
+      "bestRanks": {
+        "durable-explanation-preference": 7,
+        "durable-recoverability-principle": 7,
+        "durable-verification-habit": 6,
+        "project-room-layout": 1,
+        "temporary-test-task": 0
+      },
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "passed": true,
+      "projectionBacklog": 0,
+      "projectionFresh": true,
+      "vectorCoverage": 1.0
+    }
+  },
+  "model": "gpt-5.6-luna",
+  "modelRequests": [
+    {
+      "elapsedSeconds": 61.967,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6163,
+      "inputSha256": "ec3e556f08ac0b873616da1ebf54a1dc536be9b7f99e12d23d1bd135c19f5c1d",
+      "isolated": false,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "5cf3bbc2630f313fd5b29f15c57e13e4e5d65027a4f8e690701a10c55241a759",
+      "phase": "atom-first-curation",
+      "promptSha256": "ec3e556f08ac0b873616da1ebf54a1dc536be9b7f99e12d23d1bd135c19f5c1d",
+      "resumed": false,
+      "schemaSha256": "298dc19b03b7cb15a399769746f059eff906df5d7f51d9646451850ced3b468d",
+      "stderrSha256": "7f906583f8a7718ae7adb2c0c421bfc70e1a4a572f5ea10b3311536c6553c15f",
+      "stdoutSha256": "9563725d610fe1ef13839e33f0cdee6871b0143c846671158ce7dc0bb5fbc407",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral"
+    },
+    {
+      "elapsedSeconds": 23.205,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 4962,
+      "inputSha256": "307b77dd6ef4c77f3783704f2647a97ccb7e7eb77f4c75ffd0c8b73ed8a3c39a",
+      "isolated": true,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "4b200085bda05f9cc5f1769ffd271446a46318608d7f0da6811d45fd5aa0a560",
+      "phase": "atom-first-verifier",
+      "promptSha256": "307b77dd6ef4c77f3783704f2647a97ccb7e7eb77f4c75ffd0c8b73ed8a3c39a",
+      "resumed": false,
+      "schemaSha256": "aaea21ed89d05a6ced5be69340aa63ec8506d58951fa24c888d78e0f1ca3c28c",
+      "stderrSha256": "db2563724d8cc74704aee22ca3d0e7c1e18140961b75ecf702fdab69514a5723",
+      "stdoutSha256": "4d502536fb97736f3683b1d71fadc7512331961506a1dafeec3deaf95f62c432",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral"
+    },
+    {
+      "elapsedSeconds": 61.967,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6163,
+      "inputSha256": "ec3e556f08ac0b873616da1ebf54a1dc536be9b7f99e12d23d1bd135c19f5c1d",
+      "isolated": false,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "5cf3bbc2630f313fd5b29f15c57e13e4e5d65027a4f8e690701a10c55241a759",
+      "phase": "atom-first-curation",
+      "promptSha256": "ec3e556f08ac0b873616da1ebf54a1dc536be9b7f99e12d23d1bd135c19f5c1d",
+      "resumed": true,
+      "schemaSha256": "298dc19b03b7cb15a399769746f059eff906df5d7f51d9646451850ced3b468d",
+      "stderrSha256": "7f906583f8a7718ae7adb2c0c421bfc70e1a4a572f5ea10b3311536c6553c15f",
+      "stdoutSha256": "9563725d610fe1ef13839e33f0cdee6871b0143c846671158ce7dc0bb5fbc407",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral"
+    },
+    {
+      "elapsedSeconds": 23.205,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 4962,
+      "inputSha256": "307b77dd6ef4c77f3783704f2647a97ccb7e7eb77f4c75ffd0c8b73ed8a3c39a",
+      "isolated": true,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "4b200085bda05f9cc5f1769ffd271446a46318608d7f0da6811d45fd5aa0a560",
+      "phase": "atom-first-verifier",
+      "promptSha256": "307b77dd6ef4c77f3783704f2647a97ccb7e7eb77f4c75ffd0c8b73ed8a3c39a",
+      "resumed": true,
+      "schemaSha256": "aaea21ed89d05a6ced5be69340aa63ec8506d58951fa24c888d78e0f1ca3c28c",
+      "stderrSha256": "db2563724d8cc74704aee22ca3d0e7c1e18140961b75ecf702fdab69514a5723",
+      "stdoutSha256": "4d502536fb97736f3683b1d71fadc7512331961506a1dafeec3deaf95f62c432",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral"
+    }
+  ],
+  "runId": "memory-maintenance-luna-max-validation-20260902",
+  "schemaVersion": "paw.memory-maintenance-validation-receipt.v1",
+  "status": "passed",
+  "thinking": "max",
+  "transport": "codex_cli_ephemeral"
+}

@@ -5,8 +5,15 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Mapping, Sequence
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.check_interview_agent_experiments import validate_agent_experiments
 
 
 SCHEMA_VERSION = "paw.interview-metrics-ledger.v1"
@@ -702,6 +709,39 @@ def validate_interview_metrics(
             errors.append(f"{dataset_id}: sourceUrl is required")
         if not _non_empty_text(dataset.get("localStatus")):
             errors.append(f"{dataset_id}: localStatus is required")
+
+    if repo_root is not None:
+        experiment_ref = payload.get("agentExperimentLedger")
+        if not _non_empty_text(experiment_ref):
+            errors.append("agentExperimentLedger is required")
+        else:
+            experiment_path = _repo_ref_path(str(experiment_ref), repo_root)
+            if experiment_path is None or not experiment_path.is_file():
+                errors.append(
+                    f"agentExperimentLedger does not exist: {experiment_ref}"
+                )
+            else:
+                try:
+                    experiment_payload = json.loads(
+                        experiment_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, json.JSONDecodeError) as exc:
+                    errors.append(
+                        f"agentExperimentLedger is not readable JSON: {experiment_ref}: {exc}"
+                    )
+                else:
+                    if not isinstance(experiment_payload, Mapping):
+                        errors.append(
+                            "agentExperimentLedger must contain a JSON object"
+                        )
+                    else:
+                        errors.extend(
+                            f"agentExperimentLedger: {error}"
+                            for error in validate_agent_experiments(
+                                experiment_payload,
+                                repo_root=repo_root,
+                            )
+                        )
 
     return errors
 

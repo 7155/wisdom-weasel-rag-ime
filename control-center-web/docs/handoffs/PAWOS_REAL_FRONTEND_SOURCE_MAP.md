@@ -20,7 +20,7 @@
 
 1. `src/main.tsx` 启动 `startControlCenter`，再挂载 `App`。
 2. `frontend-product.ts` 默认选择 `paw-os`；`App.tsx` 因而渲染 `PawOsApp`。`legacy` 仍可显式选择，但不是默认产品。
-3. `features/paw-os/model/app-registry.ts` 只定义 11 个 App 的身份和 route，不能单独证明哪个组件实际渲染。
+3. `features/paw-os/model/app-registry.ts` 只定义 12 个 App 的身份和 route，不能单独证明哪个组件实际渲染。
 4. `paw-os/apps/PawAppsRuntime.tsx` 的 `renderApp` 是 App、行星、subagent 卫星和结果窗口的当前总分派点。
 5. 再沿它的 import/JSX 进入下表的叶子 render owner；CSS 只解释样式，不能反过来证明组件被选中。
 6. 原生 Swift 表面必须由构建脚本证明。文件名像 UI、出现在 patch 或截图里都不够。
@@ -56,7 +56,7 @@ PAWOS React 源码当前由 Electron 发布宿主加载：`scripts/build_control
 `electron/main.mjs` 再显式加载 `?frontend=paw-os&pawHost=electron`。旧 WKWebView Control Center
 源码与 builder 已从主线删除，因此 Electron 是唯一可构建、可安装的 PAWOS 宿主。
 
-## 11 个 App 的真实前端
+## 12 个 App 的真实前端
 
 | App / 要展示的功能 | 真实 render owner | 当前选择证据 | 介绍页应打开/覆盖 |
 | --- | --- | --- | --- |
@@ -66,7 +66,8 @@ PAWOS React 源码当前由 Electron 发布宿主加载：`scripts/build_control
 | Knowledge：知识库、资料/文档、检索/处理、图谱 | `features/knowledge/index.tsx`；`document-workspace.tsx`；`knowledge-graph.tsx`；`interactive-graph-canvas.tsx` | `renderApp('knowledge') -> PawNativeApp -> KnowledgeFeature` | `/knowledge`；材料、索引 job、查询、图谱、空/失败/处理中状态 |
 | Input Studio：输入法、词库、语音管理、输入记录 | `paw-os/apps/PawSystemAppsMigrated.tsx`；`features/input-method/index.tsx`；`lexicon-workflow.tsx`；`features/voice/index.tsx`；`features/history/index.tsx` | `renderApp('input-studio') -> PawNativeApp -> PawSystemAppsMigrated -> InputMethodFeature/InputLexiconFeature/VoiceFeature/HistoryFeature` | `/input`、`/input?view=lexicon`、`/voice`、`/history`；这是管理 UI，不是输入时浮层 |
 | App Center：已安装、目录、Agent 建议 | `PawSystemAppsMigrated.tsx`；`features/plugins/index.tsx` | `renderApp('app-center') -> PawNativeApp -> PawSystemAppsMigrated -> PluginsFeature/PawPackageCatalog` | `/plugins`、`?view=catalog`、`?view=proposals`；保留 validate/preview/confirm/apply/rollback 边界 |
-| System Monitor：活动/Trace/Eval、上下文、Trace Agent、诊断 | `PawSystemAppsMigrated.tsx`；`features/observability/index.tsx`；`features/context-debug/index.tsx`；`features/trace-agent/index.tsx`；`features/diagnostics/index.tsx` | `renderApp('system-monitor') -> PawNativeApp -> PawSystemAppsMigrated` | `/observability`、`/context-debug`、`/trace-agent`、`/diagnostics`；Trace Agent 可看原对话和实际动作并进入诊断对话；真实指标与 AI Judge 估计必须分栏/分字段，不互相冒充 |
+| System Monitor：活动/Trace/Eval、上下文、Trace Agent、诊断，以及独立报告的打开入口 | `PawSystemAppsMigrated.tsx`；`features/observability/index.tsx`；`features/context-debug/index.tsx`；`features/trace-agent/index.tsx`；`features/diagnostics/index.tsx` | `renderApp('system-monitor') -> PawNativeApp -> PawSystemAppsMigrated` | `/observability`、`/context-debug`、`/trace-agent`、`/diagnostics`；“优化报告（网页）”只打开独立 `/evolution-report`，不在窗口内渲染；Trace Agent 可看原对话和实际动作并进入诊断对话；真实指标与 AI Judge 估计必须分栏/分字段，不互相冒充 |
+| Agent Lab：冻结评测回执、实验矩阵、最优路径和受控优化 Room | `PawNativeApps.tsx`；`features/eval-lab/index.tsx`；`features/eval-lab/api.ts` | `renderApp('eval-lab') -> PawNativeApp -> EvalLabFeature` | `/eval-lab`；只读投影 Validation/held-out 边界、真实 Session 证据与 Keep/Reject，不把评测结果冒充生产晋升 |
 | System Settings：配置、外观、Agent 默认、治理、审批 | `PawSystemAppsMigrated.tsx`；`features/configuration/index.tsx`；`PawOsAppearanceSettings.tsx`；`features/governance/index.tsx`；`features/approvals/index.tsx` | `renderApp('system-settings') -> PawNativeApp -> PawSystemAppsMigrated` | `/configuration`、`/appearance`、`?view=agent`、`/governance`、`/approvals` |
 | Files：授权工作区树、选择、预览、真实错误 | `features/files/PawOsFilesApp.tsx`；`SvgFilePreview.tsx` | `renderApp('files') -> lazy import PawOsFilesApp -> FilesApp` | `/files`；文件/文件夹是 OS 投影，不能复制 transcript、写 Finder/Git 或成为第二权威 |
 | Browser：标签、地址栏、同一个可见 guest、查找/状态/历史/下载/设置 | `paw-os/apps/PawBrowserApp.tsx`；`features/browser/BrowserTabStrip.tsx`、`BrowserOmnibox.tsx`、`BrowserFindBar.tsx`、`BrowserPageStatus.tsx`；host 语义在 `paw-browser-host.ts` 和 `electron/` | `renderApp('browser') -> PawBrowserApp`；组件创建 `<webview>`；Electron `will-attach-webview` 固定隔离 partition | `/browser`；PAW React chrome 加同窗真实 guest，不能拿后端截图或另一浏览器窗口冒充 |
@@ -76,6 +77,11 @@ PAWOS React 源码当前由 Electron 发布宿主加载：`scripts/build_control
 完整、无缩写的路径和选择标记在 JSON manifest 中。
 
 ## 不是 App、但介绍页通常也要展示的真实表面
+
+- 独立优化报告网页：`app/App.tsx` 用 pathname 选择
+  `features/evolution-report/standalone.tsx`，再渲染 `index.tsx` 与
+  `evolution-report.css`。路径是 `/evolution-report`；它不属于 System Monitor 或任何
+  PAWOS App，不显示桌面、Dock 或窗口 chrome。
 
 - 桌面 Wayfinder / Project Field：`paw-os/shell/PawWayfinderWork.tsx` 与
   `features/project-field/index.tsx`。`PawOsApp.syncPawOsRoute` 在 route 不属于 App 时调用
@@ -148,7 +154,7 @@ production-build-selected-native-surface 的 owner 当实现来源。介绍页�
 但不得把 preview transport、fixture、测试、静态 HTML、截图、dist、生成合同或旧 handoff 当实现；不得把
 showcase 数据写回生产 store。
 
-11 个 App 必须与 registry 精确一致；Room 在 Agent 内，不是第 12 个 App。Browser 必须展示 PAW React chrome
+12 个 App 必须与 registry 精确一致；Room 在 Agent 内，不是额外 App。Browser 必须展示 PAW React chrome
 和同一个 Electron webview guest；Files 是 Runtime/OS 投影；Squirrel Assistant Overlay 与 Voice Overlay 是
 单列原生表面。每次结论附具体路径和选择/构建标记。找不到选择链时写 unverified，不自行补一个“看起来像”的文件。
 

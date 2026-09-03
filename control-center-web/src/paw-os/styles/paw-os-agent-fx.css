@@ -317,8 +317,76 @@
 
 .paw-desktop-root .paw-chatfx .paw-activity-stack {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 0;
+}
+
+/* One control folds the whole running Tool/reasoning lane. Individual rows
+   keep their own evidence disclosures when the lane is opened again. */
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toolbar {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 2px 4px 24px;
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__status {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  color: var(--paw-chat-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toggle {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--paw-chat-text-tertiary);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 18px;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toggle:hover {
+  color: var(--paw-chat-text-secondary);
+  background: color-mix(in srgb, var(--paw-chat-text-tertiary) 8%, transparent);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--paw-chat-accent) 66%, transparent);
+  outline-offset: 1px;
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toggle > svg {
+  flex: 0 0 auto;
+  transition: transform 180ms var(--paw-chat-spring, cubic-bezier(.34, 1.4, .64, 1));
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toggle[aria-expanded='true'] > svg {
+  transform: rotate(-90deg);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__toggle[aria-expanded='false'] > svg {
+  transform: rotate(90deg);
+}
+
+.paw-desktop-root .paw-chatfx .paw-activity-stack__reveal {
+  min-width: 0;
 }
 
 .paw-desktop-root .paw-chatfx .paw-activity-node {
@@ -1192,7 +1260,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .paw-desktop-root .paw-chatfx :is(.paw-chevron, .paw-activity__detail, .paw-activity__progress-track > i, .fx-btn, .fx-track .fill, .agent-turn-work__toggle, .paw-activity__row, .agent-rich-collapsible__chevron) {
+  .paw-desktop-root .paw-chatfx :is(.paw-chevron, .paw-activity__detail, .paw-activity__progress-track > i, .fx-btn, .fx-track .fill, .agent-turn-work__toggle, .paw-activity__row, .paw-activity-stack__toggle, .paw-activity-stack__toggle > svg, .agent-rich-collapsible__chevron) {
     transition: none;
   }
 
@@ -1242,7 +1310,9 @@
   .paw-chevron,
   .paw-activity__detail,
   .agent-turn-work__toggle,
-  .paw-activity__row
+  .paw-activity__row,
+  .paw-activity-stack__toggle,
+  .paw-activity-stack__toggle > svg
 ) {
   transition: none;
 }

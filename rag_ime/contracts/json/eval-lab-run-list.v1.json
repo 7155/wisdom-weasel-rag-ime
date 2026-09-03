@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.eval-lab-run-list.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "items", "total", "experiments", "experimentTotal"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.eval-lab-run-list.v1"},
+    "ok": {"const": true},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/run"}
+    },
+    "total": {"type": "integer", "minimum": 0},
+    "experiments": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": ["schemaVersion", "experimentId", "revisionSha256"],
+        "properties": {
+          "schemaVersion": {"const": "rag-ime.agent-lab-experiment.v1"},
+          "experimentId": {"type": "string", "minLength": 1},
+          "revisionSha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "experimentTotal": {"type": "integer", "minimum": 0},
+    "pathSearches": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/pathSearch"}
+    },
+    "pathSearchTotal": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId", "title", "taskAlias", "taskIndex", "taskSucceeded",
+        "terminalEvent", "verifierPassed", "verifierTotal", "toolCalls",
+        "failedToolCalls", "latencyMs"
+      ],
+      "properties": {
+        "sessionId": {"type": "string", "pattern": "^agent:"},
+        "title": {"type": "string", "minLength": 1},
+        "taskAlias": {"type": "string", "minLength": 1},
+        "taskIndex": {"type": "integer", "minimum": 1},
+        "taskSucceeded": {"type": "boolean"},
+        "terminalEvent": {"type": "string", "minLength": 1},
+        "verifierPassed": {"type": "integer", "minimum": 0},
+        "verifierTotal": {"type": "integer", "minimum": 0},
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "failedToolCalls": {"type": "integer", "minimum": 0},
+        "latencyMs": {"type": "number", "minimum": 0},
+        "explanation": {"$ref": "#/$defs/explanation"}
+      }
+    },
+    "explanation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["caseId", "businessRequest", "agentOutcome", "acceptance"],
+      "properties": {
+        "caseId": {"type": "string", "minLength": 1, "maxLength": 120},
+        "businessRequest": {"$ref": "#/$defs/normalizedText"},
+        "agentOutcome": {"$ref": "#/$defs/normalizedSummary"},
+        "acceptance": {"$ref": "#/$defs/acceptance"}
+      }
+    },
+    "normalizedText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["normalizedText"],
+      "properties": {
+        "normalizedText": {"type": "string", "minLength": 1, "maxLength": 600}
+      }
+    },
+    "normalizedSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["normalizedSummary"],
+      "properties": {
+        "normalizedSummary": {"type": "string", "minLength": 1, "maxLength": 600}
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "total", "items"],
+      "properties": {
+        "passed": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0},
+        "items": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/acceptanceItem"}
+        }
+      }
+    },
+    "acceptanceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "status", "failureOwner", "explanation"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,79}$"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "status": {"enum": ["pass", "fail", "partial", "unknown"]},
+        "failureOwner": {
+          "enum": [null, "prompt_context", "evaluator_gold", "agent", "unknown"]
+        },
+        "explanation": {"type": "string", "maxLength": 240}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "runId", "title", "suiteId", "split",
+        "workflowProfile", "status", "taskCount", "taskSuccessCount",
+        "taskSuccessRate", "verifierPassCount", "verifierCount",
+        "verifierPassRate", "toolCalls", "failedToolCalls", "latencyMs",
+        "sourceDatabaseSha256", "sourceReportSha256", "createdAtMs",
+        "updatedAtMs", "tasks"
+      ],
+      "properties": {
+        "schemaVersion": {"const": "rag-ime.eval-lab-run.v1"},
+        "runId": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "suiteId": {"type": "string", "minLength": 1},
+        "split": {"type": "string", "minLength": 1},
+        "workflowProfile": {"type": "string", "minLength": 1},
+        "status": {"enum": ["completed"]},
+        "taskCount": {"type": "integer", "minimum": 1},
+        "taskSuccessCount": {"type": "integer", "minimum": 0},
+        "taskSuccessRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "verifierPassCount": {"type": "integer", "minimum": 0},
+        "verifierCount": {"type": "integer", "minimum": 0},
+        "verifierPassRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "failedToolCalls": {"type": "integer", "minimum": 0},
+        "latencyMs": {"type": "number", "minimum": 0},
+        "sourceDatabaseSha256": {"$ref": "#/$defs/sha256"},
+        "sourceReportSha256": {"$ref": "#/$defs/sha256"},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0},
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "items": {"$ref": "#/$defs/task"}
+        }
+      }
+    },
+    "pathSearch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "searchId", "title", "objectiveSummary", "metricSummary", "frozenControlCount", "selectedNodeId", "selectedPath", "claimStatus", "claimSummary", "candidates", "generatedAtMs"],
+      "properties": {
+        "schemaVersion": {"const": "rag-ime.agent-lab-path-search.v1"},
+        "searchId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "objectiveSummary": {"type": "string", "minLength": 1, "maxLength": 1600},
+        "metricSummary": {"type": "string", "minLength": 1, "maxLength": 1600},
+        "frozenControlCount": {"type": "integer", "minimum": 0},
+        "selectedNodeId": {"type": "string", "minLength": 1, "maxLength": 160},
+        "selectedPath": {
+          "type": "array", "minItems": 1, "maxItems": 64,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["nodeId", "decision", "reason"],
+            "properties": {
+              "nodeId": {"type": "string", "minLength": 1, "maxLength": 160},
+              "decision": {"type": "string", "minLength": 1, "maxLength": 40},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 1600}
+            }
+          }
+        },
+        "claimStatus": {"enum": ["best_known", "blocked", "insufficient_evidence"]},
+        "claimSummary": {"type": "string", "minLength": 1, "maxLength": 1600},
+        "candidates": {
+          "type": "array", "maxItems": 128,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["nodeId", "changedFactor", "status", "metrics", "reason"],
+            "properties": {
+              "nodeId": {"type": "string", "minLength": 1, "maxLength": 160},
+              "changedFactor": {"type": "string", "minLength": 1, "maxLength": 100},
+              "status": {"enum": ["eligible", "rejected", "not_evaluated", "unknown"]},
+              "metrics": {"type": "object", "maxProperties": 64, "additionalProperties": {"type": "number"}},
+              "reason": {"type": "string", "minLength": 1, "maxLength": 1600}
+            }
+          }
+        },
+        "generatedAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

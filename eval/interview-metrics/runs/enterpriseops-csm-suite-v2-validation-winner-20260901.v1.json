@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "paw.enterpriseops-csm-suite-v2-validation-winner.v1",
+  "status": "validation_winner_selected_heldout_not_consumed",
+  "measuredAt": "2026-09-01",
+  "suiteRevision": "enterpriseops-csm-suite-v2",
+  "split": "validation",
+  "dataset": {
+    "taskCount": 3,
+    "verifierCount": 31,
+    "taskManifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+    "overlaySha256": "40ac966afefb0a71bb1f3e04560bdbf4953fac2788ce2ba90e05b86cfe26677b",
+    "businessAsOfDate": "2025-11-04",
+    "heldOutTaskCount": 8,
+    "heldOutConsumed": false
+  },
+  "runtime": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "high",
+    "runtimeIdentitySha256": "e3bd71bac16e36a3246032c0ef892676e41777ebe9f35cebc175051f2120436c",
+    "toolCatalogSha256": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077",
+    "installed": false
+  },
+  "baseline": {
+    "profile": "baseline-v1",
+    "taskSuccessCount": 2,
+    "taskCount": 3,
+    "taskSuccessRate": 0.6666666666666666,
+    "verifierPassCount": 28,
+    "verifierCount": 31,
+    "verifierPassRate": 0.9032258064516129,
+    "toolCalls": 72,
+    "failedToolCalls": 0,
+    "latencyMs": 529349.673,
+    "databasesCleaned": 3,
+    "contractSha256": "31882c5098dc2509b488932b9530f0c0868ba7799e823a8191985903c27e1a46",
+    "canonicalReportSha256": "bb602a8bcc76e512ddf5e7535458ccc050c5a4d6484dc0f8340fd21802eb1397",
+    "reportFileSha256": "951edaf66376915491fae102c7e3358f1ba77a6da8e2625d376ec00b62abf48b",
+    "representativeFailure": {
+      "caseAlias": "Larson PLC UK service onboarding",
+      "requested": "Create the internal article with the exact title SLES Setup Guide.",
+      "actual": "The Agent created SLES Setup Guide for LAR-SLES-2027.",
+      "failedVerifierIndexes": [10, 11, 15]
+    }
+  },
+  "winner": {
+    "profile": "state-contract-v1",
+    "taskSuccessCount": 3,
+    "taskCount": 3,
+    "taskSuccessRate": 1.0,
+    "verifierPassCount": 31,
+    "verifierCount": 31,
+    "verifierPassRate": 1.0,
+    "toolCalls": 64,
+    "failedToolCalls": 0,
+    "latencyMs": 758437.096,
+    "databasesCleaned": 3,
+    "contractSha256": "7dbd17f6b9fd7bc539f368325007e0429d5ca165b7770605ad11506e705fcdc6",
+    "canonicalReportSha256": "3c558c66288fe4e2dd33d6682f8d7fe14a7522f3bb17b53f2a0c6c8c5dfaa720",
+    "reportFileSha256": "406770d833267739f2be4d106c3f5782bde79f66267b2e982381deedf8589aab",
+    "representativeSuccess": {
+      "caseAlias": "Larson PLC UK service onboarding",
+      "requested": "Create the internal article with the exact title SLES Setup Guide.",
+      "actual": "The Agent created SLES Setup Guide and preserved the exact supplied body and dynamic UK owner.",
+      "failedVerifierIndexes": []
+    }
+  },
+  "comparison": {
+    "taskSuccessAbsoluteDelta": 0.3333333333333334,
+    "verifierPassAbsoluteDelta": 0.09677419354838712,
+    "toolCallDelta": -8,
+    "toolCallRelativeDeltaPercent": -11.11111111111111,
+    "latencyDeltaMs": 229087.423,
+    "latencyRelativeDeltaPercent": 43.2771445199325,
+    "qualityPriorityRulePassed": true,
+    "decision": "keep_state_contract_validation_winner"
+  },
+  "claim": {
+    "allowed": "On three frozen Validation workflows and 31 deterministic verifiers, state-contract improved task success from 2/3 to 3/3 and verifier pass from 28/31 to 31/31 while reducing Tool calls from 72 to 64; latency increased from 529.35s to 758.44s.",
+    "forbidden": "Held-out, production or installed success; stable 100% across repeated trials; a universal 11.1% Tool reduction; or latency improvement."
+  }
+}

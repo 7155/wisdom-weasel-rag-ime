@@ -380,9 +380,27 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
     _get("/api/browser/status", "browser_control.status"),
     _get("/api/browser/tabs", "browser_control.tabs"),
     _get("/api/agent/runtime", "agent.runtime_status"),
+    _get(
+        "/api/agent/eval-lab/runs",
+        "agent.eval_lab_runs",
+        response_contract="eval-lab-run-list.v1.json",
+    ),
+    _get(
+        "/api/agent/eval-lab/evidence",
+        "agent.eval_lab_evidence_read",
+        query_args=("runId", "taskIndex"),
+        takes_arguments=True,
+    ),
     _get("/api/agent/providers", "pi_provider_auth.catalog"),
     _get("/api/agent/extensions", "agent_extensions.list"),
     _get("/api/agent/extensions/catalog", "agent_extensions.catalog"),
+    _get("/api/agent/extensions/skills", "agent_extensions.skills_list"),
+    _get(
+        "/api/agent/extensions/skills/detail",
+        "agent_extensions.skill_detail",
+        query_args=("skillId",),
+        takes_arguments=True,
+    ),
     _get("/api/agent/extensions/proposals", "agent_extensions.proposals"),
     _get(
         "/api/observability/sandbox-runs",

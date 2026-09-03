@@ -22,6 +22,7 @@ describe('pawOsAppRegistry', () => {
       'input-studio',
       'app-center',
       'system-monitor',
+      'eval-lab',
       'system-settings',
       'files',
       'browser',
@@ -33,12 +34,16 @@ describe('pawOsAppRegistry', () => {
     expect(pawOsAppForRoute('voice')?.id).toBe('input-studio');
     expect(pawOsAppForRoute('history')?.id).toBe('input-studio');
     expect(pawOsAppForRoute('diagnostics')?.id).toBe('system-monitor');
+    expect(pawOsAppForRoute('evolution-report')).toBeNull();
     expect(pawOsAppForRoute('governance')?.id).toBe('system-settings');
   });
 
   it('maps every old route exactly once, except the Wayfinder home', () => {
     const appRoutes = pawOsAppRegistry.flatMap((app) => app.routeIds);
-    const expected = routeRegistry.map((route) => route.id).filter((id) => id !== wayfinderRouteId);
+    const expected = routeRegistry
+      .filter((route) => route.surface !== 'standalone')
+      .map((route) => route.id)
+      .filter((id) => id !== wayfinderRouteId);
 
     expect(appRoutes).toHaveLength(new Set(appRoutes).size);
     expect(appRoutes.sort()).toEqual(expected.sort());

@@ -13,6 +13,7 @@ const appIds = [
   'input-studio',
   'app-center',
   'system-monitor',
+  'eval-lab',
   'system-settings',
   'files',
   'browser',
@@ -32,7 +33,7 @@ function token(block: string, name: string): string {
 }
 
 describe('UR-104 PAWOS App color identities', () => {
-  it('gives all eleven Apps distinct primary, supporting, and surface relationships', () => {
+  it('gives all twelve Apps distinct primary, supporting, and surface relationships', () => {
     const palettes = appIds.map((appId) => {
       const block = appPaletteBlock(appId);
       return {

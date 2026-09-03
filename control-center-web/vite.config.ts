@@ -146,6 +146,7 @@ export default defineConfig({
   },
   plugins: [react(), browserDependencyBoundary(), controlTransportBoundary()],
   resolve: {
+    dedupe: ['react', 'react-dom', '@testing-library/react', '@testing-library/user-event'],
     alias: [
       ...(nativeOnlyBuild
         ? [{ find: /^@\/app\/control-transport$/, replacement: nativeTransportEntry }]
@@ -162,20 +163,27 @@ export default defineConfig({
     sourcemap: false,
     target: 'es2022',
   },
-  server: controlProxyTarget
-    ? {
-        proxy: {
-          '/api': {
-            target: controlProxyTarget,
+  server: {
+    fs: { allow: [path.resolve(rootDirectory, '..')] },
+    ...(controlProxyTarget
+      ? {
+          proxy: {
+            '/api': {
+              target: controlProxyTarget,
+            },
           },
-        },
-      }
-    : undefined,
+        }
+      : {}),
+  },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     css: true,
     testTimeout: 15_000,
-    include: ['src/**/*.test.{ts,tsx}', 'extension-apps/**/*.test.{ts,tsx}'],
+    include: [
+      'src/**/*.test.{ts,tsx}',
+      'extension-apps/**/*.test.{ts,tsx}',
+      '../integrations/pi/skills/pawos-app-builder/assets/frontend-template/**/*.test.{ts,tsx}',
+    ],
   },
 });

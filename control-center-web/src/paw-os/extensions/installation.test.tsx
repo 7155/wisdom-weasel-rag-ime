@@ -1,6 +1,6 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { pawExtensionApps } from './registry';
@@ -11,7 +11,11 @@ import {
   usePawExtensionInstallation,
 } from './installation';
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe('PAWOS Extension App installation projection', () => {
   const extension = pawExtensionApps[0]!;
@@ -114,6 +118,121 @@ describe('PAWOS Extension App installation projection', () => {
     expect(transport.requests.filter(({ request }) => request.pathId === 'agent.extensions.list')).toHaveLength(2);
   });
 
+  it('does not poll while hidden, refreshes once on resume, and reconciles 60 seconds after install events', async () => {
+    vi.useFakeTimers();
+    let visibility: DocumentVisibilityState = 'hidden';
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+    const transport = new MockControlTransport({ routes: {
+      'agent.extensions.list': { ok: true, runtimeAvailable: true, items: [] },
+    } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControlTransportProvider transport={transport}>
+        <PawExtensionInstallationProvider>{children}</PawExtensionInstallationProvider>
+      </ControlTransportProvider>
+    );
+    renderHook(() => usePawExtensionInstallation(), { wrapper });
+
+    await flushAsyncWork();
+    expect(extensionListRequestCount(transport)).toBe(0);
+
+    visibility = 'visible';
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+    });
+    expect(extensionListRequestCount(transport)).toBe(1);
+
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+    });
+    expect(extensionListRequestCount(transport)).toBe(1);
+
+    act(() => window.dispatchEvent(new Event(PAW_EXTENSION_INSTALLATION_CHANGED_EVENT)));
+    await flushAsyncWork();
+    expect(extensionListRequestCount(transport)).toBe(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(59_999);
+      await Promise.resolve();
+    });
+    expect(extensionListRequestCount(transport)).toBe(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    expect(extensionListRequestCount(transport)).toBe(3);
+
+    visibility = 'hidden';
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event(PAW_EXTENSION_INSTALLATION_CHANGED_EVENT));
+      vi.advanceTimersByTime(120_000);
+    });
+    await flushAsyncWork();
+    expect(extensionListRequestCount(transport)).toBe(3);
+  });
+
+  it('aborts in-flight reconciliation when hidden and on unmount', async () => {
+    let visibility: DocumentVisibilityState = 'visible';
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+    const transport = new MockControlTransport({ routes: {
+      'agent.extensions.list': () => new Promise<never>(() => undefined),
+    } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControlTransportProvider transport={transport}>
+        <PawExtensionInstallationProvider>{children}</PawExtensionInstallationProvider>
+      </ControlTransportProvider>
+    );
+    const { unmount } = renderHook(() => usePawExtensionInstallation(), { wrapper });
+    await flushAsyncWork();
+    const firstSignal = transport.requests[0]?.request.signal;
+    expect(firstSignal?.aborted).toBe(false);
+
+    visibility = 'hidden';
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    expect(firstSignal?.aborted).toBe(true);
+
+    visibility = 'visible';
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    await flushAsyncWork();
+    expect(extensionListRequestCount(transport)).toBe(2);
+    const secondSignal = transport.requests[1]?.request.signal;
+    expect(secondSignal?.aborted).toBe(false);
+
+    unmount();
+    expect(secondSignal?.aborted).toBe(true);
+  });
+
+  it('waits for the passive 60 second reconciliation after a failed request', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    const transport = new MockControlTransport({ routes: {
+      'agent.extensions.list': () => { throw new Error('offline'); },
+    } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControlTransportProvider transport={transport}>
+        <PawExtensionInstallationProvider>{children}</PawExtensionInstallationProvider>
+      </ControlTransportProvider>
+    );
+    renderHook(() => usePawExtensionInstallation(), { wrapper });
+    await flushAsyncWork();
+    expect(extensionListRequestCount(transport)).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(59_999);
+      await Promise.resolve();
+    });
+    expect(extensionListRequestCount(transport)).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    expect(extensionListRequestCount(transport)).toBe(2);
+  });
+
   it.each([
     ['version', { version: '9.9.9' }],
     ['binding digest', { bindingSha256: 'f'.repeat(64), bindingCapability: `pawos.extension.binding.${'f'.repeat(40)}` }],
@@ -206,3 +325,14 @@ describe('PAWOS Extension App installation projection', () => {
     expect(projection.availableExtensionIds.has(extension.id)).toBe(false);
   });
 });
+
+function extensionListRequestCount(transport: MockControlTransport): number {
+  return transport.requests.filter(({ request }) => request.pathId === 'agent.extensions.list').length;
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}

@@ -18,18 +18,18 @@ class TraceDefectLedgerTests(unittest.TestCase):
         source_only = [item for item in defects if item["evidenceClass"] == "source_test_only"]
 
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(8, len(headline))
+        self.assertEqual(11, len(headline))
         self.assertEqual(
             3,
             sum(item["evidenceClass"] == "main_repository_validation" for item in headline),
         )
         self.assertEqual(
-            5,
+            8,
             sum(item["evidenceClass"] == "source_local_candidate" for item in headline),
         )
-        self.assertEqual(3, len(source_only))
-        self.assertEqual(8, payload["summary"]["closedLoopDefects"])
-        self.assertEqual(3, payload["summary"]["additionalSourceTestOnlyRepairs"])
+        self.assertEqual(5, len(source_only))
+        self.assertEqual(11, payload["summary"]["closedLoopDefects"])
+        self.assertEqual(5, payload["summary"]["additionalSourceTestOnlyRepairs"])
 
     def test_skill_workflow_and_tool_counts_are_not_derived_from_attempts_or_tests(self) -> None:
         payload = json.loads(LEDGER.read_text(encoding="utf-8"))
@@ -40,8 +40,8 @@ class TraceDefectLedgerTests(unittest.TestCase):
         self.assertEqual(3, len(payload["skillIssues"]))
         self.assertEqual(2, sum(item["status"] == "structurally_fixed" for item in payload["skillIssues"]))
         self.assertEqual(1, sum(item["status"] == "diagnosed_only" for item in payload["skillIssues"]))
-        self.assertEqual(5, len(payload["workflowImprovements"]))
-        self.assertEqual(6, len(payload["toolRuntimeContractImprovements"]))
+        self.assertEqual(6, len(payload["workflowImprovements"]))
+        self.assertEqual(9, len(payload["toolRuntimeContractImprovements"]))
 
     def test_every_counted_defect_has_existing_evidence(self) -> None:
         payload = json.loads(LEDGER.read_text(encoding="utf-8"))

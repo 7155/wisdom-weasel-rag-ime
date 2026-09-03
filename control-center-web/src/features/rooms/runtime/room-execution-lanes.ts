@@ -82,9 +82,23 @@ export function selectActivePublicRoomTurn(projection: RoomProjectionState) {
   const latestTurnId = selectPublicRoomTurnOrder(projection).at(-1);
   if (!latestTurnId) return undefined;
   const latestTurn = projection.turnsById[latestTurnId];
-  return latestTurn?.status === 'queued' || latestTurn?.status === 'running'
+  return (latestTurn?.status === 'queued' || latestTurn?.status === 'running')
+    && roomTurnHasLiveExecution(latestTurn)
     ? latestTurn
     : undefined;
+}
+
+function roomTurnHasLiveExecution(turn: RoomProjectionState['turnsById'][string]): boolean {
+  const dispatchIds = turn.dispatchIds ?? [];
+  if (dispatchIds.length > 0) {
+    const terminalDispatchIds = new Set(turn.terminalDispatchIds ?? []);
+    return dispatchIds.some((dispatchId) => !terminalDispatchIds.has(dispatchId));
+  }
+  if (turn.participantIds.length > 0) {
+    const terminalParticipantIds = new Set(turn.terminalParticipantIds ?? []);
+    return turn.participantIds.some((participantId) => !terminalParticipantIds.has(participantId));
+  }
+  return true;
 }
 
 /**

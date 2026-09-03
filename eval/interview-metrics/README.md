@@ -14,6 +14,15 @@
 | IM-004 | “还有完成记忆的全部整理，找找rag数据集之类的” | Memory 按写入治理、维护、投影、召回、注入、反馈、Trace、Eval 和前台分层；Knowledge 独立；公开数据集分级。 | 见 `MEMORY_AND_RAG_EVAL.md` |
 | IM-005 | “trace得做通，因为后续我开发垂直类的agent的应用需要tarce基础，所以现在就得打好地基，例如开发sgg文件夹的示例，掌柜问数之类的。还有rag，记忆这些的检测。还有我之后是准备agent能自己开发垂直应用，自己评测检查trace，准备沙盒之类的，就像rag的agent自己测试和自己构建。” | 指标账本必须能被统一 Trace/Eval、垂直 Agent 沙盒、自测与自评复用；确定性事实和 AI Judge 分开。 | 当前 Trace 修复闭环已有 121 项聚焦回归；安装态与前台证据仍单列 |
 | IM-006 | “你可以辅助他” | 本轮可辅助另一条 Room/Trace Session，但避免共享文件写冲突；这里新增独立评测目录和校验器。 | 已隔离实施 |
+| IM-007 | “我们要面向面试来eavl，来做指标” | 从简历 Headline 和面试追问倒推指标；每个数字必须回答业务问题、选型收益、失败与证据边界。 | 已加入 Agent Experiment 硬合同 |
+| IM-008 | “还要展示我们eavel agent 和traceagent 对系统和提示词，工具，流程 skill的提示，前后优化的效果” | 对 System Prompt、Tool、Workflow、Skill 四层分别记录发现、建议、授权、实施、复验、同题输出和指标 delta。 | 已设为必填字段 |
+| IM-009 | “不够的指标就补充……我们完全可以作为各种agetn的试验场” | PAW 作为各垂直 Agent 的共同实验场；缺指标时增加冻结 Validation case 和 scorer，再搜索候选配置，不用单条演示代替评测。 | 已设为实验入口要求 |
+| IM-010 | “结果可以往好的写……春秋笔法，star法则” | 简历第一屏选最强且有证据的正向结果，按 STAR 压缩；失败和限制留在深挖页，禁止改分母、泄露 Gold 或伪造结果。 | 已写入 narrativePolicy |
+| IM-011 | “一次并行一批，但每个候选只改变一个层……质量评测可以自动执行，但每次候选实际运行前要有用户确认。尤其是修改 Prompt、Skill、Tool，要确保模型能往正确的改才能不白跑” | 每批候选并行提出，但每个候选绑定一个改动层、失败原因、目标指标、保护门禁和验证方式；用户确认后才运行，未通过候选保留为拒绝/回退，不能删除。 | 当前控制要求 |
+| IM-012 | “达到目标即停止” | 每个场景达到主指标、保护门禁和已声明效率/成本目标后，由 Facilitator 收口，不为穷举分支继续消耗调用。 | 当前停止规则 |
+| IM-013 | “room这个沙盒这个特殊，行星traceagent直接全新上下文输入trace提示词和技能就行” | Agent Lab 的沙盒 Room 为每个 Trace Reviewer 建立全新上下文，只注入受限 Trace/Eval evidence envelope、Trace Prompt 和 Trace Skill，不继承普通 Agent 对话。 | 当前上下文边界 |
+| IM-014 | “你应该把room弄过来，单独的，因为这个是单独app，对话也不要划分到agent项目，这个是app的对话” | Agent Lab 使用 App-owned Room/Session；评测对话按 App owner 隔离，不进入普通 Agent 项目列表、项目记忆或项目上下文。 | 当前产品边界 |
+| IM-015 | “每个场景有自己的主指标和保护门禁Reviewer相当于traceagent，这里是不是也要多个啊，并行检查agent trace” | 每个垂直场景独立定义主指标与保护门禁；一批候选完成后由多个受限 Trace Reviewer 并行检查不同证据维度，Host Verifier 仍拥有最终 pass/fail 权限，Facilitator 汇总分歧。 | 当前评测流程 |
 
 ## 结论
 
@@ -42,8 +51,17 @@
 98/98 Tool 调用成功，CA 为 `1.00`，FA/JRA/Top3JRA 均为 `0.8333`，并产生
 Trace、Eval、Sandbox 与 Artifact 标识。前三次失败试跑均保留：它们依次暴露网络
 受限传输、模型路由漂移和结构化 observation hash 合同不一致。该结果来自
-source-local candidate，runner 本身没有执行安装动作；Provider token 尚未进入聚合
-投影，因此不能说生产验收、安装态身份、Held-out 泛化或“零 Token 成本”。
+source-local 实验版 Runtime，故意只在隔离环境验证，不直接应用到当前 PAWOS，
+以免失败候选污染用户正在使用的系统。Provider token 尚未进入聚合投影，因此不能说
+生产验收、当前系统已恢复、Held-out 泛化或“零 Token 成本”。
+
+随后在同一冻结 Validation 上保留了 v1–v4 四轮候选。v1 暴露搜索 Schema 与隐藏
+12-term 实现限制不一致；v2 修复搜索合同后又暴露全零 usage 被误判为可用；v3 用
+两阶段诊断、调用预算和重复调用拒绝把 Tool 数从 `189` 降到 `82`，但出现一次长
+`cacheKey` 转录失败；v4 只把公开地址换成 case-scoped `observationId`，实现
+`94/94` Tool 成功，却让 CA/JRA/Top3JRA 降到 `0.50/0.4167/0.50`。因此短 ID
+只作为 Tool 合同修复保留，业务工作流候选严格 Reject，baseline 继续是 incumbent，
+且不再用同一 Validation 继续跑 v5。
 
 掌柜问数现在也有独立的 Extension App candidate 测评入口：它先校验
 App/Package/Skill 的绑定与摘要，再解析已注册的 `sgg/fixture-v2`，在新临时工作区运行
@@ -91,17 +109,29 @@ Tool 就终止，因此不可能“自己修好自己”。外层 supervisor 用
 前两次 Agent 都完成 `skill_load + inspect`，却因结构化报告合同漂移被拒绝，其中一次
 可确定为把 `confidence` 输出成数字。第三次只有在提示词显式复述 schema 时才成功，
 不算 Skill 已经可靠。为此给 `trace-agent-diagnostics` 增加 exact-envelope 自检并以
-测试锁定；新建的 dirty-source derived candidate 未安装，普通提示词下的新只读 Session
+测试锁定；新建的 dirty-source derived candidate 只在隔离实验环境复验，普通提示词下的新只读 Session
 成功生成合法报告，并在 `sourceAvailable=false`、timeline 为空、usage 未投影时保留
 `unknown`、不编造 finding。这里验证的是 **Skill 输出合同修复**，不是 Runtime 已安装、
 CloudOps 已有完整可观测性，或 Trace Agent 可以绕过授权改写自己。
 
 按“一个独立根因 + 保留的失败/拒绝证据 + 修复 + 验证边界”去重后，当前可审计
-清单共有 **8 个闭环合同缺陷**：3 个有主仓 Validation/控制面证据，5 个只在未安装
-的 source-local candidate 上复验；另有 3 个 source/test-only 修复不计入这 8 个。
-同一清单还记录了 3 个 Skill 问题（2 个结构修复、1 个仅诊断）、5 项流程改进和
-6 项 Tool/Runtime 合同改进。四组分类有重叠，不能相加，也不能表述为“Trace Agent
-自主发现并修复了全部 8 个问题”。
+清单共有 **11 个闭环合同缺陷**：3 个有主仓 Validation/控制面证据，8 个只在隔离的
+source-local 实验版上复验；另有 5 个 source/test-only 修复不计入这 11 个。
+同一清单还记录了 3 个 Skill 问题（2 个结构修复、1 个仅诊断）、6 项流程改进和
+9 项 Tool/Runtime 合同改进。四组分类有重叠，不能相加，也不能表述为“Trace Agent
+自主发现并修复了全部 11 个问题”。
+
+EnterpriseOps CSM 又提供了一条独立的垂直执行链证据。最初 plumbing run 因
+Thinking 绑定、spool transport 和 `read_only` 权限语义错误，没有进入真实业务
+Tool，仅得到 0/3 任务、3/31 verifier。修复这些问题，并补上 MCP `isError`、清理、
+gold redaction、terminal gate、oracle Tool 标识、toolCallId 幂等和 split 隔离后，
+最终 baseline 达到 1/3 任务、26/31 verifier、47 次业务 Tool、0 次 Tool failure，
+3/3 临时数据库完成删除。`9.68% → 83.87%` 只能称执行/评测链修复，不能称业务
+workflow 提升。这一步之后另起 suite-v2 合同：state-contract 在同一组 3 条
+Validation 上由 2/3 task、28/31 verifier 推进到 3/3、31/31，并把 Tool 从 72
+降到 64；代价是耗时从 529.35 秒升到 758.44 秒。该 Validation winner 只消费过
+一次冻结 Held-out，结果仅 1/8 task、54/65 verifier，Promotion 被拒绝且未重跑。
+详细修复项见 [`ENTERPRISEOPS_CSM_TRACE_REPAIR_20260901.md`](ENTERPRISEOPS_CSM_TRACE_REPAIR_20260901.md)。
 
 完整数值、命令、来源和限制在
 [`evidence-ledger.v1.json`](evidence-ledger.v1.json)。账本是当前唯一的机器可读
@@ -132,12 +162,27 @@ CloudOps 已有完整可观测性，或 Trace Agent 可以绕过授权改写自�
   定位到 Pi Codex wire field；隔离修复候选让同一只读诊断从 0 次 Tool 调用推进到
   `skill_load + trace_diagnostics.inspect` 和完整报告，候选安装态仍单独验收。
 - 建立 Trace/Eval 缺陷去重账本，以“失败证据 + 修复 + 复验边界”为计数门槛，
-  审计出 8 个闭环合同缺陷、3 个 Skill 问题、5 项流程改进与 6 项 Tool/Runtime
-  合同改进；分类重叠不相加，并区分主仓 Validation 与未安装 candidate 证据。
+  审计出 11 个闭环合同缺陷、3 个 Skill 问题、6 项流程改进与 9 项 Tool/Runtime
+  合同改进；分类重叠不相加，并区分主仓 Validation 与隔离实验版证据。
 - 为 CloudOps 故障定位构建受限 Tool 与 host-only scorer；在冻结的 12 题
   Validation 上用 3 个 Sol Session 完成 3x4 工作流，12/12 作答、98/98 Tool 调用
   成功，CA `1.00`、FA/JRA/Top3JRA `0.8333`，并保留三次失败 Trace 作为 OS 合同
-  修复证据；candidate 尚未安装且 Token 投影仍待修。
+  修复证据；实验版 Tool/Runtime 只在 source-local 沙盒运行、未影响当前 PAWOS 安装态；
+  Sol baseline 缺 Provider usage，因此不计算该场景的模型成本下降。
+- 对同一 CloudOps Validation 保留四轮 falsification：修复搜索 Schema、usage
+  投影与长 Tool ID 三个合同缺陷，将 observationId 路径做到 `94/94` Tool 成功；
+  因 CA/JRA 退化到 `0.50/0.4167` 主动 Reject，保留 baseline 并停止继续调参。
+- 为 EnterpriseOps CSM 构建 source-local Pi、89-Tool MCP Gateway、临时数据库与
+  31 条 Host-private SQL verifier；Trace 驱动修复 11 个 Runner/Tool/评测合同问题，
+  将可执行 verifier 从 3/31 恢复到 26/31、业务 Tool 从 0 恢复到 47 次并完成
+  3/3 数据库清理；suite-v2 state-contract 在 Validation 达到 3/3、31/31，但
+  一次性 Held-out 仅 1/8、54/65，系统拒绝 Promotion 并保留完整失败回执。
+- 为 EnterpriseOps 建立受质量约束的单变量模型成本门禁：receipt checker 锁定相同
+  task manifest、Prompt、Skill、Tool catalog、Workflow、runner、Runtime provenance、
+  `thinking=max` 与价格来源后，Luna Max 将 API 成本估算从 `$3.243385` 降到
+  `$0.725239`（`-77.64%`）、耗时降低 `16.45%`，但 task `3/3→2/3`、Verifier
+  `31/31→30/31`；系统因此 Reject 低价候选并保留 Sol，旧的 `-96.43%` 结论因
+  thinking/source provenance 不匹配撤回。
 
 ### 面试展开时应主动补充
 
@@ -171,7 +216,7 @@ CloudOps 已有完整可观测性，或 Trace Agent 可以绕过授权改写自�
 | Enterprise RAG Agent Validation | baseline → agentic：延迟 `71.1s → 242.6s`、Tool `6 → 11`、Judge 正确率 `0.5 → 0`；恢复复用 `1/4` lane | 4 个 answer case，结论是 `Reject`；25% 仅指 lane 复用，索引仍重建，held-out 未运行 |
 | Enterprise RAG exact citation v16 | 9/9 事实有 host 证据；baseline/Skill/tuned 仅覆盖 2/9 引用事实，四 lane citation support 均为 0 | 新证据合同下的 4 题 Validation Reject；不能与旧 token-overlap 分数算提升，held-out 未运行 |
 | Graph+Tag reranker readiness | 企业投影为 `0` node、`0` edge、`0` extraction，Memory Tag 身份不能直接对应 Knowledge chunk | 这是正确阻断伪 A/B 的 readiness 审计，不是 Graph+Tag 与 Qwen3 的性能比较 |
-| CloudOps Agent Validation | 12/12 作答、CA `1.00`、FA/JRA/Top3JRA `0.8333`、98/98 Tool 调用成功 | source-local candidate 的 Validation，runner 未执行安装；Provider token 与 process signals 不可用，不能称生产验收、Held-out 或零成本 |
+| CloudOps Agent Validation | 12/12 作答、CA `1.00`、FA/JRA/Top3JRA `0.8333`、98/98 Tool 调用成功 | 隔离实验版的 Validation，未应用到当前系统；Provider token 与 process signals 不可用，不能称生产验收、Held-out 或零成本 |
 | 掌柜问数 App candidate | 1 个离线 fixture，precision/recall/F1 `1.0`，Provider `0`，Trace/Eval/Sandbox 已关联 | 仅源码绑定与确定性沙盒合同；不能称真实 Text-to-SQL 100%、真实数据、安装或前台验收 |
 | 产品发行 | 当前安装开发版与公开发行是两条证据；`releaseStatus` 仍为 `blocked` | 单测、build 或安装开发版都不等于签名、公证、干净机或完整前台验收 |
 
@@ -260,6 +305,41 @@ pnpm exec vitest run \
 不要覆盖现有 scorecard，也不要写“已重新复现”。
 
 ## 记录规则
+
+本轮 Agent Lab 的变量矩阵、冻结控制、六张垂直实验卡与一张成本门禁卡、STAR 讲法和简历边界见
+[`AGENT_LAB_INTERVIEW_DATA_20260901.md`](AGENT_LAB_INTERVIEW_DATA_20260901.md)。
+页面与文档使用同一份 `agent-experiments.v1.json` 总账；文档中标为 `OPEN-GAP` 的项目
+不能在面试中写成已完成结果。
+
+### 垂直 Agent 实验的必填合同
+
+所有准备进入简历、项目展示或 Eval Lab 的垂直 Agent 实验，必须先登记到
+[`agent-experiments.v1.json`](agent-experiments.v1.json)。PAW 把自己作为 RAG、
+CloudOps、EnterpriseOps、掌柜问数和后续 Extension Agent 的共同实验场，而不是为
+每个 Demo 另写一套无法比较的漂亮数字。
+
+一张实验卡必须同时保留：
+
+- 真实业务问题以及为什么普通对话或单次脚本不够；
+- 冻结 Dataset、split、case 数、manifest hash 和 Held-out 是否已消费；
+- Baseline 与 Candidate 的真实输入、输出、指标和 Evidence；
+- Eval Agent / Trace Agent 的 observation、hypothesis、evidence 与 candidate change；
+- `System Prompt / Tool / Workflow / Skill` 四层逐项判决；
+- `detectedBy / proposedBy / authorizedBy / implementedBy / verifiedBy` 五段归因；
+- 同题前后 metric delta、输出差异以及 Keep / Reject / Rollback；
+- STAR 四段、简历 Headline、允许说法、禁止说法和 `OPEN-GAP`。
+
+`Headline` 采用春秋笔法：第一句选择最强、最相关、证据闭合的正向结果；失败版本
+进入技术迭代和面试深挖，不抢第一屏。但原始分母、Reject、限制和不利结果必须保留
+在证据页。不得通过删除难题、泄露 Gold、改变分母或把 Validation 改称 Held-out 来
+制造好结果。
+
+总账校验会级联校验实验账本；缺少上述字段的实验不能进入可陈述区：
+
+```bash
+python3 scripts/check_interview_metrics.py --json
+python3 scripts/check_interview_agent_experiments.py --json
+```
 
 后续每一次 Trace/Eval 或 benchmark 运行至少追加这些字段：
 

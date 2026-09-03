@@ -40,11 +40,62 @@ describe('PawDesktopProvider persistence safety', () => {
 
     expect(screen.getByTestId('dock-apps')).toHaveTextContent('system-settings,agent');
   });
+  it('round-trips a valid Room collaboration focus through desktop persistence', () => {
+    vi.useFakeTimers();
+    const first = render(<PawDesktopProvider><DesktopProbe /></PawDesktopProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: '聚焦 Room' }));
+    expect(screen.getByTestId('focus-group')).toHaveTextContent('room:room-persist');
+    act(() => vi.advanceTimersByTime(250));
+    expect(JSON.parse(window.localStorage.getItem('pawos.desktop.v1') ?? '{}')).toMatchObject({
+      collaborationFocusGroup: 'room:room-persist',
+    });
+
+    first.unmount();
+    render(<PawDesktopProvider><DesktopProbe /></PawDesktopProvider>);
+
+    expect(screen.getByTestId('focus-group')).toHaveTextContent('room:room-persist');
+  });
+
+  it('drops persisted focus when the matching Room main is not visible', () => {
+    window.localStorage.setItem('pawos.desktop.v1', JSON.stringify({
+      windows: {
+        'agent:room-hidden': {
+          id: 'agent:room-hidden',
+          appId: 'agent',
+          title: 'Room',
+          target: { kind: 'room', id: 'room-hidden', title: 'Room', panel: 'focus' },
+          bounds: { x: 0, y: 0, width: 500, height: 400 },
+          minimized: false,
+        },
+      },
+      stack: ['agent:room-hidden'],
+      activeWindowId: 'agent:room-hidden',
+      collaborationFocusGroup: 'room:room-hidden',
+    }));
+
+    render(<PawDesktopProvider><DesktopProbe /></PawDesktopProvider>);
+
+    expect(screen.getByTestId('focus-group')).toHaveTextContent('none');
+  });
 });
 
 function DesktopProbe() {
   const api = usePawDesktopApi();
   const count = usePawDesktopStore((state) => Object.keys(state.windows).length);
   const dockApps = usePawDesktopStore((state) => state.dockAppIds.join(','));
-  return <><button onClick={() => api.getState().openApp('agent')} type="button">打开 Agent</button><output data-testid="window-count">{count}</output><output data-testid="dock-apps">{dockApps}</output></>;
+  const focusGroup = usePawDesktopStore((state) => state.collaborationFocusGroup ?? 'none');
+  return <>
+    <button onClick={() => api.getState().openApp('agent')} type="button">打开 Agent</button>
+    <button onClick={() => {
+      api.getState().openApp('agent', {
+        entityId: 'room-persist',
+        target: { kind: 'room', id: 'room-persist', title: '持久化 Room' },
+      });
+      api.getState().setCollaborationFocusGroup('room:room-persist');
+    }} type="button">聚焦 Room</button>
+    <output data-testid="window-count">{count}</output>
+    <output data-testid="dock-apps">{dockApps}</output>
+    <output data-testid="focus-group">{focusGroup}</output>
+  </>;
 }

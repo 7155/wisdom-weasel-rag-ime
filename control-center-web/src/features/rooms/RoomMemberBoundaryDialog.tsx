@@ -1,4 +1,4 @@
-import { Check, FolderOpen, ShieldCheck } from 'lucide-react';
+import { Check, FolderOpen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { useControlTransport } from '@/app/control-transport';
@@ -14,6 +14,8 @@ import {
 } from '@/components/primitives';
 import { publicToolName } from '@/features/agent/tool-presentation';
 import { publicErrorText } from '@/features/overview/management-ui';
+import { RoomPermissionPolicyEditor } from './room-presentation';
+import { parseRoomPermissionPolicy, type RoomKind } from './room-types';
 import { roomParticipantPlanetName } from './room-participant-identity';
 
 interface RoomMemberIdentity {
@@ -21,7 +23,6 @@ interface RoomMemberIdentity {
   ordinal: number;
 }
 
-type RoomExecutionMode = 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
 
 interface RoomToolCatalogItem {
   id: string;
@@ -57,13 +58,22 @@ const PI_SESSION_BASE_TOOLS: readonly RoomToolCatalogItem[] = [
   },
 ];
 
+const PI_SESSION_BASE_TOOL_IDS: Record<string, true> = {
+  read: true,
+  edit: true,
+  write: true,
+  bash: true,
+};
+
 export function RoomMemberBoundaryDialog({
-  executionMode,
+  permissionPolicy,
+  roomKind,
   participant,
   workspaceRoots,
   onClose,
 }: {
-  executionMode?: RoomExecutionMode;
+  permissionPolicy?: unknown;
+  roomKind?: RoomKind;
   participant?: RoomMemberIdentity;
   workspaceRoots: string[];
   onClose: () => void;
@@ -107,43 +117,44 @@ export function RoomMemberBoundaryDialog({
     };
   }, [participant, transport]);
 
-  const baseToolIds = new Set(PI_SESSION_BASE_TOOLS.map((tool) => tool.id));
-  const enabledTools = tools.filter((tool) => tool.enabled && !baseToolIds.has(tool.id));
+  const enabledTools = tools.filter((tool) => (
+    tool.enabled && PI_SESSION_BASE_TOOL_IDS[tool.id] !== true
+  ));
   const availableToolCount = PI_SESSION_BASE_TOOLS.length + enabledTools.length;
+  const parsedPermissionPolicy = parseRoomPermissionPolicy(permissionPolicy, roomKind);
+  const effectiveRoomKind = roomKind ?? 'collaboration';
   return (
     <Dialog open={Boolean(participant)} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="room-policy-dialog">
         <DialogHeader>
           <DialogTitle>{roomParticipantPlanetName(participant)} 能做什么</DialogTitle>
           <DialogDescription>
-            这里显示真正生效的工作权限、目录和工具。分工只是协作提示，不会让伙伴绕过你的授权。
+            这里按服务端策略分别显示行星 / Partner 与卫星 / Tool Agent 的实际生效权限。
+            分工只是协作提示，不会扩大任何一层授权。
           </DialogDescription>
         </DialogHeader>
         {error ? <p className="room-dialog-error" role="alert">{error}</p> : null}
         {participant ? (
           <div className="room-policy-form">
-            <div className="room-policy-boundary">
-              <ShieldCheck size={18} />
-              <span>
-                <strong>{executionModeLabel(executionMode)}</strong>
-                <small>{loading ? '4 项 Session 基础工具已就绪，正在确认扩展能力；' : `${availableToolCount} 项工具可用，其中 4 项为 Session 基础工具；`}{executionMode === 'full_trust' ? '独立审批助手（Luna Max）依据整个协作空间的结构化审批记录判定待审批操作；' : ''}停止任务、目录边界、删库、灾难性破坏和敏感数据外传禁区始终有效。</small>
-              </span>
-            </div>
+            <RoomPermissionPolicyEditor
+              policy={parsedPermissionPolicy}
+              roomKind={effectiveRoomKind}
+            />
             <fieldset>
-              <legend>可以工作的目录 <small>{workspaceRoots.length} 项</small></legend>
+              <legend>起始项目上下文 <small>{workspaceRoots.length} 项</small></legend>
               {workspaceRoots.length ? (
                 <div className="room-policy-roots">
                   {workspaceRoots.map((path) => (
                     <span key={path}><FolderOpen size={14} /><small>{path}</small></span>
                   ))}
                 </div>
-              ) : <p className="room-policy-empty">这个协作空间不会访问项目目录。</p>}
+              ) : <p className="room-policy-empty">没有预选项目；具体可达范围以上方分层策略为准。</p>}
             </fieldset>
             <Disclosure
               className="room-policy-tools-disclosure"
-              summary={<>看看可以使用哪些工具 <small>{loading ? '4 项基础工具，扩展能力确认中' : `${availableToolCount} 项`}</small></>}
+              summary={<>看看 Session 暴露了哪些工具 <small>{loading ? '4 项基础工具，扩展能力确认中' : `${availableToolCount} 项`}</small></>}
             >
-              <p className="room-policy-tools-heading"><strong>Session 基础工具</strong><small>由 Pi 原生暴露，真实执行仍受当前目录与工作权限约束。</small></p>
+              <p className="room-policy-tools-heading"><strong>Session 基础工具</strong><small>工具是否可执行及是否需要批准，以上方 Partner 与 Tool Agent 生效层为准。</small></p>
               <div className="room-policy-tools">
                 {PI_SESSION_BASE_TOOLS.map((tool) => (
                   <div key={tool.id}>
@@ -187,14 +198,6 @@ function roomToolCatalogItems(value: unknown): RoomToolCatalogItem[] {
   });
 }
 
-function executionModeLabel(executionMode: RoomExecutionMode | undefined): string {
-  return {
-    read_only: '只读',
-    per_action: '每次确认',
-    workspace_managed: '工作区托管',
-    full_trust: '全自动',
-  }[executionMode ?? 'per_action'];
-}
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

@@ -1,13 +1,89 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from rag_ime.assistant_overlay import build_assistant_overlay_payload
+from rag_ime.contracts import json_schema
 from rag_ime.contracts.json_schema import ContractValidationError, load_contract, validate_contract
 
 
 class JsonContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        clear = getattr(json_schema, "clear_contract_cache", None)
+        if clear is not None:
+            clear()
+
+    def tearDown(self) -> None:
+        clear = getattr(json_schema, "clear_contract_cache", None)
+        if clear is not None:
+            clear()
+
+    def test_repeated_named_contract_validation_opens_and_parses_schema_once(self) -> None:
+        original_read_text = Path.read_text
+        original_json_loads = json.loads
+        original_validate_schema = json_schema.validate_json_schema
+        with (
+            mock.patch.object(
+                Path,
+                "read_text",
+                autospec=True,
+                side_effect=original_read_text,
+            ) as read_text,
+            mock.patch(
+                "rag_ime.contracts.json_schema.json.loads",
+                side_effect=original_json_loads,
+            ) as parse_json,
+            mock.patch.object(
+                json_schema,
+                "validate_json_schema",
+                side_effect=original_validate_schema,
+            ) as validate_schema,
+        ):
+            for index in range(10_000):
+                validate_contract(
+                    {"text": f"recovered event {index}"},
+                    "foreground-commit.v1.json",
+                )
+
+        self.assertEqual(read_text.call_count, 1)
+        self.assertEqual(parse_json.call_count, 1)
+        self.assertEqual(validate_schema.call_count, 1)
+
+    def test_cached_load_contract_returns_an_independent_deep_copy(self) -> None:
+        first = load_contract("foreground-commit.v1.json")
+        properties = first.get("properties")
+        self.assertIsInstance(properties, dict)
+        assert isinstance(properties, dict)
+        properties["text"] = False
+
+        second = load_contract("foreground-commit.v1.json")
+        second_properties = second.get("properties")
+        self.assertIsInstance(second_properties, dict)
+        assert isinstance(second_properties, dict)
+        self.assertIsInstance(second_properties.get("text"), dict)
+
+    def test_contract_cache_can_be_cleared_after_dynamic_resource_replacement(self) -> None:
+        clear = getattr(json_schema, "clear_contract_cache", None)
+        self.assertIsNotNone(clear)
+        assert clear is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            contracts_dir = Path(tmp)
+            contract_path = contracts_dir / "dynamic.v1.json"
+            contract_path.write_text(json.dumps({"type": "string"}), encoding="utf-8")
+            with mock.patch.object(json_schema, "CONTRACTS_DIR", contracts_dir):
+                clear()
+                validate_contract("cached", "dynamic.v1.json")
+                contract_path.write_text(json.dumps({"type": "integer"}), encoding="utf-8")
+                validate_contract("cached", "dynamic.v1.json")
+                clear()
+                with self.assertRaises(ContractValidationError):
+                    validate_contract("cached", "dynamic.v1.json")
+
     def test_all_versioned_contracts_load(self) -> None:
         for name in (
             "rime-suggest-request.v1.json",

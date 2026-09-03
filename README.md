@@ -90,6 +90,51 @@ and accepted evidence are projected into shared collaboration state. Managed
 file and Diff results expand inline so the work stays in context instead of
 opening an unrelated modal workflow.
 
+Completed local Codex conversations can be staged and then registered as
+ordinary PAW conversation records without copying them into governed Memory:
+
+```bash
+python3 scripts/import_codex_conversation.py <codex-session-id>
+python3 scripts/import_codex_conversation.py <codex-session-id> --write
+```
+
+The first command is a dry-run. The written record keeps its original title,
+uses a provenance-marked Pi v3 transcript, and can be restored through the
+existing Agent Session path. Its Codex origin stays in provenance rather than
+being added to the visible title. Import intentionally keeps visible
+user/assistant text and omits developer bootstrap, private reasoning, Tool
+calls/results, and Runtime events; the receipt records that fidelity boundary.
+Incomplete Codex rollouts are rejected unless `--allow-incomplete` is
+explicitly supplied.
+
+Bulk discovery keys every JSONL by its embedded `session_meta.id`, so local
+symlinks, migrated copies, and stale Codex state paths do not create duplicate
+PAW records. Repeat `--source-root` to include external archives; currently
+open Codex rollouts are skipped by default:
+
+```bash
+python3 scripts/import_codex_conversations.py \
+  --paw-python-root "$HOME/Library/Application Support/RagIme/app" \
+  --source-root ~/.codex/sessions \
+  --source-root ~/.codex/archived_sessions \
+  --source-root ~/.codex/history_sync_backups \
+  --source-root "/path/to/CodexData" \
+  --allow-incomplete
+
+# After reviewing the dry-run summary:
+python3 scripts/import_codex_conversations.py \
+  --source-root ~/.codex/sessions \
+  --source-root ~/.codex/archived_sessions \
+  --source-root ~/.codex/history_sync_backups \
+  --source-root "/path/to/CodexData" \
+  --allow-incomplete --write \
+  --receipt /path/to/new-import-receipt.json
+```
+
+`--paw-python-root` makes live writes use the installed PAW store implementation
+and schema while retaining the importer from the current checkout. Omit it for
+an isolated database initialized by the same checkout.
+
 ### Rime Input
 
 **Status: implemented; real foreground acceptance remains required.**

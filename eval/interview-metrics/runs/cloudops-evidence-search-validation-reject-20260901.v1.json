@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "paw.cloudops-workflow-validation-reject.v1",
+  "runId": "cloudops-evidence-search-validation-reject-20260901-v1",
+  "status": "validation_rejected",
+  "measuredAt": "2026-09-01",
+  "frozenIdentity": {
+    "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+    "runtimeVersion": "pi-0.84.2-920e42b9c19f-raghost-a1bb684fe6",
+    "runtimeManifestSha256": "4ff63aa5b77d620b70f9e430a009d93450a8a297e9602d3bcc96820fe7b29211",
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "split": "validation",
+    "heldOutObserved": false
+  },
+  "retainedTrials": [
+    {
+      "trialId": "cloudops-paw-evidence-search-root-20260901-v1",
+      "status": "failed_batch_2",
+      "rootCause": "schema-valid long search query was rejected by an undisclosed implementation-only term limit",
+      "formalScoreProduced": false,
+      "failureReportSha256": "db562eda029edde7e8d956d06c89d4625012e5038bb5be8cf7286cebfb05975e"
+    },
+    {
+      "trialId": "cloudops-paw-evidence-search-root-20260901-v2",
+      "status": "answers_and_score_retained_eval_persistence_failed",
+      "rootCause": "all-zero usage fields were treated as available and then rejected by the Eval usage contract",
+      "failureReportSha256": "d1b1eff5db207dd51488c19a0e5f78ffeff6b03820fb292669c04ea21234ff99",
+      "artifactJournalSha256": "9f2e3113cd87146970bbe6ec66f6bf0b8e0d076245ba3f125dc942e129747a72",
+      "artifactSnapshotSha256": "d7ba77059a25a552c07c0eb9ff1c802c02281b6e171ab8634ddf84592988561c",
+      "formalScoreProduced": true
+    }
+  ],
+  "comparison": {
+    "baseline": {
+      "ca": 1.0,
+      "jra": 0.8333333333333334,
+      "top3Jra": 0.8333333333333334,
+      "toolCalls": 98,
+      "elapsedMs": 1356582
+    },
+    "evidenceSearchV1": {
+      "ca": 0.8333333333333334,
+      "jra": 0.8333333333333334,
+      "top3Jra": 1.0,
+      "toolCalls": 189,
+      "searchCalls": 106,
+      "listCalls": 15,
+      "readCalls": 62,
+      "failedToolCalls": 0,
+      "elapsedMs": 996035
+    },
+    "delta": {
+      "caAbsolute": -0.16666666666666663,
+      "jraAbsolute": 0.0,
+      "top3JraAbsolute": 0.16666666666666663,
+      "toolCallsAbsolute": 91,
+      "toolCallsRelative": 0.9285714285714286,
+      "elapsedMsAbsolute": -360547,
+      "elapsedRelative": -0.26577604597436794
+    }
+  },
+  "decision": {
+    "result": "reject",
+    "reasons": [
+      "CA regressed from 1.0 to 0.8333",
+      "JRA did not improve",
+      "Tool calls increased by 92.86%",
+      "Top3JRA improvement alone does not satisfy the quality gate"
+    ],
+    "traceAgentDiagnosis": {
+      "status": "diagnosed_read_only",
+      "workflowRootCause": "search-first exploration lacked a two-stage fault-object then root-cause decision contract and had no search, list or duplicate-query stop budget",
+      "osRootCause": "usage availability and private trial artifact projection were inconsistent with the Eval usage contract"
+    }
+  },
+  "verification": {
+    "focusedCloudOpsTestsPassed": 24,
+    "focusedCloudOpsTestsFailed": 0,
+    "candidateInstalled": false,
+    "heldOutObserved": false
+  },
+  "claim": {
+    "allowed": "On the same 12-case CloudOps Validation suite, evidence-search v1 moved the two previously missed joint answers into Top-3 and reduced wall time by 26.58%, but CA regressed, JRA stayed flat and Tool calls rose 92.86%; the candidate was therefore rejected and retained as evidence for a bounded v3 workflow.",
+    "forbidden": "The workflow improved overall accuracy, reduced cost, passed Validation, consumed Held-out, was installed, or the Eval persistence failure invalidates the retained host score."
+  }
+}

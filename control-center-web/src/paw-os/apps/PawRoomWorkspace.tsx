@@ -39,7 +39,9 @@ import { RoomComposer, roomMentionedParticipants } from '@/features/rooms/compos
 import { roomCollaborationRoleLabel, roomPlanetName } from '@/features/rooms/room-copy';
 import { latestPendingGroupedRoomInput, type PendingRoomQuestion } from '@/features/rooms/room-question';
 import {
-  roomExecutionModeLabel,
+  RoomPermissionPolicyEditor,
+  roomCollaborationRoleOptions,
+  roomPermissionLayerPresentation,
   roomWorkStateLabel,
 } from '@/features/rooms/room-presentation';
 import {
@@ -55,7 +57,15 @@ import {
 } from '../runtime/runtime-tool-window';
 import { PawWindowChromePortal, usePawWindowChromeTarget } from '../shell/PawWindowChrome';
 import { roomProjection, useRoomLiveStore } from '@/features/rooms/state/live-store';
-import type { RoomExecutionMode, RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
+import {
+  parseRoomPermissionPolicy,
+  roomPermissionPoliciesEqual,
+  roomPermissionPolicyNeedsDangerousConfirmation,
+  roomPermissionPolicyNeedsWorkspaceConfirmation,
+  type RoomPermissionPolicy,
+  type RoomSummary,
+  type RoomWorkItem,
+} from '@/features/rooms/room-types';
 import { PawRoomConversation, roomProcessWindowRequest } from './PawRoomConversation';
 import { PawRoomFocusOverview } from './PawRoomFocusOverview';
 import { PawRoomRoundSheet } from './PawRoomRoundSheet';
@@ -135,6 +145,7 @@ export function PawRoomWorkspace({
   active = true,
   initialDraft,
   initialError,
+  participantProcessLocation = 'session-window',
   personas,
   record,
   recordId,
@@ -143,6 +154,8 @@ export function PawRoomWorkspace({
   active?: boolean;
   initialDraft?: string;
   initialError?: string;
+  /** Extension Apps can keep public Room inspection inside their own surface. */
+  participantProcessLocation?: 'session-window' | 'room-transcript';
   personas: AgentPersonaV1[];
   record?: RoomSummary;
   recordId: string;
@@ -163,6 +176,14 @@ export function PawRoomWorkspace({
   const [error, setError] = useState(initialError ?? '');
   const [startConfirmation, setStartConfirmation] = useState<RoomStartConfirmation | null>(null);
   const [panel, setPanel] = useState<RoomToolPanel | 'none'>('none');
+  const [embeddedFocusActive, setEmbeddedFocusActive] = useState(false);
+  const roomFocusGroup = `room:${recordId}`;
+  const desktopFocusGroup = desktop?.collaborationFocusGroup;
+  const hasDesktopFocusSource = desktopFocusGroup !== undefined;
+  const collaborationFocusActive = hasDesktopFocusSource
+    ? desktopFocusGroup === roomFocusGroup
+    : embeddedFocusActive;
+  const previousFocusRef = useRef(collaborationFocusActive);
   useEffect(() => {
     const gate = record?.startGate;
     if (gate?.status === 'pending') {
@@ -200,9 +221,20 @@ export function PawRoomWorkspace({
   useEffect(() => {
     setView('rounds');
     setPanel('none');
+    setEmbeddedFocusActive(false);
     setSelectedParticipantId('');
     setCollaborationOpenFailures(new Set());
   }, [recordId]);
+  useEffect(() => {
+    const previousFocus = previousFocusRef.current;
+    previousFocusRef.current = collaborationFocusActive;
+    if (!previousFocus || collaborationFocusActive) return;
+    /* A desktop-wide exit may arrive from the shell, another Room, or a
+       surviving window. Only presentation owned by this Room is stale then;
+       the desktop focus owner remains the store. */
+    setPanel('none');
+    setSelectedParticipantId('');
+  }, [collaborationFocusActive]);
 
   const clearOptimisticSteer = useCallback((clientActionId: string) => {
     if (optimisticSteerRef.current?.clientActionId !== clientActionId) return;
@@ -236,6 +268,9 @@ export function PawRoomWorkspace({
   const pendingQuestion = projection?.pendingUserQuestion;
   const pendingGroupedInput = latestPendingGroupedRoomInput(projection);
   const activeTurn = projection ? selectActivePublicRoomTurn(projection) : undefined;
+  const latestTurn = projection
+    ? projection.turnsById[selectPublicRoomTurnOrder(projection).at(-1) ?? '']
+    : undefined;
   const collaborationParticipantSignature = useMemo(() => record?.participants
     .map((participant) => [
       participant.id,
@@ -558,17 +593,23 @@ export function PawRoomWorkspace({
         .map((item) => item.path)
         .filter((path): path is string => Boolean(path));
       if (!workspaceRoots.length) return;
-      const executionMode = record.executionMode ?? 'workspace_managed';
+      const permissionPolicy = parseRoomPermissionPolicy(record.permissionPolicy, record.roomKind);
+      const workspaceConfirmationRequired = permissionPolicy
+        ? roomPermissionPolicyNeedsWorkspaceConfirmation(permissionPolicy)
+        : record.executionMode === 'workspace_managed';
+      const dangerousConfirmationRequired = permissionPolicy
+        ? roomPermissionPolicyNeedsDangerousConfirmation(permissionPolicy)
+        : record.executionMode === 'full_trust';
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.room.archive',
         params: { roomId: recordId },
         body: {
           workspaceRoots,
-          executionMode,
-          ...(executionMode === 'workspace_managed'
+          ...(permissionPolicy ? { permissionPolicy } : {}),
+          ...(workspaceConfirmationRequired
             ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
             : {}),
-          ...(executionMode === 'full_trust'
+          ...(dangerousConfirmationRequired
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
             : {}),
         },
@@ -607,14 +648,21 @@ export function PawRoomWorkspace({
   }, [openParticipantObserver, record?.participants]);
   const selectAndOpenParticipant = useCallback((participantId: string) => {
     setSelectedParticipantId(participantId);
-    if (panel === 'focus') {
+    if (participantProcessLocation === 'room-transcript') {
+      setView('conversation');
+      setPanel('none');
+      setEmbeddedFocusActive(false);
+      desktop?.setCollaborationFocusGroup?.(null);
+      return;
+    }
+    if (collaborationFocusActive) {
       openParticipantById(participantId);
       return;
     }
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!participant) return;
     desktop?.openWindow(roomPartnerSessionWindowRequest(participant));
-  }, [desktop, openParticipantById, panel, record?.participants]);
+  }, [collaborationFocusActive, desktop, openParticipantById, participantProcessLocation, record?.participants]);
   const openProcessActivity = useCallback((activity: RoomActivityProjection) => {
     const request = roomProcessWindowRequest(activity, recordId);
     if (request) desktop?.openWindow({ ...request, background: false });
@@ -679,22 +727,24 @@ export function PawRoomWorkspace({
   const enterCollaborationMode = useCallback(() => {
     setView('rounds');
     setPanel('focus');
+    if (!hasDesktopFocusSource) setEmbeddedFocusActive(true);
     if (!desktop || !record) return;
     /* Collaboration focus is an explicit Room view choice. Opening a
        participant Session is still an ordinary desktop action and must not
        enter this mode as a side effect. */
-    desktop.setCollaborationFocusGroup?.(`room:${record.id}`);
+    desktop.setCollaborationFocusGroup?.(roomFocusGroup);
     setCollaborationOpenFailures(new Set());
-  }, [desktop, record]);
+  }, [desktop, hasDesktopFocusSource, record, roomFocusGroup]);
   const exitCollaborationFocus = useCallback(() => {
+    setEmbeddedFocusActive(false);
     setPanel('none');
     setSelectedParticipantId('');
     desktop?.setCollaborationFocusGroup?.(null);
   }, [desktop]);
-  const closeCollaborationFocus = useCallback(() => {
-    exitCollaborationFocus();
+  const closeCollaborationPanel = useCallback(() => {
+    setPanel('none');
     collaborationTriggerRef.current?.focus();
-  }, [exitCollaborationFocus]);
+  }, []);
   const retryCollaborationPlanet = useCallback((participantId: string) => {
     const participant = record?.participants.find((candidate) => candidate.id === participantId);
     if (!desktop || !participant) return;
@@ -718,8 +768,8 @@ export function PawRoomWorkspace({
    * (`agent:<participantId>`), which lets a removed member disappear without
    * inventing a second desktop store or changing Session semantics. */
   useEffect(() => {
-    if (panel !== 'focus' || !desktop || !record) {
-      if (panel !== 'focus') collaborationSyncKeyRef.current = '';
+    if (!collaborationFocusActive || !desktop || !record) {
+      if (!collaborationFocusActive) collaborationSyncKeyRef.current = '';
       return;
     }
     /* Room snapshots are intentionally frequent. Reconcile the desktop only
@@ -746,8 +796,8 @@ export function PawRoomWorkspace({
   }, [
     collaborationParticipantRequests,
     collaborationParticipantSignature,
+    collaborationFocusActive,
     desktop,
-    panel,
     record,
   ]);
   useEffect(() => {
@@ -770,42 +820,67 @@ export function PawRoomWorkspace({
     desktop.bindRoomMain?.({ kind: 'room', id: record.id, title: record.title, subtitle: record.description });
   }, [desktop, record]);
   /* status overlay 克制：为 0 的计数是噪音，状态行只亮出真实存在的工作。 */
+  const submittedPartnerCount = focusProjection?.partners.filter((partner) => partner.state === 'completed').length ?? 0;
   const signalChips = ([
     ['active', focusProjection?.counts.active ?? 0, '进行'],
     ['review', focusProjection?.counts.review ?? 0, '复核'],
     ['blocked', focusProjection?.counts.blocked ?? 0, '受阻'],
-    ['complete', focusProjection?.counts.completed ?? 0, '完成'],
+    ['submitted', submittedPartnerCount, '伙伴已提交结果'],
+    ['complete', focusProjection?.counts.completed ?? 0, '任务完成'],
   ] as const).filter(([, count]) => count > 0);
   /* 没有主持就没有 Sol：signal chrome 只有在真的有伙伴担任 coordinator 时
      才用 Sol 命名这个 Room 的原点，否则统一叫「主 Room」。 */
   const coordinatorActive = focusProjection ? roomFocusHasCoordinator(focusProjection.partners) : false;
   const originLabel = roomFocusOriginLabel(coordinatorActive);
-  const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}>
+  const syncOffline = Boolean(error) && error !== ROOM_WORKSPACE_MISSING_TEXT;
+  const visibleRecoveryState = syncOffline ? 'failed' : recoveryState;
+  const runtimeBusy = visibleRecoveryState !== 'failed' && Boolean(activeTurn);
+  const awaitingRoot = visibleRecoveryState !== 'failed'
+    && latestTurn?.status === 'running'
+    && !activeTurn
+    && submittedPartnerCount > 0;
+  const runtimeStatusLabel = abortingActiveTurn
+    ? '正在停止'
+    : syncOffline || recoveryState === 'failed'
+      ? '同步离线 · 历史已保留'
+      : sending && runtimeBusy
+        ? '正在干预'
+        : runtimeBusy
+          ? '协作中'
+          : awaitingRoot
+            ? '伙伴已提交，等待 Root'
+            : latestTurn?.status === 'completed'
+              ? 'Room 已完成'
+              : recoveryState === 'synced'
+                ? '已同步'
+                : '连接中';
+  const roomChromeControls = <div aria-label="Room 窗口控制" className="paw-room-window-chrome" data-coordinator={coordinatorActive || undefined} data-status={abortingActiveTurn ? 'stopping' : runtimeBusy ? 'busy' : visibleRecoveryState}>
     {coordinatorActive ? <span aria-label="Agent 中的 Sol 协作模式" className="paw-room-workspace__mode">Sol</span> : null}
     <nav aria-label="Room 工作台视图">
-      <button aria-label="任务表" aria-pressed={panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); exitCollaborationFocus(); }} type="button"><ListChecks size={14} /><span>任务表</span></button>
-      <button aria-label="协同模式" aria-pressed={panel !== 'none'} data-room-view="collaboration" onClick={enterCollaborationMode} ref={collaborationTriggerRef} type="button"><Focus size={14} /><span>协同模式</span></button>
-      <button aria-label="公开记录" aria-pressed={panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); exitCollaborationFocus(); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
+      <button aria-label="任务" aria-pressed={!collaborationFocusActive && panel === 'none' && view === 'rounds'} data-room-view="rounds" onClick={() => { setView('rounds'); exitCollaborationFocus(); }} type="button"><ListChecks size={14} /><span>任务</span></button>
+      <button aria-label="协同模式" aria-pressed={collaborationFocusActive} data-room-view="collaboration" onClick={enterCollaborationMode} ref={collaborationTriggerRef} type="button"><Focus size={14} /><span>协同模式</span></button>
+      <button aria-label="公开记录" aria-pressed={!collaborationFocusActive && panel === 'none' && view === 'conversation'} data-room-view="conversation" onClick={() => { setView('conversation'); exitCollaborationFocus(); }} type="button"><MessageCircle size={14} /><span>公开记录</span></button>
       <button aria-label="星空" aria-pressed={view === 'starfield'} data-room-view="starfield" onClick={() => { setView('starfield'); exitCollaborationFocus(); }} type="button"><Orbit size={14} /><span>星空</span></button>
     </nav>
-    <div className="paw-room-workspace__runtime"><span><i />{abortingActiveTurn ? '正在停止' : sending && activeTurn ? '正在干预' : activeTurn ? '协作中' : recoveryState === 'synced' ? '已同步' : '连接中'}</span>{activeTurn ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
+    <div className="paw-room-workspace__runtime"><span><i />{runtimeStatusLabel}</span>{runtimeBusy ? <button aria-label="停止整轮协作" disabled={abortingActiveTurn} onClick={() => void abortTurn(activeRootId)} type="button"><StopCircle size={16} /></button> : null}</div>
   </div>;
   return (
     <section
       className="paw-room-workspace paw-room-workspace--migrated-v1"
       data-agent-mode="room"
+      data-collaboration-mode={collaborationFocusActive}
       data-panel={panel}
       data-view={view}
       data-window-chrome={windowChromeTarget ? 'portal' : 'fallback'}
       data-room-id={recordId}
-      data-status={abortingActiveTurn ? 'stopping' : activeTurn ? 'busy' : recoveryState}
+      data-status={abortingActiveTurn ? 'stopping' : runtimeBusy ? 'busy' : visibleRecoveryState}
     >
       {windowChromeTarget ? <PawWindowChromePortal>{roomChromeControls}</PawWindowChromePortal> : <header className="paw-room-workspace__header">{roomChromeControls}</header>}
 
       <section aria-label="Room 当前协作" className="paw-room-workspace__signal">
         <div className="paw-room-workspace__objective">
           <div><small>目标</small><strong>{focusProjection?.goal.title || activeTopic?.title || activeWork?.objective || record?.description || '当前协作'}</strong></div>
-          <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务</span>
+          <span>{activeParticipants.length} 颗行星 · {focusProjection?.workItems.length ?? 0} 项任务{record?.ownerAppId === 'extension:agent-lab' ? ' · Agent Lab 只读沙盒' : ''}</span>
         </div>
         {focusProjection ? <div aria-label={`${originLabel} 当前状态`} className="paw-room-workspace__signal-status">
           {signalChips.length
@@ -951,7 +1026,7 @@ export function PawRoomWorkspace({
           </div>
         </section>
         {panel !== 'none' && record ? <PawRoomToolWorkspace
-          onClose={closeCollaborationFocus}
+          onClosePanel={closeCollaborationPanel}
           onError={setError}
           onOpenParticipant={openParticipantById}
           onPanelChange={setPanel}
@@ -972,7 +1047,7 @@ export function PawRoomWorkspace({
 }
 
 function PawRoomToolWorkspace({
-  onClose,
+  onClosePanel,
   onError,
   onOpenParticipant,
   onSelectParticipant,
@@ -986,7 +1061,7 @@ function PawRoomToolWorkspace({
   room,
   selectedParticipantId,
 }: {
-  onClose: () => void;
+  onClosePanel: () => void;
   onError: (message: string) => void;
   onOpenParticipant: (participantId: string, background?: boolean) => void;
   onSelectParticipant: (participantId: string) => void;
@@ -1015,14 +1090,19 @@ function PawRoomToolWorkspace({
     onPanelChange(roomToolPanelItems[nextIndex]);
     tabRefs.current[nextIndex]?.focus();
   }, [onPanelChange]);
+  const handleAsideKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    onClosePanel();
+  }, [onClosePanel]);
   /* 空间指向：协作态势键在标题栏尾端，面板也必须从尾端展开。data-side 把这个
      朝向写成契约而不是 DOM 顺序的副作用，CSS 用同名网格区落位。 */
-  return <aside aria-label="Room 协作态势" className="paw-room-tools" data-side="trailing">
+  return <aside aria-label="Room 协作态势" className="paw-room-tools" data-side="trailing" onKeyDown={handleAsideKeyDown}>
     <header className="paw-room-tools__header">
       <span><Focus aria-hidden="true" size={15} /><strong>协作态势</strong></span>
       <div className="paw-room-tools__actions">
         {onPopout ? <button aria-label="在协作窗口中打开协作态势" onClick={onPopout} type="button"><ExternalLink aria-hidden="true" size={14} /></button> : null}
-        <button aria-label="关闭协作态势" onClick={onClose} type="button"><X aria-hidden="true" size={15} /></button>
+        <button aria-label="关闭协作态势" onClick={onClosePanel} type="button"><X aria-hidden="true" size={15} /></button>
       </div>
     </header>
     <nav aria-label="协作工具视图" aria-orientation="horizontal" className="paw-room-tools__tabs" role="tablist">
@@ -1071,6 +1151,7 @@ export function PawRoomGovernance({
   if (!room) return <div className="paw-room-governance paw-room-governance--empty">Room 元数据尚未恢复。</div>;
   return (
     <PawRoomGovernanceInner
+      key={room.id}
       onError={onError}
       onRefresh={onRefresh}
       onRoomUpdated={onRoomUpdated}
@@ -1080,25 +1161,6 @@ export function PawRoomGovernance({
   );
 }
 
-/* The row beside each control already names the current value through the
-   shared Room copy, so the choices are drawn from the same source. Spelling
-   them out by hand gave one participant row 实现与验证 next to a picker reading
-   实现, and the 空间设置 header 每次确认 next to a picker reading 逐项确认. */
-const collaborationRoleOptions = (['coordinator', 'researcher', 'implementer', 'reviewer', 'specialist'] as const)
-  .map((role) => ({ value: role, label: roomCollaborationRoleLabel(role) }));
-
-const executionModeOptions = [
-  {
-    value: 'per_action' as const,
-    label: '全权限',
-    description: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认',
-  },
-  {
-    value: 'full_trust' as const,
-    label: '全自动',
-    description: '整个系统与所有 Tool 可用；每个动作自动批准，仍受操作系统边界约束',
-  },
-];
 
 function PawRoomGovernanceInner({
   personas,
@@ -1122,14 +1184,28 @@ function PawRoomGovernanceInner({
   const [workOwner, setWorkOwner] = useState('');
   const [title, setTitle] = useState(room.title);
   const [description, setDescription] = useState(room.description ?? '');
-  const [executionMode, setExecutionMode] = useState<RoomExecutionMode>(room.executionMode ?? 'per_action');
+  const storedPermissionPolicy = useMemo(
+    () => parseRoomPermissionPolicy(room.permissionPolicy, room.roomKind),
+    [room.permissionPolicy, room.roomKind],
+  );
+  const [permissionPolicy, setPermissionPolicy] = useState<RoomPermissionPolicy | undefined>(
+    storedPermissionPolicy,
+  );
   const activeParticipants = room.participants.filter((item) => item.status === 'active');
   const availablePersonas = personas.filter((persona) => !activeParticipants.some((item) => item.roleId === persona.roleId && item.roleVersion === persona.version));
   const participantLimitReached = activeParticipants.length >= ROOM_PARTICIPANT_LIMIT;
   const nextPlanetName = roomPlanetName(Math.max(-1, ...room.participants.map((participant) => participant.ordinal)) + 1);
-  const selectedExecutionMode = executionModeOptions.find((option) => option.value === executionMode);
-  const legacyExecutionMode = !selectedExecutionMode;
-  const executionModeDisplayLabel = selectedExecutionMode?.label ?? roomExecutionModeLabel(executionMode);
+  const permissionPolicyChanged = !roomPermissionPoliciesEqual(
+    permissionPolicy,
+    storedPermissionPolicy,
+  );
+  const permissionDisplayLabel = permissionPolicy
+    ? roomPermissionLayerPresentation(
+        permissionPolicy,
+        'room',
+        room.roomKind ?? 'collaboration',
+      ).effectiveLabel
+    : '分层权限不可用';
 
   async function mutate(key: string, request: ControlRequest): Promise<void> {
     setBusyKey(key);
@@ -1178,7 +1254,7 @@ function PawRoomGovernanceInner({
       <div className="paw-room-governance__members">{activeParticipants.map((participant) => <article key={participant.id}>
         <span aria-hidden="true" className="paw-room-governance__member-mark"><Users size={14} /></span>
         <span><strong>{roomPlanetName(participant.ordinal)}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
-        {room.roomKind !== 'roleplay' ? <Select aria-label={`${roomPlanetName(participant.ordinal)} 的分工`} disabled={Boolean(busyKey)} onValueChange={(collaborationRole) => void mutate(`role:${participant.id}`, { pathId: 'agent.room.participant.update', params: { roomId: room.id }, body: { participantId: participant.id, collaborationRole } })} options={collaborationRoleOptions} value={participant.collaborationRole ?? 'implementer'} /> : null}
+        {room.roomKind !== 'roleplay' ? <Select aria-label={`${roomPlanetName(participant.ordinal)} 的分工`} disabled={Boolean(busyKey)} onValueChange={(collaborationRole) => void mutate(`role:${participant.id}`, { pathId: 'agent.room.participant.update', params: { roomId: room.id }, body: { participantId: participant.id, collaborationRole } })} options={roomCollaborationRoleOptions(participant.collaborationRole)} value={participant.collaborationRole ?? 'implementer'} /> : null}
         <button aria-label={`移出 ${roomPlanetName(participant.ordinal)}`} disabled={Boolean(busyKey) || activeParticipants.length <= 2 || participant.id === room.moderatorParticipantId} onClick={() => void mutate(`remove:${participant.id}`, { pathId: 'agent.room.participant.remove', params: { roomId: room.id }, body: { participantId: participant.id } })} type="button">{busyKey === `remove:${participant.id}` ? <LoaderCircle className="ui-spin" size={14} /> : <UserMinus size={14} />}</button>
       </article>)}</div>
       {availablePersonas.length ? <div className="paw-room-governance__invite"><span aria-hidden="true"><UserPlus size={14} />邀请伙伴</span><Select aria-label="邀请伙伴" disabled={Boolean(busyKey) || participantLimitReached} onValueChange={(key) => { if (participantLimitReached) return; const persona = personas.find((item) => `${item.roleId}:${item.version}` === key); if (persona) void mutate(`add:${persona.roleId}`, { pathId: 'agent.room.participant.add', params: { roomId: room.id }, body: { roleId: persona.roleId, roleVersion: persona.version, collaborationRole: 'implementer' } }); }} options={participantLimitReached ? [{ value: '', label: `已达 ${ROOM_PARTICIPANT_LIMIT} 人上限` }] : availablePersonas.map((persona) => ({ value: `${persona.roleId}:${persona.version}`, label: `${nextPlanetName} · ${persona.tagline || '协作伙伴'}` }))} placeholder={participantLimitReached ? `已达 ${ROOM_PARTICIPANT_LIMIT} 人上限` : `选择 ${nextPlanetName} 的分工…`} value="" /></div> : null}
@@ -1197,25 +1273,16 @@ function PawRoomGovernanceInner({
     </section>
 
     <section>
-      <header><span><Settings2 size={15} /><strong>空间设置</strong></span><small>{executionModeDisplayLabel}</small></header>
+      <header><span><Settings2 size={15} /><strong>空间设置</strong></span><small>{permissionDisplayLabel}</small></header>
       <div className="paw-room-governance__form">
         <input aria-label="Room 名称" maxLength={120} onChange={(event) => setTitle(event.target.value)} value={title} />
         <input aria-label="Room 简介" maxLength={500} onChange={(event) => setDescription(event.target.value)} placeholder="简介" value={description} />
-        {room.roomKind !== 'roleplay' ? (
-          <>
-            <Select
-              aria-label="Room 执行权限"
-              onValueChange={setExecutionMode}
-              options={executionModeOptions}
-              placeholder={legacyExecutionMode ? roomExecutionModeLabel(executionMode) : undefined}
-              value={selectedExecutionMode?.value}
-            />
-            <small>
-              {selectedExecutionMode?.description
-                ?? `${roomExecutionModeLabel(executionMode)}（旧版策略，仅保留显示；选择全权限或全自动后更新）`}
-            </small>
-          </>
-        ) : null}
+        <RoomPermissionPolicyEditor
+          onChange={permissionPolicy ? setPermissionPolicy : undefined}
+          menuSelect
+          policy={permissionPolicy}
+          roomKind={room.roomKind ?? 'collaboration'}
+        />
         <button
           disabled={!title.trim() || Boolean(busyKey)}
           onClick={() => void mutate('settings', {
@@ -1225,14 +1292,18 @@ function PawRoomGovernanceInner({
               archived: false,
               title: title.trim(),
               description: description.trim(),
-              executionMode,
+              ...(permissionPolicy ? { permissionPolicy } : {}),
               routingPolicy: room.routingPolicy,
               routingConfig: (room.routingConfig ?? null) as unknown as Record<string, unknown>,
               moderatorParticipantId: room.moderatorParticipantId,
-              ...(executionMode === 'workspace_managed'
+              ...(permissionPolicyChanged
+                && permissionPolicy
+                && roomPermissionPolicyNeedsWorkspaceConfirmation(permissionPolicy)
                 ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
                 : {}),
-              ...(executionMode === 'full_trust'
+              ...(permissionPolicyChanged
+                && permissionPolicy
+                && roomPermissionPolicyNeedsDangerousConfirmation(permissionPolicy)
                 ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
                 : {}),
             } as unknown as ControlRequest['body'],

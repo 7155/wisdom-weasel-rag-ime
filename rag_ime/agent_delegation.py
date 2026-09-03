@@ -15,7 +15,18 @@ from pathlib import Path
 from .agent_artifacts import AgentArtifactStore
 from .agent_context_runtime import AgentContextRuntime
 from .agent_events import AgentEventHub
-from .agent_execution_policy import unrestricted_workspace_policy_active
+from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
+    PER_ACTION_EXECUTION_MODE,
+    READ_ONLY_EXECUTION_MODE,
+    WORKSPACE_MANAGED_EXECUTION_MODE,
+    unrestricted_workspace_policy_active,
+)
+from .agent_tool_ids import (
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    FULL_ACCESS_TOOL_PROFILE,
+    READONLY_TOOL_PROFILE,
+)
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_driver import (
     AgentRuntimeDriver,
@@ -27,7 +38,7 @@ from .agent_runtime_driver import (
 )
 from .agent_sessions import AgentSessionStore
 from .agent_templates import AgentTemplate, agent_template, agent_template_catalog
-from .agent_workspace_roots import existing_workspace_roots
+from .agent_workspace_roots import existing_workspace_roots, system_wide_workspace_roots
 from .contracts.json_schema import validate_contract, validate_json_schema
 from .db import apply_database_migrations
 from .pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeManager
@@ -41,6 +52,20 @@ _SOFT_BUDGET_RATIO = 0.8
 _DEFAULT_CANCELLATION_GRACE_MS = 2_000
 _DEFAULT_SUBAGENT_SESSION_RETENTION_MS = 72 * 60 * 60 * 1_000
 _DEFAULT_SUBAGENT_SESSION_GC_INTERVAL_MS = 15 * 60 * 1_000
+_ROOM_PERMISSION_MODES = frozenset(
+    {
+        READ_ONLY_EXECUTION_MODE,
+        PER_ACTION_EXECUTION_MODE,
+        WORKSPACE_MANAGED_EXECUTION_MODE,
+        FULL_TRUST_EXECUTION_MODE,
+    }
+)
+_ROOM_PERMISSION_MODE_RANK = {
+    READ_ONLY_EXECUTION_MODE: 0,
+    PER_ACTION_EXECUTION_MODE: 1,
+    WORKSPACE_MANAGED_EXECUTION_MODE: 1,
+    FULL_TRUST_EXECUTION_MODE: 2,
+}
 _DELEGATION_TASK_CONTRACT: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
@@ -320,11 +345,18 @@ class AgentDelegationStore:
                     },
                     created_at_ms=now,
                 )
-        for run_id in run_ids:
-            self._sync_run_artifact(run_id)
-        return self.get_batch(batch_id)
+        # The SQLite rows above are the acceptance receipt.  Lifecycle
+        # artifacts are advisory and are materialized by the worker so a
+        # contended artifact lock cannot delay wait=false acknowledgement.
+        return self.get_batch(batch_id, hydrate_artifacts=False)
 
-    def get_batch(self, batch_id: str) -> dict[str, object]:
+    def get_batch(
+        self,
+        batch_id: str,
+        *,
+        hydrate_artifacts: bool = True,
+    ) -> dict[str, object]:
+
         with self._connect() as conn:
             # A batch projection is made from two related rows.  In SQLite,
             # SELECTs do not start a transaction by themselves, so without an
@@ -345,21 +377,28 @@ class AgentDelegationStore:
                 (batch_id,),
             ).fetchall()
         payload = _batch_payload(row, runs)
-        if self.artifacts is not None:
+        if self.artifacts is not None and hydrate_artifacts:
             payload["runs"] = [self._decorate_run(run) for run in payload["runs"]]
             for run in payload["runs"]:
                 validate_contract(run, "agent-subagent-run.v1.json")
             validate_contract(payload, "agent-subagent-batch.v1.json")
         return payload
 
-    def get_run(self, run_id: str) -> dict[str, object]:
+    def get_run(
+        self,
+        run_id: str,
+        *,
+        hydrate_artifacts: bool = True,
+    ) -> dict[str, object]:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM agent_subagent_runs WHERE id = ?", (run_id,)
             ).fetchone()
         if row is None:
             raise KeyError(run_id)
-        return self._decorate_run(_run_payload(row))
+        payload = _run_payload(row)
+        return self._decorate_run(payload) if self.artifacts is not None and hydrate_artifacts else payload
+
 
     def submit_structured_output(
         self,
@@ -558,23 +597,68 @@ class AgentDelegationStore:
         *,
         parent_session_id: str = "",
         limit: int = 50,
+        hydrate_artifacts: bool = True,
     ) -> list[dict[str, object]]:
         bounded = max(1, min(int(limit), 200))
         with self._connect() as conn:
-            if parent_session_id:
-                rows = conn.execute(
-                    """
-                    SELECT id FROM agent_subagent_batches
-                    WHERE parent_session_id = ? ORDER BY created_at_ms DESC LIMIT ?
-                    """,
-                    (parent_session_id, bounded),
-                ).fetchall()
+            if hydrate_artifacts:
+                if parent_session_id:
+                    rows = conn.execute(
+                        """
+                        SELECT id FROM agent_subagent_batches
+                        WHERE parent_session_id = ? ORDER BY created_at_ms DESC LIMIT ?
+                        """,
+                        (parent_session_id, bounded),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT id FROM agent_subagent_batches ORDER BY created_at_ms DESC LIMIT ?",
+                        (bounded,),
+                    ).fetchall()
+                batch_ids = [str(row["id"]) for row in rows]
             else:
-                rows = conn.execute(
-                    "SELECT id FROM agent_subagent_batches ORDER BY created_at_ms DESC LIMIT ?",
-                    (bounded,),
+                conn.execute("BEGIN")
+                if parent_session_id:
+                    batch_rows = conn.execute(
+                        """
+                        SELECT * FROM agent_subagent_batches
+                        WHERE parent_session_id = ?
+                        ORDER BY created_at_ms DESC LIMIT ?
+                        """,
+                        (parent_session_id, bounded),
+                    ).fetchall()
+                else:
+                    batch_rows = conn.execute(
+                        """
+                        SELECT * FROM agent_subagent_batches
+                        ORDER BY created_at_ms DESC LIMIT ?
+                        """,
+                        (bounded,),
+                    ).fetchall()
+                if not batch_rows:
+                    return []
+                batch_ids = [str(row["id"]) for row in batch_rows]
+                placeholders = ",".join("?" for _ in batch_ids)
+                run_rows = conn.execute(
+                    f"""
+                    SELECT * FROM agent_subagent_runs
+                    WHERE batch_id IN ({placeholders})
+                    ORDER BY batch_id, ordinal ASC
+                    """,  # noqa: S608 - placeholders are generated internally.
+                    tuple(batch_ids),
                 ).fetchall()
-        return [self.get_batch(str(row["id"])) for row in rows]
+        if hydrate_artifacts:
+            return [self.get_batch(batch_id) for batch_id in batch_ids]
+        runs_by_batch: dict[str, list[sqlite3.Row]] = {batch_id: [] for batch_id in batch_ids}
+        for run_row in run_rows:
+            runs_by_batch[str(run_row["batch_id"])].append(run_row)
+        return [
+            _batch_payload(
+                batch_row,
+                runs_by_batch[str(batch_row["id"])],
+            )
+            for batch_row in batch_rows
+        ]
 
     def active_run_count(self) -> int:
         with self._connect() as conn:
@@ -705,9 +789,6 @@ class AgentDelegationStore:
         if state not in _TERMINAL_STATES:
             raise ValueError("delegated run terminal state is invalid")
         now = _timestamp(completed_at_ms)
-        result_json = json.dumps(
-            dict(result or {}), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
         already_terminal = False
         with self._connect() as conn:
             # Serialize terminal selection with the write. A late runtime
@@ -715,10 +796,17 @@ class AgentDelegationStore:
             # but exactly one of them owns the durable terminal transition.
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT batch_id, state FROM agent_subagent_runs WHERE id = ?", (run_id,)
+                "SELECT batch_id, state FROM agent_subagent_runs WHERE id = ?",
+                (run_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(run_id)
+            result_json = json.dumps(
+                dict(result or {}),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             already_terminal = str(row["state"]) in _TERMINAL_STATES
             if not already_terminal:
                 conn.execute(
@@ -1546,10 +1634,21 @@ class AgentDelegationStore:
         payload = dict(run)
         if self.artifacts is None:
             return payload
-        payload["artifact"] = self.artifacts.reference(
-            owner_kind="subagent_run",
-            owner_id=str(payload["id"]),
-        )
+        try:
+            payload["artifact"] = self.artifacts.reference(
+                owner_kind="subagent_run",
+                owner_id=str(payload["id"]),
+            )
+        except KeyError:
+            # Explicit artifact hydration is allowed to materialize the
+            # lifecycle receipt if the background worker has not reached its
+            # first checkpoint yet. Status uses hydrate_artifacts=False and
+            # never enters this path.
+            self._sync_run_artifact(str(payload["id"]))
+            payload["artifact"] = self.artifacts.reference(
+                owner_kind="subagent_run",
+                owner_id=str(payload["id"]),
+            )
         snapshot = self.artifacts.snapshot(
             owner_kind="subagent_run",
             owner_id=str(payload["id"]),
@@ -1763,6 +1862,7 @@ class AgentDelegationCoordinator:
         model_route_provider: Callable[
             [str], Mapping[str, object] | None
         ] | None = None,
+        startup_recovery: bool = True,
     ) -> None:
         self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
         self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
@@ -1817,13 +1917,26 @@ class AgentDelegationCoordinator:
         self._last_session_gc_monotonic = 0.0
         self._active_runs: dict[str, _ActiveDelegatedRun] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._reserved_run_count = 0
         self._closed = False
-        recoverable = self.store.reconcile_interrupted_runs()
-        self._schedule_pending_result_contexts()
-        self.collect_expired_sessions(force=True)
-        if self.runtime_config.enabled:
-            for run_id in recoverable:
-                self._start_run_thread(run_id)
+        self._startup_recovery_lock = threading.RLock()
+        self._startup_recovery_complete = False
+        if startup_recovery:
+            self.reconcile_startup()
+
+    def reconcile_startup(self) -> None:
+        """Recover durable delegated runs and retention once per process."""
+
+        with self._startup_recovery_lock:
+            if self._startup_recovery_complete:
+                return
+            recoverable = self.store.reconcile_interrupted_runs()
+            self._schedule_pending_result_contexts()
+            self.collect_expired_sessions(force=True)
+            if self.runtime_config.enabled:
+                for run_id in recoverable:
+                    self._start_run_thread(run_id)
+            self._startup_recovery_complete = True
 
     def catalog(self) -> dict[str, object]:
         return {
@@ -1834,13 +1947,36 @@ class AgentDelegationCoordinator:
             "items": agent_template_catalog(),
         }
 
+    @contextmanager
+    def _capacity_reservation(self, count: int):
+        count = max(0, int(count))
+        with self._lock:
+            if self._closed:
+                raise ValueError("delegation runtime is closed")
+            if (
+                self.store.active_run_count()
+                + self._reserved_run_count
+                + count
+                > _MAX_PARALLEL_RUNS
+            ):
+                raise ValueError("at most two delegated tasks may run at once")
+            self._reserved_run_count += count
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._reserved_run_count = max(
+                    0,
+                    self._reserved_run_count - count,
+                )
+
     def delegate(self, parent_session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         parent = self.sessions.get(parent_session_id)
         self.sessions.require_goal_execution(parent_session_id)
         parent_run = self.store.run_for_child_session(parent_session_id)
         if parent.get("status") == "archived" and parent_run is None:
             raise ValueError("archived sessions cannot delegate tasks")
-        wait = payload.get("wait") is not False
+        wait = payload.get("wait") is True
         tasks = _delegation_tasks(payload)
         retry_lineage = (
             dict(payload.get("_retryLineage"))
@@ -1885,7 +2021,10 @@ class AgentDelegationCoordinator:
         depth = int(parent_run.get("depth") or 0) + 1 if parent_run else 1
         parent_run_id = str(parent_run.get("id") or "") if parent_run else ""
         if parent_run is not None:
-            parent_batch = self.store.get_batch(str(parent_run["batchId"]))
+            parent_batch = self.store.get_batch(
+                str(parent_run["batchId"]),
+                hydrate_artifacts=False,
+            )
             causal_metadata = dict(parent_batch["causalMetadata"])
         else:
             todo = self.sessions.agent_todo(parent_session_id)
@@ -1911,12 +2050,21 @@ class AgentDelegationCoordinator:
                 "taskId": "",
                 "dispatchId": "",
             }
+        room_context: Mapping[str, object] | None = None
+        room_permission_policy = None
         if self._room_context_provider is not None:
-            room_context = self._room_context_provider(parent_session_id)
-            if isinstance(room_context, Mapping):
+            candidate_room_context = self._room_context_provider(parent_session_id)
+            if isinstance(candidate_room_context, Mapping):
+                room_context = candidate_room_context
+                room_permission_policy = _room_permission_policy(
+                    room_context.get("permissionPolicy")
+                )
                 causal_metadata = _delegation_causal_metadata(
                     {**causal_metadata, **room_context}
                 )
+        effective_room_execution_mode = _effective_room_execution_mode(
+            room_permission_policy
+        )
         if depth > 2:
             raise ValueError("subagent maximum depth is 2")
 
@@ -1939,28 +2087,35 @@ class AgentDelegationCoordinator:
 
         created_sessions: list[dict[str, object]] = []
         prepared_model_routes: list[dict[str, str]] = []
+        prepared_authority: list[str] = []
         prepared_files: list[Path] = []
         control_fork_runtime: AgentRuntimeDriver | None = None
         resolved_control_fork_entry_id = control_fork_entry_id
-        with self._lock:
-            if self._closed:
-                raise ValueError("delegation runtime is closed")
-            if self.store.active_run_count() + len(tasks) > _MAX_PARALLEL_RUNS:
-                raise ValueError("at most two delegated tasks may run at once")
+        with self._capacity_reservation(len(tasks)):
             try:
                 for ordinal, (task, template) in enumerate(zip(tasks, templates, strict=True)):
                     parent_profile = str(parent.get("toolProfileVersion") or "control-center-v1")
-                    unrestricted_parent = unrestricted_workspace_policy_active(parent)
                     parent_execution_mode = str(parent.get("executionMode") or "").strip()
-                    access = str(task.get("access") or "inherit")
+                    requested_access = str(task.get("access") or "inherit")
+                    access, policy_execution_mode = _room_policy_access(
+                        requested_access,
+                        effective_execution_mode=effective_room_execution_mode,
+                    )
                     writable = access == "write"
                     if writable and str(parent.get("mode") or "") != "coordinator":
                         raise ValueError("writable delegated tasks require a coordinator parent")
                     if writable and (
-                        parent_profile == "subagent-readonly-v1"
-                        or parent_execution_mode == "read_only"
+                        parent_profile == READONLY_TOOL_PROFILE
+                        or parent_execution_mode == READ_ONLY_EXECUTION_MODE
                     ):
                         raise ValueError("the parent Session cannot grant write access")
+                    room_unrestricted = _room_policy_is_unrestricted(
+                        effective_room_execution_mode
+                    )
+                    unrestricted_parent = (
+                        unrestricted_workspace_policy_active(parent)
+                        or room_unrestricted
+                    )
                     parent_roots = [str(value) for value in parent.get("workspaceRoots") or []]
                     requested_roots = [str(value) for value in task.get("workspaceRoots") or []]
                     # Workspace roots describe where a delegated Session may
@@ -1997,13 +2152,19 @@ class AgentDelegationCoordinator:
                                 "delegated workspaceRoots must be inherited from the parent Session"
                             )
                     child_roots = requested_roots or parent_roots
+                    if writable and room_unrestricted:
+                        child_roots = list(system_wide_workspace_roots(child_roots))
                     if writable and not child_roots:
                         raise ValueError("writable delegated tasks require an authorized workspace")
                     child_profile = (
-                        "subagent-readonly-v1"
+                        READONLY_TOOL_PROFILE
                         if access == "read_only"
-                        or parent_profile == "subagent-readonly-v1"
-                        or parent_execution_mode == "read_only"
+                        or parent_profile == READONLY_TOOL_PROFILE
+                        or parent_execution_mode == READ_ONLY_EXECUTION_MODE
+                        else DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+                        if writable and effective_room_execution_mode == FULL_TRUST_EXECUTION_MODE
+                        else FULL_ACCESS_TOOL_PROFILE
+                        if writable and effective_room_execution_mode == PER_ACTION_EXECUTION_MODE
                         else parent_profile
                         if writable and unrestricted_parent
                         else "subagent-worker-v1"
@@ -2011,7 +2172,15 @@ class AgentDelegationCoordinator:
                         else template.tool_profile_version
                     )
                     child_mode = "coordinator" if writable else "assistant"
-                    child_execution_mode = parent_execution_mode if writable else None
+                    child_execution_mode = (
+                        policy_execution_mode
+                        if policy_execution_mode is not None and access == "write"
+                        else READ_ONLY_EXECUTION_MODE
+                        if policy_execution_mode is not None and access == "read_only"
+                        else parent_execution_mode
+                        if writable
+                        else None
+                    )
                     model_route_id = "toolAgent" if writable else "subagent"
                     configured_model_route = (
                         self._model_route_provider(model_route_id)
@@ -2100,6 +2269,7 @@ class AgentDelegationCoordinator:
                     # Register immediately so a later policy/fork failure can
                     # always remove the half-prepared internal Session.
                     created_sessions.append(child)
+                    prepared_authority.append(access)
                     prepared_model_routes.append(
                         {
                             "modelRoute": model_route_id,
@@ -2194,11 +2364,12 @@ class AgentDelegationCoordinator:
                     created_sessions[-1] = child
 
                 run_specs = []
-                for child, task, template, prepared_model_route in zip(
+                for child, task, template, prepared_model_route, authority in zip(
                     created_sessions,
                     tasks,
                     templates,
                     prepared_model_routes,
+                    prepared_authority,
                     strict=True,
                 ):
                     budget = template.budget
@@ -2218,11 +2389,7 @@ class AgentDelegationCoordinator:
                     ]
                     if "outputSchema" in task and "structured_output" not in tool_names:
                         tool_names.append("structured_output")
-                    workspace_access = (
-                        "write"
-                        if str(task.get("access") or "inherit") == "write"
-                        else "read_only"
-                    )
+                    workspace_access = authority
                     launch_digest = {
                         "modelProfile": str(child.get("modelProfile") or "pi/default"),
                         "thinkingLevel": str(child.get("thinkingLevel") or ""),
@@ -2325,15 +2492,19 @@ class AgentDelegationCoordinator:
                 "items": self.store.list_batches(
                     parent_session_id=parent_session_id,
                     limit=_bounded_int(payload.get("limit") or 20, minimum=1, maximum=100),
+                    hydrate_artifacts=False,
                 ),
                 "peers": self._peer_runs(parent_session_id),
                 "tree": self._run_tree(parent_session_id),
             }
         try:
-            batch = self.store.get_batch(identifier)
+            batch = self.store.get_batch(identifier, hydrate_artifacts=False)
         except KeyError:
-            run = self.store.get_run(identifier)
-            batch = self.store.get_batch(str(run["batchId"]))
+            run = self.store.get_run(identifier, hydrate_artifacts=False)
+            batch = self.store.get_batch(
+                str(run["batchId"]),
+                hydrate_artifacts=False,
+            )
         self._assert_delegation_tree_access(parent_session_id, batch)
         return {
             "schemaVersion": "rag-ime.agent-delegation-status.v1",
@@ -2465,7 +2636,7 @@ class AgentDelegationCoordinator:
         caller_run = self.store.run_for_child_session(session_id)
         caller_run_id = str(caller_run.get("id") or "") if caller_run else ""
         peers: list[dict[str, object]] = []
-        for batch in self.store.list_batches(limit=200):
+        for batch in self.store.list_batches(limit=200, hydrate_artifacts=False):
             if (
                 self._delegation_root_session_id(str(batch["parentSessionId"]))
                 != root_session_id
@@ -2490,7 +2661,7 @@ class AgentDelegationCoordinator:
     def _run_tree(self, session_id: str) -> dict[str, object]:
         root_session_id = self._delegation_root_session_id(session_id)
         runs: list[dict[str, object]] = []
-        for batch in self.store.list_batches(limit=200):
+        for batch in self.store.list_batches(limit=200, hydrate_artifacts=False):
             if (
                 self._delegation_root_session_id(str(batch["parentSessionId"]))
                 != root_session_id
@@ -2550,7 +2721,10 @@ class AgentDelegationCoordinator:
             run = self.store.run_for_child_session(current)
             if run is None:
                 return current
-            batch = self.store.get_batch(str(run["batchId"]))
+            batch = self.store.get_batch(
+                str(run["batchId"]),
+                hydrate_artifacts=False,
+            )
             current = str(batch.get("parentSessionId") or "")
         return current
 
@@ -3034,19 +3208,22 @@ class AgentDelegationCoordinator:
         }
 
     def wait(self, batch_id: str) -> dict[str, object]:
-        batch = self.store.get_batch(batch_id)
+        batch = self.store.get_batch(batch_id, hydrate_artifacts=False)
         maximum = max(
             int(run["budget"]["maxDurationMs"])
             for run in batch["runs"]
         )
         deadline = time.monotonic() + maximum / 1000.0 + 10.0
         while time.monotonic() < deadline:
-            batch = self.store.get_batch(batch_id)
+            batch = self.store.get_batch(batch_id, hydrate_artifacts=False)
             if str(batch["state"]) in _TERMINAL_STATES:
                 self.collect_expired_sessions(force=False)
+                for run in batch["runs"]:
+                    self.store._sync_run_artifact(str(run["id"]))
                 return self.store.get_batch(batch_id)
             time.sleep(0.025)
         self.store.request_abort(batch_id)
+        batch = self.store.get_batch(batch_id, hydrate_artifacts=False)
         for run in batch["runs"]:
             if str(run["state"]) in _ACTIVE_STATES:
                 self._request_cancel(
@@ -3054,6 +3231,8 @@ class AgentDelegationCoordinator:
                     state="timed_out",
                     reason="Delegation wait deadline exceeded",
                 )
+        for run in batch["runs"]:
+            self.store._sync_run_artifact(str(run["id"]))
         return self.store.get_batch(batch_id)
 
     def close(self) -> None:
@@ -4242,6 +4421,98 @@ def _validated_native_fork_sessions(
             }
         )
     return resolved
+def _room_permission_policy(value: object) -> dict[str, dict[str, str]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("room permissionPolicy must be an object")
+    expected_keys = {"schemaVersion", "room", "partner", "toolAgent"}
+    unknown_keys = set(value) - expected_keys
+    if unknown_keys:
+        raise ValueError("room permissionPolicy contains an unknown field")
+    if str(value.get("schemaVersion") or "") != "rag-ime.room-permission-policy.v1":
+        raise ValueError("room permissionPolicy schemaVersion is invalid")
+    expected_layers = ("room", "partner", "toolAgent")
+    policy: dict[str, dict[str, str]] = {}
+    for layer in expected_layers:
+        layer_value = value.get(layer)
+        if not isinstance(layer_value, Mapping):
+            raise ValueError(f"room permissionPolicy.{layer} must be an object")
+        unknown_fields = set(layer_value) - {"executionMode"}
+        if unknown_fields:
+            raise ValueError(f"room permissionPolicy.{layer} contains an unknown field")
+        execution_mode = str(layer_value.get("executionMode") or "").strip()
+        if execution_mode not in _ROOM_PERMISSION_MODES and not (
+            layer in {"partner", "toolAgent"} and execution_mode == "inherit"
+        ):
+            raise ValueError(
+                f"room permissionPolicy.{layer}.executionMode is invalid"
+            )
+        policy[layer] = {"executionMode": execution_mode}
+    room_mode = policy["room"]["executionMode"]
+    partner_mode = policy["partner"]["executionMode"]
+    tool_agent_mode = policy["toolAgent"]["executionMode"]
+    room_rank = _ROOM_PERMISSION_MODE_RANK[room_mode]
+    partner_rank = (
+        room_rank
+        if partner_mode == "inherit"
+        else _ROOM_PERMISSION_MODE_RANK[partner_mode]
+    )
+    tool_agent_rank = (
+        partner_rank
+        if tool_agent_mode == "inherit"
+        else _ROOM_PERMISSION_MODE_RANK[tool_agent_mode]
+    )
+    if partner_rank > room_rank or tool_agent_rank > partner_rank:
+        raise ValueError("room permissionPolicy cannot widen parent authority")
+    return policy
+
+
+def _effective_room_execution_mode(
+    policy: Mapping[str, Mapping[str, str]] | None,
+) -> str | None:
+    if not policy:
+        return None
+    room_mode = str(policy["room"]["executionMode"])
+    partner_mode = str(policy["partner"]["executionMode"])
+    tool_agent_mode = str(policy["toolAgent"]["executionMode"])
+    if partner_mode == "inherit":
+        partner_mode = room_mode
+    if tool_agent_mode == "inherit":
+        tool_agent_mode = partner_mode
+    return tool_agent_mode
+
+
+def _room_policy_is_unrestricted(
+    execution_mode: str | None,
+) -> bool:
+    return execution_mode in {
+        PER_ACTION_EXECUTION_MODE,
+        FULL_TRUST_EXECUTION_MODE,
+    }
+
+
+def _room_policy_access(
+    requested_access: str,
+    *,
+    effective_execution_mode: str | None,
+) -> tuple[str, str | None]:
+    access = requested_access
+    if access == "inherit":
+        access = (
+            "read_only"
+            if effective_execution_mode == READ_ONLY_EXECUTION_MODE
+            else "write"
+            if effective_execution_mode is not None
+            else "inherit"
+        )
+    if access == "write" and effective_execution_mode == READ_ONLY_EXECUTION_MODE:
+        raise ValueError("the Room permission policy cannot grant write access")
+    return access, effective_execution_mode
+
+
+
+
 def _delegation_causal_metadata(
     value: Mapping[str, object] | None,
 ) -> dict[str, object]:
@@ -4489,10 +4760,30 @@ def _safe_runtime_artifact_payload(event: AgentEventEnvelope) -> dict[str, objec
             if key in event.payload
         }
     if event.event_type in {"turn_completed", "turn_failed"}:
-        return {
-            "status": str(event.payload.get("status") or "")[:80],
+        default_state = "completed" if event.event_type == "turn_completed" else "failed"
+        state = _bounded_text(
+            event.payload.get("state") or event.payload.get("status") or default_state,
+            maximum=80,
+        )
+        payload: dict[str, object] = {
+            "status": _bounded_text(
+                event.payload.get("status") or state,
+                maximum=80,
+            ),
+            "state": state,
             "error": _bounded_text(event.payload.get("error"), maximum=240),
         }
+        for key in ("toolName", "toolCallId", "callId", "toolId"):
+            if key in event.payload:
+                payload[key] = _bounded_text(event.payload.get(key), maximum=160)
+        tool = event.payload.get("tool")
+        if isinstance(tool, Mapping):
+            payload["tool"] = {
+                key: _bounded_text(tool.get(key), maximum=160)
+                for key in ("name", "id", "toolName", "toolCallId", "callId")
+                if key in tool
+            }
+        return payload
     return {}
 
 

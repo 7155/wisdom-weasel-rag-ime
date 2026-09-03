@@ -48,6 +48,24 @@ describe('PawSystemAppsMigrated', () => {
     expect(within(navigation).getByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
   });
 
+  it('opens the optimization report as an external webpage instead of mounting it in System Monitor', async () => {
+    const user = userEvent.setup();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    renderSystemApp('system-monitor', '/observability');
+
+    const link = screen.getByRole('button', { name: '优化报告（网页）' });
+    expect(link).not.toHaveAttribute('aria-current');
+    expect(screen.queryByRole('heading', { name: '优化报告真实界面' })).not.toBeInTheDocument();
+
+    await user.click(link);
+
+    expect(open).toHaveBeenCalledWith(
+      expect.stringMatching(/\/evolution-report$/),
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
   it('leaves App identity to the shared window chrome instead of repeating it in the rail', () => {
     renderSystemApp('input-studio', '/input');
 
@@ -130,7 +148,7 @@ describe('PawSystemAppsMigrated', () => {
 
     cleanup();
     renderSystemApp('system-monitor', '/observability');
-    expect(groupLabels()).toEqual(['实时', '排查']);
+    expect(groupLabels()).toEqual(['实时', '实验', '排查']);
   });
 
   it('counts pending approvals on the Settings rail without inventing numbers', async () => {

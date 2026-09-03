@@ -174,6 +174,78 @@ describe('Agent tool activity details', () => {
     }
   });
 
+  it('collapses and restores the entire FX activity list from its top control', () => {
+    const first = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-collapse-all-first',
+      toolName: 'workspace_shell',
+      publicResult: { outputPreview: 'first result' },
+    });
+    const second = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-collapse-all-second',
+      toolName: 'workspace_search',
+      publicResult: { outputPreview: 'second result' },
+    });
+
+    const { container } = render(<FxActivityStack activities={[first, second]} />);
+    const stack = screen.getByRole('group', { name: '工具与思考步骤' });
+    const collapseAll = within(stack).getByRole('button', {
+      name: /全部收起工具与思考步骤，共 2 项/,
+    });
+    const firstRow = container.querySelector('.paw-activity')!;
+    const controlledId = collapseAll.getAttribute('aria-controls');
+    const list = controlledId ? document.getElementById(controlledId) : null;
+
+    expect(collapseAll).toHaveAttribute('aria-expanded', 'true');
+    expect(collapseAll.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(list).toHaveAttribute('role', 'tree');
+    expect(list).toHaveAttribute('aria-hidden', 'false');
+
+    fireEvent.click(collapseAll);
+
+    expect(collapseAll).toHaveAttribute('aria-expanded', 'false');
+    expect(collapseAll).toHaveTextContent('全部展开');
+    expect(list).toHaveAttribute('aria-hidden', 'true');
+    expect(list).toHaveAttribute('inert');
+
+    fireEvent.click(collapseAll);
+
+    expect(collapseAll).toHaveAttribute('aria-expanded', 'true');
+    expect(collapseAll).toHaveTextContent('全部收起');
+    expect(list).toHaveAttribute('aria-hidden', 'false');
+    expect(list).not.toHaveAttribute('inert');
+  });
+
+  it('starts a long FX activity list compact without hiding its live or failure state', () => {
+    const activities = Array.from({ length: 6 }, (_, index) => toolActivity(
+      index === 0 ? 'tool_progress' : 'tool_finished',
+      index === 0 ? 'running' : index === 1 ? 'failed' : 'completed',
+      {
+        toolCallId: `call-long-stack-${index}`,
+        toolName: index % 2 ? 'workspace_search' : 'workspace_shell',
+        ...(index === 1 ? { isError: true } : {}),
+      },
+    ));
+
+    const { container } = render(<FxActivityStack activities={activities} sessionId="session-long-stack" />);
+    const stack = screen.getByRole('group', { name: '工具与思考步骤' });
+    const toggle = within(stack).getByRole('button', {
+      name: /全部展开工具与思考步骤，共 6 项/,
+    });
+    const controlledId = toggle.getAttribute('aria-controls');
+    const list = controlledId ? document.getElementById(controlledId) : null;
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(within(stack).getByText('进行中 · 1 项失败 · 6 个步骤')).toBeVisible();
+    expect(list).toHaveAttribute('aria-hidden', 'true');
+    expect(list).toHaveAttribute('inert');
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(list).toHaveAttribute('aria-hidden', 'false');
+    expect(container.querySelectorAll('.paw-activity-node')).toHaveLength(6);
+  });
+
   it('renders only authoritative bounded Tool progress as a compact meter', () => {
     const counted = {
       ...toolActivity('tool_progress', 'running', {

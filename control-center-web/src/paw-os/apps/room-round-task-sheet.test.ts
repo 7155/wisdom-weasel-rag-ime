@@ -160,6 +160,36 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
     });
   });
 
+  it('carries a coordinator progress post kind without calling it a final result', () => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    const row = selectRoomRoundTaskSheets(
+      room,
+      coordinatorPostProjection('progress'),
+    )[0]?.rows[0];
+
+    expect(row).toMatchObject({
+      state: 'completed',
+      postKind: 'progress',
+      latestProgress: '主控正在整理汇报',
+      result: '主控正在整理汇报',
+    });
+  });
+
+  it('carries a moderator result post kind as the explicit final identity', () => {
+    const room = roomWith([participant('participant-earth', 'session-earth', 0)]);
+    const row = selectRoomRoundTaskSheets(
+      room,
+      coordinatorPostProjection('result'),
+    )[0]?.rows[0];
+
+    expect(row).toMatchObject({
+      state: 'completed',
+      postKind: 'result',
+      latestProgress: '主控最终汇报',
+      result: '主控最终汇报',
+    });
+  });
+
   it('does not poison a running planet row after a recoverable tool failure', () => {
     const room = roomWith([
       participant('participant-earth', 'session-earth', 0),
@@ -610,6 +640,36 @@ describe('selectRoomRoundTaskSheets (UR-170/172)', () => {
   });
 });
 
+function coordinatorPostProjection(
+  postKind: 'progress' | 'result',
+): RoomProjectionState {
+  const projection = runningProjection(
+    postKind === 'result' ? '主控最终汇报' : '主控正在整理汇报',
+  );
+  const messageId = `assistant-coordinator-${postKind}`;
+  projection.turnsById['turn-1'] = {
+    ...projection.turnsById['turn-1']!,
+    status: 'completed',
+    messageIds: ['user-1', messageId],
+    terminalParticipantIds: ['participant-earth'],
+    updatedAtMs: 5,
+  };
+  projection.activitiesById['activity-earth'] = {
+    ...projection.activitiesById['activity-earth']!,
+    status: 'completed',
+    updatedAtMs: 4,
+  };
+  projection.messagesById[messageId] = assistantMessage(
+    messageId,
+    'turn-1',
+    postKind === 'result' ? '主控最终汇报' : '主控正在整理汇报',
+    5,
+    postKind,
+  );
+  projection.messageOrder = ['user-1', messageId];
+  return projection;
+}
+
 function runningProjection(summary: string): RoomProjectionState {
   return {
     ...createRoomProjection('room-a'),
@@ -667,7 +727,13 @@ function userMessage(id: string, turnId: string, text: string, createdAtMs: numb
   };
 }
 
-function assistantMessage(id: string, turnId: string, text: string, createdAtMs: number) {
+function assistantMessage(
+  id: string,
+  turnId: string,
+  text: string,
+  createdAtMs: number,
+  postKind?: string,
+) {
   return {
     id,
     roomId: 'room-a',
@@ -677,6 +743,7 @@ function assistantMessage(id: string, turnId: string, text: string, createdAtMs:
     role: 'assistant' as const,
     status: 'completed' as const,
     text,
+    ...(postKind ? { postKind } : {}),
     createdAtMs,
   };
 }

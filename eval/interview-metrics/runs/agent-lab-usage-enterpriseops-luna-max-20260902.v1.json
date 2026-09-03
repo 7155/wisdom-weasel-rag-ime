@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "rag-ime.agent-lab-usage-receipt.v1",
+  "runId": "enterpriseops-csm-luna-max-validation-20260902-v2",
+  "evaluationScope": "validation-only",
+  "provider": "openai-codex",
+  "model": "gpt-5.6-luna",
+  "thinking": "max",
+  "taskCount": 3,
+  "assistantResponseCount": 81,
+  "usage": {
+    "available": true,
+    "uncachedInputTokens": 180218,
+    "cachedInputTokens": 2930688,
+    "outputTokens": 42665,
+    "reasoningTokens": 34746,
+    "reportedTotalTokens": 3153571
+  },
+  "aggregation": {
+    "source": "completed Pi JSONL transcripts",
+    "rule": "sum every assistant message usage receipt in the three selected Validation transcripts",
+    "transcriptCount": 3,
+    "transcriptSetSha256": "972c23b01aecff1a3057a6f70e10b28bcf26ad5d1ae09e0314160c7a81177c1a"
+  },
+  "qualityGate": {
+    "taskSuccessCount": 3,
+    "taskCount": 3,
+    "verifierPassCount": 31,
+    "verifierCount": 31,
+    "failedToolCalls": 0,
+    "allDatabasesCleaned": true
+  },
+  "boundaries": [
+    "This receipt aggregates Provider usage recorded in the selected Validation transcripts; it is not a provider invoice.",
+    "Held-out was not run for this model comparison.",
+    "The source-local Runtime candidate was not installed into PAWOS."
+  ]
+}

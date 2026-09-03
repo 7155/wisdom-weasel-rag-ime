@@ -181,6 +181,57 @@ class AgentListPaginationTests(unittest.TestCase):
         finally:
             service.close()
 
+    def test_application_owner_filter_does_not_require_a_surface_key(self) -> None:
+        service = AgentService(
+            db_path=self.db_path,
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config",
+                session_dir=self.root / "sessions",
+                logs_dir=self.root / "logs",
+            ),
+        )
+        try:
+            participants = []
+            for suffix, role_id in (
+                ("a", "companion-present-v1"),
+                ("b", "companion-future-v1"),
+            ):
+                session = service.sessions.create(title=f"app-room-{suffix}")
+                participants.append(
+                    {
+                        "sessionId": session["id"],
+                        "roleId": role_id,
+                        "roleVersion": "1",
+                        "displayName": suffix.upper(),
+                    }
+                )
+            created = service.rooms.create(
+                title="Agent Lab Room",
+                routing_policy="natural",
+                participants=participants,
+                owner_app_id="extension:agent-lab",
+                surface_key="experiment.restore",
+            )
+
+            response = service.list_rooms(
+                {
+                    "ownerAppId": "extension:agent-lab",
+                    # The HTTP adapter supplies an empty value when this
+                    # optional query parameter is absent.
+                    "surfaceKey": "",
+                    "limit": 100,
+                }
+            )
+
+            self.assertEqual(
+                [item["id"] for item in response["items"]],
+                [created["id"]],
+            )
+        finally:
+            service.close()
+
     def test_debug_server_forwards_both_cursor_query_fields(self) -> None:
         class FakeAgent:
             def __init__(self) -> None:

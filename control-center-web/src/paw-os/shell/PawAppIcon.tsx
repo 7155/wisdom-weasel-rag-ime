@@ -35,6 +35,7 @@ const APPROVED_SYMBOL_IDS: Record<PawBuiltinIdentityIconId, string> = {
   'input-studio': 'app-input',
   'app-center': 'app-appcenter',
   'system-monitor': 'app-monitor',
+  'eval-lab': 'app-eval-lab',
   'system-settings': 'app-settings',
 };
 
@@ -50,12 +51,13 @@ const APP_COLORS: Record<PawBuiltinIdentityIconId, string> = {
   'input-studio': '#5E5CE6',
   'app-center': '#0E9F8A',
   'system-monitor': '#3E4C59',
+  'eval-lab': '#C97718',
   'system-settings': '#8E8E93',
 };
 
 const PAW_ICON_PAPER = 'var(--paw-icon-paper)';
 
-/** The twelve deterministic SVG drawings from the approved wall. */
+/** The thirteen deterministic SVG drawings from the approved wall. */
 const APPROVED_ART: Record<PawBuiltinIdentityIconId, ReactNode> = {
   agent: <>
     <path d="M10 15 a10 10 0 0 1 10-10 h8 a10 10 0 0 1 10 10 v7 a10 10 0 0 1-10 10 h-9 l-6.5 6 v-6.2 A10 10 0 0 1 10 25 z" fill={PAW_ICON_PAPER} transform="translate(0,4)" />
@@ -105,6 +107,7 @@ const APPROVED_ART: Record<PawBuiltinIdentityIconId, ReactNode> = {
     <path d="M24 24.5 V39 M24 24.5 11.2 17.2 M24 24.5 36.8 17.2" fill="none" stroke={PAW_ICON_PAPER} strokeLinejoin="round" strokeWidth="3.4" />
   </>,
   'system-monitor': <path d="M9 27.5 h7.5 l3-9.5 5 16.5 3.6-11 H39" fill="none" stroke="#30D158" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.6" />,
+  'eval-lab': <><path d="M18 10 h12 M21 10 v12 l-8 13 a3 3 0 0 0 2.6 4.5 h16.8 A3 3 0 0 0 35 35 l-8-13 V10" fill="none" stroke={PAW_ICON_PAPER} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.4" /><path d="M16 31 h16" stroke="#FFE0A8" strokeLinecap="round" strokeWidth="3" /></>,
   'system-settings': <>
     <circle cx="24" cy="24" fill="none" r="6.6" stroke={PAW_ICON_PAPER} strokeWidth="3.6" />
     <path d="M24 8.5 v5.4 M24 34.1 v5.4 M8.5 24 h5.4 M34.1 24 h5.4 M13.2 13.2 l3.8 3.8 M31 31 l3.8 3.8 M34.8 13.2 31 17 M17 31 l-3.8 3.8" stroke={PAW_ICON_PAPER} strokeLinecap="round" strokeWidth="3.6" />

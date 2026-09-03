@@ -348,6 +348,101 @@ describe('Agent chat rendering', () => {
     ]);
   });
 
+  it('renders one image prompt before its reasoning when snapshot media ids differ', () => {
+    const sessionId = 'session-1';
+    const question = '收起所有工具和思考';
+    const transcriptUser = {
+      ...userMessage(sessionId, 'history:pi-user-with-image'),
+      id: 'pi-user-with-image',
+      attachments: ['transcript-media-copy'],
+      blocks: [
+        {
+          id: 'pi-user-with-image:text',
+          type: 'text' as const,
+          status: 'completed' as const,
+          presentationKind: 'markdown',
+          data: { text: question },
+        },
+        {
+          id: 'pi-user-with-image:image',
+          type: 'image' as const,
+          status: 'completed' as const,
+          presentationKind: 'image',
+          data: { mediaId: 'transcript-media-copy', receiptUrl: '/media/transcript' },
+        },
+      ],
+      createdAtMs: 1_000,
+      completedAtMs: 1_000,
+    };
+    const replayUser = {
+      ...transcriptUser,
+      id: 'event-user-with-image',
+      turnId: 'turn-with-image',
+      clientMessageId: 'web-image-prompt',
+      attachments: ['uploaded-media'],
+      blocks: [
+        { ...transcriptUser.blocks[0]!, id: 'event-user-with-image:text' },
+        {
+          ...transcriptUser.blocks[1]!,
+          id: 'event-user-with-image:image',
+          data: { mediaId: 'uploaded-media', receiptUrl: '/media/uploaded' },
+        },
+      ],
+    };
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [transcriptUser],
+      liveEvents: [
+        {
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: `${sessionId}:41`,
+          sessionId,
+          turnId: 'turn-with-image',
+          sequence: 41,
+          createdAtMs: 1_000,
+          eventType: 'message_completed',
+          payload: { clientMessageId: 'web-image-prompt', message: replayUser },
+          resumeToken: `${sessionId}:41`,
+        },
+        {
+          ...agentEventFixture(42, 'reasoning_summary', {
+            requestId: 'reasoning-after-image',
+            summary: '正在处理图片消息',
+            source: 'provider_reasoning_summary',
+            state: 'completed',
+          }),
+          sessionId,
+          turnId: 'turn-with-image',
+          createdAtMs: 1_010,
+          resumeToken: `${sessionId}:42`,
+        },
+      ],
+      lastSequence: 42,
+      resumeToken: `${sessionId}:42`,
+      status: 'responding',
+    });
+    const projection = useAgentLiveStore.getState().projections[sessionId]!;
+    const turnIds = visibleAgentTurnIds(projection);
+    const { container } = render(
+      <>{turnIds.map((turnId) => (
+        <AgentTurn
+          key={turnId}
+          presentation="fx"
+          sessionId={sessionId}
+          turnId={turnId}
+          onApprovalDecision={() => {}}
+        />
+      ))}</>,
+    );
+
+    expect(turnIds).toEqual(['history:pi-user-with-image']);
+    expect(screen.getAllByText(question)).toHaveLength(1);
+    expect(container.querySelectorAll('.paw-user-step')).toHaveLength(1);
+    expect(screen.getAllByText('1 个附件')).toHaveLength(1);
+    const user = container.querySelector('.paw-user-step')!;
+    const reasoning = screen.getByText('正在处理图片消息').closest('.paw-activity-node')!;
+    expect(user.compareDocumentPosition(reasoning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('renders autocompact as one event-driven timeline step that settles in place', () => {
     const sessionId = 'session-1';
     const turnId = 'turn-1';
@@ -967,10 +1062,14 @@ describe('Agent chat rendering', () => {
       '--- TRACE_DIAGNOSTIC_RESULT_V1 ---',
       JSON.stringify({
         schemaVersion: 'rag-ime.trace-diagnostic-result.v1',
-        summary: '记忆整理在 Runtime JSONL 解析阶段失败。',
-        hardGates: [],
+        summary: '记忆整理没有完成，结果未保存。',
+        hardGates: [{ gateId: 'task-completion', status: 'failed', reason: '本次整理没有产生可持久化的结果。', evidenceIds: [] }],
         judgeScores: [],
-        findings: [{ findingId: 'raw-protocol-only' }],
+        findings: [{
+          findingId: 'raw-protocol-only',
+          observation: 'Pi Runtime Host 的 session.settlement.get 在 JSONL 解析阶段超时。',
+          candidateRepair: '对结算读取做一次有界重试，再运行同一组验证。',
+        }],
       }),
       '--- END_TRACE_DIAGNOSTIC_RESULT_V1 ---',
     ].join('\n');
@@ -982,7 +1081,17 @@ describe('Agent chat rendering', () => {
     );
 
     const receipt = screen.getByRole('status', { name: 'Trace 诊断结构化结果' });
-    expect(receipt).toHaveTextContent('记忆整理在 Runtime JSONL 解析阶段失败。');
+    expect(receipt).toHaveTextContent('发生了什么');
+    expect(receipt).toHaveTextContent('记忆整理没有完成，结果未保存。');
+    expect(receipt).toHaveTextContent('对你的影响');
+    expect(receipt).toHaveTextContent('本次整理没有产生可持久化的结果。');
+    expect(receipt).toHaveTextContent('Trace 可以怎么修复');
+    expect(receipt).toHaveTextContent('对结算读取做一次有界重试');
+    expect(receipt).toHaveTextContent('下一步');
+    expect(receipt).toHaveTextContent('先打开报告核对证据；确认后再交给独立修复 Agent');
+    const details = within(receipt).getByText('技术细节与报告编号').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    expect(details).toHaveTextContent('session.settlement.get');
     expect(receipt).toHaveTextContent(reportId);
     expect(screen.queryByText(/raw-protocol-only/)).not.toBeInTheDocument();
     expect(screen.queryByText(/TRACE_DIAGNOSTIC_RESULT_V1/)).not.toBeInTheDocument();

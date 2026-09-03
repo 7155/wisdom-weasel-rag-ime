@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "paw.enterpriseops-csm-suite-v2-heldout-one-shot.v1",
+  "status": "completed_candidate_rejected",
+  "measuredAt": "2026-09-01",
+  "split": "held-out",
+  "suiteRevision": "enterpriseops-csm-suite-v2",
+  "oneShot": {
+    "promotionReceiptSha256": "1e545f414874f18899750c8f498f4cdc31c4609f18f6ab1202ce43387e45c8aa",
+    "authorizationConsumed": true,
+    "rerunAllowed": false
+  },
+  "dataset": {
+    "taskCount": 8,
+    "verifierCount": 65,
+    "taskManifestSha256": "e89bda891c4c1f7e69f5b80d35a0e84e5dfdcfcdff43cf9fe2f02ecb57e6efab",
+    "overlaySha256": "40ac966afefb0a71bb1f3e04560bdbf4953fac2788ce2ba90e05b86cfe26677b",
+    "excludedMissingSeedCount": 1,
+    "businessAsOfDate": "2025-11-04"
+  },
+  "runtime": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "high",
+    "runtimeIdentitySha256": "e3bd71bac16e36a3246032c0ef892676e41777ebe9f35cebc175051f2120436c",
+    "toolCatalogSha256": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077",
+    "runnerSha256": "ecd133ef4674a6311807bfa3370638b5717110c81b57ad23de19e076934d1b5a",
+    "installed": false
+  },
+  "result": {
+    "taskSuccessCount": 1,
+    "taskCount": 8,
+    "taskSuccessRate": 0.125,
+    "verifierPassCount": 54,
+    "verifierCount": 65,
+    "verifierPassRate": 0.8307692307692308,
+    "terminalCompletionCount": 8,
+    "runtimeErrorCount": 0,
+    "toolCalls": 140,
+    "failedToolCalls": 2,
+    "latencyMs": 2015238.891,
+    "databasesCleaned": 8,
+    "usageAvailable": false
+  },
+  "tasks": [
+    {"taskAlias": "Task 1", "taskSucceeded": false, "verifierPassed": 3, "verifierTotal": 4, "failedVerifierIndexes": [2], "toolCalls": 14, "failedToolCalls": 0, "provisionalFirstOwner": "tool_capability_closure"},
+    {"taskAlias": "Task 2", "taskSucceeded": false, "verifierPassed": 8, "verifierTotal": 9, "failedVerifierIndexes": [9], "toolCalls": 13, "failedToolCalls": 1, "provisionalFirstOwner": "prompt_workflow_state_conflict"},
+    {"taskAlias": "Task 3", "taskSucceeded": false, "verifierPassed": 5, "verifierTotal": 6, "failedVerifierIndexes": [3], "toolCalls": 30, "failedToolCalls": 0, "provisionalFirstOwner": "unknown"},
+    {"taskAlias": "Task 4", "taskSucceeded": false, "verifierPassed": 10, "verifierTotal": 12, "failedVerifierIndexes": [1, 3], "toolCalls": 17, "failedToolCalls": 0, "provisionalFirstOwner": "workflow_state_model"},
+    {"taskAlias": "Task 5", "taskSucceeded": false, "verifierPassed": 15, "verifierTotal": 19, "failedVerifierIndexes": [4, 12, 14, 15], "toolCalls": 31, "failedToolCalls": 0, "provisionalFirstOwner": "evaluator_fixture_reachability"},
+    {"taskAlias": "Task 6", "taskSucceeded": false, "verifierPassed": 3, "verifierTotal": 4, "failedVerifierIndexes": [2], "toolCalls": 7, "failedToolCalls": 1, "provisionalFirstOwner": "tool_workflow_read_closure"},
+    {"taskAlias": "Task 7", "taskSucceeded": false, "verifierPassed": 4, "verifierTotal": 5, "failedVerifierIndexes": [5], "toolCalls": 11, "failedToolCalls": 0, "provisionalFirstOwner": "tool_fixture_capability_closure"},
+    {"taskAlias": "Task 8", "taskSucceeded": true, "verifierPassed": 6, "verifierTotal": 6, "failedVerifierIndexes": [], "toolCalls": 17, "failedToolCalls": 0, "provisionalFirstOwner": "none"}
+  ],
+  "readOnlyDiagnosis": {
+    "status": "provisional_without_gold_semantics",
+    "failedVerifierTaxonomy": {
+      "toolCapabilityClosure": 3,
+      "promptWorkflowStateConflict": 3,
+      "evaluatorFixtureReachability": 4,
+      "unknown": 1
+    },
+    "canonicalToolLedger": {"toolCalls": 140, "failedToolCalls": 2},
+    "sourceTranscriptObservation": {"directBusinessToolCalls": 142, "errorToolResults": 4},
+    "observabilityGap": "Two pre-Gateway fetch failures are present in source transcripts but absent from the canonical Gateway ledger; canonical interview metrics remain 140/2.",
+    "boundary": "Owners were inferred from public task text, transcript and Tool receipts without reading SQL, expected values or private Gold semantics; they are WorkItem routing hypotheses, not confirmed Gold-defect counts."
+  },
+  "roomWorkItems": [
+    {"id": "heldout-tool-capability-closure", "ownerRole": "trace_and_tool_partner", "caseAliases": ["Task 1", "Task 6", "Task 7"], "status": "evidence_migrated_no_rerun"},
+    {"id": "heldout-state-contract", "ownerRole": "workflow_partner", "caseAliases": ["Task 2", "Task 4"], "status": "evidence_migrated_no_rerun"},
+    {"id": "heldout-fixture-reachability", "ownerRole": "eval_reviewer_partner", "caseAliases": ["Task 5"], "status": "evidence_migrated_no_rerun"},
+    {"id": "heldout-unknown", "ownerRole": "trace_partner", "caseAliases": ["Task 3"], "status": "evidence_migrated_no_rerun"},
+    {"id": "heldout-tool-ledger-projection", "ownerRole": "observability_partner", "caseAliases": ["Task 3"], "status": "evidence_migrated_no_rerun"}
+  ],
+  "evidence": {
+    "canonicalReportSha256": "4bd9e9177794b045c7e8743dfc6b61c47c525a06f3f939bdf5a6f2299900e0e3",
+    "reportFileSha256": "c347a15c2a843748c42162e0dbf63fc201233b5e403a757ce350bc17106eed84"
+  },
+  "decision": {
+    "value": "reject",
+    "reason": "The Validation winner did not generalize to whole-task Held-out completion: only one of eight tasks satisfied every verifier. The one-shot result is final and will not be rerun."
+  },
+  "claim": {
+    "allowed": "The one-shot eight-task EnterpriseOps Suite v2 Held-out completed all eight Runtime turns and cleaned all eight temporary databases, but state-contract passed only 1/8 whole tasks and 54/65 atomic verifiers with two failed Tool calls; the Validation winner was therefore rejected for generalization.",
+    "forbidden": "Production or installed success; stable 12.5% or 83.08% across repeated trials; the seven failed tasks were Runtime crashes; the 3/3 Validation result generalized; or any Held-out rerun."
+  },
+  "limitations": [
+    "This is exactly one stochastic Held-out observation and cannot be repeated under the one-shot contract.",
+    "One raw benchmark task was excluded before execution because its seed was missing; the measured denominator is the eight manifest-bound tasks.",
+    "Task-selected Tool schemas were visible to the Agent, while SQL Gold, seed identity and database identity remained hidden.",
+    "Provider token usage was unavailable, so no Held-out token-cost claim is permitted.",
+    "The source-local Runtime candidate was not installed into current PAWOS."
+  ]
+}

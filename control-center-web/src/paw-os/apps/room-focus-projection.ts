@@ -706,6 +706,14 @@ function partnerFocusState(
   const recoverableActivityFailure = latestActivity?.status === 'failed'
     && (authoritativeState === 'running' || authoritativeState === 'completed');
 
+  /* A participant terminal is execution authority. Room metadata can lag one
+   * refresh behind and still call its WorkItem active; that historical task
+   * state must not turn a submitted partner result back into "进行中". The
+   * Root turn remains independent and may continue integrating other lanes. */
+  if (authoritativeState && ['completed', 'failed', 'stopped'].includes(authoritativeState)) {
+    return authoritativeState;
+  }
+
   return strongestState([
     ...owned.map((item) => item.state),
     ...(authoritativeState ? [authoritativeState] : []),

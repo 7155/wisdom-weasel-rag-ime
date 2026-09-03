@@ -28,9 +28,14 @@ from .agent_approval_model import ApprovalModelArbiter
 from .agent_background_jobs import AgentBackgroundJobService
 from .agent_context_runtime import AgentContextRuntime
 from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
     ROOM_UNRESTRICTED_EXECUTION_MODE,
     auto_approve_policy_active,
     execution_policy_prompt,
+)
+from .room_permission_policy import (
+    normalize_room_permission_policy,
+    resolve_room_permission_policy,
 )
 from .work_documents import WorkDocumentService
 from .agent_command_receipts import (
@@ -162,6 +167,8 @@ from .trace_replay_verification import (
     TraceVerificationValidationError,
 )
 from .sandbox_run_store import SandboxRunStore
+from .eval_lab import EvalLabProjection
+from .eval_lab_evidence import EvalLabEvidenceProjection
 from .vertical_agent_suite import (
     BuiltinVerticalSuiteError,
     run_builtin_vertical_agent_eval,
@@ -201,9 +208,26 @@ class AgentService:
         trace_store: TraceStore | None = None,
         sandbox_run_store: SandboxRunStore | None = None,
         collaboration_profile_signers: Mapping[str, bytes] | None = None,
+        startup_recovery_enabled: bool = True,
+        defer_startup_recovery: bool = False,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = str(project or "")
+        self._startup_recovery_enabled = bool(startup_recovery_enabled)
+        self._startup_recovery_run_lock = RLock()
+        self._startup_recovery_status_lock = RLock()
+        self._startup_recovery_report: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-startup-recovery.v1",
+            "enabled": self._startup_recovery_enabled,
+            "status": "pending" if self._startup_recovery_enabled else "complete",
+            "ok": not self._startup_recovery_enabled,
+            "error": "",
+            **(
+                {}
+                if self._startup_recovery_enabled
+                else {"skippedReason": "not_execution_owner"}
+            ),
+        }
         self.personas = AgentPersonaStore(db_path)
         self.personas.initialize()
         self.role_books = AgentRoleBookStore(db_path)
@@ -239,8 +263,19 @@ class AgentService:
             # guarded install step is permanently disabled.
             runtime_factory.reconfigure(configured)
             self.runtime_factory = runtime_factory
-        self.sessions = AgentSessionStore(db_path)
+        self.sessions = AgentSessionStore(db_path, persistent_reads=True)
         self.sessions.initialize()
+        # The checked-in public ledger is a read-only projection source for the
+        # Agent Lab page.  Explicit import remains append-only persistence;
+        # this avoids hiding newly recorded cards when an external demo DB is
+        # older than the current source checkout.
+        source_ledger = Path(__file__).resolve().parents[1] / "eval/interview-metrics/agent-experiments.v1.json"
+        self.eval_lab = EvalLabProjection(db_path, source_ledger_path=source_ledger)
+        # The evidence catalog is a read-only view over the optional
+        # source-local evaluation archive.  It never joins the archive into
+        # ordinary Agent Sessions and never starts a Provider; the App asks for
+        # one bounded transcript only when the user opens it.
+        self.eval_lab_evidence = EvalLabEvidenceProjection()
         self.context_runtime = AgentContextRuntime(db_path)
         self.context_runtime.initialize()
         self.command_receipts = AgentCommandReceiptStore(db_path)
@@ -252,7 +287,10 @@ class AgentService:
                 idle_timeout_seconds=configured.idle_timeout_seconds,
             )
         )
-        self.configuration_store = AgentConfigurationStore(db_path)
+        self.configuration_store = AgentConfigurationStore(
+            db_path,
+            persistent_reads=True,
+        )
         self.configuration_store.initialize(seed_configuration)
         self.control_events = AgentControlEventHub(self.configuration_store)
         self._configuration_lock = RLock()
@@ -291,6 +329,7 @@ class AgentService:
                 self.runtime_factory.session_root.expanduser().resolve(strict=False).parent
                 / "rooms"
             ),
+            persistent_reads=True,
         )
         self.rooms.initialize()
         self.room_start_gates = AgentRoomStartGateStore(db_path)
@@ -354,7 +393,7 @@ class AgentService:
             sessions=self.sessions,
             context_runtime=self.context_runtime,
         )
-        self.work_documents.initialize()
+        self.work_documents.initialize(reconcile=False)
         self.room_work.set_terminal_observer(
             self.work_documents.observe_authority
         )
@@ -410,6 +449,7 @@ class AgentService:
             compaction_observer=self._checkpoint_runtime_compaction,
             room_context_provider=self._room_delegation_context,
             model_route_provider=self._configured_model_route,
+            startup_recovery=False,
         )
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
@@ -596,7 +636,6 @@ class AgentService:
             delivery_handler=self._deliver_room_intercom,
             audit_publisher=self._publish_room_intercom_audit,
         )
-        self.room_work.reconcile_intercom_outcomes()
         self._approval_executor: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._memory_maintenance_probe: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None
         self._process_id_provider = process_id_provider
@@ -709,7 +748,6 @@ class AgentService:
         self.wake_scheduler.bind_terminal_observer(
             self.room_partner_application.observe_wake_terminal_event
         )
-        self.room_partner_application.reconcile()
         self.approval_application = AgentApprovalApplicationService(self)
         self.message_snapshot = AgentMessageSnapshotService(
             sessions=self.sessions,
@@ -763,6 +801,54 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
+        if self._startup_recovery_enabled and not defer_startup_recovery:
+            self.run_startup_recovery()
+
+    def startup_recovery_status(self) -> dict[str, object]:
+        with self._startup_recovery_status_lock:
+            return dict(self._startup_recovery_report)
+
+    def run_startup_recovery(self) -> None:
+        """Replay noncritical durable recovery after schema owners exist."""
+
+        if not self._startup_recovery_enabled:
+            return
+        with self._startup_recovery_run_lock:
+            with self._startup_recovery_status_lock:
+                if self._startup_recovery_report.get("status") == "complete":
+                    return
+                self._startup_recovery_report = {
+                    **self._startup_recovery_report,
+                    "status": "running",
+                    "ok": False,
+                    "error": "",
+                }
+            try:
+                for room in self.rooms.list(include_archived=False):
+                    self._activate_room_unrestricted_execution(
+                        str(room.get("id") or ""),
+                        room=room,
+                    )
+                self.work_documents.reconcile(retry_failed_observers=True)
+                self.delegation.reconcile_startup()
+                self.room_work.reconcile_intercom_outcomes()
+                self.room_partner_application.reconcile()
+            except Exception as exc:
+                with self._startup_recovery_status_lock:
+                    self._startup_recovery_report = {
+                        **self._startup_recovery_report,
+                        "status": "failed",
+                        "ok": False,
+                        "error": exc.__class__.__name__,
+                    }
+                raise
+            with self._startup_recovery_status_lock:
+                self._startup_recovery_report = {
+                    **self._startup_recovery_report,
+                    "status": "complete",
+                    "ok": True,
+                    "error": "",
+                }
 
     def _close_runtime_session(self, session_id: str) -> None:
         close_session = getattr(self.runtime, "close_session", None)
@@ -1317,6 +1403,15 @@ class AgentService:
     def list_sessions(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
         return self.session_application.list_sessions(payload)
 
+    def eval_lab_runs(self) -> dict[str, object]:
+        return self.eval_lab.list_runs()
+
+    def eval_lab_evidence_read(
+        self,
+        payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        return self.eval_lab_evidence.read(payload)
+
     def ensure_surface_session(
         self,
         payload: Mapping[str, object],
@@ -1339,7 +1434,7 @@ class AgentService:
     ) -> dict[str, object] | None:
         participant = self.rooms.participant_for_session(
             session_id,
-            active_only=False,
+            active_only=True,
         )
         root_id, dispatch_id = self.room_turns.active_turn(session_id)
         if participant is None or not root_id:
@@ -1372,27 +1467,48 @@ class AgentService:
         self,
         session_id: str,
     ) -> dict[str, object]:
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=True,
+        )
+        permission_policy: object = None
+        room_id = ""
+        if participant is not None:
+            room_id = str(participant.get("roomId") or "")
+            try:
+                room = self.rooms.get(room_id)
+            except AgentRoomNotFound:
+                room = None
+            if room is not None:
+                permission_policy = room.get("permissionPolicy")
+        context: dict[str, object] = {
+            "roomBound": False,
+            "roomId": "",
+            "rootId": "",
+            "taskId": "",
+            "dispatchId": "",
+            "generation": 0,
+        }
+        if permission_policy is not None:
+            context["permissionPolicy"] = permission_policy
+            context["permissionPolicySource"] = "room"
         live = self._active_room_dispatch_context(session_id)
-        if live is None:
-            return {
-                "roomBound": False,
-                "roomId": "",
-                "rootId": "",
-                "taskId": "",
-                "dispatchId": "",
-                "generation": 0,
+        if live is None or not room_id:
+            return context
+        live_room_id = str(live.get("roomId") or "")
+        if live_room_id != room_id:
+            return context
+        context.update(
+            {
+                "roomBound": True,
+                "roomId": live_room_id,
+                "rootId": str(live.get("rootId") or ""),
+                "taskId": str(live.get("taskId") or ""),
+                "dispatchId": str(live.get("dispatchId") or ""),
+                "generation": int(live["generation"]),
             }
-        lineage = {
-            "roomId": str(live.get("roomId") or ""),
-            "rootId": str(live.get("rootId") or ""),
-            "taskId": str(live.get("taskId") or ""),
-            "dispatchId": str(live.get("dispatchId") or ""),
-        }
-        return {
-            "roomBound": True,
-            **lineage,
-            "generation": int(live["generation"]),
-        }
+        )
+        return context
 
 
     def mutate_goal(
@@ -2271,7 +2387,14 @@ class AgentService:
         return self.room_management.update_artifact(room_id, payload)
 
     def update_room(self, room_id: str, payload: Mapping[str, object]) -> dict[str, object]:
-        return self.room_management.update_room(room_id, payload)
+        response = self.room_management.update_room(room_id, payload)
+        room = response.get("room") if isinstance(response, Mapping) else None
+        if isinstance(room, Mapping):
+            self._activate_room_unrestricted_execution(
+                room_id,
+                room=room,
+            )
+        return response
 
     def add_room_participant(
         self,
@@ -2424,6 +2547,92 @@ class AgentService:
             response=response,
         )
 
+    def _claim_room_start_gate(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        requested_participant_ids: Sequence[str],
+        work_item_id: str,
+        attachment_ids: Sequence[str],
+        retry_of_root_id: str,
+    ) -> dict[str, object] | None:
+        # Client IDs are the replay boundary for Room commands. Requests from
+        # older direct callers without one retain the pre-gate compatibility
+        # path; the Control Center always supplies one.
+        if not client_message_id:
+            return None
+        existing_gate = self.room_start_gates.get(room_id)
+        if (
+            existing_gate is not None
+            and existing_gate.get("status") == "confirmed"
+            and str(existing_gate.get("clientMessageId") or "") != client_message_id
+        ):
+            # The Room start boundary is crossed once. A later WorkItem owns a
+            # new command receipt, not a new alignment gate. The original
+            # client id still reaches `claim()` below so an exact retry can
+            # replay the stored first response and a mutated retry is rejected.
+            return None
+        target_ids = list(requested_participant_ids)
+        if not target_ids:
+            try:
+                _work, owner_id = self.room_work.authoritative_owner(
+                    work_item_id,
+                    room_id=room_id,
+                )
+                target_ids = [str(owner_id)]
+            except Exception:
+                target_ids = []
+        gate = self.room_start_gates.claim(
+            room_id=room_id,
+            objective_text=message,
+            client_message_id=client_message_id,
+            target_participant_ids=target_ids,
+            work_item_id=work_item_id,
+            attachment_ids=attachment_ids,
+            retry_of_root_id=retry_of_root_id,
+        )
+        if gate.get("status") == "pending" and not gate.get("idempotentReplay"):
+            event = self.room_events.publish(
+                room_id=room_id,
+                event_type="room_start_confirmation_required",
+                payload={
+                    "gateId": gate["gateId"],
+                    "objective": gate["objective"],
+                    "workItemId": gate["workItemId"],
+                    "targetParticipantIds": gate["targetParticipantIds"],
+                    "requiresConfirmation": True,
+                },
+                turn_id=str(gate["gateId"]),
+                topic_id=str(self.rooms.get(room_id).get("activeTopicId") or ""),
+            )
+            gate = {**gate, "event": event}
+        return gate
+
+    @staticmethod
+    def _room_start_confirmation_response(gate: Mapping[str, object]) -> dict[str, object]:
+        return {
+            "schemaVersion": "rag-ime.agent-room-message.v1",
+            "ok": True,
+            "accepted": False,
+            "status": "awaiting_confirmation",
+            "phase": "alignment",
+            "executionOwner": "session",
+            "roomId": gate["roomId"],
+            "clientMessageId": gate["clientMessageId"],
+            "workItemId": gate["workItemId"],
+            "startConfirmation": {
+                "gateId": gate["gateId"],
+                "status": gate["status"],
+                "objective": gate["objective"],
+                "workItemId": gate["workItemId"],
+                "targetParticipantIds": gate["targetParticipantIds"],
+                "requiresConfirmation": True,
+                "afterConfirmExecutionMode": "room_unrestricted",
+            },
+            "timelineEvents": ([gate["event"]] if isinstance(gate.get("event"), Mapping) else []),
+        }
 
     def _post_room_message_command(
         self,
@@ -2554,10 +2763,10 @@ class AgentService:
                 "idempotentReplay": gate["status"] != "pending",
             }
         confirmed = self.room_start_gates.confirm(room_id)
-        # A pending gate may survive an older Host. Confirming that legacy
-        # record persists the unrestricted overlay before dispatch and on
-        # idempotent replay, preventing participant Sessions from falling back
-        # to per-Tool approvals.
+        # The confirmation is the sole user-facing authorization boundary for
+        # ordinary Room work. Persist the overlay before dispatch, and also on
+        # idempotent replay so an older or restarted Host repairs participant
+        # Sessions instead of falling back to per-Tool approvals.
         self._activate_room_unrestricted_execution(room_id)
         stored = confirmed.get("response")
         if isinstance(stored, Mapping):
@@ -2600,7 +2809,7 @@ class AgentService:
         *,
         room: Mapping[str, object] | None = None,
     ) -> int:
-        """Apply Room's default approval-free overlay to active participants."""
+        """Align the Room approval overlay with effective partner authority."""
 
         current_room = room
         if current_room is None:
@@ -2610,6 +2819,24 @@ class AgentService:
                 return 0
         if str(current_room.get("status") or "") != "active":
             return 0
+        room_kind = str(current_room.get("roomKind") or "collaboration")
+        try:
+            permission_policy = normalize_room_permission_policy(
+                current_room.get("permissionPolicy"),
+                room_kind=room_kind,
+                current=current_room,
+                legacy_execution_mode=current_room.get("executionMode"),
+            )
+        except ValueError:
+            return 0
+        effective_partner_mode = resolve_room_permission_policy(
+            permission_policy
+        )["partner"]["executionMode"]
+        target_overlay = (
+            ROOM_UNRESTRICTED_EXECUTION_MODE
+            if effective_partner_mode == FULL_TRUST_EXECUTION_MODE
+            else ""
+        )
         updated = 0
         for participant in current_room.get("participants", []):
             if not isinstance(participant, Mapping):
@@ -2623,14 +2850,11 @@ class AgentService:
                 session = self.sessions.get(session_id)
             except KeyError:
                 continue
-            if (
-                str(session.get("roomExecutionMode") or "")
-                == ROOM_UNRESTRICTED_EXECUTION_MODE
-            ):
+            if str(session.get("roomExecutionMode") or "") == target_overlay:
                 continue
             self.sessions.set_room_execution_mode(
                 session_id,
-                ROOM_UNRESTRICTED_EXECUTION_MODE,
+                target_overlay,
             )
             updated += 1
         return updated
@@ -5537,6 +5761,9 @@ class AgentService:
         self.wake_scheduler.bind_terminal_observer(None)
         self.wake_scheduler.close()
         self.room_intercom.close()
+        self.rooms.close()
+        self.sessions.close()
+        self.configuration_store.close()
 
     def reconfigure_runtime(self, config: PiRuntimeConfig) -> dict[str, object]:
         self.runtime.stop()
@@ -5869,6 +6096,7 @@ def agent_service_from_settings(
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
     runtime_execution_owner: bool = True,
+    defer_startup_recovery: bool = False,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
@@ -5897,6 +6125,8 @@ def agent_service_from_settings(
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
         background_job_execution_owner=runtime_execution_owner,
+        startup_recovery_enabled=runtime_execution_owner,
+        defer_startup_recovery=defer_startup_recovery,
     )
 
 

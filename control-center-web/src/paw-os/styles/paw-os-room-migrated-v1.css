@@ -718,7 +718,8 @@
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='satellite'] .paw-window {
   border-color: rgb(29 36 48 / .11);
   border-radius: 14px;
-  background: rgb(255 255 255 / .96);
+  background: #fff;
+  color: #202834;
   box-shadow: 0 24px 58px -20px rgb(35 47 66 / .25), 0 4px 12px rgb(35 47 66 / .06);
 }
 
@@ -731,11 +732,6 @@
 .paw-desktop-root .paw-window-shell[data-frame-mode='focus-card'] .paw-window-title strong {
   font-size: 12.5px;
   font-weight: 620;
-}
-
-.paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='satellite']:not([data-active]) .paw-window {
-  opacity: .88;
-  filter: saturate(.82);
 }
 
 .paw-desktop-root .paw-window-shell[data-focus-layout][data-collaboration-role='satellite'][data-active] .paw-window {
@@ -776,7 +772,8 @@
  * 身份铭牌和关闭入口留在内容面最上方；名称、状态以及 Session/Trace
  * 导航分别由这条薄铭牌和 participant observer 自己承担。 */
 .paw-desktop-root .paw-window-shell[data-frame-mode='planet'] > .paw-planet-surface {
-  background: transparent;
+  background: #fff;
+  color: #202834;
 }
 .paw-desktop-root .paw-window-shell[data-frame-mode='planet'] .paw-planet-identity {
   min-width: 0;
@@ -842,6 +839,7 @@
 
 .paw-desktop-root .paw-os-satellite--participant-chat {
   background: #fff;
+  color: #202834;
 }
 
 .paw-desktop-root .paw-os-satellite--participant-chat .paw-participant-chat__timeline {

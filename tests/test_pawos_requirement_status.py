@@ -24,7 +24,7 @@ def status_document(payload: dict[str, object]) -> str:
 
 
 class PawosRequirementStatusTests(unittest.TestCase):
-    def test_repository_split_ledger_covers_ur_001_through_ur_212_with_three_scoped_closeouts(self) -> None:
+    def test_repository_split_ledger_covers_ur_001_through_ur_225_with_three_scoped_closeouts(self) -> None:
         root = Path(__file__).resolve().parents[1]
         requirements_path = root / "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md"
         status_path = root / "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md"
@@ -32,10 +32,10 @@ class PawosRequirementStatusTests(unittest.TestCase):
         report = validate_requirement_status(requirements_path, status_path)
 
         self.assertEqual(report["errors"], [])
-        self.assertEqual(report["requirementCount"], 212)
+        self.assertEqual(report["requirementCount"], 225)
         self.assertEqual(report["firstRequirementId"], "UR-001")
-        self.assertEqual(report["lastRequirementId"], "UR-212")
-        self.assertEqual(report["assessmentCounts"], {"complete": 3, "unassessed": 209})
+        self.assertEqual(report["lastRequirementId"], "UR-225")
+        self.assertEqual(report["assessmentCounts"], {"complete": 3, "unassessed": 222})
         self.assertTrue(report["splitLedger"])
         self.assertEqual(report["completeCount"], 3)
         self.assertEqual(report["receiptCount"], 2)

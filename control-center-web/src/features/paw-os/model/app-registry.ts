@@ -8,6 +8,7 @@ export type PawOsAppId =
   | 'input-studio'
   | 'app-center'
   | 'system-monitor'
+  | 'eval-lab'
   | 'system-settings'
   | 'files'
   | 'browser'
@@ -110,6 +111,16 @@ export const pawOsAppRegistry: readonly PawOsAppDefinition[] = [
     presentation: 'system',
     accent: 'cyan',
     tagline: '上下文、运行记录与问题排查',
+  },
+  {
+    id: 'eval-lab',
+    label: 'Agent Lab',
+    shortLabel: '评测',
+    routeIds: ['eval-lab'],
+    defaultRouteId: 'eval-lab',
+    presentation: 'utility',
+    accent: 'amber',
+    tagline: '评测任务、分数与边界',
   },
   {
     id: 'system-settings',

@@ -3,10 +3,12 @@ import { memo, useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
   PawOsAppSurfaceProvider,
+  PawOsDesktopProvider,
   usePawOsAppActive,
   usePawOsAppCompact,
   usePawOsAppIdentity,
   usePawOsAppSurface,
+  usePawOsDesktop,
 } from './surface-context';
 
 function Probe() {
@@ -19,8 +21,22 @@ function Probe() {
     </output>
   );
 }
+function DesktopFocusProbe() {
+  return <output data-testid="desktop-focus-group">{usePawOsDesktop()?.collaborationFocusGroup ?? 'none'}</output>;
+}
+
 
 describe('PawOsAppSurfaceProvider', () => {
+  it('exposes desktop-owned collaboration focus as a read-only surface control', () => {
+    render(
+      <PawOsDesktopProvider collaborationFocusGroup="room:room-7" openWindow={() => undefined}>
+        <DesktopFocusProbe />
+      </PawOsDesktopProvider>,
+    );
+
+    expect(screen.getByTestId('desktop-focus-group')).toHaveTextContent('room:room-7');
+  });
+
   it('exposes window-local geometry to an App presentation', () => {
     render(
       <PawOsAppSurfaceProvider appId="agent" width={700} height={560}>

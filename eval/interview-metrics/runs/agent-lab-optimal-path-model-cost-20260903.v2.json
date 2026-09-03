@@ -1,0 +1,234 @@
+{
+  "baseline": {
+    "changedFactor": "baseline",
+    "configRevision": "0ad535eb4c056acba60b4fc43e8cbe2a2f9dc356a5b2f160bfae9a855e9986bd",
+    "evidenceRefs": [
+      "eval/interview-metrics/runs/enterpriseops-csm-sol-max-validation-20260903.v1.json",
+      "eval/interview-metrics/runs/agent-lab-cost-sol-max-20260903.v1.json"
+    ],
+    "frozenControlHash": "e06290e7f9a34c4c4caaafa3c980c89f6630c2e68ec3599d9b3899cc85cb5128",
+    "metrics": {
+      "allDatabasesCleaned": 1.0,
+      "apiCostUsd": 3.243385,
+      "costReceiptAvailable": 1.0,
+      "costTargetMet": 1.0,
+      "failedToolCalls": 1.0,
+      "latencyMs": 1112646.229,
+      "taskSuccessRate": 1.0,
+      "toolCalls": 87.0,
+      "verifierPassRate": 1.0
+    },
+    "nodeId": "sol-max-controlled-20260903",
+    "parentNodeId": null,
+    "status": "eligible"
+  },
+  "candidates": [
+    {
+      "changedFactor": "model",
+      "configRevision": "7761c5b4f66150a46d122545535de8dc2189c4f6653f23e30391e36081c0de64",
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-luna-max-validation-20260903.v3.json",
+        "eval/interview-metrics/runs/agent-lab-cost-luna-max-20260903.v3.json"
+      ],
+      "frozenControlHash": "e06290e7f9a34c4c4caaafa3c980c89f6630c2e68ec3599d9b3899cc85cb5128",
+      "metrics": {
+        "allDatabasesCleaned": 1.0,
+        "apiCostUsd": 0.725239,
+        "costReceiptAvailable": 1.0,
+        "costTargetMet": 0.0,
+        "failedToolCalls": 0.0,
+        "latencyMs": 929656.199,
+        "taskSuccessRate": 0.6666666666666666,
+        "toolCalls": 66.0,
+        "verifierPassRate": 0.967741935483871
+      },
+      "nodeId": "luna-max-controlled-20260903",
+      "parentNodeId": "sol-max-controlled-20260903",
+      "reason": "hard or quality gate failed: all tasks complete, all verifiers pass, predeclared 80 percent cost target, quality_non_regression:taskSuccessRate, quality_non_regression:verifierPassRate",
+      "status": "rejected"
+    }
+  ],
+  "claim": {
+    "limitations": [
+      "结果只代表本次声明的搜索空间和冻结控制，不是全局最优证明。",
+      "Validation 用于路径选择；不得把本回执改写为 Held-out 或生产结论。",
+      "当前没有可用于 Pareto 比较的候选节点。"
+    ],
+    "status": "insufficient_evidence",
+    "summary": "没有候选同时通过硬门禁和质量非回退约束，当前只能保留基线。"
+  },
+  "frozenControls": [
+    {
+      "name": "suite",
+      "value": "enterpriseops-csm-suite-v2"
+    },
+    {
+      "name": "split",
+      "value": "validation"
+    },
+    {
+      "name": "cases",
+      "value": "3 tasks / 31 host-private verifiers; manifest d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec"
+    },
+    {
+      "name": "prompt_contract",
+      "value": "5a2bc14cc2eb05badd053061e2345587a08abc4d6e0ad6ca3d7d07a2987f6580"
+    },
+    {
+      "name": "tool_catalog",
+      "value": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077"
+    },
+    {
+      "name": "runner_and_runtime_provenance",
+      "value": "ecd133ef4674a6311807bfa3370638b5717110c81b57ad23de19e076934d1b5a / 97be9f351511b7aefa6c85a1b9e971357cd0b482c8cab517780dd17d7133acaf"
+    },
+    {
+      "name": "thinking_and_timeout",
+      "value": "max / 900 seconds"
+    },
+    {
+      "name": "pricing",
+      "value": "2026-09-01 / source 867c9fe491a9134fc9ac0041f478ec041d7638f41b4022939349c2654075dd56"
+    },
+    {
+      "name": "held_out",
+      "value": "sealed and not consumed by model-cost search"
+    }
+  ],
+  "generatedAtMs": 1788398083325,
+  "hardGates": [
+    {
+      "name": "all tasks complete",
+      "reason": "taskSuccessRate=1，门槛 gte 1。",
+      "status": "pass"
+    },
+    {
+      "name": "all verifiers pass",
+      "reason": "verifierPassRate=1，门槛 gte 1。",
+      "status": "pass"
+    },
+    {
+      "name": "temporary databases cleaned",
+      "reason": "allDatabasesCleaned=1，门槛 eq 1。",
+      "status": "pass"
+    },
+    {
+      "name": "usage receipt available",
+      "reason": "costReceiptAvailable=1，门槛 eq 1。",
+      "status": "pass"
+    },
+    {
+      "name": "predeclared 80 percent cost target",
+      "reason": "costTargetMet=1，门槛 eq 1。",
+      "status": "pass"
+    },
+    {
+      "name": "quality_non_regression:taskSuccessRate",
+      "reason": "baseline=1，candidate=1。",
+      "status": "pass"
+    },
+    {
+      "name": "quality_non_regression:verifierPassRate",
+      "reason": "baseline=1，candidate=1。",
+      "status": "pass"
+    },
+    {
+      "name": "quality_non_regression:failedToolCalls",
+      "reason": "baseline=1，candidate=1。",
+      "status": "pass"
+    }
+  ],
+  "objective": {
+    "gates": [
+      {
+        "metric": "taskSuccessRate",
+        "name": "all tasks complete",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "metric": "verifierPassRate",
+        "name": "all verifiers pass",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "metric": "allDatabasesCleaned",
+        "name": "temporary databases cleaned",
+        "operator": "eq",
+        "value": 1
+      },
+      {
+        "metric": "costReceiptAvailable",
+        "name": "usage receipt available",
+        "operator": "eq",
+        "value": 1
+      },
+      {
+        "metric": "costTargetMet",
+        "name": "predeclared 80 percent cost target",
+        "operator": "eq",
+        "value": 1
+      }
+    ],
+    "metrics": [
+      {
+        "class": "quality",
+        "direction": "max",
+        "name": "taskSuccessRate",
+        "nonRegression": true,
+        "scale": 1,
+        "weight": 0.55
+      },
+      {
+        "class": "quality",
+        "direction": "max",
+        "name": "verifierPassRate",
+        "nonRegression": true,
+        "scale": 1,
+        "weight": 0.25
+      },
+      {
+        "class": "reliability",
+        "direction": "min",
+        "name": "failedToolCalls",
+        "nonRegression": true,
+        "scale": 10,
+        "weight": 0.05
+      },
+      {
+        "class": "efficiency",
+        "direction": "min",
+        "name": "toolCalls",
+        "scale": 100,
+        "weight": 0.03
+      },
+      {
+        "class": "efficiency",
+        "direction": "min",
+        "name": "latencyMs",
+        "scale": 1200000,
+        "weight": 0.07
+      },
+      {
+        "class": "cost",
+        "direction": "min",
+        "name": "apiCostUsd",
+        "scale": 4,
+        "weight": 0.05
+      }
+    ],
+    "selectionPolicy": "lexicographic_pareto",
+    "userNeed": "在任务与 Host-private verifier 质量不回退、临时数据库清理且 usage 可核验的前提下，选择更低成本的任务模型。"
+  },
+  "schemaVersion": "rag-ime.agent-lab-path-search.v1",
+  "searchId": "enterpriseops-csm-model-cost-20260903-v2",
+  "selectedPath": [
+    {
+      "decision": "baseline",
+      "nodeId": "sol-max-controlled-20260903",
+      "reason": "用户指定的比较基线。"
+    }
+  ],
+  "title": "EnterpriseOps CSM · 质量优先模型成本路径"
+}

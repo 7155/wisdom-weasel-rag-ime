@@ -93,6 +93,7 @@
     "archivedAtMs": {"type": ["integer", "null"]},
     "messageCount": {"type": "integer", "minimum": 0},
     "lastMessagePreview": {"type": "string"},
+    "lastTerminalTurnId": {"type": "string", "maxLength": 240},
     "workspaceRoots": {"type": "array", "items": {"type": "string"}},
     "shellPolicyVersion": {"type": "string"}
   }

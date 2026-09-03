@@ -1,0 +1,54 @@
+# Personal Memory Luna Shadow Evaluation
+
+- Result: `iterate`.
+- Scope: verified private recovery shadow; production SQLite was not opened or modified.
+- Model: `gpt-5.6-luna`, thinking `max`.
+- Transport: `codex_cli_ephemeral`; installed Gateway acceptance remains separate.
+- Source shadow unchanged: `True`.
+
+## Evidence -> Atom -> Book
+
+- First run: `True`; scopes `1`.
+- Current Atoms: `6`; governed `6`.
+- Unsupported governed Atoms: `0`.
+- All governed current Atoms have legal lineage: `True`.
+- Book projection in sync: `True`.
+- Logical applied-state SHA-256: `9fd393026ccbfd0a74575e7a01240b20adb80791c6016bd8dd937466cce2c747`.
+
+## Recovery
+
+- Rollback kind: `memory_book_run`; pass `True`.
+- Rollback restored baseline: `True`.
+- Replay attempted: `True`; pass `False`.
+- Replay used an exact private pre-run snapshot: `True`; restored before replay: `True`.
+- Replay reused content-addressed model outputs: `True`.
+- Replay restored identical logical state: `True`.
+
+## Hybrid RAG acceptance
+
+- Synthetic capture-v2 cases: `5`; durable `4`; non-memory controls `1`.
+- Every fixture stored with candidate Evidence: `True`.
+- Applied projection fresh: `True`; vector coverage `0.0`.
+- Applied hybrid recall passed: `True`; curated Atom count `6`.
+- Rollback removed the curated Atom set from retrieval: `True`.
+- Content-addressed replay restored the same Atom set and recall: `True`.
+
+| Case | Expected Memory | Linked Atoms | Retrieved | Best rank | Pass |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `durable-explanation-preference` | `True` | `2` | `True` | `2` | `True` |
+| `durable-verification-habit` | `True` | `1` | `True` | `2` | `True` |
+| `durable-recoverability-principle` | `True` | `2` | `True` | `2` | `True` |
+| `project-room-layout` | `True` | `1` | `True` | `1` | `True` |
+| `temporary-test-task` | `False` | `0` | `False` | `0` | `True` |
+
+## Real-model receipts
+
+- `atom-first-curation`: model `gpt-5.6-luna`, thinking `max`, isolated `False`, resumed `False`, elapsed `64.234` s, output `4e9474495d5b507d0bddfd8bb0168802f05bb5a048929eeea6245f3144d6a18a`.
+- `atom-first-verifier`: model `gpt-5.6-luna`, thinking `max`, isolated `True`, resumed `False`, elapsed `50.707` s, output `2a84b464856cee5130e7891a8d1a680e4fc403d85b9f8481cc8e78867cf3c607`.
+- `atom-first-curation`: model `gpt-5.6-luna`, thinking `max`, isolated `False`, resumed `True`, elapsed `64.234` s, output `4e9474495d5b507d0bddfd8bb0168802f05bb5a048929eeea6245f3144d6a18a`.
+- `atom-first-verifier`: model `gpt-5.6-luna`, thinking `max`, isolated `True`, resumed `True`, elapsed `50.707` s, output `2a84b464856cee5130e7891a8d1a680e4fc403d85b9f8481cc8e78867cf3c607`.
+
+## Interpretation
+
+This closes the private-shadow real-Luna quality and recovery slice only. It does not claim installed Gateway, Squirrel, Voice, or Control Center acceptance.
+No raw source text, model output, database path, or private identifier is included here.

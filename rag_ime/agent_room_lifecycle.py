@@ -28,6 +28,10 @@ from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
 )
+from .room_permission_policy import (
+    normalize_room_permission_policy,
+    resolve_room_permission_policy,
+)
 from .agent_tool_ids import DANGEROUS_MODE_CONFIRMATION
 
 
@@ -44,7 +48,10 @@ class RoomCreationPlan:
     routing_policy: str
     moderator_ordinal: int
     workspace_roots: tuple[str, ...]
+    permission_policy: dict[str, object]
     execution_mode: str
+    owner_app_id: str
+    surface_key: str
     participants: tuple[RoomParticipantPlan, ...]
 
 
@@ -83,7 +90,12 @@ class RoomLifecycleService:
         payload: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         value = dict(payload or {})
-        page = self.rooms.list_page(
+        list_page = (
+            self.rooms.list_directory_page
+            if _bool(value.get("projectionOnly"))
+            else self.rooms.list_page
+        )
+        page = list_page(
             include_archived=_bool(
                 value.get("includeArchived")
             ),
@@ -95,6 +107,15 @@ class RoomLifecycleService:
             ),
             before_updated_at_ms=_optional_integer(value.get("beforeUpdatedAtMs")),
             before_id=_optional_cursor_id(value.get("beforeId")),
+            owner_app_id=(
+                str(value["ownerAppId"])
+                if "ownerAppId" in value
+                else None
+            ),
+            # Debug/HTTP adapters preserve optional query fields as empty
+            # strings.  An omitted surfaceKey means "all surfaces owned by
+            # this App", not the literal empty surface.
+            surface_key=str(value.get("surfaceKey") or "").strip() or None,
         )
         return {
             "schemaVersion": "rag-ime.agent-room-list.v1",
@@ -154,16 +175,18 @@ class RoomLifecycleService:
             )
         execution_keys = {
             "executionMode",
-            "workspaceRoots",
+            "permissionPolicy",
             "workspaceScopeConfirmation",
             "dangerousModeConfirmation",
         }
-        if "workspaceRoots" in payload:
+        if "workspaceRoots" in payload and not (
+            {"executionMode", "permissionPolicy"} & set(payload)
+        ):
             return self._update_workspace_roots(
                 room_id,
                 payload,
             )
-        if "executionMode" in payload:
+        if {"executionMode", "permissionPolicy"} & set(payload):
             execution_payload = {
                 key: value
                 for key, value in payload.items()
@@ -235,43 +258,45 @@ class RoomLifecycleService:
     ) -> dict[str, object]:
         room = self.rooms.get(room_id)
         room_kind = str(room.get("roomKind") or "collaboration")
-        current_execution_mode = normalize_execution_mode(
-            room.get("executionMode"),
-            default=PER_ACTION_EXECUTION_MODE,
+        current_policy = normalize_room_permission_policy(
+            room.get("permissionPolicy"),
+            room_kind=room_kind,
+            current=room,
+            legacy_execution_mode=room.get("executionMode"),
         )
         execution_mode = normalize_execution_mode(
             payload.get("executionMode"),
-            default=current_execution_mode,
+            default=current_policy["room"]["executionMode"],
         )
+        permission_policy = normalize_room_permission_policy(
+            {
+                **current_policy,
+                "room": {"executionMode": execution_mode},
+            },
+            room_kind=room_kind,
+        )
+        effective_policy = resolve_room_permission_policy(permission_policy)
+        effective_execution_mode = effective_policy["partner"]["executionMode"]
         workspace_roots = _workspace_roots(
             payload,
             room_kind=room_kind,
+            permission_policy=permission_policy,
             execution_mode=execution_mode,
         )
         policy = project_room_participant_policy(
             room,
-            execution_mode=execution_mode,
+            permission_policy=permission_policy,
             workspace_roots=workspace_roots,
         )
         unrestricted = policy.unrestricted
         if unrestricted:
             workspace_roots = list(policy.workspace_roots)
-        if execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
+        if effective_execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
             str(payload.get("workspaceScopeConfirmation") or "")
             != WORKSPACE_SCOPE_CONFIRMATION
         ):
             raise ValueError(
                 "workspace-managed Room execution requires an explicit workspace scope confirmation"
-            )
-        if (
-            execution_mode == FULL_TRUST_EXECUTION_MODE
-            and room_kind != "collaboration"
-            and current_execution_mode != FULL_TRUST_EXECUTION_MODE
-            and str(payload.get("dangerousModeConfirmation") or "")
-            != DANGEROUS_MODE_CONFIRMATION
-        ):
-            raise ValueError(
-                "full-trust Room execution requires an explicit native confirmation"
             )
         configuration = {
             key: value
@@ -279,6 +304,7 @@ class RoomLifecycleService:
             if key
             not in {
                 "executionMode",
+                "permissionPolicy",
                 "workspaceRoots",
                 "workspaceScopeConfirmation",
                 "dangerousModeConfirmation",
@@ -303,7 +329,7 @@ class RoomLifecycleService:
                     session_policy = project_room_participant_policy(
                         room,
                         mode=str(session.get("mode") or "coordinator"),
-                        execution_mode=execution_mode,
+                        permission_policy=permission_policy,
                         workspace_roots=workspace_roots,
                     )
                     self.sessions.set_runtime_policy(
@@ -331,7 +357,7 @@ class RoomLifecycleService:
                 "changedFields": sorted(
                     {*configuration, "workspaceRoots", "executionMode"}
                 ),
-                "executionMode": execution_mode,
+                "executionMode": room["executionMode"],
                 "workspaceRootCount": len(workspace_roots),
                 "configRevision": room["configRevision"],
             },
@@ -353,44 +379,78 @@ class RoomLifecycleService:
     ) -> dict[str, object]:
         room = self.rooms.get(room_id)
         room_kind = str(room.get("roomKind") or "collaboration")
-        current_execution_mode = normalize_execution_mode(
-            room.get("executionMode"),
-            default=PER_ACTION_EXECUTION_MODE,
+        current_policy = normalize_room_permission_policy(
+            room.get("permissionPolicy"),
+            room_kind=room_kind,
+            current=room,
+            legacy_execution_mode=room.get("executionMode"),
         )
-        execution_mode = normalize_execution_mode(payload.get("executionMode"))
+        if "permissionPolicy" in payload:
+            permission_policy = normalize_room_permission_policy(
+                payload.get("permissionPolicy"),
+                room_kind=room_kind,
+                current=room,
+                legacy_execution_mode=payload.get("executionMode"),
+            )
+        else:
+            permission_policy = normalize_room_permission_policy(
+                {
+                    **current_policy,
+                    "room": {
+                        "executionMode": payload.get(
+                            "executionMode"
+                        )
+                    },
+                },
+                room_kind=room_kind,
+            )
+        current_execution_mode = current_policy["room"]["executionMode"]
+        execution_mode = permission_policy["room"]["executionMode"]
+        effective_execution_mode = resolve_room_permission_policy(
+            permission_policy
+        )["partner"]["executionMode"]
         raw_roots = [
             str(value)
             for value in room.get("workspaceRoots") or []
             if str(value).strip()
         ]
+        requested_roots = raw_roots
+        if config_payload is not None and "workspaceRoots" in config_payload:
+            requested_raw = config_payload.get("workspaceRoots")
+            if not isinstance(requested_raw, list):
+                raise ValueError("workspaceRoots must be an array")
+            requested_roots = [
+                str(value)
+                for value in requested_raw
+                if str(value).strip()
+            ]
         unrestricted_policy = project_room_participant_policy(
             room,
-            execution_mode=execution_mode,
-            workspace_roots=raw_roots,
+            permission_policy=permission_policy,
+            workspace_roots=requested_roots,
         )
         unrestricted = unrestricted_policy.unrestricted
-        roots = (
-            list(
-                _workspace_roots(
-                    {"workspaceRoots": raw_roots},
-                    room_kind=room_kind,
-                    execution_mode=execution_mode,
-                )
+        roots = list(
+            _workspace_roots(
+                {"workspaceRoots": requested_roots},
+                room_kind=room_kind,
+                permission_policy=permission_policy,
+                execution_mode=execution_mode,
             )
-            if unrestricted
-            else raw_roots
         )
         policy = project_room_participant_policy(
             room,
-            execution_mode=execution_mode,
+            permission_policy=permission_policy,
             workspace_roots=roots,
         )
         roots = list(policy.workspace_roots)
-        if execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and not roots:
+        if effective_execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
+            not roots
+        ):
             raise ValueError(
                 "managed and full-trust Room execution require a workspace"
             )
-        if execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
+        if effective_execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
             str(payload.get("workspaceScopeConfirmation") or "")
             != WORKSPACE_SCOPE_CONFIRMATION
         ):
@@ -408,9 +468,15 @@ class RoomLifecycleService:
                 "full-trust Room execution requires an explicit native confirmation"
             )
         configuration = dict(config_payload or {})
-        configuration_changed = bool(configuration)
-        if unrestricted and roots != raw_roots:
+        if (
+            "workspaceRoots" in configuration
+            or unrestricted
+            or roots != raw_roots
+        ):
             configuration["workspaceRoots"] = roots
+        if permission_policy != current_policy:
+            configuration["permissionPolicy"] = permission_policy
+        configuration_changed = bool(configuration)
         with self.participants.turn_lock:
             sessions = self.participants.participant_sessions(room)
             active_session_ids = self.participants.active_runtime_session_ids()
@@ -430,7 +496,7 @@ class RoomLifecycleService:
                     session_policy = project_room_participant_policy(
                         room,
                         mode=str(session.get("mode") or "coordinator"),
-                        execution_mode=execution_mode,
+                        permission_policy=permission_policy,
                         workspace_roots=roots,
                     )
                     runtime_kwargs = session_policy.runtime_kwargs()
@@ -473,7 +539,8 @@ class RoomLifecycleService:
                     else "room_execution_mode_updated"
                 ),
                 "changedFields": changed_fields,
-                "executionMode": execution_mode,
+                "executionMode": room["executionMode"],
+                "permissionPolicy": room["permissionPolicy"],
                 "configRevision": room["configRevision"],
             },
             topic_id=str(room.get("activeTopicId") or ""),
@@ -526,6 +593,7 @@ class RoomLifecycleService:
                     plan.moderator_ordinal
                 ),
                 room_kind=plan.room_kind,
+                permission_policy=plan.permission_policy,
                 avatar=str(
                     payload.get("avatar") or "members"
                 ),
@@ -543,6 +611,8 @@ class RoomLifecycleService:
                     )
                     else None
                 ),
+                owner_app_id=plan.owner_app_id,
+                surface_key=plan.surface_key,
             )
         except Exception:
             for session_id in reversed(
@@ -671,28 +741,24 @@ class RoomLifecycleService:
                 "agent room requires between 2 and 8 "
                 "participants"
             )
-        execution_mode = normalize_execution_mode(
-            payload.get("executionMode"),
-            default=(
-                WORKSPACE_MANAGED_EXECUTION_MODE
-                if room_kind == "collaboration"
-                else PER_ACTION_EXECUTION_MODE
-            ),
+        permission_policy = normalize_room_permission_policy(
+            payload.get("permissionPolicy"),
+            room_kind=room_kind,
+            legacy_execution_mode=payload.get("executionMode"),
         )
+        execution_mode = permission_policy["room"]["executionMode"]
         workspace_roots = _workspace_roots(
             payload,
             room_kind=room_kind,
+            permission_policy=permission_policy,
             execution_mode=execution_mode,
         )
-        if execution_mode in {
-            WORKSPACE_MANAGED_EXECUTION_MODE,
-            FULL_TRUST_EXECUTION_MODE,
-        } and room_kind != "collaboration":
-            raise ValueError(
-                "roleplay Rooms cannot use workspace-managed or full-trust execution"
-            )
         routing_policy = str(
             payload.get("routingPolicy") or "natural"
+        )
+        owner_app_id, surface_key = _room_surface_identity(
+            payload.get("ownerAppId"),
+            payload.get("surfaceKey"),
         )
         requested_moderator_role_id = str(
             payload.get("moderatorRoleId") or ""
@@ -724,7 +790,10 @@ class RoomLifecycleService:
             routing_policy=routing_policy,
             moderator_ordinal=moderator_ordinal,
             workspace_roots=workspace_roots,
+            permission_policy=permission_policy,
             execution_mode=execution_mode,
+            owner_app_id=owner_app_id,
+            surface_key=surface_key,
             participants=participants,
         )
 
@@ -791,9 +860,12 @@ def _workspace_roots(
     payload: Mapping[str, object],
     *,
     room_kind: str,
+    permission_policy: Mapping[str, object] | None = None,
     execution_mode: str = WORKSPACE_MANAGED_EXECUTION_MODE,
 ) -> tuple[str, ...]:
     raw = payload.get("workspaceRoots")
+    if raw is None:
+        raw = []
     if not isinstance(raw, list):
         raise ValueError("workspaceRoots must be an array")
     raw_roots = tuple(
@@ -810,19 +882,30 @@ def _workspace_roots(
         raise ValueError(
             "agent room accepts at most four workspace roots"
         )
+    normalized_policy = permission_policy
+    if normalized_policy is None:
+        normalized_policy = normalize_room_permission_policy(
+            None,
+            room_kind=room_kind,
+            legacy_execution_mode=execution_mode,
+        )
     policy = project_room_participant_policy(
         {
             "roomKind": room_kind,
+            "permissionPolicy": normalized_policy,
             "executionMode": execution_mode,
         },
-        execution_mode=execution_mode,
+        permission_policy=normalized_policy,
         workspace_roots=raw_roots,
     )
+    effective_execution_mode = resolve_room_permission_policy(
+        normalized_policy
+    )["partner"]["executionMode"]
     if (
         room_kind == "collaboration"
         and not raw_roots
         and not policy.unrestricted
-        and execution_mode != READ_ONLY_EXECUTION_MODE
+        and effective_execution_mode != READ_ONLY_EXECUTION_MODE
     ):
         raise ValueError(
             "agent room requires an authorized workspace"
@@ -834,6 +917,25 @@ def _workspace_roots(
             "agent room accepts at most four workspace roots"
         )
     return existing_workspace_roots(raw_roots)
+
+
+def _room_surface_identity(
+    owner_app_id: object,
+    surface_key: object,
+) -> tuple[str, str]:
+    owner = str(owner_app_id or "").strip()
+    key = str(surface_key or "").strip()
+    if owner and not owner.startswith("extension:"):
+        raise ValueError("room ownerAppId must be an extension App id")
+    if owner and not key:
+        raise ValueError("room surfaceKey is required for an App-owned Room")
+    if key and not owner:
+        raise ValueError("room surfaceKey requires ownerAppId")
+    if len(owner) > 80 or len(key) > 64 or any(
+        char.isspace() for char in owner + key
+    ):
+        raise ValueError("room App ownership identity is invalid")
+    return owner, key
 
 
 def _moderator_ordinal(
@@ -872,9 +974,12 @@ def _participant_session_payload(
     policy = project_room_participant_policy(
         {
             "roomKind": plan.room_kind,
+            "permissionPolicy": plan.permission_policy,
             "executionMode": plan.execution_mode,
             "workspaceRoots": plan.workspace_roots,
-        }
+        },
+        permission_policy=plan.permission_policy,
+        workspace_roots=plan.workspace_roots,
     )
     return {
         "title": f"{plan.title} · {role.display_name}",
@@ -882,6 +987,11 @@ def _participant_session_payload(
         "roleId": role.role_id,
         "roleVersion": role.version,
         **policy.create_fields(),
+        **({
+            "surfaceKind": "extension_app",
+            "ownerAppId": plan.owner_app_id,
+            "surfaceKey": plan.surface_key,
+        } if plan.owner_app_id else {}),
     }
 
 

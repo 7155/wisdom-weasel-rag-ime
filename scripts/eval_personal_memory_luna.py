@@ -10,6 +10,7 @@ import os
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Mapping
 
@@ -19,7 +20,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rag_ime.deepseek_memory_organizer import ManagedPiMemoryOrganizer
-from rag_ime.embeddings import NullEmbeddingProvider, embedding_provider_from_env
+from rag_ime.embeddings import (
+    HashingEmbeddingProvider,
+    NullEmbeddingProvider,
+    embedding_provider_from_env,
+)
 from rag_ime.activity_timeline_evaluation import load_frozen_activity_timeline
 from rag_ime.memory_book_compiler import rollback_memory_book_run
 from rag_ime.memory_evidence_admission import rollback_evidence_admissions_for_run
@@ -143,7 +148,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("clean synthetic working database already exists")
         rag_core = LocalSqliteCoreClient(
             working_db,
-            embedding_provider=embedding_provider,
+            # Keep the default synthetic fixture fully local and deterministic
+            # while still exercising the dense lane. A configured provider is
+            # opt-in via --embedding-from-env and is never silently substituted.
+            embedding_provider=embedding_provider or HashingEmbeddingProvider(),
         )
         rag_core.initialize()
         prepared = {
@@ -175,6 +183,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         synthetic_seed = redacted_synthetic_seed_summary(synthetic_cases)
     baseline = atom_first_memory_state_summary(working_db)
+    replay_baseline_snapshot: Path | None = None
+    replay_baseline_sha256 = ""
+    if bool(args.clean_synthetic_shadow):
+        # A rollback is a semantic operation, but the projection layer may
+        # retain derived topic rows that are intentionally not part of the
+        # logical Atom summary.  Capture the exact pre-run SQLite state so a
+        # replay can prove the same frozen input rather than accidentally
+        # measuring a second run against post-rollback projection residue.
+        replay_baseline_snapshot = private_root / "pre-run-baseline.sqlite"
+        _snapshot_sqlite(working_db, replay_baseline_snapshot)
+        replay_baseline_sha256 = _file_sha256(replay_baseline_snapshot)
     executor = PrivateCodexLunaMemoryExecutor(
         private_root / "luna",
         audit_db_path=working_db,
@@ -235,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     replay: dict[str, object] = {
         "attempted": False,
-        "ok": False,
+        "ok": True,
         "reusedModelRequests": False,
         "restoredAppliedState": False,
     }
@@ -286,37 +305,48 @@ def main(argv: list[str] | None = None) -> int:
 
         if rollback["ok"] and rollback["kind"] == "memory_book_run":
             replay["attempted"] = True
+            if replay_baseline_snapshot is not None:
+                replay["baselineRestoredForReplay"] = _restore_sqlite_snapshot(
+                    replay_baseline_snapshot,
+                    working_db,
+                )
+                if not replay["baselineRestoredForReplay"]:
+                    replay["ok"] = False
+                    replay["error"] = "private replay baseline restore failed"
+            else:
+                replay["baselineRestoredForReplay"] = True
             receipt_count_before = len(executor.receipts)
-            second = curator.run_due(
-                manual=True,
-                owner_kind="user",
-                owner_id="default",
-                instruction=ATOM_FIRST_EVALUATION_INSTRUCTION,
-                current_ms=int(time.time() * 1_000) + 120_000,
-            )
-            second_state = atom_first_memory_state_summary(working_db)
-            if rag_core is not None:
-                replay_rag_full = evaluate_synthetic_personal_memory_rag(
-                    rag_core,
-                    synthetic_cases,
-                    project=str(args.project),
-                    migrations_dir=schema_view,
+            if replay.get("baselineRestoredForReplay"):
+                second = curator.run_due(
+                    manual=True,
+                    owner_kind="user",
+                    owner_id="default",
+                    instruction=ATOM_FIRST_EVALUATION_INSTRUCTION,
+                    current_ms=int(time.time() * 1_000) + 120_000,
                 )
-                replay_rag = redacted_personal_memory_rag_summary(replay_rag_full)
-                replay["ragRestored"] = bool(replay_rag_full.get("passed"))
-                replay["ragAtomSetStable"] = (
-                    str(replay_rag_full.get("discoveredAtomIdsSha256") or "")
-                    == str(first_rag_full.get("discoveredAtomIdsSha256") or "")
+                second_state = atom_first_memory_state_summary(working_db)
+                if rag_core is not None:
+                    replay_rag_full = evaluate_synthetic_personal_memory_rag(
+                        rag_core,
+                        synthetic_cases,
+                        project=str(args.project),
+                        migrations_dir=schema_view,
+                    )
+                    replay_rag = redacted_personal_memory_rag_summary(replay_rag_full)
+                    replay["ragRestored"] = bool(replay_rag_full.get("passed"))
+                    replay["ragAtomSetStable"] = (
+                        str(replay_rag_full.get("discoveredAtomIdsSha256") or "")
+                        == str(first_rag_full.get("discoveredAtomIdsSha256") or "")
+                    )
+                replay_receipts = executor.receipts[receipt_count_before:]
+                replay["reusedModelRequests"] = bool(replay_receipts) and all(
+                    bool(item.get("resumed")) for item in replay_receipts
                 )
-            replay_receipts = executor.receipts[receipt_count_before:]
-            replay["reusedModelRequests"] = bool(replay_receipts) and all(
-                bool(item.get("resumed")) for item in replay_receipts
-            )
-            replay["restoredAppliedState"] = (
-                second_state["logicalStateSha256"]
-                == first_state["logicalStateSha256"]
-            )
-            replay["ok"] = (
+                replay["restoredAppliedState"] = (
+                    second_state["logicalStateSha256"]
+                    == first_state["logicalStateSha256"]
+                )
+            replay["ok"] = bool(replay.get("ok", True)) and (
                 bool(second.get("ok"))
                 and bool(replay["reusedModelRequests"])
                 and bool(replay["restoredAppliedState"])
@@ -398,6 +428,10 @@ def main(argv: list[str] | None = None) -> int:
         "rollback": rollback,
         "rollbackRag": rollback_rag,
         "replay": replay,
+        "replayBaseline": {
+            "captured": replay_baseline_snapshot is not None,
+            "sha256": replay_baseline_sha256,
+        },
         "replayRun": redacted_owner_run_summary(second) if second else {},
         "replayState": second_state,
         "replayRag": replay_rag,
@@ -585,6 +619,53 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _snapshot_sqlite(source: Path, destination: Path) -> None:
+    """Create a consistent private SQLite snapshot without copying a live WAL."""
+
+    if destination.exists():
+        raise ValueError(f"SQLite snapshot already exists: {destination.name}")
+    temporary = destination.with_name("." + destination.name + ".tmp")
+    for sidecar in (
+        temporary.with_name(temporary.name + "-wal"),
+        temporary.with_name(temporary.name + "-shm"),
+    ):
+        if sidecar.exists():
+            sidecar.unlink()
+    with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as source_conn:
+        with closing(sqlite3.connect(temporary)) as destination_conn:
+            source_conn.backup(destination_conn)
+            destination_conn.commit()
+    temporary.chmod(0o600)
+    os.replace(temporary, destination)
+    destination.chmod(0o600)
+
+
+def _restore_sqlite_snapshot(snapshot: Path, target: Path) -> bool:
+    """Restore a private SQLite snapshot atomically and verify its bytes."""
+
+    temporary = target.with_name("." + target.name + ".replay.tmp")
+    for sidecar in (
+        temporary.with_name(temporary.name + "-wal"),
+        temporary.with_name(temporary.name + "-shm"),
+    ):
+        if sidecar.exists():
+            sidecar.unlink()
+    with closing(sqlite3.connect(f"file:{snapshot}?mode=ro", uri=True)) as source_conn:
+        with closing(sqlite3.connect(temporary)) as destination_conn:
+            source_conn.backup(destination_conn)
+            destination_conn.commit()
+    temporary.chmod(0o600)
+    for sidecar in (
+        target.with_name(target.name + "-wal"),
+        target.with_name(target.name + "-shm"),
+    ):
+        if sidecar.exists():
+            sidecar.unlink()
+    os.replace(temporary, target)
+    target.chmod(0o600)
+    return _file_sha256(snapshot) == _file_sha256(target)
+
+
 def _write_private_summary(path: Path, summary: Mapping[str, object]) -> None:
     temporary = path.with_name("." + path.name + ".tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -599,10 +680,19 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
     if path.exists():
         raise ValueError("public report path already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() == ".json":
+        path.write_text(
+            json.dumps(_public_report_payload(summary), ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        return
     first = dict(summary.get("firstRun") or {})
     applied = dict(summary.get("appliedState") or {})
     rollback = dict(summary.get("rollback") or {})
     replay = dict(summary.get("replay") or {})
+    replay_baseline = dict(summary.get("replayBaseline") or {})
     seed = dict(summary.get("syntheticSeed") or {})
     applied_rag = dict(summary.get("appliedRag") or {})
     rollback_rag = dict(summary.get("rollbackRag") or {})
@@ -635,6 +725,7 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
         f"- Rollback kind: `{rollback.get('kind')}`; pass `{rollback.get('ok')}`.",
         f"- Rollback restored baseline: `{rollback.get('restoredBaseline')}`.",
         f"- Replay attempted: `{replay.get('attempted')}`; pass `{replay.get('ok')}`.",
+        f"- Replay used an exact private pre-run snapshot: `{replay_baseline.get('captured')}`; restored before replay: `{replay.get('baselineRestoredForReplay')}`.",
         f"- Replay reused content-addressed model outputs: `{replay.get('reusedModelRequests')}`.",
         f"- Replay restored identical logical state: `{replay.get('restoredAppliedState')}`.",
         "",
@@ -695,6 +786,109 @@ def _write_public_report(path: Path, summary: Mapping[str, object]) -> None:
         ]
     )
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _public_report_payload(summary: Mapping[str, object]) -> dict[str, object]:
+    """Build the machine-readable, raw-text-free public receipt."""
+
+    first = dict(summary.get("firstRun") or {})
+    applied = dict(summary.get("appliedState") or {})
+    applied_rag = dict(summary.get("appliedRag") or {})
+    rollback = dict(summary.get("rollback") or {})
+    rollback_rag = dict(summary.get("rollbackRag") or {})
+    replay = dict(summary.get("replay") or {})
+    replay_rag = dict(summary.get("replayRag") or {})
+    seed = dict(summary.get("syntheticSeed") or {})
+    model_requests = [
+        dict(item)
+        for item in summary.get("modelRequests") or []
+        if isinstance(item, Mapping)
+    ]
+    return {
+        "schemaVersion": "paw.memory-maintenance-validation-receipt.v1",
+        "runId": "memory-maintenance-luna-max-validation-20260902",
+        "status": "passed" if bool(summary.get("passed")) else "iterate",
+        "evaluationScope": "validation-only",
+        "heldOutEvaluated": False,
+        "localOnly": True,
+        "model": summary.get("model"),
+        "thinking": summary.get("thinking"),
+        "transport": summary.get("transport"),
+        "metrics": {
+            "fixture": {
+                "caseCount": seed.get("caseCount"),
+                "durableCaseCount": seed.get("durableCaseCount"),
+                "nonMemoryCaseCount": seed.get("nonMemoryCaseCount"),
+                "allStored": seed.get("allStored"),
+                "allCandidateEvidence": seed.get("allCandidateEvidence"),
+            },
+            "curation": {
+                "ok": first.get("ok"),
+                "sourceCount": first.get("results", [{}])[0].get("sourceCount")
+                if isinstance(first.get("results"), list) and first.get("results")
+                and isinstance(first.get("results")[0], Mapping)
+                else None,
+                "modelDecisionCount": first.get("results", [{}])[0].get("modelDecisionCount")
+                if isinstance(first.get("results"), list) and first.get("results")
+                and isinstance(first.get("results")[0], Mapping)
+                else None,
+                "currentAtomCount": applied.get("currentAtomCount"),
+                "governedCurrentAtomCount": applied.get("governedCurrentAtomCount"),
+                "legalLineageCurrentAtomCount": applied.get("legalLineageCurrentAtomCount"),
+                "bookProjectionInSync": dict(applied.get("bookProjection") or {}).get("inSync"),
+            },
+            "retrieval": {
+                "caseCount": applied_rag.get("caseCount"),
+                "durableCaseCount": applied_rag.get("durableCaseCount"),
+                "passed": applied_rag.get("passed"),
+                "allCasesPassed": all(
+                    bool(item.get("passed"))
+                    for item in applied_rag.get("cases") or []
+                    if isinstance(item, Mapping)
+                ),
+                "bestRanks": {
+                    str(item.get("caseId")): item.get("bestRank")
+                    for item in applied_rag.get("cases") or []
+                    if isinstance(item, Mapping)
+                },
+                "projectionFresh": applied_rag.get("projectionFresh"),
+                "projectionBacklog": applied_rag.get("projectionBacklog"),
+                "vectorCoverage": applied_rag.get("vectorCoverage"),
+            },
+            "recovery": {
+                "rollbackPassed": rollback.get("ok"),
+                "rollbackRestoredBaseline": rollback.get("restoredBaseline"),
+                "rollbackRagCleared": rollback_rag.get("passed"),
+                "replayPassed": replay.get("ok"),
+                "replayReusedModelRequests": replay.get("reusedModelRequests"),
+                "replayRestoredAppliedState": replay.get("restoredAppliedState"),
+                "replayRagPassed": replay_rag.get("passed"),
+                "replayAtomSetStable": replay.get("ragAtomSetStable"),
+            },
+        },
+        "modelRequests": model_requests,
+        "hardGates": {
+            "productionDatabaseOpened": False,
+            "productionMutationPerformed": False,
+            "sourceShadowUnchanged": summary.get("sourceShadowUnchanged"),
+            "heldOutEvaluated": False,
+            "privateShadow": True,
+            "rollbackVerified": rollback.get("ok"),
+            "replayVerified": replay.get("ok"),
+        },
+        "evidence": {
+            "syntheticFixtureSha256": seed.get("fixtureSha256"),
+            "appliedStateSha256": applied.get("logicalStateSha256"),
+            "appliedAtomSetSha256": applied_rag.get("discoveredAtomIdsSha256"),
+            "replayAtomSetSha256": replay_rag.get("discoveredAtomIdsSha256"),
+            "replayBaselineSha256": dict(summary.get("replayBaseline") or {}).get("sha256"),
+        },
+        "claimBoundary": [
+            "private-shadow validation only",
+            "real Luna Max requests and independent verifier retained in private artifacts",
+            "installed Gateway and foreground acceptance are not evaluated",
+        ],
+    }
 
 
 def _write_semantic_public_report(

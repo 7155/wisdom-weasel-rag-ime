@@ -113,10 +113,11 @@ class WorkDocumentService:
         self.context_runtime = context_runtime
         self._lock = threading.RLock()
 
-    def initialize(self) -> None:
+    def initialize(self, *, reconcile: bool = True) -> None:
         with sqlite_connection(self.db_path, row_factory=sqlite3.Row, foreign_keys=True) as conn:
             apply_database_migrations(conn)
-        self.reconcile(retry_failed_observers=True)
+        if reconcile:
+            self.reconcile(retry_failed_observers=True)
 
     def preflight_register(self, payload: Mapping[str, object]) -> None:
         """Validate a receipt-bound registration before its approved file write."""

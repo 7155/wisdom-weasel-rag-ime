@@ -2,7 +2,7 @@
 
 ## 用户需求账本总索引
 
-这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成二十卷，
+这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成二十六卷，
 避免一次读取或编辑全部需求时发生截断。拆分只改变导航，不改变编号、
 语义、优先级、来源、修正关系或实施状态。
 
@@ -34,6 +34,12 @@ verdict 和 E1–E6 证据仍由
 | 18 | [UR-209](requirements/PAWOS_REQUIREMENTS_209_209.md) | 桌面图标移除、隐藏与恢复，不改变 App 或对象数据 |
 | 19 | [UR-210–UR-211](requirements/PAWOS_REQUIREMENTS_210_211.md) | Extension App 沙箱选择与 RAG 冻结实验、选优、受控晋升/回滚 |
 | 20 | [UR-212](requirements/PAWOS_REQUIREMENTS_212_212.md) | App Builder 专属前端代码、owner/改法、重试身份与完整测试/安装态验收矩阵 |
+| 21 | [UR-213](requirements/PAWOS_REQUIREMENTS_213_213.md) | 自我进化实验的初学者详情网页、计算、前后变化、Keep/Reject 与证据边界 |
+| 22 | [UR-214](requirements/PAWOS_REQUIREMENTS_214_214.md) | 优化报告迁出 System Monitor，成为独立网页与外部打开入口 |
+| 23 | [UR-215–UR-220](requirements/PAWOS_REQUIREMENTS_215_220.md) | 单角色 Room、消息去重、Tool 折叠、Composer 稳定、对话性能与安装一致性 |
+| 24 | [UR-221–UR-222](requirements/PAWOS_REQUIREMENTS_221_222.md) | Trace 全自动项目绑定与白话诊断/修复入口 |
+| 25 | [UR-223–UR-224](requirements/PAWOS_REQUIREMENTS_223_224.md) | 终态通知幂等与 Session Stop 真实取消/即时回落 |
+| 26 | [UR-225](requirements/PAWOS_REQUIREMENTS_225_225.md) | Trace 报告倒金字塔、白话因果链、证据缺口集中与双层读者 |
 
 ## 同一文档集的其他文件
 
@@ -46,7 +52,7 @@ verdict 和 E1–E6 证据仍由
 
 ## 读取与编辑规则
 
-- 从本索引进入后按二十卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
+- 从本索引进入后按二十六卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
   下一份；最后一卷继续到逐字证据、产品契约和实施状态，不会静默结束。
 - 修正已有需求时，编辑包含该稳定 ID 的分卷；不得重新编号。新增需求追加到
   最后一卷，超过可维护规模后再新建下一卷，并同时更新本索引与相邻导航。
@@ -58,5 +64,5 @@ verdict 和 E1–E6 证据仍由
 ## 继续阅读 / 编辑
 
 - 下一份：[UR-001–UR-030](requirements/PAWOS_REQUIREMENTS_001_030.md)
-- 若只查最新要求：[UR-212](requirements/PAWOS_REQUIREMENTS_212_212.md)
+- 若只查最新要求：[UR-225](requirements/PAWOS_REQUIREMENTS_225_225.md)
 - 若记录实现结果：[PAWOS_REQUIREMENT_STATUS.md](PAWOS_REQUIREMENT_STATUS.md)

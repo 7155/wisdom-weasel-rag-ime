@@ -773,13 +773,16 @@ class RoomPartnerApplicationService:
             ).append(record)
         for (room_id, root_id), records in grouped.items():
             expected = {str(record["childDispatchId"]) for record in records}
-            for event in self.rooms.list_events(
+            for event in self._recovery_events_for_turn(
                 room_id,
-                after_sequence=0,
-                limit=2_000,
+                root_id,
+                dispatch_ids=tuple(sorted(expected)),
+                event_types=(
+                    "room_post",
+                    "participant_message",
+                    "participant_activity",
+                ),
             ):
-                if str(event.get("turnId") or "") != root_id:
-                    continue
                 payload = event.get("payload")
                 payload = payload if isinstance(payload, Mapping) else {}
                 data = payload.get("data")
@@ -850,6 +853,46 @@ class RoomPartnerApplicationService:
                     schedule_id=schedule_id,
                     error=str(schedule.get("lastError") or ""),
                 )
+
+    def _recovery_events_for_turn(
+        self,
+        room_id: str,
+        root_id: str,
+        *,
+        dispatch_ids: tuple[str, ...],
+        event_types: tuple[str, ...],
+    ) -> list[Mapping[str, object]]:
+        dispatch_lookup = getattr(
+            self.rooms,
+            "list_recovery_events_for_dispatches",
+            None,
+        )
+        if callable(dispatch_lookup):
+            return dispatch_lookup(
+                room_id,
+                root_id,
+                dispatch_ids=dispatch_ids,
+                limit=2_000,
+            )
+        targeted_lookup = getattr(self.rooms, "list_events_for_turn", None)
+        if callable(targeted_lookup):
+            return targeted_lookup(
+                room_id,
+                root_id,
+                event_types=event_types,
+                after_sequence=0,
+                limit=2_000,
+            )
+        return [
+            event
+            for event in self.rooms.list_events(
+                room_id,
+                after_sequence=0,
+                limit=2_000,
+            )
+            if str(event.get("turnId") or "") == root_id
+            and str(event.get("eventType") or "") in event_types
+        ]
 
     def _requeue_legacy_preacceptance_conflict_wakes(self) -> None:
         """Repair a bounded legacy wake whose typed conflict was lost."""
@@ -1102,10 +1145,25 @@ class RoomPartnerApplicationService:
         source_participant_id = str(record.get("sourceParticipantId") or "")
         if not room_id or not root_id or not source_participant_id:
             return False
+        room = self.rooms.get(room_id)
+        if not isinstance(room, Mapping):
+            return False
+        moderator = self._active_room_moderator(room)
+        if moderator is None:
+            return False
+        moderator_participant_id = str(moderator.get("id") or "")
+        moderator_session_id = str(moderator.get("sessionId") or "")
+        if (
+            not moderator_participant_id
+            or not moderator_session_id
+            or source_participant_id != moderator_participant_id
+            or session_id != moderator_session_id
+        ):
+            return False
         root_work = self._accepted_root_work(
             room_id=room_id,
             root_turn_id=root_id,
-            facilitator_participant_id=source_participant_id,
+            facilitator_participant_id=moderator_participant_id,
         )
         if not root_work:
             return False
@@ -1133,7 +1191,7 @@ class RoomPartnerApplicationService:
             "rootId": root_id,
             "generation": generation,
             "dispatchId": str(record.get("parentDispatchId") or ""),
-            "authorActorRef": source_participant_id,
+            "authorActorRef": moderator_participant_id,
             "kind": "result",
             "visibility": "room",
             "content": _terminal_result_content(ordered_work),
@@ -1145,7 +1203,6 @@ class RoomPartnerApplicationService:
             "createdAtMs": finished_at_ms,
         }
         validate_contract(post, "room-post.v2.json")
-        room = self.rooms.get(room_id)
         publish_projection(
             projection_key=f"room-terminal-result:{room_id}:{root_id}",
             room_id=room_id,
@@ -1161,8 +1218,8 @@ class RoomPartnerApplicationService:
                 },
             },
             turn_id=root_id,
-            participant_id=source_participant_id,
-            source_session_id=session_id,
+            participant_id=moderator_participant_id,
+            source_session_id=moderator_session_id,
             topic_id=self.room_topic_for_turn(root_id),
             created_at_ms=finished_at_ms,
         )
@@ -1207,6 +1264,78 @@ class RoomPartnerApplicationService:
                 return None
         return sorted(root_work, key=lambda item: str(item.get("id") or ""))
 
+    def _retained_root_typed_result(
+        self,
+        *,
+        room_id: str,
+        root_turn_id: str,
+    ) -> Mapping[str, object] | None:
+        """Return the one retained typed result event for an exact replay."""
+
+        list_events = getattr(self.rooms, "list_events", None)
+        if not room_id or not root_turn_id or not callable(list_events):
+            return None
+        try:
+            room = self.rooms.get(room_id)
+            if not isinstance(room, Mapping):
+                return None
+            last_sequence = int(room.get("lastEventSequence") or 0)
+            events = list_events(
+                room_id,
+                after_sequence=max(0, last_sequence - 2_000),
+                limit=2_000,
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not isinstance(events, (list, tuple)):
+            return None
+        candidates: list[Mapping[str, object]] = []
+        for event in events:
+            if not isinstance(event, Mapping):
+                continue
+            if (
+                str(event.get("roomId") or "") != room_id
+                or str(event.get("turnId") or "") != root_turn_id
+                or str(event.get("eventType") or "") != "room_post"
+            ):
+                continue
+            payload = event.get("payload")
+            payload = payload if isinstance(payload, Mapping) else {}
+            post = payload.get("post")
+            publication_source = (
+                post.get("publicationSource")
+                if isinstance(post, Mapping)
+                else None
+            )
+            if (
+                isinstance(post, Mapping)
+                and str(post.get("kind") or "") == "result"
+                and str(post.get("roomId") or "") == room_id
+                and str(post.get("rootId") or "") == root_turn_id
+                and str(post.get("postId") or "")
+                and str(post.get("idempotencyKey") or "")
+                and isinstance(publication_source, Mapping)
+                and str(publication_source.get("kind") or "") == "room_post"
+                and str(publication_source.get("ref") or "")
+                == str(post.get("idempotencyKey") or "")
+            ):
+                candidates.append(event)
+        if len(candidates) != 1:
+            return None
+        event = candidates[0]
+        payload = event.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        post = payload.get("post")
+        event_id = str(event.get("eventId") or "")
+        if (
+            not event_id
+            or not isinstance(post, Mapping)
+            or not str(post.get("postId") or "")
+            or not str(post.get("idempotencyKey") or "")
+        ):
+            return None
+        return event
+
     def _root_has_typed_result(self, record: Mapping[str, object]) -> bool:
         room_id = str(record.get("roomId") or "")
         root_id = str(record.get("rootId") or "")
@@ -1217,9 +1346,15 @@ class RoomPartnerApplicationService:
             f"room-terminal-result:{room_id}:{root_id}"
         ):
             return True
+        has_typed_result = getattr(self.rooms, "has_typed_result", None)
+        if callable(has_typed_result):
+            return bool(has_typed_result(room_id, root_id))
+        list_events = getattr(self.rooms, "list_events", None)
+        if not callable(list_events):
+            return False
         room = self.rooms.get(room_id)
         last_sequence = int(room.get("lastEventSequence") or 0)
-        for event in self.rooms.list_events(
+        for event in list_events(
             room_id,
             after_sequence=max(0, last_sequence - 2_000),
             limit=2_000,
@@ -1235,6 +1370,7 @@ class RoomPartnerApplicationService:
             if isinstance(post, Mapping) and str(post.get("kind") or "") == "result":
                 return True
         return False
+
 
     def _requeue_legacy_stale_facilitator_wakes(self) -> None:
         """Repair one wake cancelled by an older Gateway during an upgrade.
@@ -1905,6 +2041,35 @@ class RoomPartnerApplicationService:
         if not root_id or not dispatch_id:
             raise ValueError("room_partner requires an active Room turn")
         return root_id, dispatch_id
+
+    @staticmethod
+    def _active_room_moderator(
+        room: Mapping[str, object],
+    ) -> Mapping[str, object] | None:
+        """Return the active participant named by the persisted moderator ID."""
+
+        moderator_id = _text(
+            room.get("moderatorParticipantId"),
+            maximum=320,
+        )
+        participants = room.get("participants")
+        if (
+            not moderator_id
+            or not isinstance(participants, list)
+        ):
+            return None
+        matches = [
+            participant
+            for participant in participants
+            if (
+                isinstance(participant, Mapping)
+                and str(participant.get("id") or "") == moderator_id
+            )
+        ]
+        if len(matches) != 1 or str(matches[0].get("status") or "") != "active":
+            return None
+        return matches[0]
+
 
     def _list(self, source: Mapping[str, object]) -> dict[str, object]:
         room = self.rooms.get(str(source["roomId"]))
@@ -2820,20 +2985,85 @@ class RoomPartnerApplicationService:
             }
         root_id, dispatch_id = self._active_root(source)
         room = self.rooms.get(str(source["roomId"]))
+        author_participant_id = str(source["id"])
+        existing_result_event: Mapping[str, object] | None = None
+        existing_result_post: Mapping[str, object] | None = None
+        existing_result_event_id = ""
+        idempotent_replay = False
         if kind == "result":
-            if str(source.get("collaborationRole") or "") != "coordinator":
-                raise ValueError("only the Room Facilitator can publish kind=result")
-            accepted_work = self._accepted_root_work(
-                room_id=str(room["id"]),
-                root_turn_id=root_id,
-                facilitator_participant_id=str(source["id"]),
+            moderator = (
+                self._active_room_moderator(room)
+                if isinstance(room, Mapping)
+                else None
             )
-            if accepted_work is None:
-                raise ValueError(
-                    "Room result requires every WorkItem to be explicitly "
-                    "accepted with passed/satisfied evidence"
+            moderator_participant_id = (
+                str(moderator.get("id") or "")
+                if moderator is not None
+                else ""
+            )
+            if (
+                not moderator_participant_id
+                or str(source.get("id") or "") != moderator_participant_id
+            ):
+                raise ValueError("only the Room Facilitator can publish kind=result")
+            author_participant_id = moderator_participant_id
+            root_has_typed_result = self._root_has_typed_result(
+                {"roomId": str(room["id"]), "rootId": root_id}
+            )
+            if root_has_typed_result:
+                existing_result_event = self._retained_root_typed_result(
+                    room_id=str(room["id"]),
+                    root_turn_id=root_id,
                 )
-        post_id = f"room-post:{tool_call_id}"
+                existing_payload = (
+                    existing_result_event.get("payload")
+                    if existing_result_event is not None
+                    else None
+                )
+                existing_payload = (
+                    existing_payload
+                    if isinstance(existing_payload, Mapping)
+                    else {}
+                )
+                existing_post = existing_payload.get("post")
+                existing_result_post = (
+                    existing_post
+                    if isinstance(existing_post, Mapping)
+                    else None
+                )
+                existing_result_event_id = str(
+                    existing_result_event.get("eventId") or ""
+                ) if existing_result_event is not None else ""
+                existing_idempotency_key = (
+                    str(existing_result_post.get("idempotencyKey") or "")
+                    if existing_result_post is not None
+                    else ""
+                )
+                if (
+                    existing_result_event is None
+                    or existing_result_post is None
+                    or not existing_result_event_id
+                    or not existing_idempotency_key
+                    or existing_idempotency_key != tool_call_id
+                ):
+                    raise ValueError("Room Root already has a typed result")
+                idempotent_replay = True
+            if not idempotent_replay:
+                accepted_work = self._accepted_root_work(
+                    room_id=str(room["id"]),
+                    root_turn_id=root_id,
+                    facilitator_participant_id=moderator_participant_id,
+                )
+                if accepted_work is None:
+                    raise ValueError(
+                        "Room result requires every WorkItem to be explicitly "
+                        "accepted with passed/satisfied evidence"
+                    )
+        post_id = (
+            str(existing_result_post.get("postId") or "")
+            if idempotent_replay and existing_result_post is not None
+            else f"room-post:{tool_call_id}"
+        )
         created_at_ms = int(time.time() * 1_000)
         post = {
             "schemaVersion": "wisdom-weasel.room-post.v2",
@@ -2842,7 +3072,7 @@ class RoomPartnerApplicationService:
             "rootId": root_id,
             "generation": 0,
             "dispatchId": dispatch_id,
-            "authorActorRef": str(source["id"]),
+            "authorActorRef": author_participant_id,
             "kind": kind,
             "visibility": "room",
             "content": content,
@@ -2896,7 +3126,7 @@ class RoomPartnerApplicationService:
                 ),
             },
             "turn_id": root_id,
-            "participant_id": str(source["id"]),
+            "participant_id": author_participant_id,
             "source_session_id": str(source["sessionId"]),
             "topic_id": self.room_topic_for_turn(root_id),
         }
@@ -2908,6 +3138,12 @@ class RoomPartnerApplicationService:
             has_projection = getattr(self.room_events, "has_projection", None)
             if callable(has_projection) and has_projection(projection_key):
                 published = False
+            elif idempotent_replay:
+                published = False
+            elif self._root_has_typed_result(
+                {"roomId": str(room["id"]), "rootId": root_id}
+            ):
+                raise ValueError("Room Root already has a typed result")
             else:
                 self.room_events.publish_projection(
                     projection_key=projection_key,
@@ -2924,6 +3160,14 @@ class RoomPartnerApplicationService:
             "kind": kind,
             "published": published,
             "settledWorkItems": [],
+            **(
+                {
+                    "eventId": existing_result_event_id,
+                    "idempotentReplay": True,
+                }
+                if idempotent_replay
+                else {}
+            ),
         }
 
 

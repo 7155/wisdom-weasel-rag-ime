@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "paw.enterpriseops-csm-luna-max-validation-preflight.v1",
+  "runId": "enterpriseops-csm-luna-max-validation-preflight-20260901-v1",
+  "status": "blocked_before_provider_call",
+  "measuredAt": "2026-09-01",
+  "requested": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-luna",
+    "thinking": "max",
+    "split": "validation",
+    "suiteRevision": "enterpriseops-csm-suite-v2",
+    "workflowProfile": "state-contract-v1"
+  },
+  "frozenPreflight": {
+    "taskCount": 3,
+    "excludedTaskCount": 1,
+    "taskManifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+    "heldOutConsumed": false
+  },
+  "blocker": {
+    "stage": "gym_connectivity_preflight",
+    "endpoint": "http://127.0.0.1:8001",
+    "error": "Sandbox policy blocks local/private network addresses (not_allowed_local)",
+    "providerCallStarted": false,
+    "toolCalls": 0,
+    "usageReceiptAvailable": false,
+    "costComputed": false
+  },
+  "claim": {
+    "allowed": "Luna Max Validation 参数与同一 3-task manifest 已完成只读 preflight；执行在访问 EnterpriseOps Gym 前被环境网络策略阻断。",
+    "forbidden": "Luna Max 已完成、效果等同 Sol、成本降低 80%、Provider 已调用或 Held-out 已消费。"
+  },
+  "nextAction": "在允许访问本机 EnterpriseOps Gym（127.0.0.1:8001）的 PAW 沙盒/Runtime 中重新执行同一 Validation；不得改任务、Prompt、Tool、Verifier 或 Held-out。"
+}

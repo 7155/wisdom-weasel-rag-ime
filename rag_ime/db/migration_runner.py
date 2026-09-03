@@ -6,6 +6,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -130,7 +131,31 @@ def latest_migration_version(
 
 
 def load_migrations(migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR) -> tuple[Migration, ...]:
-    root = Path(migrations_dir)
+    root = Path(migrations_dir).resolve(strict=False)
+    if root == DEFAULT_MIGRATIONS_DIR.resolve(strict=False):
+        return _load_default_migrations()
+    return _read_migrations(root)
+
+
+@lru_cache(maxsize=1)
+def _load_default_migrations() -> tuple[Migration, ...]:
+    """Read packaged migration sources once for this process generation.
+
+    Every Store still verifies the live database's applied versions and
+    checksums.  Only the immutable SQL resource reads are shared, avoiding
+    thousands of identical filesystem reads during Gateway construction.
+    """
+
+    return _read_migrations(DEFAULT_MIGRATIONS_DIR.resolve(strict=False))
+
+
+def clear_migration_source_cache() -> None:
+    """Forget packaged migration resources after a deliberate replacement."""
+
+    _load_default_migrations.cache_clear()
+
+
+def _read_migrations(root: Path) -> tuple[Migration, ...]:
     migrations: list[Migration] = []
     seen_versions: set[int] = set()
     for path in sorted(root.glob("*.sql")):

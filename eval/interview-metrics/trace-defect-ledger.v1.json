@@ -8,15 +8,15 @@
     "overlappingCategoriesMayNotBeSummed": true
   },
   "summary": {
-    "closedLoopDefects": 8,
+    "closedLoopDefects": 11,
     "mainRepositoryValidationBacked": 3,
-    "sourceLocalCandidateBacked": 5,
-    "additionalSourceTestOnlyRepairs": 3,
+    "sourceLocalCandidateBacked": 8,
+    "additionalSourceTestOnlyRepairs": 5,
     "skillIssuesFound": 3,
     "skillIssuesStructurallyFixed": 2,
     "skillIssuesDiagnosedOnly": 1,
-    "workflowImprovements": 5,
-    "toolRuntimeContractImprovements": 6
+    "workflowImprovements": 6,
+    "toolRuntimeContractImprovements": 9
   },
   "defects": [
     {
@@ -92,6 +92,39 @@
       "evidenceRefs": ["eval/interview-metrics/runs/cloudops-agent-validation-20260901.v1.json"]
     },
     {
+      "id": "CLOUDOPS-SEARCH-CONTRACT-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "candidate_verified_not_installed",
+      "owner": "cloudops_evidence_search_contract",
+      "rootCause": "The public search schema accepted a query that the implementation rejected through an undisclosed twelve-term limit.",
+      "evidenceRefs": ["eval/interview-metrics/runs/cloudops-evidence-search-validation-reject-20260901.v1.json"]
+    },
+    {
+      "id": "CLOUDOPS-USAGE-PROJECTION-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "candidate_verified_not_installed",
+      "owner": "cloudops_eval_usage_projection",
+      "rootCause": "All-zero provider usage was projected as available and then serialized as an empty object that the Eval usage contract rejected.",
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-evidence-search-validation-reject-20260901.v1.json",
+        "eval/interview-metrics/runs/cloudops-bounded-workflow-validation-reject-20260901.v1.json"
+      ]
+    },
+    {
+      "id": "CLOUDOPS-OBS-ID-001",
+      "headlineEligible": true,
+      "evidenceClass": "source_local_candidate",
+      "status": "candidate_verified_not_installed_quality_rejected",
+      "owner": "cloudops_observation_address_contract",
+      "rootCause": "The Agent had to transcribe a long opaque cache key into a later read call, creating an avoidable Tool-addressing failure.",
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-bounded-workflow-validation-reject-20260901.v1.json",
+        "eval/interview-metrics/runs/cloudops-observation-id-validation-reject-20260901.v1.json"
+      ]
+    },
+    {
       "id": "RAG-SOURCELOOP-001",
       "headlineEligible": false,
       "evidenceClass": "source_test_only",
@@ -117,6 +150,24 @@
       "owner": "rag_agentic_critic_contract",
       "rootCause": "The declared no-Tool critic contract conflicted with a hard gate that expected child retrieval receipts.",
       "evidenceRefs": ["scripts/run_rag_agent_ablation.py", "tests/test_run_rag_agent_ablation.py"]
+    },
+    {
+      "id": "CLOUDOPS-OBS-STALE-001",
+      "headlineEligible": false,
+      "evidenceClass": "source_test_only",
+      "status": "source_test_fixed_runtime_candidate_not_rebuilt",
+      "owner": "cloudops_observation_id_snapshot_binding",
+      "rootCause": "An observation ID could remain readable after the frozen suite snapshot changed.",
+      "evidenceRefs": ["rag_ime/cloudops_benchmark_agent.py", "tests/test_cloudops_benchmark_agent.py"]
+    },
+    {
+      "id": "CLOUDOPS-OBS-METADATA-001",
+      "headlineEligible": false,
+      "evidenceClass": "source_test_only",
+      "status": "source_test_fixed_runtime_candidate_not_rebuilt",
+      "owner": "cloudops_observation_id_descriptor_binding",
+      "rootCause": "An observation ID did not bind every public descriptor field, so index metadata drift did not invalidate it.",
+      "evidenceRefs": ["rag_ime/cloudops_benchmark_agent.py", "tests/test_cloudops_benchmark_agent.py"]
     }
   ],
   "skillIssues": [
@@ -129,7 +180,8 @@
     "host_private_fact_qrels_citation_gate",
     "label_blind_coverage_plan_and_same_session_audit",
     "no_tool_critic_and_bounded_parent_supplemental_retrieval",
-    "cloudops_blind_3x4_runner_with_retained_failure_trace_eval_sandbox_artifacts"
+    "cloudops_blind_3x4_runner_with_retained_failure_trace_eval_sandbox_artifacts",
+    "bounded_evidence_search_budgets_duplicate_rejection_and_fail_closed_candidate_stop"
   ],
   "toolRuntimeContractImprovements": [
     "source_loop_id_hash_only_envelope",
@@ -137,17 +189,21 @@
     "remove_unsupported_codex_max_output_tokens",
     "cloudops_capability_token_loopback_transport",
     "structured_observation_canonical_serialization",
-    "checkpoint_private_hash_bound_search_trace_and_public_redaction"
+    "checkpoint_private_hash_bound_search_trace_and_public_redaction",
+    "schema_aligned_search_term_normalization",
+    "unknown_preserving_usage_projection_and_per_case_private_receipt",
+    "case_scoped_short_observation_id_with_suite_snapshot_full_descriptor_binding_and_private_cache_key_resolution"
   ],
   "unresolved": [
     "RAG-SKILL-ABSTAIN-001",
     "RAG-AGENTIC-TERM-001",
     "TRACE-OBS-001",
     "RUNTIME-CROSSDB-CANCEL-001",
-    "RAG-GRAPHTAG-001"
+    "RAG-GRAPHTAG-001",
+    "CLOUDOPS-EVIDENCE-SEARCH-QUALITY-001"
   ],
   "claim": {
-    "allowed": "Across the PAW Trace/Eval, Enterprise RAG and CloudOps validation chains, eight unique contract defects have retained failure evidence plus a repair and verification boundary; three are backed by main-repository Validation/control-plane evidence and five by non-installed source-local candidate replay. Three additional repairs are source/test-only. The same evidence inventory contains three Skill issues, five workflow improvements and six Tool/Runtime contract improvements; these categories overlap and may not be added together.",
-    "forbidden": "Trace Agent autonomously found and fixed all eight defects, eleven production bugs were fixed, tests or retry counts equal defect counts, source-local validation receipts themselves prove installation, or unresolved/blocked items are repaired."
+    "allowed": "Across the PAW Trace/Eval, Enterprise RAG and CloudOps validation chains, eleven unique contract defects have retained failure evidence plus a repair and verification boundary; three are backed by main-repository Validation/control-plane evidence and eight by non-installed source-local candidate replay. Five additional repairs are source/test-only. The same evidence inventory contains three Skill issues, six workflow improvements and nine Tool/Runtime contract improvements; these categories overlap and may not be added together. The CloudOps observationId contract eliminated its Tool-addressing failure, while the corresponding workflow candidate was rejected because diagnosis quality regressed.",
+    "forbidden": "Trace Agent autonomously found and fixed all eleven defects, eleven production bugs were fixed, the observationId candidate improved diagnosis quality, tests or retry counts equal defect counts, source-local validation receipts themselves prove installation, or unresolved/blocked items are repaired."
   }
 }

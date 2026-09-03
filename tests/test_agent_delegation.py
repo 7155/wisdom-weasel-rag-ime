@@ -531,6 +531,154 @@ class AgentDelegationTests(unittest.TestCase):
             model_route_provider=model_route_provider,
         )
 
+    def test_wait_false_ack_and_status_do_not_hydrate_artifact_under_contention(self) -> None:
+        class _ArtifactBarrier:
+            def __init__(self) -> None:
+                self.entered = threading.Event()
+                self.release = threading.Event()
+
+            def __enter__(self):
+                self.entered.set()
+                if not self.release.wait(2):
+                    raise AssertionError("artifact worker did not receive release")
+                return self
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                return False
+
+        coordinator = self.coordinator()
+        barrier = _ArtifactBarrier()
+        coordinator.artifacts._lock = barrier
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "wait": False,
+                    "agent": "researcher",
+                    "task": "验证后台回执",
+                    **_TASK_CONTRACT,
+                },
+            )
+            batch = response["batch"]
+            run_id = str(batch["runs"][0]["id"])
+            self.assertTrue(barrier.entered.wait(2))
+
+            status = coordinator.status(
+                str(self.parent["id"]),
+                {"runId": run_id},
+            )
+            status_run = status["batch"]["runs"][0]
+            self.assertEqual(run_id, status_run["id"])
+            self.assertIn(status_run["state"], {"running", "completed"})
+            self.assertNotIn("artifact", status_run)
+
+            barrier.release.set()
+            final = coordinator.wait(str(batch["id"]))
+            final_run = final["runs"][0]
+            self.assertEqual("completed", final_run["state"])
+            self.assertIn("artifact", final_run)
+        finally:
+            barrier.release.set()
+            coordinator.close()
+
+    def test_room_permission_policy_controls_inherited_and_narrowed_children(self) -> None:
+        room_parent = self.sessions.create(
+            title="协作 Room 父会话",
+            mode="coordinator",
+            workspace_roots=[str(self.root)],
+        )
+        coordinator = self.coordinator(
+            room_context_provider=lambda session_id: (
+                {
+                    "permissionPolicy": {
+                        "schemaVersion": "rag-ime.room-permission-policy.v1",
+                        "room": {"executionMode": "full_trust"},
+                        "partner": {"executionMode": "inherit"},
+                        "toolAgent": {"executionMode": "inherit"},
+                    },
+                    "permissionPolicySource": "room",
+                }
+                if session_id == str(room_parent["id"])
+                else {}
+            )
+        )
+        try:
+            response = coordinator.delegate(
+                str(room_parent["id"]),
+                {
+                    "wait": False,
+                    "tasks": [
+                        {
+                            "agent": "researcher",
+                            "task": "执行 Room 默认授权任务",
+                            **_TASK_CONTRACT,
+                        },
+                        {
+                            "agent": "researcher",
+                            "task": "执行 Room 只读收窄任务",
+                            "access": "read_only",
+                            **_TASK_CONTRACT,
+                        },
+                    ],
+                },
+            )
+            inherited_run, narrowed_run = response["batch"]["runs"]
+            inherited = self.sessions.get(str(inherited_run["childSessionId"]))
+            narrowed = self.sessions.get(str(narrowed_run["childSessionId"]))
+            self.assertEqual("coordinator", inherited["mode"])
+            self.assertEqual("control-center-auto-approve-v1", inherited["toolProfileVersion"])
+            self.assertEqual([str(self.root.resolve()), "/"], inherited["workspaceRoots"])
+            self.assertTrue(inherited["projectContextEnabled"])
+            self.assertTrue(inherited["piSkillsEnabled"])
+            self.assertTrue(inherited["codexSkillsEnabled"])
+
+            self.assertEqual("assistant", narrowed["mode"])
+            self.assertEqual("subagent-readonly-v1", narrowed["toolProfileVersion"])
+            self.assertEqual("read_only", narrowed["executionMode"])
+            self.assertEqual([str(self.root.resolve())], narrowed["workspaceRoots"])
+            coordinator.wait(str(response["batch"]["id"]))
+
+            standalone = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "wait": True,
+                    "agent": "researcher",
+                    "task": "保持独立 Session 默认只读",
+                    **_TASK_CONTRACT,
+                },
+            )
+            standalone_child = self.sessions.get(
+                str(standalone["batch"]["runs"][0]["childSessionId"])
+            )
+            self.assertEqual("assistant", standalone_child["mode"])
+            self.assertEqual("subagent-readonly-v1", standalone_child["toolProfileVersion"])
+            self.assertEqual([], standalone_child["workspaceRoots"])
+            invalid_policy_coordinator = self.coordinator(
+                room_context_provider=lambda _session_id: {
+                    "permissionPolicy": {
+                        "schemaVersion": "wrong",
+                        "room": {"executionMode": "full_trust"},
+                        "partner": {"executionMode": "inherit"},
+                        "toolAgent": {"executionMode": "inherit"},
+                    }
+                }
+            )
+            try:
+                with self.assertRaisesRegex(ValueError, "schemaVersion"):
+                    invalid_policy_coordinator.delegate(
+                        str(room_parent["id"]),
+                        {
+                            "wait": False,
+                            "agent": "researcher",
+                            "task": "拒绝错误策略版本",
+                            **_TASK_CONTRACT,
+                        },
+                    )
+            finally:
+                invalid_policy_coordinator.close()
+        finally:
+            coordinator.close()
+
     def test_unrestricted_writable_children_inherit_parent_profile_and_root(self) -> None:
         for profile, execution_mode in (
             ("control-center-full-access-v1", "per_action"),
@@ -549,6 +697,7 @@ class AgentDelegationTests(unittest.TestCase):
                     str(parent["id"]),
                     {
                         "contextMode": "fresh",
+                        "wait": True,
                         "tasks": [
                             {
                                 "agent": "worker",
@@ -595,6 +744,7 @@ class AgentDelegationTests(unittest.TestCase):
                     str(parent["id"]),
                     {
                         "contextMode": "fresh",
+                        "wait": True,
                         "tasks": [
                             {
                                 "agent": "worker",
@@ -666,6 +816,7 @@ class AgentDelegationTests(unittest.TestCase):
             str(self.parent["id"]),
             {
                 "contextMode": "fresh",
+                "wait": True,
                 "tasks": [
                     {
                         "agent": "researcher",
@@ -776,6 +927,7 @@ class AgentDelegationTests(unittest.TestCase):
                     "agent": "researcher",
                     "task": "只读核对父 Session 工作区里的源码",
                     "access": "read_only",
+                    "wait": True,
                     **_TASK_CONTRACT,
                 },
             )["batch"]
@@ -818,6 +970,7 @@ class AgentDelegationTests(unittest.TestCase):
                 "access": "read_only",
                 "contextMode": "fork",
                 "forkEntryId": "latest",
+                "wait": True,
                 **_TASK_CONTRACT,
             },
         )
@@ -852,7 +1005,7 @@ class AgentDelegationTests(unittest.TestCase):
             with patch.object(self.sessions, "get", side_effect=stale_parent_get):
                 batch = coordinator.delegate(
                     parent_id,
-                    {"agent": "worker", "task": "只读子任务", **_TASK_CONTRACT},
+                    {"agent": "worker", "task": "只读子任务", "wait": True, **_TASK_CONTRACT},
                 )["batch"]
             child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
             self.assertEqual(child["toolProfileVersion"], "subagent-readonly-v1")
@@ -880,7 +1033,7 @@ class AgentDelegationTests(unittest.TestCase):
         try:
             response = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "researcher", "task": "核对检索证据", **_TASK_CONTRACT},
+                {"agent": "researcher", "task": "核对检索证据", "wait": True, **_TASK_CONTRACT},
             )
             self.assertEqual("completed", response["batch"]["state"])
             context, purpose = factory.contexts[0]
@@ -912,7 +1065,12 @@ class AgentDelegationTests(unittest.TestCase):
         try:
             response = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "researcher", "task": "核对共享 Host", **_TASK_CONTRACT},
+                {
+                    "wait": True,
+                    "agent": "researcher",
+                    "task": "核对共享 Host",
+                    **_TASK_CONTRACT,
+                },
             )
             run = response["batch"]["runs"][0]
             child_id = str(run["childSessionId"])
@@ -946,6 +1104,7 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "agent": "researcher",
                 "task": "读取任务证据",
+                "wait": True,
                 **_TASK_CONTRACT,
             },
         )
@@ -984,6 +1143,7 @@ class AgentDelegationTests(unittest.TestCase):
                 {
                     "agent": "researcher",
                     "task": "返回一条事件结果",
+                    "wait": True,
                     **_TASK_CONTRACT,
                 },
             )
@@ -1491,6 +1651,7 @@ class AgentDelegationTests(unittest.TestCase):
                 read_only, writable = coordinator.delegate(
                     str(self.parent["id"]),
                     {
+                        "wait": True,
                         "tasks": [
                             {
                                 "agent": "researcher",
@@ -1556,6 +1717,7 @@ class AgentDelegationTests(unittest.TestCase):
                     "task": "使用显式回退路由",
                     "modelProfile": "openai-codex/gpt-5.6-luna",
                     "thinkingLevel": "medium",
+                    "wait": True,
                     **_TASK_CONTRACT,
                 },
             )["batch"]["runs"][0]
@@ -1746,7 +1908,7 @@ class AgentDelegationTests(unittest.TestCase):
         try:
             independent = coordinator.delegate(
                 session_id,
-                {"agent": "researcher", "task": "不依赖当前 Todo", **_TASK_CONTRACT},
+                {"agent": "researcher", "task": "不依赖当前 Todo", "wait": True, **_TASK_CONTRACT},
             )["batch"]["runs"][0]
             self.assertEqual(independent["todoTask"], "")
             self.assertEqual(independent["todoPhase"], "")
@@ -1768,6 +1930,7 @@ class AgentDelegationTests(unittest.TestCase):
                     "task": "返回证据供主持会话核验",
                     **_TASK_CONTRACT,
                     "todoTask": todo_task,
+                    "wait": True,
                 },
             )["batch"]
             run = batch["runs"][0]
@@ -1849,6 +2012,7 @@ class AgentDelegationTests(unittest.TestCase):
                     "agent": "worker",
                     "task": "声称完成但不提供任何工具证据",
                     **_TASK_CONTRACT,
+                    "wait": True,
                 },
             )
 
@@ -1926,7 +2090,7 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator(_ManyTurnsAndToolsRuntime)
         batch = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "researcher", "task": "完成需要多轮检索的任务", **_TASK_CONTRACT},
+            {"agent": "researcher", "task": "完成需要多轮检索的任务", "wait": True, **_TASK_CONTRACT},
         )["batch"]
 
         run = batch["runs"][0]
@@ -1942,7 +2106,7 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator()
         batch = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "reviewer", "task": "检查受控 Artifact", **_TASK_CONTRACT},
+            {"agent": "reviewer", "task": "检查受控 Artifact", "wait": True, **_TASK_CONTRACT},
         )["batch"]
         artifact_id = str(batch["runs"][0]["artifact"]["artifactId"])
         other = self.sessions.create(title="其他主持会话")
@@ -1969,7 +2133,7 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator()
         batch = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "worker", "task": "只能使用父会话允许的工具", **_TASK_CONTRACT},
+            {"agent": "worker", "task": "只能使用父会话允许的工具", "wait": True, **_TASK_CONTRACT},
         )["batch"]
         child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
 
@@ -2004,6 +2168,7 @@ class AgentDelegationTests(unittest.TestCase):
                     "allowedTools": ["workspace_read", "workspace_patch"],
                     "piSkillsEnabled": True,
                     "codexSkillsEnabled": False,
+                    "wait": True,
                     **_TASK_CONTRACT,
                 },
             )["batch"]
@@ -2101,12 +2266,12 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator()
         first = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "delegate", "task": "第一层", **_TASK_CONTRACT},
+            {"agent": "delegate", "task": "第一层", "wait": True, **_TASK_CONTRACT},
         )["batch"]
         first_child = first["runs"][0]["childSessionId"]
         second = coordinator.delegate(
             str(first_child),
-            {"agent": "reviewer", "task": "第二层", **_TASK_CONTRACT},
+            {"agent": "reviewer", "task": "第二层", "wait": True, **_TASK_CONTRACT},
         )["batch"]
         self.assertEqual(second["depth"], 2)
         tree = coordinator.status(str(self.parent["id"]), {})["tree"]
@@ -2240,6 +2405,7 @@ class AgentDelegationTests(unittest.TestCase):
                 "task": "继承讨论并规划",
                 **_TASK_CONTRACT,
                 "contextMode": "fork",
+                "wait": True,
                 "_runtimeContext": _fork_context(
                     parent_file=parent_file,
                     child_file=child_file,
@@ -2294,6 +2460,7 @@ class AgentDelegationTests(unittest.TestCase):
                 "task": "保留后清理",
                 **_TASK_CONTRACT,
                 "contextMode": "fork",
+                "wait": True,
                 "_runtimeContext": _fork_context(
                     parent_file=parent_file,
                     child_file=child_file,
@@ -2467,7 +2634,7 @@ class AgentDelegationTests(unittest.TestCase):
             coordinator = self.coordinator(_SoftBudgetRuntime)
             batch = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "reviewer", "task": "接近输出预算但仍完成", **_TASK_CONTRACT},
+                {"agent": "reviewer", "task": "接近输出预算但仍完成", "wait": True, **_TASK_CONTRACT},
             )["batch"]
 
         run = batch["runs"][0]
@@ -2492,7 +2659,7 @@ class AgentDelegationTests(unittest.TestCase):
             )
             batch = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "worker", "task": "触发硬输出预算", **_TASK_CONTRACT},
+                {"agent": "worker", "task": "触发硬输出预算", "wait": True, **_TASK_CONTRACT},
             )["batch"]
 
         run = batch["runs"][0]
@@ -2531,7 +2698,7 @@ class AgentDelegationTests(unittest.TestCase):
             )
             batch = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "worker", "task": "共享 Host 子会话超预算", **_TASK_CONTRACT},
+                {"agent": "worker", "task": "共享 Host 子会话超预算", "wait": True, **_TASK_CONTRACT},
             )["batch"]
 
         run = batch["runs"][0]
