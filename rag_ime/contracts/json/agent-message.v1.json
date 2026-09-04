@@ -15,6 +15,7 @@
     "citations": {"type": "array", "items": {"type": "string"}},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "completedAtMs": {"type": ["integer", "null"]},
+    "clientMessageId": {"type": "string", "minLength": 1, "maxLength": 128},
     "provider": {"type": "string"},
     "model": {"type": "string"},
     "usage": {"$ref": "#/$defs/usage"}

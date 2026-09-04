@@ -37,6 +37,7 @@ from .agent_execution_policy import (
     ROOM_UNRESTRICTED_EXECUTION_MODE,
     auto_approve_policy_active,
     execution_policy_prompt,
+    workspace_scope_sha256,
 )
 from .room_permission_policy import (
     normalize_room_permission_policy,
@@ -4123,6 +4124,149 @@ class AgentService:
     ) -> dict[str, object]:
         return self.observations.snapshot(payload)
 
+    def _trace_diagnostic_source_environment(
+        self,
+        kind: str,
+        identifier: str,
+    ) -> Mapping[str, object] | None:
+        """Resolve project policy from the selected source, never UI hints."""
+
+        source: Mapping[str, object] | None = None
+        try:
+            if kind == "session":
+                source = self.sessions.get(identifier)
+            elif kind == "room":
+                room_snapshot = self.room_snapshot(identifier)
+                room = room_snapshot.get("room")
+                source = room if isinstance(room, Mapping) else None
+            elif kind == "run":
+                observation = self.observation_snapshot(
+                    {"runId": identifier, "limit": 100}
+                )
+                items = observation.get("items")
+                session_ids = (
+                    {
+                        str(item.get("sessionId") or "").strip()
+                        for item in items
+                        if isinstance(item, Mapping)
+                        and str(item.get("sessionId") or "").strip()
+                    }
+                    if isinstance(items, Sequence)
+                    and not isinstance(items, (str, bytes, bytearray))
+                    else set()
+                )
+                if len(session_ids) == 1:
+                    source = self.sessions.get(next(iter(session_ids)))
+        except (KeyError, ValueError):
+            return None
+        if not isinstance(source, Mapping):
+            return None
+        projected = dict(source)
+        roots = projected.get("workspaceRoots")
+        if isinstance(roots, Sequence) and not isinstance(
+            roots, (str, bytes, bytearray)
+        ):
+            projected["workspaceScopeSha256"] = workspace_scope_sha256(roots)
+        return projected
+
+    def _trace_diagnostic_project_roots(
+        self,
+        targets: Sequence[Mapping[str, object]],
+    ) -> list[str]:
+        """Return the ordered union of authoritative non-system source roots."""
+
+        roots: list[str] = []
+        for target in targets:
+            environment = self._trace_diagnostic_source_environment(
+                str(target.get("kind") or ""),
+                str(target.get("id") or ""),
+            )
+            if not isinstance(environment, Mapping):
+                continue
+            source_roots = environment.get("workspaceRoots")
+            if not isinstance(source_roots, Sequence) or isinstance(
+                source_roots, (str, bytes, bytearray)
+            ):
+                continue
+            for value in source_roots:
+                root = str(value or "").strip()
+                if root and root != "/" and root not in roots:
+                    roots.append(root)
+        return roots
+
+    def _assert_trace_diagnostic_project_binding(
+        self,
+        session: Mapping[str, object],
+        targets: Sequence[Mapping[str, object]],
+        *,
+        frozen_environment: Mapping[str, object] | None = None,
+    ) -> None:
+        """Require exact source-project identity beside the `/` capability."""
+
+        for target in targets:
+            environment = self._trace_diagnostic_source_environment(
+                str(target.get("kind") or ""),
+                str(target.get("id") or ""),
+            )
+            source_roots = environment.get("workspaceRoots") if environment else None
+            if (
+                not isinstance(source_roots, Sequence)
+                or isinstance(source_roots, (str, bytes, bytearray))
+                or not any(str(root or "").strip() not in {"", "/"} for root in source_roots)
+            ):
+                raise ValueError(
+                    "binding_required: select a project for every Trace source before diagnosis"
+                )
+        expected_roots = self._trace_diagnostic_project_roots(targets)
+        if not expected_roots:
+            raise ValueError(
+                "binding_required: select a project for every Trace source before diagnosis"
+            )
+        actual_roots = [
+            str(root or "").strip()
+            for root in session.get("workspaceRoots", [])
+            if str(root or "").strip() and str(root or "").strip() != "/"
+        ]
+        if actual_roots != expected_roots:
+            raise ValueError(
+                "Trace diagnostic Session project workspace binding does not match frozen source targets"
+            )
+        if not isinstance(frozen_environment, Mapping):
+            return
+        frozen_rows = frozen_environment.get("targets")
+        if not isinstance(frozen_rows, Sequence) or isinstance(
+            frozen_rows, (str, bytes, bytearray)
+        ):
+            raise ValueError("Trace diagnostic frozen project workspace binding is unavailable")
+        frozen_by_key = {
+            str(row.get("targetKey") or ""): str(
+                row.get("workspaceScopeSha256") or ""
+            )
+            for row in frozen_rows
+            if isinstance(row, Mapping)
+        }
+        for target in targets:
+            target_key = str(target.get("targetKey") or "")
+            if target_key not in frozen_by_key:
+                raise ValueError(
+                    "Trace diagnostic frozen project workspace binding is incomplete"
+                )
+            environment = self._trace_diagnostic_source_environment(
+                str(target.get("kind") or ""),
+                str(target.get("id") or ""),
+            )
+            roots = environment.get("workspaceRoots") if environment else []
+            current_hash = (
+                workspace_scope_sha256(roots)
+                if isinstance(roots, Sequence)
+                and not isinstance(roots, (str, bytes, bytearray))
+                else ""
+            )
+            if current_hash != frozen_by_key[target_key]:
+                raise ValueError(
+                    "Trace diagnostic source project workspace binding changed after inspection"
+                )
+
     def trace_diagnostic_inspection(
         self,
         payload: Mapping[str, object],
@@ -4148,15 +4292,7 @@ class AgentService:
             return list(items)
 
         def environment_reader(kind: str, identifier: str) -> Mapping[str, object] | None:
-            # Only the Session store owns these policy/runtime facts. Room and
-            # standalone run targets remain explicitly partial instead of
-            # inheriting the current machine's environment by accident.
-            if kind != "session":
-                return None
-            try:
-                return self.sessions.get(identifier)
-            except KeyError:
-                return None
+            return self._trace_diagnostic_source_environment(kind, identifier)
 
         return inspect_trace_targets(
             targets=targets,
@@ -4187,6 +4323,14 @@ class AgentService:
                 "Trace diagnostic report requires the explicit full-trust diagnostic Session policy"
             )
         inspection = self.trace_diagnostic_inspection(payload)
+        self._assert_trace_diagnostic_project_binding(
+            session,
+            [
+                target
+                for target in inspection.get("targets", [])
+                if isinstance(target, Mapping)
+            ],
+        )
         title = str(payload.get("title") or "Trace 诊断报告")
         return self.trace_diagnostic_reports.create(
             diagnostic_session_id=diagnostic_session_id,
@@ -4311,6 +4455,35 @@ class AgentService:
         try:
             extract_trace_diagnostic_result(snapshot)
         except ValueError:
+            # Report creation intentionally precedes the first prompt, so an
+            # empty idle snapshot is still a valid pre-admission race. Once a
+            # durable public user message exists, however, idle proves that a
+            # diagnostic turn was admitted and has already settled. Leaving
+            # that report in ``generating`` would make a missing/invalid result
+            # permanent (for example after a long tool-only turn whose final
+            # answer was lost).
+            items = snapshot.get("items")
+            report_created_at_ms = report.get("createdAtMs")
+            admitted = (
+                isinstance(items, Sequence)
+                and not isinstance(items, (str, bytes, bytearray))
+                and isinstance(report_created_at_ms, int)
+                and not isinstance(report_created_at_ms, bool)
+                and any(
+                    isinstance(item, Mapping)
+                    and str(item.get("role") or "") == "user"
+                    and isinstance(item.get("createdAtMs"), int)
+                    and not isinstance(item.get("createdAtMs"), bool)
+                    and int(item["createdAtMs"]) >= report_created_at_ms
+                    for item in items
+                )
+            )
+            if admitted:
+                return self.trace_diagnostic_reports.fail(
+                    str(report["reportId"]),
+                    expected_revision=int(report["revision"]),
+                    reason="诊断 Session 未生成可校验的结构化报告。",
+                )
             return dict(report)
         return self.finalize_trace_diagnostic_report(
             str(report["reportId"]),
@@ -4339,17 +4512,46 @@ class AgentService:
         report = self.trace_diagnostic_reports.get(report_id)
         if report is not None:
             targets = report.get("targets")
+            report_targets = (
+                [target for target in targets if isinstance(target, Mapping)]
+                if isinstance(targets, Sequence)
+                and not isinstance(targets, (str, bytes, bytearray))
+                else []
+            )
+            inspection = report.get("inspection")
+            environment = (
+                inspection.get("environment")
+                if isinstance(inspection, Mapping)
+                else None
+            )
+            diagnostic_session_id = str(
+                report.get("diagnosticSessionId") or ""
+            ).strip()
+            if diagnostic_session_id:
+                diagnostic_session = self.sessions.get(diagnostic_session_id)
+                self._assert_trace_diagnostic_project_binding(
+                    diagnostic_session,
+                    report_targets,
+                    frozen_environment=(
+                        environment if isinstance(environment, Mapping) else None
+                    ),
+                )
+            self._assert_trace_diagnostic_project_binding(
+                repair_session,
+                report_targets,
+                frozen_environment=(
+                    environment if isinstance(environment, Mapping) else None
+                ),
+            )
             source_target = next(
                 (
                     target
-                    for target in targets
+                    for target in report_targets
                     if isinstance(target, Mapping)
                     and str(target.get("targetKey") or "") == source_scope
                 ),
                 None,
-            ) if isinstance(targets, Sequence) and not isinstance(
-                targets, (str, bytes, bytearray)
-            ) else None
+            )
             if isinstance(source_target, Mapping):
                 source_kind = str(source_target.get("kind") or "")
                 source_id = str(source_target.get("id") or "")
@@ -4463,6 +4665,9 @@ class AgentService:
 
         expected_revision = _trace_diagnostic_expected_revision(payload)
         receipt_id = _required_text(payload, "repairReceiptId")
+        verification_receipt_id = str(
+            payload.get("verificationReceiptId") or ""
+        ).strip()
         receipt_result = self.get_trace_repair_receipt(receipt_id)
         receipt = receipt_result.get("receipt")
         if not isinstance(receipt, Mapping):
@@ -4489,12 +4694,22 @@ class AgentService:
             repair_trace=repair_trace,
             eval_run=eval_run,
         )
+        verification_receipt: Mapping[str, object] | None = None
+        if verification_receipt_id:
+            verification_result = self.get_trace_verification_receipt(
+                verification_receipt_id
+            )
+            candidate = verification_result.get("verificationReceipt")
+            if not isinstance(candidate, Mapping):
+                raise ValueError("Trace verification receipt projection is invalid")
+            verification_receipt = candidate
         return self.trace_diagnostic_reports.verify_repair(
             report_id,
             expected_revision=expected_revision,
             receipt=receipt,
             eval_run=eval_run,
             comparison=comparison,
+            verification_receipt=verification_receipt,
         )
 
     def trace_diagnostic_report(self, report_id: str) -> dict[str, object]:
@@ -4509,7 +4724,8 @@ class AgentService:
     ) -> dict[str, object]:
         values = dict(payload or {})
         return self.trace_diagnostic_reports.list(
-            limit=_integer(values.get("limit"), default=100, minimum=1, maximum=100)
+            limit=_integer(values.get("limit"), default=100, minimum=1, maximum=100),
+            cursor=str(values.get("cursor") or "").strip() or None,
         )
 
     def list_eval_suites(
@@ -6371,7 +6587,8 @@ def _trace_diagnostic_session_policy_active(
         and str(session.get("executionMode") or "") == FULL_TRUST_EXECUTION_MODE
         and auto_approve_policy_active(session)
         and isinstance(workspace_roots, list)
-        and "/" in {str(root).strip() for root in workspace_roots}
+        and bool(workspace_roots)
+        and all(str(root).strip() and str(root).strip() != "/" for root in workspace_roots)
         and str(session.get("toolAllowlistMode") or "") == "profile"
         and all(
             session.get(key) is True

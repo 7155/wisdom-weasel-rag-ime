@@ -26,4 +26,14 @@ describe('SseParser', () => {
     parser.finish();
     expect(events).toEqual([]);
   });
+
+  it('discards an event when the stream ends before its empty-line frame boundary', () => {
+    const events: unknown[] = [];
+    const parser = new SseParser((event) => events.push(event));
+    parser.push('id: session-1:8\nevent: turn_completed\ndata: {"status":"completed"}');
+
+    parser.finish();
+
+    expect(events).toEqual([]);
+  });
 });

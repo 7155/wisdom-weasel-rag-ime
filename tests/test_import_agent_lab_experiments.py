@@ -100,9 +100,13 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
                 write=False,
                 imported_at_ms=123,
             )
-        self.assertEqual(receipt["experimentCount"], 22)
+        self.assertEqual(receipt["experimentCount"], 26)
         self.assertIn("cloudops.agent-validation-and-falsification.v1", receipt["experimentIds"])
         self.assertIn("agent-lab.model-cost.luna-max-validation.v1", receipt["experimentIds"])
+        self.assertIn("enterpriseops-csm.preloaded-tool-cost.v1", receipt["experimentIds"])
+        self.assertIn("enterprise-rag.sol-max-budget3-r3.v1", receipt["experimentIds"])
+        self.assertIn("cloudops.alert-first-sol-max.v1", receipt["experimentIds"])
+        self.assertIn("memory.maintenance-concise-contract-sol-max.v1", receipt["experimentIds"])
 
     def test_projects_preview_ablation_rows_from_evidence_and_run_receipts(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -159,7 +163,7 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
             "memory.maintenance-shadow-v4": ("rejected", "reject", 5),
             "cloudops.runtime-selection-repair-retry3.v1": ("rejected", "reject", 12),
         }
-        self.assertEqual(len(by_id), 22)
+        self.assertEqual(len(by_id), 26)
         for experiment_id, (status, decision, case_count) in required.items():
             experiment = by_id[experiment_id]
             self.assertEqual(experiment["status"], status, experiment_id)
@@ -181,6 +185,11 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
             any(item["dataset"]["heldOutConsumed"] for item in by_id.values() if item["experimentId"] in required)
         )
         runtime_repair = by_id["cloudops.runtime-selection-repair-retry3.v1"]
+        self.assertEqual(runtime_repair["projectionState"], "history")
+        self.assertEqual(
+            runtime_repair["supersededBy"],
+            "cloudops.validation-baseline.v1",
+        )
         self.assertEqual(runtime_repair["factors"][0]["name"], "workflow")
         self.assertEqual(runtime_repair["baseline"]["metrics"]["promptEntered"], 0)
         self.assertEqual(runtime_repair["candidate"]["metrics"]["promptEntered"], 1)
@@ -238,6 +247,8 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
         self.assertEqual(candidate["metrics"]["receiptCount"], 3)
         self.assertEqual(candidate["metrics"]["transcriptCount"], 0)
         self.assertLessEqual(len(candidate.get("outputExamples", [])), 1)
+        self.assertEqual(experiment["projectionState"], "history")
+        self.assertEqual(experiment["supersededBy"], "cloudops.validation-baseline.v1")
 
     def test_maps_public_ledger_without_private_output_examples(self) -> None:
         with tempfile.TemporaryDirectory(prefix="paw-agent-lab-import-") as tmp:

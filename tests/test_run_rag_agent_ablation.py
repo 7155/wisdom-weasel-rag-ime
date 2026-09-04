@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.run_rag_agent_ablation import (
+    REQUIRED_HARD_GATES,
     _append_lane_checkpoint_attempt,
     _append_lane_checkpoint_attempt_binding,
     _append_lane_checkpoint_attempt_started,
@@ -12,9 +17,12 @@ from scripts.run_rag_agent_ablation import (
     _answer_judge_failure_is_retryable,
     _answer_judge_format_repair_prompt,
     _answer_judge_prompt,
+    _build_candidate_decision,
     _answer_case_manifest,
     _authorize_held_out,
     _claim_held_out_gate,
+    _child_token_usage,
+    _combine_token_usage,
     _apply_answer_only_judgments,
     _apply_answer_judgments,
     _knowledge_base_retrieval_config,
@@ -32,6 +40,8 @@ from scripts.run_rag_agent_ablation import (
     _lane_checkpoint_report_projection,
     _lane_checkpoint_reusable_records,
     _open_lane_checkpoint,
+    _output_protocol_repair_needed,
+    _output_protocol_repair_prompt,
     _recover_lane_checkpoint_orphans,
     _recover_private_evaluation_session,
     _require_actual_metal_runtime,
@@ -43,17 +53,333 @@ from scripts.run_rag_agent_ablation import (
     _pin_evaluation_agent_config,
     _runtime_failure_category,
     _run_coverage_audit,
+    _run_output_protocol_repair,
     _run_lane,
     _resolve_evaluation_split,
     _search_parameter_policy_passes,
     _sha256_json,
     _started_tool_names,
+    _token_usage,
     _validate_answer_evidence_qrels,
     _validate_checkpoint_request,
 )
 
 
 class RunRagAgentAblationTests(unittest.TestCase):
+    def test_token_usage_counts_each_provider_request_without_double_counting_final_message(self) -> None:
+        events = [
+            {
+                "eventType": "provider_request_completed",
+                "payload": {
+                    "usage": {
+                        "input": 100,
+                        "output": 20,
+                        "cacheRead": 30,
+                        "cacheWrite": 0,
+                        "totalTokens": 150,
+                    }
+                },
+            },
+            {
+                "eventType": "provider_request_completed",
+                "payload": {
+                    "usage": {
+                        "inputTokens": 80,
+                        "outputTokens": 10,
+                        "cacheReadTokens": 40,
+                        "cacheWriteTokens": 0,
+                        "totalTokens": 130,
+                    }
+                },
+            },
+            {
+                "eventType": "message_completed",
+                "payload": {
+                    "usage": {
+                        "input": 80,
+                        "output": 10,
+                        "cacheRead": 40,
+                        "cacheWrite": 0,
+                        "totalTokens": 130,
+                    }
+                },
+            },
+        ]
+
+        self.assertEqual(
+            {
+                "inputTokens": 180,
+                "outputTokens": 30,
+                "cacheReadTokens": 70,
+                "cacheWriteTokens": 0,
+                "totalTokens": 280,
+                "usageSource": "provider_request_receipts",
+                "providerRequestCount": 2,
+                "categoryReceiptComplete": True,
+            },
+            _token_usage(events),
+        )
+
+    def test_token_usage_falls_back_to_legacy_completed_message(self) -> None:
+        usage = _token_usage(
+            [
+                {
+                    "eventType": "message_completed",
+                    "payload": {
+                        "usage": {
+                            "input": 12,
+                            "output": 3,
+                            "cacheRead": 5,
+                            "cacheWrite": 0,
+                            "totalTokens": 20,
+                        }
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual("message_completed_fallback", usage["usageSource"])
+        self.assertEqual(0, usage["providerRequestCount"])
+        self.assertEqual(20, usage["totalTokens"])
+        self.assertFalse(usage["categoryReceiptComplete"])
+
+    def test_child_token_usage_recovers_categories_from_durable_provider_observation(self) -> None:
+        class FakeObservations:
+            def __init__(self) -> None:
+                self.flush_calls: list[float] = []
+                self.snapshot_payloads: list[dict[str, object]] = []
+                self.event_projection_ready = False
+
+            def flush(self, *, timeout_seconds: float) -> bool:
+                self.flush_calls.append(timeout_seconds)
+                return True
+
+            def snapshot(self, payload: dict[str, object]) -> dict[str, object]:
+                self.snapshot_payloads.append(payload)
+                if not self.event_projection_ready:
+                    return {"items": []}
+                return {
+                    "items": [
+                        {
+                            "name": "provider.request",
+                            "phase": "provider_request_completed",
+                            "status": "completed",
+                            "metrics": {
+                                "inputTokens": 10,
+                                "outputTokens": 5,
+                                "cacheReadTokens": 40,
+                                "cacheWriteTokens": 0,
+                                "totalTokens": 55,
+                            },
+                        }
+                    ]
+                }
+
+        class FakeEvents:
+            def __init__(self, observations: FakeObservations) -> None:
+                self.observations = observations
+                self.flush_calls: list[float] = []
+
+            def flush(self, *, timeout: float) -> bool:
+                self.flush_calls.append(timeout)
+                self.observations.event_projection_ready = True
+                return True
+
+        class FakeService:
+            def __init__(self) -> None:
+                self.observations = FakeObservations()
+                self.events = FakeEvents(self.observations)
+
+            def messages(self, _session_id: str) -> dict[str, object]:
+                # Settled child snapshots deliberately omit Provider receipts.
+                return {"liveEvents": [{"eventType": "turn_completed"}]}
+
+        service = FakeService()
+        usage = _child_token_usage(
+            service,
+            {"childSessionId": "child-a", "usage": {"totalTokens": 55}},
+        )
+
+        self.assertEqual(10, usage["inputTokens"])
+        self.assertEqual(5, usage["outputTokens"])
+        self.assertEqual(40, usage["cacheReadTokens"])
+        self.assertEqual(0, usage["cacheWriteTokens"])
+        self.assertEqual(55, usage["totalTokens"])
+        self.assertEqual(1, usage["providerRequestCount"])
+        self.assertEqual("durable_provider_observation_receipts", usage["usageSource"])
+        self.assertTrue(usage["categoryReceiptComplete"])
+        self.assertEqual([2.0], service.events.flush_calls)
+        self.assertEqual([2.0], service.observations.flush_calls)
+        self.assertEqual(
+            [{"sessionId": "child-a", "limit": 500}],
+            service.observations.snapshot_payloads,
+        )
+
+    def test_child_token_usage_fails_closed_when_observation_total_disagrees(self) -> None:
+        class FakeObservations:
+            def flush(self, *, timeout_seconds: float) -> bool:
+                return True
+
+            def snapshot(self, _payload: dict[str, object]) -> dict[str, object]:
+                return {
+                    "items": [
+                        {
+                            "name": "provider.request",
+                            "phase": "provider_request_completed",
+                            "status": "completed",
+                            "metrics": {
+                                "inputTokens": 10,
+                                "outputTokens": 5,
+                                "cacheReadTokens": 40,
+                                "cacheWriteTokens": 0,
+                                "totalTokens": 55,
+                            },
+                        }
+                    ]
+                }
+
+        class FakeService:
+            observations = FakeObservations()
+
+            class events:
+                @staticmethod
+                def flush(*, timeout: float) -> bool:
+                    return timeout == 2.0
+
+            def messages(self, _session_id: str) -> dict[str, object]:
+                return {"liveEvents": []}
+
+        usage = _child_token_usage(
+            FakeService(),
+            {"childSessionId": "child-a", "usage": {"totalTokens": 56}},
+        )
+
+        self.assertEqual(56, usage["totalTokens"])
+        self.assertFalse(usage["categoryReceiptComplete"])
+        self.assertEqual("durable_provider_observation_receipts_mismatch", usage["usageSource"])
+
+    def test_child_token_usage_recovers_categories_from_settled_transcript(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-child-usage-") as directory:
+            transcript = Path(directory) / "child.jsonl"
+            transcript.write_text("\n".join([
+                json.dumps({"type": "session", "id": "pi-child"}),
+                json.dumps({
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "public result"}],
+                        "usage": {
+                            "input": 10,
+                            "output": 5,
+                            "cacheRead": 40,
+                            "cacheWrite": 0,
+                            "totalTokens": 55,
+                        },
+                    },
+                }),
+            ]) + "\n", encoding="utf-8")
+
+            class FakeObservations:
+                @staticmethod
+                def flush(*, timeout_seconds: float) -> bool:
+                    return timeout_seconds == 2.0
+
+                @staticmethod
+                def snapshot(_payload: dict[str, object]) -> dict[str, object]:
+                    return {"items": []}
+
+            class FakeSessions:
+                @staticmethod
+                def runtime_binding(_session_id: str) -> dict[str, object]:
+                    return {"transcriptRef": transcript.as_posix()}
+
+            class FakeService:
+                observations = FakeObservations()
+                sessions = FakeSessions()
+
+                class events:
+                    @staticmethod
+                    def flush(*, timeout: float) -> bool:
+                        return timeout == 2.0
+
+                @staticmethod
+                def messages(_session_id: str) -> dict[str, object]:
+                    return {"liveEvents": [{"eventType": "turn_completed"}]}
+
+            usage = _child_token_usage(
+                FakeService(),
+                {"childSessionId": "child-a", "usage": {"totalTokens": 55}},
+            )
+
+        self.assertEqual(10, usage["inputTokens"])
+        self.assertEqual(5, usage["outputTokens"])
+        self.assertEqual(40, usage["cacheReadTokens"])
+        self.assertEqual(0, usage["cacheWriteTokens"])
+        self.assertEqual(55, usage["totalTokens"])
+        self.assertEqual(1, usage["providerRequestCount"])
+        self.assertEqual("settled_child_transcript_usage", usage["usageSource"])
+        self.assertTrue(usage["categoryReceiptComplete"])
+
+    def test_combined_token_usage_keeps_oauth_cost_categories(self) -> None:
+        combined = _combine_token_usage(
+            {
+                "inputTokens": 100,
+                "outputTokens": 20,
+                "cacheReadTokens": 30,
+                "cacheWriteTokens": 0,
+                "totalTokens": 150,
+                "providerRequestCount": 2,
+                "categoryReceiptComplete": True,
+            },
+            [{
+                "inputTokens": 10,
+                "outputTokens": 5,
+                "cacheReadTokens": 40,
+                "cacheWriteTokens": 0,
+                "totalTokens": 55,
+                "providerRequestCount": 1,
+                "categoryReceiptComplete": True,
+            }],
+        )
+
+        self.assertEqual(110, combined["inputTokens"])
+        self.assertEqual(25, combined["outputTokens"])
+        self.assertEqual(70, combined["cacheReadTokens"])
+        self.assertEqual(205, combined["totalTokens"])
+        self.assertEqual(3, combined["providerRequestCount"])
+        self.assertTrue(combined["categoryReceiptComplete"])
+
+    def test_candidate_decision_ignores_losing_lane_quality_but_not_integrity(self) -> None:
+        lanes = [
+            {"lane": lane, "hardGates": dict.fromkeys(REQUIRED_HARD_GATES, True)}
+            for lane in ("baseline", "skill", "tuned", "agentic")
+        ]
+        lanes[0]["hardGates"]["citationResolution"] = False
+        lanes[1]["hardGates"]["abstention"] = False
+
+        accepted = _build_candidate_decision(lanes)
+
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual("keep", accepted["decision"])
+        self.assertEqual("quality_and_contract_only", accepted["decisionScope"])
+        self.assertEqual("downstream_cross_run_selection", accepted["costDecisionRole"])
+        self.assertEqual("diagnostic_only", accepted["latencyDecisionRole"])
+        self.assertEqual(
+            ["baseline:citationResolution", "skill:abstention"],
+            accepted["losingLaneOutcomeFailures"],
+        )
+
+        lanes[2]["hardGates"]["terminalCompletion"] = False
+        integrity_rejected = _build_candidate_decision(lanes)
+        self.assertFalse(integrity_rejected["accepted"])
+        self.assertIn("tuned:terminalCompletion", integrity_rejected["failedHardGates"])
+
+        lanes[2]["hardGates"]["terminalCompletion"] = True
+        lanes[3]["hardGates"]["citationResolution"] = False
+        candidate_rejected = _build_candidate_decision(lanes)
+        self.assertFalse(candidate_rejected["accepted"])
+        self.assertIn("agentic:citationResolution", candidate_rejected["failedHardGates"])
+
     @staticmethod
     def _held_out_authority() -> tuple[dict[str, object], dict[str, object]]:
         retrieval_config = {"mode": "hybrid"}
@@ -2318,6 +2644,31 @@ class RunRagAgentAblationTests(unittest.TestCase):
             _started_tool_names(merged, messages),
         )
 
+    def test_snapshot_tool_evidence_deduplicates_by_call_even_when_event_ids_differ(self) -> None:
+        primary = [{
+            "eventId": "runtime:event:1",
+            "eventType": "tool_started",
+            "payload": {
+                "toolCallId": "call-agents",
+                "toolName": "agents",
+                "args": {"op": "delegate"},
+            },
+        }]
+        durable_projection = [{
+            "eventId": "runtime:history-tool:other-id",
+            "eventType": "tool_started",
+            "payload": {
+                "toolCallId": "call-agents",
+                "toolName": "agents",
+                "args": {"op": "delegate"},
+            },
+        }]
+
+        merged = _merge_event_evidence(primary, durable_projection)
+
+        self.assertEqual(1, len(merged))
+        self.assertEqual(1, len(_agents_tool_receipts(merged)))
+
     def test_provider_transient_retry_distinguishes_gateway_progress(self) -> None:
         events = [
             {
@@ -2399,6 +2750,35 @@ class RunRagAgentAblationTests(unittest.TestCase):
             hashlib.sha256(held_out.encode("utf-8")).hexdigest(),
         )
 
+    def test_agentic_prompt_supports_a_frozen_lower_supplemental_budget(self) -> None:
+        common = {
+            "lane": "agentic",
+            "run_id": "run",
+            "cases": [{"queryId": "q-1", "query": "问题"}],
+            "retrieval_config": {
+                "mode": "dense",
+                "rerankEnabled": True,
+                "rerankCandidateDepth": 40,
+            },
+            "evaluation_mode": "answer-only",
+            "evaluation_split": "validation",
+        }
+        incumbent = _lane_prompt(**common, agentic_supplemental_limit=6)
+        candidate = _lane_prompt(**common, agentic_supplemental_limit=3)
+
+        self.assertIn("全局最多 6 次补检索", incumbent)
+        self.assertIn("全局最多 3 次补检索", candidate)
+        self.assertNotEqual(
+            hashlib.sha256(incumbent.encode("utf-8")).hexdigest(),
+            hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
+        )
+        for lane in ("baseline", "skill", "tuned"):
+            lane_common = {**common, "lane": lane}
+            self.assertEqual(
+                _lane_prompt(**lane_common, agentic_supplemental_limit=6),
+                _lane_prompt(**lane_common, agentic_supplemental_limit=3),
+            )
+
     def test_coverage_audit_is_label_blind_bounded_and_no_tool(self) -> None:
         cases = [
             {
@@ -2475,6 +2855,93 @@ class RunRagAgentAblationTests(unittest.TestCase):
             service,
             session_id="private-session",
             turn_id="audit-turn",
+            timeout_seconds=30,
+        )
+
+    def test_output_protocol_repair_is_schema_only_and_preserves_existing_answers(self) -> None:
+        cases = [
+            {
+                "queryId": "private-query-id",
+                "evaluationCaseId": "case-01",
+                "query": "Which runtime optimizations are explicitly listed?",
+                "answer": "PRIVATE GOLD MUST NOT APPEAR",
+            }
+        ]
+        incomplete = (
+            '{"cases":[{"caseId":"case-01","answer":"batching",'
+            '"citations":["K2"],"abstained":false}]}'
+        )
+
+        self.assertTrue(
+            _output_protocol_repair_needed(cases=cases, assistant_text=incomplete)
+        )
+        prompt = _output_protocol_repair_prompt(
+            cases=cases,
+            assistant_text=incomplete,
+        )
+
+        self.assertIn("不得调用任何 Tool", prompt)
+        self.assertIn("只修复 JSON 协议", prompt)
+        self.assertIn("保持已有 answer、citations、abstained 原值", prompt)
+        self.assertIn('"caseId":"case-01"', prompt)
+        self.assertIn('"caseId":"safety-not-found"', prompt)
+        self.assertIn('"answer":"batching"', prompt)
+        self.assertNotIn("PRIVATE GOLD", prompt)
+        self.assertNotIn("private-query-id", prompt)
+
+        complete = (
+            '{"cases":['
+            '{"caseId":"case-01","answer":"batching",'
+            '"citations":["K2"],"abstained":false},'
+            '{"caseId":"safety-not-found","answer":"证据不足",'
+            '"citations":[],"abstained":true}]}'
+        )
+        self.assertFalse(
+            _output_protocol_repair_needed(cases=cases, assistant_text=complete)
+        )
+
+    def test_run_output_protocol_repair_uses_one_same_session_turn(self) -> None:
+        from unittest.mock import patch
+
+        class FakeService:
+            def __init__(self) -> None:
+                self.prompts: list[tuple[str, dict[str, object]]] = []
+
+            def prompt(
+                self,
+                session_id: str,
+                payload: dict[str, object],
+            ) -> dict[str, object]:
+                self.prompts.append((session_id, payload))
+                return {"turnId": "protocol-repair-turn"}
+
+        service = FakeService()
+        with patch(
+            "scripts.run_rag_agent_ablation._wait_for_terminal",
+            return_value=([{"eventType": "turn_completed"}], "turn_completed"),
+        ) as wait:
+            receipt, events, terminal = _run_output_protocol_repair(
+                service,
+                session_id="private-session",
+                cases=[
+                    {
+                        "evaluationCaseId": "case-01",
+                        "query": "Which runtime optimizations are listed?",
+                    }
+                ],
+                assistant_text='{"cases":[]}',
+                timeout_seconds=30,
+            )
+
+        self.assertEqual("protocol-repair-turn", receipt["turnId"])
+        self.assertEqual([{"eventType": "turn_completed"}], events)
+        self.assertEqual("turn_completed", terminal)
+        self.assertEqual("private-session", service.prompts[0][0])
+        self.assertIn("不得调用任何 Tool", str(service.prompts[0][1]["message"]))
+        wait.assert_called_once_with(
+            service,
+            session_id="private-session",
+            turn_id="protocol-repair-turn",
             timeout_seconds=30,
         )
 
@@ -2616,11 +3083,15 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertIn("只有 partial_direct", prompt)
         self.assertIn("不得把省下的配额转移给 none_direct", prompt)
         self.assertIn("attention/kernel", prompt)
+        self.assertIn("suggested quantization 只表示建议", prompt)
+        self.assertIn("quantization-friendly execution path", prompt)
         self.assertIn("hosted、Dedicated、Private、add-on", prompt)
         self.assertIn("不得依赖默认值或省略 rerank 参数", prompt)
         self.assertIn("rerank=true", prompt)
         self.assertIn("rerankCandidateDepth=40", prompt)
-        self.assertIn("topK=10", prompt)
+        self.assertIn("topK=5", prompt)
+        self.assertIn("第一轮 top-5", prompt)
+        self.assertNotIn("第一轮 top-10", prompt)
         self.assertIn("mode=lexical、topK=3、threshold=0、rerank=false", prompt)
         self.assertIn("最多三条", prompt)
         self.assertIn("不超过 160 字", prompt)
@@ -2630,6 +3101,9 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertIn("最终合成以父级 search 正文为唯一事实依据", prompt)
         self.assertIn("委派返回后不再执行第二轮 coverage audit", prompt)
         self.assertIn("所有直接佐证来源", prompt)
+        self.assertIn("决定目标是否成立的限定词", prompt)
+        self.assertIn("示例、草案、建议或候选值", prompt)
+        self.assertIn("整条 case 必须 abstained=true", prompt)
         self.assertNotIn("b" * 32, prompt)
 
     def test_agentic_prompt_uses_one_batch_coverage_critic(self) -> None:
@@ -2781,6 +3255,14 @@ class RunRagAgentAblationTests(unittest.TestCase):
                 cases=cases,
             )
         )
+        self.assertFalse(
+            _agentic_parent_query_policy_passes(
+                ledger,
+                parent_session_id="parent",
+                cases=cases,
+                max_supplemental_total=1,
+            )
+        )
         ledger["items"][0]["args"]["query"] = "缩短问题"
         self.assertFalse(
             _agentic_parent_query_policy_passes(
@@ -2811,6 +3293,75 @@ class RunRagAgentAblationTests(unittest.TestCase):
             }
             for index in range(5)
         )
+        self.assertFalse(
+            _agentic_parent_query_policy_passes(
+                ledger,
+                parent_session_id="parent",
+                cases=cases,
+            )
+        )
+
+    def test_agentic_parent_query_policy_accepts_privacy_safe_query_receipts(self) -> None:
+        cases = [
+            {
+                "evaluationCaseId": "case-01",
+                "query": "原始问题一",
+            },
+            {
+                "evaluationCaseId": "case-02",
+                "query": "原始问题二",
+            },
+        ]
+
+        def safe_query_args(case_id: str, query: str) -> dict[str, object]:
+            return {
+                "evaluationCaseId": case_id,
+                "querySha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+                "queryChars": len(query),
+            }
+
+        ledger = {
+            "items": [
+                {
+                    "sessionId": "parent",
+                    "operation": "search",
+                    "ok": True,
+                    "args": safe_query_args("case-01", "原始问题一"),
+                },
+                {
+                    "sessionId": "parent",
+                    "operation": "search",
+                    "ok": True,
+                    "args": safe_query_args("case-02", "原始问题二"),
+                },
+                {
+                    "sessionId": "parent",
+                    "operation": "search",
+                    "ok": True,
+                    "args": safe_query_args(
+                        "safety-not-found",
+                        "虚构项目‘紫微零号’在2099年的预算批准人是谁？",
+                    ),
+                },
+                {
+                    "sessionId": "parent",
+                    "operation": "search",
+                    "ok": True,
+                    "args": safe_query_args("case-01", "主体一 槽位甲 直接证据"),
+                },
+            ]
+        }
+
+        self.assertTrue(
+            _agentic_parent_query_policy_passes(
+                ledger,
+                parent_session_id="parent",
+                cases=cases,
+            )
+        )
+        ledger["items"][0]["args"]["querySha256"] = hashlib.sha256(
+            "缩短问题".encode("utf-8")
+        ).hexdigest()
         self.assertFalse(
             _agentic_parent_query_policy_passes(
                 ledger,
@@ -2985,7 +3536,7 @@ class RunRagAgentAblationTests(unittest.TestCase):
                         "baseAlias": "benchmark",
                         "evaluationCaseId": "case-01",
                         "mode": "dense",
-                        "topK": 10,
+                        "topK": 5,
                         "threshold": 0,
                         "rerank": True,
                         "rerankCandidateDepth": 40,
@@ -3014,6 +3565,15 @@ class RunRagAgentAblationTests(unittest.TestCase):
                 retrieval_config=config,
             )
         )
+        ledger["items"][0]["args"]["topK"] = 10
+        self.assertFalse(
+            _search_parameter_policy_passes(
+                ledger,
+                lane="agentic",
+                retrieval_config=config,
+            )
+        )
+        ledger["items"][0]["args"]["topK"] = 5
         ledger["items"][1]["args"]["topK"] = 10
         self.assertFalse(
             _search_parameter_policy_passes(

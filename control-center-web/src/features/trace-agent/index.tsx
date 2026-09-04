@@ -20,17 +20,14 @@ import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   EmptyState,
 } from '@/components/primitives';
 import type { EvalRunV1 } from '@/contracts/generated/eval-run.v1';
+import type { ObservabilitySandboxRunListV1 } from '@/contracts/generated/observability-sandbox-run-list.v1';
+import type { SandboxRunV1 } from '@/contracts/generated/sandbox-run.v1';
 import type { TraceRepairReceiptV1 } from '@/contracts/generated/trace-repair-receipt.v1';
+import type { TraceReplayCaseV1 } from '@/contracts/generated/trace-replay-case.v1';
+import type { TraceVerificationReceiptV1 } from '@/contracts/generated/trace-verification-receipt.v1';
 import type { ObservationSnapshotV1 } from '@/contracts/generated/observation-snapshot.v1';
 import type { AgentRoomSnapshotV1 } from '@/contracts/generated/agent-room-snapshot.v1';
 import type { ObservabilityEvalListV1 } from '@/contracts/generated/observability-eval-list.v1';
@@ -66,6 +63,13 @@ import {
   type TraceRepairIdentity,
 } from './trace-repair';
 import {
+  parseTraceReplayCaseCreate,
+  parseTraceReplayCaseGet,
+  parseTraceVerificationCreate,
+  parseTraceVerificationGet,
+  TraceReplayValidationError,
+} from './trace-replay';
+import {
   TRACE_AGENT_MAX_TARGETS,
   traceTargetColorToken,
   traceTargetKey,
@@ -87,7 +91,6 @@ export const TRACE_DIAGNOSTIC_SESSION_POLICY = {
   toolProfileVersion: 'control-center-auto-approve-v1',
   executionMode: 'full_trust',
   dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
-  workspaceRoots: ['/'] as string[],
   toolAllowlistMode: 'profile',
   projectContextEnabled: true,
   piSkillsEnabled: true,
@@ -104,6 +107,9 @@ type TraceTarget = {
   updatedAtMs: number;
   detail: string;
   workspaceRoots: string[];
+  mode?: string;
+  executionMode?: string;
+  toolProfileVersion?: string;
   sourceSessionId?: string;
   workspaceBindingState?: 'ready' | 'unbound' | 'conflict';
   handoffOnly?: boolean;
@@ -128,6 +134,7 @@ type TraceRepairHandoff = {
   promptAccepted: boolean;
   findingId: string;
   identity: TraceRepairIdentity;
+  replayCase: TraceReplayCaseV1 | null;
 };
 
 type TraceRepairReceipt = TraceRepairReceiptV1;
@@ -137,6 +144,8 @@ type TraceEvalReceipt = {
   repairTraceId: string;
   repairReceipt: TraceRepairReceipt;
   evalRun: EvalRunV1;
+  replayCase: TraceReplayCaseV1 | null;
+  verificationReceipt: TraceVerificationReceiptV1 | null;
 };
 
 type TraceTargetCatalog = {
@@ -155,14 +164,19 @@ export function TraceAgentFeature() {
 type TraceDiagnosticReportSummary = TraceDiagnosticReportListV1['items'][number];
 
 function useTraceDiagnosticReports(transport: ReturnType<typeof useControlTransport>) {
-  return useQuery<TraceDiagnosticReportListV1>({
+  return useInfiniteQuery<TraceDiagnosticReportListV1>({
     queryKey: ['trace-agent', 'diagnostic-reports'],
-    queryFn: ({ signal }) => transport.request<TraceDiagnosticReportListV1>({
+    initialPageParam: '',
+    queryFn: ({ pageParam, signal }) => transport.request<TraceDiagnosticReportListV1>({
       pathId: 'observability.traceDiagnosticReports.list',
-      query: { limit: 100 },
+      query: {
+        limit: 100,
+        ...(pageParam ? { cursor: String(pageParam) } : {}),
+      },
       responseContract: 'trace-diagnostic-report-list.v1',
       signal,
     }),
+    getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -295,7 +309,15 @@ function TraceAgentWorkbench() {
   const visibleItemIdentity = visibleItems.map((item) => item.targetKey).join('|');
   const catalogTargetIdentity = catalogTargets.map((item) => item.targetKey).join('|');
   const persistedReportsQuery = useTraceDiagnosticReports(transport);
-  const persistedReports = persistedReportsQuery.data?.items ?? [];
+  const persistedReports = useMemo(() => {
+    const unique = new Map<string, TraceDiagnosticReportSummary>();
+    for (const page of persistedReportsQuery.data?.pages ?? []) {
+      for (const item of page.items) {
+        if (!unique.has(item.reportId)) unique.set(item.reportId, item);
+      }
+    }
+    return [...unique.values()];
+  }, [persistedReportsQuery.data?.pages]);
   const diagnosedByTargetKey = useMemo(() => {
     const result = new Map<string, TraceDiagnosticReportSummary>();
     for (const reportSummary of persistedReports) {
@@ -439,14 +461,84 @@ function TraceAgentWorkbench() {
     },
     [latestTraceId, runHistory.source, runTrace.data, runTrace.error, runTrace.isPending, selected],
   );
+  const bindingRequiredTargets = selectedTargets.filter((target) => (
+    traceProjectWorkspaceRoots([target]).length === 0
+  ));
+  const bindingTarget = bindingRequiredTargets.find((target) => target.targetKey === focusedKey)
+    ?? bindingRequiredTargets[0]
+    ?? null;
+  const bindProject = useMutation({
+    mutationFn: async (target: TraceTarget) => {
+      if (!transport.pickFiles) {
+        throw new Error('binding_required: 当前环境不能选择项目，请回到来源 Session 或 Room 完成绑定。');
+      }
+      const picked = await transport.pickFiles({
+        purpose: 'workspace-root',
+        selection: 'directory',
+        multiple: true,
+        maxFiles: 4,
+      });
+      const workspaceRoots = [...new Set(picked
+        .map((item) => item.path?.trim() ?? '')
+        .filter((root) => root && root !== '/'))];
+      if (!workspaceRoots.length) {
+        throw new Error('binding_required: 请选择至少一个具体项目目录，根目录 / 不能作为项目绑定。');
+      }
+      if (target.kind === 'room') {
+        await transport.request({
+          pathId: 'agent.room.archive',
+          params: { roomId: target.id },
+          body: {
+            workspaceRoots,
+            ...(target.executionMode === 'workspace_managed'
+              ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+              : {}),
+            ...(target.executionMode === 'full_trust'
+              ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+              : {}),
+          },
+        });
+      } else {
+        const sessionId = target.kind === 'session' ? target.id : target.sourceSessionId;
+        if (!sessionId) {
+          throw new Error('binding_required: 该运行没有唯一来源 Session；请回到来源对象选择项目后重试。');
+        }
+        const executionMode = target.executionMode || 'per_action';
+        await transport.request({
+          pathId: 'agent.session.mode.update',
+          params: { sessionId },
+          body: {
+            mode: 'coordinator',
+            executionMode,
+            toolProfileVersion: target.toolProfileVersion || 'control-center-v1',
+            toolAllowlistMode: 'profile',
+            projectContextEnabled: true,
+            workspaceRoots,
+            ...(executionMode === 'workspace_managed'
+              ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+              : {}),
+            ...(executionMode === 'full_trust'
+              ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+              : {}),
+          },
+        });
+      }
+      await targets.refetch();
+    },
+  });
   const start = useMutation({
     mutationFn: async (diagnosticTargets: TraceTarget[]) => {
       if (!diagnosticTargets.length) throw new Error('至少选择一个诊断对象。');
       if (diagnosticTargets.length > TRACE_AGENT_MAX_TARGETS) throw new Error(`最多选择 ${TRACE_AGENT_MAX_TARGETS} 个诊断对象。`);
+      const unbound = diagnosticTargets.filter((target) => traceProjectWorkspaceRoots([target]).length === 0);
+      if (unbound.length) {
+        throw new Error(`binding_required: ${unbound.map((target) => target.title || target.id).join('、')} 尚未绑定权威项目，请先选择项目。`);
+      }
       const primaryTarget = diagnosticTargets[0];
       const reportTitle = diagnosticTargets.length === 1
         ? `Trace 诊断 · ${primaryTarget.title}`
         : `Trace 诊断 · ${primaryTarget.title} 等 ${diagnosticTargets.length} 个对象`;
+      const diagnosticPolicy = traceDiagnosticSessionPolicy(diagnosticTargets);
       const created = await transport.request({
         pathId: 'agent.sessions.create',
         body: {
@@ -455,7 +547,7 @@ function TraceAgentWorkbench() {
           ownerAppId: TRACE_AGENT_OWNER_APP_ID,
           surfaceKey: 'diagnostic',
           title: reportTitle,
-          ...TRACE_DIAGNOSTIC_SESSION_POLICY,
+          ...diagnosticPolicy,
         },
       });
       const sessionId = createdSessionId(created);
@@ -466,7 +558,7 @@ function TraceAgentWorkbench() {
       await transport.request({
         pathId: 'agent.session.mode.update',
         params: { sessionId },
-        body: { ...TRACE_DIAGNOSTIC_SESSION_POLICY },
+        body: { ...diagnosticPolicy },
       });
       const persistedReport = await transport.request<TraceDiagnosticReportV1>({
         pathId: 'observability.traceDiagnosticReports.create',
@@ -528,6 +620,7 @@ function TraceAgentWorkbench() {
         findingId: string;
         identity: TraceRepairIdentity;
       };
+      let replayCase: TraceReplayCaseV1 | null = null;
       if (existingAuthorization?.state === 'authorized') {
         repairContext = {
           sessionId: existingAuthorization.repairSessionId,
@@ -538,6 +631,7 @@ function TraceAgentWorkbench() {
             failureRef: existingAuthorization.failureRef,
           },
         };
+        replayCase = await freezeTraceReplayCase(transport, reportAuthority, repairContext.identity);
       } else {
         const rawFindings = asRecord(reportAuthority.result).findings;
         const structuredFindings = Array.isArray(rawFindings) ? rawFindings.map(asRecord) : [];
@@ -558,6 +652,12 @@ function TraceAgentWorkbench() {
           throw new Error('诊断报告没有可绑定到修复目标的 Finding、失败证据或 source Trace。');
         }
         const identity = { sourceScope, sourceTraceId, failureRef } satisfies TraceRepairIdentity;
+        // Freeze and immediately re-read the immutable source Case before any
+        // writable candidate Session exists. Missing GT/Sandbox evidence stays
+        // explicitly unavailable; a started freeze that fails never falls
+        // through to an unverifiable candidate.
+        replayCase = await freezeTraceReplayCase(transport, reportAuthority, identity);
+        const repairPolicy = traceDiagnosticSessionPolicy([diagnostic.primaryTarget]);
         const created = await transport.request({
           pathId: 'agent.sessions.create',
           body: {
@@ -565,7 +665,7 @@ function TraceAgentWorkbench() {
             surfaceKind: 'extension_app',
             ownerAppId: TRACE_AGENT_OWNER_APP_ID,
             surfaceKey: 'repair',
-            ...TRACE_DIAGNOSTIC_SESSION_POLICY,
+            ...repairPolicy,
           },
         });
         const sessionId = createdSessionId(created);
@@ -573,7 +673,7 @@ function TraceAgentWorkbench() {
         await transport.request({
           pathId: 'agent.session.mode.update',
           params: { sessionId },
-          body: { ...TRACE_DIAGNOSTIC_SESSION_POLICY },
+          body: { ...repairPolicy },
         });
         const linkedReport = await transport.request<TraceDiagnosticReportV1>({
           pathId: 'observability.traceDiagnosticReport.repairAuthorize',
@@ -598,7 +698,7 @@ function TraceAgentWorkbench() {
           pathId: 'agent.session.prompt',
           params: { sessionId: repairContext.sessionId },
           body: {
-            message: repairPrompt(diagnostic, repairContext.identity),
+            message: repairPrompt(diagnostic, repairContext.identity, replayCase),
             clientMessageId: `trace-agent-repair:${repairContext.sessionId}:${diagnostic.reportId}`,
             delivery: 'prompt',
           },
@@ -608,7 +708,7 @@ function TraceAgentWorkbench() {
         // Authorization is durable and identifies the only repair Session.
         // Keep it recoverable instead of creating a conflicting replacement.
       }
-      return { ...repairContext, promptAccepted } satisfies TraceRepairHandoff;
+      return { ...repairContext, promptAccepted, replayCase } satisfies TraceRepairHandoff;
     },
     onSuccess: (next) => {
       setRepairHandoff(next);
@@ -637,6 +737,7 @@ function TraceAgentWorkbench() {
           sourceTraceId: authorization.sourceTraceId,
           failureRef: authorization.failureRef,
         },
+        replayCase: null,
       };
     });
   }, [persistedReport.data, report]);
@@ -710,6 +811,9 @@ function TraceAgentWorkbench() {
         identity,
         repairReceipt.repairReceiptId,
       );
+      const verificationReceipt = handoff.replayCase
+        ? await verifyTraceReplayCase(transport, handoff.replayCase, verifiedReceipt)
+        : null;
       const recheckResponse = await transport.request({
         pathId: 'observability.traceRepair.recheck',
         body: {
@@ -729,6 +833,9 @@ function TraceAgentWorkbench() {
         body: {
           expectedRevision: currentReport.revision,
           repairReceiptId: verifiedReceipt.repairReceiptId,
+          ...(verificationReceipt
+            ? { verificationReceiptId: verificationReceipt.verificationReceiptId }
+            : {}),
         },
         responseContract: 'trace-diagnostic-report.v1',
       });
@@ -738,6 +845,8 @@ function TraceAgentWorkbench() {
         repairTraceId,
         repairReceipt: recheckResult.receipt,
         evalRun: recheckResult.evalRun,
+        replayCase: handoff.replayCase,
+        verificationReceipt,
       } satisfies TraceEvalReceipt;
     },
     onSuccess: (next) => {
@@ -835,7 +944,7 @@ function TraceAgentWorkbench() {
             <div>
               <span className="trace-agent-kicker">选择 → 关联 → 解释</span>
               <h2>让一段运行记录自己说清楚问题</h2>
-              <p>诊断 Session 使用全信任运行，加载专用 Skill，可读取原始对话与根目录 / 下文件，并在证据充分时执行最小、可验证的项目修改。</p>
+              <p>诊断 Session 使用全信任运行，加载专用 Skill，可读取原始对话与来源对象精确绑定的项目目录，并在证据充分时执行最小、可验证的项目修改。</p>
             </div>
             <StatusBadge label="全信任诊断" tone="warning" />
           </header>
@@ -906,6 +1015,16 @@ function TraceAgentWorkbench() {
                     </div>
                   ))}
                 </div>
+                {persistedReportsQuery.hasNextPage ? (
+                  <Button
+                    loading={persistedReportsQuery.isFetchingNextPage}
+                    onClick={() => void persistedReportsQuery.fetchNextPage()}
+                    size="small"
+                    variant="quiet"
+                  >
+                    {persistedReportsQuery.isFetchingNextPage ? '正在加载更早报告' : '加载更早报告'}
+                  </Button>
+                ) : null}
               </section>
             ) : null}
             {selected ? (
@@ -917,11 +1036,24 @@ function TraceAgentWorkbench() {
               >
                 <div>
                   <strong>诊断已选的 {selectedTargets.length} 个对象</strong>
-                  <span>{selected.handoffOnly ? '仅依据结构化交接包 · 不伪造 Session / Room / Run 快照' : selected.kind === 'room' ? '当前 Room 会带入全部行星、WorkItems 和公开流转；当前焦点只负责预览' : selected.kind === 'run' ? '当前运行及关联 Trace 负责预览；启动时会提交所有勾选对象' : '当前焦点用于预览；启动时会把所有勾选对象作为一个冻结诊断范围'}</span>
+                  <span>{bindingRequiredTargets.length
+                    ? `binding_required · ${bindingRequiredTargets.length} 个来源没有权威项目绑定；请选择具体项目目录后再诊断。`
+                    : selected.handoffOnly ? '仅依据结构化交接包 · 不伪造 Session / Room / Run 快照' : selected.kind === 'room' ? '当前 Room 会带入全部行星、WorkItems 和公开流转；当前焦点只负责预览' : selected.kind === 'run' ? '当前运行及关联 Trace 负责预览；启动时会提交所有勾选对象' : '当前焦点用于预览；启动时会把所有勾选对象作为一个冻结诊断范围'}</span>
                 </div>
+                {bindingTarget ? (
+                  <Button
+                    disabled={bindProject.isPending}
+                    leadingIcon={bindProject.isPending ? <LoaderCircle className="ui-spin" size={15} /> : <FolderOpen size={15} />}
+                    onClick={() => bindProject.mutate(bindingTarget)}
+                    size="small"
+                    variant="secondary"
+                  >
+                    {bindProject.isPending ? '正在绑定项目' : '选择项目'}
+                  </Button>
+                ) : null}
                 <Button
                   aria-label={report ? '诊断已启动' : '开始诊断'}
-                  disabled={start.isPending || Boolean(report) || selectedTargets.length === 0}
+                  disabled={start.isPending || Boolean(report) || selectedTargets.length === 0 || bindingRequiredTargets.length > 0}
                   leadingIcon={start.isPending ? <LoaderCircle className="ui-spin" size={15} /> : <Sparkles size={15} />}
                   onClick={() => start.mutate(selectedTargets)}
                 >
@@ -936,6 +1068,9 @@ function TraceAgentWorkbench() {
                   >
                     打开诊断 Agent 对话
                   </Button>
+                ) : null}
+                {bindProject.error ? (
+                  <span aria-live="polite" role="alert">{publicErrorText(bindProject.error, 'binding_required: 项目绑定失败，请重试。')}</span>
                 ) : null}
               </div>
             ) : null}
@@ -1189,7 +1324,6 @@ function TraceAgentReport({
   persistedReport?: TraceDiagnosticReportV1;
   finalizeError: unknown;
 }) {
-  const [repairConfirmationOpen, setRepairConfirmationOpen] = useState(false);
   const persistedEval = evalReceipt?.evalRun ?? evalList?.items.find((item) => (
     item.mode === 'ai_judge'
     && item.metricAuthority === 'ai_judge_estimate'
@@ -1200,9 +1334,7 @@ function TraceAgentReport({
   const diagnosticReady = persistedReport?.status === 'completed';
   const diagnosticFailed = persistedReport?.status === 'failed';
   const diagnosticTimedOut = diagnosticSession.timedOut && !diagnosticReady && !diagnosticSession.error;
-  const handleRepairClick = () => {
-    setRepairConfirmationOpen(true);
-  };
+  const verificationReceipt = evalReceipt?.verificationReceipt ?? null;
   return (
     <section aria-label="Trace 诊断报告" className="trace-agent-result trace-agent-result--success">
       <div className="trace-agent-result__icon" aria-hidden="true"><CheckCircle2 size={20} /></div>
@@ -1233,7 +1365,7 @@ function TraceAgentReport({
             data-testid="trace-agent-repair"
             disabled={!diagnosticReady || repairState.isPending || Boolean(repairHandoff)}
             leadingIcon={repairState.isPending ? <LoaderCircle className="ui-spin" size={14} /> : <Wrench size={14} />}
-            onClick={handleRepairClick}
+            onClick={onRepair}
             variant="primary"
           >
             {repairHandoff ? (repairHandoff.promptAccepted ? '修复 Agent 已就绪' : '修复授权已保存') : repairState.isPending ? '正在交接修复' : '交给 Agent 修复'}
@@ -1242,22 +1374,6 @@ function TraceAgentReport({
             {report.traceId ? '回到 Trace 重跑诊断' : '回到原记录重跑诊断'}
           </Button>
         </div>
-        <Dialog open={repairConfirmationOpen && !repairHandoff} onOpenChange={setRepairConfirmationOpen}>
-          <DialogContent aria-modal="true" className="trace-agent-repair-confirmation" data-testid="trace-agent-repair-confirmation" hideClose>
-            <DialogHeader>
-              <DialogTitle>确认启动全信任修复 Session？</DialogTitle>
-              <DialogDescription className="trace-agent-repair-confirmation__copy">
-                <span>修复目标：{report.primaryTarget.title || report.primaryTarget.id}（{report.primaryTarget.kind} · {report.primaryTarget.id}）；其余 {Math.max(0, report.targets.length - 1)} 个对象只作为比较证据。</span>
-                <strong>确认后，修复 Session 可以访问完整磁盘（根目录 /）、使用全部 Tools，并自动批准每一次 Tool 操作，不再逐项询问。</strong>
-                <span>PAW 不会用来源工作区、路径、审批或哈希门禁阻拦；macOS TCC、Unix 文件权限等操作系统权限仍是最终边界。</span>
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <DialogClose asChild><Button size="small" variant="quiet">取消</Button></DialogClose>
-              <Button onClick={() => { setRepairConfirmationOpen(false); onRepair(); }} size="small" variant="primary">确认交给 Agent 修复</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
         <TraceSourceTimeline
           ariaLabel="诊断 Agent 对话与报告"
           description="这里直接读取诊断 Session 的权威时间线；工具过程、报告正文与失败状态都留在同一 Trace 页面。"
@@ -1304,7 +1420,9 @@ function TraceAgentReport({
             {repairHandoff.promptAccepted ? <CheckCircle2 size={15} /> : <TriangleAlert size={15} />}
             <span>
               {repairHandoff.promptAccepted
-                ? '已创建全信任修复 Agent Session；它可访问完整磁盘并使用全部 Tools，所有 Tool 操作自动批准。操作系统权限仍是最终边界。完成修改后，复检只读取已持久化、不可变的修复 Trace 中已记录的修改与通过测试证据，由 AI Judge 评审；等待的是这些证据与复检，不是逐项审批；此按钮不重跑命令、不进行同案 Trace 回放、不验证 source SHA，也不执行回滚。'
+                ? repairHandoff.replayCase
+                  ? `已在候选修改前冻结并复读 Replay Case ${repairHandoff.replayCase.replayCaseId}；完成修复后必须用同一 Case、ground-truth Eval 和回归集生成 Verification Receipt。全信任 Tool 权限已由唯一授权确定，不再重复确认。`
+                  : '已创建全信任修复 Agent Session，所有 Tool 操作自动批准；当前来源没有足够的 ground-truth Eval、Sandbox Replay Cohort 或 source SHA，无法虚构 Replay Case。仍可查看已持久化修复 Trace 与 AI Judge 辅助复检，但它不构成同 Case 验证。'
                 : '全信任修复授权和原修复 Session 已持久化，但修复任务尚未确认送达。重新发送会复用同一个授权 Session 和幂等消息标识，不会创建冲突 Session。'}
             </span>
             <Button leadingIcon={<ArrowUpRight size={13} />} onClick={() => openDiagnosticSession(desktop, repairHandoff.sessionId)} size="small">
@@ -1318,7 +1436,11 @@ function TraceAgentReport({
                 size="small"
                 variant="primary"
               >
-                {persistedEval ? '复检已持久化' : recheckState.isPending ? '正在复检修复 Trace 证据' : '复检修复 Trace 证据'}
+                {persistedEval
+                  ? repairHandoff.replayCase ? '同 Case 验证已持久化' : '复检已持久化'
+                  : recheckState.isPending
+                    ? repairHandoff.replayCase ? '正在同 Case 验证候选' : '正在复检修复 Trace 证据'
+                    : repairHandoff.replayCase ? '同 Case 验证候选' : '复检修复 Trace 证据'}
               </Button>
             ) : (
               <Button
@@ -1345,7 +1467,27 @@ function TraceAgentReport({
             <span>
               AI Judge 复检已持久化：{persistedEval.evalRunId} · {evalStatusLabel(persistedEval.status)}
             </span>
-            <small>{evalReceipt?.repairReceipt.sandboxStatus === 'not_required' ? '已记录的全信任 Session 终态测试证据：passed（未在 Host 沙盒复跑）' : `已记录的 Host 沙盒测试证据：${evalReceipt?.repairReceipt.sandboxStatus || '未知'} · ${evalReceipt?.repairReceipt.sandboxedTestCount ?? 0} 次`} · 诊断 Trace：{sourceTraceId || '未知'} · 修复 Trace：{repairTraceId || '未知'} · AI Judge 仅评审修复 Trace 中已记录的修改与通过测试证据，不伪装成人工验收；此按钮不重跑命令、不进行同案 Trace 回放、不验证 source SHA，也不执行回滚。</small>
+            <small>{evalReceipt?.repairReceipt.sandboxStatus === 'not_required' ? '已记录的全信任 Session 终态测试证据：passed（未在 Host 沙盒复跑）' : `已记录的 Host 沙盒测试证据：${evalReceipt?.repairReceipt.sandboxStatus || '未知'} · ${evalReceipt?.repairReceipt.sandboxedTestCount ?? 0} 次`} · 诊断 Trace：{sourceTraceId || '未知'} · 修复 Trace：{repairTraceId || '未知'} · {verificationReceipt ? 'AI Judge 是补充说明；最终 Keep / Reject 只绑定下面已复读的 Verification Receipt。' : 'AI Judge 仅评审修复 Trace 中已记录的修改与通过测试证据，不伪装成人工验收；此按钮不重跑命令、不进行同案 Trace 回放、不验证 source SHA，也不执行回滚。'}</small>
+          </div>
+        ) : null}
+        {verificationReceipt ? (
+          <div
+            aria-live="polite"
+            className={`trace-agent-repair-state trace-agent-repair-state--${verificationReceipt.decision === 'kept' ? 'success' : 'error'}`}
+            data-testid="trace-agent-verification-receipt"
+            role="status"
+          >
+            {verificationReceipt.decision === 'kept' ? <CheckCircle2 size={15} /> : <TriangleAlert size={15} />}
+            <span>
+              Verification Receipt · {verificationReceipt.decision === 'kept' ? 'Keep' : 'Reject'} · {verificationReceipt.verificationReceiptId}
+            </span>
+            <small>
+              质量 {verificationReceipt.comparison.metric}：{verificationReceipt.comparison.before} → {verificationReceipt.comparison.after}（{formatSignedDelta(verificationReceipt.comparison.absoluteDelta)}）
+              {' · '}延迟：{formatNullableComparison(verificationReceipt.efficiency.latencyMs)}
+              {' · '}Tokens：{formatNullableComparison(verificationReceipt.efficiency.totalTokens)}
+              {' · '}回归：{verificationReceipt.regression.passed ? '通过' : `失败 ${verificationReceipt.regression.failedEvalRunIds.join('、')}`}
+              {' · '}rollback target：{verificationReceipt.rollbackTarget}
+            </small>
           </div>
         ) : null}
         <dl className="trace-agent-report-meta">
@@ -2423,11 +2565,21 @@ function bindRunTargetWorkspace(
   }
   const sourceSession = sessionById.get(target.sourceSessionId);
   if (!sourceSession?.workspaceRoots.length) {
-    return { ...target, workspaceRoots: [], workspaceBindingState: 'unbound' };
+    return {
+      ...target,
+      workspaceRoots: [],
+      mode: sourceSession?.mode,
+      executionMode: sourceSession?.executionMode,
+      toolProfileVersion: sourceSession?.toolProfileVersion,
+      workspaceBindingState: 'unbound',
+    };
   }
   return {
     ...target,
     workspaceRoots: sourceSession.workspaceRoots,
+    mode: sourceSession.mode,
+    executionMode: sourceSession.executionMode,
+    toolProfileVersion: sourceSession.toolProfileVersion,
     workspaceBindingState: 'ready',
   };
 }
@@ -2452,6 +2604,9 @@ function targetItems(value: unknown, kind: TraceTargetKind): TraceTarget[] {
       updatedAtMs: numberValue(item.updatedAtMs, numberValue(item.createdAtMs)),
       detail,
       workspaceRoots,
+      mode: stringValue(item.mode),
+      executionMode: stringValue(item.executionMode),
+      toolProfileVersion: stringValue(item.toolProfileVersion),
     };
   }).filter((item) => Boolean(item.id));
 }
@@ -2500,6 +2655,171 @@ function terminalRepairTurnTrace(value: unknown): string {
     .map((item) => stringValue(item.turnId))
     .find(Boolean);
   return turnId ? `trace:turn:${turnId}` : '';
+}
+
+async function freezeTraceReplayCase(
+  transport: ReturnType<typeof useControlTransport>,
+  report: TraceDiagnosticReportV1,
+  identity: TraceRepairIdentity,
+): Promise<TraceReplayCaseV1 | null> {
+  const environment = asRecord(asRecord(report.inspection).environment);
+  const environmentTargets = Array.isArray(environment.targets)
+    ? environment.targets.map(asRecord)
+    : [];
+  const sourceSha256 = stringValue(
+    environmentTargets.find((target) => stringValue(target.targetKey) === identity.sourceScope)?.sourceSha256,
+  );
+  if (!/^[a-f0-9]{64}$/.test(sourceSha256)) return null;
+
+  const evals = await transport.request<ObservabilityEvalListV1>({
+    pathId: 'observability.evals.list',
+    query: { traceId: identity.sourceTraceId, limit: 100 },
+    responseContract: 'observability-eval-list.v1',
+  });
+  const baselineEval = [...evals.items]
+    .filter((item) => (
+      item.mode === 'ground_truth'
+      && item.metricAuthority === 'ground_truth'
+      && item.status === 'completed'
+      && Boolean(item.suiteBinding?.suiteId)
+      && Boolean(item.suiteBinding?.suiteRevision)
+      && typeof item.metrics.accuracy === 'number'
+      && item.metrics.accuracy < 1
+    ))
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+  if (!baselineEval) return null;
+
+  const sandboxes = await transport.request<ObservabilitySandboxRunListV1>({
+    pathId: 'observability.sandboxRuns.list',
+    query: { limit: 500 },
+    responseContract: 'observability-sandbox-run-list.v1',
+  });
+  const baselineSummary = [...sandboxes.items]
+    .filter((item) => (
+      item.status === 'completed'
+      && item.traceIds.includes(identity.sourceTraceId)
+      && item.evalRunIds.includes(baselineEval.evalRunId)
+    ))
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+  if (!baselineSummary) return null;
+  const baselineSandbox = await transport.request<SandboxRunV1>({
+    pathId: 'observability.sandboxRun.get',
+    params: { sandboxRunId: baselineSummary.sandboxRunId },
+    responseContract: 'sandbox-run.v1',
+  });
+  if (
+    !baselineSandbox.replayCohort
+    || baselineSandbox.replayCohort.suiteId !== baselineEval.suiteBinding?.suiteId
+    || baselineSandbox.replayCohort.suiteRevision !== baselineEval.suiteBinding?.suiteRevision
+  ) return null;
+
+  const request = {
+    schemaVersion: 'rag-ime.trace-replay-case-create.v1' as const,
+    sourceScope: identity.sourceScope,
+    failureRef: identity.failureRef,
+    sourceTraceId: identity.sourceTraceId,
+    baselineEvalRunId: baselineEval.evalRunId,
+    baselineSandboxRunId: baselineSandbox.sandboxRunId,
+    successMetric: 'accuracy',
+    successThreshold: 1,
+    rollbackTarget: `source-sha256:${sourceSha256}`,
+  };
+  const created = parseTraceReplayCaseCreate(
+    await transport.request({
+      pathId: 'observability.traceReplay.case.create',
+      body: request,
+    }),
+    request,
+  );
+  return parseTraceReplayCaseGet(
+    await transport.request({
+      pathId: 'observability.traceReplay.case.get',
+      params: { replayCaseId: created.replayCaseId },
+    }),
+    created,
+  );
+}
+
+async function verifyTraceReplayCase(
+  transport: ReturnType<typeof useControlTransport>,
+  replayCase: TraceReplayCaseV1,
+  repairReceipt: TraceRepairReceiptV1,
+): Promise<TraceVerificationReceiptV1> {
+  const evals = await transport.request<ObservabilityEvalListV1>({
+    pathId: 'observability.evals.list',
+    query: { traceId: repairReceipt.repairTraceId, limit: 100 },
+    responseContract: 'observability-eval-list.v1',
+  });
+  const repairEval = [...evals.items]
+    .filter((item) => (
+      item.mode === 'ground_truth'
+      && item.metricAuthority === 'ground_truth'
+      && item.status === 'completed'
+      && item.suiteBinding?.suiteId === replayCase.replayCohort.suiteId
+      && item.suiteBinding?.suiteRevision === replayCase.replayCohort.suiteRevision
+      && typeof item.metrics[replayCase.successCriterion.metric] === 'number'
+    ))
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+  if (!repairEval) {
+    throw new TraceReplayValidationError('候选修复尚无同一 Suite 的 ground-truth EvalRun。');
+  }
+
+  const sandboxes = await transport.request<ObservabilitySandboxRunListV1>({
+    pathId: 'observability.sandboxRuns.list',
+    query: { limit: 500 },
+    responseContract: 'observability-sandbox-run-list.v1',
+  });
+  const repairSummary = [...sandboxes.items]
+    .filter((item) => (
+      item.status === 'completed'
+      && item.traceIds.includes(repairReceipt.repairTraceId)
+      && item.evalRunIds.includes(repairEval.evalRunId)
+    ))
+    .sort((left, right) => right.updatedAtMs - left.updatedAtMs)[0];
+  if (!repairSummary) {
+    throw new TraceReplayValidationError('候选修复尚无绑定同 Case EvalRun 的 SandboxRun。');
+  }
+  const repairSandbox = await transport.request<SandboxRunV1>({
+    pathId: 'observability.sandboxRun.get',
+    params: { sandboxRunId: repairSummary.sandboxRunId },
+    responseContract: 'sandbox-run.v1',
+  });
+  if (JSON.stringify(repairSandbox.replayCohort) !== JSON.stringify(replayCase.replayCohort)) {
+    throw new TraceReplayValidationError('候选 SandboxRun 的 Replay Cohort 与冻结 Case 不一致。');
+  }
+  const regressionEvalRunIds = repairSandbox.evalRunIds.filter((evalRunId) => evalRunId !== repairEval.evalRunId);
+  if (!regressionEvalRunIds.length) {
+    throw new TraceReplayValidationError('同 Case 验证至少需要一个绑定到候选 SandboxRun 的回归 EvalRun。');
+  }
+  const request = {
+    schemaVersion: 'rag-ime.trace-verification-request.v1' as const,
+    replayCaseId: replayCase.replayCaseId,
+    repairReceiptId: repairReceipt.repairReceiptId,
+    repairEvalRunId: repairEval.evalRunId,
+    repairSandboxRunId: repairSandbox.sandboxRunId,
+    regressionEvalRunIds,
+  };
+  const created = parseTraceVerificationCreate(
+    await transport.request({
+      pathId: 'observability.traceReplay.verify',
+      body: request,
+    }),
+    {
+      replayCase,
+      repairReceiptId: repairReceipt.repairReceiptId,
+      repairTraceId: repairReceipt.repairTraceId,
+      repairEvalRunId: repairEval.evalRunId,
+      repairSandboxRunId: repairSandbox.sandboxRunId,
+      regressionEvalRunIds,
+    },
+  );
+  return parseTraceVerificationGet(
+    await transport.request({
+      pathId: 'observability.traceReplay.verification.get',
+      params: { verificationReceiptId: created.verificationReceiptId },
+    }),
+    created,
+  );
 }
 
 function traceRepairIdentity(report: TraceAgentReport): TraceRepairIdentity {
@@ -2624,14 +2944,44 @@ function evalStatusLabel(status: string): string {
   } as Record<string, string>)[status] ?? status;
 }
 
+function formatSignedDelta(value: number | null): string {
+  if (value === null) return '未知';
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function formatNullableComparison(value: { before: number | null; after: number | null; delta: number | null }): string {
+  if (value.before === null || value.after === null || value.delta === null) return '未知';
+  return `${value.before} → ${value.after}（${formatSignedDelta(value.delta)}）`;
+}
+
 function traceRecheckErrorText(value: unknown): string {
-  if (value instanceof TraceRepairValidationError) return value.message;
+  if (value instanceof TraceRepairValidationError || value instanceof TraceReplayValidationError) return value.message;
   return publicErrorText(value, '修复 Session 尚未形成可复检的 Trace。');
 }
 
 function createdSessionId(value: unknown): string {
   const payload = asRecord(value);
   return stringValue(asRecord(payload.session).id) || stringValue(payload.sessionId);
+}
+
+/**
+ * A Session's first workspace root is also its project/cwd identity. Keep the
+ * source projects as the durable identity. Full-trust system access is
+ * projected by the runtime and must never widen this persisted list to `/`.
+ */
+function traceDiagnosticSessionPolicy(targets: TraceTarget[]) {
+  const workspaceRoots = traceProjectWorkspaceRoots(targets);
+  return {
+    ...TRACE_DIAGNOSTIC_SESSION_POLICY,
+    workspaceRoots,
+  };
+}
+
+function traceProjectWorkspaceRoots(targets: TraceTarget[]): string[] {
+  return [...new Set(targets
+    .flatMap((target) => target.workspaceRoots)
+    .map((root) => root.trim())
+    .filter((root) => root && root !== '/'))];
 }
 
 function traceTargetFromHandoff(handoff: TraceAgentHandoff): TraceTarget {
@@ -2669,10 +3019,12 @@ function diagnosticPrompt(targets: TraceTarget[], traceId: string, reportId = ''
   const safeTargetTitle = redactTraceAgentText(primaryTarget.title, 180);
   const safeTraceId = redactTraceAgentText(traceId, 180);
   const focusHint = diagnosticFocusHint(primaryTarget, targets.length);
+  const projectRoots = traceProjectWorkspaceRoots(targets);
   return [
     `先调用 skill_load 加载 name=trace-agent-diagnostics；SkillRef=${TRACE_AGENT_SKILL_REF}。`,
     '',
     '这是一次全信任诊断与修复。可直接读取选定对象的原始对话、Trace 和根目录 / 下文件，无需逐项审批；确认根因后执行最小、可验证的项目修改，不把报告或猜测当成完成。',
+    `Project workspace binding（默认 cwd/context）：${projectRoots.join('、')}。根目录 / 是 full_trust 的读取/Tool 能力，不替代这个项目身份。`,
     `诊断对象：${primaryTarget.kind} ${safeTargetId}（${safeTargetTitle}）`,
     targets.length > 1 ? `本次冻结范围共 ${targets.length} 个对象：${targets.map((target) => `${target.kind}:${redactTraceAgentText(target.id, 120)}`).join('、')}` : '',
     reportId ? `网页报告 ID：${redactTraceAgentText(reportId, 180)}。诊断完成后必须输出结构化结果标记，供服务端持久化。` : '',
@@ -2759,8 +3111,13 @@ function diagnosticFocusHint(target: TraceTarget, targetCount: number): string {
   return targetCount > 1 ? `多对象可比性与 ${primary}` : primary;
 }
 
-function repairPrompt(report: TraceAgentReport, identity: TraceRepairIdentity = traceRepairIdentity(report)): string {
+function repairPrompt(
+  report: TraceAgentReport,
+  identity: TraceRepairIdentity = traceRepairIdentity(report),
+  replayCase: TraceReplayCaseV1 | null = null,
+): string {
   const primaryTarget = report.primaryTarget;
+  const projectRoots = traceProjectWorkspaceRoots([primaryTarget]);
   const handoff = {
     target: {
       kind: primaryTarget.kind,
@@ -2783,7 +3140,8 @@ function repairPrompt(report: TraceAgentReport, identity: TraceRepairIdentity = 
     diagnosticSessionId: redactTraceAgentText(report.sessionId, 180),
     diagnosticReportRef: `agent-session:${redactTraceAgentText(report.sessionId, 180)}`,
     traceId: report.traceId ? redactTraceAgentText(report.traceId, 180) : null,
-    repairSessionPolicy: TRACE_DIAGNOSTIC_SESSION_POLICY,
+    replayCase,
+    repairSessionPolicy: traceDiagnosticSessionPolicy([primaryTarget]),
     failedEvidence: report.evidence.map((item) => ({
       id: redactTraceAgentText(item.id, 180),
       source: redactTraceAgentText(item.source, 240),
@@ -2798,8 +3156,9 @@ function repairPrompt(report: TraceAgentReport, identity: TraceRepairIdentity = 
   return [
     '这是 Trace Agent 的候选修复交接。你是独立的全信任可写 Agent，请先复核证据和诊断 Session，再完成最小修复。',
     `修复目标是 primary failure：${primaryTarget.kind}:${redactTraceAgentText(primaryTarget.id, 180)}。其余诊断对象只用于比较和定位，不是新的修复目标；这是任务范围，不是文件系统权限限制。`,
+    `修复 Session 已继承来源 Project workspace binding（默认 cwd/context）：${projectRoots.join('、')}。根目录 / 仍是 full_trust 的读取/Tool 能力，不是项目身份。`,
     '用户已经在唯一确认中授予根目录 / 的全磁盘权限、全部 Tools 权限，并同意每一个 Tool 和 action 自动批准。不要再询问目录、ENABLE_FULL_TRUST、Tool 批准或任何 PAW 审批。',
-    '来源工作区、路径、workspace scope、approval hash 和来源/修复工作区是否相同都不是阻断条件；handoff 中的对象与路径只能作为导航线索，权限边界始终是 /。',
+    '来源 Project workspace binding 用作默认 cwd/context，不是权限门禁；URL handoff 中的路径只能作为导航线索，canonical Session/Room 绑定才是项目身份。full_trust 的权限边界始终是 /。',
     '只有 macOS TCC、Unix 文件权限和其他操作系统权限仍可能拒绝具体操作；遇到真实的 OS 拒绝时，报告该拒绝，不要把它误写成 PAW 审批问题。',
     '请优先定位根因，给出最小修复；完成后运行与问题直接相关的最小验证，并回报修改文件、实际 Tool 操作、验证结果以及如何回到 Trace 重跑诊断。',
     '',
@@ -2811,6 +3170,15 @@ function repairPrompt(report: TraceAgentReport, identity: TraceRepairIdentity = 
     `sourceScope: ${identity.sourceScope}`,
     `sourceTraceId: ${identity.sourceTraceId}`,
     `failureRef: ${identity.failureRef}`,
+    ...(replayCase ? [
+      `Replay Case 已在候选修改前冻结并复读：${replayCase.replayCaseId}`,
+      `必须复用 cohort：${JSON.stringify(replayCase.replayCohort)}`,
+      `成功标准：${replayCase.successCriterion.metric} ${replayCase.successCriterion.direction} ${replayCase.successCriterion.threshold}`,
+      `rollback target：${replayCase.rollbackTarget}`,
+      '候选完成后必须产生绑定同一 Case 的 ground-truth EvalRun、SandboxRun 和至少一个回归 EvalRun；不要用 AI Judge 估计代替。',
+    ] : [
+      '当前没有足够权威证据冻结 Replay Case；不要声称完成了同 Case 对照或 Keep / Reject 决策。',
+    ]),
     '',
     '完成修复与最小验证后，最终回复必须包含下列结构化报告，供界面核对范围；报告中的 ID、testStatus 都只是声明，不能替代实际 Session/Trace 证据：',
     'TRACE_REPAIR_EVIDENCE',

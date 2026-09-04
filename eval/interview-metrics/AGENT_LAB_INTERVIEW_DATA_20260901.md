@@ -16,8 +16,9 @@ App-owned Room，先补齐数据并确认评测合同；Facilitator 再一次并
 Memory）。候选实际运行前必须得到用户确认，且 Room 消息中包含：失败原因、要修复的
 具体问题、改动层、预期指标、保护门禁和验证方式。
 
-Validation 可在用户确认后自动执行；失败、回退和不可比候选都保留，不能删除或重跑到
-“好结果”。候选完成后，多个 Trace Reviewer 使用全新上下文并行检查前后 Agent Trace，
+Validation 可在用户确认后自动执行；失败、回退和不可比候选从“当前结果”移出，不再
+参与当前比较，但原始回执仍以只读历史保留，不能靠重跑覆盖成“好结果”。候选完成后，
+多个 Trace Reviewer 使用全新上下文并行检查前后 Agent Trace，
 只接收受限 evidence envelope、Trace Prompt 和 Trace Skill；Host-private Verifier
 负责最终通过/失败，Facilitator 只负责汇总。用户可以保留、继续下一轮或停止；达到该
 场景的目标即停止，不为穷举所有分支继续消耗调用。Luna 是每个场景里的 Model 候选，
@@ -40,7 +41,8 @@ Agent Lab Room 的对话、Session、沙盒和评测证据归 App owner 管理�
 | Execution policy | sandbox、network、workspace roots、approval | 候选修复能否在不影响 PAW 的沙盒落地？ | runtime identity、sandbox profile、workspace digest |
 | Human loop / Pricing | 审核点、授权、实际 API 价格 | 省钱是否建立在相同质量和相同 token 口径上？ | 审核权限、账单/usage receipt、价格日期与来源 |
 
-**实验原则：** 一次只改变一个主要变量或一组有明确因果关系的变量；先在 Validation 诊断，候选通过硬门禁后才允许一次性 Held-out。质量未达到同一水平时，不用 token、延迟或价格宣布“更高效”。
+**实验原则：** 一次只改变一个主要变量或一组有明确因果关系的变量；先在 Validation 诊断，候选通过硬门禁后才允许一次性 Held-out。质量未达到同一水平时，不用 token 或价格宣布“更高效”；延迟始终展示并用于发现循环、阻塞和 Runtime 异常，但不作为 Keep/Reject 硬门槛。
+“耗时不重要”不等于“没有终态也算成功”：只要 Agent 最终完成，耗时高低不影响质量门禁；若在运行预算内没有产生可验收结果，则按 terminal/protocol 失败，而不是按慢任务成功。
 
 ## 已有六张业务实验卡 + 一张成本门禁卡
 
@@ -172,7 +174,8 @@ Judge 输出还要经过确定性解析器：case/candidate 必须一一齐全�
 白名单、fact ID 必须来自本题，否则整次 Judge receipt fail closed。之后 Host 再用
 隐藏的 `fact → source/chunk/quote` qrels 独立检查 citation 是否可解析、每条必要事实是否
 真的被所引原文支持；Schema、终态、Tool contract、拒答和 citation 都是发布硬门禁，
-最后才比较 token、耗时和价格。因此 Judge 是语义评分层，不是唯一真相来源。
+质量通过后才比较 token 与价格；耗时按当前要求只保留为诊断信息，不阻止 Keep。因此
+Judge 是语义评分层，不是唯一真相来源。
 
 当前诚实边界：本项目已有匿名化、严格 JSON、逐事实 rubric、确定性 hard gate 和失败
 回执，但这批 RAG receipt 没有绑定一份“多位人工标注者与 Judge 的一致率”校准报告，
@@ -182,21 +185,38 @@ Judge 输出还要经过确定性解析器：case/candidate 必须一一齐全�
 实际例子：`qst_0474` 问的是 Redwood inference engine 明确列出的 serving-runtime
 优化。Judge 从题目和 reference 拆出 5 个必答事实：modern attention、continuous
 batching、KV/prefix cache、quantization-friendly path，以及同时感知 architecture、
-sequence length 和 hardware 的 kernel selection。旧 v20 receipt 中 baseline、Skill、
-tuned 都只覆盖 `F2 + F3`，没有矛盾、也没有额外无依据主张，但因为少了另外 3 项，仍
-统一判为 `incomplete`，不能因“答到两个关键词”给部分成功。`qst_0477` 则询问 4 类收入
-来源；候选覆盖 `F1–F4` 后 Judge 判 `correct`。但旧 receipt 中该答案的 citation support
-仍未通过 Host qrels，所以最终仍被发布硬门禁拒绝。这正好说明“语义答对”不等于“引用
-证据正确”。
+sequence length 和 hardware 的 kernel selection。v7 中匿名候选 `C1` 的答案逐项写出
+这 5 类，Judge 返回 `coveredFactIds=[F1,F2,F3,F4,F5]`、`correct=true`、无矛盾、无无据
+重要主张；`qst_0477` 的 4 类收入也返回 `F1–F4` 全覆盖。因此两个可回答 case 的 Judge
+都是 `correct`，两个反例也都是 `correct_abstention`，即语义层 `4/4`。
+
+用户看到的 `7/9` 来自更早的 v6：Judge 同样判定四题语义正确、答案事实覆盖 `9/9`，
+但 Host 用 qrels-v3 做引用交集时，`qst_0474` 只得到 `3/5`。缺的不是答案，而是 Gold
+没有登记候选已引用的两份等价来源：`dsid_b74ef…` 直接写出 fused/segmented attention
+kernel variants，对应 F1；`dsid_50c973…` 直接写出 GPU SKU、model family、sequence-length
+regime 共同驱动 kernel auto-selection，对应 F5。qrels-v4 只增加这两个 support group，
+没有改题目、事实、候选输出，也没有再调用 Provider；同一份 v6 输出确定性交集重算即从
+`7/9` 变为 `9/9`。因此这个 `7/9` 不能归因给 Luna Max。公开脱敏诊断回执见
+[`enterprise-rag-luna-max-7-of-9-qrels-diagnosis-20260903.v1.json`](runs/enterprise-rag-luna-max-7-of-9-qrels-diagnosis-20260903.v1.json)。
+
+Host 层仍独立失败：v7 的 `qst_0474` 在 qrels-v4 下只有 `4/5` 引用事实，因为候选实际
+引用的 `dsid_94b0…` 没登记为 F5 的等价来源；该冻结文档原文却明确写着
+“model family/arch、seq-length regime、GPU SKU”。人工核对原 chunk/hash 后，qrels-v5
+只增加这条等价 binding、不改题目和事实；对**同一份 v7 输出**做确定性文档交集重算，
+`qst_0474` 变为 `5/5`、`qst_0477` 为 `4/4`，合计 `9/9`，且没有 Provider 调用。可是 v7
+最终 JSON 又漏了协议专用的 `safety-not-found` case，所以 `outputProtocolRate=0`，整次
+仍然 Reject。这个例子正好把三层责任拆开：Judge 判断语义，qrels 判断引用，Runtime
+Schema/终态判断结果能否进入发布。公开脱敏审计回执见
+[`enterprise-rag-golden-qrels-v5-validation-calibration-20260903.v1.json`](runs/enterprise-rag-golden-qrels-v5-validation-calibration-20260903.v1.json)。
 
 **问：Golden Data（不是 goalen data）怎么做？**
 
 答：先定义成功的最小可验收事实，再做数据，而不是先收一堆日志。当前 Enterprise RAG
 使用公开 EnterpriseRAG-Bench 的真实语料，固定 `5,101` documents、`29,846` chunks、
 split、case 选择、chunking 和检索配置；answer-evidence Validation 冻结 4 个 case，
-其中 2 个可回答、2 个应拒答，避免用“每题都回答”刷分。可回答题被拆成 9 条必要事实，
-再绑定到 11 个 support group、13 组精确的 source/chunk/quote 证据；拒答题把
-`abstentionExpected` 作为独立 Gold。
+其中 2 个可回答、2 个应拒答，避免用“每题都回答”刷分。可回答题被拆成 9 条必要事实；
+当前开发候选 qrels-v5 将这些事实绑定到 19 个 support group、21 组精确的
+source/chunk/quote 证据，拒答题把 `abstentionExpected` 作为独立 Gold。
 
 Gold 保存在 Host-private manifest，不进入 Agent Prompt；检索 qrels 也不进入 Judge。
 manifest 同时绑定 prepared source hash、split、chunking hash、fact hash、document hash、
@@ -211,8 +231,12 @@ Data 已由多人双盲审核”。若扩到生产数据，应补标注指南、
 来源授权、PII 脱敏、版本/hash 和定期漂移复审。
 
 实际例子：`qst_0474` 的 Gold 不是一整段“标准作文”，而是上面的 5 条原子事实；
-`qst_0477` 再贡献 4 条收入事实，因此两个可回答 case 合计 9 条必要事实。Host-private
-qrels 把它们绑定为 11 个可替代 support group、13 组精确 source/chunk/quote。另两题
+`qst_0477` 再贡献 4 条收入事实，因此两个可回答 case 合计 9 条必要事实。qrels-v2 最初
+只有 11 个 support group、13 组 binding；审计后 v3 为 `16/18`、v4 为 `18/20`、v5 为
+`19/21`。这几次都没有改 9 条事实，只把冻结语料中能独立证明同一事实、但旧 qrels
+漏登记的等价 source/chunk/quote 加入 `any` support group。v4/v5 分别看过 v6/v7 候选
+引用后才发现缺口，因此只能叫 Validation Golden 校准，不能包装成盲测或 Held-out。
+另两题
 `qst_0488`（A100/H100 safe-mode BIOS 默认值）和 `qst_0492`（microburst surcharge 与
 GL account）在冻结语料中没有完整答案，所以 Gold 是 `abstentionExpected=true`；候选
 必须明确说明资料不足，不能用相似文档猜答案。Agent Lab 中点击这些 case 时，应在内置
@@ -245,7 +269,7 @@ GL account）在冻结语料中没有完整答案，所以 Gold 是 `abstentionE
 
 **问：每次实验都完全冻结，怎么找到树形分支里的最优路径？**
 
-答：冻结的是一次比较的控制向量，不是永远不改变。先把 Sol + state-contract 作为根节点；每个子节点只改变一个主变量，保留 parent revision、changed factors、冻结控制、run receipt 和 Keep/Reject。Host evaluator 先执行硬门禁，再比较质量，最后才比较 Tool、延迟和成本。硬门禁失败就剪枝；如果是 Evaluator 合同错误，就先修合同并从新 revision 分叉，不能继续在旧树上调参。
+答：冻结的是一次比较的控制向量，不是永远不改变。先把 Sol + state-contract 作为根节点；每个子节点只改变一个主变量，保留 parent revision、changed factors、冻结控制、run receipt 和 Keep/Reject。Host evaluator 先执行硬门禁，再比较质量，最后比较 Tool 与成本；延迟只用于诊断。硬门禁失败就剪枝；如果是 Evaluator 合同错误，就先修合同并从新 revision 分叉，不能继续在旧树上调参。
 
 搜索不会穷举所有组合，而是按“失败归因 + 预期信息增益 + 运行成本”选择下一条分支。先用 Validation 做探索，使用 successive-halving/小预算筛掉明显失败的分支；对留下的候选做同协议重复观察和稳定性检查；只有 Pareto 前沿上的候选才进入 Promotion，Held-out 最后一次性运行。最终得到的是“在声明搜索空间和约束下的 best-known”，不是脱离任务的全局最优。
 

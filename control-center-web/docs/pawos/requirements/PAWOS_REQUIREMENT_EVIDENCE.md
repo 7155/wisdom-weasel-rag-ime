@@ -718,6 +718,12 @@
 用户。唯一 owner 工作目录、停止/取消、哈希、Host 沙箱和硬安全边界不因全自动
 而失效。
 
+> **后续控制性修正（OMP `5c944447`，2026-09-03）：** 上段“诊断 Session 继续
+> 只读”只保留为历史设计证据，不再控制当前实现。来源任务已经选择 `full_trust`
+> 时，`trace-agent-diagnostics` 可以在同一审计任务中读对话、读取已绑定外部文件、
+> 修改绑定项目并做同 Case 复验，不再逐 Tool 或在 repair handoff 处二次询问。
+> 独立 repair Session 可以保留为内部责任隔离，但不能让用户只得到分析而没有修复。
+
 ### 2026-08-30 · 垂直 App 自举、掌柜问数与安装生命周期
 
 > 垂直app还能os的agent自己修改app前端来制作app安装，自己设计垂直技能，自己trace沙盒测试进行优化，例如，根据对话模式修改app的agent对话界面
@@ -889,17 +895,429 @@ Trace 的项目绑定与白话结论分别映射到 `UR-221`、`UR-222`。附件
 三步修复/复验流程、正文短证据别名和全未知评分压缩规则共同映射到 `UR-225`。
 账本保留完整控制语义；本节避免再次复制整段示例错误和十余个重复 Evidence ID。
 
+### 2026-09-03 · 四项目 Trace/Eval、修复闭环、Agent Lab 详情与优化矩阵
+
+> 我们是不是trace的各个矩阵都出来结果了
+
+> 我怎么才能检查结果，和查看具体具体记录。四个场景分别是什么场景
+
+> 还有就是，现在是优化，为什么很多项目 调试技能工具，还有提示词之后 以及换成露娜模式之后效果还变差了呢。即使是模型换成便宜的模型，但这个模型完成这种简单任务肯定是没有问题的。[Image #1]就是当前存在一个问题，感觉就是能够分析出当前，比如说工具执行失败了，或者技能调用是否有问题。但是为什么没没能改正呢？ 真实失败 → Trace 定位 → 冻结任务与环境 → 一次只改一项 → 重复运行 → 确定性验收 + 语义评分 → 质量硬门禁 → 再比较成本 → Keep/Reject → 同 Case 重放 → 安装态 Canary。就是我们不可能失败啊，模型都是最高级的sol模型，即便luna也是max
+
+> 结果成功就算成功
+
+> 我们当前能应对上面说的面试问题吗，比如judge怎么打分，怎么做goalen数据。RAG Agentic Sol、Luna 都失败；主要是 Agentic Runtime/协议链路问题这个应该用traceagent修复啊，刚好也可以写建立了
+
+> 这些记录文档
+
+> 得告诉我，这些问题怎么处理的
+
+> 旧的错误的彻底删除，避免干扰
+
+> 然后，跑完调优，我要一个，成功率，成本，时间，都变好的结果。四个项目都是，这样做，我们项目有价值。还得在os的app类看得到我们的每次运行，改了什么，怎么改的，优化的效果
+
+> 然后，app看看如何展现，任务，数据集，结果，优化，新结果。任务和数据集怎么展示点击如何查看，是弹出文件夹还是怎么的
+
+> 用实际例子
+
+> 最后结果也都要，怎么改，为什么，还有改的diff和效果，就像这个矩阵
+
+> 需求都记录
+
+> 耗时不重要。，且逐事实引用只有 7/9。这个看看为什么，是luanamx吗
+
+以上消息按顺序映射到 `UR-226`–`UR-235`。最后一条以“耗时不重要”明确修正
+前一条“三项都变好”中的耗时硬门槛：耗时仍显示和解释，但不再阻止 Keep；质量/成功
+与成本目标保持不变。`7/9` 和 “是不是 Luna Max” 是对当次 RAG v6 结果的诊断问题，
+不预设模型归因。
+
+同一任务中用户粘贴的大段 Agent 评测口播与 Judge/Golden 问答草稿是参考材料，不能
+归为用户亲自实施过的事实；只有“这些有哪些建议”和“用实际例子”是控制要求。两张
+附件分别作为评测结构和 diff 矩阵的视觉参考，不从图中样例数字推导 Runtime 事实。
+当前可追溯来源为 current task、2026-09-03、user-message ordinals `721`、`798`、
+`1181`、`1526`、`1713`、`1727`、`1831`、`2339`、`2547`、`2996`、`3239`、
+`6433`、`6465` 及其后一条耗时修正；ordinal 不替代产品运行身份。
+
+来源覆盖审计同时保留三类非新增产品需求：开头 macOS Dock 图标问题已由“ok了”终结；
+“继续”只是恢复当前任务；更早的“直接 git push”“不要添加这些 [License]”“等我干完
+再统一”属于先前上传任务及其修正，不自动为本轮未完成实验/UI 续期 push 权限，也不得
+重新加入已拒绝的 License。
+
+### 2026-09-03 · 对话记录与全部证据必须可追踪
+
+> 对话记录证据都要可追踪
+
+该消息映射到 `UR-236`，并补强 `UR-230`、`UR-232`、`UR-234`、`UR-235`。当前 Codex
+界面未暴露这条消息的稳定 message ID，因此不伪造：使用 sourceRef
+`current-thread/2026-09-03/after-UR-235`、采集时间 `2026-09-03T22:00:16+08:00`、消息
+顺序、逐字原文和 SHA-256
+`78346ec80196cd9e6c13a34046f440c238bf5ba0bcc48cef94c0e1be7c8afdd4` 作为当前可验证
+来源锚点；若后续界面提供真实 ID，只追加映射。需求、diff、Case、Trace、Judge/Gold、
+run receipt、指标和 verdict 均须双向链接该来源，历史失败只读保留但不进入当前投影。
+
+### 2026-09-03 · 对话前后端稳定性与恢复 Goal
+
+以下原话来自用户指定的 Session 导出
+`omp-session-2026-09-03T14-55-34-850Z_01a067c4-a1c2-7674-9691-8fc5c8be6fdc.html`。
+只采集 active path 的直接用户消息；ID 与 UTC 时间来自导出条目：
+
+- `55bd6e3c` · `2026-09-03T13:02:14.253Z`
+
+  > 渲染还是有问题，一个消息，特别是首个用户发送显示多个
+
+- `9b73a55c` · `2026-09-03T13:07:12.018Z`
+
+  > [Image #1, 1568x1027] 就是这个重复的问题
+
+- `3e018899` · `2026-09-03T13:09:39.456Z`
+
+  > [Image #1, 1568x1037] 还有这种问题
+
+- `d0466ad0` · `2026-09-03T13:15:47.442Z`
+
+  > pi和前端依旧没有完美对齐
+
+- `d6c2be6e` · `2026-09-03T13:28:05.434Z`
+
+  > 自动记忆整理 需要处理 自动记忆整理失败，可在 Memory 中检查并重试。 managed memory model request failed: Memory Session timed out; the frozen request remains resumable 21:26 自动记忆整理 需要处理 自动记忆整理失败，可在 Memory 中检查并重试。 managed memory model request failed: unable to open database file 21:14 FIRST-MESSAGE-DUP-1788440719… 已结束运行 对话 Agent 已退出运行态，可从项目桌面重新打开。
+
+- `691bc8c6` · `2026-09-03T13:35:08.537Z`
+
+  > 记录这些bug，并完全解决
+
+- `f568f27e` · `2026-09-03T14:02:14.217Z`
+
+  > 这个前后段对不上，或者一直不同步是不是安全和哈希多了
+
+- `42e619f7` · `2026-09-03T14:02:40.847Z`
+
+  > 为什么会找不到对话实例呢
+
+- `65e5eae0` · `2026-09-03T14:03:09.802Z`
+
+  > 检查整个项目，我们不需要什么安全，但是绝对不要这种影响性能和体验对的问题和重复
+
+- `dcb427e6` · `2026-09-03T14:07:37.220Z`
+
+  > 原则就是体验第一
+
+- `ab49e784` · `2026-09-03T14:27:45.389Z`
+
+  > 提前加载pi实例有助于优化流畅度吗
+
+- `6cb9499c` · `2026-09-03T14:29:00.042Z`
+
+  > [Image #1, 1568x914] 这种问题，务必务必杜绝，找到问题，因为我老是第一条消息失败，然后过一会打开又弹出来
+
+- `1963d0d6` · `2026-09-03T14:31:29.743Z`
+
+  > codingto好像有这个项目，看看这个是怎么处理消息前后段同步的，我们这个bug太多了，你要是改好了，就彻底删除bug代码因为很多时候，都是改好过，然后之后忘了又覆盖上了，记录
+
+- `89474f31` · `2026-09-03T14:55:36.081Z`
+
+  > 继续
+
+这些条目映射到 `UR-237`–`UR-239`。两张附件是前台复现证据，不能仅从截图推导额外
+Runtime 事实；“提前加载”是诊断问题，不预先要求以预热代替竞态修复；CodingTo 是待检查
+参考，不自动成为 PAW 依赖。
+
+当前 Goal thread 为 `01a0653f-8a73-7c50-880b-53f729cce993`。界面未提供以下消息的稳定
+message ID，因此按当前顺序保留逐字原文，不伪造 ID：
+
+> 设置为goal，集中解决这个前后端不一致和对话老是发送失败问题[Image #1]。安全一点都不重要，体验第一
+
+> 是不是sse不够稳健啊
+
+> 继续
+
+> 都恢复了
+
+> luan也可以继续了
+
+> 加强前后端稳定性
+
+> 并行完成，还有这个
+
+> 你的subagent都用sol
+
+> 你干活都用好的，测试的时候才测试luan max
+
+> 他们可以写，sol没问题
+
+其中“都恢复了”是 Provider 外部状态更新；“继续”恢复既有 Goal；“luan也可以继续了”
+随后被模型分工修正为实现/审计统一 Sol Max、Luna Max 只做最终模型对照；“并行完成”和
+“他们可以写”是当前执行授权。用户随后粘贴的 OMP handler/TODO 输出是指定继续的任务证据，
+不冒充用户亲自完成的工作。
+
+### 2026-09-04 · 对话稳定性修复结果、真实 Case 与独立复核
+
+本节是 `UR-237`–`UR-239` 的结果证据，不改变上面的用户原意，也不把源码测试冒充安装态。
+本轮没有安装或发布；生产 `http://127.0.0.1:8768/health` 在验收结束前仍返回 `200`。实现、
+审计与判断均由 Sol Max 完成；Luna Max 只用于最后的 Provider 兼容性探测；未使用 x1top。
+
+#### 为什么以前会“发送失败，过一会答案又出现”
+
+1. Session 创建先发布窗口，首个 Prompt 的 admission 尚未到达 Pi 时，较早的 idle snapshot
+   会被前端当作新事实；旧 reducer 因此把仍在途的 optimistic 消息改成“未收到助手回复”。
+2. durable transcript 能保存消息，却没有把产品的 `clientMessageId`/`turnId` 带回公开
+   snapshot；刷新后同一用户输入会以 `history:*` 身份重新出现，无法与本地消息精确合并。
+3. HTTP、Native 与 Mock transport 在调用窗口 observer 前就推进共享 cursor；任一窗口回调
+   抛错后，下一次连接会从尚未真正交付的 sequence 之后开始，形成永久缺口。前端同时把
+   `snapshot_required` 控制事件误当成 durable cursor，并拒绝能修复 busy 状态的
+   equal-cursor snapshot。
+4. Home 的附件导入先于 optimistic 发布，导致首条消息不能立即显示；它还把“HTTP 已返回”
+   与“Prompt 已接受”混为一谈，未区分 pending、unknown/ambiguous、同步取消和确定拒绝。
+5. Memory 在 Runtime 已接受但 ACK 丢失时，持久行可能仍没有 `turnId`。旧逻辑依据宽泛错误
+   文本把它当作“尚未 admission”并再次 prompt，造成跨 executor 重复副作用。
+
+#### 怎么改，以及删除了哪些旧错误路径
+
+- reducer 只允许请求回执或精确 durable `clientMessageId` 收敛在途消息；idle snapshot
+  单独不再制造失败终态。持久投影把 `rag-ime.pi-turn-binding` 中的产品 `turnId` 和
+  `clientMessageId` 带回消息合同；legacy transcript 只保留有窄时间界限的兼容匹配。
+- SSE/HTTP/Native/Mock 都改成 observer 成功收到 N 后才提交 N；一个 observer 失败只隔离该
+  订阅并从旧 cursor 重放。普通 sequence gap 由 snapshot 修复，控制事件不再污染 durable
+  cursor，busy/equal-cursor snapshot 可以补状态但不能把较新的 terminal 回退。
+- Home 先创建唯一 optimistic 锚点，再异步导入附件并以 managed receipt 替换临时 ID；同步
+  cancelled admission 删除该锚点，确定 rejected 显示可重试失败，unknown/ambiguous 保留原
+  身份等待对账，禁止自动换 ID 重发。
+- Memory 仅把结构化 `PiRuntimeTurnConflict` / `PiRuntimeCommandRejected` 记录为可安全重试的
+  `rag-ime.memory-admission.v1 status=rejected`。Timeout/transport error 一律是 `unknown`；
+  `attemptCount>0 + empty turnId` 必须先用 Runtime snapshot 做唯一
+  `clientMessageId -> turnId` 查找，找不到或多义时写
+  `memory_admission_ambiguous_not_replayed` 并停止，绝不自动重复 prompt。
+- 已删除/旁路两类已证明错误且无正确消费者的热路径：仅凭 quiescent snapshot 生成
+  “未收到助手回复”的分支，以及凭错误字符串认定 Memory pre-admission 并自动重放的分支。
+  durable transcript、provisional deep link 与精确 snapshot recovery 仍有消费者，因此只读
+  保留；没有为了“干净”删除历史记录。
+
+#### 红绿矩阵与独立复核
+
+- 前端关键五项矩阵：`67/67`；包含 observer N 失败后的 N+1 重放、ordinary gap 与
+  equal-cursor 修复、Home admission 五态、首条附件即时显示和 managed ID 替换。
+- 收口时在当前工作树重跑 9 个对话/transport 测试文件：`184/184`；`pnpm typecheck` 通过。
+- 前端宽回归：`69 files / 762 tests`；仅有既存 jsdom Canvas warning。
+- Memory executor：`34/34`；caller/integration：`32/32`；Pi durable identity、settlement、
+  abort 等较宽集合：`73/73`。既存 SQLite `ResourceWarning` 没有被包装成新通过项。
+- `node scripts/generate_control_center_contracts.mjs` 可重复生成 `169` 个合同；import boundary、
+  route ownership 与 `git diff --check` 通过。
+- `env VITE_CONTROL_TRANSPORT=http VITE_BUILD_CHANNEL=production pnpm build` 通过：`4492`
+  modules，`7.18s`；只有大 chunk warning。
+- 独立 Sol reviewer 给出 `clear_with_risk`：operability `passed`、requirement satisfaction
+  `satisfied`，`UR-237`–`UR-239` 全部 satisfied。非阻断边界是：Runtime snapshot 完全不可用
+  时 Memory 选择停止并等待显式恢复，而不是冒险重复副作用；`observer.error` 自身再次抛错
+  仍是可选硬化项。
+
+#### 真实 PAWOS 前台与 Runtime Case
+
+隔离的源码 Gateway 使用 `127.0.0.1:8878`、生产 HTTP transport build 和用户指定的 Aed
+OpenCode Provider；临时数据根与生产数据库隔离。以下全是合成验收字符串，不含个人输入：
+
+- 首发 Session：`agent:8e4d810f-e813-400d-aabc-d2fd1fb608d2`；
+  `clientMessageId=session-mtlt948l-hfwzj1kg`；
+  `turnId=ff62e216-9c37-45ae-9c81-1c4c8af395de`；结果
+  `PAW-FOREGROUND-EXACTLY-ONCE-OK-4`。
+- 同一已知 Session 的下一轮：
+  `clientMessageId=paw-51e0351b-b48b-434f-93ba-9bca11eabb1a`；
+  `turnId=54c4e6d3-d22a-404c-8e09-597021a99a65`；结果
+  `PAW-KNOWN-SESSION-EXACTLY-ONCE-OK-5`。
+- recent snapshot 为 `idle`、`lastSequence=50`，恰好 `4` 条公开消息；每轮各一条 user 与一条
+  assistant，两个 user 都带精确 `clientMessageId`。durable JSONL 恰好 `11` 行，SHA-256
+  `71e4a408de56347b7dac08c28035471ff86f5570e206be45fbdf510c75c0b20b`，两轮 binding 与
+  settlement 的 ID 一一对应。
+- Playwright 刷新前后，主时间线各只有一个可见 user `<p>` 与一个可见 assistant `<p>`；
+  原始全页文本查询命中的另外两个 preview `<span>` 均为 `aria-hidden=true` 且
+  `checkVisibility=false`，不是重复消息。页面中“本轮未完成”和“未收到助手回复”计数均为
+  `0`，浏览器 console error 为 `0`。
+- 截图及 SHA-256：
+  `output/playwright/pawos-conversation-stability-before-refresh.png`
+  (`2345eb121d0ec958834f6056a9b26bf098a19d774dc84dd7f18b0cb725890d4d`)；刷新后
+  (`b391ce08a2c363de80c5a858003fc39ed8468fd1772732c57b248f0281653f6c`)；
+  `output/playwright/pawos-known-session-before-refresh.png`
+  (`dae175a1c0b8d6621f1fa8fe910fd28e75864f42005a4af5dbf91f5aa02843a5`)；刷新后
+  (`0fa1f88ef9216e9e0f6c0254f5e36b89638d1505128a2272b5069b4ef15131e9`)。
+
+另一条隔离 Session `agent:755142dd-2056-4789-b8d7-f525d424a27a` 在 Host 重启前后保持原
+`6` 条消息；重启后新 turn `2945eaa7-8dbc-452d-a59d-7b26518b3b1c` 返回精确结果，随后使用
+同一 `clientMessageId=canary-aed-sol-max-after-restart-3` 重放只返回原 turn，消息数和 cursor
+均不增长；SSE 从 sequence `37` 到 `59` 连续重放 `23` 个事件。
+
+Luna Max 的兼容探测被 Aed Provider 明确拒绝为 `404 model_not_found`：当前账户组不提供
+`gpt-5.6-luna`。PAW 仍正确形成一个 user + 一个 failed assistant、同一 turn、idle 终态，
+没有幽灵消息；这只能证明失败收敛正确，不能声称 Luna 任务成功。当前自定义 Provider 的
+价格表返回零，因此本轮也不虚构成本改善。
+
+证据边界：以上 E5/E6 是隔离源码 Gateway 与真实 PAWOS 浏览器前台，不是 E4 安装回执；
+用户本轮明确要求不安装、不提交、不推送，因此没有修改已安装应用或远端仓库。
+
+### 2026-09-04 · OMP active path 完整来源恢复与 48/48 覆盖审计
+
+本节补齐用户指定 OMP 导出的前 34 条直接用户消息，并把此前已记录的后 14 条纳入同一
+source-to-requirement 覆盖。它只证明需求来源完整，不证明对应功能已经实现。
+
+- **导出文件：** `omp-session-2026-09-03T14-55-34-850Z_01a067c4-a1c2-7674-9691-8fc5c8be6fdc.html`
+- **Session ID：** `01a067c4-a1c2-7674-9691-8fc5c8be6fdc`
+- **标题：** `检查并修改 PAW_SKILL_DIFF_REVIEW 技能`
+- **leafId：** `2b2f928c`
+- **active path：** `10,704` entries；其中 `48` 条直接用户消息
+- **原文件 SHA-256：** `35e37c1a091ce69973a03888ab33cc6748e6ddf7f62d11adf97486692e9b7761`
+- **提取边界：** 只沿 `leafId -> parentId` 还原 active path，并只采集
+  `message.role=user`。`<attachment>` 内旧 Agent/Tool 文本、截图中文字和用户粘贴的产品
+  输出属于 reference-only；附件后的直接用户文字才是控制性原话。原始 HTML 保持本机
+  私有证据，不进入 Git。
+
+#### Source-to-requirement coverage
+
+| # | message ID · UTC | 分类 | Requirement / 处理 |
+| --- | --- | --- | --- |
+| 01 | `9e10f143` · `2026-09-02T23:51:20.475Z` | continuation | 恢复指定 Session/Codex 对话的工作指令；不是新增产品语义 |
+| 02 | `0a355701` · `2026-09-02T23:52:36.232Z` | status question | 要求先确认需求与任务是否找回；映射本次覆盖审计，不新增 UR |
+| 03 | `269fb8d9` · `2026-09-02T23:53:22.303Z` | correction | 修正来源为 Codex session 路径；映射本节 retrieval boundary |
+| 04 | `23c14678` · `2026-09-02T23:56:40.435Z` | requirement + continuation | `UR-226`、`UR-232`、`UR-233`：完成沙箱 Agent 测试并形成可用于简历/面试的真实矩阵 |
+| 05 | `b2d77cd2` · `2026-09-03T01:41:24.016Z` | compound requirement | `UR-014`、`UR-074`、`UR-082`、`UR-094`、`UR-097`、`UR-123`、`UR-156`–`UR-157`、`UR-161`、`UR-180`、`UR-206`/`UR-215`、`UR-221`、`UR-237`–`UR-239` |
+| 06 | `fd98baec` · `2026-09-03T01:43:21.075Z` | requirement | `UR-237`–`UR-238`：前后端必须收敛，否则不能算完成 |
+| 07 | `af52ef1c` · `2026-09-03T01:46:10.954Z` | execution authorization | `UR-014` 的并行 subagent 执行授权；不新增产品能力 |
+| 08 | `2d342c10` · `2026-09-03T01:46:47.936Z` | documentation requirement | `UR-235`–`UR-236`：任务信息必须落入文档 |
+| 09 | `1b5cb5ca` · `2026-09-03T02:15:09.232Z` | continuation | 继续既有工作，不新增 UR |
+| 10 | `83f8a8c2` · `2026-09-03T02:16:17.397Z` | continuation | 允许既有 subagent 继续；不新增 UR |
+| 11 | `8048875d` · `2026-09-03T02:48:07.801Z` | reference + requirement | 粘贴的 Room 内容是 reference-only；末句映射 `UR-206`/`UR-215`：明确负责人在表格外单独汇报最终结果 |
+| 12 | `fb58f5f5` · `2026-09-03T03:34:37.654Z` | status question | 不新增 UR |
+| 13 | `89036c3f` · `2026-09-03T03:45:43.893Z` | requirement | `UR-219`：窗口读取延迟和内容缺失必须定位并彻底解决 |
+| 14 | `14c46013` · `2026-09-03T03:56:14.377Z` | requirement | `UR-219`：卫星对话不能长时间加载 |
+| 15 | `9d78fc81` · `2026-09-03T04:02:34.832Z` | requirement | `UR-219`、`UR-238`：窗口实时更新 |
+| 16 | `95cff8dc` · `2026-09-03T04:04:24.490Z` | requirement | `UR-216`、`UR-219`、`UR-237`–`UR-238`：所有窗口快速显示同一真实完整聊天记录 |
+| 17 | `a2f8c69f` · `2026-09-03T04:06:41.195Z` | priority correction | `UR-217`、`UR-219`、`UR-237`：消息立即出现，Tool 详情允许稍后补齐 |
+| 18 | `7548ab40` · `2026-09-03T04:09:21.339Z` | requirement + evidence | `UR-137`、`UR-143`、`UR-223`、`UR-238`：Pi 已终止时前端不能继续显示 running |
+| 19 | `8861514c` · `2026-09-03T04:11:21.824Z` | documentation + completion | `UR-235`–`UR-236`：全部记录并解决 |
+| 20 | `5c944447` · `2026-09-03T04:52:25.569Z` | permission correction | `UR-180`、`UR-188`、`UR-221`、`UR-227`：Trace 自举链可读对话/外部文件、改项目且 full_trust 后不逐项审批 |
+| 21 | `5f7ae0a5` · `2026-09-03T04:55:11.479Z` | removal requirement | `UR-240`：从 PAW 移除 `resume-builder` |
+| 22 | `3d77579a` · `2026-09-03T04:57:34.527Z` | execution authorization | `UR-014`：并行完成；不新增产品能力 |
+| 23 | `a29d81d7` · `2026-09-03T05:57:55.956Z` | status question | 不新增 UR |
+| 24 | `ab09270f` · `2026-09-03T06:13:48.669Z` | requirement | `UR-240`：Settings 按 Session/Room/Trace/Lab 场景隔离 Skill |
+| 25 | `481dcb39` · `2026-09-03T06:14:11.717Z` | priority | 加强 `UR-240` P0，不新增重复能力 |
+| 26 | `9e594fe7` · `2026-09-03T06:15:28.287Z` | duplicate clarification | `UR-240`：Skill 控制入口位于 Settings |
+| 27 | `e1603f68` · `2026-09-03T06:39:37.017Z` | status + urgency | 不新增 UR；记录为优先级信号 |
+| 28 | `b7bfdf50` · `2026-09-03T08:54:00.006Z` | continuation | 不新增 UR |
+| 29 | `cc406836` · `2026-09-03T10:12:53.730Z` | delivery requirement | `UR-163`、`UR-220`：完整候选完成后全量安装，并将限定变更推到已核对的 `7155` main |
+| 30 | `a6829a5c` · `2026-09-03T10:13:25.598Z` | diagnostic question | `UR-219`：70 秒必须分段定位，不能无证据归因模型冷启动 |
+| 31 | `e81915c6` · `2026-09-03T10:13:38.978Z` | acceptance correction | `UR-219`：冷路径首段可见回复目标 3–7 秒 |
+| 32 | `734f84ed` · `2026-09-03T11:11:21.507Z` | requirement + attachment evidence | `UR-237`–`UR-238`：同步和显示问题仍存在，截图只作复现证据 |
+| 33 | `ecf6b307` · `2026-09-03T11:11:37.411Z` | documentation + completion | `UR-235`–`UR-236`：记录并解决 |
+| 34 | `170ffbb3` · `2026-09-03T12:59:17.629Z` | artifact review requirement | `UR-241`：检查并修订指定 PAW Skill Diff Review ZIP |
+| 35 | `55bd6e3c` · `2026-09-03T13:02:14.253Z` | requirement | `UR-216`、`UR-237`：首条用户消息不得重复 |
+| 36 | `9b73a55c` · `2026-09-03T13:07:12.018Z` | attachment evidence | `UR-216`、`UR-237`；图片不新增独立语义 |
+| 37 | `3e018899` · `2026-09-03T13:09:39.456Z` | attachment evidence | `UR-237`；图片不新增独立语义 |
+| 38 | `d0466ad0` · `2026-09-03T13:15:47.442Z` | requirement | `UR-237`–`UR-238`：Pi 与前端精确对齐 |
+| 39 | `d6c2be6e` · `2026-09-03T13:28:05.434Z` | observed product evidence | `UR-223`、`UR-239`：Memory timeout/DB failure 与对话终态通知；产品输出不冒充用户需求 |
+| 40 | `691bc8c6` · `2026-09-03T13:35:08.537Z` | documentation + completion | `UR-235`、`UR-239` |
+| 41 | `f568f27e` · `2026-09-03T14:02:14.217Z` | diagnostic question | `UR-238`–`UR-239`；不预设安全/hash 是根因 |
+| 42 | `42e619f7` · `2026-09-03T14:02:40.847Z` | diagnostic question | `UR-237`–`UR-238`：对话实例身份与恢复 |
+| 43 | `65e5eae0` · `2026-09-03T14:03:09.802Z` | priority/constraint | `UR-238`–`UR-239` 与 D-015：体验优先，删除阻塞热路径的重复非权威门禁 |
+| 44 | `dcb427e6` · `2026-09-03T14:07:37.220Z` | priority/constraint | 同上，不新增重复能力 |
+| 45 | `ab49e784` · `2026-09-03T14:27:45.389Z` | diagnostic question | `UR-219`、`UR-238`；预热只是待验证假设，不是强制实现 |
+| 46 | `6cb9499c` · `2026-09-03T14:29:00.042Z` | requirement + attachment evidence | `UR-237`：第一条失败后迟到恢复必须收敛为同一轮 |
+| 47 | `1963d0d6` · `2026-09-03T14:31:29.743Z` | reference + regression requirement | `UR-235`、`UR-237`–`UR-239`：调查 CodingTo 仅作参考；修复后删除已证明错误且无消费者的旧路径并防覆盖回流 |
+| 48 | `89474f31` · `2026-09-03T14:55:36.081Z` | continuation | 继续本任务，不新增 UR |
+
+#### 前 34 条控制性原话
+
+以下只复制用户亲自输入的控制文字；`01`、`05` 中 `<attachment>` 的旧 Agent/Tool 记录和
+`11` 中大段 Room 产品输出均不重复进 Git。它们的完整原始字节由上面的导出 SHA 锚定。
+
+- `9e10f143`： “继续这些Session:                     01a0519e-1cd0-7291-abd6-78a33ccfc3ca读这个codex对话”
+- `0a355701`： “先叙事你找回我的要求和任务了吗”
+- `269fb8d9`： “就是codex的session路径”
+- `23c14678`： “那就继续，读清楚了的话，还有把那些沙箱agent测试完成，我要矩阵写简历”
+- `b2d77cd2` 控制原话第一段： “你完成后把这个工作也合并进来。这个room的渲染改正，就是协同态势可以关闭这个侧边这个协作态势的框，并且维持在协作聚焦的显示。还有trace本对话为什么”
+- `b2d77cd2` 中间的两次 `delegate` 与一次 `status` 失败卡为用户粘贴的产品输出，按 reference-only 保留在原导出，不伪装成用户创作的句子。
+- `b2d77cd2` 控制原话第二段： “subagent失败 [Image #1, 1568x1037] 还是之前所说的那样子，room的行星和卫星权限拉满，无需审批，room对话框可以设置各层权限。还有目前还有一个严重问题，就是卫星前端和pi没有同步，pi明明结束了，前端还在显示[Image #2, 1568x1037] 。记录这些问题，记录下来，然后一一解决，并行完成”
+- `fd98baec`： “前端后端不一致，导致前端完成不了”
+- `af52ef1c`： “可以subagent，并行完成”
+- `2d342c10`： “任务信息，任务落地为文档”
+- `1b5cb5ca`： “继续”
+- `83f8a8c2`： “sub也继续”
+- `8048875d`： “这个最后一个是有负责人单独汇报吧。不然结果都是表格内，用户看不到”
+- `fb58f5f5`： “进度如何”
+- `89036c3f`： “前端窗口读取数据延时大[Image #1, 1568x1037] 并且都不到很多时候，这个如何彻底解决”
+- `14c46013`： “加载半天才能看到卫星对话”
+- `9d78fc81`： “需要实时更新”
+- `95cff8dc`： “当前很多窗口，加载很久，加载内容不齐全，我就想，所有窗口都是真实聊天记录，快速加载，不允许不一致的情况”
+- `a2f8c69f`： “消息马上就得出现，tool这些可以慢一点点”
+- `7548ab40`： “你看这个earth早就结束，但是前端没收到，一直显示进行中[Image #1, 1568x1037]”
+- `8861514c`： “都得记录到文档，务必解决”
+- `5c944447`： “trace-agent-diagnostics在trace agnet 这个agetn是完整权限对吧，改项目和读对话无需同意，读外部文件也行，务必，因为这个需要自举就要能够改项目”
+- `5f7ae0a5`： “resume-builder移除paw”
+- `3d77579a`： “并行完成任务”
+- `a29d81d7`： “还没完成吗”
+- `ab09270f`： “设置里面需要在不同场景加载不同的技能，比如说 CS 模式它就完全不要加载。Room 机，Room 里面的那些机能，然后 Room 里面 嗯，就相对塞辛增加相应的技能就行了。然后崔丝的技能就 确实那个场景在增加 然后的话 嗯，可以再 嗯，比如说 那个 lab 的技能，就实验室的技能，只能实验室增加。”
+- `481dcb39`： “这个务必完成”
+- `9e594fe7`： “就是设置里面加入技能控制”
+- `e1603f68`： “进度完成了吗，能快一点吗”
+- `b7bfdf50`： “继续”
+- `cc406836`： “全量安装和push”
+- `a6829a5c`： “首次冷 Provider 回复约 70
+ 秒，但消息和路由回执仍即时出现；该剩余时间属于模型冷启动为什么，不会这么久吧”
+- `e81915c6`： “3-7秒吧”
+- `734f84ed`： “[Image #1, 1568x1037] 还是存在前端同步问题和显示问题”
+- `ecf6b307`： “记录并解决”
+- `170ffbb3`： “/Volumes/undo\ 4t/MyGlobalDownloads/PAW_SKILL_DIFF_REVIEW.zip这个技能看看对不对，，然后改一下”
+
+**覆盖结论：** OMP active path 的 `48/48` 直接用户消息已经映射到稳定 Requirement，或明确
+标为 continuation、status question、correction、reference-only/attachment evidence；不存在
+未分类 source ID。该结论不把 reference-only 产品输出、Agent 文本或截图解释成用户新需求。
+
+### 2026-09-04 · Outcome 文档治理纠正
+
+> 管理outcome的技能，描述这个让他分段OUTCOMES.md
+
+> 错了，错了
+
+> 不要新技能，目前要不然就agent。md，索引上新的outcome，要不然就分类归档，这个规则记录就行
+
+最新一句否决了新增 Outcome Skill 和立即拆分文件的解释。当前控制规则只写入根
+`AGENTS.md`：新 Outcome 必须进入既有根索引；超过上下文预算时保留稳定 ID 与当前行，
+再把细节或关闭历史按类别归档并建立双向链接，不能留下只存在于临时文档的孤儿 Outcome。
+这是一条项目文档治理规则，不新增 PAWOS 产品 Requirement，也不把纠正前生成但已撤回的
+临时文件当作实现结果。当前 Codex 环境没有公开这三条消息的稳定 message ID，因此只记录
+线程、日期与逐字文本，不伪造 ID。
+
+### 2026-09-04 · PAW Skill Diff Review 修订包
+
+用户给出的原始 `PAW_SKILL_DIFF_REVIEW.zip` 保持原字节，SHA-256 为
+`2940c26a6da204b639be9ed13e49282c02d0533f3252d0bec403d9b5550b8571`。审查以
+`main@f0bcdab577bb5d7f33afec1797bffd23f7946323` 为当前基线，结论不是机械套用原包：
+
+- 拒绝新增强制 `project-workflow`，因为它把条件式 Skill 重新做成第二套项目生命周期/
+  完成门；拒绝弱化 `organize-work-documents` 的无损来源账本。
+- 保留当前八个工作流 Skill；唯一进入仓库的兼容增量是
+  `facilitate-room/SKILL.md` 的 `unfinised` → `unfinished` 拼写修复，它对应已有受管
+  Runtime 责任清单测试，而不是借机改写职责。
+- 修订包为 `PAW_SKILL_DIFF_REVIEW.v2-20260904.zip`，SHA-256
+  `ad7921f381f24e66e28726be12120392dff8112df8d7f867e7ed878a011e1aff`。原包未被覆盖；
+  v2 含 `WHY_AND_HOW.md`、side-by-side HTML、两个相同的最小 patch、验证说明、manifest
+  和当前提案文件，共 `24` 个 archive entry；不含 `LICENSE.resume-skills`，也不含
+  `project-workflow` 目录。
+- manifest 的 `23` 个 payload hash 已逐项核对，`unzip -tq` 通过，最小 patch 在干净
+  baseline 上通过 `git apply --check`。当前九个被审查 Skill 通过 `quick_validate.py`，
+  相关受管 Pi focused contract 为 `6/6`。
+- side-by-side HTML 已由 headless Chrome 实际打开并截图为
+  `output/playwright/paw-skill-diff-review-v2.png`，截图 SHA-256
+  `bd5e35f29e1bb90278c75853318dd12585d8fcfe79c6cf2672c0241dc2a1b355`；可见页明确列出
+  keep/reject/accept narrow fix 决策与最终 diff。
+
+证据边界：以上已经证明修订包内容、最小源码差异和可打开性；最终项目 harness、安装态
+受管 Skill 同步与本轮完整候选验收仍在进行，因此本节此刻不把 `UR-241` 标成 complete。
+
 以下各节覆盖本次继续工作中可直接检索到的新增实质性用户消息。进度查询、
 “好了吗”等消息是状态询问，不新增产品语义；附件图片是视觉证据，不从图片
 文字或布局推导额外要求。逐条用户消息 ID 在当前 Codex 环境不可用，因此统一
 使用当前任务、线程 `codex://threads/<redacted-current-thread>` 和
 日期作为来源边界，不伪造 turn ID。
 
-Updated: 2026-09-01
+Updated: 2026-09-04
 
 - **Document owner:** Project product direction
 - **Status:** accepted user requirements; not implementation or Runtime proof
-- **Revision:** `pawos-requirements.r18`
+- **Revision:** `pawos-requirements.r20`
 - **Historical execution record:** [PAWOS_FRONTEND_HISTORY.md](../PAWOS_FRONTEND_HISTORY.md)
 
 This is the canonical requirements record for the PAWOS product surface and

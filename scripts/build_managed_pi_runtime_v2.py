@@ -418,14 +418,62 @@ def _node_relocation_error(node: Path) -> str:
     return ""
 
 
+def _dirty_pi_worktree_sha256(pi_root: Path) -> str:
+    try:
+        tracked = subprocess.run(
+            ["git", "diff", "--binary", "--no-ext-diff", "HEAD", "--"],
+            cwd=pi_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=pi_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ManagedPiRuntimeError(
+            f"Pi dirty source identity is unavailable: {exc}"
+        ) from exc
+
+    digest = hashlib.sha256()
+    digest.update(b"tracked\0")
+    digest.update(tracked)
+    for encoded_path in sorted(item for item in untracked.split(b"\0") if item):
+        path = pi_root / os.fsdecode(encoded_path)
+        digest.update(b"\0untracked\0")
+        digest.update(encoded_path)
+        digest.update(b"\0")
+        try:
+            if path.is_symlink():
+                digest.update(b"symlink\0")
+                digest.update(os.fsencode(os.readlink(path)))
+            elif path.is_file():
+                digest.update(b"file\0")
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        digest.update(chunk)
+            else:
+                raise ManagedPiRuntimeError(
+                    f"Pi dirty source contains an unsupported untracked path: {path}"
+                )
+        except OSError as exc:
+            raise ManagedPiRuntimeError(
+                f"Pi dirty source identity is unavailable for {path}: {exc}"
+            ) from exc
+    return digest.hexdigest()
+
+
 def _verify_pi_worktree(pi_root: Path) -> str:
     """Verify the explicit Pi source checkout before any build work begins.
 
-    The managed payload is a production artifact, so source identity must be a
-    real Git worktree with the canonical Runtime Host, no local changes, and a
-    descendant of the reviewed Runtime Host baseline.  In particular, a
-    neighbouring checkout that merely happens to contain a Pi package is not a
-    valid source.
+    Formal artifacts require a clean detached worktree descended from the
+    reviewed Runtime Host baseline. Explicit development installs may build a
+    dirty detached worktree, but the returned revision includes a content
+    digest so it cannot masquerade as the clean commit.
     """
 
     pi_root = pi_root.expanduser().resolve()
@@ -473,7 +521,8 @@ def _verify_pi_worktree(pi_root: Path) -> str:
         raise ManagedPiRuntimeError(
             f"Pi worktree detached-HEAD verification failed: {detail}"
         )
-    if status.strip():
+    dirty = bool(status.strip())
+    if dirty and os.environ.get("RAG_IME_ALLOW_DIRTY_INSTALL") != "1":
         raise ManagedPiRuntimeError(
             "Pi worktree must be clean; uncommitted source changes were found"
         )
@@ -497,11 +546,13 @@ def _verify_pi_worktree(pi_root: Path) -> str:
             "Pi worktree does not contain the required reviewed Runtime Host "
             f"ancestry {REQUIRED_PI_RUNTIME_BASE_COMMIT}: {exc}"
         ) from exc
+    if dirty:
+        return f"{commit}+dirty.{_dirty_pi_worktree_sha256(pi_root)}"
     return commit
 
 
 def _source_revision(pi_root: Path) -> str:
-    """Return a clean, ancestry-verified source revision."""
+    """Return an ancestry-verified clean or explicit development revision."""
 
     return _verify_pi_worktree(pi_root)
 

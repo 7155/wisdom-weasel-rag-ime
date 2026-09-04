@@ -1632,6 +1632,7 @@ def pi_message_payload(
         attachments=tuple(dict.fromkeys(attachments)),
         created_at_ms=created_at,
         completed_at_ms=created_at,
+        client_message_id=str(raw.get("clientMessageId") or ""),
         provider=str(raw.get("provider") or "").strip()[:80],
         model=str(raw.get("responseModel") or raw.get("model") or "").strip()[:160],
         usage=public_usage(raw) if role == "assistant" else None,

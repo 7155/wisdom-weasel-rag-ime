@@ -33,6 +33,10 @@ REQUIRED_HARD_GATES = (
     "answerJudge",
     "cleanup",
 )
+CANDIDATE_OUTCOME_HARD_GATES = ("citationResolution", "abstention")
+COMPARISON_INTEGRITY_HARD_GATES = tuple(
+    gate for gate in REQUIRED_HARD_GATES if gate not in CANDIDATE_OUTCOME_HARD_GATES
+)
 
 
 def sha256_json(value: object) -> str:
@@ -256,6 +260,10 @@ def _validation_identity(
     }
     if set(lane_map) != set(LANES):
         raise ValueError("validation Agent report must contain the four named lanes")
+    candidate_decision = _validated_candidate_decision(
+        validation.get("candidateDecision"),
+        lane_map=lane_map,
+    )
     failed_hard_gates_by_lane: dict[str, list[str]] = {}
     for lane in LANES:
         hard_gates = _object(lane_map[lane].get("hardGates"), f"{lane} hard gates")
@@ -267,8 +275,20 @@ def _validation_identity(
             name for name, value in hard_gates.items() if value is False
         )
         if decision == "keep" and failed_hard_gates_by_lane[lane]:
-            detail = ", ".join(missing) if missing else "one or more gates are false"
-            raise ValueError(f"{lane} hard gate failure: {detail}")
+            allowed_losing_outcome_failure = (
+                candidate_decision is not None
+                and candidate_decision.get("accepted") is True
+                and lane != "agentic"
+                and set(failed_hard_gates_by_lane[lane]).issubset(
+                    CANDIDATE_OUTCOME_HARD_GATES
+                )
+            )
+            if not allowed_losing_outcome_failure:
+                detail = ", ".join(missing) if missing else "one or more gates are false"
+                raise ValueError(f"{lane} hard gate failure: {detail}")
+    if decision == "keep" and candidate_decision is not None:
+        if candidate_decision.get("accepted") is not True:
+            raise ValueError("validation Agent candidate decision did not pass")
 
     if retrieval.get("status") != "completed":
         raise ValueError("retrieval report did not complete")
@@ -468,6 +488,64 @@ def _verify_identity_hash(value: Mapping[str, object], label: str) -> str:
     if not expected or sha256_json(unsigned) != expected:
         raise ValueError(f"{label} self hash is invalid")
     return expected
+
+
+def _validated_candidate_decision(
+    value: object,
+    *,
+    lane_map: Mapping[str, Mapping[str, object]],
+) -> dict[str, object] | None:
+    """Validate the candidate-only decision emitted by the current runner.
+
+    Legacy reports have no such receipt and retain the original all-lanes gate
+    behavior.  Current reports may let losing lanes fail outcome quality, but
+    never comparison integrity; the Agentic candidate must pass every gate.
+    """
+
+    if value is None:
+        return None
+    candidate = _object(value, "validation candidate decision")
+    if (
+        candidate.get("schemaVersion")
+        != "rag-ime.rag-agent-candidate-decision.v1"
+        or candidate.get("candidateLane") != "agentic"
+        or candidate.get("latencyDecisionRole") != "diagnostic_only"
+        or candidate.get("candidateOutcomeGates")
+        != list(CANDIDATE_OUTCOME_HARD_GATES)
+        or candidate.get("comparisonIntegrityGates")
+        != list(COMPARISON_INTEGRITY_HARD_GATES)
+    ):
+        raise ValueError("validation candidate decision contract is invalid")
+
+    expected_failed: list[str] = []
+    expected_losing: list[str] = []
+    for lane_name in LANES:
+        hard_gates = _object(
+            lane_map[lane_name].get("hardGates"),
+            f"{lane_name} hard gates",
+        )
+        for gate in COMPARISON_INTEGRITY_HARD_GATES:
+            if hard_gates.get(gate) is not True:
+                expected_failed.append(f"{lane_name}:{gate}")
+        if lane_name == "agentic":
+            for gate in CANDIDATE_OUTCOME_HARD_GATES:
+                if hard_gates.get(gate) is not True:
+                    expected_failed.append(f"{lane_name}:{gate}")
+        else:
+            for gate in CANDIDATE_OUTCOME_HARD_GATES:
+                if hard_gates.get(gate) is not True:
+                    expected_losing.append(f"{lane_name}:{gate}")
+
+    accepted = not expected_failed
+    if (
+        candidate.get("accepted") is not accepted
+        or candidate.get("decision") != ("keep" if accepted else "reject")
+        or sorted(candidate.get("failedHardGates") or []) != sorted(expected_failed)
+        or sorted(candidate.get("losingLaneOutcomeFailures") or [])
+        != sorted(expected_losing)
+    ):
+        raise ValueError("validation candidate decision does not match lane gates")
+    return candidate
 
 
 def _object(value: object, label: str) -> dict[str, Any]:

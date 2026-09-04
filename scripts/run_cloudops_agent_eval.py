@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,135 @@ HostScorer = Callable[[Path, list[dict[str, object]]], Mapping[str, object]]
 _TRIAL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\Z")
 _SCORE_METRICS = ("AnswerCoverage", "CA", "FA", "JRA", "Top3JRA")
 _USAGE_KEYS = ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
+_CONTEXT_PROJECTIONS = frozenset({"standard-v1", "observation-id-v1"})
+
+
+class _CloudOpsContextProjectionGateway:
+    """Change only the public Tool addressing projected into model context.
+
+    The wrapped gateway remains the sole owner of suite validation, budgets,
+    answers, and the append-only ledger.  ``observation-id-v1`` replaces the
+    long cache key in public list/read traffic with the already-derived short
+    observation id.  It does not change the prompt, observation body, cases,
+    Gold, scorer, or Host-side evidence hashes.
+    """
+
+    def __init__(
+        self,
+        gateway: CloudOpsBenchmarkGateway,
+        *,
+        context_projection: str = "standard-v1",
+    ) -> None:
+        if context_projection not in _CONTEXT_PROJECTIONS:
+            raise ValueError("CloudOps context projection is unsupported")
+        self._gateway = gateway
+        self.context_projection = context_projection
+        self.suite = gateway.suite
+        self.max_reads_per_case = gateway.max_reads_per_case
+        self._source_chars = 0
+        self._projected_chars = 0
+        self._projected_calls = 0
+
+    def bind_session(self, *args: object, **kwargs: object) -> dict[str, object]:
+        forwarded = dict(kwargs)
+        if forwarded.get("workflow_profile") in {
+            "quality-bounded-v3",
+            "quality-staged-v4",
+            "alert-first-v5",
+        }:
+            # This candidate changes only the Agent-visible diagnostic prompt.
+            # The owning gateway remains on the exact baseline Tool contract.
+            forwarded["workflow_profile"] = "baseline-v1"
+        return self._gateway.bind_session(*args, **forwarded)
+
+    def unbind_session(self, *args: object, **kwargs: object) -> bool:
+        return self._gateway.unbind_session(*args, **kwargs)
+
+    def answers(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+        return self._gateway.answers(*args, **kwargs)
+
+    def ledger(self, *args: object, **kwargs: object) -> dict[str, object]:
+        return self._gateway.ledger(*args, **kwargs)
+
+    def runtime_manifests(self, session: Mapping[str, object]) -> list[dict[str, object]]:
+        manifests = deepcopy(self._gateway.runtime_manifests(session))
+        if self.context_projection == "standard-v1" or not manifests:
+            return manifests
+        schemas = manifests[0].get("parameters", {}).get("oneOf", [])
+        for schema in schemas:
+            if not isinstance(schema, dict):
+                continue
+            properties = schema.get("properties")
+            if not isinstance(properties, dict):
+                continue
+            operation = properties.get("op")
+            if not isinstance(operation, dict) or operation.get("const") != "read":
+                continue
+            properties.pop("cacheKey", None)
+            properties["observationId"] = {
+                "type": "string",
+                "pattern": r"^obs_[0-9a-f]{24}$",
+            }
+            schema["required"] = ["op", "caseId", "observationId"]
+        return manifests
+
+    def execute(self, payload: Mapping[str, object]) -> dict[str, object]:
+        forwarded = deepcopy(dict(payload))
+        args = forwarded.get("args")
+        if (
+            self.context_projection == "observation-id-v1"
+            and isinstance(args, dict)
+            and str(args.get("op") or "") == "read"
+        ):
+            case_id = str(args.get("caseId") or "")
+            observation_id = str(args.pop("observationId", "") or "")
+            args["cacheKey"] = self._cache_key_for_observation_id(
+                case_id,
+                observation_id,
+            )
+        source = self._gateway.execute(forwarded)
+        projected = deepcopy(source)
+        if self.context_projection == "observation-id-v1":
+            result = projected.get("result")
+            if isinstance(result, dict):
+                result.pop("cacheKey", None)
+                items = result.get("items")
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            item.pop("cacheKey", None)
+        self._source_chars += len(_canonical(source))
+        self._projected_chars += len(_canonical(projected))
+        self._projected_calls += 1
+        return projected
+
+    def projection_summary(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "paw.cloudops-context-projection.v1",
+            "profile": self.context_projection,
+            "toolResultCount": self._projected_calls,
+            "sourceChars": self._source_chars,
+            "projectedChars": self._projected_chars,
+            "savedChars": self._source_chars - self._projected_chars,
+            "semanticObservationBodiesChanged": False,
+            "promptChanged": False,
+        }
+
+    def _cache_key_for_observation_id(self, case_id: str, observation_id: str) -> str:
+        cursor = 0
+        while True:
+            page = self.suite.list_observations(case_id, cursor=cursor, limit=50)
+            for item in page.get("items") or []:
+                if (
+                    isinstance(item, Mapping)
+                    and str(item.get("observationId") or "") == observation_id
+                ):
+                    return str(item.get("cacheKey") or "")
+            next_cursor = str(page.get("nextCursor") or "")
+            if not next_cursor:
+                break
+            cursor = int(next_cursor)
+        raise ValueError("CloudOps observation id is not present in the assigned case")
 
 
 def _canonical(value: object) -> str:
@@ -234,6 +364,7 @@ def _public_host_invocation(args: Any, *, transport: str) -> dict[str, object]:
         "timeoutSeconds": float(args.timeout_seconds),
         "maxReadsPerCase": int(args.max_reads_per_case),
         "workflowProfile": str(getattr(args, "workflow_profile", "baseline-v1")),
+        "contextProjection": str(getattr(args, "context_projection", "standard-v1")),
         "hostPathsPublished": False,
     }
     payload["commandSha256"] = _sha256(payload)
@@ -275,6 +406,7 @@ def run_cloudops_agent_eval(
     runtime_identity: Mapping[str, object] | None = None,
     thinking_level: str = "max",
     workflow_profile: str = "baseline-v1",
+    context_projection: str = "standard-v1",
 ) -> dict[str, object]:
     """Execute the frozen batches sequentially and persist one truthful chain."""
 
@@ -292,8 +424,13 @@ def run_cloudops_agent_eval(
         "evidence-search-v1",
         "evidence-search-v2",
         "observation-id-v1",
+        "quality-bounded-v3",
+        "quality-staged-v4",
+        "alert-first-v5",
     }:
         raise ValueError("CloudOps workflow profile is unsupported")
+    if context_projection not in _CONTEXT_PROJECTIONS:
+        raise ValueError("CloudOps context projection is unsupported")
     artifact_store.initialize()
     batch_plan = {
         batch_id: list(suite.assigned_case_ids(batch_id)) for batch_id in suite.batch_ids
@@ -344,6 +481,7 @@ def run_cloudops_agent_eval(
             "runtimeIdentity": public_runtime_identity,
             "thinkingLevel": thinking_level,
             "workflowProfile": workflow_profile,
+            "contextProjection": context_projection,
         },
     )
     service.bind_tool_manifest_provider(gateway.runtime_manifests)
@@ -459,6 +597,7 @@ def run_cloudops_agent_eval(
                 "modelIdentitySha256": _sha256(ensured),
                 "toolManifestSha256": tool_manifest_sha256,
                 "workflowProfile": workflow_profile,
+                "contextProjection": context_projection,
             }
             batch_results.append(batch)
             append(
@@ -651,6 +790,7 @@ def run_cloudops_agent_eval(
                 "sequential": True,
                 "maxReadsPerCase": gateway.max_reads_per_case,
                 "workflowProfile": workflow_profile,
+                "contextProjection": context_projection,
             }
         ),
         "modelProfileFingerprint": "sha256:" + _sha256(
@@ -729,6 +869,17 @@ def run_cloudops_agent_eval(
         "runtimeIdentity": public_runtime_identity,
         "thinkingLevel": thinking_level,
         "workflowProfile": workflow_profile,
+        "contextProjection": context_projection,
+        "contextProjectionSummary": (
+            gateway.projection_summary()
+            if callable(getattr(gateway, "projection_summary", None))
+            else {
+                "schemaVersion": "paw.cloudops-context-projection.v1",
+                "profile": context_projection,
+                "semanticObservationBodiesChanged": False,
+                "promptChanged": False,
+            }
+        ),
         "replayCohort": cohort,
     }
 
@@ -747,6 +898,51 @@ def _batch_prompt(
     )
     if workflow_profile == "baseline-v1":
         return base
+    if workflow_profile == "quality-bounded-v3":
+        return (
+            base
+            + " For each case, first localize the affected object and name the two most plausible "
+            "root causes. Use at most three list pages, then perform at least five and at most eight exact "
+            "observation reads. Do not submit until the top diagnosis has direct "
+            "root-cause evidence and counterevidence against the closest alternative; healthy adjacent "
+            "components are counterevidence, not proof that the affected component is healthy. Preserve "
+            "residual uncertainty in Top-2 and Top-3. Avoid narration between calls and emit the smallest "
+            "valid submit JSON once all four cases meet this evidence rule."
+        )
+    if workflow_profile == "quality-staged-v4":
+        return (
+            base
+            + " Investigate all four cases in two stages. Stage 1: localize the affected object and name "
+            "the closest competing cause for every case. Stage 2: read only observations that complete a "
+            "causal chain or falsify that competitor. For code defects, follow caller/callee values across "
+            "both sides of the failure. For service failures, inspect gateway route configuration plus the "
+            "target Service and endpoints before choosing DNS, selector, policy, or routing causes. For "
+            "performance failures, compare alert onset through the caller graph to find the earliest affected "
+            "leaf, then distinguish application delay from transport or resource faults using connectivity, "
+            "errors, and image identity. Across the whole batch, target no more than eight list pages and "
+            "twenty-four exact reads, but do not submit any case without direct support and evidence against "
+            "its closest alternative. Healthy adjacent components are counterevidence, not proof. Preserve "
+            "residual uncertainty in Top-2 and Top-3, avoid narration between calls, and emit the smallest "
+            "valid submit JSON once all four causal chains are complete."
+        )
+    if workflow_profile == "alert-first-v5":
+        return (
+            base
+            + " Investigate every case independently in two stages: localize the affected object, then "
+            "falsify its closest competing cause. For code defects, follow caller/callee values across both "
+            "sides of the failure. For service failures, inspect gateway route configuration plus the target "
+            "Service and endpoints before choosing DNS, selector, policy, or routing causes. For each "
+            "performance case, after one inventory page first read the GetAlerts observation; use its anomaly "
+            "magnitudes and the propagation order with dependency observations to localize the earliest "
+            "affected leaf. Only then use connectivity, errors, resource signals, or image evidence to "
+            "distinguish code delay from transport or capacity faults. Do not use pod age, image pull events, "
+            "or image identity to localize, and never compare image identity across independent cases. Across "
+            "the whole batch, target no more than eight list pages and twenty-four exact reads, but quality "
+            "wins: every Top-1 needs direct support and evidence against its closest alternative. Keep a "
+            "compact four-row evidence ledger without recapping completed cases or narrating between calls. "
+            "Preserve uncertainty in Top-2 and Top-3; keep each key_evidence_summary within 55 words and emit "
+            "the smallest valid submit JSON once all four causal chains are complete."
+        )
     if workflow_profile in {"evidence-search-v2", "observation-id-v1"}:
         prompt = (
             base
@@ -924,6 +1120,211 @@ def _numeric_usage(value: object) -> dict[str, int] | None:
     }
 
 
+def _cost_optimization_comparison(
+    baseline: Mapping[str, object],
+    candidate: Mapping[str, object],
+) -> dict[str, object]:
+    """Fail closed unless one context-only candidate preserves quality and costs less."""
+
+    identity_fields = (
+        "suiteSha256",
+        "contractSha256",
+        "batchPlanSha256",
+        "caseCount",
+        "thinkingLevel",
+    )
+    identity_checks = {
+        key: baseline.get(key) == candidate.get(key) and baseline.get(key) not in {None, ""}
+        for key in identity_fields
+    }
+    baseline_workflow = str(baseline.get("workflowProfile") or "")
+    candidate_workflow = str(candidate.get("workflowProfile") or "")
+    baseline_projection = str(baseline.get("contextProjection") or "")
+    candidate_projection = str(candidate.get("contextProjection") or "")
+    workflow_changed = baseline_workflow != candidate_workflow
+    observation_projection = (
+        not workflow_changed
+        and baseline_workflow == candidate_workflow == "baseline-v1"
+        and baseline_projection == "standard-v1"
+        and candidate_projection == "observation-id-v1"
+    )
+    prompt_contract = (
+        workflow_changed
+        and baseline_workflow == "baseline-v1"
+        and candidate_workflow in {
+            "quality-bounded-v3",
+            "quality-staged-v4",
+            "alert-first-v5",
+        }
+        and baseline_projection == candidate_projection == "standard-v1"
+    )
+    identity_checks["singleVariable"] = observation_projection or prompt_contract
+    single_variable = (
+        "public_tool_addressing_projection"
+        if observation_projection
+        else "bounded_diagnostic_prompt_contract"
+        if prompt_contract
+        else "invalid_multiple_or_missing_factors"
+    )
+    baseline_runtime = baseline.get("runtimeIdentity")
+    candidate_runtime = candidate.get("runtimeIdentity")
+    runtime_keys = (
+        "runtimeVersion",
+        "piVersion",
+        "protocolVersion",
+        "manifestSha256",
+        "entrypointSha256",
+        "nodeSha256",
+        "extensionSha256",
+        "provider",
+        "model",
+    )
+    if not isinstance(baseline_runtime, Mapping) or not isinstance(candidate_runtime, Mapping):
+        runtime_checks = {key: False for key in runtime_keys}
+    else:
+        runtime_checks = {
+            key: baseline_runtime.get(key) == candidate_runtime.get(key)
+            and baseline_runtime.get(key) not in {None, ""}
+            for key in runtime_keys
+        }
+    identity_ok = all(identity_checks.values()) and all(runtime_checks.values())
+
+    baseline_metrics = baseline.get("metrics")
+    candidate_metrics = candidate.get("metrics")
+    metric_comparison: dict[str, dict[str, object]] = {}
+    quality_ok = isinstance(baseline_metrics, Mapping) and isinstance(candidate_metrics, Mapping)
+    for key in _SCORE_METRICS:
+        before = baseline_metrics.get(key) if isinstance(baseline_metrics, Mapping) else None
+        after = candidate_metrics.get(key) if isinstance(candidate_metrics, Mapping) else None
+        valid = (
+            isinstance(before, (int, float))
+            and not isinstance(before, bool)
+            and isinstance(after, (int, float))
+            and not isinstance(after, bool)
+            and math.isfinite(float(before))
+            and math.isfinite(float(after))
+        )
+        non_regressed = bool(valid and float(after) + 1e-12 >= float(before))
+        quality_ok = bool(quality_ok and non_regressed)
+        metric_comparison[key] = {
+            "before": before,
+            "after": after,
+            "delta": (float(after) - float(before)) if valid else None,
+            "nonRegressed": non_regressed,
+        }
+
+    usage_categories = {
+        "uncachedInputTokens": "input",
+        "cachedInputTokens": "cacheRead",
+        "outputTokens": "output",
+    }
+    baseline_usage = baseline.get("usage")
+    candidate_usage = candidate.get("usage")
+    usage_comparison: dict[str, dict[str, object]] = {}
+    usage_ok = (
+        isinstance(baseline_usage, Mapping)
+        and baseline_usage.get("available") is True
+        and isinstance(candidate_usage, Mapping)
+        and candidate_usage.get("available") is True
+    )
+    strict_decrease = False
+    for public_key, source_key in usage_categories.items():
+        before = baseline_usage.get(source_key) if isinstance(baseline_usage, Mapping) else None
+        after = candidate_usage.get(source_key) if isinstance(candidate_usage, Mapping) else None
+        valid = (
+            isinstance(before, int)
+            and not isinstance(before, bool)
+            and before >= 0
+            and isinstance(after, int)
+            and not isinstance(after, bool)
+            and after >= 0
+        )
+        non_increasing = bool(valid and after <= before)
+        decreased = bool(valid and after < before)
+        usage_ok = bool(usage_ok and non_increasing)
+        strict_decrease = strict_decrease or decreased
+        usage_comparison[public_key] = {
+            "before": before,
+            "after": after,
+            "delta": (after - before) if valid else None,
+            "nonIncreasing": non_increasing,
+            "strictlyDecreased": decreased,
+        }
+    cost_ok = bool(usage_ok and strict_decrease)
+    passed = bool(identity_ok and quality_ok and cost_ok)
+    return {
+        "schemaVersion": "paw.cloudops-cost-optimization-comparison.v1",
+        "decision": "keep" if passed else "reject",
+        "singleVariable": single_variable,
+        "baselineWorkflowProfile": baseline_workflow,
+        "candidateWorkflowProfile": candidate_workflow,
+        "baselineContextProjection": baseline_projection,
+        "candidateContextProjection": candidate_projection,
+        "identityGatePassed": identity_ok,
+        "identityChecks": {**identity_checks, **{f"runtime.{k}": v for k, v in runtime_checks.items()}},
+        "qualityGatePassed": quality_ok,
+        "quality": metric_comparison,
+        "costGatePassed": cost_ok,
+        "usage": usage_comparison,
+        "costAuthority": "same-provider-model-usage-categories",
+        "providerBillAvailable": False,
+        "elapsedIsKeepGate": False,
+    }
+
+
+def _cloudops_optimization_receipt(
+    *,
+    baseline: Mapping[str, object],
+    candidate: Mapping[str, object],
+    baseline_report_sha256: str,
+    candidate_report_sha256: str,
+) -> dict[str, object]:
+    comparison = _cost_optimization_comparison(baseline, candidate)
+    variable = str(comparison["singleVariable"])
+    if variable == "bounded_diagnostic_prompt_contract":
+        factor = {
+            "layer": "prompt",
+            "name": variable,
+            "before": comparison["baselineWorkflowProfile"],
+            "after": comparison["candidateWorkflowProfile"],
+            "why": "bound retrieval while requiring direct root-cause and competing-diagnosis evidence",
+        }
+    else:
+        factor = {
+            "layer": "tool",
+            "name": variable,
+            "before": comparison["baselineContextProjection"],
+            "after": comparison["candidateContextProjection"],
+            "why": "replace long public cache keys with equivalent bounded observation ids",
+        }
+    return {
+        "schemaVersion": "paw.cloudops-cost-optimization-receipt.v1",
+        "runId": f"cloudops-cost-optimization:{candidate.get('trialId') or 'unknown'}",
+        "status": "completed",
+        "decision": comparison["decision"],
+        "baselineRunId": baseline.get("trialId"),
+        "candidateRunId": candidate.get("trialId"),
+        "factor": factor,
+        "comparison": comparison,
+        "timing": {
+            "baselineElapsedMs": dict(baseline.get("signals") or {}).get("elapsedMs"),
+            "candidateElapsedMs": dict(candidate.get("signals") or {}).get("elapsedMs"),
+            "keepGate": False,
+        },
+        "projection": candidate.get("contextProjectionSummary"),
+        "evidence": {
+            "baselineReportSha256": baseline_report_sha256,
+            "candidateReportSha256": candidate_report_sha256,
+        },
+        "claimBoundary": [
+            "validation-only source-local candidate",
+            "cost verdict uses comparable Provider usage categories, not a Provider bill",
+            "elapsed time is recorded but is not a Keep gate",
+            "installed and foreground acceptance remain separate",
+        ],
+    }
+
+
 def _execution_signals(
     batch_results: list[Mapping[str, object]],
     *,
@@ -1085,11 +1486,32 @@ def main(argv: list[str] | None = None) -> int:
             "evidence-search-v1",
             "evidence-search-v2",
             "observation-id-v1",
+            "quality-bounded-v3",
+            "quality-staged-v4",
+            "alert-first-v5",
         ),
         default="baseline-v1",
     )
+    parser.add_argument(
+        "--context-projection",
+        choices=tuple(sorted(_CONTEXT_PROJECTIONS)),
+        default="standard-v1",
+        help="Change only the public Tool addressing projected into Agent context.",
+    )
+    parser.add_argument(
+        "--baseline-report",
+        type=Path,
+        help="Optional matching baseline report used for a fail-closed cost comparison.",
+    )
+    parser.add_argument(
+        "--optimization-output",
+        type=Path,
+        help="Write a standalone optimization receipt; requires --baseline-report.",
+    )
     parser.add_argument("--transport", choices=("spool", "loopback"), default="spool")
     args = parser.parse_args(argv)
+    if args.optimization_output is not None and args.baseline_report is None:
+        parser.error("--optimization-output requires --baseline-report")
 
     args.trial_id = _normalize_trial_id(args.trial_id)
     private_root = args.private_root.expanduser().resolve(strict=False)
@@ -1103,9 +1525,12 @@ def main(argv: list[str] | None = None) -> int:
         raise FileExistsError("CloudOps trial root already exists")
     run_root.mkdir(mode=0o700)
     suite = CloudOpsBlindSuite(args.blind_root)
-    gateway = CloudOpsBenchmarkGateway(
-        suite,
-        max_reads_per_case=max(1, int(args.max_reads_per_case)),
+    gateway = _CloudOpsContextProjectionGateway(
+        CloudOpsBenchmarkGateway(
+            suite,
+            max_reads_per_case=max(1, int(args.max_reads_per_case)),
+        ),
+        context_projection=str(args.context_projection),
     )
     transport: object
     runtime_wrapper: Path | None = None
@@ -1164,6 +1589,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime_identity=runtime_identity,
             thinking_level=str(args.thinking),
             workflow_profile=str(args.workflow_profile),
+            context_projection=str(args.context_projection),
         )
         report["hostInvocation"] = _public_host_invocation(
             args,
@@ -1187,7 +1613,31 @@ def main(argv: list[str] | None = None) -> int:
         if service is not None:
             service.close()
         transport.close()
+    baseline_report: dict[str, object] | None = None
+    if args.baseline_report is not None:
+        value = json.loads(args.baseline_report.expanduser().resolve(strict=True).read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("CloudOps baseline report must be a JSON object")
+        baseline_report = dict(value)
+        report["optimizationComparison"] = _cost_optimization_comparison(
+            baseline_report,
+            report,
+        )
     _write_json_atomic(args.output, report)
+    if args.optimization_output is not None and baseline_report is not None:
+        _write_json_atomic(
+            args.optimization_output,
+            _cloudops_optimization_receipt(
+                baseline=baseline_report,
+                candidate=report,
+                baseline_report_sha256=_file_sha256(
+                    args.baseline_report.expanduser().resolve(strict=True)
+                ),
+                candidate_report_sha256=_file_sha256(
+                    args.output.expanduser().resolve(strict=True)
+                ),
+            ),
+        )
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

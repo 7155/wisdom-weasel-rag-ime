@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import call, patch
 
 from rag_ime.system_terminal import SCHEMA_VERSION, SystemTerminalError, SystemTerminalService
 
@@ -17,6 +18,61 @@ class SystemTerminalServiceTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.service.close()
         self.temporary.cleanup()
+
+    def test_failed_spawn_closes_each_pty_descriptor_once(self) -> None:
+        with (
+            patch(
+                "rag_ime.system_terminal.os.openpty",
+                return_value=(70, 71),
+            ),
+            patch.object(
+                self.service,
+                "_set_size",
+            ),
+            patch(
+                "rag_ime.system_terminal.subprocess.Popen",
+                side_effect=OSError("simulated spawn failure"),
+            ),
+            patch(
+                "rag_ime.system_terminal.os.close",
+            ) as close_descriptor,
+        ):
+            with self.assertRaisesRegex(
+                OSError,
+                "simulated spawn failure",
+            ):
+                self.service.create({"shell": "/bin/sh"})
+
+        self.assertEqual(
+            close_descriptor.call_args_list,
+            [call(70), call(71)],
+        )
+
+    def test_failed_pty_configuration_closes_each_descriptor(self) -> None:
+        with (
+            patch(
+                "rag_ime.system_terminal.os.openpty",
+                return_value=(80, 81),
+            ),
+            patch.object(
+                self.service,
+                "_set_size",
+                side_effect=OSError("simulated pty configuration failure"),
+            ),
+            patch(
+                "rag_ime.system_terminal.os.close",
+            ) as close_descriptor,
+        ):
+            with self.assertRaisesRegex(
+                OSError,
+                "simulated pty configuration failure",
+            ):
+                self.service.create({"shell": "/bin/sh"})
+
+        self.assertEqual(
+            close_descriptor.call_args_list,
+            [call(80), call(81)],
+        )
 
     def test_real_pty_runs_command_and_returns_cursor_stream(self) -> None:
         created = self.service.create({"shell": "/bin/sh", "cols": 90, "rows": 24})

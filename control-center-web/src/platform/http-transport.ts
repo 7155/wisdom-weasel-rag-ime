@@ -404,14 +404,11 @@ export class HttpControlTransport implements ControlTransport {
         observer.open?.(lastEventId);
         const decoder = new TextDecoder();
         const parser = new SseParser((item) => {
-          try {
-            const event = parseStreamEvent(validationRuntime, streamKind, item) as Event;
-            lastEventId = streamResumeToken(event, item.id, lastEventId);
-            observer.next(event);
-            if (isSnapshotRequired(event)) observer.snapshotRequired?.(event);
-          } catch (error) {
-            observer.error?.(asError(error));
-          }
+          const event = parseStreamEvent(validationRuntime, streamKind, item) as Event;
+          const deliveredEventId = streamResumeToken(event, item.id, lastEventId);
+          observer.next(event);
+          if (isSnapshotRequired(event)) observer.snapshotRequired?.(event);
+          lastEventId = deliveredEventId;
         });
         const reader = response.body.getReader();
         try {
@@ -422,6 +419,18 @@ export class HttpControlTransport implements ControlTransport {
           }
           parser.push(decoder.decode());
           parser.finish();
+        } catch (error) {
+          // A cursor acknowledges projection delivery, not socket receipt. If
+          // parsing or observer delivery fails, stop this response immediately:
+          // otherwise another event already buffered on the same connection
+          // could commit N+1 while N is still missing.
+          try {
+            await reader.cancel(error);
+          } catch {
+            // The body may already have closed while the failed frame was
+            // being projected. Reconnect still starts at the prior cursor.
+          }
+          throw error;
         } finally {
           reader.releaseLock();
         }
@@ -482,6 +491,11 @@ function parseStreamEvent(
 }
 
 function streamResumeToken(event: unknown, sseId: string, fallback: string): string {
+  // A snapshot-required envelope is a transient recovery control, not a
+  // durable journal event. Its id is intentionally outside the normal
+  // `<owner>:<sequence>` cursor grammar; sending it back as Last-Event-ID
+  // would ask the server to recover from the recovery notice itself.
+  if (isSnapshotRequired(event)) return fallback;
   if (isRecord(event)) {
     if (typeof event.resumeToken === 'string' && event.resumeToken.length > 0) {
       return event.resumeToken;

@@ -80,6 +80,7 @@ export type EvalLabEvidenceTask = {
   assistantMessages: number;
   toolCalls: number;
   toolFailures: number;
+  toolReceiptComplete?: boolean;
   toolNames: readonly string[];
   externalSessionRef: string;
   model: string;

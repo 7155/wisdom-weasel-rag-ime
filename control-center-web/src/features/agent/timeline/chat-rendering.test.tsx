@@ -1771,6 +1771,47 @@ describe('Agent chat rendering', () => {
     expect(switchModel).not.toHaveBeenCalled();
   });
 
+  it('requires re-upload instead of retrying a failed local attachment placeholder', () => {
+    const sessionId = 'session-local-attachment-failed';
+    const turnId = 'turn-local-attachment-failed';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [{
+        ...userMessage(sessionId, turnId),
+        id: 'local-attachment-user',
+        attachments: ['home-attachment-local-only'],
+      }],
+      liveEvents: [{
+        ...agentEventFixture(2, 'turn_failed', {
+          error: '附件未能导入，这条消息没有发送。请重新上传附件后发送。',
+        }),
+        eventId: `${sessionId}:2`,
+        sessionId,
+        turnId,
+      }],
+      lastSequence: 2,
+      resumeToken: `${sessionId}:2`,
+      status: 'faulted',
+    });
+
+    render(
+      <TooltipProvider>
+        <AgentTurn
+          sessionId={sessionId}
+          turnId={turnId}
+          modelSelectionAvailable
+          onApprovalDecision={() => {}}
+          onRetryTurn={() => true}
+          onSwitchModel={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('重新上传附件');
+    expect(screen.queryByRole('button', { name: '重试本轮' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '切换模型' })).not.toBeInTheDocument();
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('does not surface a superseded user-only snapshot turn as the current failure', () => {
     const sessionId = 'session-steered-snapshot';
     const interruptedTurnId = 'turn-before-steer';

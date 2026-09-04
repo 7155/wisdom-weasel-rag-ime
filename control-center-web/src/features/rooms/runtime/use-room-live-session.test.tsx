@@ -115,6 +115,71 @@ describe('useRoomLiveSession snapshot recovery', () => {
     expect(transport.activeSubscriptionCount()).toBe(0);
   });
 
+  it('keeps every Room window live when one local listener rejects a terminal update', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.room.snapshot': roomSnapshot([]),
+      },
+    });
+    const listenerFailure = new Error('planet window render failed');
+    const healthyEvents = vi.fn();
+    const connectionErrors = vi.fn();
+    const report = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const callbackDefaults = {
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: connectionErrors,
+      onRecoveryState: vi.fn(),
+    };
+
+    const { unmount } = renderHook(() => {
+      useRoomLiveSession({
+        roomId: 'room-1',
+        transport,
+        ...callbackDefaults,
+        onEvents: () => { throw listenerFailure; },
+      });
+      useRoomLiveSession({
+        roomId: 'room-1',
+        transport,
+        ...callbackDefaults,
+        onEvents: healthyEvents,
+      });
+    });
+
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));
+    const terminal = {
+      ...roomEventFixture(1, 'turn_completed', {
+        rootId: 'room-turn-1',
+        status: 'completed',
+      }),
+      participantId: null,
+      sourceSessionId: '',
+    };
+    const rawTerminal = Object.fromEntries(
+      Object.entries(terminal).filter(([key]) => key !== 'streamKind'),
+    );
+
+    act(() => {
+      expect(transport.emit('agent.room.events', rawTerminal)).toBe(1);
+    });
+    await flushAsyncWork();
+
+    expect(healthyEvents).toHaveBeenCalledWith('room-1', [terminal]);
+    expect(connectionErrors).not.toHaveBeenCalled();
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    expect(roomProjection('room-1').lastSequence).toBe(1);
+    expect(roomProjection('room-1').turnsById['room-turn-1']?.status).toBe('completed');
+    expect(report).toHaveBeenCalledWith(
+      'Room live-session listener failed',
+      listenerFailure,
+    );
+    report.mockRestore();
+    unmount();
+  });
+
 
   it('renders conversation events before the deferred Tool snapshot finishes', async () => {
     vi.useFakeTimers();

@@ -1,0 +1,144 @@
+{
+  "baselineRunId": "memory-maintenance-sol-max-full-json-baseline-20260904-r2",
+  "candidateRunId": "memory-maintenance-sol-max-compact-json-candidate-20260904-r2",
+  "claimBoundary": [
+    "private-shadow validation only",
+    "cost verdict uses comparable Codex usage categories, not a Provider bill",
+    "elapsed time is recorded but is not a Keep gate",
+    "installed Gateway and foreground acceptance remain separate"
+  ],
+  "comparison": {
+    "baselineContextProfile": "full-json-v1",
+    "baselineQuality": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allRetrievalCases": true,
+        "allStored": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "retrievalCases": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceCount": true,
+        "sourceShadowUnchanged": true,
+        "status": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "candidateContextProfile": "compact-json-v1",
+    "candidateQuality": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allRetrievalCases": true,
+        "allStored": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "retrievalCases": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceCount": true,
+        "sourceShadowUnchanged": true,
+        "status": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "costAuthority": "same-provider-model-usage-categories",
+    "costGatePassed": false,
+    "decision": "reject",
+    "elapsedIsKeepGate": false,
+    "identityChecks": {
+      "evaluationScope": true,
+      "fixture": true,
+      "model": true,
+      "thinking": true
+    },
+    "identityGatePassed": true,
+    "providerBillAvailable": false,
+    "qualityGatePassed": true,
+    "schemaVersion": "paw.memory-maintenance-cost-optimization-comparison.v1",
+    "singleVariable": "canonical_json_context_projection",
+    "usage": {
+      "cachedInputTokens": {
+        "after": 0,
+        "before": 0,
+        "delta": 0,
+        "nonIncreasing": true,
+        "strictlyDecreased": false
+      },
+      "outputTokens": {
+        "after": 2274,
+        "before": 2207,
+        "delta": 67,
+        "nonIncreasing": false,
+        "strictlyDecreased": false
+      },
+      "uncachedInputTokens": {
+        "after": 39241,
+        "before": 39799,
+        "delta": -558,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      }
+    }
+  },
+  "decision": "reject",
+  "evidence": {
+    "baselineReportSha256": "486341e5c156b58b7b5fb6b78b80982a3a62f451f5717312e887224ffc8906ab",
+    "candidateReportSha256": "a6e029be42ba7570c5744226296dd728f2e547dcc6694275f43030fcfdcdcac2"
+  },
+  "factor": {
+    "after": "compact-json-v1",
+    "before": "full-json-v1",
+    "layer": "prompt_context",
+    "name": "canonical_json_context_projection",
+    "why": "remove JSON formatting whitespace without changing the decoded packet"
+  },
+  "runId": "memory-maintenance-cost-optimization:memory-maintenance-sol-max-compact-json-candidate-20260904-r2",
+  "schemaVersion": "paw.memory-maintenance-cost-optimization-receipt.v1",
+  "status": "completed",
+  "timing": {
+    "baseline": {
+      "evaluationElapsedMs": 56610,
+      "keepGate": false,
+      "modelElapsedMs": 55211
+    },
+    "candidate": {
+      "evaluationElapsedMs": 58892,
+      "keepGate": false,
+      "modelElapsedMs": 57338
+    },
+    "keepGate": false
+  }
+}

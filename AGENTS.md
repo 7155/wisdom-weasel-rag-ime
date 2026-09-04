@@ -110,7 +110,10 @@ Do not dump private reasoning or raw Tool history into parent context.
 - `PROJECT.md` changes only when the durable vision, destination, boundary, or
   non-goal is accepted.
 - `OUTCOMES.md` is the bounded project focus set. Update it for an accepted
-  result, material blocker, or changed next frontier—not every Tool call.
+  result, material blocker, or changed next frontier—not every Tool call. Keep
+  every new Outcome in the root index. If it exceeds budget, retain its stable
+  row, archive detail or closed history by category with reciprocal links, and
+  never leave an Outcome only in an ad-hoc document.
 - `DECISIONS.md` stores cross-outcome decisions and their consequences.
 - `CONTEXT.md` is a glossary only; it must not become an implementation guide.
 - Active Session and Room Agents update only their assigned brief, workboard,

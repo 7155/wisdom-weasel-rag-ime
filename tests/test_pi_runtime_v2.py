@@ -28,7 +28,10 @@ from rag_ime.pi_runtime_v2 import (
     _pi_tool_history_events,
     _runtime_primitive_capabilities,
 )
-from rag_ime.pi_runtime_values import PiRuntimeCommandRejected
+from rag_ime.pi_runtime_values import (
+    PiRuntimeCommandAcceptanceUnknown,
+    PiRuntimeCommandRejected,
+)
 
 
 FAKE_HOST = r'''#!/usr/bin/env python3
@@ -120,6 +123,14 @@ for line in sys.stdin:
         })
         if os.environ.get("TEST_SESSION_OPEN_MESSAGE_COUNT"):
             session["messageCount"] = int(os.environ["TEST_SESSION_OPEN_MESSAGE_COUNT"])
+        recovered_turn_id = os.environ.get("TEST_SESSION_OPEN_RECOVERED_TURN", "").strip()
+        if recovered_turn_id:
+            session["activeTurnId"] = recovered_turn_id
+            session["activeClientMessageId"] = "client-recovered"
+            session["activeTurn"] = {
+                "turnId": recovered_turn_id,
+                "clientMessageId": "client-recovered",
+            }
         result(request, {"snapshot": session, "evictedSessionId": None})
     elif method == "session.control_state":
         session = sessions[session_id]
@@ -128,7 +139,14 @@ for line in sys.stdin:
             "sessionId": session_id,
             "isIdle": session.get("isIdle", True),
             "isCompacting": False,
-            "activeTurn": None,
+            "activeTurn": (
+                {
+                    "turnId": session["activeTurnId"],
+                    "clientMessageId": session.get("activeClientMessageId", ""),
+                }
+                if session.get("activeTurnId")
+                else None
+            ),
             "sequence": sequence,
         })
     elif method == "session.snapshot":
@@ -258,6 +276,13 @@ for line in sys.stdin:
         event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
         event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
         if params["message"] == "end-without-settled":
+            # Model a host that reached the idle boundary but whose terminal
+            # `agent_settled` notification was lost in transit.  Keeping the
+            # active turn here would describe a different state: a genuinely
+            # live or suspended turn, which the runtime must not auto-retire.
+            sessions[session_id].pop("activeTurnId", None)
+            sessions[session_id].pop("activeClientMessageId", None)
+            sessions[session_id]["activeTurn"] = None
             continue
         time.sleep(0.15)
         event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
@@ -343,6 +368,9 @@ for line in sys.stdin:
         })
     elif method == "session.abort":
         turn_id = sessions[session_id].get("activeTurnId", "turn-" + session_id)
+        sessions[session_id].pop("activeTurnId", None)
+        sessions[session_id].pop("activeClientMessageId", None)
+        sessions[session_id]["activeTurn"] = None
         result(request, {
             "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
             "sessionId": session_id,
@@ -983,6 +1011,65 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ["systematic-debugging", "test-driven-implementation"],
         )
 
+    def test_session_open_receipt_freezes_skill_refs_across_reuse(self) -> None:
+        session_id = str(self.first["id"])
+        effective = ["systematic-debugging", "trace-agent-diagnostics"]
+        self.runtime._skill_allowlist_provider = lambda _session: list(effective)
+
+        opened = self.runtime.ensure(session_id)
+        self.assertEqual(
+            opened["resourceSnapshot"],
+            {
+                "schemaVersion": "rag-ime.pi-session-resource-snapshot.v1",
+                "skillPolicy": "allowlist",
+                "skillRefs": [
+                    "systematic-debugging",
+                    "trace-agent-diagnostics",
+                ],
+            },
+        )
+        binding = self.store.runtime_binding(session_id)
+        assert binding is not None
+        self.assertEqual(
+            binding["metadata"]["resourceSnapshot"],
+            opened["resourceSnapshot"],
+        )
+
+        effective[:] = ["systematic-debugging", "facilitate-room"]
+        reused = self.runtime.ensure(session_id)
+
+        self.assertTrue(reused["reused"])
+        self.assertEqual(reused["resourceSnapshot"], opened["resourceSnapshot"])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(
+            [request["method"] for request in requests].count("session.open"),
+            1,
+        )
+
+        self.runtime.stop()
+        reopened = self.runtime.ensure(session_id)
+        self.assertFalse(reopened["reused"])
+        self.assertEqual(reopened["resourceSnapshot"], opened["resourceSnapshot"])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        session_opens = [
+            request for request in requests if request["method"] == "session.open"
+        ]
+        self.assertEqual(len(session_opens), 2)
+        self.assertEqual(
+            session_opens[-1]["params"]["skillAllowlist"],
+            ["systematic-debugging", "trace-agent-diagnostics"],
+        )
+
     def test_session_skill_allowlist_fails_closed_on_an_old_host(self) -> None:
         session_id = str(self.first["id"])
         self.runtime._skill_allowlist_provider = (
@@ -996,6 +1083,48 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "does not support per-Session Skill allowlists",
         ):
             self.runtime.ensure(session_id)
+
+    def test_ensure_retires_an_idle_turn_restored_after_host_failure(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        recovered_turn_id = "turn-interrupted-before-ack"
+        self.store.set_status(
+            session_id,
+            "faulted",
+            last_message_preview="Pi Runtime Host exited",
+        )
+        self.runtime.config = replace(
+            self.runtime.config,
+            provider_environment={
+                "TEST_SESSION_OPEN_RECOVERED_TURN": recovered_turn_id,
+            },
+        )
+
+        ensured = self.runtime.ensure(session_id)
+
+        self.assertIsNone(ensured["state"]["activeTurn"])
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        session_methods = [
+            request["method"]
+            for request in requests
+            if request["method"].startswith("session.")
+        ]
+        self.assertEqual(
+            session_methods,
+            [
+                "session.open",
+                "session.control_state",
+                "session.abort",
+                "session.control_state",
+            ],
+        )
 
     def test_retire_recovered_turn_uses_exact_idle_turn_and_confirms_clear(
         self,
@@ -2717,6 +2846,78 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ["真实评测任务", "真实评测结果"],
         )
 
+    def test_durable_snapshot_keeps_product_prompt_identity(self) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "product-prompt-identity.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-product-prompt-identity"},
+            {
+                "type": "custom",
+                "customType": "rag-ime.pi-turn-binding",
+                "id": "binding-first-prompt",
+                "parentId": "pi-product-prompt-identity",
+                "data": {
+                    "schemaVersion": "rag-ime.pi-turn-binding.v1",
+                    "turnId": "turn-first-prompt",
+                    "clientMessageId": "client-first-prompt",
+                },
+            },
+            {
+                "type": "message",
+                "id": "product-user",
+                "parentId": "binding-first-prompt",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "hi"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "product-assistant",
+                "parentId": "product-user",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Hi! How can I help?"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-product-prompt-identity",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="product-assistant",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+
+        snapshot = self.runtime.session_snapshot(session_id)
+        recent = self.runtime.recent_session_snapshot(session_id)
+
+        self.assertEqual(
+            [message["turnId"] for message in snapshot["messages"]],
+            ["turn-first-prompt", "turn-first-prompt"],
+        )
+        self.assertEqual(
+            snapshot["messages"][0]["clientMessageId"],
+            "client-first-prompt",
+        )
+        self.assertEqual(
+            [message["turnId"] for message in recent["messages"]],
+            ["turn-first-prompt", "turn-first-prompt"],
+        )
+        self.assertEqual(
+            recent["messages"][0]["clientMessageId"],
+            "client-first-prompt",
+        )
+
     def test_durable_snapshot_uses_transcript_append_time_for_timeline_order(self) -> None:
         session_id = str(self.first["id"])
         transcript = self.root / "sessions" / "timeline-order.jsonl"
@@ -3039,6 +3240,69 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "resourceRevision",
             json.dumps(finished["payload"]["result"], ensure_ascii=False),
         )
+
+    def test_failed_provider_message_does_not_project_unexecuted_tool_draft(self) -> None:
+        raw_messages = [
+            {
+                "id": "user-provider-retry",
+                "role": "user",
+                "timestamp": 100,
+                "content": [{"type": "text", "text": "委派一次覆盖审查"}],
+            },
+            {
+                "id": "assistant-provider-failed",
+                "role": "assistant",
+                "timestamp": 101,
+                "stopReason": "error",
+                "errorMessage": "fetch failed",
+                "content": [{
+                    "type": "toolCall",
+                    "id": "call-never-executed",
+                    "name": "agents",
+                    "arguments": {
+                        "op": "delegate",
+                        "agent": "reviewer",
+                        "version": "1",
+                        "task": "partial provider draft",
+                    },
+                }],
+            },
+            {
+                "id": "assistant-provider-recovered",
+                "role": "assistant",
+                "timestamp": 102,
+                "stopReason": "toolUse",
+                "content": [{
+                    "type": "toolCall",
+                    "id": "call-executed",
+                    "name": "agents",
+                    "arguments": {
+                        "op": "delegate",
+                        "tasks": [{"agent": "reviewer", "version": "1"}],
+                    },
+                }],
+            },
+            {
+                "role": "toolResult",
+                "timestamp": 103,
+                "toolCallId": "call-executed",
+                "toolName": "agents",
+                "isError": False,
+                "details": {"schemaVersion": "rag-ime.agent-delegation.v1"},
+            },
+        ]
+
+        events = _pi_tool_history_events(
+            raw_messages,
+            session_id="session-provider-retry-tool-draft",
+        )
+
+        tool_ids = [
+            str(event["payload"].get("toolCallId") or "")
+            for event in events
+            if event["eventType"] in {"tool_started", "tool_finished"}
+        ]
+        self.assertEqual(["call-executed", "call-executed"], tool_ids)
 
     def test_resident_history_and_command_reads_skip_context_reassembly(self) -> None:
         session_id = str(self.first["id"])
@@ -4121,6 +4385,69 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
         messages = self.runtime.messages(session_id)
         self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+
+    def test_prompt_ack_loss_after_host_acceptance_does_not_publish_unscoped_failure(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def lose_prompt_ack(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+            before_write=None,
+        ) -> dict[str, object]:
+            result = original_send(
+                method,
+                params,
+                timeout=timeout,
+                before_write=before_write,
+            )
+            if method == "session.prompt":
+                raise PiRuntimeError(
+                    "Pi Runtime Host command timed out: session.prompt"
+                )
+            return result
+
+        with patch.object(client, "send", side_effect=lose_prompt_ack):
+            with self.assertRaisesRegex(
+                PiRuntimeCommandAcceptanceUnknown,
+                "command timed out: session.prompt",
+            ):
+                self.runtime.prompt(
+                    session_id,
+                    "host accepts but caller loses the acknowledgement",
+                    client_message_id="client:lost-prompt-ack",
+                )
+
+        _wait_until(
+            lambda: any(
+                item.event_type == "turn_completed"
+                for item in self.events.replay(session_id)[0]
+            ),
+        )
+        events = self.events.replay(session_id)[0]
+        completed = [
+            item for item in events
+            if item.event_type == "turn_completed"
+        ]
+        self.assertEqual(len(completed), 1)
+        turn_id = completed[0].turn_id
+        self.assertTrue(turn_id)
+        self.assertTrue(any(
+            item.event_type == "message_completed"
+            and item.turn_id == turn_id
+            for item in events
+        ))
+        self.assertFalse(any(
+            item.event_type == "turn_failed"
+            for item in events
+        ))
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
 
     def test_provider_retry_events_are_projected_without_raw_diagnostics(self) -> None:
         session_id = str(self.first["id"])

@@ -169,3 +169,13 @@ implementation choices or live status.
   not gate these profiles. Schemas, target applicability, atomic race checks,
   actual Tool availability, macOS TCC, and Unix permissions remain boundaries.
   Legacy profiles remain readable but are not ordinary choices.
+
+## D-015 — Experience Leads Runtime Tradeoffs
+
+- **Status:** accepted
+- **Decision:** Runtime UX and continuity lead. Only the owner of a concrete
+  integrity boundary may block first paint, polling, prompt admission, or
+  recovery.
+- **Consequence:** one owner per fact; consumers project it. Move duplicate
+  guards offline. Privacy, credentials, destructive authority, database
+  atomicity, macOS permissions, and immutable artifacts remain hard.

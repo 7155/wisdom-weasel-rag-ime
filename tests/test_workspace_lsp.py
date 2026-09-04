@@ -192,6 +192,22 @@ class WorkspaceLspHarnessTests(unittest.TestCase):
         self.assertEqual(diagnostics["items"][0]["severity"], "warning")
         self.assertEqual(self.harness.lsp_status(self.session, {})["state"], "ready")
 
+    def test_passive_status_does_not_crawl_markerless_workspaces(self) -> None:
+        (self.root / "pyproject.toml").unlink()
+
+        status = self.harness.lsp_status(self.session, {})
+
+        self.assertEqual(status["state"], "unavailable")
+        self.assertEqual(status["roots"][0]["servers"], [])
+        hover = self.harness.lsp_read(
+            self.session,
+            "hover",
+            {"path": str(self.main), "line": 1, "column": 3},
+        )
+        self.assertEqual(hover["content"], "`foo: int`")
+        self.assertEqual(self.harness.lsp_status(self.session, {})["state"], "ready")
+
+
     def test_runtime_projection_epoch_and_heartbeat_invalidate_closed_lifecycle(self) -> None:
         initial = self.harness.lsp_status(self.session, {})
         cancelled_epoch = initial["runtimeEpoch"] + 1

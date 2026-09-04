@@ -58,7 +58,13 @@ FROZEN_HELD_OUT_TASK_IDS = (
     "task_20260102_172945_725_ad5a67e3_5480e26f",
     "task_20260104_202644_765_00364ece_a86667c0",
 )
-WORKFLOW_PROFILES = ("baseline-v1", "dependency-plan-v1", "state-contract-v1")
+WORKFLOW_PROFILES = (
+    "baseline-v1",
+    "dependency-plan-v1",
+    "state-contract-v1",
+    "state-contract-compact-v2",
+    "state-contract-preloaded-v3",
+)
 ENTERPRISEOPS_SUITE_V2_REVISION = "enterpriseops-csm-suite-v2"
 ENTERPRISEOPS_SUITE_V2_BUSINESS_AS_OF_DATE = "2025-11-04"
 ENTERPRISEOPS_SUITE_V2_OVERLAY_PATH = ROOT / "eval/enterpriseops-csm-suite-v2.overlay.v1.json"
@@ -522,7 +528,11 @@ def build_agent_prompt(
         raise ValueError("EnterpriseOps suite revision is unsupported")
     if workflow_profile == "baseline-v1":
         return base
-    if workflow_profile == "state-contract-v1":
+    if workflow_profile in {
+        "state-contract-v1",
+        "state-contract-compact-v2",
+        "state-contract-preloaded-v3",
+    }:
         business_as_of = str(task.get("businessAsOfDate") or "").strip()
         if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", business_as_of):
             raise ValueError("EnterpriseOps state contract requires a business as-of date")
@@ -540,6 +550,18 @@ def build_agent_prompt(
             f" The frozen business as-of date is {business_as_of}; resolve relative dates from that date, not from "
             "the model's current clock."
         )
+        if workflow_profile in {
+            "state-contract-compact-v2",
+            "state-contract-preloaded-v3",
+        }:
+            return (
+                base
+                + f"\n\nKeep a compact internal state contract.{date_contract}{temporal_contract} "
+                "Do not call the built-in session_workflow Tool or any planning Tool. Preserve exact strings, dates, "
+                "amounts, enums and limits. Resolve each distinct role independently. Execute each required mutation "
+                "once in dependency order. Do not reread unchanged records: trust successful mutation results, make "
+                "one final verification pass with CSM reads, and repair at most once. End with one short summary."
+            )
         return (
             base
             + f"\n\nCompile a state contract before the first mutation.{date_contract}{temporal_contract} Preserve user-provided exact strings, quoted titles, "
@@ -702,6 +724,7 @@ class EnterpriseOpsToolGateway:
         database_id: str,
         context: Mapping[str, object],
         allowed_tools: Sequence[str],
+        preload_tools: bool = False,
     ) -> None:
         tools = [str(name) for name in allowed_tools]
         missing = [name for name in tools if name not in self.catalog]
@@ -714,6 +737,7 @@ class EnterpriseOpsToolGateway:
                 "databaseId": str(database_id),
                 "context": dict(context),
                 "tools": tools,
+                "preloadTools": bool(preload_tools),
             }
 
     def unbind_session(self, session_id: str) -> bool:
@@ -728,15 +752,16 @@ class EnterpriseOpsToolGateway:
         manifests = []
         for name in binding["tools"]:
             source = self.catalog[str(name)]
-            manifests.append(
-                {
-                    "name": str(name),
-                    "description": str(source.get("description") or ""),
-                    "parameters": dict(source.get("inputSchema") or {"type": "object"}),
-                    "profile": "enterpriseops-csm-ephemeral-v1",
-                    "risk": "R0",
-                }
-            )
+            manifest = {
+                "name": str(name),
+                "description": str(source.get("description") or ""),
+                "parameters": dict(source.get("inputSchema") or {"type": "object"}),
+                "profile": "enterpriseops-csm-ephemeral-v1",
+                "risk": "R0",
+            }
+            if binding["preloadTools"] is True:
+                manifest["alwaysAvailable"] = True
+            manifests.append(manifest)
         return manifests
 
     def execute(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -1000,6 +1025,7 @@ def _run_profile(
                 database_id=database_id,
                 context=context,
                 allowed_tools=[str(name) for name in task["selected_tools"]],
+                preload_tools=workflow_profile == "state-contract-preloaded-v3",
             )
             runtime_stage = "runtime_ensure"
             ensured = service.ensure_runtime({"sessionId": session_id})
@@ -1271,6 +1297,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "schemaVersion": "paw.enterpriseops-csm-evaluation-contract.v1",
             "split": args.split,
             "workflowProfile": args.workflow_profile,
+            "toolDisclosureMode": (
+                "preloaded_selected_schemas"
+                if args.workflow_profile == "state-contract-preloaded-v3"
+                else "progressive"
+            ),
             "suiteRevision": args.suite_revision,
             "overlaySha256": str(overlay.get("overlaySha256") or "") if overlay else "",
             "taskManifestSha256": manifest["manifestSha256"],

@@ -62,6 +62,7 @@ from .pi_runtime_public import (
     visible_message_text,
 )
 from .pi_runtime_values import (
+    PiRuntimeCommandAcceptanceUnknown,
     PiRuntimeCommandRejected,
     PiRuntimeTurnConflict,
     effective_thinking_level,
@@ -96,6 +97,41 @@ _DURABLE_TRANSCRIPT_MAX_BYTES = 64 * 1024 * 1024
 _DURABLE_TRANSCRIPT_MAX_LINES = 200_000
 _DURABLE_TRANSCRIPT_MAX_LINE_BYTES = 8 * 1024 * 1024
 _RECENT_TRANSCRIPT_BOUNDARY_BYTES = 64 * 1024
+_TURN_BINDING_CUSTOM_TYPE = "rag-ime.pi-turn-binding"
+_DURABLE_TURN_ID_KEY = "_ragImeTurnId"
+_SESSION_RESOURCE_SNAPSHOT_SCHEMA = "rag-ime.pi-session-resource-snapshot.v1"
+
+
+def _session_resource_snapshot(
+    skill_allowlist: list[str] | None,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": _SESSION_RESOURCE_SNAPSHOT_SCHEMA,
+        "skillPolicy": "all_enabled" if skill_allowlist is None else "allowlist",
+        "skillRefs": list(skill_allowlist or []),
+    }
+
+
+def _bound_session_resource_snapshot(
+    binding: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    metadata = as_mapping((binding or {}).get("metadata"))
+    snapshot = as_mapping(metadata.get("resourceSnapshot"))
+    policy = str(snapshot.get("skillPolicy") or "")
+    refs = snapshot.get("skillRefs")
+    if (
+        snapshot.get("schemaVersion") != _SESSION_RESOURCE_SNAPSHOT_SCHEMA
+        or policy not in {"allowlist", "all_enabled"}
+        or not isinstance(refs, list)
+        or any(not isinstance(ref, str) or not ref for ref in refs)
+        or (policy == "all_enabled" and refs)
+    ):
+        return None
+    return {
+        "schemaVersion": _SESSION_RESOURCE_SNAPSHOT_SCHEMA,
+        "skillPolicy": policy,
+        "skillRefs": list(refs),
+    }
 
 
 def _record_plugin_usage_notice(
@@ -325,7 +361,10 @@ class PiRuntimeHostClient:
         with self._lock:
             process = self._process
             if process is None or process.poll() is not None or process.stdin is None:
-                raise PiRuntimeError("Pi Runtime Host is not running")
+                raise PiRuntimeCommandRejected(
+                    "Pi Runtime Host is not running",
+                    host_error_code="RUNTIME_NOT_RUNNING",
+                )
             self._pending[request_id] = response_queue
         try:
             self._write_record(
@@ -336,7 +375,9 @@ class PiRuntimeHostClient:
         except (BrokenPipeError, OSError) as exc:
             with self._lock:
                 self._pending.pop(request_id, None)
-            raise PiRuntimeError("Pi Runtime Host stdin closed") from exc
+            raise PiRuntimeCommandAcceptanceUnknown(
+                "Pi Runtime Host stdin closed after command dispatch"
+            ) from exc
         except BaseException:
             with self._lock:
                 self._pending.pop(request_id, None)
@@ -346,9 +387,11 @@ class PiRuntimeHostClient:
         except queue.Empty as exc:
             with self._lock:
                 self._pending.pop(request_id, None)
-            raise PiRuntimeError(f"Pi Runtime Host command timed out: {method}") from exc
+            raise PiRuntimeCommandAcceptanceUnknown(
+                f"Pi Runtime Host command timed out: {method}"
+            ) from exc
         if isinstance(response, BaseException):
-            raise PiRuntimeError(str(response))
+            raise PiRuntimeCommandAcceptanceUnknown(str(response)) from response
         assert isinstance(response, dict)
         if response.get("ok") is not True:
             error = as_mapping(response.get("error"))
@@ -821,6 +864,7 @@ class PiRuntimeHostManager:
             client = self._host()
             session = dict(self.sessions.get(session_id))
             binding = self.sessions.runtime_binding(session_id)
+            resource_snapshot = _bound_session_resource_snapshot(binding)
             if binding is not None:
                 if (
                     binding.get("driverId") != self.driver_id
@@ -861,7 +905,11 @@ class PiRuntimeHostManager:
                 self._sync_idle_snapshot(session_id, snapshot)
                 with self._lock:
                     self._schedule_idle_locked()
-                return {"state": snapshot, "reused": True}
+                return {
+                    "state": snapshot,
+                    "resourceSnapshot": resource_snapshot,
+                    "reused": True,
+                }
 
             roots = [
                 str(value)
@@ -879,11 +927,18 @@ class PiRuntimeHostManager:
                 str(session.get("toolProfileVersion") or "")
                 == MEMORY_CURATION_TOOL_PROFILE
             )
-            skill_allowlist = (
-                []
-                if memory_curation_session
-                else self._session_skill_allowlist(session)
-            )
+            if memory_curation_session:
+                skill_allowlist: list[str] | None = []
+            elif resource_snapshot is not None:
+                skill_allowlist = (
+                    list(resource_snapshot["skillRefs"])
+                    if resource_snapshot["skillPolicy"] == "allowlist"
+                    else None
+                )
+            else:
+                skill_allowlist = self._session_skill_allowlist(session)
+            if resource_snapshot is None:
+                resource_snapshot = _session_resource_snapshot(skill_allowlist)
             if (
                 skill_allowlist is not None
                 and not bool(self._host_capabilities.get("sessionSkillAllowlist"))
@@ -950,6 +1005,13 @@ class PiRuntimeHostManager:
                     session_id,
                     f"{model['provider']}/{model['id']}",
                 )
+            binding_metadata = dict(as_mapping((binding or {}).get("metadata")))
+            binding_metadata.update(
+                {
+                    "protocolVersion": _PROTOCOL_VERSION,
+                    "resourceSnapshot": resource_snapshot,
+                }
+            )
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
@@ -960,7 +1022,7 @@ class PiRuntimeHostManager:
                 transcript_ref=str(snapshot.get("sessionFile") or ""),
                 branch_anchor=str(snapshot.get("leafId") or ""),
                 binding_state="active",
-                metadata={"protocolVersion": _PROTOCOL_VERSION},
+                metadata=binding_metadata,
                 # The Host count describes Pi's Provider transcript and can
                 # include Tool/protocol entries.  AgentMessageSnapshot owns
                 # the public conversation count, so opening a resident Pi
@@ -998,6 +1060,33 @@ class PiRuntimeHostManager:
                 )
                 if not admission_in_flight:
                     self._schedule_idle_locked()
+            recovered_turn_retirement: dict[str, object] | None = None
+            restored_turn = as_mapping(snapshot.get("activeTurn"))
+            restored_turn_id = str(
+                restored_turn.get("turnId") or ""
+            ).strip()
+            if (
+                snapshot.get("isIdle") is True
+                and restored_turn_id
+            ):
+                # A restarted Host can restore Pi's durable turn binding after
+                # the native Provider run has already disappeared. Leaving
+                # that idle binding in place makes every later prompt fail
+                # SESSION_BUSY even though there is no work left to resume.
+                # Retire only the exact turn proved by both the open snapshot
+                # and the Host control state before admitting new work.
+                recovered_turn_retirement = (
+                    self.retire_recovered_turn(
+                        session_id,
+                        restored_turn_id,
+                    )
+                )
+                snapshot = dict(
+                    as_mapping(
+                        recovered_turn_retirement.get("state")
+                    )
+                )
+                bound = self.sessions.get(session_id)
             # Opening a cold Pi Session is part of prompt admission. Do not
             # publish a late `ready` after a concurrent Stop already exposed
             # `aborting`; that would regress the UI while the same admission
@@ -1011,8 +1100,18 @@ class PiRuntimeHostManager:
             return {
                 "state": snapshot,
                 "session": bound,
+                "resourceSnapshot": resource_snapshot,
                 "evictedSessionId": evicted or None,
                 "reused": False,
+                **(
+                    {
+                        "recoveredTurnRetirement": (
+                            recovered_turn_retirement
+                        )
+                    }
+                    if recovered_turn_retirement is not None
+                    else {}
+                ),
             }
 
     def retire_recovered_turn(
@@ -1421,6 +1520,19 @@ class PiRuntimeHostManager:
             "busy",
             last_message_preview=public_prompt_preview,
         )
+        dispatch_attempted = False
+
+        def mark_prompt_dispatched() -> None:
+            nonlocal dispatch_attempted
+            self._mark_prompt_dispatched(
+                session_id,
+                normalized_client_message_id,
+            )
+            # This callback runs under the Host client's write lock immediately
+            # before its JSONL write.  Once it returns, a missing response is an
+            # acceptance-unknown outcome, never proof that Pi rejected the turn.
+            dispatch_attempted = True
+
         try:
             # The Runtime Host resolves `session.prompt` after Pi accepts the
             # turn preflight. Stop and Steer remain responsive through the
@@ -1432,23 +1544,23 @@ class PiRuntimeHostManager:
                     _PROMPT_TIMEOUT_SECONDS,
                     self.config.command_timeout_seconds,
                 ),
-                before_write=lambda: self._mark_prompt_dispatched(
-                    session_id,
-                    normalized_client_message_id,
-                ),
+                before_write=mark_prompt_dispatched,
             )
         except Exception as exc:
+            explicit_rejection = isinstance(exc, PiRuntimeCommandRejected)
+            acceptance_unknown = dispatch_attempted and not explicit_rejection
             with self._lock:
                 state = self._states.setdefault(
                     session_id,
                     _HostedSessionState(),
                 )
-                state.prompt_admission_in_flight = False
-                state.admission_client_message_id = ""
-                state.abort_pending_admission = False
-                state.admission_abort_dispatched = False
-                state.prompt_dispatched = False
-                state.prompt_dispatch_signal.set()
+                if not acceptance_unknown:
+                    state.prompt_admission_in_flight = False
+                    state.admission_client_message_id = ""
+                    state.abort_pending_admission = False
+                    state.admission_abort_dispatched = False
+                    state.prompt_dispatched = False
+                    state.prompt_dispatch_signal.set()
             if (
                 isinstance(exc, PiRuntimeCommandRejected)
                 and exc.host_error_code
@@ -1459,8 +1571,20 @@ class PiRuntimeHostManager:
                     "idle",
                     last_message_preview="已停止。",
                 )
+            elif acceptance_unknown:
+                # The Host can complete the real turn before this call notices
+                # that its ACK was lost.  Keep the exact admission alive until
+                # a Host event binds it (or application recovery finds the
+                # durable message), and never invent an empty-turn failure.
+                if isinstance(exc, PiRuntimeCommandAcceptanceUnknown):
+                    raise
+                raise PiRuntimeCommandAcceptanceUnknown(str(exc)) from exc
             else:
-                self._turn_failed(session_id, "", exc)
+                # No Pi turn exists for a proven rejection.  The HTTP command
+                # receipt owns the failed optimistic message; publishing a
+                # turn_failed with an empty id would create an unrelated
+                # `unscoped` failure in every connected frontend.
+                self.sessions.set_status(session_id, "idle")
             raise
         turn_id = str(accepted.get("turnId") or "")
         with self._lock:
@@ -2125,7 +2249,9 @@ class PiRuntimeHostManager:
                 role == "user"
                 and not pi_message_continues_public_turn(raw)
             ) or not current_turn_id:
-                current_turn_id = f"history:{message_id}"
+                current_turn_id = str(
+                    raw.get(_DURABLE_TURN_ID_KEY) or f"history:{message_id}"
+                )
                 last_assistant_fingerprint = None
             payload = pi_message_payload(
                 timeline_raw,
@@ -4029,6 +4155,21 @@ class PiRuntimeHostManager:
                     state.abort_requested_turn_id = turn_id
             if client_message_id:
                 state.client_message_id = client_message_id
+            if (
+                turn_id
+                and client_message_id
+                and state.prompt_admission_in_flight
+                and state.admission_client_message_id == client_message_id
+            ):
+                # Any correlated Host event is durable acceptance evidence.
+                # This also closes an admission whose command ACK was lost,
+                # without waiting for an HTTP retry or guessing by text/time.
+                state.prompt_admission_in_flight = False
+                state.admission_client_message_id = ""
+                state.abort_pending_admission = False
+                state.admission_abort_dispatched = False
+                state.prompt_dispatched = False
+                state.prompt_dispatch_signal.set()
         if event_type == "message_start":
             raw_message = as_mapping(raw.get("message"))
             if str(raw_message.get("role") or "").lower() == "assistant":
@@ -5270,7 +5411,23 @@ def _pi_durable_branch_messages(
 
     messages: list[dict[str, object]] = []
     message_entries: list[dict[str, object]] = []
+    pending_turn_binding: tuple[str, str] | None = None
     for entry in selected_entries:
+        if (
+            str(entry.get("type") or "") == "custom"
+            and str(entry.get("customType") or "") == _TURN_BINDING_CUSTOM_TYPE
+        ):
+            binding = as_mapping(entry.get("data"))
+            turn_id = str(binding.get("turnId") or "").strip()
+            if (
+                binding.get("schemaVersion") == "rag-ime.pi-turn-binding.v1"
+                and turn_id
+            ):
+                pending_turn_binding = (
+                    turn_id,
+                    str(binding.get("clientMessageId") or "").strip(),
+                )
+            continue
         if str(entry.get("type") or "") != "message":
             continue
         raw_message = entry.get("message")
@@ -5283,6 +5440,16 @@ def _pi_durable_branch_messages(
             timestamp = _pi_history_entry_timestamp_ms(entry.get("timestamp"))
             if timestamp > 0:
                 message["timestamp"] = timestamp
+        if (
+            str(message.get("role") or "").strip().lower() == "user"
+            and not pi_message_continues_public_turn(message)
+        ):
+            if pending_turn_binding is not None:
+                turn_id, client_message_id = pending_turn_binding
+                message[_DURABLE_TURN_ID_KEY] = turn_id
+                if client_message_id:
+                    message["clientMessageId"] = client_message_id
+            pending_turn_binding = None
         messages.append(message)
         message_entries.append(entry)
     return messages, message_entries
@@ -5504,7 +5671,7 @@ def _recent_public_message_window(
     for raw_turn in reversed(selected_turns):
         first = raw_turn[0]
         first_id = pi_message_id(first, "history")
-        turn_id = f"history:{first_id}"
+        turn_id = str(first.get(_DURABLE_TURN_ID_KEY) or f"history:{first_id}")
         projected: list[dict[str, object]] = []
         for raw in raw_turn:
             payload = pi_message_payload(
@@ -5655,7 +5822,9 @@ def _pi_tool_history_events(
         message_id = pi_message_id(raw, "history")
         if role == "user":
             if not pi_message_continues_public_turn(raw):
-                current_turn_id = f"history:{message_id}"
+                current_turn_id = str(
+                    raw.get(_DURABLE_TURN_ID_KEY) or f"history:{message_id}"
+                )
             continue
         turn_id = current_turn_id or f"history:{message_id}"
         fingerprint = _pi_history_message_fingerprint(raw)
@@ -5698,6 +5867,17 @@ def _pi_tool_history_events(
                     )
                 )
                 activity_order.append(reasoning_id)
+            # Pi may durably retain a partial assistant message when a
+            # Provider request fails and the Tool loop retries.  A toolCall
+            # block in that failed message is only a Provider draft: no
+            # tool_execution_start was emitted and no side effect occurred.
+            # Projecting it as tool_started invents an execution and can make
+            # one real delegation look like two after recovery.
+            if (
+                str(raw.get("stopReason") or "").strip().lower() == "error"
+                or bool(str(raw.get("errorMessage") or "").strip())
+            ):
+                continue
             content = raw.get("content") if isinstance(raw.get("content"), list) else []
             for item_index, item_value in enumerate(content):
                 item = as_mapping(item_value)

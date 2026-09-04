@@ -3370,6 +3370,16 @@ export const contractSchemas = {
           "blocked"
         ]
       },
+      "projectionState": {
+        "enum": [
+          "current",
+          "history"
+        ]
+      },
+      "supersededBy": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"
+      },
       "effectStatus": {
         "enum": [
           "improved",
@@ -5718,6 +5728,11 @@ export const contractSchemas = {
           "integer",
           "null"
         ]
+      },
+      "clientMessageId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
       },
       "provider": {
         "type": "string"
@@ -25493,6 +25508,13 @@ export const contractSchemas = {
       "truncated": {
         "type": "boolean"
       },
+      "nextCursor": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "pattern": "^[0-9]+\\.[a-f0-9]{32}$"
+      },
       "items": {
         "type": "array",
         "maxItems": 100,
@@ -25957,6 +25979,21 @@ export const contractSchemas = {
           "evalRunId": {
             "type": "string",
             "maxLength": 160
+          },
+          "verificationReceiptId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "replayCaseId": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "decision": {
+            "enum": [
+              "",
+              "kept",
+              "rejected"
+            ]
           },
           "testStatus": {
             "enum": [

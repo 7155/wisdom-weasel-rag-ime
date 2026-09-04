@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { agentEventFixture } from './fixtures/events';
 import { MockControlTransport } from './mock-transport';
@@ -33,5 +33,86 @@ describe('MockControlTransport', () => {
     expect(snapshots).toHaveLength(1);
     cancel();
     expect(transport.activeSubscriptionCount()).toBe(0);
+  });
+
+  it('keeps the previous cursor when observer delivery fails', () => {
+    const transport = new MockControlTransport();
+    const reconnect = vi.fn();
+    const error = vi.fn();
+    let deliveries = 0;
+    transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-1' },
+        lastEventId: 'session-1:8',
+      },
+      {
+        next: () => {
+          deliveries += 1;
+          if (deliveries === 1) throw new Error('projection commit failed');
+        },
+        error,
+        reconnect,
+      },
+    );
+
+    expect(transport.emit(
+      'agent.session.events',
+      agentEventFixture(9, 'turn_completed', {}),
+    )).toBe(0);
+    expect(transport.emit(
+      'agent.session.events',
+      agentEventFixture(10, 'turn_completed', {}),
+    )).toBe(0);
+    transport.simulateReconnect('agent.session.events');
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'projection commit failed',
+    }));
+    expect(reconnect).toHaveBeenLastCalledWith({
+      attempt: 1,
+      delayMs: 20,
+      lastEventId: 'session-1:8',
+    });
+
+    expect(transport.emit(
+      'agent.session.events',
+      agentEventFixture(9, 'turn_completed', {}),
+    )).toBe(1);
+    transport.simulateReconnect('agent.session.events');
+    expect(reconnect).toHaveBeenLastCalledWith({
+      attempt: 1,
+      delayMs: 20,
+      lastEventId: 'session-1:9',
+    });
+  });
+
+  it('keeps the durable cursor after a transient snapshot-required control', () => {
+    const transport = new MockControlTransport();
+    const reconnect = vi.fn();
+    transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-1' },
+        lastEventId: 'session-1:8',
+      },
+      { next: () => undefined, reconnect },
+    );
+    const control = {
+      ...agentEventFixture(10, 'snapshot_required', {
+        reason: 'event_replay_gap',
+        afterEventId: 'session-1:8',
+      }),
+      eventId: 'session-1:snapshot-required:9',
+      resumeToken: 'session-1:snapshot-required:9',
+    };
+
+    expect(transport.emit('agent.session.events', control)).toBe(1);
+    transport.simulateReconnect('agent.session.events');
+
+    expect(reconnect).toHaveBeenLastCalledWith({
+      attempt: 1,
+      delayMs: 20,
+      lastEventId: 'session-1:8',
+    });
   });
 });

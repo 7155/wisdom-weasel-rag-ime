@@ -425,6 +425,162 @@ describe('HttpControlTransport', () => {
     expect(fetchMock.mock.calls[1]?.[0].toString()).toContain('lastEventId=session-1%3A1');
   });
 
+  it('does not replace the durable reconnect cursor with a transient snapshot-required id', async () => {
+    const headers: string[] = [];
+    let resolveSecondRequest = () => {};
+    const secondRequest = new Promise<void>((resolve) => {
+      resolveSecondRequest = resolve;
+    });
+    const control = {
+      ...agentEventFixture(42, 'snapshot_required', {
+        reason: 'event_replay_gap',
+        afterEventId: 'session-1:1',
+      }),
+      eventId: 'session-1:snapshot-required:41',
+      resumeToken: 'session-1:snapshot-required:41',
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers).get('Last-Event-ID') ?? '<missing>');
+      if (headers.length === 1) {
+        return new Response(sse(control), {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }
+      resolveSecondRequest();
+      return new Response(': heartbeat\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock as typeof fetch,
+      reconnectBaseDelayMs: 0,
+      reconnectMaxDelayMs: 0,
+      random: () => 0,
+    });
+    const received: string[] = [];
+    const cancel = transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-1' },
+        lastEventId: 'session-1:1',
+      },
+      {
+        next(event) {
+          received.push((event as ReturnType<typeof agentEventFixture>).eventId);
+        },
+      },
+    );
+
+    await secondRequest;
+    cancel();
+
+    expect(received).toEqual(['session-1:snapshot-required:41']);
+    expect(headers.slice(0, 2)).toEqual(['session-1:1', 'session-1:1']);
+  });
+
+  it('replays an event when delivery fails before advancing Last-Event-ID', async () => {
+    const terminal = agentEventFixture(1, 'turn_completed', { status: 'completed' });
+    const headers: string[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers).get('Last-Event-ID') ?? '<missing>');
+      return new Response(sse(terminal), {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock as typeof fetch,
+      reconnectBaseDelayMs: 0,
+      reconnectMaxDelayMs: 0,
+      random: () => 0,
+    });
+    let deliveries = 0;
+    let cancel = () => {};
+    const delivered = new Promise<void>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next() {
+            deliveries += 1;
+            if (deliveries === 1) throw new Error('projection commit failed');
+            cancel();
+            resolve();
+          },
+        },
+      );
+    });
+
+    await delivered;
+
+    expect(deliveries).toBe(2);
+    expect(headers.slice(0, 2)).toEqual(['session-1:0', 'session-1:0']);
+  });
+
+  it('terminates the failed SSE response before it can deliver a later event', async () => {
+    const first = agentEventFixture(1, 'text_delta', { delta: 'first' });
+    const later = agentEventFixture(2, 'turn_completed', { status: 'completed' });
+    const headers: string[] = [];
+    const cancelledBodies: unknown[] = [];
+    let requestCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      headers.push(new Headers(init?.headers).get('Last-Event-ID') ?? '<missing>');
+      requestCount += 1;
+      if (requestCount === 1) {
+        const bytes = new TextEncoder().encode(`${sse(first)}${sse(later)}`);
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+          },
+          cancel(reason) {
+            cancelledBodies.push(reason);
+          },
+        }), {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }
+      return new Response(sse(first), {
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock as typeof fetch,
+      reconnectBaseDelayMs: 0,
+      reconnectMaxDelayMs: 0,
+      random: () => 0,
+    });
+    const attempted: string[] = [];
+    let cancel = () => {};
+    const replayed = new Promise<void>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next(event) {
+            attempted.push((event as ReturnType<typeof agentEventFixture>).eventId);
+            if (attempted.length === 1) throw new Error('projection commit failed');
+            cancel();
+            resolve();
+          },
+        },
+      );
+    });
+
+    await replayed;
+
+    expect(attempted).toEqual(['session-1:1', 'session-1:1']);
+    expect(headers.slice(0, 2)).toEqual(['session-1:0', 'session-1:0']);
+    expect(cancelledBodies).toHaveLength(1);
+  });
+
   it('aborts an in-flight request and cancels reconnect work', async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>

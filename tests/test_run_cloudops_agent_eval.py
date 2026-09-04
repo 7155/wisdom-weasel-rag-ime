@@ -17,9 +17,11 @@ from rag_ime.pi_runtime import _tools_for_session
 from rag_ime.sandbox_run_store import SandboxRunStore
 from rag_ime.trace_store import TraceStore
 from scripts.run_cloudops_agent_eval import (
+    _CloudOpsContextProjectionGateway,
     _assert_expected_runtime,
     _batch_prompt,
     _candidate_runtime_config,
+    _cost_optimization_comparison,
     _normalize_trial_id,
     _numeric_usage,
     _public_host_invocation,
@@ -142,6 +144,154 @@ class _NoSubmissionService(_FakeAgentService):
 
 
 class RunCloudOpsAgentEvalTests(unittest.TestCase):
+    def test_observation_id_projection_changes_only_public_tool_addressing(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cloudops-projection-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(
+                root / "blind",
+                batches={"batch-1": case_ids},
+            )
+            gateway = _CloudOpsContextProjectionGateway(
+                CloudOpsBenchmarkGateway(suite, max_reads_per_case=4),
+                context_projection="observation-id-v1",
+            )
+            gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="baseline-v1",
+            )
+
+            manifest = gateway.runtime_manifests({"id": "session-1"})[0]
+            read_schema = next(
+                item
+                for item in manifest["parameters"]["oneOf"]
+                if item["properties"]["op"]["const"] == "read"
+            )
+            self.assertIn("observationId", read_schema["required"])
+            self.assertNotIn("cacheKey", read_schema["properties"])
+
+            listed = gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": "session-1",
+                    "tool": "cloudops_benchmark",
+                    "toolCallId": "tool:list:1",
+                    "sourceLoopId": "turn:1",
+                    "args": {"op": "list", "caseId": case_ids[0], "limit": 1},
+                }
+            )["result"]
+            descriptor = listed["items"][0]
+            self.assertNotIn("cacheKey", descriptor)
+            self.assertRegex(descriptor["observationId"], r"^obs_[0-9a-f]{24}$")
+
+            read = gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": "session-1",
+                    "tool": "cloudops_benchmark",
+                    "toolCallId": "tool:read:1",
+                    "sourceLoopId": "turn:1",
+                    "args": {
+                        "op": "read",
+                        "caseId": case_ids[0],
+                        "observationId": descriptor["observationId"],
+                    },
+                }
+            )["result"]
+            self.assertEqual("pod restarted twice", read["observation"])
+            self.assertNotIn("cacheKey", read)
+            self.assertGreater(
+                gateway.projection_summary()["sourceChars"],
+                gateway.projection_summary()["projectedChars"],
+            )
+            self.assertEqual(
+                _batch_prompt("batch-1", tuple(case_ids), workflow_profile="baseline-v1"),
+                _batch_prompt("batch-1", tuple(case_ids), workflow_profile="baseline-v1"),
+            )
+
+    def test_cost_comparison_requires_same_quality_and_three_nonincreasing_categories(self) -> None:
+        baseline = {
+            "suiteSha256": "a" * 64,
+            "contractSha256": "b" * 64,
+            "batchPlanSha256": "c" * 64,
+            "caseCount": 12,
+            "workflowProfile": "baseline-v1",
+            "thinkingLevel": "max",
+            "contextProjection": "standard-v1",
+            "runtimeIdentity": {
+                "runtimeVersion": "runtime-1",
+                "piVersion": "0.84.2",
+                "protocolVersion": "v2",
+                "manifestSha256": "d" * 64,
+                "entrypointSha256": "e" * 64,
+                "nodeSha256": "f" * 64,
+                "extensionSha256": "1" * 64,
+                "provider": "openai-codex",
+                "model": "gpt-5.6-sol",
+            },
+            "metrics": {"AnswerCoverage": 1.0, "CA": 1.0, "FA": 0.8333, "JRA": 0.8333, "Top3JRA": 0.8333},
+            "usage": {"available": True, "input": 100, "cacheRead": 50, "output": 30, "cacheWrite": 0, "totalTokens": 180},
+        }
+        candidate = {
+            **baseline,
+            "contextProjection": "observation-id-v1",
+            "usage": {"available": True, "input": 90, "cacheRead": 50, "output": 29, "cacheWrite": 0, "totalTokens": 169},
+        }
+
+        comparison = _cost_optimization_comparison(baseline, candidate)
+
+        self.assertEqual("keep", comparison["decision"])
+        self.assertTrue(comparison["qualityGatePassed"])
+        self.assertTrue(comparison["costGatePassed"])
+        no_factor = {
+            **candidate,
+            "contextProjection": "standard-v1",
+        }
+        self.assertEqual(
+            "reject",
+            _cost_optimization_comparison(baseline, no_factor)["decision"],
+        )
+        workflow_candidate = {
+            **baseline,
+            "workflowProfile": "quality-bounded-v3",
+            "usage": {"available": True, "input": 80, "cacheRead": 40, "output": 20},
+        }
+        workflow_comparison = _cost_optimization_comparison(
+            baseline,
+            workflow_candidate,
+        )
+        self.assertEqual("keep", workflow_comparison["decision"])
+        self.assertEqual("bounded_diagnostic_prompt_contract", workflow_comparison["singleVariable"])
+        alert_first_candidate = {
+            **baseline,
+            "workflowProfile": "alert-first-v5",
+            "usage": {"available": True, "input": 80, "cacheRead": 40, "output": 20},
+        }
+        self.assertEqual(
+            "keep",
+            _cost_optimization_comparison(baseline, alert_first_candidate)["decision"],
+        )
+        two_factor_candidate = {
+            **workflow_candidate,
+            "contextProjection": "observation-id-v1",
+        }
+        self.assertEqual(
+            "reject",
+            _cost_optimization_comparison(baseline, two_factor_candidate)["decision"],
+        )
+        regressed = {**candidate, "usage": {**candidate["usage"], "output": 31}}
+        self.assertEqual(
+            "reject",
+            _cost_optimization_comparison(baseline, regressed)["decision"],
+        )
+        missing = {**candidate, "usage": {"available": False}}
+        self.assertEqual(
+            "reject",
+            _cost_optimization_comparison(baseline, missing)["decision"],
+        )
+
     def test_evidence_search_profile_requires_network_counterevidence_for_performance_cases(self) -> None:
         prompt = _batch_prompt(
             "batch-3",
@@ -194,6 +344,115 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
         self.assertIn("at most two distinct search calls per case", prompt)
         self.assertIn("Use observationId returned by list or search", prompt)
         self.assertNotIn("GetAlerts", prompt)
+
+    def test_quality_bounded_v3_requires_direct_and_counter_evidence_with_a_fixed_budget(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="quality-bounded-v3",
+        )
+
+        self.assertIn("at least five and at most eight exact observation reads", prompt)
+        self.assertIn("direct root-cause evidence", prompt)
+        self.assertIn("counterevidence against the closest alternative", prompt)
+        self.assertIn("at most three list pages", prompt)
+        self.assertIn("smallest valid submit JSON", prompt)
+
+        with tempfile.TemporaryDirectory(prefix="cloudops-prompt-contract-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={"batch-1": case_ids})
+            gateway = _CloudOpsContextProjectionGateway(CloudOpsBenchmarkGateway(suite))
+            binding = gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="quality-bounded-v3",
+            )
+            operations = {
+                item["properties"]["op"]["const"]
+                for item in gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+            }
+            self.assertEqual("baseline-v1", binding["workflowProfile"])
+            self.assertNotIn("search", operations)
+
+    def test_quality_staged_v4_keeps_baseline_tools_and_requires_category_specific_causal_checks(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="quality-staged-v4",
+        )
+
+        self.assertIn("whole batch", prompt)
+        self.assertIn("gateway route configuration", prompt)
+        self.assertIn("earliest affected leaf", prompt)
+        self.assertIn("image identity", prompt)
+        self.assertIn("caller/callee values", prompt)
+        self.assertIn("smallest valid submit JSON", prompt)
+
+        with tempfile.TemporaryDirectory(prefix="cloudops-staged-prompt-contract-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={"batch-1": case_ids})
+            gateway = _CloudOpsContextProjectionGateway(CloudOpsBenchmarkGateway(suite))
+            binding = gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="quality-staged-v4",
+            )
+            operations = {
+                item["properties"]["op"]["const"]
+                for item in gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+            }
+            self.assertEqual("baseline-v1", binding["workflowProfile"])
+            self.assertNotIn("search", operations)
+
+    def test_alert_first_v5_localizes_performance_before_image_comparison_and_caps_prose(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="alert-first-v5",
+        )
+
+        self.assertIn("first read the GetAlerts observation", prompt)
+        self.assertIn("Do not use pod age, image pull events, or image identity to localize", prompt)
+        self.assertIn("dependency observations", prompt)
+        self.assertIn("compact four-row evidence ledger", prompt)
+        self.assertIn("55 words", prompt)
+
+        with tempfile.TemporaryDirectory(prefix="cloudops-alert-first-contract-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={"batch-1": case_ids})
+            gateway = _CloudOpsContextProjectionGateway(CloudOpsBenchmarkGateway(suite))
+            binding = gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="alert-first-v5",
+            )
+            operations = {
+                item["properties"]["op"]["const"]
+                for item in gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+            }
+            self.assertEqual("baseline-v1", binding["workflowProfile"])
+            self.assertNotIn("search", operations)
 
     def test_trial_id_is_a_bounded_basename_not_a_path(self) -> None:
         self.assertEqual("cloudops-run.v1", _normalize_trial_id("cloudops-run.v1"))

@@ -1,0 +1,21 @@
+{
+  "errorFingerprint": "sha256:f007915f6680d1f89c8113b85e48344b140e0452d99bce87d68a9ea056564168",
+  "errorType": "PiRuntimeError",
+  "hostInvocation": {
+    "commandSha256": "10471406b5e930acb82c3e76548c43b5357a6a77d8042de93ac70a243e7a55af",
+    "contextProjection": "observation-id-v1",
+    "hostPathsPublished": false,
+    "maxReadsPerCase": 40,
+    "model": "gpt-5.6-sol",
+    "provider": "openai-codex",
+    "schemaVersion": "paw.cloudops-host-invocation.v1",
+    "thinking": "max",
+    "timeoutSeconds": 900.0,
+    "transport": "loopback-http-v1",
+    "trialId": "cloudops-sol-max-observation-id-candidate-20260904-r3",
+    "workflowProfile": "baseline-v1"
+  },
+  "schemaVersion": "paw.cloudops-agent-eval-failure.v1",
+  "status": "failed",
+  "trialId": "cloudops-sol-max-observation-id-candidate-20260904-r3"
+}

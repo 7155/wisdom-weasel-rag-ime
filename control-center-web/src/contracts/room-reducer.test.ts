@@ -18,6 +18,96 @@ import { parseRoomEvent } from './validators';
 import { roomEventFixture as roomEvent } from '@/test/fixtures/events';
 
 describe('RoomEventReducer', () => {
+  it('replays the 2,000-event message-first Room window without blocking the first paint', () => {
+    const events = Array.from({ length: 1_000 }, (_value, index) => {
+      const turnId = `room-turn-${index + 1}`;
+      const messageSequence = index * 2 + 1;
+      const terminalSequence = messageSequence + 1;
+      const message = roomEvent(messageSequence, 'user_message', {
+        messageId: `room-message-${index + 1}`,
+        rootId: turnId,
+        text: `真实 Room 消息 ${index + 1}`,
+      });
+      const terminal = roomEvent(terminalSequence, 'turn_completed', {
+        rootId: turnId,
+        status: 'completed',
+      });
+      return [
+        {
+          ...message,
+          eventId: `room-1:${messageSequence}`,
+          turnId,
+          resumeToken: `room-1:${messageSequence}`,
+        },
+        {
+          ...terminal,
+          eventId: `room-1:${terminalSequence}`,
+          turnId,
+          participantId: null,
+          sourceSessionId: '',
+          resumeToken: `room-1:${terminalSequence}`,
+        },
+      ];
+    }).flat();
+    const snapshot = parseRoomConversationSnapshot({
+      schemaVersion: 'rag-ime.agent-room-conversation-snapshot.v1',
+      ok: true,
+      room: {
+        schemaVersion: 'rag-ime.agent-room.v1',
+        id: 'room-1',
+        title: '长 Room',
+        status: 'active',
+        executionMode: 'workspace_managed',
+        routingPolicy: 'moderator',
+        moderatorParticipantId: 'participant-1',
+        permissionPolicy: {
+          schemaVersion: 'rag-ime.room-permission-policy.v1',
+          room: { executionMode: 'workspace_managed' },
+          partner: { executionMode: 'inherit' },
+          toolAgent: { executionMode: 'inherit' },
+        },
+        workspaceRoots: [],
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        lastEventSequence: 2_000,
+        participants: [1, 2].map((ordinal) => ({
+          schemaVersion: 'rag-ime.agent-participant.v1',
+          id: `participant-${ordinal}`,
+          roomId: 'room-1',
+          sessionId: `session-room-${ordinal}`,
+          roleId: ordinal === 1 ? 'companion-present-v1' : 'companion-firstlight-v1',
+          roleVersion: '1',
+          displayName: ordinal === 1 ? '澄' : '澄·初',
+          collaborationRole: ordinal === 1 ? 'coordinator' : 'reviewer',
+          status: 'active',
+          ordinal: ordinal - 1,
+          createdAtMs: 1,
+          lastSpokeAtMs: null,
+        })),
+      },
+      events: events.map((event) => Object.fromEntries(
+        Object.entries(event).filter(([key]) => key !== 'streamKind'),
+      )),
+      firstEventSequence: 1,
+      cursorSequence: 2_000,
+      resumeToken: 'room-1:2000',
+      deferredEventCount: 0,
+      truncated: false,
+    });
+
+    const startedAt = performance.now();
+    const projection = replayRoomConversationSnapshot(
+      createRoomProjection('room-1'),
+      snapshot,
+    );
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(projection.messageOrder).toHaveLength(1_000);
+    expect(projection.turnOrder).toHaveLength(1_000);
+    expect(projection.turnsById['room-turn-1000']?.status).toBe('completed');
+    expect(elapsedMs).toBeLessThan(250);
+  });
+
   it('projects participant deltas once and requests a snapshot on a gap', () => {
     const first = reduceRoomEvent(
       createRoomProjection('room-1'),

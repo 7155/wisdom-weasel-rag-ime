@@ -1,0 +1,21 @@
+{
+  "errorFingerprint": "sha256:9bd4fe32651cd1c10ff43233b6ccf668c88a16759d9981cb4af34ddc91d0df0e",
+  "errorType": "AgentCommandReceiptFailed",
+  "hostInvocation": {
+    "commandSha256": "c2ab416b91bd4b548942b04484de2d5cdce240bc1b5969b051272a387a972dfc",
+    "contextProjection": "standard-v1",
+    "hostPathsPublished": false,
+    "maxReadsPerCase": 40,
+    "model": "gpt-5.6-sol",
+    "provider": "openai-codex",
+    "schemaVersion": "paw.cloudops-host-invocation.v1",
+    "thinking": "max",
+    "timeoutSeconds": 900.0,
+    "transport": "loopback-http-v1",
+    "trialId": "cloudops-sol-max-standard-baseline-20260904-v1",
+    "workflowProfile": "baseline-v1"
+  },
+  "schemaVersion": "paw.cloudops-agent-eval-failure.v1",
+  "status": "failed",
+  "trialId": "cloudops-sol-max-standard-baseline-20260904-v1"
+}

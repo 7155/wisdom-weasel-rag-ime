@@ -949,6 +949,51 @@ describe('AgentEventReducer', () => {
     expect(recovered.turnsById['history:pi-user'].activityIds).toContain('tool-proof');
   });
 
+  it('replaces a live user row when a bounded snapshot imports its transcript anchor', () => {
+    const question = '最近输入有哪些';
+    const liveMessage = {
+      ...serverMessage('runtime-user', 'user', 'runtime-turn', question),
+      createdAtMs: 1_000,
+      completedAtMs: 1_000,
+    };
+    const live = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      {
+        ...agentEvent(41, 'message_completed', {
+          clientMessageId: 'memory-steward:journal-2026-09-03:1000',
+          message: liveMessage,
+        }),
+        turnId: 'runtime-turn',
+        createdAtMs: 1_000,
+        payload: {
+          clientMessageId: 'memory-steward:journal-2026-09-03:1000',
+          message: liveMessage,
+        },
+      },
+    ).state;
+
+    const recovered = applyAgentSnapshot(live, {
+      messages: [{
+        ...serverMessage('pi-user', 'user', 'history:pi-user', question),
+        createdAtMs: 1_100,
+        completedAtMs: 1_100,
+      }],
+      liveEvents: [],
+      lastSequence: 42,
+      resumeToken: 'session-1:42',
+      snapshotScope: 'recent',
+      partial: true,
+      status: 'busy',
+    });
+
+    expect(recovered.messageOrder).toEqual(['pi-user']);
+    expect(recovered.messagesById['runtime-user']).toBeUndefined();
+    expect(recovered.messagesById['pi-user']?.clientMessageId).toBe(
+      'memory-steward:journal-2026-09-03:1000',
+    );
+    expect(recovered.turnOrder).toEqual(['history:pi-user']);
+  });
+
   it('keeps one user anchor when transcript and replay media ids differ', () => {
     const question = '收起所有工具和思考';
     const transcriptUser = serverMessage('pi-user-with-image', 'user', 'history:pi-user-with-image', question);
@@ -1835,30 +1880,105 @@ describe('AgentEventReducer', () => {
     expect(restored.status).toBe('idle');
   });
 
-  it('does not revive an unmatched optimistic turn after an authoritative idle snapshot', () => {
+  it('keeps an admitted first prompt pending across an earlier idle snapshot', () => {
     const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
-      clientMessageId: 'client-idle-without-receipt',
-      text: '这条请求没有出现在空闲快照里',
+      clientMessageId: 'client-first-prompt',
+      text: 'hi',
       nowMs: 10,
     });
 
-    const restored = applyAgentSnapshot(optimistic, {
+    const earlySnapshot = applyAgentSnapshot(optimistic, {
       messages: [],
       liveEvents: [],
-      lastSequence: 8,
-      resumeToken: 'session-1:8',
+      lastSequence: 0,
+      resumeToken: 'session-1:0',
       status: 'idle',
     });
 
-    expect(restored.messagesById['local:client-idle-without-receipt']).toBeDefined();
-    expect(restored.turnsById['local-turn:client-idle-without-receipt']).toMatchObject({
-      status: 'failed',
-      failure: '未收到助手回复。',
+    expect(earlySnapshot.messagesById['local:client-first-prompt']).toMatchObject({
+      role: 'user',
+      status: 'queued',
     });
-    expect(restored.turnOrder.filter((turnId) => (
-      ['queued', 'running', 'waiting'].includes(restored.turnsById[turnId]?.status ?? '')
-    ))).toEqual([]);
-    expect(restored.status).toBe('idle');
+    expect(earlySnapshot.turnsById['local-turn:client-first-prompt']?.status).toBe('queued');
+    expect(earlySnapshot.status).toBe('busy');
+
+    const settledSnapshot = applyAgentSnapshot(earlySnapshot, {
+      messages: [
+        {
+          ...serverMessage('server-user', 'user', 'turn-first-prompt', 'hi'),
+          clientMessageId: 'client-first-prompt',
+        },
+        serverMessage('server-assistant', 'assistant', 'turn-first-prompt', 'Hi! How can I help?'),
+      ],
+      liveEvents: [],
+      lastSequence: 14,
+      resumeToken: 'session-1:14',
+      status: 'idle',
+    });
+
+    expect(settledSnapshot.messageOrder).toEqual(['server-user', 'server-assistant']);
+    expect(settledSnapshot.messagesById['local:client-first-prompt']).toBeUndefined();
+    expect(settledSnapshot.turnsById['local-turn:client-first-prompt']).toBeUndefined();
+    expect(settledSnapshot.turnsById['turn-first-prompt']?.status).toBe('completed');
+    expect(settledSnapshot.status).toBe('idle');
+  });
+
+  it('does not fail an admitted prompt when an idle snapshot contains only its durable user anchor', () => {
+    const clientMessageId = 'client-user-anchor-before-runtime-busy';
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId,
+      text: '先显示这条消息，再等待回答',
+      nowMs: 10,
+    });
+
+    const earlySnapshot = applyAgentSnapshot(optimistic, {
+      messages: [{
+        ...serverMessage(
+          'server-user-anchor',
+          'user',
+          'turn-user-anchor',
+          '先显示这条消息，再等待回答',
+        ),
+        clientMessageId,
+      }],
+      liveEvents: [],
+      lastSequence: 1,
+      resumeToken: 'session-1:1',
+      status: 'idle',
+    });
+
+    expect(earlySnapshot.messageOrder).toEqual(['server-user-anchor']);
+    expect(earlySnapshot.messagesById[`local:${clientMessageId}`]).toBeUndefined();
+    expect(earlySnapshot.turnsById['turn-user-anchor']).toMatchObject({
+      status: 'running',
+    });
+    expect(earlySnapshot.turnsById['turn-user-anchor']?.failure).toBeUndefined();
+    expect(earlySnapshot.status).toBe('busy');
+
+    const answered = reduceAgentEvents(earlySnapshot, [
+      {
+        ...agentEvent(2, 'message_completed', {
+          message: serverMessage(
+            'server-assistant-answer',
+            'assistant',
+            'turn-user-anchor',
+            '这是唯一的一次回答。',
+          ),
+        }),
+        turnId: 'turn-user-anchor',
+      },
+      {
+        ...agentEvent(3, 'turn_completed', { status: 'completed' }),
+        turnId: 'turn-user-anchor',
+      },
+    ]);
+
+    expect(answered.messageOrder).toEqual([
+      'server-user-anchor',
+      'server-assistant-answer',
+    ]);
+    expect(answered.turnsById['turn-user-anchor']?.status).toBe('completed');
+    expect(answered.status).toBe('idle');
   });
 
   it('does not reconcile a failed optimistic admission by transcript text alone', () => {
@@ -1963,7 +2083,7 @@ describe('AgentEventReducer', () => {
     ).toBeUndefined();
   });
 
-  it('terminalizes an unresolved admission on the original message', () => {
+  it('keeps an unresolved admission waiting on the original message', () => {
     const optimistic = appendOptimisticAgentMessage(
       createAgentProjection('session-1'),
       {
@@ -1987,15 +2107,18 @@ describe('AgentEventReducer', () => {
       unresolved.messagesById['local:client-unresolved'],
     ).toMatchObject({
       clientMessageId: 'client-unresolved',
-      status: 'failed',
+      status: 'queued',
       admissionState: 'unresolved',
     });
     expect(
       unresolved.turnsById['local-turn:client-unresolved'],
     ).toMatchObject({
-      status: 'failed',
-      failure: '无法确认是否已执行，不能自动重试。',
+      status: 'waiting',
     });
+    expect(
+      unresolved.turnsById['local-turn:client-unresolved']?.failure,
+    ).toBeUndefined();
+    expect(unresolved.status).toBe('busy');
   });
 
   it('preserves a non-retryable pending admission across snapshot refresh', () => {
@@ -2025,15 +2148,102 @@ describe('AgentEventReducer', () => {
     expect(
       restored.messagesById['local:client-pending'],
     ).toMatchObject({
-      status: 'failed',
+      status: 'queued',
       admissionState: 'pending',
     });
     expect(
       restored.turnsById['local-turn:client-pending'],
     ).toMatchObject({
-      status: 'failed',
-      failure: '服务端仍在确认；系统不会自动重试。',
+      status: 'waiting',
     });
+    expect(
+      restored.turnsById['local-turn:client-pending']?.failure,
+    ).toBeUndefined();
+    expect(restored.status).toBe('busy');
+  });
+
+  it('retains an unscoped backend failure as a diagnostic without inventing a failed turn', () => {
+    const reduced = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      {
+        ...agentEvent(8, 'turn_failed', { error: 'lost acknowledgement' }),
+        turnId: '',
+      },
+    ).state;
+
+    expect(reduced.turnOrder).toEqual([]);
+    expect(reduced.turnsById).not.toHaveProperty('unscoped');
+    expect(reduced.status).toBe('idle');
+    expect(reduced.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: 'turn_failed',
+        summary: expect.stringContaining('turnId'),
+      }),
+    ]));
+  });
+
+  it('settles a pending acknowledgement from the exact durable SSE identity', () => {
+    const clientMessageId = 'client-pending-then-accepted';
+    const optimistic = appendOptimisticAgentMessage(
+      createAgentProjection('session-1'),
+      {
+        clientMessageId,
+        text: '只执行一次并等待证据',
+        nowMs: 10,
+      },
+    );
+    const pending = failOptimisticAgentMessage(
+      optimistic,
+      clientMessageId,
+      '服务端仍在确认。',
+      20,
+      'pending',
+    );
+    const durableUser = {
+      ...serverMessage(
+        'durable-user-after-lost-ack',
+        'user',
+        'turn-after-lost-ack',
+        '只执行一次并等待证据',
+      ),
+      clientMessageId,
+    };
+
+    const settled = reduceAgentEvents(pending, [
+      {
+        ...agentEvent(9, 'message_completed', {
+          clientMessageId,
+          message: durableUser,
+        }),
+        turnId: 'turn-after-lost-ack',
+      },
+      {
+        ...agentEvent(10, 'message_completed', {
+          message: serverMessage(
+            'durable-assistant-after-lost-ack',
+            'assistant',
+            'turn-after-lost-ack',
+            '请求只执行了一次。',
+          ),
+        }),
+        turnId: 'turn-after-lost-ack',
+      },
+      {
+        ...agentEvent(11, 'turn_completed', { status: 'completed' }),
+        turnId: 'turn-after-lost-ack',
+      },
+    ]);
+
+    expect(settled.messagesById[`local:${clientMessageId}`]).toBeUndefined();
+    expect(settled.messageOrder).toEqual([
+      'durable-user-after-lost-ack',
+      'durable-assistant-after-lost-ack',
+    ]);
+    expect(settled.turnsById[`local-turn:${clientMessageId}`]).toBeUndefined();
+    expect(settled.turnsById['turn-after-lost-ack']).toMatchObject({
+      status: 'completed',
+    });
+    expect(settled.status).toBe('idle');
   });
 
   it('discards a rejected optimistic retry without leaving a duplicate turn', () => {

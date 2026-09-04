@@ -23,6 +23,7 @@ from typing import Any, cast
 from .agent_runtime_driver import AgentRuntimeError
 
 __all__ = [
+    "PiRuntimeCommandAcceptanceUnknown",
     "PiRuntimeCommandRejected",
     "PiRuntimeError",
     "PiRuntimeTurnConflict",
@@ -51,6 +52,17 @@ class PiRuntimeTurnConflict(PiRuntimeError):
     """A new prompt cannot start while this runtime owns an active turn."""
 
     error_code = "AGENT_TURN_CONFLICT"
+
+
+class PiRuntimeCommandAcceptanceUnknown(PiRuntimeError):
+    """A Host command was written but its acknowledgement was not observed.
+
+    The command may already be executing or durably settled.  Callers must
+    reconcile it by stable command identity instead of publishing a failure or
+    issuing a second side effect.
+    """
+
+    error_code = "PI_RUNTIME_ACCEPTANCE_UNKNOWN"
 
 
 class PiRuntimeCommandRejected(PiRuntimeError):

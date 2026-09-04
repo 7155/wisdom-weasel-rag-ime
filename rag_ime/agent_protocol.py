@@ -241,6 +241,7 @@ class AgentMessage:
     attachments: tuple[str, ...] = ()
     citations: tuple[str, ...] = ()
     completed_at_ms: int | None = None
+    client_message_id: str = ""
     provider: str = ""
     model: str = ""
     usage: dict[str, int] | None = None
@@ -262,6 +263,7 @@ class AgentMessage:
             citations=tuple(str(item) for item in value.get("citations") or []),
             created_at_ms=int(value["createdAtMs"]),
             completed_at_ms=int(value["completedAtMs"]) if value.get("completedAtMs") is not None else None,
+            client_message_id=str(value.get("clientMessageId") or ""),
             provider=str(value.get("provider") or ""),
             model=str(value.get("model") or ""),
             usage={str(key): int(item) for key, item in _mapping(value.get("usage")).items()}
@@ -283,6 +285,8 @@ class AgentMessage:
             "createdAtMs": self.created_at_ms,
             "completedAtMs": self.completed_at_ms,
         }
+        if self.client_message_id:
+            payload["clientMessageId"] = self.client_message_id
         if self.provider:
             payload["provider"] = self.provider
         if self.model:

@@ -90,9 +90,13 @@ class SystemTerminalService:
         rows = self._dimension(payload.get("rows"), default=30, maximum=200)
         title = str(payload.get("title") or cwd.name or "Terminal").strip()[:120] or "Terminal"
         master_fd, slave_fd = os.openpty()
-        self._set_size(master_fd, cols=cols, rows=rows)
-        environment = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
         try:
+            self._set_size(master_fd, cols=cols, rows=rows)
+            environment = {
+                **os.environ,
+                "TERM": "xterm-256color",
+                "COLORTERM": "truecolor",
+            }
             process = subprocess.Popen(
                 [shell, "-l"],
                 cwd=str(cwd),
@@ -103,9 +107,11 @@ class SystemTerminalService:
                 preexec_fn=_acquire_controlling_terminal,
                 close_fds=True,
             )
-        except Exception:
-            os.close(master_fd)
-            os.close(slave_fd)
+        except BaseException:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
             raise
         finally:
             try:

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "paw.enterprise-rag-golden-qrels-audit.v1",
+  "runId": "enterprise-rag-golden-qrels-v5-validation-calibration-20260903",
+  "status": "passed",
+  "requirementRefs": ["UR-226", "UR-233", "UR-234", "UR-236"],
+  "sourceRefs": [
+    "current-thread/2026-09-03/after-UR-235",
+    "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md"
+  ],
+  "localOnly": true,
+  "evaluationScope": "validation-development-calibration",
+  "dataset": {
+    "datasetId": "enterprise-rag-answer-evidence-validation-v1",
+    "documentCount": 5101,
+    "chunkCount": 29846,
+    "answerableCaseCount": 2,
+    "abstentionCaseCount": 2,
+    "requiredFactCount": 9
+  },
+  "qrels": {
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "candidateVersion": "v5",
+    "previousVersion": "v4",
+    "sha256": "2c599db673b0a48e0b9cef5c7400c1052ab8aa543221570d02188ca7b6d5140d",
+    "manifestSha256": "891ada8d0d80570c215baab44a0c01bcaee7bf4029bbb4012788e8232a600e98",
+    "previousManifestSha256": "72ea8c576e1df05dce7006465422bcd41487cb75997507968ef24d5a374e0b4f",
+    "supportGroupCount": 19,
+    "evidenceBindingCount": 21
+  },
+  "change": {
+    "addedAlternativeBindingCount": 1,
+    "queryId": "qst_0474",
+    "factId": "F5",
+    "documentId": "dsid_94b0d0306935482d820e38d0bd986139",
+    "documentSha256": "074b6093f6aa5fd9ad288817e33005ceb067e5abdf84a37af89008461ddee8e1",
+    "chunkOrdinal": 0,
+    "chunkSha256": "d5d7bab7c61dcc5e54b24369b6d53b8beba3ea6235605b5dfcf1240d02139478",
+    "quote": "Expanded kernel selection signals: model family/arch, seq-length regime (prefill vs decode characteristics), GPU SKU.",
+    "quoteSha256": "1ae8402da61e123855c76a46852af5c2b6898d24fbde1f837a64eb8318748862"
+  },
+  "deterministicChecks": {
+    "factsChanged": false,
+    "questionSetChanged": false,
+    "quoteFoundInFrozenChunk": true,
+    "documentAndChunkHashesMatched": true,
+    "providerCalls": 0,
+    "heldOutOpened": false
+  },
+  "sameOutputOfflineRescore": {
+    "sourceRun": "validation-answer-evidence-luna-max-trace-repair-20260903-v7",
+    "sourceReportSha256": "3d93420949096642ffcef2a1633a5ff953b6920d032a5ac3014e1c6ab17b87b4",
+    "method": "deterministic-document-intersection-no-provider-call",
+    "qst_0474": "5/5",
+    "qst_0477": "4/4",
+    "total": "9/9"
+  },
+  "auditSha256": "f699ee47fed19afde3c9abc7a1389088ab36879ee2f670f814f6c6068f111632",
+  "claimBoundary": [
+    "v5 was created after inspecting a Validation candidate citation, so it is development-only calibration",
+    "v5 does not change questions, required facts, answer labels, corpus, split, or the two abstention cases",
+    "the 9/9 offline rescore proves qrels coverage for the same v7 output; it is not an unbiased promotion result",
+    "Held-out remains unopened"
+  ]
+}

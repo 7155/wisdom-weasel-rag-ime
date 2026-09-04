@@ -18,6 +18,7 @@ from rag_ime.memory_model_executor import (
     memory_curation_model_status,
     reconcile_stale_memory_runtime_sessions,
 )
+from rag_ime.pi_runtime_values import PiRuntimeTurnConflict
 
 
 class FakeMemoryRuntime:
@@ -51,6 +52,7 @@ class FakeMemoryRuntime:
         self.close_error: Exception | None = None
         self.settlement_calls: list[dict[str, object]] = []
         self.settlements: dict[str, dict[str, object]] = {}
+        self.snapshots: dict[str, dict[str, object]] = {}
 
     def available_models(self) -> list[dict[str, object]]:
         return [dict(model) for model in self.models]
@@ -194,6 +196,9 @@ class FakeMemoryRuntime:
             raise TimeoutError("Memory Session turn timed out")
         return dict(settlement)
 
+    def session_snapshot(self, session_id: str) -> dict[str, object]:
+        return dict(self.snapshots.get(session_id) or {"messages": []})
+
     def abort(self, session_id: str) -> dict[str, object]:
         self.aborted.append(session_id)
         return {"cancelled": True, "sessionId": session_id}
@@ -233,6 +238,46 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
             timeout_seconds=timeout_seconds,
             db_path=self.db_path,
         )
+
+    def _leave_accepted_request_running_without_durable_identity(
+        self,
+        executor: GovernedMemoryModelExecutor,
+        *,
+        messages: list[dict[str, str]],
+    ) -> None:
+        def unavailable_bind(*, request_id: str, turn_id: str) -> None:
+            del request_id, turn_id
+            raise sqlite3.OperationalError("unable to open database file")
+
+        def unavailable_terminal_write(
+            *,
+            request_id: str,
+            turn_id: str,
+            output_text: str,
+            receipt: dict[str, object],
+        ) -> sqlite3.Row:
+            del request_id, turn_id, output_text, receipt
+            raise sqlite3.OperationalError("unable to open database file")
+
+        def unavailable_resumable_write(
+            *,
+            request_id: str,
+            error: str,
+            receipt: dict[str, object] | None = None,
+            turn_id: str = "",
+        ) -> None:
+            del request_id, error, receipt, turn_id
+            raise sqlite3.OperationalError("unable to open database file")
+
+        executor._bind_turn = unavailable_bind  # type: ignore[method-assign]
+        executor._complete_request = (  # type: ignore[method-assign]
+            unavailable_terminal_write
+        )
+        executor._mark_request_resumable = (  # type: ignore[method-assign]
+            unavailable_resumable_write
+        )
+        with self.assertRaisesRegex(sqlite3.OperationalError, "unable to open"):
+            executor.complete(messages=messages)
 
     def test_default_timeout_covers_the_verified_luna_production_lease(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)
@@ -335,6 +380,359 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_transient_database_open_failure_does_not_lose_accepted_turn_identity(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_transient_turn_binding")
+        original_bind_turn = executor._bind_turn
+        bind_attempts = 0
+
+        def transient_bind_turn(*, request_id: str, turn_id: str) -> None:
+            nonlocal bind_attempts
+            bind_attempts += 1
+            if bind_attempts == 1:
+                raise sqlite3.OperationalError("unable to open database file")
+            original_bind_turn(request_id=request_id, turn_id=turn_id)
+
+        executor._bind_turn = transient_bind_turn  # type: ignore[method-assign]
+
+        response = executor.complete(
+            messages=[{"role": "user", "content": '{"v":2,"e":[]}'}]
+        )
+
+        self.assertEqual(response["turnId"], "turn-1")
+        self.assertEqual(bind_attempts, 2)
+        self.assertEqual(len(runtime.prompts), 1)
+        self.assertEqual(runtime.aborted, [])
+        request = executor.run_status(
+            "memory_book_transient_turn_binding"
+        )["requests"][0]
+        self.assertEqual(request["state"], "completed")
+        self.assertEqual(request["turnId"], "turn-1")
+
+    def test_recovery_after_two_bind_failures_reuses_the_accepted_turn(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_persist_accepted_turn_on_failure")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        original_bind_turn = executor._bind_turn
+        original_complete_request = executor._complete_request
+        binding_available = False
+        bind_attempts = 0
+        complete_attempts = 0
+
+        def fail_both_initial_bind_attempts(
+            *,
+            request_id: str,
+            turn_id: str,
+        ) -> None:
+            nonlocal bind_attempts
+            bind_attempts += 1
+            if not binding_available:
+                raise sqlite3.OperationalError("unable to open database file")
+            original_bind_turn(request_id=request_id, turn_id=turn_id)
+
+        executor._bind_turn = (  # type: ignore[method-assign]
+            fail_both_initial_bind_attempts
+        )
+
+        def fail_first_terminal_write(
+            *,
+            request_id: str,
+            turn_id: str,
+            output_text: str,
+            receipt: dict[str, object],
+        ) -> sqlite3.Row:
+            nonlocal complete_attempts
+            complete_attempts += 1
+            if complete_attempts == 1:
+                raise sqlite3.OperationalError("unable to open database file")
+            return original_complete_request(
+                request_id=request_id,
+                turn_id=turn_id,
+                output_text=output_text,
+                receipt=receipt,
+            )
+
+        executor._complete_request = (  # type: ignore[method-assign]
+            fail_first_terminal_write
+        )
+
+        with self.assertRaises(MemoryModelUnavailable):
+            executor.complete(messages=messages)
+
+        self.assertEqual(bind_attempts, 2)
+        self.assertEqual(len(runtime.prompts), 1)
+        resumable = executor.run_status(
+            "memory_book_persist_accepted_turn_on_failure"
+        )["requests"][0]
+        self.assertEqual(resumable["state"], "resumable")
+        self.assertEqual(resumable["turnId"], "turn-1")
+        self.assertEqual(
+            resumable["receipt"]["admission"],
+            {
+                "schemaVersion": "rag-ime.memory-admission.v1",
+                "accepted": True,
+                "sessionId": runtime.prompts[0]["sessionId"],
+                "turnId": "turn-1",
+                "clientMessageId": runtime.prompts[0]["clientMessageId"],
+            },
+        )
+
+        binding_available = True
+        recovered = executor.complete(messages=messages)
+
+        self.assertEqual(recovered["turnId"], "turn-1")
+        self.assertTrue(recovered["receipt"]["recoveredSettlement"])
+        self.assertEqual(len(runtime.prompts), 1)
+        self.assertEqual(
+            executor.run_status(
+                "memory_book_persist_accepted_turn_on_failure"
+            )["requests"][0]["attemptCount"],
+            1,
+        )
+
+    def test_two_bind_failures_do_not_interrupt_terminal_settlement(self) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_deferred_turn_binding")
+        bind_attempts = 0
+
+        def unavailable_bind(*, request_id: str, turn_id: str) -> None:
+            del request_id, turn_id
+            nonlocal bind_attempts
+            bind_attempts += 1
+            raise sqlite3.OperationalError("unable to open database file")
+
+        executor._bind_turn = unavailable_bind  # type: ignore[method-assign]
+
+        response = executor.complete(
+            messages=[{"role": "user", "content": '{"v":2,"e":[]}'}]
+        )
+
+        self.assertEqual(response["turnId"], "turn-1")
+        self.assertEqual(bind_attempts, 2)
+        self.assertEqual(len(runtime.prompts), 1)
+        self.assertEqual(runtime.aborted, [])
+        request = executor.run_status(
+            "memory_book_deferred_turn_binding"
+        )["requests"][0]
+        self.assertEqual(request["state"], "completed")
+        self.assertEqual(request["turnId"], "turn-1")
+
+    def test_same_process_persists_admission_when_database_returns_later(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_late_database_recovery")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        original_complete_request = executor._complete_request
+        original_mark_request_resumable = executor._mark_request_resumable
+        complete_attempts = 0
+        resumable_attempts = 0
+
+        def unavailable_bind(*, request_id: str, turn_id: str) -> None:
+            del request_id, turn_id
+            raise sqlite3.OperationalError("unable to open database file")
+
+        def fail_first_terminal_write(
+            *,
+            request_id: str,
+            turn_id: str,
+            output_text: str,
+            receipt: dict[str, object],
+        ) -> sqlite3.Row:
+            nonlocal complete_attempts
+            complete_attempts += 1
+            if complete_attempts == 1:
+                raise sqlite3.OperationalError("unable to open database file")
+            return original_complete_request(
+                request_id=request_id,
+                turn_id=turn_id,
+                output_text=output_text,
+                receipt=receipt,
+            )
+
+        def fail_first_resumable_write(
+            *,
+            request_id: str,
+            error: str,
+            receipt: dict[str, object] | None = None,
+            turn_id: str = "",
+        ) -> None:
+            nonlocal resumable_attempts
+            resumable_attempts += 1
+            if resumable_attempts == 1:
+                raise sqlite3.OperationalError("unable to open database file")
+            original_mark_request_resumable(
+                request_id=request_id,
+                error=error,
+                receipt=receipt,
+                turn_id=turn_id,
+            )
+
+        executor._bind_turn = unavailable_bind  # type: ignore[method-assign]
+        executor._complete_request = (  # type: ignore[method-assign]
+            fail_first_terminal_write
+        )
+        executor._mark_request_resumable = (  # type: ignore[method-assign]
+            fail_first_resumable_write
+        )
+
+        with self.assertRaisesRegex(sqlite3.OperationalError, "unable to open"):
+            executor.complete(messages=messages)
+        before_recovery = executor.run_status(
+            "memory_book_late_database_recovery"
+        )["requests"][0]
+        self.assertEqual(before_recovery["state"], "running")
+        self.assertEqual(before_recovery["turnId"], "")
+
+        recovered = executor.complete(messages=messages)
+
+        self.assertEqual(recovered["turnId"], "turn-1")
+        self.assertTrue(recovered["receipt"]["recoveredSettlement"])
+        self.assertEqual(len(runtime.prompts), 1)
+        self.assertEqual(resumable_attempts, 2)
+        persisted = executor.run_status(
+            "memory_book_late_database_recovery"
+        )["requests"][0]
+        self.assertEqual(persisted["state"], "completed")
+        self.assertEqual(persisted["turnId"], "turn-1")
+        self.assertEqual(persisted["attemptCount"], 1)
+
+    def test_new_executor_never_replays_ambiguous_running_admission(self) -> None:
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        first.begin_run("memory_book_ambiguous_running_admission")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        self._leave_accepted_request_running_without_durable_identity(
+            first,
+            messages=messages,
+        )
+        ambiguous = first.run_status(
+            "memory_book_ambiguous_running_admission"
+        )["requests"][0]
+        self.assertEqual(ambiguous["state"], "running")
+        self.assertEqual(ambiguous["turnId"], "")
+        self.assertEqual(ambiguous["attemptCount"], 1)
+        self.assertEqual(len(first_runtime.prompts), 1)
+        first.close()
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime)
+        second.begin_run("memory_book_ambiguous_running_admission")
+
+        with self.assertRaisesRegex(
+            MemoryModelUnavailable,
+            "ambiguous.*not replayed",
+        ):
+            second.complete(messages=messages)
+
+        self.assertEqual(second_runtime.prompts, [])
+        preserved = second.run_status(
+            "memory_book_ambiguous_running_admission"
+        )["requests"][0]
+        self.assertEqual(preserved["state"], "resumable")
+        self.assertEqual(preserved["turnId"], "")
+        self.assertEqual(preserved["attemptCount"], 1)
+        self.assertEqual(
+            preserved["lastError"],
+            "memory_admission_ambiguous_not_replayed",
+        )
+        self.assertEqual(preserved["receipt"]["admission"]["status"], "unknown")
+
+    def test_new_executor_recovers_turn_from_durable_runtime_snapshot(self) -> None:
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        first.begin_run("memory_book_snapshot_admission_recovery")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        self._leave_accepted_request_running_without_durable_identity(
+            first,
+            messages=messages,
+        )
+        ambiguous = first.run_status(
+            "memory_book_snapshot_admission_recovery"
+        )["requests"][0]
+        original_session_id = str(ambiguous["sessionId"])
+        request_id = str(first_runtime.prompts[0]["clientMessageId"])
+        first.close()
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second_runtime.snapshots[original_session_id] = {
+            "messages": [
+                {
+                    "role": "user",
+                    "turnId": "turn-1",
+                    "clientMessageId": request_id,
+                    "blocks": [{"type": "text", "data": {"text": "private"}}],
+                }
+            ]
+        }
+        second_runtime.settlements["turn-1"] = dict(
+            first_runtime.settlements["turn-1"]
+        )
+        second = self._executor(second_runtime)
+        second.begin_run("memory_book_snapshot_admission_recovery")
+
+        recovered = second.complete(messages=messages)
+
+        self.assertEqual(recovered["turnId"], "turn-1")
+        self.assertTrue(recovered["receipt"]["recoveredSettlement"])
+        self.assertEqual(second_runtime.prompts, [])
+        persisted = second.run_status(
+            "memory_book_snapshot_admission_recovery"
+        )["requests"][0]
+        self.assertEqual(persisted["state"], "completed")
+        self.assertEqual(persisted["turnId"], "turn-1")
+        self.assertEqual(persisted["attemptCount"], 1)
+
+    def test_new_executor_never_replays_when_prompt_ack_is_lost(self) -> None:
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        first = self._executor(first_runtime)
+        first.begin_run("memory_book_lost_prompt_ack")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        original_prompt = first_runtime.prompt
+
+        def accept_then_lose_ack(
+            *args: object,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            original_prompt(*args, **kwargs)
+            raise TimeoutError("prompt acknowledgement timed out")
+
+        first_runtime.prompt = accept_then_lose_ack  # type: ignore[method-assign]
+
+        with self.assertRaises(MemoryModelTimeout):
+            first.complete(messages=messages)
+        ambiguous = first.run_status("memory_book_lost_prompt_ack")["requests"][0]
+        self.assertEqual(ambiguous["state"], "resumable")
+        self.assertEqual(ambiguous["turnId"], "")
+        self.assertEqual(ambiguous["attemptCount"], 1)
+        self.assertEqual(ambiguous["lastError"], "memory_curation_timeout")
+        self.assertEqual(len(first_runtime.prompts), 1)
+        first.close()
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime)
+        second.begin_run("memory_book_lost_prompt_ack")
+
+        with self.assertRaisesRegex(
+            MemoryModelUnavailable,
+            "ambiguous.*not replayed",
+        ):
+            second.complete(messages=messages)
+
+        self.assertEqual(second_runtime.prompts, [])
+        preserved = second.run_status("memory_book_lost_prompt_ack")["requests"][0]
+        self.assertEqual(preserved["state"], "resumable")
+        self.assertEqual(preserved["turnId"], "")
+        self.assertEqual(preserved["attemptCount"], 1)
 
     def test_near_budget_packet_is_not_truncated_or_nested_as_json_messages(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events)
@@ -547,6 +945,229 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         self.assertEqual(self.sessions.get(str(run["sessionId"]))["status"], "idle")
         self.assertEqual(runtime.closed, [])
 
+    def test_timeout_cancels_only_the_memory_session(self) -> None:
+        ordinary = self.sessions.create(
+            title="ordinary conversation",
+            session_kind="conversation",
+        )
+        ordinary_session_id = str(ordinary["id"])
+        self.sessions.bind_runtime_session(
+            ordinary_session_id,
+            driver_id="pi-runtime-v2",
+            runtime_kind="pi",
+            external_session_id="pi-ordinary-live",
+        )
+        self.sessions.set_status(ordinary_session_id, "busy")
+        runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        executor = self._executor(runtime, timeout_seconds=0.01)
+        memory_run = executor.begin_run("memory_book_timeout_isolation")
+
+        with self.assertRaises(MemoryModelTimeout):
+            executor.complete(
+                messages=[{"role": "user", "content": '{"v":2,"e":[]}'}]
+            )
+
+        self.assertEqual(runtime.aborted, [memory_run["sessionId"]])
+        self.assertEqual(self.sessions.get(ordinary_session_id)["status"], "busy")
+        self.assertEqual(
+            self.sessions.runtime_binding(ordinary_session_id)["externalSessionId"],
+            "pi-ordinary-live",
+        )
+
+    def test_retry_reuses_late_durable_settlement_without_reprompting(self) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        executor = self._executor(runtime, timeout_seconds=0.01)
+        executor.begin_run("memory_book_late_settlement")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+
+        with self.assertRaises(MemoryModelTimeout):
+            executor.complete(messages=messages)
+        first_prompt = runtime.prompts[0]
+        runtime.settlements["turn-1"] = {
+            "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+            "sessionId": first_prompt["sessionId"],
+            "runtimeSessionId": f"pi-{first_prompt['sessionId']}",
+            "turnId": "turn-1",
+            "clientMessageId": first_prompt["clientMessageId"],
+            "receipt": {
+                "schemaVersion": "pi.agent-settled.v2",
+                "receiptId": "pi-settled:turn-1",
+                "sessionId": f"pi-{first_prompt['sessionId']}",
+                "runId": "turn-1",
+                "scopeId": f"pi-{first_prompt['sessionId']}:turn-1",
+                "generation": 1,
+                "disposition": "completed",
+                "stopReason": "stop",
+                "settledAtMs": 200,
+                "aborted": False,
+                "pendingOperations": 0,
+                "operations": {
+                    "pending": 0,
+                    "pendingByKind": {},
+                    "registeredByKind": {},
+                },
+                "operationCounts": {},
+                "finalMessage": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": '{"decisions":[]}'}],
+                    "usage": {"input": 12, "output": 4},
+                },
+            },
+        }
+        runtime.settle = True
+
+        recovered = executor.complete(messages=messages)
+
+        self.assertEqual(recovered["turnId"], "turn-1")
+        self.assertTrue(recovered["receipt"]["recoveredSettlement"])
+        self.assertEqual(len(runtime.prompts), 1)
+        request = executor.run_status("memory_book_late_settlement")["requests"][0]
+        self.assertEqual(request["state"], "completed")
+        self.assertEqual(request["attemptCount"], 1)
+
+    def test_unresolved_accepted_turn_is_not_reprompted(self) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        executor = self._executor(runtime, timeout_seconds=0.01)
+        executor.begin_run("memory_book_unresolved_accepted_turn")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+
+        with self.assertRaises(MemoryModelTimeout):
+            executor.complete(messages=messages)
+        with self.assertRaisesRegex(
+            MemoryModelTimeout,
+            "not replayed",
+        ):
+            executor.complete(messages=messages)
+
+        self.assertEqual(len(runtime.prompts), 1)
+        request = executor.run_status(
+            "memory_book_unresolved_accepted_turn"
+        )["requests"][0]
+        self.assertEqual(request["state"], "resumable")
+        self.assertEqual(request["turnId"], "turn-1")
+        self.assertEqual(request["attemptCount"], 1)
+
+    def test_restart_does_not_replay_a_persisted_accepted_turn(self) -> None:
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        first = self._executor(first_runtime, timeout_seconds=0.01)
+        first.begin_run("memory_book_restart_after_admission")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+
+        with self.assertRaises(MemoryModelTimeout):
+            first.complete(messages=messages)
+        persisted = first.run_status(
+            "memory_book_restart_after_admission"
+        )["requests"][0]
+        self.assertEqual(persisted["turnId"], "turn-1")
+        original_session_id = str(persisted["sessionId"])
+        reconcile_stale_memory_runtime_sessions(
+            self.sessions,
+            db_path=self.db_path,
+        )
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        second = self._executor(second_runtime, timeout_seconds=0.01)
+        resumed = second.begin_run("memory_book_restart_after_admission")
+        self.assertNotEqual(resumed["sessionId"], original_session_id)
+
+        with self.assertRaisesRegex(MemoryModelTimeout, "not replayed"):
+            second.complete(messages=messages)
+
+        self.assertEqual(second_runtime.prompts, [])
+        after_restart = second.run_status(
+            "memory_book_restart_after_admission"
+        )["requests"][0]
+        self.assertEqual(after_restart["state"], "resumable")
+        self.assertEqual(after_restart["sessionId"], original_session_id)
+        self.assertEqual(after_restart["turnId"], "turn-1")
+        self.assertEqual(after_restart["attemptCount"], 1)
+
+    def test_explicit_admission_without_turn_id_is_never_blindly_replayed(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_admission_without_turn_id")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        original_prompt = runtime.prompt
+
+        def accepted_without_turn_id(
+            *args: object,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            original_prompt(*args, **kwargs)
+            return {"accepted": True}
+
+        runtime.prompt = accepted_without_turn_id  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(MemoryModelUnavailable, "turn id"):
+            executor.complete(messages=messages)
+        resumable = executor.run_status(
+            "memory_book_admission_without_turn_id"
+        )["requests"][0]
+        self.assertEqual(resumable["turnId"], "")
+        self.assertTrue(resumable["receipt"]["admission"]["accepted"])
+
+        with self.assertRaisesRegex(MemoryModelUnavailable, "not replayed"):
+            executor.complete(messages=messages)
+
+        self.assertEqual(len(runtime.prompts), 1)
+        self.assertEqual(
+            executor.run_status(
+                "memory_book_admission_without_turn_id"
+            )["requests"][0]["attemptCount"],
+            1,
+        )
+
+    def test_failed_accepted_turn_is_reported_and_not_reprompted(self) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events)
+        executor = self._executor(runtime)
+        executor.begin_run("memory_book_failed_accepted_turn")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        original_await_turn_settled = runtime.await_turn_settled
+
+        def failed_settlement(
+            session_id: str,
+            turn_id: str,
+            *,
+            client_message_id: str,
+            timeout_seconds: float,
+        ) -> dict[str, object]:
+            settlement = original_await_turn_settled(
+                session_id,
+                turn_id,
+                client_message_id=client_message_id,
+                timeout_seconds=timeout_seconds,
+            )
+            receipt = dict(settlement["receipt"])
+            receipt["disposition"] = "failed"
+            receipt["stopReason"] = "provider_terminal_failure"
+            settlement["receipt"] = receipt
+            return settlement
+
+        runtime.await_turn_settled = (  # type: ignore[method-assign]
+            failed_settlement
+        )
+
+        with self.assertRaisesRegex(
+            MemoryModelUnavailable,
+            "provider_terminal_failure",
+        ):
+            executor.complete(messages=messages)
+        with self.assertRaisesRegex(
+            MemoryModelUnavailable,
+            "not replayed.*provider_terminal_failure",
+        ):
+            executor.complete(messages=messages)
+
+        self.assertEqual(len(runtime.prompts), 1)
+        request = executor.run_status(
+            "memory_book_failed_accepted_turn"
+        )["requests"][0]
+        self.assertEqual(request["state"], "resumable")
+        self.assertEqual(request["turnId"], "turn-1")
+        self.assertIn("provider_terminal_failure", request["lastError"])
+
     def test_resumable_isolated_request_retries_in_a_fresh_internal_session(self) -> None:
         messages = [{"role": "user", "content": '{"v":2,"activity":[]}'}]
         first_runtime = FakeMemoryRuntime(self.sessions, self.events)
@@ -555,7 +1176,7 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         original_prompt = first_runtime.prompt
 
         def reject_active_turn(*args: object, **kwargs: object) -> dict[str, object]:
-            raise RuntimeError("Session already has an active turn")
+            raise PiRuntimeTurnConflict("Session already has an active turn")
 
         first_runtime.prompt = reject_active_turn  # type: ignore[method-assign]
         with self.assertRaisesRegex(MemoryModelUnavailable, "active turn"):
@@ -569,6 +1190,16 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         )["requests"][0]
         failed_session_id = str(failed_request["sessionId"])
         self.assertEqual(failed_request["state"], "resumable")
+        self.assertEqual(
+            failed_request["receipt"]["admission"],
+            {
+                "schemaVersion": "rag-ime.memory-admission.v1",
+                "status": "rejected",
+                "reasonCode": "AGENT_TURN_CONFLICT",
+                "sessionId": failed_session_id,
+                "clientMessageId": failed_request["requestId"],
+            },
+        )
         first_runtime.prompt = original_prompt  # type: ignore[method-assign]
 
         second_runtime = FakeMemoryRuntime(self.sessions, self.events)
@@ -607,7 +1238,7 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         original_session_id = str(run["sessionId"])
 
         def reject_active_turn(*args: object, **kwargs: object) -> dict[str, object]:
-            raise RuntimeError("Session already has an active turn")
+            raise PiRuntimeTurnConflict("Session already has an active turn")
 
         first_runtime.prompt = reject_active_turn  # type: ignore[method-assign]
         with self.assertRaisesRegex(MemoryModelUnavailable, "active turn"):
@@ -615,6 +1246,10 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         failed = first.run_status("memory_book_primary_active_turn")["requests"][0]
         self.assertEqual(failed["state"], "resumable")
         self.assertEqual(failed["sessionId"], original_session_id)
+        self.assertEqual(
+            failed["receipt"]["admission"]["reasonCode"],
+            "AGENT_TURN_CONFLICT",
+        )
 
         second_runtime = FakeMemoryRuntime(self.sessions, self.events)
         second = self._executor(second_runtime)

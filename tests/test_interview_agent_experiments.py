@@ -142,7 +142,7 @@ def _valid_experiment() -> dict[str, object]:
 
 
 class InterviewAgentExperimentContractTests(unittest.TestCase):
-    def test_repository_matrix_preserves_21_rows_and_adds_retry3_repair(self) -> None:
+    def test_repository_matrix_preserves_history_and_adds_current_four_project_results(self) -> None:
         root = Path(__file__).resolve().parents[1]
         payload = json.loads(
             (root / "eval/interview-metrics/agent-experiments.v1.json").read_text(
@@ -172,6 +172,10 @@ class InterviewAgentExperimentContractTests(unittest.TestCase):
             "memory.maintenance-shadow-v3": ("rejected", "reject", ("workflow",)),
             "memory.maintenance-shadow-v4": ("rejected", "reject", ("workflow",)),
             "cloudops.runtime-selection-repair-retry3.v1": ("rejected", "reject", ("workflow",)),
+            "enterpriseops-csm.preloaded-tool-cost.v1": ("kept", "keep", ("tool",)),
+            "enterprise-rag.sol-max-budget3-r3.v1": ("rejected", "reject", ("skill", "tool", "workflow")),
+            "cloudops.alert-first-sol-max.v1": ("kept", "keep", ("prompt",)),
+            "memory.maintenance-concise-contract-sol-max.v1": ("kept", "keep", ("prompt",)),
         }
         by_id = {item["id"]: item for item in payload["experiments"]}
 

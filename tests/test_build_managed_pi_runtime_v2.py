@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -511,6 +512,53 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ManagedPiRuntimeError, "clean"):
                 _source_revision(root)
+
+    def test_development_install_identifies_dirty_pi_source_without_blocking_it(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-dirty-dev-pi-") as temporary:
+            root = Path(temporary)
+            source = root / "integrations" / "rag-ime-runtime-host" / "src"
+            source.mkdir(parents=True)
+            source_file = source / "runtime-host.ts"
+            source_file.write_text("export const runtime = true;\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Pi Runtime Test"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "-qm", "initial runtime host"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(["git", "checkout", "--detach", "-q"], cwd=root, check=True)
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                text=True,
+            ).strip()
+            source_file.write_text("export const runtime = false;\n", encoding="utf-8")
+
+            with (
+                patch(
+                    "scripts.build_managed_pi_runtime_v2.REQUIRED_PI_RUNTIME_BASE_COMMIT",
+                    commit,
+                ),
+                patch.dict(os.environ, {"RAG_IME_ALLOW_DIRTY_INSTALL": "1"}),
+            ):
+                first_revision = _source_revision(root)
+                source_file.write_text("export const runtime = 'changed';\n", encoding="utf-8")
+                second_revision = _source_revision(root)
+
+            self.assertRegex(first_revision, rf"^{commit}\+dirty\.[0-9a-f]{{64}}$")
+            self.assertNotEqual(first_revision, second_revision)
+
 
     def test_builder_requires_the_provider_safe_pi_commit_without_an_evaluation_escape_hatch(self) -> None:
         self.assertEqual(

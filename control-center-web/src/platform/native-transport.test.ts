@@ -276,6 +276,151 @@ describe('NativeControlTransport', () => {
     }
   });
 
+  it('reconnects from the previous cursor when observer delivery fails', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: NativeBridgeRequestEnvelope[] = [];
+      let nextId = 1;
+      const bridgeWindow = fakeBridgeWindow((envelope) => {
+        sent.push(envelope);
+        queueMicrotask(() => {
+          bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+            id: envelope.id,
+            ok: true,
+            result: {},
+          });
+        });
+      });
+      const reconnects: unknown[] = [];
+      let deliveries = 0;
+      const transport = new NativeControlTransport({
+        bridgeWindow,
+        createId: () => `delivery-${nextId++}`,
+      });
+      const cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:8',
+        },
+        {
+          next: () => {
+            deliveries += 1;
+            if (deliveries === 1) throw new Error('projection commit failed');
+          },
+          reconnect: (state) => reconnects.push(state),
+        },
+      );
+      await Promise.resolve();
+
+      bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        subscriptionId: 'delivery-1',
+        kind: 'event',
+        event: agentEventFixture(9, 'turn_completed', {}),
+        lastEventId: 'session-1:9',
+      });
+      bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        subscriptionId: 'delivery-1',
+        kind: 'event',
+        event: agentEventFixture(10, 'turn_completed', {}),
+        lastEventId: 'session-1:10',
+      });
+
+      expect(deliveries).toBe(1);
+      expect(reconnects).toEqual([
+        { attempt: 1, delayMs: 250, lastEventId: 'session-1:8' },
+      ]);
+      expect(sent.filter((item) => item.method === 'cancelSubscription')).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(250);
+      const subscribeCalls = sent.filter((item) => item.method === 'subscribe');
+      expect(subscribeCalls[1]?.payload).toEqual({
+        subscriptionId: 'delivery-1',
+        request: {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:8',
+        },
+      });
+
+      bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        subscriptionId: 'delivery-1',
+        kind: 'event',
+        event: agentEventFixture(9, 'turn_completed', {}),
+        lastEventId: 'session-1:9',
+      });
+      expect(deliveries).toBe(2);
+      cancel();
+      await Promise.resolve();
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reconnect from a transient native snapshot-required id', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: NativeBridgeRequestEnvelope[] = [];
+      let nextId = 1;
+      const bridgeWindow = fakeBridgeWindow((envelope) => {
+        sent.push(envelope);
+        queueMicrotask(() => {
+          bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+            id: envelope.id,
+            ok: true,
+            result: {},
+          });
+        });
+      });
+      const reconnects: unknown[] = [];
+      const transport = new NativeControlTransport({
+        bridgeWindow,
+        createId: () => `snapshot-${nextId++}`,
+      });
+      const cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:8',
+        },
+        {
+          next: () => undefined,
+          reconnect: (state) => reconnects.push(state),
+        },
+      );
+      await Promise.resolve();
+
+      const control = {
+        ...agentEventFixture(10, 'snapshot_required', {
+          reason: 'event_replay_gap',
+          afterEventId: 'session-1:8',
+        }),
+        eventId: 'session-1:snapshot-required:9',
+        resumeToken: 'session-1:snapshot-required:9',
+      };
+      bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        subscriptionId: 'snapshot-1',
+        kind: 'event',
+        event: control,
+        lastEventId: 'session-1:snapshot-required:9',
+      });
+      bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        subscriptionId: 'snapshot-1',
+        kind: 'complete',
+        lastEventId: 'session-1:snapshot-required:9',
+      });
+
+      expect(reconnects).toEqual([
+        { attempt: 1, delayMs: 250, lastEventId: 'session-1:8' },
+      ]);
+      cancel();
+      await Promise.resolve();
+      transport.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails closed before posting an unknown pathId or arbitrary URL field', async () => {
     const sent: NativeBridgeRequestEnvelope[] = [];
     const bridgeWindow = fakeBridgeWindow((envelope) => sent.push(envelope));

@@ -70,6 +70,9 @@ interface NativeSubscription {
   observer: ControlEventObserver<unknown>;
   validationRuntime: ContractValidationRuntime | null;
   lastEventId: string;
+  uncommittedEventId?: string;
+  deliveryBlocked: boolean;
+  reconnectBarrier?: Promise<void>;
   reconnectAttempt: number;
   reconnectTimer?: ReturnType<typeof setTimeout>;
 }
@@ -170,6 +173,7 @@ export class NativeControlTransport implements ControlTransport {
       observer: observer as ControlEventObserver<unknown>,
       validationRuntime: null,
       lastEventId: request.lastEventId,
+      deliveryBlocked: false,
       reconnectAttempt: 0,
     };
     this.subscriptions.set(subscriptionId, subscription);
@@ -402,6 +406,10 @@ export class NativeControlTransport implements ControlTransport {
     }
     const subscription = this.subscriptions.get(envelope.subscriptionId);
     if (!subscription) return;
+    // Once a consumer rejects event N, no later frame from that native stream
+    // is safe to project. Wait until the host has cancelled that stream and a
+    // fresh subscribe from the prior cursor has completed.
+    if (subscription.deliveryBlocked) return;
     if (envelope.kind === 'error') {
       subscription.observer.error?.(new NativeBridgeCallError(envelope.error));
       if (isRetryableBridgeError(envelope.error)) {
@@ -412,7 +420,11 @@ export class NativeControlTransport implements ControlTransport {
       return;
     }
     if (envelope.kind === 'complete') {
-      subscription.lastEventId = envelope.lastEventId || subscription.lastEventId;
+      // Completion repeats the host cursor even when the preceding event was
+      // not committed by the observer. Keep replay anchored before that event.
+      if (envelope.lastEventId !== subscription.uncommittedEventId) {
+        subscription.lastEventId = envelope.lastEventId || subscription.lastEventId;
+      }
       this.scheduleSubscriptionReconnect(envelope.subscriptionId, subscription);
       return;
     }
@@ -421,13 +433,24 @@ export class NativeControlTransport implements ControlTransport {
       if (!subscription.validationRuntime) {
         throw new NativeBridgeCallError('contract validation runtime is not ready');
       }
+      subscription.uncommittedEventId = envelope.lastEventId || undefined;
       const event = parseNativeEvent(subscription.validationRuntime, streamKind, envelope.event);
-      subscription.lastEventId = envelope.lastEventId || eventResumeToken(event);
-      subscription.reconnectAttempt = 0;
+      const hostEventId = envelope.lastEventId || eventResumeToken(event);
+      subscription.uncommittedEventId = hostEventId || undefined;
+      const deliveredEventId = isSnapshotRequired(event)
+        ? subscription.lastEventId
+        : hostEventId || subscription.lastEventId;
       subscription.observer.next(event);
       if (isSnapshotRequired(event)) subscription.observer.snapshotRequired?.(event);
+      // The reconnect cursor acknowledges projection delivery, not merely
+      // receipt from the native host. Leave it unchanged when a consumer
+      // throws so replay can redeliver the event.
+      subscription.lastEventId = deliveredEventId;
+      if (!isSnapshotRequired(event)) subscription.uncommittedEventId = undefined;
+      subscription.reconnectAttempt = 0;
     } catch (error) {
       subscription.observer.error?.(asError(error));
+      this.interruptSubscriptionAfterDeliveryFailure(envelope.subscriptionId, subscription);
     }
   }
 
@@ -464,17 +487,46 @@ export class NativeControlTransport implements ControlTransport {
     subscription.reconnectTimer = globalThis.setTimeout(() => {
       subscription.reconnectTimer = undefined;
       if (this.disposed || this.subscriptions.get(subscriptionId) !== subscription) return;
-      const request = { ...subscription.request, lastEventId: subscription.lastEventId };
-      void this.call('subscribe', {
-        subscriptionId,
-        request: controlSubscriptionWirePayload(request),
-      })
-        .then(() => subscription.observer.open?.(subscription.lastEventId))
+      void Promise.resolve(subscription.reconnectBarrier)
+        .then(() => {
+          if (this.disposed || this.subscriptions.get(subscriptionId) !== subscription) return false;
+          const request = { ...subscription.request, lastEventId: subscription.lastEventId };
+          return this.call('subscribe', {
+            subscriptionId,
+            request: controlSubscriptionWirePayload(request),
+          }).then(() => true);
+        })
+        .then((opened) => {
+          if (!opened || this.disposed || this.subscriptions.get(subscriptionId) !== subscription) return;
+          subscription.deliveryBlocked = false;
+          subscription.uncommittedEventId = undefined;
+          subscription.observer.open?.(subscription.lastEventId);
+        })
         .catch((error) => {
           subscription.observer.error?.(asError(error));
           this.scheduleSubscriptionReconnect(subscriptionId, subscription);
         });
     }, delayMs);
+  }
+
+  private interruptSubscriptionAfterDeliveryFailure(
+    subscriptionId: string,
+    subscription: NativeSubscription,
+  ): void {
+    if (subscription.deliveryBlocked) return;
+    subscription.deliveryBlocked = true;
+    subscription.reconnectBarrier = this.call('cancelSubscription', {
+      subscriptionId,
+      lastEventId: subscription.lastEventId,
+    }).then(
+      () => undefined,
+      () => undefined,
+    ).finally(() => {
+      if (this.subscriptions.get(subscriptionId) === subscription) {
+        subscription.reconnectBarrier = undefined;
+      }
+    });
+    this.scheduleSubscriptionReconnect(subscriptionId, subscription);
   }
 }
 

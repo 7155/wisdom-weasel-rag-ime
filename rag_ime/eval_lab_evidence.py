@@ -733,6 +733,23 @@ class EvalLabEvidenceProjection:
         for index, row in enumerate(task_rows, start=1):
             title = str(row.get("title") or f"Task {index}")
             task_record = self._match_report_task(title, report_tasks, index)
+            report_tool_failures = 0
+            report_tool_receipt_complete = False
+            if task_record:
+                explicit_failures = task_record.get("failedToolCalls")
+                tool_calls = task_record.get("toolCalls")
+                successful_tool_calls = task_record.get("successfulToolCalls")
+                if isinstance(explicit_failures, (int, float)) and not isinstance(explicit_failures, bool):
+                    report_tool_failures = max(0, int(explicit_failures))
+                    report_tool_receipt_complete = True
+                elif (
+                    isinstance(tool_calls, (int, float))
+                    and not isinstance(tool_calls, bool)
+                    and isinstance(successful_tool_calls, (int, float))
+                    and not isinstance(successful_tool_calls, bool)
+                ):
+                    report_tool_failures = max(0, int(tool_calls) - int(successful_tool_calls))
+                    report_tool_receipt_complete = True
             transcript_path = self._safe_transcript_path(directory, row.get("transcript_ref"))
             stats = self._transcript_stats(transcript_path) if transcript_path else _TranscriptStats(False)
             task = {
@@ -746,7 +763,8 @@ class EvalLabEvidenceProjection:
                 "userMessages": stats.user_messages,
                 "assistantMessages": stats.assistant_messages,
                 "toolCalls": int((task_record.get("toolCalls") or 0) if task_record else stats.tool_calls),
-                "toolFailures": int((task_record.get("failedToolCalls") or 0) if task_record else stats.tool_failures),
+                "toolFailures": report_tool_failures if task_record else stats.tool_failures,
+                "toolReceiptComplete": stats.exists or report_tool_receipt_complete,
                 "toolNames": list(stats.tool_names),
                 "inputTokens": stats.input_tokens,
                 "outputTokens": stats.output_tokens,
@@ -1378,6 +1396,74 @@ class EvalLabEvidenceProjection:
                 for name, value in lanes.items()
                 if isinstance(value, Mapping)
             ]
+        if isinstance(lanes, list):
+            # RAG ablation reports keep four diagnostic lanes in one receipt.
+            # The final accountable result is the agentic lane; expose only
+            # its per-case gate projection so the UI can compare two complete
+            # runs without copying answers, citations, qrels, or hidden Gold.
+            agentic = next(
+                (
+                    item for item in lanes
+                    if isinstance(item, Mapping)
+                    and str(item.get("lane") or "") == "agentic"
+                ),
+                None,
+            )
+            if isinstance(agentic, Mapping):
+                score = agentic.get("score")
+                score = score if isinstance(score, Mapping) else {}
+                answer_cases = score.get("answerCases")
+                if isinstance(answer_cases, list):
+                    terminal = str(agentic.get("terminalEvent") or "unknown")
+                    projected: list[Mapping[str, object]] = []
+                    for raw_case in answer_cases:
+                        if not isinstance(raw_case, Mapping):
+                            continue
+                        case_id = str(
+                            raw_case.get("evaluationCaseId")
+                            or raw_case.get("queryId")
+                            or ""
+                        ).strip()
+                        if not case_id:
+                            continue
+                        gate_names = (
+                            "answerSuccess",
+                            "citationSupport",
+                            "abstentionCorrect",
+                            "toolSuccess",
+                        )
+                        gates = [
+                            (name, raw_case.get(name))
+                            for name in gate_names
+                            if isinstance(raw_case.get(name), bool)
+                        ]
+                        failed_names = [name for name, passed in gates if not passed]
+                        verifier_results = [
+                            {"verifierIndex": index, "passed": bool(passed)}
+                            for index, (_, passed) in enumerate(gates, start=1)
+                        ]
+                        task: dict[str, object] = {
+                            "taskId": case_id,
+                            "taskSucceeded": raw_case.get("agentSuccess") is True,
+                            "terminalEvent": terminal,
+                            "failedToolCalls": int(raw_case.get("toolSuccess") is False),
+                            "verifier": {
+                                "passed": sum(bool(passed) for _, passed in gates),
+                                "total": len(gates),
+                                "failedVerifierNames": failed_names,
+                                "verifierResults": verifier_results,
+                            },
+                        }
+                        for key in (
+                            "answerFactCoverage",
+                            "citationFactCoverage",
+                        ):
+                            value = raw_case.get(key)
+                            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                                task[key] = value
+                        projected.append(task)
+                    if projected:
+                        return projected
         # A few historical receipts nest their public task/batch projection
         # below result/validation/heldOut.  Inspect only these known wrappers;
         # never recurse into arbitrary report data.
@@ -1475,6 +1561,7 @@ class EvalLabEvidenceProjection:
             "answerCount", "toolCalls", "failedToolCalls", "searchCalls", "listCalls",
             "readCalls", "elapsedMs", "latencyMs", "answerCoverage", "ca", "fa",
             "jra", "top3Jra", "formalScoreProduced", "usageAvailable",
+            "answerFactCoverage", "citationFactCoverage",
         ):
             value = task.get(source_key)
             if isinstance(value, (int, float, bool)) and not isinstance(value, bool):
@@ -1486,6 +1573,25 @@ class EvalLabEvidenceProjection:
         owner = task.get("provisionalFirstOwner") or task.get("failureOwner")
         if isinstance(owner, str) and owner.strip():
             result["failureOwner"] = _public_text(owner, fallback="", limit=120)
+        usage = task.get("usage")
+        if isinstance(usage, Mapping):
+            for target, aliases in (
+                ("inputTokens", ("input", "inputTokens")),
+                ("outputTokens", ("output", "outputTokens")),
+                ("cacheReadTokens", ("cacheRead", "cacheReadTokens")),
+                ("cacheWriteTokens", ("cacheWrite", "cacheWriteTokens")),
+            ):
+                value = next(
+                    (
+                        usage.get(alias)
+                        for alias in aliases
+                        if isinstance(usage.get(alias), (int, float))
+                        and not isinstance(usage.get(alias), bool)
+                    ),
+                    None,
+                )
+                if value is not None:
+                    result[target] = max(0, int(value))
         return result
 
     @staticmethod
@@ -1628,6 +1734,58 @@ class EvalLabEvidenceProjection:
         if isinstance(usage, Mapping):
             environment["usageReceipt"] = self._safe_report_mapping(usage, depth=0)
             environment["pricingUsage"] = "报告含 usage 回执"
+        transcript_usage = {
+            "input": sum(int(item.get("inputTokens") or 0) for item in tasks),
+            "output": sum(int(item.get("outputTokens") or 0) for item in tasks),
+            "cacheRead": sum(int(item.get("cacheReadTokens") or 0) for item in tasks),
+            "cacheWrite": sum(int(item.get("cacheWriteTokens") or 0) for item in tasks),
+        }
+        if any(transcript_usage.values()):
+            usage_source = (
+                "transcript"
+                if any(
+                    item.get("transcriptAvailable") is True
+                    and any(int(item.get(key) or 0) > 0 for key in ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"))
+                    for item in tasks
+                )
+                else "report_task_usage"
+            )
+            report_task_usage_complete = False
+            if usage_source == "report_task_usage":
+                report_tasks = self._report_tasks(report)
+                aliases = (
+                    ("input", "inputTokens"),
+                    ("output", "outputTokens"),
+                    ("cacheRead", "cacheReadTokens"),
+                    ("cacheWrite", "cacheWriteTokens"),
+                )
+                report_task_usage_complete = bool(report_tasks) and all(
+                    isinstance(item.get("usage"), Mapping)
+                    and all(
+                        any(
+                            isinstance(item["usage"].get(key), (int, float))
+                            and not isinstance(item["usage"].get(key), bool)
+                            for key in keys
+                        )
+                        for keys in aliases
+                    )
+                    for item in report_tasks
+                )
+            environment["usageReceipt"] = {
+                "source": usage_source,
+                **transcript_usage,
+                "totalTokens": sum(transcript_usage.values()),
+                **(
+                    {"categoryReceiptComplete": report_task_usage_complete}
+                    if usage_source == "report_task_usage"
+                    else {}
+                ),
+            }
+            environment["pricingUsage"] = (
+                "已从 transcript 汇总 Provider usage"
+                if usage_source == "transcript"
+                else "已从逐 Task 报告汇总 Provider usage"
+            )
         estimate = report.get("estimate")
         if isinstance(estimate, Mapping):
             environment["costEstimate"] = self._safe_report_mapping(estimate, depth=0)

@@ -517,6 +517,7 @@ describe('PAWOS Agent App', () => {
     const transport = createTransport();
     const user = userEvent.setup();
     renderAgent(transport);
+    const rail = screen.getByRole('complementary', { name: 'Agent 工作记录' });
 
     await user.click(await screen.findByRole('button', { name: '更多“发布检查”操作' }));
     await user.click(await screen.findByRole('menuitem', { name: '归档 Session' }));
@@ -525,6 +526,7 @@ describe('PAWOS Agent App', () => {
 
     await user.click(screen.getByRole('button', { name: '工作记录选项' }));
     await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档 Session' }));
+    await waitFor(() => expect(rail.querySelector('.paw-agent-recents')).not.toHaveAttribute('aria-busy', 'true'));
     await user.click(await screen.findByRole('button', { name: '更多“发布检查”操作' }));
     await user.click(await screen.findByRole('menuitem', { name: '恢复 Session' }));
 

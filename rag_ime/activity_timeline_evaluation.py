@@ -533,12 +533,11 @@ def _write_private_exclusive(path: Path, text: str) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
             handle.write(text)
     except BaseException:
-        try:
+        if descriptor >= 0:
             os.close(descriptor)
-        except OSError:
-            pass
         raise
     path.chmod(0o600)
 

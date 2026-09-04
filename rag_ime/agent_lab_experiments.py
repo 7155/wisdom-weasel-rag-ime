@@ -135,5 +135,8 @@ def _decode(raw: str) -> dict[str, object]:
             "reason": "旧版回执没有显式冻结控制投影。",
         }],
     )
+    # Older append-only revisions predate the current/history projection. They
+    # remain current unless a later import explicitly supersedes them.
+    payload.setdefault("projectionState", "current")
     validate_contract(payload, "agent-lab-experiment.v1.json")
     return payload

@@ -22,7 +22,9 @@ from .agent_tool_ids import (
     READONLY_TOOL_PROFILE,
 )
 from .agent_workspace_roots import (
+    exact_trace_project_workspace_roots,
     existing_workspace_roots,
+    is_trace_project_bound_surface,
     system_wide_workspace_roots,
 )
 
@@ -246,7 +248,16 @@ class AgentSessionApplicationService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
-        if (
+        trace_project_binding = is_trace_project_bound_surface(
+            payload.get("surfaceKind") or "agent",
+            payload.get("ownerAppId") or "",
+            payload.get("surfaceKey") or "",
+        )
+        if trace_project_binding:
+            workspace_roots = list(
+                exact_trace_project_workspace_roots(workspace_roots)
+            )
+        elif (
             mode == "coordinator"
             and workspace_roots
             and requested_tool_profile
@@ -258,7 +269,7 @@ class AgentSessionApplicationService:
             workspace_roots = list(
                 existing_workspace_roots(workspace_roots)
             )
-        if requested_tool_profile in {
+        if not trace_project_binding and requested_tool_profile in {
             DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
             FULL_ACCESS_TOOL_PROFILE,
         }:

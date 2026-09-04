@@ -34,10 +34,102 @@ from rag_ime.personal_memory_luna_evaluation import (
     redacted_luna_request_summary,
     redacted_synthetic_seed_summary,
     seed_synthetic_personal_memory_rag_cases,
+    _evaluation_prompt,
 )
 
 
 class PersonalMemoryLunaEvaluationTests(unittest.TestCase):
+    def test_concise_prompt_contract_keeps_full_packet_and_bounds_output(self) -> None:
+        messages = [
+            {"role": "system", "content": "authoritative contract"},
+            {"role": "user", "content": '{"b": 2, "a": [1, 2]}'},
+        ]
+        standard_prompt, standard_projection = _evaluation_prompt(
+            "atom-first-curation",
+            messages,
+            requested_output_tokens=None,
+            required_model="gpt-5.6-sol",
+            context_profile="full-json-v1",
+            prompt_contract="standard-v1",
+        )
+        concise_prompt, concise_projection = _evaluation_prompt(
+            "atom-first-curation",
+            messages,
+            requested_output_tokens=None,
+            required_model="gpt-5.6-sol",
+            context_profile="full-json-v1",
+            prompt_contract="concise-json-v1",
+        )
+        concise_schema = personal_memory_phase_schema(
+            "atom-first-curation",
+            prompt_contract="concise-json-v1",
+        )
+
+        self.assertEqual(standard_projection["sourcePacketSha256"], concise_projection["sourcePacketSha256"])
+        self.assertEqual(standard_projection["sourcePacketChars"], concise_projection["projectedPacketChars"])
+        self.assertIn('{"b": 2, "a": [1, 2]}', concise_prompt)
+        self.assertLess(len(concise_prompt), len(standard_prompt))
+        self.assertIn("reasoning target <= 384 tokens", concise_prompt)
+        reason = concise_schema["properties"]["create"]["items"]["properties"]["reason"]
+        self.assertEqual(reason["maxLength"], 48)
+
+    def test_executor_can_freeze_sol_and_compact_only_packet_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="personal-memory-sol-compact-") as temporary:
+            calls: list[dict[str, object]] = []
+
+            def runner(**kwargs: object) -> LunaStructuredRun:
+                calls.append(dict(kwargs))
+                prompt = str(kwargs["prompt"])
+                schema_text = json.dumps(
+                    kwargs["schema"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                output = {"v": 2, "d": []}
+                encoded = json.dumps(output, ensure_ascii=False, sort_keys=True)
+                return LunaStructuredRun(
+                    phase=str(kwargs["phase"]),
+                    model="gpt-5.6-sol",
+                    thinking="max",
+                    command=(),
+                    elapsed_seconds=0.1,
+                    exit_code=0,
+                    prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
+                    schema_sha256=hashlib.sha256(schema_text.encode()).hexdigest(),
+                    output_sha256=hashlib.sha256(encoded.encode()).hexdigest(),
+                    stdout_sha256="7" * 64,
+                    stderr_sha256="8" * 64,
+                    output=output,
+                )
+
+            executor = PrivateCodexLunaMemoryExecutor(
+                temporary,
+                model_id="gpt-5.6-sol",
+                context_profile="compact-json-v1",
+                structured_runner=runner,
+            )
+            executor.begin_run("run:sol", frozen_input_sha256="f" * 64)
+            response = executor.complete(
+                phase="evidence-adjudication",
+                isolated=False,
+                messages=[
+                    {"role": "system", "content": "classify"},
+                    {"role": "user", "content": '{"b": 2, "a": [1, 2]}'},
+                ],
+            )
+            executor.finish_run()
+
+            prompt = str(calls[0]["prompt"])
+            self.assertIn("Required model: gpt-5.6-sol", prompt)
+            self.assertIn('{"a":[1,2],"b":2}', prompt)
+            self.assertNotIn('{"b": 2, "a": [1, 2]}', prompt)
+            self.assertEqual("compact-json-v1", response["receipt"]["contextProfile"])
+            self.assertGreater(
+                response["receipt"]["sourcePacketChars"],
+                response["receipt"]["projectedPacketChars"],
+            )
+
     def test_synthetic_capture_to_rag_and_rollback_is_retrieval_complete(self) -> None:
         with tempfile.TemporaryDirectory(prefix="personal-memory-rag-eval-") as temporary:
             root = Path(temporary)

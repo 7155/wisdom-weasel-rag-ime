@@ -110,9 +110,12 @@ function renderAudit(
   const decision = decisionLabel(experiment);
   const metricRows = buildMetricRows(experiment);
   const dataset = datasetExplanation(experiment);
+  const projectionLabel = experiment.projectionState === 'history'
+    ? '历史记录（不参与当前结论）'
+    : '当前结果';
 
   return `<main class="trace-audit trace-audit--export eval-lab-audit" data-status="${attr(experiment.status)}">
-  <header class="trace-audit__masthead"><div class="trace-audit__identity"><p class="trace-audit__document-type">Agent Lab · 单轮评测报告</p><h1>${escapeHtml(reportTitle(experiment))}</h1><p class="trace-audit__lede">说明这轮实验为什么改、具体改了什么、结果如何，以及最终是否采用。</p></div><dl class="trace-audit__document-meta">${meta('实验 ID', experiment.experimentId, true)}${meta('状态', statusLabel(experiment.status))}${meta('处置结论', decision)}${meta('报告来源', reportHumanText(osOrigin))}</dl></header>
+  <header class="trace-audit__masthead"><div class="trace-audit__identity"><p class="trace-audit__document-type">Agent Lab · 单轮评测报告</p><h1>${escapeHtml(reportTitle(experiment))}</h1><p class="trace-audit__lede">说明这轮实验为什么改、具体改了什么、结果如何，以及最终是否采用。</p></div><dl class="trace-audit__document-meta">${meta('实验 ID', experiment.experimentId, true)}${meta('记录范围', projectionLabel)}${meta('状态', statusLabel(experiment.status))}${meta('处置结论', decision)}${meta('报告来源', reportHumanText(osOrigin))}</dl></header>
   <div class="trace-audit__scan-layer">
     ${renderSummary(experiment, decision, traceBoundary)}
     ${section('metrics', '结果对比', '基线方案与候选方案使用同一批题和同一验收方法。', renderMetrics(metricRows))}

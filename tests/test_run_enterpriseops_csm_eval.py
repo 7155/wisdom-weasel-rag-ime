@@ -162,10 +162,24 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
         state_contract = build_agent_prompt(
             state_task, workflow_profile="state-contract-v1"
         )
+        compact_contract = build_agent_prompt(
+            state_task, workflow_profile="state-contract-compact-v2"
+        )
+        preloaded_contract = build_agent_prompt(
+            state_task, workflow_profile="state-contract-preloaded-v3"
+        )
         self.assertIn("2025-12-31", state_contract)
         self.assertIn("2026-01-01 through 2026-12-31", state_contract)
         self.assertIn("exact strings", state_contract)
         self.assertIn("distinct role", state_contract)
+        self.assertIn("internal state contract", compact_contract)
+        self.assertIn("Do not call the built-in session_workflow Tool", compact_contract)
+        self.assertIn("one final verification pass", compact_contract)
+        self.assertIn("exact strings", compact_contract)
+        self.assertIn("distinct role", compact_contract)
+        self.assertNotIn("reread each created or updated record", compact_contract)
+        self.assertLess(len(compact_contract), len(state_contract))
+        self.assertEqual(compact_contract, preloaded_contract)
         self.assertNotIn("2025-12-31", prompt)
 
     def test_business_as_of_date_comes_from_latest_seed_timestamp(self) -> None:
@@ -188,7 +202,13 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
         patched = apply_suite_overlay(task, overlay, suite_revision=ENTERPRISEOPS_SUITE_V2_REVISION)
 
         self.assertEqual(ENTERPRISEOPS_SUITE_V2_BUSINESS_AS_OF_DATE, patched["businessAsOfDate"])
-        for profile in ("baseline-v1", "dependency-plan-v1", "state-contract-v1"):
+        for profile in (
+            "baseline-v1",
+            "dependency-plan-v1",
+            "state-contract-v1",
+            "state-contract-compact-v2",
+            "state-contract-preloaded-v3",
+        ):
             prompt = build_agent_prompt(
                 patched,
                 workflow_profile=profile,
@@ -306,6 +326,7 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
             ["find_account", "create_new_case"],
             [item["name"] for item in manifests],
         )
+        self.assertTrue(all("alwaysAvailable" not in item for item in manifests))
         result = gateway.execute(
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
@@ -328,6 +349,16 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
             ],
             client.calls,
         )
+
+        gateway.bind_session(
+            "session-2",
+            database_id="db-2",
+            context={"x-user-email": "agent@example.com"},
+            allowed_tools=["find_account", "create_new_case"],
+            preload_tools=True,
+        )
+        preloaded = gateway.runtime_manifests({"id": "session-2"})
+        self.assertTrue(all(item.get("alwaysAvailable") is True for item in preloaded))
         self.assertNotIn("database_id", json.dumps(manifests))
         self.assertNotIn("agent@example.com", json.dumps(manifests))
         self.assertNotIn("db-1", json.dumps(result))

@@ -16,7 +16,17 @@ export interface UseVirtualTranscriptOptions<T> {
   scrollRef: RefObject<HTMLElement | null>;
   overscanTop?: number;
   overscanBottom?: number;
+  /** Stable conversation identity used to position one cold-open window. */
+  initialScrollKey?: string;
+  /** Optional previously captured reader position in the complete list. */
+  initialAnchor?: {
+    key: string;
+    index: number;
+    offsetFromViewportTopPx: number;
+  };
 }
+
+const DEFAULT_UNMEASURED_VIEWPORT_HEIGHT = 800;
 
 /**
  * Small variable-height virtualizer designed for chat timelines.
@@ -30,11 +40,14 @@ export function useVirtualTranscript<T>({
   scrollRef,
   overscanTop = 1_400,
   overscanBottom = 600,
+  initialScrollKey = '',
+  initialAnchor,
 }: UseVirtualTranscriptOptions<T>) {
   const sizeCache = useRef(new Map<string, number>());
   const elementToKey = useRef(new WeakMap<Element, string>());
   const observerRef = useRef<ResizeObserver | null>(null);
   const layoutRef = useRef<{ rows: VirtualRow[]; totalSize: number }>({ rows: [], totalSize: 0 });
+  const initiallyPositionedKeyRef = useRef('');
   const [measurementEpoch, setMeasurementEpoch] = useState(0);
   const [viewport, setViewport] = useState({ top: 0, height: 0 });
 
@@ -52,6 +65,23 @@ export function useVirtualTranscript<T>({
   }, [items, getKey, estimateSize, measurementEpoch]);
   layoutRef.current = layout;
 
+  const initialViewport = useMemo(() => {
+    const rows = layout.rows;
+    if (rows.length === 0) return { top: 0, height: DEFAULT_UNMEASURED_VIEWPORT_HEIGHT };
+    if (!initialAnchor) {
+      return {
+        top: Math.max(0, layout.totalSize - DEFAULT_UNMEASURED_VIEWPORT_HEIGHT),
+        height: DEFAULT_UNMEASURED_VIEWPORT_HEIGHT,
+      };
+    }
+    const exact = rows.find((row) => row.key === initialAnchor.key);
+    const anchored = exact ?? rows[Math.max(0, Math.min(initialAnchor.index, rows.length - 1))]!;
+    return {
+      top: Math.max(0, anchored.start - initialAnchor.offsetFromViewportTopPx),
+      height: DEFAULT_UNMEASURED_VIEWPORT_HEIGHT,
+    };
+  }, [initialAnchor, layout.rows, layout.totalSize]);
+
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
@@ -59,7 +89,10 @@ export function useVirtualTranscript<T>({
     const read = () => {
       frame = 0;
       setViewport((previous) => {
-        const next = { top: scroller.scrollTop, height: scroller.clientHeight };
+        const next = {
+          top: scroller.scrollTop,
+          height: scroller.clientHeight || DEFAULT_UNMEASURED_VIEWPORT_HEIGHT,
+        };
         return previous.top === next.top && previous.height === next.height ? previous : next;
       });
     };
@@ -76,6 +109,22 @@ export function useVirtualTranscript<T>({
       if (frame) cancelAnimationFrame(frame);
     };
   }, [scrollRef]);
+
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (
+      !scroller
+      || layout.rows.length === 0
+      || initiallyPositionedKeyRef.current === initialScrollKey
+    ) return;
+    const height = scroller.clientHeight || DEFAULT_UNMEASURED_VIEWPORT_HEIGHT;
+    const top = initialAnchor
+      ? initialViewport.top
+      : Math.max(0, layout.totalSize - height);
+    scroller.scrollTop = top;
+    initiallyPositionedKeyRef.current = initialScrollKey;
+    setViewport({ top, height });
+  }, [initialAnchor, initialScrollKey, initialViewport.top, layout.rows.length, layout.totalSize, scrollRef]);
 
   useLayoutEffect(() => {
     if (typeof ResizeObserver !== 'function') return;
@@ -114,13 +163,12 @@ export function useVirtualTranscript<T>({
   const virtualRows = useMemo(() => {
     const rows = layout.rows;
     if (rows.length === 0) return [];
-    /* No measurable viewport means no honest window to cull against — a
-     * headless or not-yet-laid-out scroller renders the whole transcript
-     * rather than an arbitrary slice of it. */
-    if (viewport.height <= 0) return rows;
-
-    const from = Math.max(0, viewport.top - overscanTop);
-    const to = viewport.top + viewport.height + overscanBottom;
+    // Before refs/layout exist, use the estimated newest or remembered
+    // viewport. Rendering every retained row here blocks the very first paint
+    // and defeats virtualization for a cold 2,000-event Room snapshot.
+    const resolvedViewport = viewport.height > 0 ? viewport : initialViewport;
+    const from = Math.max(0, resolvedViewport.top - overscanTop);
+    const to = resolvedViewport.top + resolvedViewport.height + overscanBottom;
     let low = 0;
     let high = rows.length - 1;
     let startIndex = rows.length - 1;
@@ -141,7 +189,7 @@ export function useVirtualTranscript<T>({
       visible.push(row);
     }
     return visible;
-  }, [layout.rows, overscanBottom, overscanTop, viewport]);
+  }, [initialViewport, layout.rows, overscanBottom, overscanTop, viewport]);
 
   const scrollToIndex = useCallback((index: number, align: 'start' | 'center' | 'end' = 'center') => {
     const scroller = scrollRef.current;

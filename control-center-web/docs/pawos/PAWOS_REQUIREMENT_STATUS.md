@@ -2,7 +2,7 @@
 
 This document answers “which requirements are complete?” without changing the
 meaning ledger set indexed by [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The
-twenty-six requirement volumes own user meaning; this index owns explicit assessment and evidence
+thirty requirement volumes own user meaning; this index owns explicit assessment and evidence
 links. Runtime, Git, installation, and foreground state remain authoritative in
 their own projections and receipts.
 
@@ -41,19 +41,19 @@ Evidence levels describe scope, not a completion ladder. For example, E2 does
 not prove E4–E6, and a screenshot without an authoritative run identity does
 not prove the Runtime path.
 
-## Current honest summary — 2026-09-01
+## Current honest summary — 2026-09-04
 
 | Scope | Current indexed result | Boundary / next action |
 | --- | --- | --- |
-| All requirements | `222 unassessed`, `3 complete`, `2 receipts` | Only the bounded final-delivery requirements `UR-150`–`UR-152` are closed by fresh E1/E2 receipts; `UR-192`–`UR-225` remain unassessed. |
-| Current P0 requirements | 182 controlling P0 entries, all `unassessed` | Owners must attach scoped closeout receipts and set both verdicts per requirement. |
-| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-225` remain `unassessed`; `UR-150`–`UR-152` are `complete` | The two receipts prove only current source plus the privacy-safe scripted Demo/test boundary. |
-| Install / Runtime / foreground | No E4, E5, or E6 receipt is linked here | Do not claim installed or foreground acceptance from source, tests, builds, or screenshots. |
+| All requirements | `235 unassessed`, `6 complete`, `7 receipts` | `UR-150`–`UR-152` and the bounded conversation-stability requirements `UR-237`–`UR-239` are closed; other requirements retain their prior status. |
+| Current P0 requirements | 196 controlling P0 entries: `193 unassessed`, `3 complete` | Only `UR-237`–`UR-239` have fresh scoped closeout receipts in this P0 set. |
+| Recent conversation/UI/final-delivery requirements | `UR-133`–`UR-149`, `UR-153`–`UR-236`, `UR-240`–`UR-241` remain `unassessed`; `UR-150`–`UR-152` and `UR-237`–`UR-239` are `complete` | Conversation closure is bounded to exactly-once admission/rendering, transport recovery, and Memory/conflict isolation. |
+| Install / Runtime / foreground | No E4 receipt; E5/E6 are linked only to `UR-237`–`UR-239` | E5/E6 came from an isolated source Gateway and real PAWOS browser foreground; they do not claim an installed-app update. |
 
 This conservative baseline is intentional. It does not say that no code exists;
-it says 222 requirements have not yet been individually assessed against fresh,
-linked evidence in this index. Closing the three documentation/Demo delivery
-requirements does not promote their preview receipts to E4–E6.
+it says 235 requirements have not yet been individually assessed against fresh,
+linked evidence in this index. The conversation receipts do not promote the
+source canary to E4 installation evidence or close the separate Eval/RAG work.
 
 ## Updating one requirement
 
@@ -129,6 +129,87 @@ not inferred status.
         "control-center-web/output/showcase/pawos-showcase.webm (ignored local artifact)"
       ],
       "sha256": "sha256:e8c005b168742cbf50ed9a4236edb89a767cb0cca19680fba8c4c845f57900f6"
+    },
+    "RCP-PAWOS-CONVERSATION-SOURCE-20260904": {
+      "level": "E1",
+      "recordedAt": "2026-09-04T01:55:31+08:00",
+      "owner": "PAW conversation stability Goal",
+      "claim": "The source now preserves exact client and turn identity, distinguishes admission outcomes, commits transport cursors only after delivery, repairs snapshot gaps, and prevents ambiguous Memory replay.",
+      "artifactRefs": [
+        "control-center-web/src/contracts/agent-reducer.ts",
+        "control-center-web/src/paw-os/apps/PawAgentHome.tsx",
+        "control-center-web/src/paw-os/apps/PawSessionWorkspace.tsx",
+        "control-center-web/src/features/agent/runtime/use-agent-live-session.ts",
+        "control-center-web/src/platform/sse.ts",
+        "control-center-web/src/platform/http-transport.ts",
+        "control-center-web/src/platform/native-transport.ts",
+        "rag_ime/agent_protocol.py",
+        "rag_ime/pi_runtime_v2.py",
+        "rag_ime/memory_model_executor.py",
+        "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md#2026-09-04--对话稳定性修复结果真实-case-与独立复核"
+      ],
+      "sha256": "sha256:949d559ce11a72f7f7cc6caadf3bf43b893b9e646e7ff5baf5e46c34226adc43"
+    },
+    "RCP-PAWOS-CONVERSATION-TESTS-20260904": {
+      "level": "E2",
+      "recordedAt": "2026-09-04T01:55:31+08:00",
+      "owner": "PAW conversation stability Goal",
+      "claim": "Focused and broad frontend, Memory, Pi identity, replay, conflict, cancellation, and recovery checks passed; generated contracts, import boundaries, route ownership, and diff checks also passed.",
+      "artifactRefs": [
+        "control-center-web/src/contracts/agent-reducer.test.ts",
+        "control-center-web/src/paw-os/apps/PawAgentHome.test.tsx",
+        "control-center-web/src/paw-os/apps/PawSessionWorkspace.test.tsx",
+        "control-center-web/src/features/agent/runtime/use-agent-live-session.test.tsx",
+        "control-center-web/src/platform/http-transport.test.ts",
+        "control-center-web/src/platform/native-transport.test.ts",
+        "control-center-web/src/platform/sse.test.ts",
+        "tests/test_memory_model_executor.py",
+        "tests/test_pi_runtime_v2.py",
+        "python3 scripts/check_import_boundaries.py",
+        "python3 scripts/check_route_ownership.py"
+      ],
+      "sha256": "sha256:1230d969fea7acef416d5bcc12fb083d2748b90e335224099a4edd38ee1d84c2"
+    },
+    "RCP-PAWOS-CONVERSATION-BUILD-20260904": {
+      "level": "E3",
+      "recordedAt": "2026-09-04T01:55:31+08:00",
+      "owner": "PAW conversation stability Goal",
+      "claim": "The production-channel HTTP-only PAWOS frontend build completed from the checked source: 4492 modules in 7.18 seconds, with only the existing large-chunk warnings.",
+      "artifactRefs": [
+        "control-center-web/dist",
+        "env VITE_CONTROL_TRANSPORT=http VITE_BUILD_CHANNEL=production pnpm build"
+      ],
+      "sha256": "sha256:9d07a0184a2725ac7bb3700c1ce080447c93f43de74b590a0907e76b7b75f011"
+    },
+    "RCP-PAWOS-CONVERSATION-RUNTIME-20260904": {
+      "level": "E5",
+      "recordedAt": "2026-09-04T01:55:31+08:00",
+      "owner": "PAW conversation stability Goal",
+      "claim": "The isolated source Gateway converged restart replay and two consecutive foreground turns to exact durable bindings and settlements without increasing message count or cursor on idempotent replay.",
+      "artifactRefs": [
+        "runtime-session:agent:755142dd-2056-4789-b8d7-f525d424a27a",
+        "runtime-session:agent:8e4d810f-e813-400d-aabc-d2fd1fb608d2",
+        "turn:2945eaa7-8dbc-452d-a59d-7b26518b3b1c",
+        "turn:ff62e216-9c37-45ae-9c81-1c4c8af395de",
+        "turn:54c4e6d3-d22a-404c-8e09-597021a99a65",
+        "durable-jsonl-sha256:71e4a408de56347b7dac08c28035471ff86f5570e206be45fbdf510c75c0b20b",
+        "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md#2026-09-04--对话稳定性修复结果真实-case-与独立复核"
+      ],
+      "sha256": "sha256:319e37b5d5dc136aa7358087db5ffa63dd109015ed88109697b8aba312e01b68"
+    },
+    "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904": {
+      "level": "E6",
+      "recordedAt": "2026-09-04T01:55:31+08:00",
+      "owner": "PAW conversation stability Goal",
+      "claim": "A real PAWOS browser foreground showed the first prompt and a known-Session follow-up exactly once before and after refresh, with zero incomplete or missing-reply cards and zero browser console errors.",
+      "artifactRefs": [
+        "output/playwright/pawos-conversation-stability-before-refresh.png",
+        "output/playwright/pawos-conversation-stability-after-refresh.png",
+        "output/playwright/pawos-known-session-before-refresh.png",
+        "output/playwright/pawos-known-session-after-refresh.png",
+        "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md#2026-09-04--对话稳定性修复结果真实-case-与独立复核"
+      ],
+      "sha256": "sha256:c782058b49215e7b029bbff01915be9395162ba5453512ce0632a7ea039197e5"
     }
   },
   "requirements": {
@@ -401,7 +482,68 @@ not inferred status.
     "UR-222": {},
     "UR-223": {},
     "UR-224": {},
-    "UR-225": {}
+    "UR-225": {},
+    "UR-226": {},
+    "UR-227": {},
+    "UR-228": {},
+    "UR-229": {},
+    "UR-230": {},
+    "UR-231": {},
+    "UR-232": {},
+    "UR-233": {},
+    "UR-234": {},
+    "UR-235": {},
+    "UR-236": {},
+    "UR-237": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "evidenceRefs": [
+        "RCP-PAWOS-CONVERSATION-SOURCE-20260904",
+        "RCP-PAWOS-CONVERSATION-TESTS-20260904",
+        "RCP-PAWOS-CONVERSATION-BUILD-20260904",
+        "RCP-PAWOS-CONVERSATION-RUNTIME-20260904",
+        "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904"
+      ],
+      "requiredEvidenceLevels": ["E1", "E2", "E3", "E5", "E6"],
+      "owner": "PAW conversation stability Goal",
+      "updatedAt": "2026-09-04T01:55:31+08:00",
+      "note": "First and known-Session prompts converge by exact identity, appear once immediately, retain one terminal result across refresh, and show no ghost failure card in the isolated real foreground. E4 was intentionally not required because this Goal did not authorize installation."
+    },
+    "UR-238": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "evidenceRefs": [
+        "RCP-PAWOS-CONVERSATION-SOURCE-20260904",
+        "RCP-PAWOS-CONVERSATION-TESTS-20260904",
+        "RCP-PAWOS-CONVERSATION-BUILD-20260904",
+        "RCP-PAWOS-CONVERSATION-RUNTIME-20260904",
+        "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904"
+      ],
+      "requiredEvidenceLevels": ["E1", "E2", "E3", "E5", "E6"],
+      "owner": "PAW conversation stability Goal",
+      "updatedAt": "2026-09-04T01:55:31+08:00",
+      "note": "HTTP admission, SSE delivery, snapshot repair, cursor replay, durable transcript recovery, and Host restart converged without skipped events, terminal regression, or duplicate public messages in the checked source Runtime."
+    },
+    "UR-239": {
+      "assessment": "complete",
+      "runsVerdict": "passed",
+      "requirementVerdict": "satisfied",
+      "evidenceRefs": [
+        "RCP-PAWOS-CONVERSATION-SOURCE-20260904",
+        "RCP-PAWOS-CONVERSATION-TESTS-20260904",
+        "RCP-PAWOS-CONVERSATION-BUILD-20260904",
+        "RCP-PAWOS-CONVERSATION-RUNTIME-20260904",
+        "RCP-PAWOS-CONVERSATION-FOREGROUND-20260904"
+      ],
+      "requiredEvidenceLevels": ["E1", "E2", "E3", "E5", "E6"],
+      "owner": "PAW conversation stability Goal",
+      "updatedAt": "2026-09-04T01:55:31+08:00",
+      "note": "Structured conflicts remain retryable, ambiguous Memory admission never replays automatically, ordinary conversations remain intact under injected Memory failures, and the two proven no-consumer error branches were removed or bypassed."
+    },
+    "UR-240": {},
+    "UR-241": {}
   }
 }
 ```

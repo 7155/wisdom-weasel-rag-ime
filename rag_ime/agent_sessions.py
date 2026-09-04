@@ -33,7 +33,11 @@ from .agent_tool_ids import (
     FULL_ACCESS_TOOL_PROFILE,
     SUPPORTED_AGENT_TOOL_PROFILES,
 )
-from .agent_workspace_roots import system_wide_workspace_roots
+from .agent_workspace_roots import (
+    exact_trace_project_workspace_roots,
+    is_trace_project_bound_surface,
+    system_wide_workspace_roots,
+)
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 
@@ -231,7 +235,14 @@ class AgentSessionStore:
             DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
             FULL_ACCESS_TOOL_PROFILE,
         }
-        if unrestricted_profile:
+        trace_project_binding = is_trace_project_bound_surface(
+            normalized_surface,
+            normalized_owner_app_id,
+            normalized_surface_key,
+        )
+        if trace_project_binding:
+            roots = list(exact_trace_project_workspace_roots(roots))
+        elif unrestricted_profile:
             roots = list(system_wide_workspace_roots(roots))
             project_context_enabled = True
             pi_skills_enabled = True
@@ -1278,7 +1289,14 @@ class AgentSessionStore:
         roots = _workspace_roots(
             current.get("workspaceRoots", []) if workspace_roots is None else workspace_roots
         )
-        if unrestricted_profile:
+        trace_project_binding = is_trace_project_bound_surface(
+            current.get("surfaceKind"),
+            current.get("ownerAppId"),
+            current.get("surfaceKey"),
+        )
+        if trace_project_binding:
+            roots = list(exact_trace_project_workspace_roots(roots))
+        elif unrestricted_profile:
             roots = list(system_wide_workspace_roots(roots))
             project_context_enabled = True
             pi_skills_enabled = True

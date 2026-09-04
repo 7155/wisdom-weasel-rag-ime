@@ -1258,9 +1258,13 @@ class WorkspaceHarness:
         for root in roots:
             servers: list[dict[str, object]] = []
             for config in self.lsp_servers:
-                if not self._lsp_detected(root, config):
-                    continue
                 key = (root, config.name)
+                if (
+                    key not in clients
+                    and key not in errors
+                    and not self._lsp_root_marked(root, config)
+                ):
+                    continue
                 executable = self._resolve_lsp_executable(config.command[0])
                 client = clients.get(key)
                 error = errors.get(key, "")
@@ -1625,13 +1629,19 @@ class WorkspaceHarness:
             )
         return target, root
 
-    def _lsp_detected(self, root: Path, config: WorkspaceLspServerConfig) -> bool:
+    @staticmethod
+    def _lsp_root_marked(root: Path, config: WorkspaceLspServerConfig) -> bool:
         if "." in config.root_markers:
             return True
         for marker in config.root_markers:
             matched = any(root.glob(marker)) if "*" in marker else (root / marker).exists()
             if matched:
                 return True
+        return False
+
+    def _lsp_detected(self, root: Path, config: WorkspaceLspServerConfig) -> bool:
+        if self._lsp_root_marked(root, config):
+            return True
         scanned = 0
         pending = deque([root])
         while pending and scanned < 1_000:
@@ -1684,16 +1694,18 @@ class WorkspaceHarness:
 
     def _lsp_config_for_file(
         self,
-        root: Path,
+        _root: Path,
         path: Path,
         *,
         requested: object = None,
     ) -> WorkspaceLspServerConfig:
         suffix = path.suffix.lower()
+        requested_name = str(requested or "").strip()
         configs = tuple(
             config
-            for config in self._lsp_configs_for_root(root, requested=requested)
+            for config in self.lsp_servers
             if suffix in config.file_extensions
+            and (not requested_name or config.name == requested_name)
         )
         if not configs:
             raise WorkspaceLspError(

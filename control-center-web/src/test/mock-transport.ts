@@ -67,6 +67,7 @@ interface ActiveSubscription {
   request: ControlSubscription;
   observer: ControlEventObserver<unknown>;
   lastEventId: string;
+  deliveryBlocked: boolean;
 }
 
 export class MockControlTransport implements ControlTransport {
@@ -166,6 +167,7 @@ export class MockControlTransport implements ControlTransport {
       request,
       observer: observer as ControlEventObserver<unknown>,
       lastEventId: request.lastEventId,
+      deliveryBlocked: false,
     });
     this.subscriptionCalls.push({ id, request, at: this.now() });
     observer.open?.(request.lastEventId);
@@ -176,6 +178,7 @@ export class MockControlTransport implements ControlTransport {
     let delivered = 0;
     for (const subscription of this.subscriptions.values()) {
       if (subscription.request.pathId !== pathId) continue;
+      if (subscription.deliveryBlocked) continue;
       try {
         const streamKind = controlRoute(pathId).subscription;
         const parsed =
@@ -186,11 +189,15 @@ export class MockControlTransport implements ControlTransport {
               : streamKind === 'observation'
                 ? parseObservationEvent(event)
                 : event;
-        subscription.lastEventId = resumeToken(parsed) || subscription.lastEventId;
+        const deliveredEventId = isSnapshotRequired(parsed)
+          ? subscription.lastEventId
+          : resumeToken(parsed) || subscription.lastEventId;
         subscription.observer.next(parsed);
         if (isSnapshotRequired(parsed)) subscription.observer.snapshotRequired?.(parsed);
+        subscription.lastEventId = deliveredEventId;
         delivered += 1;
       } catch (error) {
+        subscription.deliveryBlocked = true;
         subscription.observer.error?.(asError(error));
       }
     }
@@ -205,6 +212,7 @@ export class MockControlTransport implements ControlTransport {
         delayMs,
         lastEventId: subscription.lastEventId,
       });
+      subscription.deliveryBlocked = false;
     }
   }
 

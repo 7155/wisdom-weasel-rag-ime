@@ -62,7 +62,7 @@ Partner's WorkItem or finalize the Root.
   `changes_required`, or unresolved material findings, do not record passed and
   satisfied.
 - Do not pause a live Room Goal to wait. If progress cannot continue, emit the best evidence-backed partial or blocked final. Do not use pause a live Room Goal as a wait.
-- Inventory unfinised, failed, orphaned, partial, and unclosed responsibilities
+- Inventory unfinished, failed, orphaned, partial, and unclosed responsibilities
   before creating more work.
 - Browser acceptance uses the product `browser` tool. A successful build,
   screenshot, or Partner statement is not foreground evidence by itself.

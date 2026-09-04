@@ -8055,7 +8055,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             try:
                 response = (
                     self.service.agent.list_trace_diagnostic_reports(
-                        {"limit": _query_first(query, "limit")}
+                        {
+                            "limit": _query_first(query, "limit"),
+                            "cursor": _query_first(query, "cursor"),
+                        }
                     )
                     if diagnostic_report_action == "collection"
                     else self.service.agent.trace_diagnostic_report(

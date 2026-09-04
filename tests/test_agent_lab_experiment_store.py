@@ -23,6 +23,7 @@ def _experiment(*, revision: str = "a" * 64) -> dict[str, object]:
         "evaluationKind": "rag_retrieval",
         "status": "diagnostic",
         "claimStatus": "diagnostic",
+        "projectionState": "current",
         "businessProblem": "企业问题同时包含精确标识、语义表达和跨来源完整性。",
         "whyAgent": "最终答案需要跨私有文档检索、证据约束和拒答。",
         "dataset": {
@@ -144,6 +145,7 @@ class AgentLabExperimentStoreTests(unittest.TestCase):
             latest = store.list_latest()[0]
             self.assertEqual(latest["factors"][0]["name"], "workflow")
             self.assertEqual(latest["frozenControls"][0]["name"], "legacy_revision")
+            self.assertEqual(latest["projectionState"], "current")
 
 
 if __name__ == "__main__":

@@ -86,6 +86,59 @@ describe('useAgentLiveSession shared ownership', () => {
     expect(transport.activeSubscriptionCount()).toBe(0);
   });
 
+  it('isolates a failing window callback from the shared stream and other windows', async () => {
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': {
+          lastSequence: 0,
+          resumeToken: `${SESSION_ID}:0`,
+          status: 'idle',
+          messages: [],
+          liveEvents: [],
+        },
+      },
+    });
+    const healthyWindowEvent = vi.fn();
+    const failingWindow = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+      onEvent: () => {
+        throw new Error('window render callback failed');
+      },
+    }));
+    const healthyWindow = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+      onEvent: healthyWindowEvent,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+
+    const event = agentEventFixture(1, 'turn_completed', { status: 'completed' });
+    const rawEvent = Object.fromEntries(
+      Object.entries({
+        ...event,
+        eventId: `${SESSION_ID}:1`,
+        sessionId: SESSION_ID,
+        resumeToken: `${SESSION_ID}:1`,
+      }).filter(([key]) => key !== 'streamKind'),
+    );
+    act(() => {
+      transport.emit('agent.session.events', rawEvent);
+    });
+
+    expect(healthyWindowEvent).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: `${SESSION_ID}:1`,
+    }));
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]).toMatchObject({
+      lastSequence: 1,
+      resumeToken: `${SESSION_ID}:1`,
+      status: 'idle',
+    });
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    failingWindow.unmount();
+    healthyWindow.unmount();
+  });
+
   it('recovers a dropped shared stream once for every observing window', async () => {
     let snapshotCalls = 0;
     const transport = new MockControlTransport({
@@ -136,6 +189,225 @@ describe('useAgentLiveSession shared ownership', () => {
     expect(secondRestored).toHaveBeenLastCalledWith(SESSION_ID);
     firstWindow.unmount();
     secondWindow.unmount();
+  });
+
+  it('hydrates the durable high-water snapshot after a transient snapshot-required control', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return snapshotCalls === 1
+            ? {
+                lastSequence: 1,
+                resumeToken: `${SESSION_ID}:1`,
+                status: 'busy',
+                messages: [],
+                liveEvents: [],
+                partial: true,
+                snapshotScope: 'recent',
+              }
+            : {
+                lastSequence: 41,
+                resumeToken: `${SESSION_ID}:41`,
+                status: 'busy',
+                messages: [],
+                liveEvents: [],
+                partial: true,
+                snapshotScope: 'recent',
+              };
+        },
+      },
+    });
+    const window = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+
+    const control = agentEventFixture(42, 'snapshot_required', {
+      reason: 'event_replay_gap',
+      afterEventId: `${SESSION_ID}:1`,
+    });
+    const rawControl = Object.fromEntries(
+      Object.entries({
+        ...control,
+        eventId: `${SESSION_ID}:snapshot-required:41`,
+        sessionId: SESSION_ID,
+        resumeToken: `${SESSION_ID}:snapshot-required:41`,
+      }).filter(([key]) => key !== 'streamKind'),
+    );
+    act(() => {
+      expect(transport.emit('agent.session.events', rawControl)).toBe(1);
+    });
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(2));
+
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]).toMatchObject({
+      lastSequence: 41,
+      resumeToken: `${SESSION_ID}:41`,
+      needsSnapshot: false,
+    });
+    expect(transport.subscriptionCalls[1]?.request.lastEventId).toBe(`${SESSION_ID}:41`);
+    window.unmount();
+  });
+
+  it('accepts an equal-cursor busy snapshot when an explicit gap requires repair', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return {
+            lastSequence: 1,
+            resumeToken: `${SESSION_ID}:1`,
+            status: 'busy',
+            messages: [],
+            liveEvents: [],
+            partial: true,
+            snapshotScope: 'recent',
+          };
+        },
+      },
+    });
+    const window = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+
+    const control = agentEventFixture(2, 'snapshot_required', {
+      reason: 'event_replay_gap',
+      afterEventId: `${SESSION_ID}:snapshot-required:1`,
+    });
+    const rawControl = Object.fromEntries(
+      Object.entries({
+        ...control,
+        eventId: `${SESSION_ID}:snapshot-required:1`,
+        sessionId: SESSION_ID,
+        resumeToken: `${SESSION_ID}:snapshot-required:1`,
+      }).filter(([key]) => key !== 'streamKind'),
+    );
+    act(() => {
+      expect(transport.emit('agent.session.events', rawControl)).toBe(1);
+    });
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(2));
+
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]).toMatchObject({
+      lastSequence: 1,
+      resumeToken: `${SESSION_ID}:1`,
+      needsSnapshot: false,
+      status: 'busy',
+    });
+    window.unmount();
+  });
+
+  it('hydrates an intermediate snapshot after an ordinary sequence gap', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return snapshotCalls === 1
+            ? {
+                lastSequence: 1,
+                resumeToken: `${SESSION_ID}:1`,
+                status: 'busy',
+                messages: [],
+                liveEvents: [],
+                partial: true,
+                snapshotScope: 'recent',
+              }
+            : {
+                lastSequence: 2,
+                resumeToken: `${SESSION_ID}:2`,
+                status: 'busy',
+                messages: [],
+                liveEvents: [],
+                partial: true,
+                snapshotScope: 'recent',
+              };
+        },
+      },
+    });
+    const window = renderHook(() => useAgentLiveSession({ sessionId: SESSION_ID, transport }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+
+    const gap = agentEventFixture(3, 'turn_completed', { status: 'completed' });
+    const rawGap = Object.fromEntries(Object.entries({
+      ...gap,
+      eventId: `${SESSION_ID}:3`,
+      sessionId: SESSION_ID,
+      resumeToken: `${SESSION_ID}:3`,
+    }).filter(([key]) => key !== 'streamKind'));
+    act(() => {
+      expect(transport.emit('agent.session.events', rawGap)).toBe(1);
+    });
+
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(2));
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]).toMatchObject({
+      lastSequence: 2,
+      resumeToken: `${SESSION_ID}:2`,
+      needsSnapshot: false,
+    });
+    expect(transport.subscriptionCalls[1]?.request.lastEventId).toBe(`${SESSION_ID}:2`);
+    window.unmount();
+  });
+
+  it('clears an ordinary gap without letting an equal-cursor busy snapshot regress a terminal', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return snapshotCalls === 1
+            ? {
+                lastSequence: 1,
+                resumeToken: `${SESSION_ID}:1`,
+                status: 'idle',
+                messages: [],
+                liveEvents: [],
+                runtimeQuiescent: true,
+              }
+            : {
+                lastSequence: 1,
+                resumeToken: `${SESSION_ID}:1`,
+                status: 'busy',
+                messages: [],
+                liveEvents: [],
+                partial: true,
+                snapshotScope: 'recent',
+                runtimeQuiescent: false,
+              };
+        },
+      },
+    });
+    const window = renderHook(() => useAgentLiveSession({ sessionId: SESSION_ID, transport }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]?.status).toBe('idle');
+
+    const gap = agentEventFixture(3, 'turn_started', {});
+    const rawGap = Object.fromEntries(Object.entries({
+      ...gap,
+      eventId: `${SESSION_ID}:3`,
+      sessionId: SESSION_ID,
+      resumeToken: `${SESSION_ID}:3`,
+    }).filter(([key]) => key !== 'streamKind'));
+    act(() => {
+      expect(transport.emit('agent.session.events', rawGap)).toBe(1);
+    });
+
+    await waitFor(() => expect(snapshotCalls).toBe(2));
+    await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(2));
+    expect(useAgentLiveStore.getState().projections[SESSION_ID]).toMatchObject({
+      lastSequence: 1,
+      resumeToken: `${SESSION_ID}:1`,
+      needsSnapshot: false,
+      status: 'idle',
+    });
+    window.unmount();
   });
 
 

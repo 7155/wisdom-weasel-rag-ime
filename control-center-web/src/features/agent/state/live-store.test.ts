@@ -37,6 +37,37 @@ describe('Agent live store snapshot hydration', () => {
     });
   });
 
+  it('does not let an equal-cursor busy snapshot revive a completed live turn', () => {
+    const store = useAgentLiveStore.getState();
+    const delta = event(1, 'turn-terminal', 'text_delta', {
+      delta: '已经完成的回答',
+      replaceBlock: true,
+    });
+    store.applyEvents(sessionId, [
+      delta,
+      event(2, 'turn-terminal', 'turn_completed', { status: 'completed' }),
+    ]);
+    const terminal = useAgentLiveStore.getState().projections[sessionId];
+    expect(terminal.status).toBe('idle');
+    expect(terminal.turnsById['turn-terminal']?.status).toBe('completed');
+
+    store.hydrateSnapshot(sessionId, {
+      messages: [],
+      liveEvents: [delta],
+      lastSequence: 2,
+      resumeToken: `${sessionId}:2`,
+      snapshotScope: 'recent',
+      partial: true,
+      runtimeQuiescent: false,
+      status: 'busy',
+    });
+
+    const after = useAgentLiveStore.getState().projections[sessionId];
+    expect(after).toBe(terminal);
+    expect(after.status).toBe('idle');
+    expect(after.turnsById['turn-terminal']?.status).toBe('completed');
+  });
+
   it('does not replace durable history with a newer empty full snapshot', () => {
     const store = useAgentLiveStore.getState();
     store.hydrateSnapshot(sessionId, {

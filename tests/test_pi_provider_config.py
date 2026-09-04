@@ -32,10 +32,93 @@ class PiProviderConfigTest(unittest.TestCase):
             bundle = load_pi_provider_config(path)
 
         provider = bundle.providers["gpt"]
-        self.assertEqual(provider["modelCatalogProvider"], "openai")
-        self.assertEqual(provider["models"], [{"id": "gpt-test"}])
-        self.assertNotIn("api", provider)
+        self.assertNotIn("modelCatalogProvider", provider)
+        self.assertEqual(provider["models"], [{"id": "gpt-test", "name": "GPT Test"}])
         self.assertEqual(provider["compat"], {"supportsToolSearch": False})
+
+    def test_imported_openai_compatible_gateway_declares_pi_completions_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "providers.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "provider": {
+                            "openai": {
+                                "options": {
+                                    "baseURL": "https://gateway.example/v1",
+                                    "apiKey": "fixture-secret",
+                                },
+                                "models": {"gpt-5.6-luna": {"name": "GPT-5.6 Luna"}},
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            bundle = load_pi_provider_config(path)
+
+        self.assertEqual(bundle.providers["gpt"]["api"], "openai-completions")
+
+    def test_imported_aed_models_translate_whitelisted_runtime_metadata(self) -> None:
+        source_models = {
+            model_id: {
+                "name": name,
+                "limit": {"context": 1_050_000, "output": 128_000},
+                "variants": {
+                    "low": {},
+                    "medium": {},
+                    "high": {},
+                    "xhigh": {},
+                    "max": {},
+                },
+            }
+            for model_id, name in (
+                ("gpt-5.6-luna", "GPT-5.6 Luna"),
+                ("gpt-5.6-sol", "GPT-5.6 Sol"),
+                ("gpt-5.6-terra", "GPT-5.6 Terra"),
+            )
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "providers.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "provider": {
+                            "openai": {
+                                "options": {
+                                    "baseURL": "https://gateway.example/v1",
+                                    "apiKey": "fixture-secret",
+                                },
+                                "models": source_models,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            bundle = load_pi_provider_config(path)
+
+        expected_thinking_levels = {
+            "off": None,
+            "minimal": None,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max",
+        }
+        for model, expected_name in zip(
+            bundle.providers["gpt"]["models"],
+            ("GPT-5.6 Luna", "GPT-5.6 Sol", "GPT-5.6 Terra"),
+            strict=True,
+        ):
+            self.assertEqual(model["name"], expected_name)
+            self.assertIs(model["reasoning"], True)
+            self.assertEqual(model["thinkingLevelMap"], expected_thinking_levels)
+            self.assertEqual(model["contextWindow"], 1_050_000)
+            self.assertEqual(model["maxTokens"], 128_000)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,270 @@
+{
+  "aggregateEvalRunId": "eval:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:aggregate",
+  "aggregateTraceId": "trace:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:aggregate",
+  "artifactId": "artifact:fbf113bcef5ab6c4beed55a4044fc9f96e50552f",
+  "batchCount": 3,
+  "batchPlan": "3x4-sequential",
+  "batchPlanSha256": "d7a7aba05d02005407582892bd3f5f10672ff7e6c527cf73a20570b1ed165989",
+  "batches": [
+    {
+      "answerCount": 4,
+      "answersSha256": "b91c87c90b05d8e983434aeab2e6e89251ae0ae2545cc433ada6a5e506b8cff0",
+      "assignedCaseIdsSha256": "074d07c77f1113b53ee49411954ae126d77bc48ee513dfa94f0fe2d63d5eb9b2",
+      "batchId": "batch-1",
+      "batchIndex": 1,
+      "latencyMs": 216374,
+      "ledgerSha256": "35baffdac33b589378f2e9e84feedade8970f688154d9977174a1bd5811c2353",
+      "successfulToolCalls": 21,
+      "terminalEvent": "turn_completed",
+      "toolCalls": 21,
+      "usage": {
+        "available": true,
+        "cacheRead": 700416,
+        "cacheWrite": 0,
+        "input": 66305,
+        "output": 7414,
+        "totalTokens": 774135
+      }
+    },
+    {
+      "answerCount": 4,
+      "answersSha256": "cff5d827e856493e65ebd14cc75e533b5a1e1d8a59ea35838fe14688f8277fa9",
+      "assignedCaseIdsSha256": "6f467bb71498da14a3868259b44bfd0b12a7cc16da3bd116d968120bc207de60",
+      "batchId": "batch-2",
+      "batchIndex": 2,
+      "latencyMs": 350920,
+      "ledgerSha256": "fdb8fcd4af1ca1429f4cb3eb246f55f66d3a15d709e4cb8d33dc8df420ab3683",
+      "successfulToolCalls": 31,
+      "terminalEvent": "turn_completed",
+      "toolCalls": 32,
+      "usage": {
+        "available": true,
+        "cacheRead": 1261824,
+        "cacheWrite": 0,
+        "input": 84875,
+        "output": 13982,
+        "totalTokens": 1360681
+      }
+    },
+    {
+      "answerCount": 4,
+      "answersSha256": "169e728069b6bf18eda7adeb0cd07d254aee26debd24c53c4ee394a57ab35b1b",
+      "assignedCaseIdsSha256": "b91d4df9c3d88264351c1e5866785863ba2a31f00fd57aaa2a465a0e1ae0d332",
+      "batchId": "batch-3",
+      "batchIndex": 3,
+      "latencyMs": 400762,
+      "ledgerSha256": "7725ccfc68f33e1de394fe7935114132c8892b3d49ce0f845e67b3d9a69dc061",
+      "successfulToolCalls": 46,
+      "terminalEvent": "turn_completed",
+      "toolCalls": 46,
+      "usage": {
+        "available": true,
+        "cacheRead": 2623872,
+        "cacheWrite": 0,
+        "input": 128594,
+        "output": 13960,
+        "totalTokens": 2766426
+      }
+    }
+  ],
+  "caseCount": 12,
+  "cleanup": {
+    "gatewayBindingsRemoved": true,
+    "temporaryOutputsRetained": false
+  },
+  "contextProjection": "standard-v1",
+  "contextProjectionSummary": {
+    "profile": "standard-v1",
+    "projectedChars": 602815,
+    "promptChanged": false,
+    "savedChars": 0,
+    "schemaVersion": "paw.cloudops-context-projection.v1",
+    "semanticObservationBodiesChanged": false,
+    "sourceChars": 602815,
+    "toolResultCount": 98
+  },
+  "contractSha256": "99126a25849537bf52558c3cdd18258a7393fe14c82399e9b5f834208b607b0d",
+  "evalRunIds": [
+    "eval:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:batch-1",
+    "eval:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:batch-2",
+    "eval:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:batch-3",
+    "eval:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:aggregate"
+  ],
+  "goldVisibleToAgent": false,
+  "hostInvocation": {
+    "commandSha256": "f5ea2f2ab7ac69c28d077db3f20e80a2b6ebd7bcb5efbf494ef81565c37ccb89",
+    "contextProjection": "standard-v1",
+    "hostPathsPublished": false,
+    "maxReadsPerCase": 40,
+    "model": "gpt-5.6-sol",
+    "provider": "openai-codex",
+    "schemaVersion": "paw.cloudops-host-invocation.v1",
+    "thinking": "max",
+    "timeoutSeconds": 900.0,
+    "transport": "loopback-http-v1",
+    "trialId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+    "workflowProfile": "alert-first-v5"
+  },
+  "metrics": {
+    "AnswerCoverage": 1.0,
+    "CA": 1.0,
+    "FA": 0.8333333333333334,
+    "JRA": 0.8333333333333334,
+    "Top3JRA": 1.0
+  },
+  "optimizationComparison": {
+    "baselineContextProjection": "standard-v1",
+    "baselineWorkflowProfile": "baseline-v1",
+    "candidateContextProjection": "standard-v1",
+    "candidateWorkflowProfile": "alert-first-v5",
+    "costAuthority": "same-provider-model-usage-categories",
+    "costGatePassed": true,
+    "decision": "keep",
+    "elapsedIsKeepGate": false,
+    "identityChecks": {
+      "batchPlanSha256": true,
+      "caseCount": true,
+      "contractSha256": true,
+      "runtime.entrypointSha256": true,
+      "runtime.extensionSha256": true,
+      "runtime.manifestSha256": true,
+      "runtime.model": true,
+      "runtime.nodeSha256": true,
+      "runtime.piVersion": true,
+      "runtime.protocolVersion": true,
+      "runtime.provider": true,
+      "runtime.runtimeVersion": true,
+      "singleVariable": true,
+      "suiteSha256": true,
+      "thinkingLevel": true
+    },
+    "identityGatePassed": true,
+    "providerBillAvailable": false,
+    "quality": {
+      "AnswerCoverage": {
+        "after": 1.0,
+        "before": 1.0,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "CA": {
+        "after": 1.0,
+        "before": 1.0,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "FA": {
+        "after": 0.8333333333333334,
+        "before": 0.8333333333333334,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "JRA": {
+        "after": 0.8333333333333334,
+        "before": 0.8333333333333334,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "Top3JRA": {
+        "after": 1.0,
+        "before": 0.8333333333333334,
+        "delta": 0.16666666666666663,
+        "nonRegressed": true
+      }
+    },
+    "qualityGatePassed": true,
+    "schemaVersion": "paw.cloudops-cost-optimization-comparison.v1",
+    "singleVariable": "bounded_diagnostic_prompt_contract",
+    "usage": {
+      "cachedInputTokens": {
+        "after": 4586112,
+        "before": 12995072,
+        "delta": -8408960,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      },
+      "outputTokens": {
+        "after": 35356,
+        "before": 40601,
+        "delta": -5245,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      },
+      "uncachedInputTokens": {
+        "after": 279774,
+        "before": 450205,
+        "delta": -170431,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      }
+    }
+  },
+  "processSignals": {
+    "authority": "diagnostic",
+    "available": false
+  },
+  "replayCohort": {
+    "caseId": "cloudops-smoke-v1-3x4",
+    "configFingerprint": "sha256:ca30856be7d35566192f86302b22bb2fea0fc6143b9a1b98d1213a2e0024c7f9",
+    "environmentFingerprint": "sha256:debe9bf48346bc4255032c26d68dee6398ff9cbe590c5be6d2c14fcbc2c0607d",
+    "inputFingerprint": "sha256:f3794b477a3a276a40ead3c550095bbd0f8edb37c0c5f8ebbba7f2d9c2fcfd83",
+    "modelProfileFingerprint": "sha256:38bb3b20f620e6dbd384ef26ead12779859c3beedfa85f4595211de4fad23658",
+    "skillProfileFingerprint": "sha256:140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe",
+    "suiteId": "cloudops-smoke-v1",
+    "suiteRevision": "31939ae6ba38924f",
+    "toolProfileFingerprint": "sha256:51d5bfd07e3dd2906b033ae8bd91b5aa3fafb39cc422324bff0f05c1814ca3c6"
+  },
+  "runtimeIdentity": {
+    "entrypointSha256": "2426598570097198846d556692e816a89d8a1c9a77c48187a0fe031f2f7a76d9",
+    "extensionSha256": "f0a06ecd627e76e602417989d36c47a75f56744bfafdc0ae8641ec23db899b04",
+    "identitySha256": "5019fda384df648cb28703f556efb2ce8367acdff32cb7bc432eaee3a5682c19",
+    "installActionPerformed": false,
+    "manifestSha256": "1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22",
+    "model": "gpt-5.6-sol",
+    "nodeSha256": "27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1",
+    "piVersion": "0.84.2",
+    "protocolVersion": "2",
+    "provider": "openai-codex",
+    "runtimeVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad",
+    "schemaVersion": "paw.cloudops-runtime-candidate.v1",
+    "sourceConfigFiles": [
+      "auth.json",
+      "models-store.json",
+      "models.json",
+      "settings.json"
+    ],
+    "toolProfileSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120"
+  },
+  "sandboxRunId": "sandbox:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7",
+  "schemaVersion": "paw.cloudops-agent-eval-run.v1",
+  "signals": {
+    "batchCount": 3,
+    "elapsedMs": 1036278,
+    "failedToolCalls": 1,
+    "firstToolLatencyMs": 14691,
+    "listCalls": 37,
+    "readCalls": 56,
+    "searchCalls": 0,
+    "successfulToolCalls": 98,
+    "toolCalls": 99
+  },
+  "status": "completed",
+  "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+  "thinkingLevel": "max",
+  "traceIds": [
+    "trace:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:batch-1",
+    "trace:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:batch-2",
+    "trace:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:batch-3",
+    "trace:cloudops:cloudops-sol-max-alert-first-candidate-20260904-r7:aggregate"
+  ],
+  "trialId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+  "usage": {
+    "available": true,
+    "cacheRead": 4586112,
+    "cacheWrite": 0,
+    "input": 279774,
+    "output": 35356,
+    "totalTokens": 4901242
+  },
+  "workflowProfile": "alert-first-v5"
+}

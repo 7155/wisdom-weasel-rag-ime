@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { conversationBusy, useConversationSurface } from '../ConversationSurfaceContext';
 import { usePinnedTranscript } from '../hooks/usePinnedTranscript';
-import { useSessionScrollMemory } from '../hooks/useSessionScrollMemory';
+import {
+  readSessionScrollMemory,
+  useSessionScrollMemory,
+} from '../hooks/useSessionScrollMemory';
 import { useVirtualTranscript } from '../hooks/useVirtualTranscript';
 import type { TranscriptMessage } from '../model/types';
 import { JumpToBottom } from './JumpToBottom';
@@ -30,6 +33,7 @@ export function VirtualTranscript({ empty, label, lead }: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sizerRef = useRef<HTMLDivElement | null>(null);
   const pinned = usePinnedTranscript(scrollRef, sizerRef, conversationId);
+  const rememberedAnchor = readSessionScrollMemory(conversationId)?.row;
 
   const getKey = useCallback((message: TranscriptMessage) => message.id, []);
   const estimate = useCallback((message: TranscriptMessage) => estimateMessage(message), []);
@@ -38,6 +42,14 @@ export function VirtualTranscript({ empty, label, lead }: {
     getKey,
     estimateSize: estimate,
     scrollRef,
+    initialScrollKey: conversationId,
+    ...(rememberedAnchor ? {
+      initialAnchor: {
+        key: rememberedAnchor.rowKey,
+        index: rememberedAnchor.rowIndex,
+        offsetFromViewportTopPx: rememberedAnchor.offsetFromViewportTopPx,
+      },
+    } : {}),
   });
 
   useSessionScrollMemory(conversationId, pinned.captureAnchor, pinned.restoreAnchor, scrollRef);

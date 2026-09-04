@@ -7,6 +7,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from rag_ime.activity_timeline_curation import (
@@ -17,6 +18,7 @@ from rag_ime.activity_timeline_curation import (
 from rag_ime.activity_timeline_evaluation import (
     ActivityOrganizationCandidateRun,
     LunaStructuredRun,
+    _write_private_exclusive,
     baseline_activity_summary,
     evaluation_timezone,
     load_luna_structured_run,
@@ -28,6 +30,49 @@ from rag_ime.activity_timeline_evaluation import (
 
 
 class ActivityTimelineEvaluationTests(unittest.TestCase):
+    def test_exclusive_writer_does_not_close_a_descriptor_after_fdopen_owns_it(
+        self,
+    ) -> None:
+        class FailingOwnedHandle:
+            closed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _error_type, _error, _traceback):
+                self.closed = True
+                return False
+
+            @staticmethod
+            def write(_text: str) -> None:
+                raise OSError("simulated write failure")
+
+        handle = FailingOwnedHandle()
+        with (
+            patch(
+                "rag_ime.activity_timeline_evaluation.os.open",
+                return_value=73,
+            ),
+            patch(
+                "rag_ime.activity_timeline_evaluation.os.fdopen",
+                return_value=handle,
+            ),
+            patch(
+                "rag_ime.activity_timeline_evaluation.os.close",
+            ) as close_descriptor,
+        ):
+            with self.assertRaisesRegex(
+                OSError,
+                "simulated write failure",
+            ):
+                _write_private_exclusive(
+                    Path("/private/activity-evaluation.txt"),
+                    "payload",
+                )
+
+        self.assertTrue(handle.closed)
+        close_descriptor.assert_not_called()
+
     def test_legacy_timezone_abbreviation_uses_explicit_evaluation_fallback(self) -> None:
         self.assertEqual(evaluation_timezone("CST", fallback="Asia/Shanghai"), "Asia/Shanghai")
         self.assertEqual(evaluation_timezone("UTC", fallback="Asia/Shanghai"), "UTC")

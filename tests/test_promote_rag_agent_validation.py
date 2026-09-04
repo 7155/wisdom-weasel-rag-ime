@@ -99,6 +99,36 @@ class PromoteRagAgentValidationTests(unittest.TestCase):
         for key, value in promotion["bindings"].items():
             self.assertEqual(value, gate[key])
 
+    def test_keep_allows_losing_lane_outcome_failure_when_candidate_decision_passes(self) -> None:
+        validation = self._validation_report(
+            retrieval_file_sha256=self._file_sha256(self.retrieval_path)
+        )
+        validation["lanes"][0]["hardGates"]["citationResolution"] = False
+        validation["candidateDecision"] = {
+            "schemaVersion": "rag-ime.rag-agent-candidate-decision.v1",
+            "candidateLane": "agentic",
+            "accepted": True,
+            "decision": "keep",
+            "failedHardGates": [],
+            "comparisonIntegrityGates": [
+                gate for gate in REQUIRED_HARD_GATES
+                if gate not in {"citationResolution", "abstention"}
+            ],
+            "candidateOutcomeGates": ["citationResolution", "abstention"],
+            "losingLaneOutcomeFailures": ["baseline:citationResolution"],
+            "latencyDecisionRole": "diagnostic_only",
+        }
+        self._write_signed(self.validation_path, validation)
+
+        promotion, gate = produce_authority(
+            self.validation_path,
+            self.retrieval_path,
+            decision="keep",
+        )
+
+        self.assertEqual("promoted", promotion["state"])
+        self.assertIsNotNone(gate)
+
     def test_reject_signs_rejection_receipt_and_never_returns_a_gate(self) -> None:
         promotion, gate = produce_authority(
             self.validation_path,

@@ -141,7 +141,17 @@ function createSharedRoomLiveSession(
   let lastErrorFallback = '';
 
   const broadcast = (notify: (listener: RoomLiveSessionCallbacks) => void) => {
-    for (const listener of listeners) notify(listener);
+    for (const listener of listeners) {
+      try {
+        notify(listener);
+      } catch (error) {
+        // Multiple Room/planet windows share one authoritative subscription.
+        // A local render callback is not a transport failure and must not
+        // prevent the remaining windows from receiving the same terminal or
+        // message event (nor force the SSE cursor into reconnect recovery).
+        console.error('Room live-session listener failed', error);
+      }
+    }
   };
   const setLoading = (next: boolean) => {
     loading = next;

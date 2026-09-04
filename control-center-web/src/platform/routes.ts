@@ -91,7 +91,7 @@ export const CONTROL_ROUTES = {
   'observability.traceDiagnosticReports.list': {
     method: 'GET',
     path: '/api/observability/trace-diagnostic-reports',
-    query: ['limit'],
+    query: ['limit', 'cursor'],
     responseContract: 'trace-diagnostic-report-list.v1',
   },
   'observability.traceDiagnosticReports.create': {
@@ -127,7 +127,7 @@ export const CONTROL_ROUTES = {
     method: 'POST',
     path: '/api/observability/trace-diagnostic-reports/:reportId/repair-verify',
     params: { reportId: null },
-    body: ['expectedRevision', 'repairReceiptId'],
+    body: ['expectedRevision', 'repairReceiptId', 'verificationReceiptId'],
     requiredBody: ['expectedRevision', 'repairReceiptId'],
     responseContract: 'trace-diagnostic-report.v1',
   },

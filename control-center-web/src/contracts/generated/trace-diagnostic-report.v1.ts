@@ -90,6 +90,9 @@ export interface RepairVerification {
   repairReceiptId: string;
   repairTraceId: string;
   evalRunId: string;
+  verificationReceiptId?: string;
+  replayCaseId?: string;
+  decision?: '' | 'kept' | 'rejected';
   testStatus: '' | 'passed' | 'failed' | 'blocked';
   sandboxStatus: '' | 'passed' | 'not_required' | 'blocked';
   sandboxedTestCount: number;

@@ -2,7 +2,7 @@
 
 ## 用户需求账本总索引
 
-这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成二十六卷，
+这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成三十卷，
 避免一次读取或编辑全部需求时发生截断。拆分只改变导航，不改变编号、
 语义、优先级、来源、修正关系或实施状态。
 
@@ -40,6 +40,10 @@ verdict 和 E1–E6 证据仍由
 | 24 | [UR-221–UR-222](requirements/PAWOS_REQUIREMENTS_221_222.md) | Trace 全自动项目绑定与白话诊断/修复入口 |
 | 25 | [UR-223–UR-224](requirements/PAWOS_REQUIREMENTS_223_224.md) | 终态通知幂等与 Session Stop 真实取消/即时回落 |
 | 26 | [UR-225](requirements/PAWOS_REQUIREMENTS_225_225.md) | Trace 报告倒金字塔、白话因果链、证据缺口集中与双层读者 |
+| 27 | [UR-226–UR-235](requirements/PAWOS_REQUIREMENTS_226_235.md) | 四项目质量/成本优化、Trace 修复闭环、运行/Case/diff 矩阵与 Judge/Golden 实例 |
+| 28 | [UR-236](requirements/PAWOS_REQUIREMENTS_236_236.md) | 对话原文、需求、改动、运行与验收证据的双向追踪合同 |
+| 29 | [UR-237–UR-239](requirements/PAWOS_REQUIREMENTS_237_239.md) | 对话 exactly-once 收敛、HTTP/SSE/Runtime 恢复与 Memory/冲突故障隔离 |
+| 30 | [UR-240–UR-241](requirements/PAWOS_REQUIREMENTS_240_241.md) | 四场景 Skill 隔离、resume-builder 移除与 PAW Skill Diff Review 包修订 |
 
 ## 同一文档集的其他文件
 
@@ -52,7 +56,7 @@ verdict 和 E1–E6 证据仍由
 
 ## 读取与编辑规则
 
-- 从本索引进入后按二十六卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
+- 从本索引进入后按三十卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
   下一份；最后一卷继续到逐字证据、产品契约和实施状态，不会静默结束。
 - 修正已有需求时，编辑包含该稳定 ID 的分卷；不得重新编号。新增需求追加到
   最后一卷，超过可维护规模后再新建下一卷，并同时更新本索引与相邻导航。
@@ -64,5 +68,5 @@ verdict 和 E1–E6 证据仍由
 ## 继续阅读 / 编辑
 
 - 下一份：[UR-001–UR-030](requirements/PAWOS_REQUIREMENTS_001_030.md)
-- 若只查最新要求：[UR-225](requirements/PAWOS_REQUIREMENTS_225_225.md)
+- 若只查最新要求：[UR-240–UR-241](requirements/PAWOS_REQUIREMENTS_240_241.md)
 - 若记录实现结果：[PAWOS_REQUIREMENT_STATUS.md](PAWOS_REQUIREMENT_STATUS.md)

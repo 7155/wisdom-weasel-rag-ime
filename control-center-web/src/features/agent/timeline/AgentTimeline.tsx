@@ -44,6 +44,7 @@ import {
 } from './agent-turn-work-model';
 import { useAgentLiveStore } from '../state/live-store';
 import { isAgentNetworkInterruption, publicAgentErrorText } from '../public-error';
+import { hasUndurableAgentAttachments } from '../optimistic-attachments';
 import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 
 export function isRoomPublicPostMessage(message: AgentMessageProjection): boolean {
@@ -1054,22 +1055,30 @@ export const AgentTurn = memo(function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.activityIds ?? []).map((id) => projection?.activitiesById[id]).filter(Boolean);
   }));
-  const nonRetryableAdmission = useAgentLiveStore((state) => {
+  const admissionConfirmationState = useAgentLiveStore((state) => {
     const projection = state.projections[sessionId];
-    return (
-      projection?.turnsById[turnId]?.messageIds.some(
-        (messageId) => (
-          projection.messagesById[messageId]?.role === 'user'
-          && (
-            projection.messagesById[messageId]
-              ?.admissionState === 'pending'
-            || projection.messagesById[messageId]
-              ?.admissionState === 'unresolved'
-          )
-        ),
-      ) ?? false
-    );
+    for (const messageId of projection?.turnsById[turnId]?.messageIds ?? []) {
+      const message = projection?.messagesById[messageId];
+      if (
+        message?.role === 'user'
+        && (
+          message.admissionState === 'pending'
+          || message.admissionState === 'unresolved'
+        )
+      ) return message.admissionState;
+    }
+    return '';
   });
+  const nonRetryableAdmission = Boolean(admissionConfirmationState);
+  const hasUndurableAttachments = useAgentLiveStore((state) => {
+    const projection = state.projections[sessionId];
+    return (projection?.turnsById[turnId]?.messageIds ?? []).some((messageId) => {
+      const message = projection?.messagesById[messageId];
+      return message?.role === 'user'
+        && hasUndurableAgentAttachments(message.attachments);
+    });
+  });
+  const retryUnsafe = nonRetryableAdmission || hasUndurableAttachments;
   const latestTurnId = useAgentLiveStore((state) => (
     state.projections[sessionId]?.turnOrder.at(-1) ?? ''
   ));
@@ -1188,7 +1197,7 @@ export const AgentTurn = memo(function AgentTurn({
     <article className="agent-turn" data-agent-turn-id={turnId} data-turn-status={turn.status}>
       {dayStartLabel ? <div aria-hidden="true" className="agent-fx-day"><span>{dayStartLabel}</span></div> : null}
       {userIds.slice(0, 1).map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user presentation={presentation} userMessagePresentation={userMessagePresentation} forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
-      {assistantMessages.length > 0 || inlineUserMessages.length > 0 || activities.length > 0 || memoryRecallReceipt || failure || showWorking ? (
+      {assistantMessages.length > 0 || inlineUserMessages.length > 0 || activities.length > 0 || memoryRecallReceipt || failure || showWorking || admissionConfirmationState ? (
         <div className="agent-assistant-turn">
           <div className="agent-assistant-turn__body">
             {/* fx keeps message side as identity (UR-075): no repeated
@@ -1217,12 +1226,15 @@ export const AgentTurn = memo(function AgentTurn({
                 visible work instead of staying pinned above completed steps.
                 New entries inserted above naturally carry it to the tail. */}
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} stopping={stopping} /> : null}
+            {admissionConfirmationState ? (
+              <AssistantAdmissionConfirmation state={admissionConfirmationState} />
+            ) : null}
             {turnSettled ? <AgentTurnUsage messages={assistantMessages} /> : null}
             {failure ? (
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>{failureTitle}</strong><small>{failureDetail}</small></span>
-                {failurePresentation === 'default' || (onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId) ? (
+                {failurePresentation === 'default' || (onSwitchModel && !retryUnsafe && latestTurnId === turnId) ? (
                   <div className="agent-turn__failure-actions">
                   {failurePresentation === 'default' ? <TraceAgentHandoffButton
                     handoff={{
@@ -1242,7 +1254,7 @@ export const AgentTurn = memo(function AgentTurn({
                       },
                     }}
                   /> : null}
-                  {onSwitchModel && !nonRetryableAdmission && latestTurnId === turnId ? (
+                  {onSwitchModel && !retryUnsafe && latestTurnId === turnId ? (
                     <>
                     {safeContinuation ? (
                       onContinueTurn && latestTurnId === turnId ? (
@@ -1440,6 +1452,25 @@ function AssistantWorkingState({
         <small>{stopping ? '正在取消当前模型与工具执行。' : detail}</small>
       </span>
       <i className="agent-working-dots" aria-hidden="true"><b /><b /><b /></i>
+    </div>
+  );
+}
+
+function AssistantAdmissionConfirmation({
+  state,
+}: {
+  state: 'pending' | 'unresolved';
+}) {
+  const detail = state === 'pending'
+    ? '服务端仍在确认这条消息是否已接收；系统不会自动重试。'
+    : '无法确认这条消息是否已执行；为避免重复执行，不能自动重试。请重新同步 Session。';
+  return (
+    <div className="agent-assistant-pending" role="status" aria-live="polite">
+      <ConversationPlanetMark size="lg" state="waiting" />
+      <span>
+        <strong>正在确认接收状态</strong>
+        <small>{detail}</small>
+      </span>
     </div>
   );
 }

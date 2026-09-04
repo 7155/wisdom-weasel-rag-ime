@@ -24,6 +24,7 @@ STATUSES = frozenset({"kept", "rejected", "diagnostic", "open_gap"})
 CLAIM_STATUSES = frozenset({"headline", "supporting", "diagnostic", "blocked"})
 EFFECT_STATUSES = frozenset({"improved", "neutral", "regressed", "not_run", "unverified"})
 CANDIDATE_TYPES = frozenset({"single_factor", "compound_repair", "baseline", "unknown"})
+PROJECTION_STATES = frozenset({"current", "history"})
 RECOMMENDATION_STATUSES = frozenset(
     {"proposed", "authorized", "implemented", "verified", "rejected"}
 )
@@ -159,6 +160,14 @@ def validate_agent_experiments(
         claim_status = str(experiment.get("claimStatus") or "")
         if claim_status not in CLAIM_STATUSES:
             errors.append(f"{experiment_id}: unsupported claimStatus: {claim_status}")
+        projection_state = str(experiment.get("projectionState") or "current")
+        if projection_state not in PROJECTION_STATES:
+            errors.append(
+                f"{experiment_id}: unsupported projectionState: {projection_state}"
+            )
+        superseded_by = experiment.get("supersededBy")
+        if superseded_by is not None and not _text(superseded_by):
+            errors.append(f"{experiment_id}: supersededBy must be a non-empty id")
         effect_status = str(experiment.get("effectStatus") or "")
         if effect_status not in EFFECT_STATUSES:
             errors.append(f"{experiment_id}: unsupported effectStatus: {effect_status}")

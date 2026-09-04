@@ -108,6 +108,18 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
         ['idle', 'ready', 'stopped', 'active'].includes(snapshot.status ?? ''),
       );
     }
+    // Several call sites can request a snapshot outside the shared live owner.
+    // A response captured before an SSE terminal may therefore arrive later
+    // with the same durable cursor but an older busy/live tail. Sequence
+    // equality cannot supersede a terminal projection unless an explicit gap
+    // has fenced the store and made that snapshot the recovery authority.
+    if (
+      snapshot.lastSequence === current.lastSequence
+      && current.lastSequence > 0
+      && !current.needsSnapshot
+      && isTerminalProjection(current)
+      && !isTerminalProjection(projection)
+    ) return;
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));
@@ -275,6 +287,15 @@ function preserveConfirmedActivities(
     if (!turn.activityIds.includes(activityId)) turn.activityIds.push(activityId);
   }
   return next;
+}
+
+function isTerminalProjection(projection: AgentProjectionState): boolean {
+  if (!['idle', 'ready', 'stopped', 'active', 'failed', 'faulted'].includes(projection.status)) {
+    return false;
+  }
+  return !projection.turnOrder.some((turnId) => (
+    ['queued', 'running', 'waiting'].includes(projection.turnsById[turnId]?.status ?? '')
+  ));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

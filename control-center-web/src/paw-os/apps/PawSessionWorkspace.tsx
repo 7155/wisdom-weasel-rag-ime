@@ -40,6 +40,7 @@ import {
 import { unrestrictedWorkspaceRoots } from '@/features/agent/composer/permission-policy';
 import { SessionSubagentPanel } from '@/features/agent/delegation/SessionSubagentPanel';
 import {
+  agentCommandReceiptFailure,
   isAgentCommandPending,
   isAgentSessionIdleFailure,
   isAgentTurnConflict,
@@ -48,6 +49,7 @@ import {
   publicAgentErrorText,
   SESSION_WORKSPACE_MISSING_TEXT,
 } from '@/features/agent/public-error';
+import { hasUndurableAgentAttachments } from '@/features/agent/optimistic-attachments';
 import {
   useAgentLiveSession,
   type AgentLiveSnapshotLoader,
@@ -451,12 +453,21 @@ export function PawSessionWorkspace({
       options.onAdmissionRolledBack?.();
       return;
     }
-    if (isAgentTurnConflict(reason)) {
+    const commandConflict = agentCommandReceiptFailure(reason);
+    if (commandConflict?.code === 'AGENT_COMMAND_CONFLICT') {
       store.discardOptimistic(recordId, clientMessageId);
-      void loadAgentSnapshot();
       options.restoreInput?.();
       options.onAdmissionRolledBack?.();
-      setError('上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
+      if (isAgentTurnConflict(reason)) {
+        void loadAgentSnapshot();
+        setError('上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
+      } else {
+        // A fingerprint/idempotency conflict did not execute a turn. Refreshing
+        // here races onSnapshot's error reset and erases the only useful retry
+        // instruction, so keep the restored draft and let the next send mint a
+        // fresh clientMessageId.
+        setError(errorText(reason));
+      }
       return;
     }
     store.failOptimistic(
@@ -593,12 +604,18 @@ export function PawSessionWorkspace({
     // slow, but must not make the click itself feel stalled.
     void (async () => {
       try {
-        const actionRecord = await reconcileSessionForAction();
-        if (!actionRecord) {
-          useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
-          restoreInput();
-          setError('当前 Session 暂时无法确认，请重新打开后再发送。');
-          return;
+        // An open workspace already owns a concrete Session record. Its prompt
+        // endpoint is the authority for admission; waiting on the paged catalog
+        // here can strand a valid send behind an unrelated refresh. Only a
+        // provisional deep link needs recovery before its first action.
+        if (!record) {
+          const actionRecord = await reconcileSessionForAction();
+          if (!actionRecord) {
+            useAgentLiveStore.getState().discardOptimistic(recordId, clientMessageId);
+            restoreInput();
+            setError('当前 Session 暂时无法确认，请重新打开后再发送。');
+            return;
+          }
         }
         const response = await transport.request<Record<string, unknown>>({
           pathId: 'agent.session.prompt',
@@ -710,6 +727,11 @@ export function PawSessionWorkspace({
         }
         if (!userMessage) {
           setError('找不到这轮的原始输入，无法安全重试。');
+          onAdmissionRolledBack?.();
+          return;
+        }
+        if (hasUndurableAgentAttachments(userMessage.attachments)) {
+          setError('附件未能导入，当前失败卡不能安全重试。请重新上传附件后发送。');
           onAdmissionRolledBack?.();
           return;
         }

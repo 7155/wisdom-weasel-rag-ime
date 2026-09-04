@@ -415,6 +415,17 @@ export function reduceAgentEvent(
       next.status = 'idle';
       break;
     case 'turn_failed':
+      if (!event.turnId) {
+        appendDiagnostic(next, {
+          id: event.eventId,
+          streamKind: 'agent',
+          eventType: 'turn_failed',
+          summary: 'Ignored turn_failed without a turnId; no user turn was failed.',
+          sequence: event.sequence,
+          payload,
+        });
+        break;
+      }
       completeTurn(next, event.turnId, 'failed', event.createdAtMs, text(payload.error));
       next.status = 'failed';
       upsertActivity(next, event, payload, 'failed');
@@ -607,6 +618,18 @@ export function failOptimisticAgentMessage(
   const message = state.messagesById[messageId];
   if (!message) return state;
   const next = cloneState(state);
+  if (admissionState === 'pending' || admissionState === 'unresolved') {
+    next.messagesById[messageId] = {
+      ...message,
+      status: 'queued',
+      completedAtMs: null,
+      admissionState,
+    };
+    touchTurn(next, message.turnId, 'waiting', nowMs);
+    delete next.turnsById[message.turnId]?.failure;
+    next.status = 'busy';
+    return next;
+  }
   next.messagesById[messageId] = {
     ...message,
     status: 'failed',
@@ -713,6 +736,20 @@ export function applyAgentSnapshot(
   state: AgentProjectionState,
   snapshot: AgentSnapshot,
 ): AgentProjectionState {
+  const inFlightAdmissionClientIds = new Set(
+    Object.entries(state.optimisticByClientMessageId).flatMap(([
+      clientMessageId,
+      messageId,
+    ]) => {
+      const message = state.messagesById[messageId];
+      return message
+        && message.role === 'user'
+        && (message.status === 'queued' || message.status === 'streaming')
+        && !message.admissionState
+        ? [clientMessageId]
+        : [];
+    }),
+  );
   let next = createAgentProjection(state.sessionId);
   next.status = snapshot.status ?? state.status;
   next.telemetry = parseTelemetry(snapshot.telemetry) ?? state.telemetry;
@@ -735,6 +772,16 @@ export function applyAgentSnapshot(
 
   const serverClientIds = new Set<string>();
   const transcriptMessageIds = new Set<string>();
+  /* A bounded snapshot carries forward both prior transcript anchors and
+     message_completed rows seen only through SSE. Only ids present in this
+     response (plus already-normalized history turns) are transcript anchors;
+     otherwise the carried SSE row cannot be reconciled with Pi's later id. */
+  const currentTranscriptMessageIds = new Set(
+    snapshot.messages.flatMap((rawMessage) => {
+      const id = record(rawMessage).id;
+      return typeof id === 'string' && id ? [id] : [];
+    }),
+  );
   const snapshotMessages = snapshot.snapshotScope === 'recent' && snapshot.partial === true
     ? mergeBoundedRecentMessages(state, snapshot.messages)
     : snapshot.messages;
@@ -752,7 +799,10 @@ export function applyAgentSnapshot(
       continue;
     }
     upsertMessage(next, parsed.value);
-    transcriptMessageIds.add(parsed.value.id);
+    if (
+      currentTranscriptMessageIds.has(parsed.value.id)
+      || parsed.value.turnId.startsWith('history:')
+    ) transcriptMessageIds.add(parsed.value.id);
     if (parsed.value.clientMessageId) serverClientIds.add(parsed.value.clientMessageId);
   }
 
@@ -866,36 +916,40 @@ export function applyAgentSnapshot(
     const restoredTurn = next.turnsById[optimistic.turnId];
     if (previousTurn && restoredTurn) {
       const restoredAtMs = Math.max(restoredTurn.updatedAtMs, previousTurn.updatedAtMs);
-      if (
-        authoritativeQuiescent
-        && ['queued', 'running', 'waiting'].includes(previousTurn.status)
-      ) {
-        // A full quiescent snapshot is the Runtime boundary: if it contains
-        // neither this local admission nor a live turn, retaining `queued`
-        // would resurrect the composer spinner forever. Keep the user's text
-        // visible and retryable, but settle the unmatched admission honestly.
-        next.messagesById[messageId] = {
-          ...optimistic,
-          status: 'failed',
-          completedAtMs: restoredAtMs,
-        };
-        completeTurn(
-          next,
-          optimistic.turnId,
-          'failed',
-          restoredAtMs,
-          '未收到助手回复。',
-          true,
-        );
-      } else {
-        next.turnsById[optimistic.turnId] = {
-          ...restoredTurn,
-          status: previousTurn.status,
-          updatedAtMs: restoredAtMs,
-          failure: previousTurn.failure,
-        };
-      }
+      // Session creation publishes the window before its first prompt has
+      // necessarily reached Pi. An idle snapshot can therefore be older than
+      // this in-flight local admission. Only the request result or an exact
+      // durable clientMessageId may settle it; snapshot status alone cannot.
+      next.turnsById[optimistic.turnId] = {
+        ...restoredTurn,
+        status: previousTurn.status,
+        updatedAtMs: restoredAtMs,
+        failure: previousTurn.failure,
+      };
     }
+  }
+  const hasUnsettledAdmission = Object.values(next.optimisticByClientMessageId).some((messageId) => {
+    const status = next.messagesById[messageId]?.status;
+    return status === 'queued' || status === 'streaming';
+  }) || next.messageOrder.some((messageId) => {
+    const message = next.messagesById[messageId];
+    if (
+      !message
+      || message.role !== 'user'
+      || !message.clientMessageId
+      || !inFlightAdmissionClientIds.has(message.clientMessageId)
+    ) return false;
+    const turn = next.turnsById[message.turnId];
+    return Boolean(turn) && !turn.messageIds.some(
+      (turnMessageId) => next.messagesById[turnMessageId]?.role === 'assistant',
+    );
+  });
+  // A snapshot may observe Pi's durable user anchor before it observes the
+  // matching Runtime transition away from idle. That anchor proves admission,
+  // not completion. Preserve the in-flight turn until an assistant/terminal
+  // event or the request path reports a real failure.
+  if (hasUnsettledAdmission) {
+    next.status = 'busy';
   }
   reconcileSnapshotTurnStatuses(next);
   next.lastSequence = Math.max(0, snapshot.lastSequence);
@@ -907,15 +961,15 @@ export function applyAgentSnapshot(
 }
 
 /**
- * Pi's durable transcript does not persist the product clientMessageId. A
- * post-admission snapshot can therefore contain the accepted user message
- * while the local optimistic copy still looks unrelated. Restoring that copy
- * creates a second queued turn after the real turn has completed, which makes
- * the UI revive its running indicator and misroute the next prompt as Steer.
+ * Current Pi transcripts project the durable turn binding and exact
+ * clientMessageId. Legacy transcripts can lack that binding, so a refresh may
+ * still contain the accepted user message while the local optimistic copy
+ * looks unrelated. Restoring both creates a second queued turn after the real
+ * turn completes and misroutes the next prompt as Steer.
  *
- * Match only an otherwise-unsettled local user message to one exact, nearby
- * durable user message. Failed/pending/ambiguous admissions remain local and
- * auditable; text alone without the narrow timestamp bound is never enough.
+ * The fallback is legacy-only: match one otherwise-unsettled local user
+ * message to one exact, nearby durable user message. Failed, pending, or
+ * ambiguous admissions remain local; unbounded text-only matching is forbidden.
  */
 function reconcileSnapshotOptimisticMessages(
   previous: AgentProjectionState,
@@ -2237,7 +2291,12 @@ function reconcileSnapshotTurnStatuses(state: AgentProjectionState): void {
     const statuses = new Set(messages.map((message) => message.status));
     if (statuses.has('failed')) turn.status = 'failed';
     else if (statuses.has('streaming')) turn.status = 'running';
-    else if (statuses.has('queued')) turn.status = 'queued';
+    else if (statuses.has('queued')) {
+      turn.status = messages.some((message) => (
+        message.admissionState === 'pending'
+        || message.admissionState === 'unresolved'
+      )) ? 'waiting' : 'queued';
+    }
     else if (statuses.has('aborted')) turn.status = 'aborted';
     else turn.status = 'completed';
 

@@ -26,7 +26,7 @@ from rag_ime.contracts.json_schema import validate_contract
 
 
 _LEDGER_SCHEMA = "paw.interview-agent-experiment-ledger.v1"
-_PROJECTION_REVISION = "agent-lab-public-projection-v3"
+_PROJECTION_REVISION = "agent-lab-public-projection-v4"
 _EVALUATION_KINDS = {
     "workflow",
     "rag_retrieval",
@@ -62,6 +62,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["qrels 对 Agent 隐藏", "corpus/split hash 固定", "向量覆盖完整", "Held-out 未打开"],
         "status": "open_gap",
         "claimStatus": "blocked",
+        "projectionState": "history",
+        "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1",
         "effectStatus": "not_run",
         "decision": "not_run",
         "factor": {
@@ -114,6 +116,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["逐事实 source/chunk/quote 支持", "info_not_found 拒答", "输出协议", "Held-out 未消费"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1",
         "effectStatus": "neutral",
         "factor": {"name": "model", "before": "GPT-5.6 Sol / max", "after": "GPT-5.6 Luna / max", "reason": "先只换模型，判断低价模型是否保持答案与逐事实引用质量。"},
         "baselineRunId": "enterprise-rag-answer-evidence-sol-v16-baseline",
@@ -147,6 +151,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["逐事实 source/chunk/quote 支持", "info_not_found 拒答", "输出协议", "Held-out 未消费"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1",
         "effectStatus": "neutral",
         "factor": {"name": "model", "before": "GPT-5.6 Sol / max + 冻结 Citation Skill", "after": "GPT-5.6 Luna / max + 同一 Citation Skill", "reason": "该回执只替换模型；Prompt、Skill、Tool、Workflow、语料和评分合同全部冻结。"},
         "baselineRunId": "enterprise-rag-answer-evidence-sol-v16-skill",
@@ -179,6 +185,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["逐事实 source/chunk/quote 支持", "info_not_found 拒答", "输出协议", "Held-out 未消费"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1",
         "effectStatus": "neutral",
         "factor": {"name": "model", "before": "GPT-5.6 Sol / max + 冻结 Tuned RAG", "after": "GPT-5.6 Luna / max + 同一 Tuned RAG", "reason": "该回执只替换模型；Tuned RAG、Prompt、Skill、Tool、Workflow 与评分合同全部冻结。"},
         "baselineRunId": "enterprise-rag-answer-evidence-sol-v16-tuned",
@@ -211,6 +219,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["逐事实 source/chunk/quote 支持", "info_not_found 拒答", "输出协议", "Held-out 未消费"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1",
         "effectStatus": "regressed",
         "factor": {"name": "model", "before": "GPT-5.6 Sol / max + 冻结 Agentic Workflow", "after": "GPT-5.6 Luna / max + 同一 Agentic Workflow", "reason": "该回执只替换模型；Agentic Workflow、Prompt、Skill、Tool、语料与评分合同全部冻结。"},
         "baselineRunId": "enterprise-rag-answer-evidence-sol-v16-agentic",
@@ -242,6 +252,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["12 个 case 都有答案", "观察快照与 scorer 一致", "Tool failure 单独计数", "Held-out 未观察"],
         "status": "kept",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "cloudops.alert-first-sol-max.v1",
         "effectStatus": "improved",
         "factor": {"name": "tool", "before": "私有 Tool transport / observation hash 合同失败", "after": "冻结 observation snapshot + 可解析 Tool contract", "reason": "先让 12 个 case 真正可运行、可评分，再讨论 Prompt 或 Workflow 优化。"},
         "baselineRunId": "cloudops-paw-baseline-root-20260901-v2",
@@ -269,6 +281,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["CA 不回退", "JRA/Top3JRA 同时记录", "Tool failure 单独计数", "Held-out 未观察"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "cloudops.validation-baseline.v1",
         "effectStatus": "regressed",
         "factor": {"name": "workflow", "before": "Baseline 自主探索", "after": "search-first evidence workflow", "reason": "尝试用显式搜索扩大 Top-3 根因证据覆盖，同时记录调用成本。"},
         "baselineRunId": "cloudops-agent-validation-20260901-v1",
@@ -296,6 +310,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["12 个 case 都有答案", "Tool failure 单独计数", "CA/JRA/Top3JRA 不回退", "Held-out 未观察"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "cloudops.validation-baseline.v1",
         "effectStatus": "regressed",
         "factor": {"name": "tool", "before": "公开长 cacheKey 容易转录失败", "after": "短 observationId + Host 内部地址映射", "reason": "只修地址型 Tool failure，验证 Tool 可靠性与诊断质量是否能分别守门。"},
         "baselineRunId": "cloudops-agent-validation-20260901-v1",
@@ -338,6 +354,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["Luna/max 选择回执匹配", "Prompt 已进入 Session", "Provider request 成功", "canonical submission", "Host formal CA/JRA 可用", "Held-out 未观察"],
         "status": "rejected",
         "claimStatus": "diagnostic",
+        "projectionState": "history",
+        "supersededBy": "cloudops.validation-baseline.v1",
         "effectStatus": "improved",
         "factor": {
             "name": "workflow",
@@ -403,6 +421,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["terminal completion", "合法 JSON receipt", "不从耗时推断质量", "Held-out 未消费"],
         "status": "diagnostic",
         "claimStatus": "diagnostic",
+        "projectionState": "history",
+        "supersededBy": "memory.maintenance-luna-shadow-v5.v1",
         "effectStatus": "unverified",
         "factor": {"name": "workflow", "before": "单体 Context→Provider→JSONL→Apply", "after": "未改；只冻结真实失败边界", "reason": "先把 834.945 秒后的未闭合 JSONL 作为基线，不能直接从错误字符串猜修复收益。"},
         "baselineRunId": "memory-maintenance-observed-start",
@@ -430,6 +450,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["production DB 不打开", "5/5 决策", "vector coverage 1", "rollback/replay 通过", "合法 JSON receipt"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "memory.maintenance-luna-shadow-v5.v1",
         "effectStatus": "improved",
         "candidateType": "single_factor",
         "factor": {"name": "workflow", "before": "真实单体 Run 无恢复验证", "after": "private shadow + rollback + replay", "reason": "先验证整理结果能否回滚并在相同输入上幂等重放。"},
@@ -458,6 +480,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["production DB 不打开", "5/5 决策", "vector coverage 1", "rollback/replay 通过", "合法 JSON receipt"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "memory.maintenance-luna-shadow-v5.v1",
         "effectStatus": "improved",
         "candidateType": "single_factor",
         "factor": {"name": "workflow", "before": "Replay 对残留派生状态比较", "after": "保存精确 pre-run snapshot + 复用模型输出，但 replay gate 仍为 false", "reason": "让 replay 比较同一个逻辑基线，避免重复调用模型和假失败。"},
@@ -486,6 +510,8 @@ _DERIVED_RECIPES: tuple[dict[str, Any], ...] = (
         "hardGates": ["production DB 不打开", "5/5 决策", "vector coverage 1", "rollback/replay 通过", "合法 JSON receipt"],
         "status": "rejected",
         "claimStatus": "supporting",
+        "projectionState": "history",
+        "supersededBy": "memory.maintenance-luna-shadow-v5.v1",
         "effectStatus": "improved",
         "candidateType": "unknown",
         "factor": {"name": "workflow", "before": "v3 replay gate false；vector coverage 0", "after": "v4 replay gate true；vector coverage 仍为 0", "reason": "回执没有保留代码 diff，只能确认 replay gate 翻转，无法诚实断言是哪一行实现导致。"},
@@ -976,6 +1002,12 @@ def _derived_experiment(
         "claim": _derived_claim(recipe, metric),
         "openGaps": list(recipe.get("openGaps") or []),
     }
+    projection_state = str(recipe.get("projectionState") or "current")
+    if projection_state == "history":
+        result["projectionState"] = projection_state
+    superseded_by = str(recipe.get("supersededBy") or "").strip()
+    if superseded_by:
+        result["supersededBy"] = superseded_by
     # The source evidence metric remains the authority for the status text,
     # but some metrics are deliberately diagnostic even when a candidate
     # improved a lower-level gate.  Keep the explicit recipe decision and do
@@ -1856,6 +1888,7 @@ def _public_experiment(
         "evaluationKind": _evaluation_kind(raw),
         "status": _text(raw.get("status"), "status"),
         "claimStatus": _text(raw.get("claimStatus"), "claimStatus"),
+        "projectionState": _projection_state(raw),
         "effectStatus": _effect_status(raw),
         "candidateType": _candidate_type(raw),
         "businessProblem": _text(raw.get("businessProblem"), "businessProblem"),
@@ -1889,6 +1922,9 @@ def _public_experiment(
         "openGaps": _text_list(raw.get("openGaps", []), "openGaps"),
         "importedAtMs": imported_at_ms,
     }
+    superseded_by = str(raw.get("supersededBy") or "").strip()
+    if superseded_by:
+        payload["supersededBy"] = superseded_by
     # CloudOps Luna has a checked-in failure receipt, not a readable transcript
     # or Host formal CA/JRA result.  Keep the source ledger immutable, but make
     # the Agent Lab read-through truthful: this is a runtime-only observation,
@@ -1982,6 +2018,13 @@ def _effect_status(experiment: Mapping[str, Any]) -> str:
     if status == "open_gap":
         return "not_run"
     return "unverified"
+
+
+def _projection_state(experiment: Mapping[str, Any]) -> str:
+    explicit = str(experiment.get("projectionState") or "current").strip()
+    if explicit not in {"current", "history"}:
+        raise ValueError(f"unsupported projectionState: {explicit}")
+    return explicit
 
 
 def _candidate_type(experiment: Mapping[str, Any]) -> str:

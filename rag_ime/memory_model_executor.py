@@ -15,6 +15,7 @@ from typing import Iterator, Protocol
 
 from .agent_sessions import AgentSessionNotFound, AgentSessionStore
 from .agent_tool_ids import MEMORY_CURATION_TOOL_PROFILE
+from .pi_runtime_values import PiRuntimeCommandRejected, PiRuntimeTurnConflict
 
 
 MEMORY_CURATION_PROFILE = "MEMORY_CURATION"
@@ -76,6 +77,8 @@ class MemorySessionRuntime(Protocol):
         timeout_seconds: float,
     ) -> dict[str, object]: ...
 
+    def session_snapshot(self, session_id: str) -> dict[str, object]: ...
+
     def abort(self, session_id: str) -> dict[str, object]: ...
 
     def close_session(self, session_id: str) -> bool: ...
@@ -123,6 +126,7 @@ class GovernedMemoryModelExecutor:
         self._lock = threading.RLock()
         self._active_run_id = ""
         self._active_session_id = ""
+        self._accepted_requests: dict[str, tuple[str, str]] = {}
         self.selected_model = self._resolve_live_model()
 
     @property
@@ -310,9 +314,11 @@ class GovernedMemoryModelExecutor:
                 input_sha256=input_sha256,
                 messages_json=frozen_json,
                 isolated=bool(isolated),
+                max_tokens=max_tokens,
             )
             if str(request["state"]) == "completed":
                 return self._response_from_request(request)
+            request_id = str(request["request_id"])
             session_id = str(request["session_id"] or session_id)
             if not session_id:
                 raise MemoryModelUnavailable(
@@ -338,6 +344,38 @@ class GovernedMemoryModelExecutor:
                 catalog_max_tokens=catalog_max_tokens,
             )
             started = time.monotonic()
+            accepted_turn_id = ""
+            admission_confirmed = False
+            prompt_attempted = False
+            pre_admission_rejection_code = ""
+
+            def resumable_receipt(
+                cancellation: Mapping[str, object],
+            ) -> dict[str, object]:
+                receipt: dict[str, object] = {"cancellation": dict(cancellation)}
+                if admission_confirmed:
+                    receipt["admission"] = _memory_admission_payload(
+                        session_id=session_id,
+                        turn_id=accepted_turn_id,
+                        request_id=request_id,
+                    )
+                elif pre_admission_rejection_code:
+                    receipt["admission"] = {
+                        "schemaVersion": "rag-ime.memory-admission.v1",
+                        "status": "rejected",
+                        "reasonCode": pre_admission_rejection_code,
+                        "sessionId": session_id,
+                        "clientMessageId": request_id,
+                    }
+                elif prompt_attempted:
+                    receipt["admission"] = {
+                        "schemaVersion": "rag-ime.memory-admission.v1",
+                        "status": "unknown",
+                        "sessionId": session_id,
+                        "clientMessageId": request_id,
+                    }
+                return receipt
+
             try:
                 model_receipt = dict(
                     self.runtime.set_model(
@@ -362,34 +400,63 @@ class GovernedMemoryModelExecutor:
                     max_tokens=provider_max_tokens,
                 )
                 self._mark_request_running(
-                    request_id=str(request["request_id"]),
+                    request_id=request_id,
                 )
-                accepted = self.runtime.prompt(
-                    session_id,
-                    prompt,
-                    images=[],
-                    client_message_id=str(request["request_id"]),
+                prompt_attempted = True
+                try:
+                    accepted = self.runtime.prompt(
+                        session_id,
+                        prompt,
+                        images=[],
+                        client_message_id=request_id,
+                    )
+                except PiRuntimeTurnConflict as exc:
+                    pre_admission_rejection_code = exc.error_code
+                    raise
+                except PiRuntimeCommandRejected as exc:
+                    pre_admission_rejection_code = exc.host_error_code
+                    raise
+                accepted_turn_id = str(accepted.get("turnId") or "").strip()
+                admission_confirmed = (
+                    accepted.get("accepted") is True or bool(accepted_turn_id)
                 )
-                turn_id = str(accepted.get("turnId") or "").strip()
-                if not turn_id:
+                if admission_confirmed:
+                    self._accepted_requests[request_id] = (
+                        session_id,
+                        accepted_turn_id,
+                    )
+                if not accepted_turn_id:
                     raise MemoryModelUnavailable(
                         "managed Pi did not return a Memory Session turn id"
                     )
-                self._bind_turn(
-                    request_id=str(request["request_id"]),
-                    turn_id=turn_id,
-                )
+                for bind_attempt in range(2):
+                    try:
+                        self._bind_turn(
+                            request_id=request_id,
+                            turn_id=accepted_turn_id,
+                        )
+                        break
+                    except sqlite3.OperationalError as exc:
+                        if "unable to open database file" not in str(exc).lower():
+                            raise
+                        if bind_attempt == 0:
+                            # Pi has already accepted the prompt. Retry only
+                            # this idempotent binding once; if storage remains
+                            # unavailable, continue settling with the local
+                            # admission identity and persist it in the next
+                            # terminal/resumable write that reaches SQLite.
+                            time.sleep(0.05)
                 settlement = self.runtime.await_turn_settled(
                     session_id,
-                    turn_id,
-                    client_message_id=str(request["request_id"]),
+                    accepted_turn_id,
+                    client_message_id=request_id,
                     timeout_seconds=self.timeout_seconds,
                 )
                 terminal = _memory_terminal_from_settlement(
                     settlement,
                     session_id=session_id,
-                    turn_id=turn_id,
-                    client_message_id=str(request["request_id"]),
+                    turn_id=accepted_turn_id,
+                    client_message_id=request_id,
                 )
                 if terminal["state"] == "failed":
                     raise MemoryModelUnavailable(
@@ -406,9 +473,9 @@ class GovernedMemoryModelExecutor:
                     "profile": MEMORY_CURATION_PROFILE,
                     "transport": "gateway_internal_session",
                     "runId": run_id,
-                    "requestId": str(request["request_id"]),
+                    "requestId": request_id,
                     "sessionId": session_id,
-                    "turnId": turn_id,
+                    "turnId": accepted_turn_id,
                     "provider": self.provider,
                     "modelId": self.model_id,
                     "thinkingLevel": self.thinking_level,
@@ -423,35 +490,40 @@ class GovernedMemoryModelExecutor:
                     "thinkingSelection": thinking_receipt,
                 }
                 completed = self._complete_request(
-                    request_id=str(request["request_id"]),
+                    request_id=request_id,
+                    turn_id=accepted_turn_id,
                     output_text=output_text,
                     receipt=receipt,
                 )
+                self._accepted_requests.pop(request_id, None)
                 return self._response_from_request(completed)
             except TimeoutError as exc:
                 cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
-                    request_id=str(request["request_id"]),
+                    request_id=request_id,
+                    turn_id=accepted_turn_id,
                     error="memory_curation_timeout",
-                    receipt={"cancellation": cancellation},
+                    receipt=resumable_receipt(cancellation),
                 )
                 raise MemoryModelTimeout(
                     "Memory Session timed out; the frozen request remains resumable"
                 ) from exc
-            except MemoryModelUnavailable:
+            except MemoryModelUnavailable as exc:
                 cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
-                    request_id=str(request["request_id"]),
-                    error="memory_model_request_failed",
-                    receipt={"cancellation": cancellation},
+                    request_id=request_id,
+                    turn_id=accepted_turn_id,
+                    error=_public_error(exc),
+                    receipt=resumable_receipt(cancellation),
                 )
                 raise
             except Exception as exc:
                 cancellation = self._cancel_request_session(session_id)
                 self._mark_request_resumable(
-                    request_id=str(request["request_id"]),
+                    request_id=request_id,
+                    turn_id=accepted_turn_id,
                     error=_public_error(exc),
-                    receipt={"cancellation": cancellation},
+                    receipt=resumable_receipt(cancellation),
                 )
                 raise MemoryModelUnavailable(
                     f"selected memory model request failed ({self.reference}): "
@@ -526,6 +598,7 @@ class GovernedMemoryModelExecutor:
                     "SELECT * FROM memory_curation_model_runs WHERE run_id = ?",
                     (run_id,),
                 ).fetchone()
+            self._accepted_requests.clear()
             self._active_run_id = ""
             self._active_session_id = ""
             return _run_payload(row) if row is not None else {}
@@ -598,6 +671,7 @@ class GovernedMemoryModelExecutor:
         """Release this adapter without ever stopping the shared Gateway Host."""
 
         with self._lock:
+            self._accepted_requests.clear()
             self._active_run_id = ""
             self._active_session_id = ""
 
@@ -645,6 +719,170 @@ class GovernedMemoryModelExecutor:
             )
         return selected
 
+    def _recover_resumable_request(
+        self,
+        row: sqlite3.Row,
+        *,
+        max_tokens: int | None,
+    ) -> sqlite3.Row:
+        session_id = str(row["session_id"] or "")
+        turn_id = str(row["turn_id"] or "")
+        request_id = str(row["request_id"] or "")
+        if not request_id:
+            raise MemoryModelUnavailable(
+                "accepted Memory request lost its request identity; it was not replayed"
+            )
+        if not session_id:
+            raise MemoryModelUnavailable(
+                "accepted Memory request lost its Session identity; it was not replayed"
+            )
+        if not turn_id:
+            raise MemoryModelUnavailable(
+                "accepted Memory request has no recoverable turn id; it was not replayed"
+            )
+        try:
+            settlement = self.runtime.await_turn_settled(
+                session_id,
+                turn_id,
+                client_message_id=request_id,
+                timeout_seconds=min(1.0, self.timeout_seconds),
+            )
+            terminal = _memory_terminal_from_settlement(
+                settlement,
+                session_id=session_id,
+                turn_id=turn_id,
+                client_message_id=request_id,
+            )
+        except TimeoutError as exc:
+            raise MemoryModelTimeout(
+                "previously accepted Memory Session turn remains unresolved; "
+                "the request was not replayed"
+            ) from exc
+        except MemoryModelUnavailable as exc:
+            raise MemoryModelUnavailable(
+                f"{_public_error(exc)}; the request was not replayed"
+            ) from exc
+        except Exception as exc:
+            raise MemoryModelUnavailable(
+                "previously accepted Memory Session turn could not be recovered; "
+                f"the request was not replayed ({_public_error(exc)})"
+            ) from exc
+        if terminal["state"] != "completed":
+            raise MemoryModelUnavailable(
+                "previously accepted Memory Session turn failed; "
+                "the request was not replayed: "
+                + str(terminal.get("error") or "unknown terminal failure")
+            )
+        output_text = str(terminal.get("text") or "").strip()
+        if not output_text:
+            raise MemoryModelUnavailable(
+                "previously accepted Memory Session completed without assistant JSON; "
+                "the request was not replayed"
+            )
+
+        catalog_max_tokens = int(self.selected_model.get("maxTokens") or 0)
+        provider_max_tokens = _memory_provider_max_tokens(
+            max_tokens,
+            catalog_max_tokens=catalog_max_tokens,
+        )
+        receipt = {
+            "schemaVersion": "rag-ime.memory-curation-model-receipt.v1",
+            "profile": MEMORY_CURATION_PROFILE,
+            "transport": "gateway_internal_session",
+            "runId": str(row["run_id"]),
+            "requestId": request_id,
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "provider": self.provider,
+            "modelId": self.model_id,
+            "thinkingLevel": self.thinking_level,
+            "contextWindow": int(self.selected_model.get("contextWindow") or 0),
+            "maxTokens": provider_max_tokens,
+            "catalogMaxTokens": catalog_max_tokens,
+            "inputSha256": str(row["input_sha256"] or ""),
+            "inputChars": int(row["input_chars"] or 0),
+            "elapsedMs": max(
+                0,
+                int(
+                    dict(settlement.get("receipt") or {}).get("settledAtMs")
+                    or 0
+                )
+                - int(row["created_at_ms"] or 0),
+            ),
+            "usage": dict(terminal.get("usage") or {}),
+            "modelSelection": {},
+            "thinkingSelection": {},
+            "recoveredSettlement": True,
+        }
+        completed = self._complete_request(
+            request_id=request_id,
+            turn_id=turn_id,
+            output_text=output_text,
+            receipt=receipt,
+        )
+        self._accepted_requests.pop(request_id, None)
+        self._set_run_error(self._active_run_id, state="running", error="")
+        return completed
+
+    def _recover_ambiguous_admission_from_snapshot(
+        self,
+        row: sqlite3.Row,
+    ) -> sqlite3.Row:
+        session_id = str(row["session_id"] or "")
+        request_id = str(row["request_id"] or "")
+        if not session_id or not request_id:
+            return row
+        try:
+            snapshot = self.runtime.session_snapshot(session_id)
+        except Exception:
+            return row
+        messages = snapshot.get("messages")
+        if not isinstance(messages, list):
+            return row
+        turn_ids = {
+            str(message.get("turnId") or "").strip()
+            for message in messages
+            if (
+                isinstance(message, Mapping)
+                and str(message.get("role") or "").strip().lower() == "user"
+                and str(message.get("clientMessageId") or "").strip()
+                == request_id
+                and str(message.get("turnId") or "").strip()
+            )
+        }
+        if len(turn_ids) > 1:
+            raise MemoryModelUnavailable(
+                "ambiguous Memory admission maps to multiple durable turns; "
+                "the request was not replayed"
+            )
+        if not turn_ids:
+            return row
+        turn_id = next(iter(turn_ids))
+        self._mark_request_resumable(
+            request_id=request_id,
+            turn_id=turn_id,
+            error="memory_admission_recovered_from_runtime_snapshot",
+            receipt={
+                "admission": _memory_admission_payload(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    request_id=request_id,
+                ),
+                "recoverySource": "runtime_session_snapshot",
+            },
+        )
+        with self._connect() as conn:
+            recovered = conn.execute(
+                "SELECT * FROM memory_curation_model_requests "
+                "WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        if recovered is None:
+            raise MemoryModelUnavailable(
+                "accepted Memory request disappeared before snapshot recovery"
+            )
+        return recovered
+
     def _prepare_request(
         self,
         *,
@@ -653,6 +891,7 @@ class GovernedMemoryModelExecutor:
         input_sha256: str,
         messages_json: str,
         isolated: bool,
+        max_tokens: int | None,
     ) -> sqlite3.Row:
         timestamp = _now_ms()
         with self._connect() as conn:
@@ -664,6 +903,69 @@ class GovernedMemoryModelExecutor:
                 (run_id, phase, input_sha256),
             ).fetchone()
         if row is not None:
+            request_id = str(row["request_id"] or "")
+            local_admission = self._accepted_requests.get(request_id)
+            if (
+                local_admission is not None
+                and str(row["state"]) in {"prepared", "running", "resumable"}
+                and not _request_has_admission_evidence(row)
+            ):
+                local_session_id, local_turn_id = local_admission
+                persisted_session_id = str(row["session_id"] or "")
+                if persisted_session_id and persisted_session_id != local_session_id:
+                    raise MemoryModelUnavailable(
+                        "accepted Memory request Session identity changed; "
+                        "the request was not replayed"
+                    )
+                self._mark_request_resumable(
+                    request_id=request_id,
+                    turn_id=local_turn_id,
+                    error="memory_admission_persistence_recovered",
+                    receipt={
+                        "admission": _memory_admission_payload(
+                            session_id=local_session_id,
+                            turn_id=local_turn_id,
+                            request_id=request_id,
+                        )
+                    },
+                )
+                with self._connect() as conn:
+                    row = conn.execute(
+                        "SELECT * FROM memory_curation_model_requests "
+                        "WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                if row is None:
+                    raise MemoryModelUnavailable(
+                        "accepted Memory request disappeared before recovery"
+                    )
+            if _request_has_ambiguous_admission(row):
+                row = self._recover_ambiguous_admission_from_snapshot(row)
+            if _request_has_ambiguous_admission(row):
+                self._mark_request_resumable(
+                    request_id=str(row["request_id"] or ""),
+                    error="memory_admission_ambiguous_not_replayed",
+                    receipt={
+                        "admission": {
+                            "schemaVersion": "rag-ime.memory-admission.v1",
+                            "status": "unknown",
+                            "sessionId": str(row["session_id"] or ""),
+                            "clientMessageId": str(row["request_id"] or ""),
+                        }
+                    },
+                )
+                raise MemoryModelUnavailable(
+                    "ambiguous Memory admission has no durable turn id; "
+                    "the request was not replayed"
+                )
+            if (
+                str(row["state"]) in {"running", "resumable"}
+                and _request_has_admission_evidence(row)
+            ):
+                return self._recover_resumable_request(
+                    row,
+                    max_tokens=max_tokens,
+                )
             if str(row["state"]) == "resumable":
                 previous_session_id = str(row["session_id"] or "")
                 self._retire_existing_internal_session(previous_session_id)
@@ -870,6 +1172,7 @@ class GovernedMemoryModelExecutor:
         self,
         *,
         request_id: str,
+        turn_id: str,
         output_text: str,
         receipt: Mapping[str, object],
     ) -> sqlite3.Row:
@@ -878,11 +1181,13 @@ class GovernedMemoryModelExecutor:
             conn.execute(
                 """
                 UPDATE memory_curation_model_requests
-                SET state = 'completed', output_text = ?, receipt_json = ?,
-                    last_error = '', updated_at_ms = ?, completed_at_ms = ?
+                SET state = 'completed', turn_id = ?, output_text = ?,
+                    receipt_json = ?, last_error = '', updated_at_ms = ?,
+                    completed_at_ms = ?
                 WHERE request_id = ?
                 """,
                 (
+                    turn_id,
                     output_text,
                     json.dumps(dict(receipt), ensure_ascii=False, separators=(",", ":")),
                     timestamp,
@@ -901,17 +1206,21 @@ class GovernedMemoryModelExecutor:
         request_id: str,
         error: str,
         receipt: Mapping[str, object] | None = None,
+        turn_id: str = "",
     ) -> None:
         timestamp = _now_ms()
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE memory_curation_model_requests
-                SET state = 'resumable', receipt_json = ?, last_error = ?,
-                    updated_at_ms = ?
+                SET state = 'resumable',
+                    turn_id = CASE WHEN ? != '' THEN ? ELSE turn_id END,
+                    receipt_json = ?, last_error = ?, updated_at_ms = ?
                 WHERE request_id = ? AND state != 'completed'
                 """,
                 (
+                    turn_id,
+                    turn_id,
                     json.dumps(dict(receipt or {}), ensure_ascii=False, separators=(",", ":")),
                     str(error)[:800],
                     timestamp,
@@ -1372,6 +1681,46 @@ def _request_public_payload(row: sqlite3.Row) -> dict[str, object]:
         "createdAtMs": int(row["created_at_ms"]),
         "updatedAtMs": int(row["updated_at_ms"]),
         "completedAtMs": int(row["completed_at_ms"] or 0),
+    }
+
+
+def _request_has_admission_evidence(row: sqlite3.Row) -> bool:
+    if str(row["turn_id"] or "").strip():
+        return True
+    admission = _json_object(row["receipt_json"]).get("admission")
+    return isinstance(admission, Mapping) and admission.get("accepted") is True
+
+
+def _request_has_explicit_pre_admission_rejection(row: sqlite3.Row) -> bool:
+    admission = _json_object(row["receipt_json"]).get("admission")
+    return (
+        isinstance(admission, Mapping)
+        and admission.get("schemaVersion") == "rag-ime.memory-admission.v1"
+        and admission.get("status") == "rejected"
+        and bool(str(admission.get("reasonCode") or "").strip())
+    )
+
+
+def _request_has_ambiguous_admission(row: sqlite3.Row) -> bool:
+    if str(row["turn_id"] or "").strip() or int(row["attempt_count"] or 0) <= 0:
+        return False
+    if _request_has_explicit_pre_admission_rejection(row):
+        return False
+    return str(row["state"] or "") in {"running", "resumable"}
+
+
+def _memory_admission_payload(
+    *,
+    session_id: str,
+    turn_id: str,
+    request_id: str,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.memory-admission.v1",
+        "accepted": True,
+        "sessionId": session_id,
+        "turnId": turn_id,
+        "clientMessageId": request_id,
     }
 
 

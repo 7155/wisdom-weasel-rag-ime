@@ -252,7 +252,12 @@ export function reduceRoomEvent(
     };
   }
 
-  const next = cloneState(state);
+  // Snapshot replay starts from a private projection and never publishes an
+  // intermediate state. Mutate that private accumulator in place so a
+  // message-first window at the 2,000-event server bound does not clone every
+  // already-replayed message and turn again for each event (quadratic work on
+  // Room open). Live SSE reduction keeps its immutable copy-on-write path.
+  const next = options.snapshotReplay ? state : cloneState(state);
   next.lastSequence = event.sequence;
   next.lastEventId = event.eventId;
   next.resumeToken = event.resumeToken;

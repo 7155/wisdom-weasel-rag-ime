@@ -68,6 +68,29 @@ class EvalLabEvidenceProjectionTests(unittest.TestCase):
         self.assertEqual(report_detail["turns"], [])
         self.assertEqual(report_detail["report"]["schemaVersion"], "paw.enterpriseops-csm-eval.v1")
 
+    def test_transcript_usage_receipt_wins_over_zero_report_placeholder(self) -> None:
+        report = json.loads(self.report.read_text(encoding="utf-8"))
+        report["usage"] = {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+        }
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+
+        run = EvalLabEvidenceProjection(self.root).read()["runs"][0]
+
+        self.assertEqual(run["environment"]["pricingUsage"], "已从 transcript 汇总 Provider usage")
+        self.assertEqual(run["environment"]["usageReceipt"], {
+            "source": "transcript",
+            "input": 10,
+            "output": 4,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 14,
+        })
+
     def test_missing_archive_is_a_truthful_empty_projection(self) -> None:
         projection = EvalLabEvidenceProjection(Path(self.tmp.name) / "missing")
         payload = projection.read()
@@ -155,6 +178,13 @@ class EvalLabEvidenceProjectionTests(unittest.TestCase):
                 "verifierTotal": 2,
                 "failedVerifierIndexes": [2],
                 "provisionalFirstOwner": "prompt_context",
+                "usage": {
+                    "input": 10,
+                    "output": 3,
+                    "cacheRead": 20,
+                    "cacheWrite": 0,
+                    "totalTokens": 33,
+                },
             }],
         }, ensure_ascii=False), encoding="utf-8")
         projection = EvalLabEvidenceProjection(self.root)
@@ -164,9 +194,122 @@ class EvalLabEvidenceProjectionTests(unittest.TestCase):
         self.assertEqual(run["tasks"][0]["title"], "Task 1")
         self.assertEqual(run["tasks"][0]["evidenceStatus"], "report_only")
         self.assertEqual(run["tasks"][0]["failureOwner"], "prompt_context")
+        self.assertFalse(run["tasks"][0]["toolReceiptComplete"])
+        self.assertEqual(run["tasks"][0]["inputTokens"], 10)
+        self.assertEqual(run["tasks"][0]["cacheReadTokens"], 20)
+        self.assertEqual(run["tasks"][0]["outputTokens"], 3)
+        self.assertEqual(run["environment"]["usageReceipt"], {
+            "source": "report_task_usage",
+            "input": 10,
+            "output": 3,
+            "cacheRead": 20,
+            "cacheWrite": 0,
+            "totalTokens": 33,
+            "categoryReceiptComplete": True,
+        })
         task_detail = projection.read({"runId": "report-with-tasks", "taskIndex": "1"})["detail"]
         self.assertEqual(task_detail["status"], "report_only")
         self.assertEqual(task_detail["task"]["failedVerifierIndexes"], [2])
+
+    def test_report_batch_derives_recovered_tool_failures_from_authoritative_counts(self) -> None:
+        report_run = self.root / "runs" / "cloudops-batches"
+        report_run.mkdir(parents=True)
+        (report_run / "report.json").write_text(json.dumps({
+            "schemaVersion": "paw.cloudops-agent-eval-run.v1",
+            "status": "completed",
+            "batches": [{
+                "batchId": "batch-2",
+                "answerCount": 4,
+                "terminalEvent": "turn_completed",
+                "toolCalls": 32,
+                "successfulToolCalls": 31,
+                "usage": {
+                    "input": 84,
+                    "output": 13,
+                    "cacheRead": 1261,
+                    "cacheWrite": 0,
+                },
+            }],
+        }), encoding="utf-8")
+
+        projection = EvalLabEvidenceProjection(self.root)
+        run = next(
+            item for item in projection.read()["runs"]
+            if item["runId"] == "cloudops-batches"
+        )
+
+        self.assertTrue(run["tasks"][0]["taskSucceeded"])
+        self.assertEqual(run["tasks"][0]["toolCalls"], 32)
+        self.assertEqual(run["tasks"][0]["toolFailures"], 1)
+        self.assertTrue(run["tasks"][0]["toolReceiptComplete"])
+
+    def test_rag_lane_list_projects_agentic_cases_without_hidden_answers(self) -> None:
+        report_run = self.root / "runs" / "rag-answer-run"
+        report_run.mkdir(parents=True)
+        (report_run / "report.json").write_text(json.dumps({
+            "schemaVersion": "rag-ime.rag-agent-ablation-run.v1",
+            "status": "completed",
+            "evaluation": {"split": "validation"},
+            "lanes": [
+                {
+                    "lane": "baseline",
+                    "terminalEvent": "turn_completed",
+                    "score": {"answerCases": [{
+                        "evaluationCaseId": "case-01",
+                        "agentSuccess": False,
+                        "answerSuccess": False,
+                        "citationSupport": False,
+                        "abstentionCorrect": True,
+                        "toolSuccess": True,
+                        "answer": "must not be projected",
+                    }]},
+                },
+                {
+                    "lane": "agentic",
+                    "terminalEvent": "turn_completed",
+                    "score": {"answerCases": [
+                        {
+                            "evaluationCaseId": "case-01",
+                            "agentSuccess": False,
+                            "answerSuccess": True,
+                            "citationSupport": False,
+                            "citationFactCoverage": 0.4,
+                            "abstentionCorrect": True,
+                            "toolSuccess": True,
+                            "answer": "private candidate answer",
+                            "citations": ["hidden-document-id"],
+                        },
+                        {
+                            "evaluationCaseId": "case-02",
+                            "agentSuccess": True,
+                            "answerSuccess": True,
+                            "citationSupport": True,
+                            "citationFactCoverage": 1.0,
+                            "abstentionCorrect": True,
+                            "toolSuccess": True,
+                        },
+                    ]},
+                },
+            ],
+        }, ensure_ascii=False), encoding="utf-8")
+
+        projection = EvalLabEvidenceProjection(self.root)
+        run = next(
+            item for item in projection.read()["runs"]
+            if item["runId"] == "rag-answer-run"
+        )
+
+        self.assertEqual([task["title"] for task in run["tasks"]], ["case-01", "case-02"])
+        self.assertFalse(run["tasks"][0]["taskSucceeded"])
+        self.assertEqual(run["tasks"][0]["verifierPassed"], 3)
+        self.assertEqual(run["tasks"][0]["verifierTotal"], 4)
+        self.assertEqual(run["tasks"][0]["failedVerifierNames"], ["citationSupport"])
+        self.assertEqual(run["tasks"][0]["citationFactCoverage"], 0.4)
+        self.assertTrue(run["tasks"][1]["taskSucceeded"])
+        rendered = json.dumps(run, ensure_ascii=False)
+        self.assertNotIn("private candidate answer", rendered)
+        self.assertNotIn("hidden-document-id", rendered)
+        self.assertNotIn("must not be projected", rendered)
 
     def test_report_projects_public_trace_receipt_ids(self) -> None:
         report_run = self.root / "runs" / "trace-receipts"

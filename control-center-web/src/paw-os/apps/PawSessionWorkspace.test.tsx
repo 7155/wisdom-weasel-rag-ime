@@ -1109,6 +1109,42 @@ describe('PAWOS Agent Session structural migration', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
+  it('submits to a known Session without waiting for a stalled catalog reconciliation', async () => {
+    const sessionId = 'session-known-direct-admission';
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.sessions.list': () => new Promise(() => undefined),
+      'agent.session.prompt': { ok: true },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '直接发送，不等目录');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((request) => request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+    expect(transport.requests.filter((request) => request.pathId === 'agent.sessions.list')).toHaveLength(0);
+    expect(transport.requests.find((request) => request.pathId === 'agent.session.prompt')?.body)
+      .toMatchObject({ message: '直接发送，不等目录' });
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
   it('unlocks the composer once admission settles, without waiting for the quiet snapshot', async () => {
     const sessionId = 'session-instant-unlock';
     let snapshotCalls = 0;
@@ -1663,6 +1699,57 @@ describe('PAWOS Agent Session structural migration', () => {
     expect(document.querySelector('.paw-session-workspace__error')).toBeNull();
     expect(screen.queryByRole('button', { name: '重新同步' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('请开始这轮实现');
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('rolls back a command fingerprint conflict instead of inventing a failed turn', async () => {
+    const sessionId = 'session-command-fingerprint-conflict';
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.prompt': (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        throw new ControlTransportHttpError(
+          'agent.session.prompt',
+          409,
+          'command fingerprint mismatch',
+          {
+            ok: false,
+            code: 'AGENT_COMMAND_CONFLICT',
+            commandReceipt: {
+              state: 'conflict',
+              clientMessageId: body.clientMessageId,
+              causeCode: 'COMMAND_FINGERPRINT_MISMATCH',
+              recoveryState: 'new_command_required',
+            },
+          },
+        );
+      },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{ ...liveSession(), id: sessionId }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '内容已变化，保留重发');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(composer).toHaveValue('内容已变化，保留重发'));
+    const projection = useAgentLiveStore.getState().projections[sessionId];
+    expect(Object.keys(projection?.optimisticByClientMessageId ?? {})).toHaveLength(0);
+    expect(projection?.turnOrder.some((turnId) => projection.turnsById[turnId]?.status === 'failed')).toBe(false);
+    expect(screen.getByText('这次发送内容已经变化，输入已保留；请直接重新发送一次。')).toBeVisible();
     useAgentLiveStore.getState().clear(sessionId);
   });
 

@@ -205,6 +205,9 @@ export interface TraceAuditRepairLifecycle {
   repairReceiptId: string;
   repairSessionId: string;
   repairTraceId: string;
+  verificationReceiptId: string;
+  replayCaseId: string;
+  decision: string;
   sandboxStatus: string;
   sandboxedTestCount: number;
   sourceScope: string;
@@ -1127,6 +1130,9 @@ function buildRepairLifecycle(report: TraceDiagnosticReportV1): TraceAuditRepair
     repairReceiptId: text(verification.repairReceiptId),
     repairSessionId: text(authorization.repairSessionId),
     repairTraceId: text(verification.repairTraceId),
+    verificationReceiptId: text(verification.verificationReceiptId),
+    replayCaseId: text(verification.replayCaseId),
+    decision: text(verification.decision),
     sandboxStatus: text(verification.sandboxStatus, '未运行'),
     sandboxedTestCount: integer(verification.sandboxedTestCount),
     sourceScope: text(authorization.sourceScope),

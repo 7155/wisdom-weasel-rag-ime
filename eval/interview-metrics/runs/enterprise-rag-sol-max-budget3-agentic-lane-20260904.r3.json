@@ -1,0 +1,177 @@
+{
+  "schemaVersion": "paw.enterprise-rag-lane-diagnostic-receipt.v1",
+  "runId": "enterprise-rag-sol-max-budget3-agentic-lane-20260904-r3",
+  "sourceRunId": "validation-answer-cost-sol-max-budget3-20260904-r3",
+  "status": "rejected",
+  "decision": "reject",
+  "lane": "agentic",
+  "startedAtMs": 1788485831746,
+  "completedAtMs": 1788487367243,
+  "elapsedMs": 236499.062,
+  "provider": {
+    "endpointFamily": "openai-codex",
+    "authentication": "ChatGPT OAuth",
+    "accountLabel": "user-designated Aed 20xpro",
+    "accountLabelMachineAttested": false,
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "credentialsRecorded": false,
+    "x1topConfigurationReadOrUsed": false
+  },
+  "runtime": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "piVersion": "0.84.2",
+    "protocolVersion": "2",
+    "runtimeVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad"
+  },
+  "dataset": {
+    "datasetId": "enterprise-rag-answer-evidence-validation-v1",
+    "split": "validation",
+    "caseCount": 4,
+    "answerableCaseCount": 2,
+    "abstentionCaseCount": 2,
+    "requiredFactCount": 9,
+    "documentCount": 5101,
+    "chunkCount": 29846,
+    "caseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+    "answerCaseManifestSha256": "f154bbc55dba2733e10e0ebac91da6af50493565e688b19e80327bc028f21c96"
+  },
+  "configuration": {
+    "profile": "skill plus tuned retrieval plus one-child agentic workflow",
+    "promptSha256": "37bc68f1f190a52c5284affa67126fb9dd7535004ee9097308ae45a4fb586cd0",
+    "retrievalConfigSha256": "11d259402bbf92d8961aeaa6fc77d846be7af9ef336af7bd380f21d9bf428c39",
+    "promptContractVersion": "rag-agent-evidence-state-budget-routing-v19",
+    "runtimeContractSha256": "8b6b84a3025bc712a58d30b68b4c7fd286d22b3a015e6978d72057d9d964a1d6",
+    "maxRetrievalRounds": 5,
+    "agenticSupplementalLimit": 3,
+    "childCount": 1,
+    "childThinking": "low"
+  },
+  "metrics": {
+    "agentCaseCount": 4,
+    "agentSuccessRate": 0.5,
+    "answerableCaseCount": 2,
+    "answerSuccessRate": 1.0,
+    "answerJudgeCorrectnessRate": 1.0,
+    "highLevelFactCoverage": 1.0,
+    "citationFactCoverage": 0.4444444444444444,
+    "infoNotFoundAbstentionRecall": 1.0,
+    "outputProtocolRate": 1.0,
+    "toolSuccessRate": 1.0,
+    "citationHardGatePassed": 0,
+    "searchCalls": 8,
+    "failedToolCalls": 0,
+    "formalAcceptancePassed": 0
+  },
+  "usage": {
+    "inputTokens": 67119,
+    "cacheReadTokens": 207104,
+    "cacheWriteTokens": 0,
+    "outputTokens": 8147,
+    "totalTokens": 286827,
+    "providerRequestCount": 12,
+    "categoryReceiptComplete": false,
+    "usageSource": "parent_and_subagent_provider_request_receipts"
+  },
+  "hardGates": {
+    "terminalCompletion": true,
+    "toolContract": true,
+    "answerJudge": true,
+    "abstention": true,
+    "citationResolution": false,
+    "cleanup": true
+  },
+  "tasks": [
+    {
+      "taskId": "case-01",
+      "taskSucceeded": false,
+      "terminalEvent": "turn_completed",
+      "failedToolCalls": 0,
+      "answerFactCoverage": 1.0,
+      "citationFactCoverage": 0.4,
+      "verifier": {
+        "passed": 3,
+        "total": 4,
+        "failedVerifierNames": [
+          "citationSupport"
+        ],
+        "verifierResults": [
+          {"verifierIndex": 1, "passed": true},
+          {"verifierIndex": 2, "passed": false},
+          {"verifierIndex": 3, "passed": true},
+          {"verifierIndex": 4, "passed": true}
+        ]
+      }
+    },
+    {
+      "taskId": "case-02",
+      "taskSucceeded": false,
+      "terminalEvent": "turn_completed",
+      "failedToolCalls": 0,
+      "answerFactCoverage": 1.0,
+      "citationFactCoverage": 0.5,
+      "verifier": {
+        "passed": 3,
+        "total": 4,
+        "failedVerifierNames": [
+          "citationSupport"
+        ],
+        "verifierResults": [
+          {"verifierIndex": 1, "passed": true},
+          {"verifierIndex": 2, "passed": false},
+          {"verifierIndex": 3, "passed": true},
+          {"verifierIndex": 4, "passed": true}
+        ]
+      }
+    },
+    {
+      "taskId": "case-03",
+      "taskSucceeded": true,
+      "terminalEvent": "turn_completed",
+      "failedToolCalls": 0,
+      "verifier": {
+        "passed": 3,
+        "total": 3,
+        "failedVerifierNames": [],
+        "verifierResults": [
+          {"verifierIndex": 1, "passed": true},
+          {"verifierIndex": 2, "passed": true},
+          {"verifierIndex": 3, "passed": true}
+        ]
+      }
+    },
+    {
+      "taskId": "case-04",
+      "taskSucceeded": true,
+      "terminalEvent": "turn_completed",
+      "failedToolCalls": 0,
+      "verifier": {
+        "passed": 3,
+        "total": 3,
+        "failedVerifierNames": [],
+        "verifierResults": [
+          {"verifierIndex": 1, "passed": true},
+          {"verifierIndex": 2, "passed": true},
+          {"verifierIndex": 3, "passed": true}
+        ]
+      }
+    }
+  ],
+  "evidence": {
+    "sourceReportFileSha256": "77ffabb56f73919299c1c70c566140e9eb9904cb0994d9b431a47b97271cda0a",
+    "sourceReportSha256": "566cf0d6d72b08842e1222ecf64cb19dc5163257d6729091361d05853d7e95a9",
+    "sourcePreparedSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "sourceAnswerCasesSha256": "b886a12ba4c28d19243fb1d53b3b881206d769bf36fcea512547ca8be55ce0ec",
+    "sourceRetrievalReportSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a"
+  },
+  "claimBoundary": [
+    "This source-local Validation candidate is rejected: two answerable cases fail the frozen exact-source citation-support gate even though the independent Judge marked the answers correct.",
+    "The frozen qrels/evidence manifest is unchanged. A candidate-blind Golden audit is separate work; this receipt does not relabel missing alternatives as model failure or retroactively pass the candidate.",
+    "Agentic usage categoryReceiptComplete is false because a child Provider receipt was not recoverable in this run. No cost comparison or savings claim is allowed.",
+    "The settled-transcript usage recovery was implemented after this run and has focused test coverage, but it has not been dynamically proven on another real child Session.",
+    "Answers, citations, qrels bodies, hidden Golden data, prompts, paths, and credentials are not copied into this public receipt.",
+    "This is source-local Validation evidence, not production, installed, Held-out, or multi-run stability evidence."
+  ]
+}

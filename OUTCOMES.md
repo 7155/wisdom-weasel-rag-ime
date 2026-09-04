@@ -1,6 +1,6 @@
 # Project Outcomes
 
-Updated: 2026-09-03
+Updated: 2026-09-04
 
 This file is the bounded project focus set, not a task database. Domain status
 is one of `proposed`, `active`, `blocked`, `completed`, or `cancelled`.
@@ -9,21 +9,19 @@ their authoritative projections.
 
 ## Evidence Boundary
 
-These entries distinguish source/test progress, installed development evidence,
-foreground acceptance, and distribution acceptance. Git cleanliness, installed
-commit identity, Runtime state, and release gates must be checked live;
-this document cannot make those mechanical facts true. Machine-readable
-release evidence remains in `release/product-status.json` and the release audit.
+Entries separate source/test, install, foreground, and distribution evidence.
+Git, installed identity, Runtime state, and release gates must be checked live;
+machine evidence remains in `release/product-status.json` and its audit.
 
 ## Current Focus
 
 | ID | User result | Status | Current evidence boundary | Next acceptance frontier |
 | --- | --- | --- | --- | --- |
-| O1 | Session can work reliably for a long time | active | Installed Luna canary passed activity, Steer, Stop, Tool-failure closure, refresh, and an 8/8 Tool round; the retained Trace Session recovered from a deliberate Gateway outage to one assistant receipt with idle/no-alert/no-stop state | Run a long soak plus compaction/recovery, then installed retry and permission acceptance |
+| O1 | Session can work reliably for a long time | active | Earlier installed canaries passed activity, Steer, Stop, Tool closure, and refresh; the 2026-09-04 isolated source PAWOS additionally proved exact client/turn identity, observer-safe replay, restart/idempotent recovery, and two exactly-once foreground turns across refresh | Install this candidate, then run a long soak plus compaction/recovery and permission acceptance |
 | O2 | Room completes a real collaboration by composing Pi Sessions | active | The 2026-09-03 installed build proved persisted conversation-first history, full-trust participants, simultaneous live updates, one terminal Root, refresh recovery, and selected-moderator Runtime prewarming; fresh probes measured Provider first text in 2.57–2.58 s while total Room first text varied 6.54–8.58 s | Run a multi-day reconnect/cancellation soak; if visible first text must stay below 7 s, separately bound pre-Provider routing and query-aware memory bootstrap |
 | O3 | A parent Session can use configurable private Tool Agents | active | Current source supports bounded child events/results, read/write choice, model/thinking override, and same-tree peer calls | Prove a useful live parent/child run, then raise capacity through bounded event/UI/resource budgets rather than more Kernel state |
 | O4 | PAW can develop itself through a bounded context and Skill harness | active | The installed managed Pi enforces revisioned four-scenario Skill allowlists; Settings/catalog checks proved mandatory Room/Trace/Lab isolation, and `resume-builder` is absent | Finish foreground 掌柜问数 acceptance and Package uninstall/restore |
-| O5 | Control Center truthfully renders Session and Room state | active | Installed PAWOS showed immediate Room text, real participant timelines and terminal Root state; a retained Trace Session rejects user protocol templates as receipts and recovers equal-cursor quiescent state after reconnect | Run an Agent Lab Room end to end, then run the long-window state/restoration soak |
+| O5 | Control Center truthfully renders Session and Room state | active | Installed PAWOS previously showed immediate Room text and terminal Root state; the 2026-09-04 source foreground showed first and known-Session prompts exactly once, no ghost failure, and stable refresh recovery | Install the candidate, run Agent Lab Room end to end, then run the long-window state/restoration soak |
 | O6 | Memory and Knowledge provide governed, explainable context | active | Local stores, curation, retrieval, evaluation, and management surfaces exist; recent commits refined daily activity and Project Field evidence | Keep Memory/Knowledge authority separate, verify retrieval quality on frozen evaluations, and finish product-facing acceptance without widening Session bootstrap |
 | O7 | The macOS input experience is correct in real foreground apps | active | Source, sidecar, patched Squirrel, and automated checks exist; the older status snapshot records partial foreground evidence | Fresh foreground matrix for composition, deletion, app switch, follow-up, RAG/memory selection, Accessibility, and voice |
 | O8 | A public macOS release is reproducible and distributable | blocked | Public source and engineering build paths exist | Clean scoped source, current release manifest, candidate-quality sign-off, Developer ID signing, notarization, stapling, clean-machine installation, and accepted foreground evidence |
@@ -46,12 +44,9 @@ Acceptance requires all of the following on one current Runtime/build:
 - Public Tool results stay within one round-level budget rather than multiplying
   a per-Tool limit.
 
-The 2026-08-16 installed development Runtime passed this sequence: first public
-activity in 6.4 seconds; correct Steer ordering; the browser
-projected `stopping` in 35 ms; Runtime Stop terminated in 384 ms; the failed
-Tool closed; refresh had no active ghost; and eight bounded Tool calls produced
-eight terminal events with public payloads capped at 660 bytes. This is
-current-build acceptance, not yet a multi-day soak or public-release claim.
+The 2026-08-16 installed receipt covered activity, Steer, Stop, Tool closure,
+refresh, and bounded public Tool payloads. It is not a multi-day soak or public
+release claim.
 
 ## O2 — Lightweight Room
 
@@ -60,18 +55,11 @@ Sessions. Partners may use private Tool Agents. Pi owns each Session; Room owns
 collaboration identity, explicit dispatch, ordered public events, cancellation
 fan-out, and one terminal Root.
 
-The 2026-09-03 installed build rehydrated a useful project Room with one
-accepted WorkItem, one Earth Root, and terminal participant results. A fresh
-main/Earth/Mars turn showed its optimistic message immediately, both route
-cards within 0.71 seconds, both results in every window, and the same terminal
-state after reload. The selected moderator is now prewarmed before send and
-mentioned participants are prewarmed while drafting. Two installed cold probes
-measured Provider `busy` to first durable text at 2.579 and 2.566 seconds; full
-Room send-to-first-text was 6.537 and 8.583 seconds because routing and
-query-aware memory bootstrap happen first. Layered `full_trust` reached Runtime
-without widening macOS/TCC or Provider boundaries. Next: bound the pre-Provider
-path if a strict seven-second visible-response target is required, then run a
-multi-day reconnect/cancellation soak.
+The 2026-09-03 installed Room receipt covered immediate optimistic text,
+multi-window results, one Root, reload recovery, prewarming, and layered
+`full_trust`. Provider first text was 2.57–2.58 seconds while end-to-end Room
+first text was 6.54–8.58 seconds, leaving pre-Provider routing and memory work
+as the measured frontier before a reconnect/cancellation soak.
 
 ## O3 — Tool Agent Capacity
 
@@ -93,12 +81,9 @@ Agents own the meaning they produce. A live self-hosting canary should verify
 that a new Session reads only the current Outcome and selected refs, chooses no
 unnecessary Skill, performs a real change, and returns a bounded `AgentResult`.
 
-The ability market is a Pi Package surface. It accepts npm, Git, local, and
-catalog sources; prepares and inspects them without model approval; asks for
-product confirmation only before state mutation; and records installed
-versions for update and rollback. Pi loads Package resources into new
-Sessions. The `plugin-creator` Skill searches and reuses first, creates a
-minimal Package only when the capability is absent, and stops at product confirmation.
+The Pi Package ability market accepts npm, Git, local, and catalog sources,
+previews before mutation, and records versions for update and rollback.
+`plugin-creator` reuses first and stops at product confirmation.
 
 The 2026-09-03 development installation exposes revisioned ordinary, Room,
 Trace and Agent Lab Skill routes in Settings and enforces the selected

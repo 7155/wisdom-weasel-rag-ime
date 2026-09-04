@@ -52,6 +52,7 @@ _EVIDENCE_FAILURE_RE = re.compile(
 _SCHEMA_ERROR_RE = re.compile(r"schema|validation|invalid arguments?|参数校验|验证失败", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"token", re.IGNORECASE)
 _TRACE_FINGERPRINT_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+_REPORT_CURSOR_RE = re.compile(r"^([0-9]+)\.([a-f0-9]{32})$")
 _PATH_RE = re.compile(r"(?:/Users|/home|/Volumes)/[^\s'\"]+")
 _SECRET_RE = re.compile(r"(?i)(authorization|api[_-]?key|token|secret)\s*[:=]\s*[^\s,;]+")
 _RESULT_START = "--- TRACE_DIAGNOSTIC_RESULT_V1 ---"
@@ -572,6 +573,7 @@ class TraceDiagnosticReportStore:
         receipt: Mapping[str, object],
         eval_run: Mapping[str, object],
         comparison: Mapping[str, object],
+        verification_receipt: Mapping[str, object] | None = None,
         now_ms: int | None = None,
     ) -> dict[str, object]:
         """Append receipt/Eval linkage; comparison still controls effect claims."""
@@ -582,6 +584,40 @@ class TraceDiagnosticReportStore:
         repair_trace = _required_id(receipt.get("repairTraceId"), "repairTraceId", 160)
         repair_session = _required_id(receipt.get("repairSessionId"), "repairSessionId", 160)
         eval_run_id = _required_id(eval_run.get("evalRunId"), "evalRunId", 160)
+        replay_verification = dict(verification_receipt or {})
+        verification_receipt_id = ""
+        replay_case_id = ""
+        decision = ""
+        verification_created_at_ms = 0
+        if replay_verification:
+            verification_receipt_id = _required_id(
+                replay_verification.get("verificationReceiptId"),
+                "verificationReceiptId",
+                160,
+            )
+            replay_case_id = _required_id(
+                replay_verification.get("replayCaseId"),
+                "replayCaseId",
+                160,
+            )
+            decision = str(replay_verification.get("decision") or "")
+            if decision not in {"kept", "rejected"}:
+                raise ValueError("Trace verification decision is invalid")
+            if (
+                replay_verification.get("repairReceiptId") != receipt_id
+                or replay_verification.get("sourceTraceId")
+                != receipt.get("sourceTraceId")
+                or replay_verification.get("repairTraceId") != repair_trace
+            ):
+                raise ValueError(
+                    "Trace verification receipt does not match the repair receipt"
+                )
+            verification_created_at_ms = _bounded_integer(
+                replay_verification.get("createdAtMs"),
+                minimum=0,
+                maximum=9_007_199_254_740_991,
+                name="verification createdAtMs",
+            )
         if receipt.get("testStatus") != "passed":
             raise ValueError("repair verification requires passed test evidence")
         sandbox_status = str(receipt.get("sandboxStatus") or "")
@@ -606,10 +642,27 @@ class TraceDiagnosticReportStore:
             if not authorization or authorization.get("state") != "authorized":
                 raise ValueError("repair verification requires an authorized repair handoff")
             existing_verification = _mapping(lifecycle.get("verification"))
-            if existing_verification.get("state") == "verified":
-                if existing_verification.get("repairReceiptId") == receipt_id:
+            if existing_verification.get("repairReceiptId"):
+                if not (
+                    existing_verification.get("repairReceiptId") == receipt_id
+                    and existing_verification.get("evalRunId") == eval_run_id
+                ):
+                    raise ValueError(
+                        "diagnostic report already has a different repair verification"
+                    )
+                existing_receipt_id = str(
+                    existing_verification.get("verificationReceiptId") or ""
+                )
+                if not verification_receipt_id or (
+                    existing_receipt_id == verification_receipt_id
+                ):
                     return current
-                raise ValueError("diagnostic report already has a different repair verification")
+                if existing_receipt_id:
+                    raise ValueError(
+                        "diagnostic report already has a different Trace verification"
+                    )
+                if revision != int(expected_revision):
+                    raise ValueError("report revision conflict")
             if revision != int(expected_revision):
                 raise ValueError("report revision conflict")
             for receipt_key, authorization_key in (
@@ -620,15 +673,33 @@ class TraceDiagnosticReportStore:
             ):
                 if receipt.get(receipt_key) != authorization.get(authorization_key):
                     raise ValueError("repair receipt does not match the report authorization")
+            comparison_status = str(normalized_comparison.get("status") or "")
+            verification_state = (
+                "verified"
+                if verification_receipt_id
+                else "failed" if comparison_status == "failed" else "pending"
+            )
             verification = {
-                "state": "verified",
+                # A repair receipt, passing focused tests, and a one-sided
+                # Judge run prove that the candidate was executed; they do not
+                # prove that it improved the frozen source case. Keep this
+                # lifecycle unresolved until the separate ReplayCase contract
+                # produces a comparable kept/rejected VerificationReceipt.
+                "state": verification_state,
                 "repairReceiptId": receipt_id,
                 "repairTraceId": repair_trace,
                 "evalRunId": eval_run_id,
+                "verificationReceiptId": verification_receipt_id,
+                "replayCaseId": replay_case_id,
+                "decision": decision,
                 "testStatus": "passed",
                 "sandboxStatus": sandbox_status,
                 "sandboxedTestCount": sandboxed_test_count,
-                "verifiedAtMs": timestamp,
+                "verifiedAtMs": (
+                    verification_created_at_ms
+                    if verification_receipt_id
+                    else timestamp if verification_state == "failed" else 0
+                ),
                 "comparison": normalized_comparison,
             }
             next_payload = {
@@ -755,20 +826,58 @@ class TraceDiagnosticReportStore:
             ).fetchone()
             return row is not None
 
-    def list(self, *, limit: int = 100) -> dict[str, object]:
+    def list(
+        self,
+        *,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
         safe_limit = _bounded_integer(limit, minimum=1, maximum=100, name="limit")
+        cursor_value = str(cursor or "").strip()
+        cursor_position: tuple[int, str] | None = None
+        if cursor_value:
+            match = _REPORT_CURSOR_RE.fullmatch(cursor_value)
+            if match is None:
+                raise ValueError("Trace diagnostic report cursor is invalid")
+            cursor_position = (
+                int(match.group(1)),
+                f"trace-report:{match.group(2)}",
+            )
         self.initialize()
         with sqlite_connection(self.db_path, row_factory=sqlite3.Row, foreign_keys=True) as conn:
             total = int(conn.execute("SELECT COUNT(*) FROM trace_diagnostic_reports").fetchone()[0])
-            rows = conn.execute(
-                "SELECT report_id FROM trace_diagnostic_reports ORDER BY updated_at_ms DESC,report_id DESC LIMIT ?",
-                (safe_limit,),
-            ).fetchall()
-            items = [_report_summary(_load_report(conn, str(row["report_id"]))) for row in rows]
+            if cursor_position is None:
+                rows = conn.execute(
+                    "SELECT report_id,updated_at_ms FROM trace_diagnostic_reports "
+                    "ORDER BY updated_at_ms DESC,report_id DESC LIMIT ?",
+                    (safe_limit + 1,),
+                ).fetchall()
+            else:
+                updated_at_ms, report_id = cursor_position
+                rows = conn.execute(
+                    "SELECT report_id,updated_at_ms FROM trace_diagnostic_reports "
+                    "WHERE updated_at_ms < ? OR (updated_at_ms = ? AND report_id < ?) "
+                    "ORDER BY updated_at_ms DESC,report_id DESC LIMIT ?",
+                    (updated_at_ms, updated_at_ms, report_id, safe_limit + 1),
+                ).fetchall()
+            has_more = len(rows) > safe_limit
+            page_rows = rows[:safe_limit]
+            items = [
+                _report_summary(_load_report(conn, str(row["report_id"])))
+                for row in page_rows
+            ]
+            next_cursor = None
+            if has_more and page_rows:
+                tail = page_rows[-1]
+                next_cursor = (
+                    f"{int(tail['updated_at_ms'])}."
+                    f"{str(tail['report_id']).removeprefix('trace-report:')}"
+                )
         result = {
             "schemaVersion": "rag-ime.trace-diagnostic-report-list.v1",
             "total": total,
-            "truncated": total > len(items),
+            "truncated": has_more,
+            "nextCursor": next_cursor,
             "items": items,
         }
         validate_contract(result, "trace-diagnostic-report-list.v1.json")

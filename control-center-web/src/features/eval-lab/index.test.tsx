@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
-import { previewEvalLabRuns } from '@/app/preview-eval-lab-data';
+import { previewEvalLabEvidence, previewEvalLabRuns } from '@/app/preview-eval-lab-data';
 import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 import { MockControlTransport } from '@/test/mock-transport';
 import { EvalLabFeature } from './index';
@@ -28,7 +28,7 @@ const response = {
     schemaVersion: 'rag-ime.agent-lab-path-search.v1',
     searchId: 'enterpriseops-optimal-path-v1',
     title: 'EnterpriseOps CSM · Validation 最优路径搜索',
-    objectiveSummary: '完成全部任务，同时平衡延迟和成本。',
+    objectiveSummary: '完成全部任务，再比较成本；延迟只用于诊断。',
     metricSummary: 'taskSuccessRate ↑ 0.55、latencyMs ↓ 0.15、apiCostUsd ↓ 0.1',
     frozenControlCount: 5,
     selectedNodeId: 'state-contract',
@@ -378,7 +378,7 @@ describe('Agent Lab', () => {
     expect(screen.getByText('模型、提示词、技能、工具、检索、记忆或协作流程')).toBeInTheDocument();
     expect(screen.getByText('3 · 按同一标准重跑')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { level: 2, name: '每一轮都回答：为什么改、改了什么、结果如何' })).toBeInTheDocument();
-    expect(screen.getByText('下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较时间与成本。')).toBeInTheDocument();
+    expect(screen.getByText('下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较成本；耗时只用于诊断，不阻止保留正确方案。')).toBeInTheDocument();
     const overview = screen.getByLabelText('Agent Lab 实验结果');
     expect(overview.querySelector('table')).toBeNull();
     expect(overview.querySelectorAll('.eval-lab__matrix-card')).toHaveLength(1);
@@ -392,12 +392,24 @@ describe('Agent Lab', () => {
     expect(screen.getByRole('heading', { level: 3, name: '从任务一路核对到新结果' })).toBeInTheDocument();
     expect(screen.getByText('所有内容都在 Agent Lab 内查看；本机文件夹只作为高级用户的次级入口。')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '任务定义' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('冻结条件')).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('tab', { name: '数据集 Cases' }));
     expect(screen.getByLabelText('数据集 Case 浏览器')).toBeInTheDocument();
     expect(screen.getByText('suite-v2')).toBeInTheDocument();
+    expect(screen.getByText('评测权威')).toBeInTheDocument();
+    expect(screen.getByText('泄漏边界')).toBeInTheDocument();
+    expect(screen.getByText('负例 / 拒答')).toBeInTheDocument();
     expect(screen.getByText('Case 正文未公开')).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('tab', { name: '优化记录' }));
     expect(screen.getByText('实际改动')).toBeInTheDocument();
+    const changeDiff = screen.getByLabelText('改动 diff');
+    expect(changeDiff).toHaveTextContent('修改前');
+    expect(changeDiff).toHaveTextContent('修改后');
+    expect(changeDiff).toHaveTextContent('直接执行');
+    expect(changeDiff).toHaveTextContent('状态合同');
+    expect(screen.getByText('受影响 Case')).toBeInTheDocument();
+    expect(screen.getByText('Run 与证据链')).toBeInTheDocument();
+    expect(screen.getByText('enterpriseops-suite-v2-final-validation-20260901')).toBeInTheDocument();
     expect(screen.getByText('Keep')).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('tab', { name: '新结果' }));
     expect(screen.getByText('发布 / 可靠性门禁')).toBeInTheDocument();
@@ -411,7 +423,7 @@ describe('Agent Lab', () => {
     expect(screen.getByText('查看过程复盘')).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('tab', { name: '方案路径' }));
     expect(screen.getByRole('heading', { level: 2, name: '方案是怎样一步步筛出来的' })).toBeInTheDocument();
-    expect(screen.getByText('完成全部任务，同时平衡延迟和成本。')).toBeInTheDocument();
+    expect(screen.getByText('完成全部任务，再比较成本；延迟只用于诊断。')).toBeInTheDocument();
     expect(screen.getByText('baseline → state-contract')).toBeInTheDocument();
     expect(screen.getByText('质量持平、效率较低。')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: '任务完成' })).toBeInTheDocument();
@@ -458,8 +470,54 @@ describe('Agent Lab', () => {
     });
   });
 
+  it('keeps superseded failures out of the current matrix and exposes them as read-only history', async () => {
+    const historicalExperiment = {
+      ...response.experiments[0],
+      experimentId: 'enterpriseops-csm-v1-failed',
+      title: 'EnterpriseOps CSM failed baseline',
+      status: 'rejected',
+      claimStatus: 'diagnostic',
+      projectionState: 'history',
+      supersededBy: response.experiments[0].experimentId,
+      importedAtMs: 2,
+    } as const;
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': {
+        ...response,
+        experimentTotal: 2,
+        experiments: [historicalExperiment, response.experiments[0]],
+      },
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    const overview = await screen.findByLabelText('Agent Lab 实验结果');
+    expect(overview.querySelectorAll('.eval-lab__matrix-card')).toHaveLength(1);
+    expect(screen.getByText('1 个项目 · 1 个当前实验 · 1 条历史记录')).toBeInTheDocument();
+    expect(screen.getByText('历史失败不参与当前结论')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /查看历史实验/ })).not.toBeVisible();
+
+    await userEvent.setup().click(screen.getByText('查看 1 条历史记录'));
+    const historyButton = screen.getByRole('button', { name: /查看历史实验/ });
+    expect(historyButton).toBeVisible();
+    await userEvent.setup().click(historyButton);
+    expect(await screen.findByRole('heading', { level: 2, name: 'EnterpriseOps CSM failed baseline' })).toBeInTheDocument();
+    expect(screen.getByText('历史记录 · 不参与当前结论')).toBeInTheDocument();
+  });
+
   it('groups the public ledger into four business projects without synthesizing reviewer approval', async () => {
-    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.runs': previewEvalLabRuns() } });
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': previewEvalLabRuns(),
+      'agent.eval-lab.evidence': previewEvalLabEvidence(),
+    } });
     const user = userEvent.setup();
 
     render(
@@ -472,11 +530,15 @@ describe('Agent Lab', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('4 个项目 · 21 轮实验')).toBeInTheDocument();
+    expect(await screen.findByText('4 个项目 · 12 个当前实验 · 9 条历史记录')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: '企业客户支持' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: '企业知识库问答' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: '云上事故诊断' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: '长期记忆整理' })).toBeInTheDocument();
+    expect(screen.getAllByText('项目验收：未完成')).toHaveLength(4);
+    expect(screen.getAllByText('同一冻结候选尚未同时证明任务成功、质量不退化与成本下降。')).toHaveLength(4);
+    expect(await screen.findAllByText('示例投影 · 不代表真实验收')).toHaveLength(3);
+    expect(screen.getByText('受控 Fixture 回执；另有未验证记录 · 不代表生产结果')).toBeInTheDocument();
     expect(screen.getAllByText('独立检查回执')).toHaveLength(4);
     expect(screen.getAllByText('打开实验详情查看真实 Room 回执；没有回执时不会合成通过结论。')).toHaveLength(4);
     expect(screen.queryByText('独立检查确认关键结果和证据一致。')).not.toBeInTheDocument();
@@ -485,17 +547,303 @@ describe('Agent Lab', () => {
     expect(screen.getByText('工具调用 87 → 66 · 延迟 18m 33s → 15m 30s · API 估算 $3.2434 → $0.7252（降低 77.6%）')).toBeInTheDocument();
     expect(screen.getAllByText('整理通过 5/5 · 长期信息召回 4/4 · 不该记的内容成功拦截 1/1').length).toBeGreaterThan(0);
     expect(screen.getByText('模型调用 1m 25s · 模型用量未记录 · 无法计算 API 成本')).toBeInTheDocument();
-    expect(screen.getByText('Luna Max baseline Validation（第三批超时）')).toBeInTheDocument();
-    expect(screen.getByText(/正式故障诊断评分没有运行/)).toBeInTheDocument();
-    expect(screen.getByText(/运行记录中的工具调用 278.*不是可比较的业务工具调用.*失败 14.*第三批超时.*取消也超时/)).toBeInTheDocument();
-    expect(screen.getByText(/失败运行 API 估算 \$0\.6279.*无质量分，不算节省/)).toBeInTheDocument();
-    expect(screen.getByText('运行时选择 未通过 → 通过 · Prompt 未进入 → 已进入 · 业务质量分未产生')).toBeInTheDocument();
-    expect(screen.getByText(/旧阻断已修复，但随后出现 8 次模型服务连接失败/)).toBeInTheDocument();
+    const currentMatrix = screen.getByLabelText('Agent Lab 实验结果');
+    expect(currentMatrix.querySelectorAll('.eval-lab__matrix-card')).toHaveLength(12);
+    expect(currentMatrix).not.toHaveTextContent('正式故障诊断评分没有运行');
+    const memoryProject = screen.getByRole('heading', { level: 3, name: '长期记忆整理' }).closest('.eval-lab__project-matrix');
+    expect(memoryProject).not.toBeNull();
+    await user.click(within(memoryProject as HTMLElement).getAllByRole('button', { name: '查看完整报告' })[0]);
+    expect(await screen.findByRole('heading', { level: 2, name: 'Luna v4 to v5 shadow gate' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: '实验结果' }));
+    await user.click(screen.getByText('查看 9 条历史记录'));
+    expect(screen.getAllByRole('button', { name: /查看历史实验/ })).toHaveLength(9);
+    expect(screen.getByRole('button', { name: /Luna Max baseline Validation（第三批超时）/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Runtime 选择顺序修复（retry3）/ })).toBeVisible();
     const overviewTab = screen.getByRole('tab', { name: '实验结果' });
     overviewTab.focus();
     await user.keyboard('{ArrowRight}');
     expect(screen.getByRole('tab', { name: '方案路径' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('heading', { level: 2, name: '方案是怎样一步步筛出来的' })).toBeInTheDocument();
+  });
+
+  it('qualifies OAuth cost only when the same model receipt has token-category dominance', async () => {
+    const oauthResponse = structuredClone(response) as any;
+    const experiment = oauthResponse.experiments[0];
+    experiment.effectStatus = 'improved';
+    experiment.baseline.metrics = {
+      taskSuccessRate: 0.5,
+      verifierPassRate: 0.75,
+      usageReceiptAvailable: 1,
+      sameProviderModelThinking: 1,
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      outputTokens: 50,
+    };
+    experiment.candidate.metrics = {
+      taskSuccessRate: 1,
+      verifierPassRate: 1,
+      failedToolCalls: 0,
+      usageReceiptAvailable: 1,
+      sameProviderModelThinking: 1,
+      uncachedInputTokens: 90,
+      cachedInputTokens: 200,
+      outputTokens: 40,
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': oauthResponse,
+      'agent.eval-lab.evidence': previewEvalLabEvidence(),
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('项目验收：已达标')).toBeInTheDocument();
+    expect(screen.getByText('同模型 OAuth 用量回执：未缓存输入 100 → 90 · 缓存输入 200 → 200 · 输出 50 → 40')).toBeInTheDocument();
+  });
+
+  it('qualifies a 100% to 100% candidate when quality is stable, token categories fall, and per-case receipts match', async () => {
+    const stableResponse = structuredClone(response) as any;
+    const experiment = stableResponse.experiments[0];
+    experiment.effectStatus = 'neutral';
+    experiment.baseline = {
+      ...experiment.baseline,
+      runId: 'stable-cost-baseline',
+      evidenceRefs: [],
+      metrics: {
+        taskSuccessRate: 1,
+        verifierPassRate: 1,
+        failedToolCalls: 0,
+        usageReceiptAvailable: 1,
+        sameProviderModelThinking: 1,
+        uncachedInputTokens: 100,
+        cachedInputTokens: 200,
+        outputTokens: 50,
+      },
+    };
+    experiment.candidate = {
+      ...experiment.candidate,
+      runId: 'stable-cost-candidate',
+      evidenceRefs: [],
+      metrics: {
+        taskSuccessRate: 1,
+        verifierPassRate: 1,
+        failedToolCalls: 0,
+        usageReceiptAvailable: 1,
+        sameProviderModelThinking: 1,
+        uncachedInputTokens: 90,
+        cachedInputTokens: 180,
+        outputTokens: 40,
+      },
+    };
+    const catalog = structuredClone(previewEvalLabEvidence()) as any;
+    const task = catalog.runs[0].tasks[0];
+    catalog.runs = [
+      {
+        ...catalog.runs[0], runId: 'stable-cost-baseline', updatedAtMs: 10,
+        tasks: [{
+          ...task, taskIndex: 1, taskLabel: 'case-csm-01', taskSucceeded: true,
+          terminalEvent: 'turn_completed', verifierPassed: 11, verifierTotal: 11,
+          toolFailures: 0, inputTokens: 100, cacheReadTokens: 200, outputTokens: 50,
+        }],
+      },
+      {
+        ...catalog.runs[0], runId: 'stable-cost-candidate', updatedAtMs: 11,
+        tasks: [{
+          ...task, taskIndex: 1, taskLabel: 'case-csm-01', taskSucceeded: true,
+          terminalEvent: 'turn_completed', verifierPassed: 11, verifierTotal: 11,
+          toolFailures: 0, inputTokens: 90, cacheReadTokens: 180, outputTokens: 40,
+        }],
+      },
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': stableResponse,
+      'agent.eval-lab.evidence': catalog,
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('项目验收：已达标')).toBeInTheDocument();
+    expect(screen.getByText(/最终任务成功且质量不退化/)).toBeInTheDocument();
+    expect(screen.getByText('同一冻结候选已证明任务成功、质量不退化且成本下降。')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看完整报告' }));
+    await userEvent.setup().click(screen.getByRole('tab', { name: '优化记录' }));
+    expect(screen.getByText('case-csm-01')).toBeInTheDocument();
+    expect(screen.getByText('成功 → 成功')).toBeInTheDocument();
+    expect(screen.getByText(/验收 11\/11.*→.*验收 11\/11/)).toBeInTheDocument();
+    expect(screen.getByText('未缓存输入 100 → 90 · 缓存输入 200 → 180 · 输出 50 → 40')).toBeInTheDocument();
+  });
+
+  it('uses final CloudOps task success when a recovered Tool error is not an explicit hard gate', async () => {
+    const recoveredResponse = structuredClone(response) as any;
+    const experiment = recoveredResponse.experiments[0];
+    experiment.evaluationKind = 'workflow';
+    experiment.effectStatus = 'improved';
+    experiment.scoring = {
+      ...experiment.scoring,
+      primaryMetric: 'AnswerCoverage + CA',
+      hardGates: ['12/12 canonical answers', 'CA 1.0', 'frozen scorer'],
+    };
+    experiment.baseline.metrics = {
+      answerCoverage: 1,
+      ca: 1,
+      formalScoreProduced: 1,
+      failedToolCalls: 0,
+      usageReceiptAvailable: 1,
+      sameProviderModelThinking: 1,
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      outputTokens: 50,
+    };
+    experiment.candidate.metrics = {
+      answerCoverage: 1,
+      ca: 1,
+      formalScoreProduced: 1,
+      failedToolCalls: 1,
+      usageReceiptAvailable: 1,
+      sameProviderModelThinking: 1,
+      uncachedInputTokens: 90,
+      cachedInputTokens: 180,
+      outputTokens: 40,
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': recoveredResponse,
+      'agent.eval-lab.evidence': previewEvalLabEvidence(),
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('项目验收：已达标')).toBeInTheDocument();
+  });
+
+  it('still rejects a recovered Tool error when zero failures are an explicit product hard gate', async () => {
+    const hardGateResponse = structuredClone(response) as any;
+    const experiment = hardGateResponse.experiments[0];
+    experiment.evaluationKind = 'workflow';
+    experiment.effectStatus = 'improved';
+    experiment.scoring = {
+      ...experiment.scoring,
+      primaryMetric: 'AnswerCoverage + CA',
+      hardGates: ['12/12 canonical answers', 'zero Tool failures'],
+    };
+    experiment.baseline.metrics = {
+      answerCoverage: 1,
+      ca: 1,
+      formalScoreProduced: 1,
+      failedToolCalls: 0,
+      usageReceiptAvailable: 1,
+      sameProviderModelThinking: 1,
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      outputTokens: 50,
+    };
+    experiment.candidate.metrics = {
+      answerCoverage: 1,
+      ca: 1,
+      formalScoreProduced: 1,
+      failedToolCalls: 1,
+      usageReceiptAvailable: 1,
+      sameProviderModelThinking: 1,
+      uncachedInputTokens: 90,
+      cachedInputTokens: 180,
+      outputTokens: 40,
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': hardGateResponse,
+      'agent.eval-lab.evidence': previewEvalLabEvidence(),
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
+  });
+
+  it('uses exact real evidence receipts and keeps a token-regressed candidate incomplete', async () => {
+    const receiptResponse = structuredClone(response) as any;
+    const experiment = receiptResponse.experiments[0];
+    experiment.effectStatus = 'improved';
+    experiment.baseline = {
+      ...experiment.baseline,
+      runId: 'cost-baseline',
+      evidenceRefs: [],
+      metrics: { taskSuccessRate: 0.5, verifierPassRate: 0.75 },
+    };
+    experiment.candidate = {
+      ...experiment.candidate,
+      runId: 'cost-candidate',
+      evidenceRefs: [],
+      metrics: { taskSuccessRate: 1, verifierPassRate: 1, failedToolCalls: 0 },
+    };
+    const catalog = structuredClone(previewEvalLabEvidence()) as any;
+    catalog.runs = [
+      {
+        ...catalog.runs[0],
+        runId: 'cost-baseline',
+        sourceId: 'paw-local-test',
+        sourceLabel: '真实测试运行',
+        environment: {
+          provider: 'openai-codex', model: 'gpt-5.6-sol', thinking: 'max',
+          usageReceipt: { source: 'transcript', input: 100, cacheRead: 200, output: 50 },
+        },
+      },
+      {
+        ...catalog.runs[0],
+        runId: 'cost-candidate',
+        sourceId: 'paw-local-test',
+        sourceLabel: '真实测试运行',
+        environment: {
+          provider: 'openai-codex', model: 'gpt-5.6-sol', thinking: 'max',
+          usageReceipt: { source: 'transcript', input: 110, cacheRead: 200, output: 40 },
+        },
+      },
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': receiptResponse,
+      'agent.eval-lab.evidence': catalog,
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
+    expect(screen.getByText('同模型 OAuth 用量回执：未缓存输入 100 → 110 · 缓存输入 200 → 200 · 输出 50 → 40；三类未共同不增，不能证明成本下降')).toBeInTheDocument();
   });
 
   it('marks an older path receipt as historical when a newer project path exists', async () => {
@@ -592,6 +940,8 @@ describe('Agent Lab', () => {
 
     expect(html).toContain(traceId);
     expect(html).toContain('私有 Trace 正文不写入导出文件');
+    expect(html).toContain('记录范围');
+    expect(html).toContain('当前结果');
 
     anchorClick.mockRestore();
     createObjectURL.mockRestore();
@@ -623,6 +973,8 @@ describe('Agent Lab', () => {
     expect(screen.getAllByText('答案 Judge 正确率').length).toBeGreaterThan(0);
     expect(screen.getAllByText('高层事实覆盖').length).toBeGreaterThan(0);
     expect(screen.getAllByText('可回答引用支持').length).toBeGreaterThan(0);
+    expect(screen.getByText(/当前 run enterpriseops-suite-v2-final-validation-20260901 已拒绝/)).toBeInTheDocument();
+    expect(screen.queryByText('当前只证明检索显著改善；最终回答的引用门禁仍未通过，因此候选被拒绝。')).not.toBeInTheDocument();
   });
 
   it('creates a read-only App-owned Room and embeds it in the Agent Lab Session page', async () => {

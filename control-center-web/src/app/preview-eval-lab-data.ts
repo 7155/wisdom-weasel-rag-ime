@@ -1143,6 +1143,18 @@ const items = [
   ),
 ];
 
+const supersededExperiments: Record<string, string> = {
+  'cloudops.agent-validation-and-falsification.v1': 'cloudops.validation-baseline.v1',
+  'cloudops.agent-validation-luna-max-timeout.v1': 'cloudops.validation-baseline.v1',
+  'cloudops.evidence-search.v2': 'cloudops.validation-baseline.v1',
+  'cloudops.observation-id.v4': 'cloudops.validation-baseline.v1',
+  'cloudops.runtime-selection-repair-retry3.v1': 'cloudops.validation-baseline.v1',
+  'memory.maintenance-observed-failure.v0': 'memory.maintenance-luna-shadow-v5.v1',
+  'memory.maintenance-shadow-v1': 'memory.maintenance-luna-shadow-v5.v1',
+  'memory.maintenance-shadow-v3': 'memory.maintenance-luna-shadow-v5.v1',
+  'memory.maintenance-shadow-v4': 'memory.maintenance-luna-shadow-v5.v1',
+};
+
 const experiments = [
   enterpriseOpsExecution,
   stateContract,
@@ -1166,7 +1178,13 @@ const experiments = [
   memoryV4,
   memoryMaintenance,
   traceAgent,
-];
+].map((raw) => {
+  const experimentId = String(raw.experimentId ?? '');
+  const supersededBy = supersededExperiments[experimentId];
+  return supersededBy
+    ? { ...raw, projectionState: 'history', supersededBy }
+    : { ...raw, projectionState: 'current' };
+});
 
 export function previewEvalLabRuns(): Record<string, unknown> {
   return {
@@ -1181,7 +1199,7 @@ export function previewEvalLabRuns(): Record<string, unknown> {
         schemaVersion: 'rag-ime.agent-lab-path-search.v1',
         searchId: 'enterpriseops-optimal-path-preview',
         title: 'EnterpriseOps CSM · Validation 最优路径搜索',
-        objectiveSummary: '先保证任务完成和 Verifier，再比较 Tool、延迟和成本。',
+        objectiveSummary: '先保证任务完成和 Verifier，再比较 Tool 与成本；延迟只用于诊断。',
         metricSummary: 'taskSuccessRate ↑ 0.55、verifierPassRate ↑ 0.25、toolCalls ↓ 0.05、latencyMs ↓ 0.15、apiCostUsd ↓ 0.1',
         frozenControlCount: 5,
         selectedNodeId: 'state-contract',

@@ -1,0 +1,189 @@
+{
+  "schemaVersion": "paw.enterpriseops-cost-optimization-receipt.v1",
+  "runId": "enterpriseops-csm-cost-optimization:enterpriseops-csm-sol-max-preloaded-validation-20260904-v1",
+  "status": "completed",
+  "decision": "keep",
+  "baselineRunId": "enterpriseops-csm-sol-max-compact-validation-20260904-v1",
+  "candidateRunId": "enterpriseops-csm-sol-max-preloaded-validation-20260904-v1",
+  "provider": {
+    "endpointFamily": "openai-codex",
+    "authentication": "ChatGPT OAuth",
+    "accountLabel": "user-designated Aed 20xpro",
+    "accountLabelMachineAttested": false,
+    "model": "gpt-5.6-sol",
+    "thinking": "max",
+    "modelOpenProbeRef": "eval/interview-metrics/runs/agent-lab-aed-openai-codex-model-open-probe-20260904.v1.json",
+    "credentialsRecorded": false,
+    "x1topConfigurationReadOrUsed": false
+  },
+  "factor": {
+    "name": "selected_tool_schema_disclosure",
+    "layer": "tool",
+    "before": "progressive selected-tool discovery and schema loading",
+    "after": "preloaded selected-tool schemas",
+    "why": "remove repeated schema-loading turns while preserving the exact selected Tool set and task prompt"
+  },
+  "frozenControls": {
+    "split": "validation",
+    "suiteRevision": "enterpriseops-csm-suite-v2",
+    "caseCount": 3,
+    "verifierCount": 31,
+    "taskManifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+    "promptContractSha256": "a16bb73f6b567643254ce14a103756f67cf0ce671d75fc0a73c31ef2c8607fc1",
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinking": "max"
+  },
+  "evidence": {
+    "baselineRef": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
+    "baselineFileSha256": "cbda71f1ebf6abf709620d668ab660f17886cba710d88f032b95817605076654",
+    "baselineReportSha256": "a80782690b1dcf6e0906f59f7fcfdff441011de175109cc67994962676aaff11",
+    "candidateRef": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
+    "candidateFileSha256": "35f5a263b41a6b64139db5e575f5eea2e5d7136491ddc84faef28479dc899d28",
+    "candidateReportSha256": "a6a4f9cb967f8b5d95d5f449c7f8e8d55c2bb1d807eb650285efaef58502c51e"
+  },
+  "comparison": {
+    "schemaVersion": "paw.enterpriseops-cost-optimization-comparison.v1",
+    "decision": "keep",
+    "identityGatePassed": true,
+    "singleVariable": "selected_tool_schema_disclosure",
+    "identityChecks": {
+      "caseCount": true,
+      "suiteRevision": true,
+      "taskManifestSha256": true,
+      "promptContractSha256": true,
+      "provider": true,
+      "model": true,
+      "thinking": true,
+      "singleVariable": true
+    },
+    "qualityGatePassed": true,
+    "quality": {
+      "taskSuccessRate": {
+        "before": 1.0,
+        "after": 1.0,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "verifierPassRate": {
+        "before": 1.0,
+        "after": 1.0,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "failedToolCalls": {
+        "before": 0,
+        "after": 0,
+        "delta": 0,
+        "nonRegressed": true
+      },
+      "allDatabasesCleaned": {
+        "before": true,
+        "after": true,
+        "nonRegressed": true
+      }
+    },
+    "costAuthority": "same-provider-model-usage-categories",
+    "providerBillAvailable": false,
+    "costGatePassed": true,
+    "usage": {
+      "uncachedInputTokens": {
+        "before": 120353,
+        "after": 93131,
+        "delta": -27222,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      },
+      "cachedInputTokens": {
+        "before": 2309632,
+        "after": 1242240,
+        "delta": -1067392,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      },
+      "outputTokens": {
+        "before": 23205,
+        "after": 21504,
+        "delta": -1701,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      }
+    }
+  },
+  "cases": [
+    {
+      "caseId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+      "baseline": {
+        "taskSucceeded": true,
+        "verifierPassed": 11,
+        "verifierTotal": 11,
+        "toolCalls": 14,
+        "failedToolCalls": 0,
+        "latencyMs": 133721.18,
+        "usage": {"uncachedInputTokens": 37985, "cachedInputTokens": 263808, "outputTokens": 4639}
+      },
+      "candidate": {
+        "taskSucceeded": true,
+        "verifierPassed": 11,
+        "verifierTotal": 11,
+        "toolCalls": 12,
+        "failedToolCalls": 0,
+        "latencyMs": 160013.391,
+        "usage": {"uncachedInputTokens": 26668, "cachedInputTokens": 190208, "outputTokens": 5376}
+      }
+    },
+    {
+      "caseId": "task_20260101_122222_300_ad5a67e3_3757206c",
+      "baseline": {
+        "taskSucceeded": true,
+        "verifierPassed": 5,
+        "verifierTotal": 5,
+        "toolCalls": 14,
+        "failedToolCalls": 0,
+        "latencyMs": 159860.629,
+        "usage": {"uncachedInputTokens": 22533, "cachedInputTokens": 344448, "outputTokens": 5107}
+      },
+      "candidate": {
+        "taskSucceeded": true,
+        "verifierPassed": 5,
+        "verifierTotal": 5,
+        "toolCalls": 13,
+        "failedToolCalls": 0,
+        "latencyMs": 129265.492,
+        "usage": {"uncachedInputTokens": 22273, "cachedInputTokens": 148224, "outputTokens": 4253}
+      }
+    },
+    {
+      "caseId": "task_20260102_161510_799_ad5a67e3_7221f3c8",
+      "baseline": {
+        "taskSucceeded": true,
+        "verifierPassed": 15,
+        "verifierTotal": 15,
+        "toolCalls": 25,
+        "failedToolCalls": 0,
+        "latencyMs": 330849.104,
+        "usage": {"uncachedInputTokens": 59835, "cachedInputTokens": 1701376, "outputTokens": 13459}
+      },
+      "candidate": {
+        "taskSucceeded": true,
+        "verifierPassed": 15,
+        "verifierTotal": 15,
+        "toolCalls": 29,
+        "failedToolCalls": 0,
+        "latencyMs": 275267.058,
+        "usage": {"uncachedInputTokens": 44190, "cachedInputTokens": 903808, "outputTokens": 11875}
+      }
+    }
+  ],
+  "timing": {
+    "baselineElapsedMs": 624430.913,
+    "candidateElapsedMs": 564545.941,
+    "keepGate": false
+  },
+  "claimBoundary": [
+    "Validation-only source-local candidate; installed and foreground acceptance remain separate",
+    "cost verdict is same-provider/model/thinking usage-category dominance, not a Provider bill",
+    "elapsed time is informational and is not a Keep gate",
+    "the older state-contract-v1 baseline is not the named comparator because its uncached input was lower than this candidate; no cross-run cherry-pick claim is made"
+  ]
+}

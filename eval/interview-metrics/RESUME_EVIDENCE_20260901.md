@@ -9,7 +9,7 @@
 ### 六条核心项目经历
 
 - 构建面向企业 Knowledge 的混合检索与冻结评测链，在 5,101 篇文档、29,846 个 chunk、16 条 Validation query 上比较 14 组配置；Hybrid Retrieval + Qwen3 Reranker 相对 lexical floor 将 nDCG@10 从 0.6128 提升至 0.8872（相对 +44.78%），MRR 从 0.6042 提升至 0.8672（+43.53%），Recall@10 从 0.6719 提升至 0.9554（+42.19%）。
-- 设计 Trace“只读诊断 → 用户授权 → 普通 Agent 修复 → 新 Trace/Eval 复检”闭环，并建立按独立根因去重的缺陷账本：11 个缺陷具备失败证据、修复与复验边界，另记录 3 个 Skill 问题（2 个结构修复）、6 项流程改进和 9 项 Tool/Runtime 合同改进；分类重叠不相加。
+- 设计 Trace“真实失败 → full-trust 诊断与候选修复 → 同 Case 重放 → 新 Trace/Eval 复检”闭环；可选独立 repair Agent 只作责任隔离、不增加第二次用户审批。既有缺陷账本按独立根因去重：11 个缺陷具备失败证据、修复与复验边界，另记录 3 个 Skill 问题（2 个结构修复）、6 项流程改进和 9 项 Tool/Runtime 合同改进；分类重叠不相加。
 - 在 EnterpriseOps-Gym CSM 场景构建 source-local Pi、89-Tool MCP Gateway、临时数据库和 31 条 Host-private SQL verifier。Trace 驱动修复 Thinking 绑定、Tool transport、权限语义、幂等、清理和 gold 泄漏等 11 个评测链问题，使可执行 verifier 从 3/31 提升到 26/31、业务 Tool 从 0 恢复到 47 次且 3/3 临时库清理；state-contract 在同一 Validation 上由 2/3 task、28/31 verifier 提升到 3/3、31/31，但一次性 Held-out 仅 1/8、54/65，因而被 Promotion gate 拒绝。
 - 在 12-case CloudOps 故障定位沙盒中打通 source-local Pi、能力令牌 Tool Gateway、Host-only CA/FA/JRA scorer 与 Trace/Eval/Sandbox/Artifact 回执链，修复 Tool transport 和 observation hash 合同后实现 12/12 作答、98/98 Tool 成功、CA 1.00；对三条效率候选执行消融并自动拒绝质量回退分支。
 - 将真实 Memory maintenance 的 834.945 秒 JSONL 晚失败转成可复现 private-shadow 优化链；通过精确 pre-run snapshot、content-addressed replay、本地 dense provider 与合法 JSON receipt，最终在 v5 完成 5/5 整理决策、4/4 durable recall、1/1 temporary abstention，并通过 rollback/replay 门禁。

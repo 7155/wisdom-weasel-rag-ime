@@ -8,6 +8,7 @@
     "schemaVersion": {"const": "rag-ime.trace-diagnostic-report-list.v1"},
     "total": {"type": "integer", "minimum": 0},
     "truncated": {"type": "boolean"},
+    "nextCursor": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[a-f0-9]{32}$"},
     "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/item"}}
   },
   "$defs": {

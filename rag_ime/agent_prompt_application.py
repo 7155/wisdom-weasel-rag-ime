@@ -211,7 +211,23 @@ class AgentPromptApplicationService:
                     on_accepted=record_acceptance,
                     **_checkpoint_arguments(request),
                 ))
-            finally:
+            except (
+                AgentPromptAcceptanceUnknown,
+                AgentPromptPostAcceptanceFailure,
+            ):
+                # A dispatched command without an ACK may already be running.
+                # Keep its exact admission fenced until a correlated Host event
+                # or durable command evidence resolves it; releasing here lets
+                # a different prompt overtake the unknown side effect.
+                raise
+            except Exception:
+                self._release_prompt_admission(
+                    reserved_runtime,
+                    session_id,
+                    request,
+                )
+                raise
+            else:
                 self._release_prompt_admission(
                     reserved_runtime,
                     session_id,

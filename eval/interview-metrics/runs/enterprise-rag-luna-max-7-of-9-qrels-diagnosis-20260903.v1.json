@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "paw.enterprise-rag-citation-coverage-diagnosis.v1",
+  "runId": "enterprise-rag-luna-max-7-of-9-qrels-diagnosis-20260903",
+  "status": "passed",
+  "requirementRefs": ["UR-226", "UR-227", "UR-233", "UR-234", "UR-236"],
+  "sourceRefs": [
+    "current-thread/2026-09-03/after-UR-235",
+    "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md"
+  ],
+  "question": "Was the 7/9 per-fact citation result caused by Luna Max semantic capability?",
+  "verdict": "no_qrels_coverage_defect",
+  "sourceRun": {
+    "runId": "validation-answer-evidence-luna-max-trace-repair-20260903-v6",
+    "model": "openai-codex/gpt-5.6-luna",
+    "thinking": "max",
+    "reportSha256": "5a43369cd4b29ff95b199c704dfc697956b1cc3aa7609261aeedcbe0e65be45b",
+    "fileSha256": "a671bbcfc88e5874657620f348481163934047f3f75f71c5298d0a5549c6cd4c"
+  },
+  "observedBefore": {
+    "judgeCorrectness": "4/4",
+    "highLevelFactCoverage": "9/9",
+    "citationFactCoverage": "7/9",
+    "qst_0474": "3/5",
+    "qst_0477": "4/4",
+    "qrelsVersion": "v3",
+    "qrelsSha256": "bca211615ee747365acf09a24a340cf08c9e3583007125e9e4f2df917b41117a",
+    "qrelsManifestSha256": "77b9da66d5d45b220db45edd6e76b679a022c6b7d742791ca41fa9103d853624"
+  },
+  "missingGoldenAlternatives": [
+    {
+      "queryId": "qst_0474",
+      "factId": "F1",
+      "documentId": "dsid_b74efc27cb504ce195f9609636715ac6",
+      "quote": "the scheduler switches kernel variants for attention (e.g., fused vs. segmented attention) based on sequence-length histograms",
+      "diagnosis": "The candidate cited a frozen source that directly supports modern attention variants, but qrels-v3 did not list it as an equivalent F1 support group."
+    },
+    {
+      "queryId": "qst_0474",
+      "factId": "F5",
+      "documentId": "dsid_50c9731d6bb0448fa8935cfac326d77f",
+      "quote": "kernel auto-selection v2 decision logic + GPU SKU aware registry + feature extraction (model family + seq-length regime)",
+      "diagnosis": "The candidate cited a frozen source that directly supports architecture, sequence-length, and GPU-aware kernel selection, but qrels-v3 did not list it as an equivalent F5 support group."
+    }
+  ],
+  "goldCorrection": {
+    "qrelsVersion": "v4",
+    "qrelsSha256": "921f7c1cdc291801450251b7b573cfd021a19dd03ca21622a62fa0077c68e545",
+    "qrelsManifestSha256": "72ea8c576e1df05dce7006465422bcd41487cb75997507968ef24d5a374e0b4f",
+    "auditSha256": "b3bce93d840e9a9a2b8e63bcc84ac13769c294b71d4440dddebe1b102906ecd9",
+    "addedAlternativeBindingCount": 2,
+    "factsChanged": false,
+    "questionsChanged": false,
+    "providerCalls": 0,
+    "heldOutOpened": false
+  },
+  "sameOutputOfflineRescore": {
+    "method": "deterministic-cited-document-to-support-group-intersection",
+    "candidateOutputChanged": false,
+    "providerCalls": 0,
+    "qst_0474": "5/5",
+    "qst_0477": "4/4",
+    "total": "9/9"
+  },
+  "independentLunaFindings": [
+    "A later v8 run reached 9/9 citation coverage but failed one evidence-sensitive abstention case.",
+    "A later v9 run exhausted the 600-second lane budget after 10 searches and did not emit the final protocol envelope.",
+    "Those are separate refusal and Agentic convergence defects; neither explains the v6 7/9 citation score."
+  ],
+  "claimBoundary": [
+    "qrels-v4 was created after inspecting Validation citations, so this is development-only Golden calibration, not a blind promotion result.",
+    "The diagnosis proves that the v6 7/9 score undercounted two cited equivalent sources; it does not claim Luna Max is generally error-free.",
+    "Held-out remains unopened."
+  ]
+}

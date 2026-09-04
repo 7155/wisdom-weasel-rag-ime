@@ -301,6 +301,41 @@ class TraceDiagnosticInspectionTests(unittest.TestCase):
 
 
 class TraceDiagnosticReportStoreTests(unittest.TestCase):
+    def test_report_list_uses_stable_cursor_without_truncating_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceDiagnosticReportStore(Path(directory) / "agent.sqlite3")
+            inspection = _inspection_fixture()
+            created_ids = []
+            for index in range(3):
+                created = store.create(
+                    diagnostic_session_id=f"agent:diagnostic:page:{index}",
+                    title=f"分页报告 {index}",
+                    targets=inspection["targets"],
+                    inspection=inspection,
+                    now_ms=100 + index,
+                )
+                created_ids.append(created["reportId"])
+
+            first = store.list(limit=2)
+            self.assertEqual(
+                [item["reportId"] for item in first["items"]],
+                [created_ids[2], created_ids[1]],
+            )
+            self.assertTrue(first["truncated"])
+            self.assertTrue(first["nextCursor"])
+
+            second = store.list(limit=2, cursor=first["nextCursor"])
+            self.assertEqual(
+                [item["reportId"] for item in second["items"]],
+                [created_ids[0]],
+            )
+            self.assertFalse(second["truncated"])
+            self.assertIsNone(second["nextCursor"])
+            self.assertEqual(
+                {item["reportId"] for item in first["items"] + second["items"]},
+                set(created_ids),
+            )
+
     def test_new_results_require_governed_presentation_and_failure_attribution(self) -> None:
         payload = {
             "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
@@ -778,7 +813,7 @@ class TraceDiagnosticReportStoreTests(unittest.TestCase):
             self.assertEqual(completed["result"]["requirementAssessments"], payload["requirementAssessments"])
             self.assertEqual(completed["result"]["causalLinks"], payload["causalLinks"])
 
-    def test_appends_authorized_and_verified_repair_revisions(self) -> None:
+    def test_incomparable_repair_evidence_does_not_claim_verification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = TraceDiagnosticReportStore(Path(directory) / "agent.sqlite3")
             inspection = _inspection_fixture()
@@ -886,7 +921,7 @@ class TraceDiagnosticReportStoreTests(unittest.TestCase):
                 now_ms=150,
             )
             self.assertEqual(verified["revision"], 4)
-            self.assertEqual(verified["repairLifecycle"]["verification"]["state"], "verified")
+            self.assertEqual(verified["repairLifecycle"]["verification"]["state"], "pending")
             self.assertEqual(
                 verified["repairLifecycle"]["verification"]["repairReceiptId"],
                 "repair-receipt:trace:repair",
@@ -896,7 +931,119 @@ class TraceDiagnosticReportStoreTests(unittest.TestCase):
                 "incomparable",
             )
             listed = store.list(limit=10)
-            self.assertEqual(listed["items"][0]["repairState"], "verified")
+            self.assertEqual(listed["items"][0]["repairState"], "authorized")
+
+    def test_same_case_verification_receipt_is_persisted_with_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = TraceDiagnosticReportStore(Path(directory) / "agent.sqlite3")
+            inspection = _inspection_fixture()
+            created = store.create(
+                diagnostic_session_id="agent:diagnostic:same-case",
+                title="同 Case 修复闭环",
+                targets=inspection["targets"],
+                inspection=inspection,
+                now_ms=100,
+            )
+            completed = store.complete(
+                created["reportId"],
+                expected_revision=1,
+                result={
+                    "schemaVersion": "rag-ime.trace-diagnostic-result.v1",
+                    "summary": "写入失败。",
+                    "hardGates": [],
+                    "judgeScores": [],
+                    "requirementAssessments": [],
+                    "causalLinks": [],
+                    "findings": [{
+                        "findingId": "finding:same-case",
+                        "dimensionId": "tool_runtime",
+                        "severity": "high",
+                        "observation": "stale_snapshot",
+                        "hypothesis": "批准后版本变化",
+                        "conclusion": "旧 revision 被拒绝",
+                        "confidence": "high",
+                        "evidenceIds": ["observation:observation:session:a"],
+                        "candidateRepair": "重新 prepare",
+                        "verification": "冻结并重放同一 Case。",
+                    }],
+                    "presentation": _governed_presentation(
+                        primary_finding_id="finding:same-case"
+                    ),
+                },
+                now_ms=120,
+            )
+            authorized = store.authorize_repair(
+                completed["reportId"],
+                expected_revision=2,
+                finding_id="finding:same-case",
+                source_scope="session:session:a",
+                source_trace_id="trace:a",
+                failure_ref="observation:observation:session:a",
+                repair_session_id="agent:repair:same-case",
+                now_ms=130,
+            )
+            receipt = {
+                "schemaVersion": "rag-ime.trace-repair-receipt.v1",
+                "repairReceiptId": "repair-receipt:same-case",
+                "sourceScope": "session:session:a",
+                "sourceTraceId": "trace:a",
+                "failureRef": "observation:observation:session:a",
+                "changeReceiptId": "change-evidence:same-case",
+                "testEvidenceId": "test-evidence:same-case",
+                "testStatus": "passed",
+                "sandboxStatus": "passed",
+                "sandboxedTestCount": 1,
+                "repairTraceId": "trace:repair:same-case",
+                "repairSessionId": "agent:repair:same-case",
+                "createdAtMs": 140,
+            }
+            verification_receipt = {
+                "schemaVersion": "rag-ime.trace-verification-receipt.v1",
+                "verificationReceiptId": "trace-verification:same-case",
+                "replayCaseId": "replay-case:same-case",
+                "repairReceiptId": "repair-receipt:same-case",
+                "sourceTraceId": "trace:a",
+                "repairTraceId": "trace:repair:same-case",
+                "decision": "kept",
+                "createdAtMs": 145,
+            }
+
+            verified = store.verify_repair(
+                authorized["reportId"],
+                expected_revision=3,
+                receipt=receipt,
+                eval_run={
+                    "evalRunId": "eval:repair:same-case",
+                    "status": "completed",
+                    "metricAuthority": "ai_judge_estimate",
+                    "metrics": {"task_success": 1.0},
+                },
+                comparison={
+                    "status": "incomparable",
+                    "reason": "AI Judge 不是同 Case 比较 authority。",
+                    "sourceStatus": "failed",
+                    "repairStatus": "completed",
+                    "sourceFingerprint": "sha256:" + "1" * 64,
+                    "repairFingerprint": "sha256:" + "2" * 64,
+                    "beforeMetrics": {"task_completion": 0.0},
+                    "afterMetrics": {"task_success": 1.0},
+                    "deltas": {},
+                },
+                verification_receipt=verification_receipt,
+                now_ms=150,
+            )
+
+            persisted = store.get(str(verified["reportId"]))
+            self.assertIsNotNone(persisted)
+            verification = persisted["repairLifecycle"]["verification"]
+            self.assertEqual(verification["state"], "verified")
+            self.assertEqual(
+                verification["verificationReceiptId"],
+                "trace-verification:same-case",
+            )
+            self.assertEqual(verification["replayCaseId"], "replay-case:same-case")
+            self.assertEqual(verification["decision"], "kept")
+            self.assertEqual(verification["verifiedAtMs"], 145)
 
     def test_repair_authorization_binds_trace_to_exact_frozen_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

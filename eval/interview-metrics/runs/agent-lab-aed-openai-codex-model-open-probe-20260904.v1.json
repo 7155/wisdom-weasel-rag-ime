@@ -1,0 +1,41 @@
+{
+  "accountDesignation": {
+    "authority": "user_designated",
+    "label": "Aed 20xpro",
+    "machineAttested": false
+  },
+  "auth": {
+    "machineStatus": "Logged in using ChatGPT"
+  },
+  "boundaries": [
+    "This receipt proves that the current ChatGPT-authenticated Codex CLI opened the requested model and completed one ephemeral, tool-free turn.",
+    "The Aed 20xpro account label is user-designated and is not exposed or independently attested by Codex login status.",
+    "Token usage is the Codex turn receipt, not a Provider invoice or a four-project evaluation result.",
+    "No x1top provider configuration was read or used by this probe."
+  ],
+  "endpoint": {
+    "family": "openai-codex",
+    "type": "chatgpt_oauth"
+  },
+  "measuredAt": "2026-09-04T00:08:38Z",
+  "model": "gpt-5.6-sol",
+  "output": "AED_CODEX_MODEL_OPEN_OK",
+  "probe": {
+    "ephemeral": true,
+    "expectedOutputMatched": true,
+    "modelOpenCompleted": true,
+    "sandbox": "read-only",
+    "toolsInvoked": 0
+  },
+  "provider": "openai-codex",
+  "reasoning": "max",
+  "runId": "agent-lab-aed-openai-codex-model-open-probe-20260904-v1",
+  "schemaVersion": "paw.agent-lab-model-open-probe.v1",
+  "status": "completed",
+  "usage": {
+    "cachedInputTokens": 7040,
+    "inputTokens": 24218,
+    "outputTokens": 10,
+    "reasoningOutputTokens": 0
+  }
+}

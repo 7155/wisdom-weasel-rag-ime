@@ -8,6 +8,13 @@ import type { ScrollAnchor } from './usePinnedTranscript';
 
 const memory = new Map<string, ScrollAnchor>();
 
+/** Read the previous anchor before the transcript's first DOM commit. This
+ * lets the virtualizer mount the remembered row directly instead of briefly
+ * materialising the entire history or flashing the newest tail first. */
+export function readSessionScrollMemory(sessionKey: string): ScrollAnchor | undefined {
+  return memory.get(sessionKey);
+}
+
 export function useSessionScrollMemory(
   sessionKey: string,
   captureAnchor: () => ScrollAnchor,

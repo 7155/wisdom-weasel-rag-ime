@@ -7,10 +7,14 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sqlite3
+import stat
+import subprocess
 import sys
 import time
 from contextlib import closing
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
@@ -60,6 +64,253 @@ ATOM_FIRST_EVALUATION_INSTRUCTION = (
     "unresolved questions and implementation status unless the evidence directly states a "
     "durable requirement or decision. Never infer facts from app, time or repetition."
 )
+_MEMORY_MODELS = ("gpt-5.6-luna", "gpt-5.6-sol")
+_MEMORY_CONTEXT_PROFILES = ("full-json-v1", "compact-json-v1")
+_MEMORY_PROMPT_CONTRACTS = ("standard-v1", "concise-json-v1")
+_MEMORY_USAGE_KEYS = (
+    "uncachedInputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+)
+
+
+@dataclass(frozen=True)
+class _CodexStructuredRun:
+    phase: str
+    model: str
+    thinking: str
+    command: tuple[str, ...]
+    elapsed_seconds: float
+    exit_code: int
+    prompt_sha256: str
+    schema_sha256: str
+    output_sha256: str
+    stdout_sha256: str
+    stderr_sha256: str
+    output: dict[str, object]
+    usage: dict[str, object] = field(default_factory=dict)
+
+    def redacted_receipt(self) -> dict[str, object]:
+        return {
+            "phase": self.phase,
+            "model": self.model,
+            "thinking": self.thinking,
+            "elapsedSeconds": round(self.elapsed_seconds, 3),
+            "exitCode": self.exit_code,
+            "promptSha256": self.prompt_sha256,
+            "schemaSha256": self.schema_sha256,
+            "outputSha256": self.output_sha256,
+            "stdoutSha256": self.stdout_sha256,
+            "stderrSha256": self.stderr_sha256,
+            "usage": dict(self.usage),
+        }
+
+
+def _codex_jsonl_usage(stdout: str) -> dict[str, object]:
+    completed: list[Mapping[str, object]] = []
+    for line in str(stdout or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, Mapping) or event.get("type") != "turn.completed":
+            continue
+        usage = event.get("usage")
+        if isinstance(usage, Mapping):
+            completed.append(usage)
+    if len(completed) != 1:
+        return {"available": False}
+    usage = completed[0]
+    names = {
+        "inputTokens": "input_tokens",
+        "cachedInputTokens": "cached_input_tokens",
+        "cacheWriteInputTokens": "cache_write_input_tokens",
+        "outputTokens": "output_tokens",
+    }
+    values: dict[str, int] = {}
+    for public, source in names.items():
+        raw = usage.get(source, 0 if source == "cache_write_input_tokens" else None)
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+            return {"available": False}
+        values[public] = raw
+    if values["cachedInputTokens"] > values["inputTokens"]:
+        return {"available": False}
+    return {
+        "available": True,
+        **values,
+        "uncachedInputTokens": values["inputTokens"] - values["cachedInputTokens"],
+    }
+
+
+def _run_codex_structured(
+    *,
+    prompt: str,
+    schema: Mapping[str, object],
+    artifact_dir: str | Path,
+    phase: str,
+    model: str,
+    thinking: str,
+    timeout_seconds: float = 1_200.0,
+    codex_bin: str = "codex",
+    command_runner=subprocess.run,
+) -> _CodexStructuredRun:
+    normalized_phase = " ".join(str(phase).strip().split()).casefold().replace("_", "-")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", normalized_phase):
+        raise ValueError("phase must be a short filesystem-safe identifier")
+    if model not in _MEMORY_MODELS or thinking != "max":
+        raise ValueError("Memory model identity is unsupported")
+    directory = Path(artifact_dir).expanduser()
+    directory.mkdir(parents=True, mode=0o700, exist_ok=False)
+    directory.chmod(0o700)
+    schema_text = json.dumps(
+        dict(schema), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    prompt_path = directory / f"{normalized_phase}-prompt.txt"
+    schema_path = directory / f"{normalized_phase}-schema.json"
+    output_path = directory / f"{normalized_phase}-output.json"
+    stdout_path = directory / f"{normalized_phase}-stdout.log"
+    stderr_path = directory / f"{normalized_phase}-stderr.log"
+    receipt_path = directory / f"{normalized_phase}-receipt.json"
+    _write_private_exclusive(prompt_path, prompt)
+    _write_private_exclusive(schema_path, schema_text)
+    command = (
+        codex_bin,
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--model",
+        model,
+        "--config",
+        f'model_reasoning_effort="{thinking}"',
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "--color",
+        "never",
+        "--json",
+        "--cd",
+        str(directory),
+        "--output-schema",
+        str(schema_path),
+        "--output-last-message",
+        str(output_path),
+        "-",
+    )
+    started = time.monotonic()
+    completed = command_runner(
+        list(command),
+        input=prompt,
+        text=True,
+        capture_output=True,
+        timeout=max(1.0, float(timeout_seconds)),
+        check=False,
+    )
+    elapsed = time.monotonic() - started
+    stdout = str(completed.stdout or "")
+    stderr = str(completed.stderr or "")
+    _write_private_exclusive(stdout_path, stdout)
+    _write_private_exclusive(stderr_path, stderr)
+    if int(completed.returncode) != 0:
+        raise RuntimeError(
+            f"Codex {normalized_phase} exited {completed.returncode}; private logs retained"
+        )
+    if not output_path.is_file():
+        raise RuntimeError(f"Codex {normalized_phase} produced no structured output file")
+    output_path.chmod(0o600)
+    output_text = output_path.read_text(encoding="utf-8")
+    try:
+        output = json.loads(output_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Codex {normalized_phase} output is not JSON") from exc
+    if not isinstance(output, dict):
+        raise RuntimeError(f"Codex {normalized_phase} output must be an object")
+    run = _CodexStructuredRun(
+        phase=normalized_phase,
+        model=model,
+        thinking=thinking,
+        command=command,
+        elapsed_seconds=elapsed,
+        exit_code=int(completed.returncode),
+        prompt_sha256=_text_sha256(prompt),
+        schema_sha256=_text_sha256(schema_text),
+        output_sha256=_text_sha256(output_text),
+        stdout_sha256=_text_sha256(stdout),
+        stderr_sha256=_text_sha256(stderr),
+        output=dict(output),
+        usage=_codex_jsonl_usage(stdout),
+    )
+    _write_private_exclusive(
+        receipt_path,
+        json.dumps(run.redacted_receipt(), ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
+    )
+    return run
+
+
+def _load_codex_structured_run(
+    artifact_dir: str | Path,
+    *,
+    phase: str,
+    model: str,
+    thinking: str,
+) -> _CodexStructuredRun:
+    normalized_phase = " ".join(str(phase).strip().split()).casefold().replace("_", "-")
+    directory = Path(artifact_dir).expanduser().resolve(strict=True)
+    if stat.S_IMODE(directory.stat().st_mode) & 0o077:
+        raise ValueError("private Codex artifact directory has unsafe permissions")
+    output_path = directory / f"{normalized_phase}-output.json"
+    receipt_path = directory / f"{normalized_phase}-receipt.json"
+    for path in (output_path, receipt_path):
+        if not path.is_file() or stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise ValueError("private Codex artifact is missing or unsafe")
+    output_text = output_path.read_text(encoding="utf-8")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    output = json.loads(output_text)
+    if not isinstance(receipt, dict) or not isinstance(output, dict):
+        raise ValueError("private Codex artifact is invalid")
+    if (
+        receipt.get("phase") != normalized_phase
+        or receipt.get("model") != model
+        or receipt.get("thinking") != thinking
+        or receipt.get("exitCode") != 0
+        or receipt.get("outputSha256") != _text_sha256(output_text)
+    ):
+        raise ValueError("private Codex artifact identity drifted")
+    usage = receipt.get("usage")
+    return _CodexStructuredRun(
+        phase=normalized_phase,
+        model=model,
+        thinking=thinking,
+        command=(),
+        elapsed_seconds=float(receipt.get("elapsedSeconds") or 0.0),
+        exit_code=0,
+        prompt_sha256=_receipt_sha256(receipt, "promptSha256"),
+        schema_sha256=_receipt_sha256(receipt, "schemaSha256"),
+        output_sha256=_text_sha256(output_text),
+        stdout_sha256=_receipt_sha256(receipt, "stdoutSha256"),
+        stderr_sha256=_receipt_sha256(receipt, "stderrSha256"),
+        output=dict(output),
+        usage=dict(usage) if isinstance(usage, Mapping) else {"available": False},
+    )
+
+
+def _write_private_exclusive(path: Path, value: str) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(value)
+    path.chmod(0o600)
+
+
+def _text_sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _receipt_sha256(receipt: Mapping[str, object], key: str) -> str:
+    value = str(receipt.get(key) or "")
+    if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError(f"private Codex receipt has invalid {key}")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,6 +327,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-sources", type=int, default=1_000)
     parser.add_argument("--timeout-seconds", type=float, default=1_200.0)
     parser.add_argument("--codex-bin", default="codex")
+    parser.add_argument("--model", choices=_MEMORY_MODELS, default="gpt-5.6-luna")
+    parser.add_argument(
+        "--context-profile",
+        choices=_MEMORY_CONTEXT_PROFILES,
+        default="full-json-v1",
+    )
+    parser.add_argument(
+        "--prompt-contract",
+        choices=_MEMORY_PROMPT_CONTRACTS,
+        default="standard-v1",
+    )
+    parser.add_argument(
+        "--run-id",
+        default="memory-maintenance-luna-max-validation-20260902",
+    )
+    parser.add_argument(
+        "--require-usage",
+        action="store_true",
+        help="Fail the run when Codex does not emit complete token usage categories.",
+    )
+    parser.add_argument("--baseline-report", type=Path)
+    parser.add_argument("--optimization-output", type=Path)
     parser.add_argument(
         "--embedding-from-env",
         action="store_true",
@@ -115,7 +388,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)
+    evaluation_started = time.monotonic()
     args = build_parser().parse_args(argv)
+    if args.optimization_output is not None and args.baseline_report is None:
+        raise SystemExit("--optimization-output requires --baseline-report")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", str(args.run_id)) is None:
+        raise SystemExit("--run-id must be a bounded public identifier")
     private_root = args.private_dir.expanduser().resolve(strict=False)
     if private_root.is_relative_to(ROOT):
         raise SystemExit("--private-dir must be outside the Git worktree")
@@ -195,10 +473,24 @@ def main(argv: list[str] | None = None) -> int:
         _snapshot_sqlite(working_db, replay_baseline_snapshot)
         replay_baseline_sha256 = _file_sha256(replay_baseline_snapshot)
     executor = PrivateCodexLunaMemoryExecutor(
-        private_root / "luna",
+        private_root / "codex",
         audit_db_path=working_db,
         timeout_seconds=float(args.timeout_seconds),
         codex_bin=str(args.codex_bin),
+        model_id=str(args.model),
+        context_profile=str(args.context_profile),
+        prompt_contract=str(args.prompt_contract),
+        structured_runner=lambda **kwargs: _run_codex_structured(
+            **kwargs,
+            model=str(args.model),
+            thinking="max",
+        ),
+        structured_loader=lambda directory, *, phase: _load_codex_structured_run(
+            directory,
+            phase=phase,
+            model=str(args.model),
+            thinking="max",
+        ),
     )
     organizer = ManagedPiMemoryOrganizer(executor)
     curator = OwnerMemoryCurator(
@@ -383,14 +675,17 @@ def main(argv: list[str] | None = None) -> int:
             for phase in first_phases
         )
         and bool(first_requests[-1].get("isolated"))
-        and all(item.get("model") == "gpt-5.6-luna" for item in first_requests)
+        and all(item.get("model") == str(args.model) for item in first_requests)
         and all(item.get("thinking") == "max" for item in first_requests)
     )
+    aggregate_usage = _aggregate_model_usage(requests)
+    usage_ok = aggregate_usage.get("available") is True
     passed = (
         first_ok
         and lineage_ok
         and book_ok
         and model_ok
+        and (usage_ok or not bool(args.require_usage))
         and bool(rollback.get("ok"))
         and (not replay["attempted"] or bool(replay["ok"]))
         and source_unchanged
@@ -407,9 +702,13 @@ def main(argv: list[str] | None = None) -> int:
         "schemaVersion": PERSONAL_MEMORY_LUNA_EVALUATION_SCHEMA_VERSION,
         "status": "pass" if passed else "iterate",
         "passed": passed,
-        "model": "gpt-5.6-luna",
+        "runId": str(args.run_id),
+        "model": str(args.model),
+        "provider": "openai-codex",
         "thinking": "max",
         "transport": "codex_cli_ephemeral",
+        "contextProfile": str(args.context_profile),
+        "promptContract": str(args.prompt_contract),
         "gatewayInstalledAcceptance": False,
         "productionDatabaseOpened": False,
         "productionMutationPerformed": False,
@@ -436,11 +735,55 @@ def main(argv: list[str] | None = None) -> int:
         "replayState": second_state,
         "replayRag": replay_rag,
         "modelRequests": requests,
+        "usage": aggregate_usage,
+        "timing": {
+            "evaluationElapsedMs": round((time.monotonic() - evaluation_started) * 1_000),
+            "modelElapsedMs": round(
+                sum(
+                    float(item.get("elapsedSeconds") or 0.0)
+                    for item in requests
+                    if item.get("resumed") is not True
+                )
+                * 1_000
+            ),
+            "keepGate": False,
+        },
         "privateArtifactDirectorySha256": _sha256(str(private_root)),
     }
+    baseline_report: dict[str, object] | None = None
+    if args.baseline_report is not None:
+        value = json.loads(
+            args.baseline_report.expanduser().resolve(strict=True).read_text(encoding="utf-8")
+        )
+        if not isinstance(value, dict):
+            raise ValueError("Memory baseline report must be a JSON object")
+        baseline_report = dict(value)
+        summary["optimizationComparison"] = _memory_cost_optimization_comparison(
+            baseline_report,
+            _public_report_payload(summary),
+        )
     _write_private_summary(private_root / "evaluation-summary.json", summary)
     if args.public_report is not None:
         _write_public_report(args.public_report.expanduser(), summary)
+        if args.optimization_output is not None and baseline_report is not None:
+            candidate_report = _public_report_payload(summary)
+            optimization_path = args.optimization_output.expanduser()
+            if optimization_path.exists():
+                raise ValueError("Memory optimization output already exists")
+            optimization_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_private_summary(
+                optimization_path,
+                _memory_optimization_receipt(
+                    baseline=baseline_report,
+                    candidate=candidate_report,
+                    baseline_report_sha256=_file_sha256(
+                        args.baseline_report.expanduser().resolve(strict=True)
+                    ),
+                    candidate_report_sha256=_file_sha256(
+                        args.public_report.expanduser().resolve(strict=True)
+                    ),
+                ),
+            )
     print(
         json.dumps(
             {
@@ -666,6 +1009,231 @@ def _restore_sqlite_snapshot(snapshot: Path, target: Path) -> bool:
     return _file_sha256(snapshot) == _file_sha256(target)
 
 
+def _aggregate_model_usage(
+    requests: list[dict[str, object]],
+) -> dict[str, object]:
+    fresh = [item for item in requests if item.get("resumed") is not True]
+    if not fresh:
+        return {"available": False}
+    totals = {
+        "inputTokens": 0,
+        "uncachedInputTokens": 0,
+        "cachedInputTokens": 0,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 0,
+    }
+    for item in fresh:
+        usage = item.get("usage")
+        if not isinstance(usage, Mapping) or usage.get("available") is not True:
+            return {"available": False}
+        for key in totals:
+            value = usage.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return {"available": False}
+            totals[key] += value
+    return {"available": True, "providerCallCount": len(fresh), **totals}
+
+
+def _memory_quality_gate(report: Mapping[str, object]) -> dict[str, object]:
+    metrics = report.get("metrics")
+    metrics = metrics if isinstance(metrics, Mapping) else {}
+    fixture = metrics.get("fixture")
+    fixture = fixture if isinstance(fixture, Mapping) else {}
+    curation = metrics.get("curation")
+    curation = curation if isinstance(curation, Mapping) else {}
+    retrieval = metrics.get("retrieval")
+    retrieval = retrieval if isinstance(retrieval, Mapping) else {}
+    recovery = metrics.get("recovery")
+    recovery = recovery if isinstance(recovery, Mapping) else {}
+    hard = report.get("hardGates")
+    hard = hard if isinstance(hard, Mapping) else {}
+    current_atoms = curation.get("currentAtomCount")
+    checks = {
+        "status": report.get("status") == "passed",
+        "caseCount": fixture.get("caseCount") == 5,
+        "durableCaseCount": fixture.get("durableCaseCount") == 4,
+        "nonMemoryCaseCount": fixture.get("nonMemoryCaseCount") == 1,
+        "allStored": fixture.get("allStored") is True,
+        "allCandidateEvidence": fixture.get("allCandidateEvidence") is True,
+        "curation": curation.get("ok") is True,
+        "sourceCount": curation.get("sourceCount") == 5,
+        "modelDecisionCount": curation.get("modelDecisionCount") == 5,
+        "currentAtoms": isinstance(current_atoms, int)
+        and not isinstance(current_atoms, bool)
+        and current_atoms > 0,
+        "governedAtoms": curation.get("governedCurrentAtomCount") == current_atoms,
+        "legalLineage": curation.get("legalLineageCurrentAtomCount") == current_atoms,
+        "bookProjection": curation.get("bookProjectionInSync") is True,
+        "retrievalCases": retrieval.get("caseCount") == 5,
+        "durableRetrievalCases": retrieval.get("durableCaseCount") == 4,
+        "allRetrievalCases": retrieval.get("passed") is True
+        and retrieval.get("allCasesPassed") is True,
+        "vectorCoverage": retrieval.get("vectorCoverage") == 1.0,
+        "rollback": recovery.get("rollbackPassed") is True,
+        "replay": recovery.get("replayPassed") is True,
+        "replayRag": recovery.get("replayRagPassed") is True,
+        "replayAtomSet": recovery.get("replayAtomSetStable") is True,
+        "privateShadow": hard.get("privateShadow") is True,
+        "sourceShadowUnchanged": hard.get("sourceShadowUnchanged") is True,
+        "rollbackVerified": hard.get("rollbackVerified") is True,
+        "replayVerified": hard.get("replayVerified") is True,
+        "productionDatabaseClosed": hard.get("productionDatabaseOpened") is False,
+        "productionUnchanged": hard.get("productionMutationPerformed") is False,
+    }
+    return {"passed": all(checks.values()), "checks": checks}
+
+
+def _memory_cost_optimization_comparison(
+    baseline: Mapping[str, object],
+    candidate: Mapping[str, object],
+) -> dict[str, object]:
+    baseline_context = str(baseline.get("contextProfile") or "full-json-v1")
+    candidate_context = str(candidate.get("contextProfile") or "full-json-v1")
+    baseline_contract = str(baseline.get("promptContract") or "standard-v1")
+    candidate_contract = str(candidate.get("promptContract") or "standard-v1")
+    context_changed = baseline_context != candidate_context
+    contract_changed = baseline_contract != candidate_contract
+    one_factor = context_changed != contract_changed
+    single_variable = (
+        "canonical_json_context_projection"
+        if context_changed and not contract_changed
+        else "concise_json_prompt_contract"
+        if contract_changed and not context_changed
+        else "invalid_multiple_or_missing_factors"
+    )
+    baseline_evidence = baseline.get("evidence")
+    candidate_evidence = candidate.get("evidence")
+    identity_checks = {
+        "provider": (
+            str(baseline.get("provider") or "openai-codex")
+            == str(candidate.get("provider") or "openai-codex")
+            == "openai-codex"
+        ),
+        "model": baseline.get("model") == candidate.get("model") == "gpt-5.6-sol",
+        "thinking": baseline.get("thinking") == candidate.get("thinking") == "max",
+        "evaluationScope": baseline.get("evaluationScope")
+        == candidate.get("evaluationScope")
+        == "validation-only",
+        "fixture": isinstance(baseline_evidence, Mapping)
+        and isinstance(candidate_evidence, Mapping)
+        and baseline_evidence.get("syntheticFixtureSha256")
+        == candidate_evidence.get("syntheticFixtureSha256")
+        and bool(baseline_evidence.get("syntheticFixtureSha256")),
+        "singleVariable": one_factor,
+    }
+    baseline_quality = _memory_quality_gate(baseline)
+    candidate_quality = _memory_quality_gate(candidate)
+    quality_ok = bool(baseline_quality["passed"] and candidate_quality["passed"])
+    baseline_usage = baseline.get("usage")
+    candidate_usage = candidate.get("usage")
+    usage_available = (
+        isinstance(baseline_usage, Mapping)
+        and baseline_usage.get("available") is True
+        and isinstance(candidate_usage, Mapping)
+        and candidate_usage.get("available") is True
+    )
+    usage_comparison: dict[str, dict[str, object]] = {}
+    strict_decrease = False
+    usage_ok = usage_available
+    for key in _MEMORY_USAGE_KEYS:
+        before = baseline_usage.get(key) if isinstance(baseline_usage, Mapping) else None
+        after = candidate_usage.get(key) if isinstance(candidate_usage, Mapping) else None
+        valid = (
+            isinstance(before, int)
+            and not isinstance(before, bool)
+            and before >= 0
+            and isinstance(after, int)
+            and not isinstance(after, bool)
+            and after >= 0
+        )
+        non_increasing = bool(valid and after <= before)
+        decreased = bool(valid and after < before)
+        usage_ok = bool(usage_ok and non_increasing)
+        strict_decrease = strict_decrease or decreased
+        usage_comparison[key] = {
+            "before": before,
+            "after": after,
+            "delta": (after - before) if valid else None,
+            "nonIncreasing": non_increasing,
+            "strictlyDecreased": decreased,
+        }
+    cost_ok = bool(usage_ok and strict_decrease)
+    passed = bool(all(identity_checks.values()) and quality_ok and cost_ok)
+    return {
+        "schemaVersion": "paw.memory-maintenance-cost-optimization-comparison.v1",
+        "decision": "keep" if passed else "reject",
+        "singleVariable": single_variable,
+        "baselineContextProfile": baseline_context,
+        "candidateContextProfile": candidate_context,
+        "baselinePromptContract": baseline_contract,
+        "candidatePromptContract": candidate_contract,
+        "identityGatePassed": all(identity_checks.values()),
+        "identityChecks": identity_checks,
+        "qualityGatePassed": quality_ok,
+        "baselineQuality": baseline_quality,
+        "candidateQuality": candidate_quality,
+        "costGatePassed": cost_ok,
+        "usage": usage_comparison,
+        "costAuthority": "same-provider-model-usage-categories",
+        "providerBillAvailable": False,
+        "elapsedIsKeepGate": False,
+    }
+
+
+def _memory_optimization_receipt(
+    *,
+    baseline: Mapping[str, object],
+    candidate: Mapping[str, object],
+    baseline_report_sha256: str,
+    candidate_report_sha256: str,
+) -> dict[str, object]:
+    comparison = _memory_cost_optimization_comparison(baseline, candidate)
+    variable = str(comparison["singleVariable"])
+    if variable == "canonical_json_context_projection":
+        factor = {
+            "layer": "prompt_context",
+            "name": variable,
+            "before": comparison["baselineContextProfile"],
+            "after": comparison["candidateContextProfile"],
+            "why": "remove JSON formatting whitespace without changing the decoded packet",
+        }
+    else:
+        factor = {
+            "layer": "prompt_output_contract",
+            "name": variable,
+            "before": comparison["baselinePromptContract"],
+            "after": comparison["candidatePromptContract"],
+            "why": "remove redundant wrapper instructions and bound JSON rationale fields while preserving the full packet",
+        }
+    return {
+        "schemaVersion": "paw.memory-maintenance-cost-optimization-receipt.v1",
+        "runId": f"memory-maintenance-cost-optimization:{candidate.get('runId') or 'unknown'}",
+        "status": "completed",
+        "decision": comparison["decision"],
+        "baselineRunId": baseline.get("runId"),
+        "candidateRunId": candidate.get("runId"),
+        "factor": factor,
+        "comparison": comparison,
+        "timing": {
+            "baseline": baseline.get("timing"),
+            "candidate": candidate.get("timing"),
+            "keepGate": False,
+        },
+        "evidence": {
+            "baselineReportSha256": baseline_report_sha256,
+            "candidateReportSha256": candidate_report_sha256,
+            "priorCandidateReceiptsConsumed": False,
+            "selectionPolicy": "compare only the named fresh candidate with the named full-json baseline",
+        },
+        "claimBoundary": [
+            "private-shadow validation only",
+            "cost verdict uses comparable Codex usage categories, not a Provider bill",
+            "elapsed time is recorded but is not a Keep gate",
+            "installed Gateway and foreground acceptance remain separate",
+        ],
+    }
+
+
 def _write_private_summary(path: Path, summary: Mapping[str, object]) -> None:
     temporary = path.with_name("." + path.name + ".tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -806,14 +1374,17 @@ def _public_report_payload(summary: Mapping[str, object]) -> dict[str, object]:
     ]
     return {
         "schemaVersion": "paw.memory-maintenance-validation-receipt.v1",
-        "runId": "memory-maintenance-luna-max-validation-20260902",
+        "runId": summary.get("runId"),
         "status": "passed" if bool(summary.get("passed")) else "iterate",
         "evaluationScope": "validation-only",
         "heldOutEvaluated": False,
         "localOnly": True,
+        "provider": summary.get("provider", "openai-codex"),
         "model": summary.get("model"),
         "thinking": summary.get("thinking"),
         "transport": summary.get("transport"),
+        "contextProfile": summary.get("contextProfile"),
+        "promptContract": summary.get("promptContract", "standard-v1"),
         "metrics": {
             "fixture": {
                 "caseCount": seed.get("caseCount"),
@@ -867,6 +1438,9 @@ def _public_report_payload(summary: Mapping[str, object]) -> dict[str, object]:
             },
         },
         "modelRequests": model_requests,
+        "usage": summary.get("usage"),
+        "timing": summary.get("timing"),
+        "optimizationComparison": summary.get("optimizationComparison"),
         "hardGates": {
             "productionDatabaseOpened": False,
             "productionMutationPerformed": False,
@@ -885,7 +1459,7 @@ def _public_report_payload(summary: Mapping[str, object]) -> dict[str, object]:
         },
         "claimBoundary": [
             "private-shadow validation only",
-            "real Luna Max requests and independent verifier retained in private artifacts",
+            "real Codex model requests and independent verifier retained in private artifacts",
             "installed Gateway and foreground acceptance are not evaluated",
         ],
     }

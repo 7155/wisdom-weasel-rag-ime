@@ -25,6 +25,8 @@ export interface AgentLabExperimentV1 {
     | 'other';
   status: 'kept' | 'rejected' | 'diagnostic' | 'open_gap';
   claimStatus: 'headline' | 'supporting' | 'diagnostic' | 'blocked';
+  projectionState?: 'current' | 'history';
+  supersededBy?: string;
   effectStatus?: 'improved' | 'neutral' | 'regressed' | 'not_run' | 'unverified';
   candidateType?: 'single_factor' | 'compound_repair' | 'baseline' | 'unknown';
   businessProblem: Text;

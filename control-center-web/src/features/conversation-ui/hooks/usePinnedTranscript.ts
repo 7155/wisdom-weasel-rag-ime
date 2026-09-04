@@ -17,11 +17,17 @@ export interface ScrollAnchor {
 function messageRowGeometry(scroller: HTMLElement): TranscriptRowGeometry[] {
   const scrollerTop = scroller.getBoundingClientRect().top - scroller.scrollTop;
   return [...scroller.querySelectorAll<HTMLElement>('[data-message-id]')]
-    .flatMap((element, index) => {
+    .flatMap((element, visibleIndex) => {
       const key = element.dataset.messageId;
       if (!key) return [];
       const box = element.getBoundingClientRect();
-      return [{ key, top: box.top - scrollerTop, height: box.height, index }];
+      const transcriptIndex = Number(element.dataset.index);
+      return [{
+        key,
+        top: box.top - scrollerTop,
+        height: box.height,
+        index: Number.isInteger(transcriptIndex) ? transcriptIndex : visibleIndex,
+      }];
     });
 }
 

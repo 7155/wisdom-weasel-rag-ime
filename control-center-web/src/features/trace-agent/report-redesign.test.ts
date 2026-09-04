@@ -235,6 +235,55 @@ describe('Trace diagnostic report reading contract', () => {
       expect(document.getElementById(id ?? '')).not.toBeNull();
     });
   });
+
+  it('restores the persisted same-case Keep decision after report reload', () => {
+    const report = reportFixture();
+    report.repairLifecycle = {
+      authorization: {
+        state: 'authorized',
+        authorizationKind: 'repair_handoff',
+        writeAuthority: 'auto_approved_full_trust',
+        authorizationId: 'repair-authorization:1',
+        findingId: 'finding:settlement-timeout',
+        sourceScope: 'session:memory',
+        sourceTraceId: 'trace:memory',
+        failureRef: 'evidence:runtime-timeout',
+        repairSessionId: 'agent:repair:1',
+        authorizedAtMs: 700_000,
+      },
+      verification: {
+        state: 'verified',
+        repairReceiptId: 'repair-receipt:1',
+        repairTraceId: 'trace:repair:1',
+        evalRunId: 'eval:repair:1',
+        verificationReceiptId: 'trace-verification:1',
+        replayCaseId: 'replay-case:1',
+        decision: 'kept',
+        testStatus: 'passed',
+        sandboxStatus: 'passed',
+        sandboxedTestCount: 1,
+        verifiedAtMs: 710_000,
+        comparison: {
+          status: 'incomparable',
+          reason: 'AI Judge comparison is supplemental.',
+          sourceStatus: 'failed',
+          repairStatus: 'completed',
+          sourceFingerprint: `sha256:${'1'.repeat(64)}`,
+          repairFingerprint: `sha256:${'2'.repeat(64)}`,
+          beforeMetrics: {},
+          afterMetrics: {},
+          deltas: {},
+        },
+      },
+    } as TraceDiagnosticReportV1['repairLifecycle'];
+
+    const model = buildTraceAuditReportModel(report);
+    expect(model.repairLifecycle.verificationReceiptId).toBe('trace-verification:1');
+    expect(model.repairLifecycle.replayCaseId).toBe('replay-case:1');
+    expect(model.repairLifecycle.decision).toBe('kept');
+    expect(buildTraceDiagnosticReportHtml(report)).toContain('Keep');
+    expect(buildTraceDiagnosticReportHtml(report)).toContain('trace-verification:1');
+  });
 });
 
 function reportFixture(): TraceDiagnosticReportV1 {

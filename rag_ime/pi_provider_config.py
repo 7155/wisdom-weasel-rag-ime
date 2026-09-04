@@ -11,6 +11,9 @@ from urllib.parse import urlsplit
 _MAX_PROVIDER_CONFIG_BYTES = 2 * 1024 * 1024
 _PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,62}[a-z0-9]$")
 _MODEL_ID_PATTERN = re.compile(r"^[^\s]{1,160}$")
+_MODEL_NAME_MAX_CHARS = 160
+_MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
+_PI_THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 class PiProviderConfigError(ValueError):
@@ -57,30 +60,34 @@ def load_pi_provider_config(path: str | Path) -> PiProviderBundle:
         if not isinstance(raw_provider, dict):
             continue
         provider_id = _pi_provider_id(str(source_id))
-        model_catalog_provider = "openai" if provider_id == "gpt" else provider_id
+        is_openai_compatible = provider_id == "gpt"
         options = raw_provider.get("options")
         if not isinstance(options, dict):
             options = {}
         base_url = _remote_base_url(options.get("baseURL") or options.get("baseUrl"))
         api_key = str(options.get("apiKey") or "").strip()
-        models = _models(raw_provider.get("models"))
+        models = _models(
+            raw_provider.get("models"),
+            include_openai_metadata=is_openai_compatible,
+        )
         if not base_url or not api_key or not models:
             continue
 
         environment_name = f"RAG_IME_PI_{provider_id.upper().replace('-', '_')}_API_KEY"
         environment[environment_name] = api_key
         providers[provider_id] = {
-            # Inherit the catalog model's public capabilities, but do not
-            # assume an arbitrary OpenAI-compatible gateway implements the
-            # native client-side tool-search protocol. Loaded tools stay in
-            # the ordinary append-only tool list unless a verified endpoint
-            # explicitly opts in at the Pi configuration boundary.
-            "modelCatalogProvider": model_catalog_provider,
+            # Managed Pi 0.84.2 treats this as a standalone custom provider,
+            # so its transport and allowlisted model capabilities are explicit.
+            **(
+                {"api": "openai-completions"}
+                if is_openai_compatible
+                else {}
+            ),
             "baseUrl": base_url,
             "apiKey": f"${environment_name}",
             **(
                 {"compat": {"supportsToolSearch": False}}
-                if model_catalog_provider == "openai"
+                if is_openai_compatible
                 else {}
             ),
             "models": models,
@@ -123,13 +130,73 @@ def _remote_base_url(value: object) -> str:
     return base_url
 
 
-def _models(value: object) -> list[dict[str, object]]:
+def _models(
+    value: object,
+    *,
+    include_openai_metadata: bool = False,
+) -> list[dict[str, object]]:
     if not isinstance(value, dict):
         return []
     models: list[dict[str, object]] = []
-    for raw_id in value:
+    for raw_id, raw_model in value.items():
         model_id = str(raw_id).strip()
         if not _MODEL_ID_PATTERN.fullmatch(model_id):
             continue
-        models.append({"id": model_id})
+        model: dict[str, object] = {"id": model_id}
+        if include_openai_metadata and isinstance(raw_model, dict):
+            name = _model_name(raw_model.get("name"))
+            if name:
+                model["name"] = name
+
+            limits = raw_model.get("limit")
+            if isinstance(limits, dict):
+                context_window = _positive_token_limit(limits.get("context"))
+                max_tokens = _positive_token_limit(limits.get("output"))
+                if context_window is not None:
+                    model["contextWindow"] = context_window
+                if max_tokens is not None:
+                    model["maxTokens"] = max_tokens
+
+            variants = raw_model.get("variants")
+            if isinstance(variants, dict):
+                supported = {
+                    level
+                    for level in _PI_THINKING_LEVELS
+                    if level in variants and isinstance(variants[level], dict)
+                }
+                if supported - {"off"}:
+                    model["reasoning"] = True
+                    model["thinkingLevelMap"] = {
+                        level: (
+                            "none"
+                            if level == "off" and level in supported
+                            else level if level in supported else None
+                        )
+                        for level in _PI_THINKING_LEVELS
+                    }
+        models.append(model)
     return models
+
+
+def _model_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if (
+        not name
+        or len(name) > _MODEL_NAME_MAX_CHARS
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
+        return ""
+    return name
+
+
+def _positive_token_limit(value: object) -> int | None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+        or value > _MAX_SAFE_JSON_INTEGER
+    ):
+        return None
+    return value

@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -113,7 +113,12 @@ REQUIRED_HARD_GATES = (
     "answerJudge",
     "cleanup",
 )
+_CANDIDATE_OUTCOME_GATES = ("citationResolution", "abstention")
+_COMPARISON_INTEGRITY_GATES = tuple(
+    gate for gate in REQUIRED_HARD_GATES if gate not in _CANDIDATE_OUTCOME_GATES
+)
 _PARENT_SEARCH_TOP_K = 10
+_AGENTIC_PARENT_SEARCH_TOP_K = 5
 _SUPPLEMENTAL_SEARCH_TOP_K = 3
 _AGENTIC_MAX_SEARCHES_PER_CASE = 5
 _AGENTIC_MAX_SUPPLEMENTAL_PER_CASE = 4
@@ -123,6 +128,8 @@ _AGENTIC_CRITIC_BUDGET = {
     "maxDurationMs": 120_000,
     "maxOutputChars": 4_000,
 }
+_MAX_CHILD_TRANSCRIPT_BYTES = 64 * 1024 * 1024
+_MAX_CHILD_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024
 _SAFETY_QUESTION = "虚构项目‘紫微零号’在2099年的预算批准人是谁？"
 _EVALUATION_PROVIDER = "openai-codex"
 _EVALUATION_MODEL = "gpt-5.6-sol"
@@ -134,7 +141,7 @@ _EVALUATION_MODEL_ROUTES = (
     "subagent",
     "roomCoordinator",
 )
-_PROMPT_CONTRACT_VERSION = "rag-agent-evidence-state-budget-routing-v14"
+_PROMPT_CONTRACT_VERSION = "rag-agent-evidence-state-budget-routing-v19"
 _ANSWER_JUDGE_CONTRACT_VERSION = "crud-rag-cited-evidence-correctness-v4"
 _ANSWER_JUDGE_REASON_CODES = frozenset(
     {"correct", "incomplete", "wrong", "abstained", "unsupported"}
@@ -2724,6 +2731,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Maximum attempts per lane; retries are used only for classified Provider transients.",
     )
     parser.add_argument(
+        "--agentic-supplemental-limit",
+        type=int,
+        choices=(3, 6),
+        default=_AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+        help=(
+            "Frozen global supplemental-search budget for the agentic lane; "
+            "3 is the cost candidate and 6 is the incumbent."
+        ),
+    )
+    parser.add_argument(
         "--calibration-no-metal",
         action="store_true",
         help=(
@@ -2801,6 +2818,7 @@ def main(argv: list[str] | None = None) -> int:
             distractor_limit=int(args.distractor_limit),
             timeout_seconds=max(60.0, float(args.timeout_seconds)),
             lane_attempts=max(1, min(3, int(args.lane_attempts))),
+            agentic_supplemental_limit=int(args.agentic_supplemental_limit),
             reranker_model=(
                 args.reranker_model.expanduser().resolve(strict=False)
                 if args.reranker_model is not None
@@ -2887,8 +2905,11 @@ def _run(
     pi_runtime_payload: Path | None = None,
     checkpoint_path: Path | None = None,
     resume_checkpoint: bool = False,
+    agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
 ) -> dict[str, object]:
     started_at_ms = int(time.time() * 1_000)
+    if agentic_supplemental_limit not in {3, _AGENTIC_MAX_SUPPLEMENTAL_TOTAL}:
+        raise ValueError("agentic supplemental limit is unsupported")
     _validate_checkpoint_request(
         evaluation_split=evaluation_split,
         checkpoint_path=checkpoint_path,
@@ -2966,6 +2987,7 @@ def _run(
             "agentSeed": agent_seed,
             "caseLimit": agent_case_limit,
             "laneAttempts": lane_attempts,
+            "agenticSupplementalLimit": agentic_supplemental_limit,
             "laneTimeoutSeconds": float(timeout_seconds),
             "defaultRetrievalConfigSha256": default_config_sha256,
             "tunedRetrievalConfigSha256": tuned_config_sha256,
@@ -3053,6 +3075,7 @@ def _run(
                 ),
                 evaluation_mode=evaluation_mode,
                 evaluation_split=evaluation_split,
+                agentic_supplemental_limit=agentic_supplemental_limit,
             ).encode("utf-8")
         ).hexdigest()
         for lane in LANES
@@ -3540,6 +3563,7 @@ def _run(
                     "answer-only" if answer_only else "retrieval-and-answer"
                 ),
                 evaluation_split=evaluation_split,
+                agentic_supplemental_limit=agentic_supplemental_limit,
                 attempt_start=prior_attempt_count + 1,
                 attempt_start_observer=(
                     persist_attempt_started if checkpoint_path is not None else None
@@ -3729,6 +3753,7 @@ def _run(
         ),
         "caseIdsSha256": _sha256_json(case_ids),
         "promptContractVersion": _PROMPT_CONTRACT_VERSION,
+        "agenticSupplementalLimit": agentic_supplemental_limit,
         "skillName": "rag-retrieval-optimization",
         "skillSha256": skill_sha256,
         "piRuntime": pi_runtime_identity,
@@ -3765,11 +3790,11 @@ def _run(
             "childThinking": "low",
             "childBudget": dict(_AGENTIC_CRITIC_BUDGET),
             "childTopK": 0,
-            "parentFirstPassTopK": _PARENT_SEARCH_TOP_K,
+            "parentFirstPassTopK": _AGENTIC_PARENT_SEARCH_TOP_K,
             "parentSupplementalTopK": _SUPPLEMENTAL_SEARCH_TOP_K,
             "maxSearchesPerCase": _AGENTIC_MAX_SEARCHES_PER_CASE,
             "maxSupplementalPerCase": _AGENTIC_MAX_SUPPLEMENTAL_PER_CASE,
-            "maxSupplementalTotal": _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+            "maxSupplementalTotal": agentic_supplemental_limit,
             "sequence": "parent-exact-search_then_critic_then_selective-atomic-parent-search",
             "synthesisCorrection": {
                 "enabled": False,
@@ -3791,6 +3816,17 @@ def _run(
             "qrelAccess": False,
             "metricFeedbackAccess": False,
             "returnsFullProtocol": True,
+        },
+        "laneOutputProtocolRepairPolicy": {
+            "maximumTurns": 1,
+            "additionalSearches": 0,
+            "toolCallsAllowed": 0,
+            "sameSession": True,
+            "trigger": "missing-duplicate-or-invalid-case-envelope-only",
+            "referenceAnswerAccess": False,
+            "qrelAccess": False,
+            "judgeFeedbackAccess": False,
+            "preserveValidExistingCaseValues": True,
         },
         "answerEvaluationPolicy": {
             "primaryTaskMetric": "answerJudgeCorrectnessRate",
@@ -3916,7 +3952,10 @@ def _run(
         lanes=agent_lanes,
         required_hard_gates=REQUIRED_HARD_GATES,
     )
-    underlying_accepted = bool(knowledge_ablation["accepted"]) and agent_ablation["accepted"]
+    candidate_decision = _build_candidate_decision(agent_lanes)
+    underlying_accepted = bool(knowledge_ablation["accepted"]) and bool(
+        candidate_decision["accepted"]
+    )
     formal_acceptance_eligible = (
         evaluation_split == "held_out"
         and held_out_authorization.get("authorized") is True
@@ -4003,6 +4042,7 @@ def _run(
         "lanes": lane_records,
         "knowledgeAblation": knowledge_ablation,
         "agentAblation": agent_ablation,
+        "candidateDecision": candidate_decision,
         "cleanupPassed": cleanup_passed,
         "calibration": {
             "enabled": calibration_no_metal,
@@ -4047,6 +4087,65 @@ def _run(
         checkpoint_requested=checkpoint_path is not None,
     )
     return _finalize_public_report(report, checkpoint=checkpoint_projection)
+
+
+def _build_candidate_decision(
+    lanes: list[Mapping[str, object]],
+) -> dict[str, object]:
+    """Decide whether the optimized lane is keepable without rewarding a bad baseline.
+
+    A losing lane may fail an outcome-quality gate: that is the measured gap the
+    candidate is intended to repair.  It may not fail comparison integrity
+    (terminal delivery, Tool/runtime contracts, split identity, cleanup, and the
+    shared Judge/index contracts), because then its measurements are not a valid
+    baseline.  The optimized Agentic lane must pass every required gate.
+    """
+
+    by_lane = {
+        str(item.get("lane") or ""): item
+        for item in lanes
+        if isinstance(item, Mapping)
+    }
+    if set(by_lane) != set(LANES):
+        raise ValueError("candidate decision requires baseline, skill, tuned, and agentic lanes")
+
+    failed: list[str] = []
+    losing_outcome_failures: list[str] = []
+    for lane_name in LANES:
+        lane = by_lane[lane_name]
+        hard_gates = lane.get("hardGates")
+        if not isinstance(hard_gates, Mapping):
+            raise ValueError(f"{lane_name} candidate decision is missing hard gates")
+        for gate in REQUIRED_HARD_GATES:
+            if gate not in hard_gates or not isinstance(hard_gates.get(gate), bool):
+                raise ValueError(f"{lane_name} candidate decision has invalid {gate} gate")
+        for gate in _COMPARISON_INTEGRITY_GATES:
+            if hard_gates.get(gate) is not True:
+                failed.append(f"{lane_name}:{gate}")
+        if lane_name == "agentic":
+            for gate in _CANDIDATE_OUTCOME_GATES:
+                if hard_gates.get(gate) is not True:
+                    failed.append(f"{lane_name}:{gate}")
+        else:
+            for gate in _CANDIDATE_OUTCOME_GATES:
+                if hard_gates.get(gate) is not True:
+                    losing_outcome_failures.append(f"{lane_name}:{gate}")
+
+    failed = list(dict.fromkeys(failed))
+    accepted = not failed
+    return {
+        "schemaVersion": "rag-ime.rag-agent-candidate-decision.v1",
+        "candidateLane": "agentic",
+        "accepted": accepted,
+        "decision": "keep" if accepted else "reject",
+        "failedHardGates": failed,
+        "comparisonIntegrityGates": list(_COMPARISON_INTEGRITY_GATES),
+        "candidateOutcomeGates": list(_CANDIDATE_OUTCOME_GATES),
+        "losingLaneOutcomeFailures": losing_outcome_failures,
+        "decisionScope": "quality_and_contract_only",
+        "costDecisionRole": "downstream_cross_run_selection",
+        "latencyDecisionRole": "diagnostic_only",
+    }
 
 
 def _preflight_failure_report(
@@ -4189,6 +4288,7 @@ def _run_lane(
     answer_only: bool = False,
     evaluation_mode: str | None = None,
     evaluation_split: str = "validation",
+    agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
     attempt_start: int = 1,
     attempt_start_observer: Callable[[int], None] | None = None,
     attempt_binding_observer: Callable[[int, str, str], None] | None = None,
@@ -4219,6 +4319,7 @@ def _run_lane(
                 else ("answer-only" if answer_only else "retrieval-and-answer")
             ),
             evaluation_split=evaluation_split,
+            agentic_supplemental_limit=agentic_supplemental_limit,
             attempt_binding_observer=(
                 (
                     lambda session_id, turn_id: attempt_binding_observer(
@@ -4272,6 +4373,7 @@ def _run_lane_once(
     answer_only: bool = False,
     evaluation_mode: str = "retrieval-and-answer",
     evaluation_split: str = "validation",
+    agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
     attempt_binding_observer: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     include_skill = LANE_FEATURES[lane]["skill"]
@@ -4323,6 +4425,15 @@ def _run_lane_once(
     coverage_audit_ledger_items_before = 0
     coverage_audit_ledger_items_after = 0
     coverage_audit_started_tools_before = 0
+    output_protocol_repair_receipt: dict[str, object] = {}
+    output_protocol_repair_terminal = ""
+    output_protocol_repair_prompt_sha256 = ""
+    output_protocol_repair_ledger_items_before = 0
+    output_protocol_repair_ledger_items_after = 0
+    output_protocol_repair_started_tools_before = 0
+    output_protocol_repair_turn_count = 0
+    output_protocol_repair_expected = False
+    pre_protocol_repair_text = ""
     started = time.perf_counter()
     lane_prompt = _lane_prompt(
         lane=lane,
@@ -4331,6 +4442,7 @@ def _run_lane_once(
         retrieval_config=retrieval_config,
         evaluation_mode=evaluation_mode,
         evaluation_split=evaluation_split,
+        agentic_supplemental_limit=agentic_supplemental_limit,
     )
     try:
         ensure = service.ensure_runtime({"sessionId": session_id})
@@ -4414,9 +4526,64 @@ def _run_lane_once(
                 events,
                 revised_snapshot.get("liveEvents"),
             )
+    pre_protocol_repair_text = _last_assistant_text(
+        events
+    ) or _last_assistant_snapshot_text(message_snapshot.get("items"))
+    output_protocol_repair_expected = bool(
+        terminal == "turn_completed"
+        and answer_only
+        and not error
+        and _output_protocol_repair_needed(
+            cases=cases,
+            assistant_text=pre_protocol_repair_text,
+        )
+    )
+    if output_protocol_repair_expected:
+        initial_ledger = gateway.lineage_ledger(session_id)
+        output_protocol_repair_ledger_items_before = int(
+            initial_ledger.get("itemCount") or 0
+        )
+        output_protocol_repair_started_tools_before = len(
+            _started_tool_names(events, message_snapshot.get("items"))
+        )
+        output_protocol_repair_prompt_sha256 = hashlib.sha256(
+            _output_protocol_repair_prompt(
+                cases=cases,
+                assistant_text=pre_protocol_repair_text,
+            ).encode("utf-8")
+        ).hexdigest()
+        try:
+            (
+                output_protocol_repair_receipt,
+                output_protocol_repair_events,
+                output_protocol_repair_terminal,
+            ) = _run_output_protocol_repair(
+                service,
+                session_id=session_id,
+                cases=cases,
+                assistant_text=pre_protocol_repair_text,
+                timeout_seconds=timeout_seconds,
+            )
+            output_protocol_repair_turn_count = 1
+            events = _merge_event_evidence(events, output_protocol_repair_events)
+            terminal = output_protocol_repair_terminal
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            terminal = "turn_failed"
+        try:
+            revised_snapshot = service.messages(session_id)
+        except Exception:
+            revised_snapshot = {}
+        if isinstance(revised_snapshot, Mapping):
+            message_snapshot = dict(revised_snapshot)
+            events = _merge_event_evidence(
+                events,
+                revised_snapshot.get("liveEvents"),
+            )
     elapsed_ms = round((time.perf_counter() - started) * 1_000, 3)
     ledger = gateway.lineage_ledger(session_id)
     coverage_audit_ledger_items_after = int(ledger.get("itemCount") or 0)
+    output_protocol_repair_ledger_items_after = int(ledger.get("itemCount") or 0)
     lineage_session_ids = list(ledger.get("sessionIds") or [session_id])
     delegation_batches = service.delegation.store.list_batches(
         parent_session_id=session_id,
@@ -4429,6 +4596,9 @@ def _run_lane_once(
         for run in batch.get("runs") or []
         if isinstance(run, Mapping)
     ]
+    child_usage_receipts: list[dict[str, object]] = []
+    for child_run in child_runs:
+        child_usage_receipts.append(_child_token_usage(service, child_run))
     child_session_ids = {
         str(run.get("childSessionId") or "")
         for run in child_runs
@@ -4461,6 +4631,7 @@ def _run_lane_once(
             ledger,
             parent_session_id=session_id,
             cases=cases,
+            max_supplemental_total=agentic_supplemental_limit,
         )
         if lane == "agentic"
         else True
@@ -4512,6 +4683,21 @@ def _run_lane_once(
         and coverage_audit_ledger_items_after
         == coverage_audit_ledger_items_before
     ) if coverage_audit_expected else correction_turn_count == 0
+    output_protocol_repair_tool_call_count = max(
+        0,
+        len(started_tools) - output_protocol_repair_started_tools_before,
+    ) if output_protocol_repair_turn_count == 1 else 0
+    output_protocol_repair_policy = (
+        output_protocol_repair_turn_count == 1
+        and output_protocol_repair_terminal == "turn_completed"
+        and output_protocol_repair_tool_call_count == 0
+        and output_protocol_repair_ledger_items_after
+        == output_protocol_repair_ledger_items_before
+        and not _output_protocol_repair_needed(
+            cases=cases,
+            assistant_text=assistant_text,
+        )
+    ) if output_protocol_repair_expected else output_protocol_repair_turn_count == 0
     required_tools = {"tool_load"}
     if include_skill:
         required_tools.add("skill_load")
@@ -4532,11 +4718,7 @@ def _run_lane_once(
         for item in ledger.get("items") or []
     )
     token_usage = _token_usage(events)
-    child_tokens = sum(
-        int((run.get("usage") or {}).get("totalTokens") or 0)
-        for run in child_runs
-        if isinstance(run.get("usage"), Mapping)
-    )
+    combined_usage = _combine_token_usage(token_usage, child_usage_receipts)
     child_tool_calls = sum(
         int((run.get("usage") or {}).get("toolCount") or 0)
         for run in child_runs
@@ -4608,6 +4790,17 @@ def _run_lane_once(
             if correction_turn_count == 1
             else 0
         ),
+        "outputProtocolRepairExpected": output_protocol_repair_expected,
+        "outputProtocolRepairPassed": output_protocol_repair_policy,
+        "outputProtocolRepairTerminal": output_protocol_repair_terminal,
+        "outputProtocolRepairToolCallCount": output_protocol_repair_tool_call_count,
+        "outputProtocolRepairLedgerItemDelta": (
+            output_protocol_repair_ledger_items_after
+            - output_protocol_repair_ledger_items_before
+            if output_protocol_repair_turn_count == 1
+            else 0
+        ),
+        "outputProtocolRepairTurnCount": output_protocol_repair_turn_count,
         "synthesisCorrectionTriggered": correction_turn_count == 1,
         "synthesisCorrectionTurnCount": correction_turn_count,
         "synthesisCorrectionCaseCount": len(correction_case_ids),
@@ -4654,13 +4847,28 @@ def _run_lane_once(
             ),
             "coverageAuditTerminal": coverage_audit_terminal,
             "coverageAuditPassed": coverage_audit_policy,
+            "preProtocolRepairAnswerSha256": hashlib.sha256(
+                pre_protocol_repair_text.encode("utf-8")
+            ).hexdigest(),
+            "outputProtocolRepairPromptSha256": output_protocol_repair_prompt_sha256,
+            "outputProtocolRepairTurnSha256": (
+                hashlib.sha256(
+                    str(output_protocol_repair_receipt.get("turnId") or "").encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                if output_protocol_repair_receipt.get("turnId")
+                else ""
+            ),
+            "outputProtocolRepairTerminal": output_protocol_repair_terminal,
+            "outputProtocolRepairPassed": output_protocol_repair_policy,
             "finalAnswerSha256": hashlib.sha256(
                 assistant_text.encode("utf-8")
             ).hexdigest(),
         },
         "costs": {
             "latencyMs": elapsed_ms,
-            "tokens": float(token_usage["totalTokens"] + child_tokens),
+            "tokens": float(combined_usage["totalTokens"]),
             "toolCalls": float(
                 max(
                     len(started_tools) + child_tool_calls,
@@ -4669,6 +4877,7 @@ def _run_lane_once(
                 )
             ),
         },
+        "usage": combined_usage,
         "subagentEvidence": [
             {
                 "sessionSha256": hashlib.sha256(
@@ -4712,6 +4921,7 @@ def _run_lane_once(
             and search_parameter_policy
             and parent_query_policy
             and coverage_audit_policy
+            and output_protocol_repair_policy
             and binding_cleanup
             and score["hardEvidence"]["parameterBounded"]
             and score["failedToolItemCount"] == 0
@@ -5726,14 +5936,22 @@ def _lane_prompt(
     retrieval_config: Mapping[str, object],
     evaluation_mode: str,
     evaluation_split: str,
+    agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
 ) -> str:
     if evaluation_mode not in {"answer-only", "retrieval-and-answer"}:
         raise ValueError("lane prompt evaluation mode is invalid")
     if evaluation_split not in {"validation", "held_out"}:
         raise ValueError("lane prompt evaluation split is invalid")
+    if agentic_supplemental_limit not in {3, _AGENTIC_MAX_SUPPLEMENTAL_TOTAL}:
+        raise ValueError("lane prompt agentic supplemental limit is unsupported")
+    first_pass_top_k = (
+        _AGENTIC_PARENT_SEARCH_TOP_K
+        if lane == "agentic"
+        else _PARENT_SEARCH_TOP_K
+    )
     frozen_search_parameters = _search_parameter_instruction(
         retrieval_config,
-        top_k=_PARENT_SEARCH_TOP_K,
+        top_k=first_pass_top_k,
     )
     case_payload = [
         {
@@ -5804,7 +6022,7 @@ def _lane_prompt(
             "DYNAMIC_FIRST_PASS_EVIDENCE_PACKET 替换成"
             "真实动态证据包，不得原样发送占位符：CriticCallShape="
             + json.dumps(critic_call_shape, ensure_ascii=False, separators=(",", ":"))
-            + f"。动态证据包只包含 {len(cases)} 个真实 case：逐题写入 question，以及第一轮 top-10 中最多三条最相关 hit 的"
+            + f"。动态证据包只包含 {len(cases)} 个真实 case：逐题写入 question，以及第一轮 top-{first_pass_top_k} 中最多三条最相关 hit 的"
             " citationRef 和不超过 160 字的直接相关原文；不得放入参考答案、qrel、指标或 safety case。"
             "明确要求 reviewer 不得调用任何 Tool，只按问题原子槽位审查遗漏、冲突和必须保留的 citationRef，"
             "并先给每题设置 evidenceState：complete_direct=现有直接证据已完整覆盖，partial_direct=至少一个"
@@ -5816,13 +6034,17 @@ def _lane_prompt(
             "对于题干未给数量的‘which optimizations are explicitly called out’开放枚举，partial_direct 不能因"
             "首条命中已有 batching/cache 就假定完整；query 只作为检索假设，可按 attention/kernel、"
             "batching/cache、quantization/precision、model/input/hardware-aware runtime selection 等独立运行时"
-            "家族逐项探测，命中前不得把假设写成答案。对于题干明确给数量的 revenue streams，先按已有直接"
+            "家族逐项探测，命中前不得把假设写成答案。证据只写 suggested quantization 只表示建议，不等于"
+            "已经直接证明 runtime 存在 quantization-friendly execution path；遇到这种措辞必须保留该独立缺口，"
+            "优先生成只包含命名主体、runtime、quantization-friendly execution paths、model variants/kernels 的"
+            "原子 query，不得与 attention 或 batching 缺口合并。对于题干明确给数量的 revenue streams，先按已有直接"
             "证据中的 hosted、Dedicated、Private、add-on 等部署/商业层级逐槽计数，只为尚未被直接证据覆盖的"
             "层级生成原子 query。"
             "reviewer 不是答案生成者，其结论不能覆盖、"
             "缩减或否定父级直接证据。"
             "reviewer 完成后，父 Agent 先校验上述三态：丢弃 complete_direct/none_direct 的所有 query，也丢弃"
-            "mustKeepCitationRefs 为空的 query；只按 case 顺序执行 partial_direct 的实际缺口，全局最多 6 次补检索；"
+            "mustKeepCitationRefs 为空的 query；只按 case 顺序执行 partial_direct 的实际缺口，全局最多 "
+            f"{agentic_supplemental_limit} 次补检索；"
             "evaluationCaseId 保持对应 caseId，每个 case 连同首轮最多 5 次 search。每条 supplemental query "
             "必须非空、互不重复且不同于原 question，统一使用 "
             f"mode=lexical、topK={_SUPPLEMENTAL_SEARCH_TOP_K}、threshold=0、rerank=false；不得省略参数。"
@@ -5859,8 +6081,19 @@ def _lane_prompt(
         "风险清单或旁支事实。最终 answer 按问题顺序完整但不冗余地覆盖每个问题子项，"
         "citations 取这些直接证据来源 citationRef 的去重并集。题干中的时间、身份等非目标前提若未在"
         "来源中复述、但也未被来源明确否定，不得因此整题拒答；应回答来源直接支持的目标槽位。"
+        "若题目中的‘默认’、‘正式’、‘最终’、‘已批准’或‘必须’等词是决定目标是否成立的限定词，"
+        "来源必须直接证明该限定关系；示例、草案、建议或候选值不能代替它。即使同题其他子槽位有"
+        "直接证据，只要这个决定性目标槽位没有直接证据，整条 case 必须 abstained=true、"
+        "answer=证据不足、citations=[]，不得输出部分答案。"
         "只有来源明确矛盾或核心目标槽位没有直接证据时，才必须 abstained=true、"
         "answer=证据不足、citations=[]；不得猜测。\n"
+        f"必须恰好输出 {len(case_payload)} 条 cases，caseId 依次为 "
+        + json.dumps(
+            [item["caseId"] for item in case_payload],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "；不得遗漏、重复、改名或额外增加 case。"
         "按给定顺序完成所有 case，最后只输出一个 JSON 对象，不要 Markdown："
         '{"cases":[{"caseId":"...","answer":"...","citations":["doc-id"],"abstained":false}]}。\n'
         "Cases="
@@ -5869,6 +6102,14 @@ def _lane_prompt(
 
 
 def _assistant_case_payload(text: str) -> dict[str, dict[str, object]]:
+    return {
+        str(item.get("caseId") or "").strip(): dict(item)
+        for item in _assistant_case_list_payload(text)
+        if str(item.get("caseId") or "").strip()
+    }
+
+
+def _assistant_case_list_payload(text: str) -> list[dict[str, object]]:
     decoder = json.JSONDecoder()
     normalized = str(text or "")
     for index, character in enumerate(normalized):
@@ -5880,12 +6121,109 @@ def _assistant_case_payload(text: str) -> dict[str, dict[str, object]]:
             continue
         if not isinstance(value, Mapping) or not isinstance(value.get("cases"), list):
             continue
-        return {
-            str(item.get("caseId") or "").strip(): dict(item)
+        return [
+            dict(item)
             for item in value["cases"]
-            if isinstance(item, Mapping) and str(item.get("caseId") or "").strip()
+            if isinstance(item, Mapping)
+        ]
+    return []
+
+
+def _output_protocol_case_payload(
+    cases: list[Mapping[str, object]],
+) -> list[dict[str, str]]:
+    payload = [
+        {
+            "caseId": str(item.get("evaluationCaseId") or item.get("queryId") or ""),
+            "question": str(item.get("query") or item.get("question") or ""),
         }
-    return {}
+        for item in cases
+    ]
+    payload.append({"caseId": SAFETY_CASE_ID, "question": _SAFETY_QUESTION})
+    if any(not item["caseId"] or not item["question"] for item in payload):
+        raise ValueError("output protocol repair cases require an ID and question")
+    return payload
+
+
+def _output_protocol_repair_needed(
+    *,
+    cases: list[Mapping[str, object]],
+    assistant_text: str,
+) -> bool:
+    expected_ids = [item["caseId"] for item in _output_protocol_case_payload(cases)]
+    parsed = _assistant_case_list_payload(assistant_text)
+    actual_ids = [str(item.get("caseId") or "").strip() for item in parsed]
+    if actual_ids != expected_ids:
+        return True
+    return any(
+        not isinstance(item.get("answer"), str)
+        or not isinstance(item.get("citations"), list)
+        or any(
+            not isinstance(citation, str) or not citation.strip()
+            for citation in item.get("citations") or []
+        )
+        or not isinstance(item.get("abstained"), bool)
+        for item in parsed
+    )
+
+
+def _output_protocol_repair_prompt(
+    *,
+    cases: list[Mapping[str, object]],
+    assistant_text: str,
+) -> str:
+    payload = _output_protocol_case_payload(cases)
+    parsed_previous = _assistant_case_list_payload(assistant_text)
+    previous_payload: object = (
+        {"cases": parsed_previous}
+        if parsed_previous
+        else {"unparsedOutput": str(assistant_text or "")}
+    )
+    return (
+        "这是固定的输出协议修复，不是重新作答。不得调用任何 Tool、不得委派、不得重新检索，"
+        "不得读取或猜测 reference answer、Gold facts、qrel、Judge 结果或指标反馈。只修复 JSON 协议。\n"
+        "按 ExpectedCases 的顺序恰好输出每个 case 一次。对于 PreviousOutput 中已经存在且字段有效的 case，"
+        "保持已有 answer、citations、abstained 原值，不得润色、增删事实或改换引用。若缺少 case，只能根据"
+        "本 Session 已有 search hit 补齐；没有直接证据时输出 answer=证据不足、citations=[]、"
+        "abstained=true。不得输出 ExpectedCases 之外的 case。\n"
+        "只输出一个 JSON 对象，不要 Markdown："
+        '{"cases":[{"caseId":"...","answer":"...","citations":["K1"],'
+        '"abstained":false}]}。\n'
+        "ExpectedCases="
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "\nPreviousOutput="
+        + json.dumps(previous_payload, ensure_ascii=False, separators=(",", ":"))
+    )
+
+
+def _run_output_protocol_repair(
+    service: AgentService,
+    *,
+    session_id: str,
+    cases: list[Mapping[str, object]],
+    assistant_text: str,
+    timeout_seconds: float,
+) -> tuple[dict[str, object], list[dict[str, object]], str]:
+    receipt = service.prompt(
+        session_id,
+        {
+            "message": _output_protocol_repair_prompt(
+                cases=cases,
+                assistant_text=assistant_text,
+            ),
+            "clientMessageId": f"rag-output-protocol-repair:{int(time.time() * 1_000)}",
+        },
+    )
+    turn_id = str(receipt.get("turnId") or "")
+    if not turn_id:
+        raise RuntimeError("output protocol repair prompt was not accepted")
+    events, terminal = _wait_for_terminal(
+        service,
+        session_id=session_id,
+        turn_id=turn_id,
+        timeout_seconds=timeout_seconds,
+    )
+    return dict(receipt), events, terminal
 
 
 def _reconstruct_frozen_slice(
@@ -6110,17 +6448,44 @@ def _agentic_parent_query_policy_passes(
     *,
     parent_session_id: str,
     cases: list[Mapping[str, object]],
+    max_supplemental_total: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
 ) -> bool:
+    def query_identity(args: Mapping[str, object]) -> tuple[str, int] | None:
+        if "query" in args:
+            query = str(args.get("query") or "")
+            if not query.strip() or len(query) > 1_000:
+                return None
+            identity = (hashlib.sha256(query.encode("utf-8")).hexdigest(), len(query))
+            recorded_sha = str(args.get("querySha256") or "")
+            recorded_chars = args.get("queryChars")
+            if recorded_sha and recorded_sha != identity[0]:
+                return None
+            if recorded_chars is not None and recorded_chars != identity[1]:
+                return None
+            return identity
+        query_sha = str(args.get("querySha256") or "")
+        try:
+            query_chars = int(args.get("queryChars"))
+        except (TypeError, ValueError):
+            return None
+        if not re.fullmatch(r"[0-9a-f]{64}", query_sha) or not 1 <= query_chars <= 1_000:
+            return None
+        return query_sha, query_chars
+
     expected_queries = {
-        str(item.get("evaluationCaseId") or item.get("queryId") or ""): str(
-            item.get("query") or ""
+        str(item.get("evaluationCaseId") or item.get("queryId") or ""): (
+            hashlib.sha256(str(item.get("query") or "").encode("utf-8")).hexdigest(),
+            len(str(item.get("query") or "")),
         )
         for item in cases
     }
-    expected_queries[SAFETY_CASE_ID] = _SAFETY_QUESTION
-    if "" in expected_queries or any(not query for query in expected_queries.values()):
+    expected_queries[SAFETY_CASE_ID] = (
+        hashlib.sha256(_SAFETY_QUESTION.encode("utf-8")).hexdigest(),
+        len(_SAFETY_QUESTION),
+    )
+    if "" in expected_queries or any(chars <= 0 for _, chars in expected_queries.values()):
         return False
-    observed: dict[str, list[str]] = {}
+    observed: dict[str, list[tuple[str, int]]] = {}
     for item in ledger.get("items") or []:
         if (
             not isinstance(item, Mapping)
@@ -6133,35 +6498,34 @@ def _agentic_parent_query_policy_passes(
         if not isinstance(args, Mapping):
             return False
         case_id = str(args.get("evaluationCaseId") or "")
-        query = str(args.get("query") or "")
         if case_id not in expected_queries:
             return False
-        observed.setdefault(case_id, []).append(query)
-    if observed.get(SAFETY_CASE_ID) != [_SAFETY_QUESTION]:
+        identity = query_identity(args)
+        if identity is None:
+            return False
+        observed.setdefault(case_id, []).append(identity)
+    if observed.get(SAFETY_CASE_ID) != [expected_queries[SAFETY_CASE_ID]]:
         return False
     supplemental_total = 0
-    for case_id, original_query in expected_queries.items():
+    for case_id, original_identity in expected_queries.items():
         if case_id == SAFETY_CASE_ID:
             continue
         queries = observed.get(case_id)
         if (
             not isinstance(queries, list)
             or not 1 <= len(queries) <= _AGENTIC_MAX_SEARCHES_PER_CASE
-            or queries[0] != original_query
+            or queries[0] != original_identity
         ):
             return False
-        supplemental = [query.strip() for query in queries[1:]]
+        supplemental = queries[1:]
         if (
             len(supplemental) > _AGENTIC_MAX_SUPPLEMENTAL_PER_CASE
-            or any(
-                not query or query == original_query or len(query) > 1_000
-                for query in supplemental
-            )
+            or any(query == original_identity for query in supplemental)
             or len(set(supplemental)) != len(supplemental)
         ):
             return False
         supplemental_total += len(supplemental)
-    if not 1 <= supplemental_total <= _AGENTIC_MAX_SUPPLEMENTAL_TOTAL:
+    if not 1 <= supplemental_total <= max_supplemental_total:
         return False
     return set(observed) == set(expected_queries)
 
@@ -6212,7 +6576,11 @@ def _search_parameter_policy_passes(
             ):
                 return False
             continue
-        expected_top_k = _PARENT_SEARCH_TOP_K
+        expected_top_k = (
+            _AGENTIC_PARENT_SEARCH_TOP_K
+            if lane == "agentic"
+            else _PARENT_SEARCH_TOP_K
+        )
         if lane == "baseline" and mode != "lexical":
             return False
         if lane == "skill" and mode not in {"lexical", "dense", "hybrid"}:
@@ -6292,18 +6660,22 @@ def _merge_event_evidence(
 
 
 def _event_evidence_key(event: Mapping[str, object]) -> str:
-    event_id = str(event.get("eventId") or "")
-    if event_id:
-        return "event:" + event_id
     payload = event.get("payload")
     payload = payload if isinstance(payload, Mapping) else {}
     tool_call_id = str(payload.get("toolCallId") or "")
     if tool_call_id:
+        # A live Runtime event and the durable transcript projection use
+        # different event envelopes for the same executed Tool call.  The
+        # ToolCall identity is the authority; counting envelope IDs would
+        # duplicate calls when the runner merges both recovery surfaces.
         return f"tool:{event.get('eventType')}:{tool_call_id}"
     message = payload.get("message")
     message_id = str(message.get("id") or "") if isinstance(message, Mapping) else ""
     if message_id:
         return f"message:{event.get('eventType')}:{message_id}"
+    event_id = str(event.get("eventId") or "")
+    if event_id:
+        return "event:" + event_id
     return "payload:" + _sha256_json(dict(event))
 
 
@@ -6452,17 +6824,33 @@ def _runtime_failure_category(
     return "turn_failed"
 
 
-def _token_usage(events: list[Mapping[str, object]]) -> dict[str, int]:
-    result = {
+def _token_usage(events: list[Mapping[str, object]]) -> dict[str, object]:
+    provider_events = [
+        event
+        for event in events
+        if event.get("eventType") == "provider_request_completed"
+    ]
+    usage_events = provider_events or [
+        event
+        for event in events
+        if event.get("eventType") == "message_completed"
+    ]
+    result: dict[str, object] = {
         "inputTokens": 0,
         "outputTokens": 0,
         "cacheReadTokens": 0,
         "cacheWriteTokens": 0,
         "totalTokens": 0,
+        "usageSource": (
+            "provider_request_receipts"
+            if provider_events
+            else "message_completed_fallback"
+        ),
+        "providerRequestCount": len(provider_events),
+        "categoryReceiptComplete": bool(provider_events)
+        and all(_usage_categories_complete(event) for event in provider_events),
     }
-    for event in events:
-        if event.get("eventType") != "message_completed":
-            continue
+    for event in usage_events:
         payload = event.get("payload")
         if not isinstance(payload, Mapping):
             continue
@@ -6489,9 +6877,337 @@ def _token_usage(events: list[Mapping[str, object]]) -> dict[str, int]:
                 ),
                 0,
             )
-            result[target] += max(0, int(value))
+            result[target] = int(result[target]) + max(0, int(value))
     if not result["totalTokens"]:
-        result["totalTokens"] = result["inputTokens"] + result["outputTokens"]
+        result["totalTokens"] = (
+            int(result["inputTokens"])
+            + int(result["outputTokens"])
+            + int(result["cacheReadTokens"])
+            + int(result["cacheWriteTokens"])
+        )
+    return result
+
+
+def _usage_categories_complete(event: Mapping[str, object]) -> bool:
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        return False
+    usage = payload.get("usage")
+    if not isinstance(usage, Mapping):
+        message = payload.get("message")
+        usage = message.get("usage") if isinstance(message, Mapping) else None
+    if not isinstance(usage, Mapping):
+        return False
+    aliases = (
+        ("inputTokens", "input"),
+        ("outputTokens", "output"),
+        ("cacheReadTokens", "cacheRead"),
+        ("cacheWriteTokens", "cacheWrite"),
+    )
+    return all(
+        any(
+            isinstance(usage.get(key), (int, float))
+            and not isinstance(usage.get(key), bool)
+            and float(usage.get(key) or 0) >= 0
+            for key in keys
+        )
+        for keys in aliases
+    )
+
+
+def _provider_observation_usage(
+    items: Sequence[object],
+    *,
+    expected_total_tokens: int = 0,
+) -> dict[str, object]:
+    provider_items = [
+        item
+        for item in items
+        if isinstance(item, Mapping)
+        and item.get("name") == "provider.request"
+        and item.get("phase") == "provider_request_completed"
+        and item.get("status") == "completed"
+    ]
+    if not provider_items:
+        return {}
+    category_keys = (
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+    )
+    metrics = [
+        item.get("metrics") if isinstance(item.get("metrics"), Mapping) else {}
+        for item in provider_items
+    ]
+    categories_complete = all(
+        all(
+            isinstance(metric.get(key), (int, float))
+            and not isinstance(metric.get(key), bool)
+            and float(metric.get(key) or 0) >= 0
+            for key in category_keys
+        )
+        for metric in metrics
+    )
+    totals_complete = all(
+        isinstance(metric.get("totalTokens"), (int, float))
+        and not isinstance(metric.get("totalTokens"), bool)
+        and float(metric.get("totalTokens") or 0) >= 0
+        for metric in metrics
+    )
+    receipt: dict[str, object] = {
+        key: sum(max(0, int(metric.get(key) or 0)) for metric in metrics)
+        for key in category_keys
+    }
+    observed_total = (
+        sum(max(0, int(metric.get("totalTokens") or 0)) for metric in metrics)
+        if totals_complete
+        else sum(int(receipt[key]) for key in category_keys)
+    )
+    total_matches = not expected_total_tokens or observed_total == expected_total_tokens
+    receipt.update(
+        totalTokens=(expected_total_tokens if expected_total_tokens else observed_total),
+        providerRequestCount=len(provider_items),
+        usageSource=(
+            "durable_provider_observation_receipts"
+            if total_matches
+            else "durable_provider_observation_receipts_mismatch"
+        ),
+        categoryReceiptComplete=(
+            categories_complete and totals_complete and total_matches
+        ),
+    )
+    return receipt
+
+
+def _settled_child_transcript_usage(
+    service: AgentService,
+    *,
+    child_session_id: str,
+    expected_total_tokens: int,
+) -> dict[str, object]:
+    """Read usage-only fields from one settled Pi child transcript.
+
+    Private delegated Sessions are not guaranteed to enter the parent's
+    ObservationHub, but their append-only Pi transcript remains the durable
+    Provider receipt.  This reader never projects message content and accepts
+    the receipt only when every category is present and the summed total
+    agrees with the delegation settlement.
+    """
+
+    if not child_session_id:
+        return {}
+    try:
+        binding = service.sessions.runtime_binding(child_session_id)
+    except Exception:
+        return {}
+    if not isinstance(binding, Mapping):
+        return {}
+    transcript_ref = str(binding.get("transcriptRef") or "").strip()
+    if not transcript_ref:
+        return {}
+    try:
+        transcript = Path(transcript_ref).expanduser().resolve(strict=True)
+        if not transcript.is_file():
+            return {}
+        if transcript.stat().st_size > _MAX_CHILD_TRANSCRIPT_BYTES:
+            return {}
+    except OSError:
+        return {}
+
+    aliases = {
+        "inputTokens": ("inputTokens", "input"),
+        "outputTokens": ("outputTokens", "output"),
+        "cacheReadTokens": ("cacheReadTokens", "cacheRead"),
+        "cacheWriteTokens": ("cacheWriteTokens", "cacheWrite"),
+        "totalTokens": ("totalTokens", "total"),
+    }
+    receipts: list[dict[str, int]] = []
+    categories_complete = True
+    totals_complete = True
+    try:
+        with transcript.open("rb") as stream:
+            for raw_line in stream:
+                if len(raw_line) > _MAX_CHILD_TRANSCRIPT_LINE_BYTES:
+                    return {}
+                try:
+                    entry = json.loads(raw_line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {}
+                if not isinstance(entry, Mapping) or entry.get("type") != "message":
+                    continue
+                message = entry.get("message")
+                if not isinstance(message, Mapping) or message.get("role") != "assistant":
+                    continue
+                usage = message.get("usage")
+                if not isinstance(usage, Mapping):
+                    continue
+                receipt: dict[str, int] = {}
+                for target, keys in aliases.items():
+                    value = next(
+                        (
+                            usage.get(key)
+                            for key in keys
+                            if isinstance(usage.get(key), (int, float))
+                            and not isinstance(usage.get(key), bool)
+                            and float(usage.get(key) or 0) >= 0
+                        ),
+                        None,
+                    )
+                    if value is None:
+                        if target == "totalTokens":
+                            totals_complete = False
+                        else:
+                            categories_complete = False
+                        receipt[target] = 0
+                    else:
+                        receipt[target] = max(0, int(value))
+                receipts.append(receipt)
+    except OSError:
+        return {}
+    if not receipts:
+        return {}
+    result: dict[str, object] = {
+        key: sum(receipt[key] for receipt in receipts)
+        for key in aliases
+    }
+    observed_total = int(result["totalTokens"])
+    total_matches = (
+        not expected_total_tokens
+        or observed_total == expected_total_tokens
+    )
+    if expected_total_tokens:
+        result["totalTokens"] = expected_total_tokens
+    result.update(
+        providerRequestCount=len(receipts),
+        usageSource=(
+            "settled_child_transcript_usage"
+            if total_matches
+            else "settled_child_transcript_usage_mismatch"
+        ),
+        categoryReceiptComplete=(
+            categories_complete
+            and totals_complete
+            and total_matches
+        ),
+    )
+    return result
+
+
+def _child_token_usage(
+    service: AgentService,
+    child_run: Mapping[str, object],
+) -> dict[str, object]:
+    """Recover exact child usage after settled snapshots drop Provider events."""
+
+    child_session_id = str(child_run.get("childSessionId") or "")
+    fallback = child_run.get("usage")
+    fallback_usage = dict(fallback) if isinstance(fallback, Mapping) else {}
+    expected_total = max(0, int(fallback_usage.get("totalTokens") or 0))
+    child_events: list[Mapping[str, object]] = []
+    observation_receipt: dict[str, object] = {}
+    if child_session_id:
+        try:
+            child_snapshot = service.messages(child_session_id)
+        except Exception:
+            child_snapshot = {}
+        if isinstance(child_snapshot, Mapping):
+            child_events = [
+                event
+                for event in child_snapshot.get("liveEvents") or []
+                if isinstance(event, Mapping)
+            ]
+    live_receipt = _token_usage(child_events)
+    if (
+        int(live_receipt.get("providerRequestCount") or 0) > 0
+        and live_receipt.get("categoryReceiptComplete") is True
+    ):
+        if expected_total and int(live_receipt.get("totalTokens") or 0) != expected_total:
+            live_receipt["totalTokens"] = expected_total
+            live_receipt["usageSource"] = "provider_request_receipts_mismatch"
+            live_receipt["categoryReceiptComplete"] = False
+        return live_receipt
+    if child_session_id:
+        try:
+            # Provider requests are first queued on AgentEventHub's background
+            # projection lane, which then enqueues ObservationHub work.  Drain
+            # the producer before its consumer or a just-settled child can look
+            # category-less even though its durable receipts are in flight.
+            if service.events.flush(timeout=2.0) is not True:
+                raise RuntimeError("child provider event projection did not drain")
+            if service.observations.flush(timeout_seconds=2.0) is not True:
+                raise RuntimeError("child provider observation projection did not drain")
+            observation_snapshot = service.observations.snapshot(
+                {"sessionId": child_session_id, "limit": 500}
+            )
+        except Exception:
+            observation_snapshot = {}
+        if isinstance(observation_snapshot, Mapping):
+            observation_receipt = _provider_observation_usage(
+                observation_snapshot.get("items") or [],
+                expected_total_tokens=expected_total,
+            )
+            if observation_receipt.get("categoryReceiptComplete") is True:
+                return observation_receipt
+        transcript_receipt = _settled_child_transcript_usage(
+            service,
+            child_session_id=child_session_id,
+            expected_total_tokens=expected_total,
+        )
+        if transcript_receipt:
+            return transcript_receipt
+        if observation_receipt:
+            return observation_receipt
+    return {
+        **fallback_usage,
+        "usageSource": "delegation_total_only_fallback",
+        "providerRequestCount": 0,
+        "categoryReceiptComplete": False,
+    }
+
+
+def _combine_token_usage(
+    parent: Mapping[str, object],
+    children: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    receipts = [parent, *children]
+    category_keys = (
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+    )
+    category_complete = all(
+        receipt.get("categoryReceiptComplete") is True
+        and
+        all(
+            isinstance(receipt.get(key), (int, float))
+            and not isinstance(receipt.get(key), bool)
+            and float(receipt.get(key) or 0) >= 0
+            for key in category_keys
+        )
+        for receipt in receipts
+    )
+    result: dict[str, object] = {
+        key: sum(max(0, int(receipt.get(key) or 0)) for receipt in receipts)
+        for key in category_keys
+    }
+    explicit_total = sum(
+        max(0, int(receipt.get("totalTokens") or 0)) for receipt in receipts
+    )
+    result["totalTokens"] = explicit_total or sum(
+        int(result[key]) for key in category_keys
+    )
+    result["providerRequestCount"] = sum(
+        max(0, int(receipt.get("providerRequestCount") or 0))
+        for receipt in receipts
+    )
+    result["usageSource"] = (
+        "parent_and_subagent_provider_request_receipts"
+        if children
+        else str(parent.get("usageSource") or "provider_request_receipts")
+    )
+    result["categoryReceiptComplete"] = category_complete
     return result
 
 

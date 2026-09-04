@@ -7,6 +7,12 @@ from pathlib import Path
 MISSING_WORKSPACE_ROOT_ERROR = (
     "workspaceRoots contains a directory that no longer exists"
 )
+TRACE_BINDING_REQUIRED_ERROR = (
+    "binding_required: Trace diagnostic and repair Sessions require an "
+    "authoritative project workspace binding"
+)
+TRACE_AGENT_OWNER_APP_ID = "extension:trace-agent"
+TRACE_AGENT_PROJECT_SURFACE_KEYS = frozenset({"diagnostic", "repair"})
 
 
 def existing_workspace_roots(
@@ -56,3 +62,36 @@ def system_wide_workspace_roots(values: Iterable[object]) -> tuple[str, ...]:
     if "/" not in roots:
         roots.append("/")
     return tuple(roots)
+
+
+def is_trace_project_bound_surface(
+    surface_kind: object,
+    owner_app_id: object,
+    surface_key: object,
+) -> bool:
+    """Identify Trace-owned Sessions whose persisted roots are project identity.
+
+    Full-trust Tool access is projected at execution time.  These durable roots
+    therefore remain the exact source-project binding and must never be widened
+    to ``/`` by the generic unrestricted Session policy.
+    """
+
+    return (
+        str(surface_kind or "").strip() == "extension_app"
+        and str(owner_app_id or "").strip() == TRACE_AGENT_OWNER_APP_ID
+        and str(surface_key or "").strip() in TRACE_AGENT_PROJECT_SURFACE_KEYS
+    )
+
+
+def exact_trace_project_workspace_roots(
+    values: Iterable[object],
+) -> tuple[str, ...]:
+    """Validate an explicit, non-system Trace project binding."""
+
+    raw_roots = [str(value or "").strip() for value in values]
+    if not raw_roots or any(root == "/" for root in raw_roots):
+        raise ValueError(TRACE_BINDING_REQUIRED_ERROR)
+    roots = existing_workspace_roots(raw_roots)
+    if not roots:
+        raise ValueError(TRACE_BINDING_REQUIRED_ERROR)
+    return roots

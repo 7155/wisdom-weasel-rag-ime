@@ -8,6 +8,7 @@ export interface TraceDiagnosticReportListV1 {
   schemaVersion: 'rag-ime.trace-diagnostic-report-list.v1';
   total: number;
   truncated: boolean;
+  nextCursor?: string | null;
   /**
    * @maxItems 100
    */

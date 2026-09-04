@@ -16,6 +16,7 @@ export interface AgentMessageV1 {
   citations: string[];
   createdAtMs: number;
   completedAtMs?: number | null;
+  clientMessageId?: string;
   provider?: string;
   model?: string;
   usage?: Usage;

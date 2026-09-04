@@ -1,0 +1,127 @@
+{
+  "baselineRunId": "cloudops-sol-max-standard-baseline-20260904-r2",
+  "candidateRunId": "cloudops-sol-max-quality-staged-candidate-20260904-r6",
+  "claimBoundary": [
+    "validation-only source-local candidate",
+    "cost verdict uses comparable Provider usage categories, not a Provider bill",
+    "elapsed time is recorded but is not a Keep gate",
+    "installed and foreground acceptance remain separate"
+  ],
+  "comparison": {
+    "baselineContextProjection": "standard-v1",
+    "baselineWorkflowProfile": "baseline-v1",
+    "candidateContextProjection": "standard-v1",
+    "candidateWorkflowProfile": "quality-staged-v4",
+    "costAuthority": "same-provider-model-usage-categories",
+    "costGatePassed": false,
+    "decision": "reject",
+    "elapsedIsKeepGate": false,
+    "identityChecks": {
+      "batchPlanSha256": true,
+      "caseCount": true,
+      "contractSha256": true,
+      "runtime.entrypointSha256": true,
+      "runtime.extensionSha256": true,
+      "runtime.manifestSha256": true,
+      "runtime.model": true,
+      "runtime.nodeSha256": true,
+      "runtime.piVersion": true,
+      "runtime.protocolVersion": true,
+      "runtime.provider": true,
+      "runtime.runtimeVersion": true,
+      "singleVariable": true,
+      "suiteSha256": true,
+      "thinkingLevel": true
+    },
+    "identityGatePassed": true,
+    "providerBillAvailable": false,
+    "quality": {
+      "AnswerCoverage": {
+        "after": 1.0,
+        "before": 1.0,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "CA": {
+        "after": 0.8333333333333334,
+        "before": 1.0,
+        "delta": -0.16666666666666663,
+        "nonRegressed": false
+      },
+      "FA": {
+        "after": 0.8333333333333334,
+        "before": 0.8333333333333334,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "JRA": {
+        "after": 0.8333333333333334,
+        "before": 0.8333333333333334,
+        "delta": 0.0,
+        "nonRegressed": true
+      },
+      "Top3JRA": {
+        "after": 0.8333333333333334,
+        "before": 0.8333333333333334,
+        "delta": 0.0,
+        "nonRegressed": true
+      }
+    },
+    "qualityGatePassed": false,
+    "schemaVersion": "paw.cloudops-cost-optimization-comparison.v1",
+    "singleVariable": "bounded_diagnostic_prompt_contract",
+    "usage": {
+      "cachedInputTokens": {
+        "after": 4911616,
+        "before": 12995072,
+        "delta": -8083456,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      },
+      "outputTokens": {
+        "after": 40811,
+        "before": 40601,
+        "delta": 210,
+        "nonIncreasing": false,
+        "strictlyDecreased": false
+      },
+      "uncachedInputTokens": {
+        "after": 331006,
+        "before": 450205,
+        "delta": -119199,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      }
+    }
+  },
+  "decision": "reject",
+  "evidence": {
+    "baselineReportSha256": "4e2e9c004609e467b2a0fbff040dc1aa40f79e7956f5a490a24d0b24ec8e41d5",
+    "candidateReportSha256": "1532fe244f928227b32694a2330b8b48920ab39f5eaf005f8cf61073df26bc30"
+  },
+  "factor": {
+    "after": "quality-staged-v4",
+    "before": "baseline-v1",
+    "layer": "prompt",
+    "name": "bounded_diagnostic_prompt_contract",
+    "why": "bound retrieval while requiring direct root-cause and competing-diagnosis evidence"
+  },
+  "projection": {
+    "profile": "standard-v1",
+    "projectedChars": 909341,
+    "promptChanged": false,
+    "savedChars": 0,
+    "schemaVersion": "paw.cloudops-context-projection.v1",
+    "semanticObservationBodiesChanged": false,
+    "sourceChars": 909341,
+    "toolResultCount": 90
+  },
+  "runId": "cloudops-cost-optimization:cloudops-sol-max-quality-staged-candidate-20260904-r6",
+  "schemaVersion": "paw.cloudops-cost-optimization-receipt.v1",
+  "status": "completed",
+  "timing": {
+    "baselineElapsedMs": 1175529,
+    "candidateElapsedMs": 1111957,
+    "keepGate": false
+  }
+}

@@ -69,6 +69,12 @@ import {
 } from '@/features/rooms/room-presentation';
 import { roomPlanetName } from '@/features/rooms/room-participant-identity';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import {
+  isAgentCommandPending,
+  isAmbiguousAgentPromptFailure,
+  isUnresolvedAgentCommandPending,
+  publicAgentErrorText,
+} from '@/features/agent/public-error';
 import { useRoomLiveStore } from '@/features/rooms/state/live-store';
 import { clipboardFilesFromEvent } from '@/features/agent/composer/AgentComposer';
 import type { PickedFile } from '@/platform/transport';
@@ -369,45 +375,68 @@ export function PawAgentHome({
         if (!sessionId) throw new Error('服务端没有返回可验证的 Session。');
         const clientMessageId = clientId('session');
         const createdSession = createdSessionSummary(rawSession, message, workspaceRoot, executionMode);
-        const importedAttachments = await importPendingAttachments({ sessionId });
-        const attachmentIds = importedAttachments.map((attachment) => attachment.id);
-        clearPendingAttachments();
-        // Tutti 入场顺序：先让 Session 与首条用户消息可见，配置与回执后台补齐。
+        const attachmentImport = importPendingAttachments({ sessionId });
+        const pendingAttachmentIds = [
+          ...pendingAttachments.map((attachment) => attachment.id),
+          ...(pendingClipboardPaste ? ['pending-clipboard-image'] : []),
+        ];
+        // Session existence is enough to make the user's intent visible. File
+        // import continues under that owner; local attachment identities keep
+        // the optimistic row truthful until the durable message replaces it
+        // with managed media receipts.
         useAgentLiveStore.getState().appendOptimistic(sessionId, {
           clientMessageId,
           text: message,
-          attachments: attachmentIds,
+          attachments: pendingAttachmentIds,
           nowMs: Date.now(),
         });
         onCreated({ kind: 'session', id: sessionId }, createdSession);
+        clearPendingAttachments();
         void (async () => {
-          try {
-            const configuration = [] as Promise<unknown>[];
-            const explicitModelSelection = preferenceEditedRef.current.modelReference
-              || Boolean(preferences.modelReference && preferences.modelReference !== 'inherit');
-            if (selectedModel && explicitModelSelection) {
+          const configuration = [] as Promise<unknown>[];
+          const explicitModelSelection = preferenceEditedRef.current.modelReference
+            || Boolean(preferences.modelReference && preferences.modelReference !== 'inherit');
+          if (selectedModel && explicitModelSelection) {
+            configuration.push(transport.request({
+              pathId: 'agent.session.model.select',
+              params: { sessionId },
+              body: { provider: selectedModel.provider, modelId: selectedModel.id },
+            }));
+            if (thinkingLevels.includes(thinking)) {
               configuration.push(transport.request({
-                pathId: 'agent.session.model.select',
+                pathId: 'agent.session.thinking.select',
                 params: { sessionId },
-                body: { provider: selectedModel.provider, modelId: selectedModel.id },
+                body: { level: thinking },
               }));
-              if (thinkingLevels.includes(thinking)) {
-                configuration.push(transport.request({
-                  pathId: 'agent.session.thinking.select',
-                  params: { sessionId },
-                  body: { level: thinking },
-                }));
-              }
             }
-            void Promise.allSettled(configuration);
-            await transport.request({
+          }
+          void Promise.allSettled(configuration);
+          let importedAttachments: PickedFile[];
+          try {
+            importedAttachments = await attachmentImport;
+          } catch (attachmentError) {
+            failHomeAttachmentImportBeforeAdmission(
+              sessionId,
+              clientMessageId,
+              attachmentError,
+            );
+            return;
+          }
+          const attachmentIds = importedAttachments.map((attachment) => attachment.id);
+          replaceHomeOptimisticAttachmentIds(sessionId, clientMessageId, attachmentIds);
+          try {
+            const response = await transport.request<Record<string, unknown>>({
               pathId: 'agent.session.prompt',
               params: { sessionId },
               body: { message, attachments: attachmentIds, clientMessageId },
             });
+            if (isCancelledPromptAdmission(response)) {
+              useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
+              return;
+            }
             useAgentLiveStore.getState().acknowledgeOptimistic(sessionId, clientMessageId, Date.now());
           } catch (requestError) {
-            useAgentLiveStore.getState().failOptimistic(sessionId, clientMessageId, errorText(requestError), Date.now());
+            settleHomePromptAdmissionFailure(sessionId, clientMessageId, requestError);
           }
         })();
       } else {
@@ -986,6 +1015,101 @@ function suggestedRoomParticipantCount(prompt: string, available: number): numbe
   if (normalized.length >= 240) suggested = 6;
   return Math.min(8, available, suggested);
 }
+
+function settleHomePromptAdmissionFailure(
+  sessionId: string,
+  clientMessageId: string,
+  reason: unknown,
+): void {
+  const store = useAgentLiveStore.getState();
+  if (isAgentCommandPending(reason)) {
+    store.failOptimistic(
+      sessionId,
+      clientMessageId,
+      publicAgentErrorText(reason),
+      Date.now(),
+      isUnresolvedAgentCommandPending(reason) ? 'unresolved' : 'pending',
+    );
+    return;
+  }
+  if (isAmbiguousAgentPromptFailure(reason)) {
+    store.failOptimistic(
+      sessionId,
+      clientMessageId,
+      '暂时无法确认是否已接收。系统不会自动重试；手动重试会核对同一条消息。',
+      Date.now(),
+      'ambiguous',
+    );
+    return;
+  }
+  // Validation and provider rejections are definitive.
+  // Keep the original optimistic row as one failed turn so the Session's
+  // existing retry control can replay its exact text and client lineage.
+  failHomePromptBeforeAdmission(sessionId, clientMessageId, reason);
+}
+
+function failHomePromptBeforeAdmission(
+  sessionId: string,
+  clientMessageId: string,
+  reason: unknown,
+): void {
+  useAgentLiveStore.getState().failOptimistic(
+    sessionId,
+    clientMessageId,
+    publicAgentErrorText(reason, errorText(reason)),
+    Date.now(),
+  );
+}
+
+function failHomeAttachmentImportBeforeAdmission(
+  sessionId: string,
+  clientMessageId: string,
+  reason: unknown,
+): void {
+  const detail = publicAgentErrorText(reason, errorText(reason));
+  useAgentLiveStore.getState().failOptimistic(
+    sessionId,
+    clientMessageId,
+    `附件未能导入，这条消息没有发送。请重新上传附件后发送。${detail ? ` 详情：${detail}` : ''}`,
+    Date.now(),
+  );
+}
+
+function replaceHomeOptimisticAttachmentIds(
+  sessionId: string,
+  clientMessageId: string,
+  attachmentIds: string[],
+): void {
+  useAgentLiveStore.setState((state) => {
+    const current = state.projections[sessionId];
+    const messageId = current?.optimisticByClientMessageId[clientMessageId];
+    const message = messageId ? current?.messagesById[messageId] : undefined;
+    if (!current || !messageId || !message) return state;
+    return {
+      projections: {
+        ...state.projections,
+        [sessionId]: {
+          ...current,
+          messagesById: {
+            ...current.messagesById,
+            [messageId]: { ...message, attachments: [...attachmentIds] },
+          },
+        },
+      },
+    };
+  });
+}
+
+/** Stop won the admission race. This is a successful transport response but
+ *  explicitly proves that no prompt was admitted, so the local row must not
+ *  remain queued or become accepted. */
+function isCancelledPromptAdmission(value: unknown): boolean {
+  const response = record(value);
+  return response.accepted === false
+    && response.cancelled === true
+    && response.admissionCancelled === true;
+}
+
 function errorText(reason: unknown): string {
   if (reason instanceof Error && reason.message) return reason.message;
   if (typeof reason === 'string' && reason) return reason;

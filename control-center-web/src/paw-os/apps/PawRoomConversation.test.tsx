@@ -15,6 +15,21 @@ afterEach(() => {
 });
 
 describe('PawRoomConversation', () => {
+  it('opens a long real Room on a bounded tail window before layout measurement', () => {
+    const fixture = longRoomConversation(500);
+    const startedAt = performance.now();
+    const { container } = renderRoom(fixture);
+    const elapsedMs = performance.now() - startedAt;
+    const mountedRows = container.querySelectorAll('.ccui-virtual-row').length;
+
+    expect(
+      mountedRows,
+      `mounted ${mountedRows} transcript rows during first paint in ${elapsedMs.toFixed(2)}ms`,
+    ).toBeLessThan(60);
+    expect(screen.getByText('最终消息 500')).toBeVisible();
+    expect(elapsedMs).toBeLessThan(250);
+  });
+
   it('reads the public chronology on the shared conversation surface', () => {
     const { container } = renderRoom();
 
@@ -318,4 +333,36 @@ function roomConversation() {
     sequence: 3, createdAtMs: 120, updatedAtMs: 120,
   };
   return { projection, room };
+}
+
+function longRoomConversation(turnCount: number) {
+  const fixture = roomConversation();
+  const projection = createRoomProjection(fixture.room.id);
+  for (let index = 1; index <= turnCount; index += 1) {
+    const turnId = `root-${index}`;
+    const userId = `message-user-${index}`;
+    const assistantId = `message-assistant-${index}`;
+    projection.messageOrder.push(userId, assistantId);
+    projection.messagesById[userId] = {
+      id: userId, roomId: fixture.room.id, turnId, participantId: null,
+      sourceSessionId: '', role: 'user', status: 'completed',
+      text: `真实任务 ${index}`, projectionKind: 'post',
+      sequence: index * 2 - 1, createdAtMs: index * 20,
+    };
+    projection.messagesById[assistantId] = {
+      id: assistantId, roomId: fixture.room.id, turnId,
+      participantId: 'participant-a', sourceSessionId: 'session-a',
+      role: 'assistant', status: 'completed', text: `最终消息 ${index}`,
+      projectionKind: 'post', sequence: index * 2, createdAtMs: index * 20 + 10,
+      completedAtMs: index * 20 + 10,
+    };
+    projection.turnOrder.push(turnId);
+    projection.turnsById[turnId] = {
+      id: turnId, rootId: turnId, status: 'completed',
+      messageIds: [userId, assistantId], activityIds: [],
+      participantIds: ['participant-a'], terminalParticipantIds: ['participant-a'],
+      createdAtMs: index * 20, updatedAtMs: index * 20 + 10,
+    };
+  }
+  return { projection, room: fixture.room };
 }

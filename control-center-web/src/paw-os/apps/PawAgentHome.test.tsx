@@ -9,7 +9,9 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { PiModelOption } from '@/features/agent/model-catalog-options';
 import type { AgentImagePasteOptions, ControlRequest, PickedFile } from '@/platform/transport';
 import type { RoomSummary } from '@/features/rooms/room-types';
-import { MockControlTransport } from '@/test/mock-transport';
+import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import { ControlTransportHttpError } from '@/platform/http-transport';
+import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import agentNextCss from '../styles/paw-os-agent-next.css?raw';
 import { PawAgentHome } from './PawAgentHome';
 
@@ -127,6 +129,247 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(prompt?.body).toMatchObject({ message: '请检查这张截图', attachments: ['media-screen'] });
   });
 
+  it('hands off one optimistic first message before admission using the same client identity', async () => {
+    useAgentLiveStore.getState().clear('session-created');
+    let resolveAdmission!: (value: unknown) => void;
+    const admission = new Promise<unknown>((resolve) => { resolveAdmission = resolve; });
+    let projectionAtHandoff: ReturnType<typeof useAgentLiveStore.getState>['projections'][string] | undefined;
+    const onCreated = vi.fn((selection: { kind: string; id?: string }) => {
+      if (selection.kind === 'session' && selection.id) {
+        projectionAtHandoff = useAgentLiveStore.getState().projections[selection.id];
+      }
+    });
+    const { transport } = renderHome({
+      onCreated,
+      promptRoute: () => admission,
+    });
+    const user = userEvent.setup();
+
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '首条消息不能重复');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(projectionAtHandoff).toBeDefined();
+    const optimisticEntries = Object.entries(projectionAtHandoff?.optimisticByClientMessageId ?? {});
+    expect(optimisticEntries).toHaveLength(1);
+    const [clientMessageId, messageId] = optimisticEntries[0]!;
+    expect(projectionAtHandoff?.messagesById[messageId]?.blocks[0]?.data.text).toBe('首条消息不能重复');
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.session.prompt'),
+    ).toBe(true));
+    const request = transport.requests.find(
+      ({ request: item }) => item.pathId === 'agent.session.prompt',
+    )?.request;
+    expect(request?.body).toMatchObject({
+      message: '首条消息不能重复',
+      clientMessageId,
+    });
+
+    resolveAdmission({ ok: true });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-created']?.messagesById[messageId]?.status,
+    ).toBe('queued'));
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
+  it('discards the first optimistic message when admission was synchronously cancelled', async () => {
+    useAgentLiveStore.getState().clear('session-created');
+    const { transport } = renderHome({
+      promptRoute: {
+        ok: true,
+        accepted: false,
+        cancelled: true,
+        admissionCancelled: true,
+      },
+    });
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole('textbox', { name: '描述你想完成的工作' }),
+      '这条首轮已被 Stop 取消',
+    );
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections['session-created'];
+      expect(projection?.optimisticByClientMessageId).toEqual({});
+      expect(projection?.messageOrder).toEqual([]);
+      expect(projection?.turnOrder).toEqual([]);
+      expect(projection?.status).toBe('idle');
+    });
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
+  it('hands off the first attachment message before import resolves and later sends exact receipts', async () => {
+    useAgentLiveStore.getState().clear('session-created');
+    const file = new File(['preview'], 'slow.png', { type: 'image/png' });
+    let resolveImport!: (value: PickedFile[]) => void;
+    const imported = new Promise<PickedFile[]>((resolve) => { resolveImport = resolve; });
+    let projectionAtHandoff: ReturnType<typeof useAgentLiveStore.getState>['projections'][string] | undefined;
+    const onCreated = vi.fn((selection: { kind: string; id?: string }) => {
+      if (selection.kind === 'session' && selection.id) {
+        projectionAtHandoff = useAgentLiveStore.getState().projections[selection.id];
+      }
+    });
+    const { transport } = renderHome({
+      onCreated,
+      imagePaste: () => imported,
+    });
+    const user = userEvent.setup();
+    const composer = screen.getByRole('textbox', { name: '描述你想完成的工作' });
+    fireEvent.paste(composer, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    });
+    await user.type(composer, '先显示这条附件消息');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    const optimisticEntries = Object.entries(projectionAtHandoff?.optimisticByClientMessageId ?? {});
+    expect(optimisticEntries).toHaveLength(1);
+    const [clientMessageId, messageId] = optimisticEntries[0]!;
+    expect(projectionAtHandoff?.messagesById[messageId]).toMatchObject({
+      attachments: [expect.stringMatching(/^home-attachment-/)],
+    });
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.session.prompt')).toBe(false);
+
+    resolveImport([{
+      id: 'media-slow',
+      name: 'slow.png',
+      mimeType: 'image/png',
+      byteSize: file.size,
+      sha256: 'sha-slow',
+      sessionId: 'session-created',
+    }]);
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.session.prompt'),
+    ).toBe(true));
+    const request = transport.requests.find(
+      ({ request: item }) => item.pathId === 'agent.session.prompt',
+    )?.request;
+    expect(request?.body).toMatchObject({
+      message: '先显示这条附件消息',
+      attachments: ['media-slow'],
+      clientMessageId,
+    });
+    expect(
+      useAgentLiveStore.getState().projections['session-created']?.messagesById[messageId]?.attachments,
+    ).toEqual(['media-slow']);
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
+  it('reports an attachment import failure before admission without calling it a network-ambiguous prompt', async () => {
+    useAgentLiveStore.getState().clear('session-created');
+    const file = new File(['preview'], 'broken.png', { type: 'image/png' });
+    const onCreated = vi.fn();
+    const { transport } = renderHome({
+      onCreated,
+      imagePaste: () => Promise.reject(new TypeError('clipboard bytes unavailable')),
+    });
+    const user = userEvent.setup();
+    const composer = screen.getByRole('textbox', { name: '描述你想完成的工作' });
+    fireEvent.paste(composer, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    });
+    await user.type(composer, '附件导入失败要如实显示');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      const message = Object.values(
+        useAgentLiveStore.getState().projections['session-created']?.messagesById ?? {},
+      )[0];
+      expect(message).toMatchObject({ status: 'failed' });
+      expect(message).not.toHaveProperty('admissionState');
+      expect(
+        useAgentLiveStore.getState().projections['session-created']
+          ?.turnsById[message.turnId]?.failure,
+      ).toContain('重新上传');
+    });
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt')).toHaveLength(0);
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
+  it.each([
+    ['pending', 'in_flight'],
+    ['unresolved', 'unresolved'],
+  ] as const)('keeps a first prompt with %s admission state for durable reconciliation', async (expectedState, recoveryState) => {
+    useAgentLiveStore.getState().clear('session-created');
+    const { transport } = renderHome({
+      promptRoute: (request: ControlRequest) => {
+        const clientMessageId = String((request.body as Record<string, unknown>).clientMessageId);
+        throw new ControlTransportHttpError(
+          'agent.session.prompt',
+          409,
+          'receipt remains pending',
+          {
+            ok: false,
+            code: 'AGENT_COMMAND_PENDING',
+            commandReceipt: {
+              state: 'pending',
+              clientMessageId,
+              recoveryState,
+            },
+          },
+        );
+      },
+    });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '不要误判这条消息失败');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections['session-created'];
+      const message = Object.values(projection?.messagesById ?? {}).find(
+        (item) => item.clientMessageId === String(
+          (transport.requests.find(({ request }) => request.pathId === 'agent.session.prompt')?.request.body as Record<string, unknown>)?.clientMessageId,
+        ),
+      );
+      expect(message).toMatchObject({ status: 'queued', admissionState: expectedState });
+    });
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt')).toHaveLength(1);
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
+  it('marks an ambiguous first-prompt transport loss for verification without resending', async () => {
+    useAgentLiveStore.getState().clear('session-created');
+    const { transport } = renderHome({
+      promptRoute: () => { throw new TypeError('fetch failed'); },
+    });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '这条消息可能已经送达');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    await waitFor(() => expect(
+      Object.values(useAgentLiveStore.getState().projections['session-created']?.messagesById ?? {})[0],
+    ).toMatchObject({ status: 'failed', admissionState: 'ambiguous' }));
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt')).toHaveLength(1);
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
+  it('keeps a definitive first-prompt rejection as one retryable failed turn', async () => {
+    useAgentLiveStore.getState().clear('session-created');
+    const { transport } = renderHome({
+      promptRoute: () => { throw new Error('provider rejected this prompt'); },
+    });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '保留确定失败的原始输入');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    await waitFor(() => {
+      const projection = useAgentLiveStore.getState().projections['session-created'];
+      const messages = Object.values(projection?.messagesById ?? {});
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ status: 'failed' });
+      expect(messages[0]).not.toHaveProperty('admissionState');
+      expect(messages[0]?.blocks[0]?.data.text).toBe('保留确定失败的原始输入');
+      expect(Object.values(projection?.turnsById ?? {})[0]?.failure).toBe('provider rejected this prompt');
+    });
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.prompt')).toHaveLength(1);
+    useAgentLiveStore.getState().clear('session-created');
+  });
+
   it('recomputes the visible Room team from a task suggestion and sends the adjusted participants', async () => {
     const user = userEvent.setup();
     const { transport } = renderHome({
@@ -236,11 +479,15 @@ function renderHome({
   models = [],
   personas = [],
   imagePaste,
+  onCreated = vi.fn(),
+  promptRoute = { ok: true },
 }: {
   modelReference?: string;
   models?: PiModelOption[];
   personas?: AgentPersonaV1[];
-  imagePaste?: (input: AgentImagePasteOptions) => PickedFile[];
+  imagePaste?: (input: AgentImagePasteOptions) => PickedFile[] | Promise<PickedFile[]>;
+  onCreated?: Parameters<typeof PawAgentHome>[0]['onCreated'];
+  promptRoute?: MockRouteHandler;
 } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const transport = new MockControlTransport({
@@ -269,7 +516,7 @@ function renderHome({
           workspaceRoots: [],
         },
       },
-      'agent.session.prompt': { ok: true },
+      'agent.session.prompt': promptRoute,
     },
     ...(imagePaste ? { imagePaste } : {}),
   });
@@ -284,7 +531,7 @@ function renderHome({
             projectRoots={['/work/paw']}
             rooms={[room()]}
             sessions={[session()]}
-            onCreated={vi.fn()}
+            onCreated={onCreated}
             onOpenRoom={vi.fn()}
             onOpenSession={vi.fn()}
           />

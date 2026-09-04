@@ -2,7 +2,8 @@
 
 > 2026-08-30 更新：下文保留的是 2026-08-28 契约骨架审计，不能继续当作当前
 > 平台状态。当前源码已补齐本机 SQLite 报告持久化、成功/失败终态、结构化失败原因、
-> 最多 12 个跨页目标、显式确认后的普通可写 Agent 修复，以及新 Trace 权威复检；
+> 最多 12 个跨页目标、`full_trust` 下同一 Trace 任务内的候选修复、可选的独立
+> repair Agent 责任隔离，以及新 Trace 权威复检；
 > 聚焦回归为后端 41/41、前端 80/80。当前可陈述值和禁止说法以
 > [`evidence-ledger.v1.json`](evidence-ledger.v1.json) 中
 > `trace_eval.unified_platform` 为准。这里仍不把 E2 测试升级成安装态或前台验收。

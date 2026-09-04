@@ -22,7 +22,9 @@ from .agent_tool_ids import (
     READONLY_TOOL_PROFILE,
 )
 from .agent_workspace_roots import (
+    exact_trace_project_workspace_roots,
     existing_workspace_roots,
+    is_trace_project_bound_surface,
     system_wide_workspace_roots,
 )
 from .contracts.json_schema import validate_contract
@@ -446,7 +448,16 @@ class AgentSessionPolicyService:
             if isinstance(roots, list)
             else [str(value) for value in session.get("workspaceRoots") or []]
         )
-        if requested_profile in {
+        trace_project_binding = is_trace_project_bound_surface(
+            session.get("surfaceKind"),
+            session.get("ownerAppId"),
+            session.get("surfaceKey"),
+        )
+        if trace_project_binding:
+            effective_roots = list(
+                exact_trace_project_workspace_roots(effective_roots)
+            )
+        elif requested_profile in {
             DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
             FULL_ACCESS_TOOL_PROFILE,
         }:
@@ -454,7 +465,8 @@ class AgentSessionPolicyService:
                 system_wide_workspace_roots(effective_roots)
             )
         if (
-            isinstance(roots, list)
+            not trace_project_binding
+            and isinstance(roots, list)
             and requested_mode == "coordinator"
             and requested_profile
             not in {

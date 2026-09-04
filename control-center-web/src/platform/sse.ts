@@ -26,12 +26,16 @@ export class SseParser {
   }
 
   finish(): void {
-    if (this.buffer.length > 0) {
-      const line = this.buffer.endsWith('\r') ? this.buffer.slice(0, -1) : this.buffer;
-      this.buffer = '';
-      this.consumeLine(line);
-    }
-    this.dispatch();
+    // SSE dispatch is committed by an empty line, not by transport EOF. A
+    // connection can disappear after a syntactically valid prefix of an event;
+    // emitting that prefix would advance Last-Event-ID and skip the complete
+    // durable event on reconnect. Drop the unfinished frame and let replay
+    // deliver it from the previous cursor.
+    this.buffer = '';
+    this.eventId = '';
+    this.eventName = '';
+    this.dataLines = [];
+    this.retry = undefined;
   }
 
   private consumeLine(line: string): void {

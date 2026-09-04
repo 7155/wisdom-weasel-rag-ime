@@ -20,6 +20,8 @@
     },
     "status": {"enum": ["kept", "rejected", "diagnostic", "open_gap"]},
     "claimStatus": {"enum": ["headline", "supporting", "diagnostic", "blocked"]},
+    "projectionState": {"enum": ["current", "history"]},
+    "supersededBy": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,159}$"},
     "effectStatus": {"enum": ["improved", "neutral", "regressed", "not_run", "unverified"]},
     "candidateType": {"enum": ["single_factor", "compound_repair", "baseline", "unknown"]},
     "businessProblem": {"$ref": "#/$defs/text"},

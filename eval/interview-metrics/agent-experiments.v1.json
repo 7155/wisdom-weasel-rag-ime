@@ -1,6 +1,6 @@
 {
   "schemaVersion": "paw.interview-agent-experiment-ledger.v1",
-  "generatedAt": "2026-09-03",
+  "generatedAt": "2026-09-04",
   "narrativePolicy": {
     "headline": "Use the strongest evidence-backed improvement as the first resume sentence; keep denominators and evaluation scope attached to every number.",
     "deepDive": "Show the original task, baseline output, Eval and Trace findings, authorized change, candidate output, metric delta and Keep or Reject decision when the interviewer drills down.",
@@ -12,6 +12,8 @@
       "title": "EnterpriseOps CSM execution-chain repair",
       "vertical": "enterprise-customer-support",
       "status": "kept",
+      "projectionState": "history",
+      "supersededBy": "enterpriseops-csm.preloaded-tool-cost.v1",
       "claimStatus": "supporting",
       "effectStatus": "improved",
       "candidateType": "compound_repair",
@@ -359,6 +361,8 @@
       "vertical": "enterprise-customer-support",
       "status": "rejected",
       "claimStatus": "supporting",
+      "projectionState": "history",
+      "supersededBy": "enterpriseops-csm.preloaded-tool-cost.v1",
       "effectStatus": "improved",
       "candidateType": "compound_repair",
       "businessProblem": "A complex customer-support request can contain exact strings, relative dates, role-specific identities and ordered cross-entity mutations; a plausible final message is insufficient unless the resulting database satisfies every business condition.",
@@ -761,6 +765,8 @@
       "title": "Enterprise RAG retrieval selection",
       "vertical": "enterprise-knowledge-retrieval",
       "status": "diagnostic",
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1",
       "claimStatus": "diagnostic",
       "effectStatus": "improved",
       "candidateType": "compound_repair",
@@ -1331,6 +1337,8 @@
       "evaluationKind": "workflow",
       "status": "rejected",
       "claimStatus": "supporting",
+      "projectionState": "history",
+      "supersededBy": "cloudops.validation-baseline.v1",
       "effectStatus": "regressed",
       "candidateType": "compound_repair",
       "businessProblem": "云上告警需要跨服务观察、证据读取和根因判断；只减少 Tool 次数不能证明诊断质量更好。",
@@ -1662,6 +1670,8 @@
       "evaluationKind": "workflow",
       "status": "rejected",
       "claimStatus": "supporting",
+      "projectionState": "history",
+      "supersededBy": "cloudops.validation-baseline.v1",
       "effectStatus": "not_run",
       "candidateType": "single_factor",
       "businessProblem": "CloudOps 诊断需要在冻结观察和 Host-only 质量门禁下完成；Luna Max 这次 Validation 在第三批和 abort 阶段超时，不能把 Runtime 失败写成业务质量结果。",
@@ -1947,6 +1957,8 @@
       "title": "Memory / Personal RAG shadow evaluation",
       "vertical": "personal-memory-and-rag",
       "status": "diagnostic",
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-concise-contract-sol-max.v1",
       "claimStatus": "diagnostic",
       "effectStatus": "unverified",
       "candidateType": "compound_repair",
@@ -2216,6 +2228,8 @@
       "vertical": "memory-maintenance",
       "evaluationKind": "memory",
       "status": "kept",
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-concise-contract-sol-max.v1",
       "claimStatus": "supporting",
       "effectStatus": "improved",
       "candidateType": "compound_repair",
@@ -2527,6 +2541,8 @@
       "evaluationKind": "model_cost",
       "status": "rejected",
       "claimStatus": "supporting",
+      "projectionState": "history",
+      "supersededBy": "enterpriseops-csm.preloaded-tool-cost.v1",
       "effectStatus": "regressed",
       "candidateType": "single_factor",
       "businessProblem": "高质量 Agent 评测同时要关注完成度和 API 成本；低价模型即使更快、更省，也不能越过任务与 Verifier 质量门禁。",
@@ -2857,6 +2873,1467 @@
       ]
     },
     {
+      "id": "enterpriseops-csm.preloaded-tool-cost.v1",
+      "title": "EnterpriseOps CSM · 已选 Tool Schema 预载成本优化",
+      "vertical": "enterprise-customer-support",
+      "evaluationKind": "workflow",
+      "status": "kept",
+      "claimStatus": "headline",
+      "projectionState": "current",
+      "effectStatus": "neutral",
+      "candidateType": "single_factor",
+      "businessProblem": "已经通过全部客户支持任务与 Host 验收的 Agent 仍会在每个任务里重复搜索并加载已选 Tool schema；这些元数据往返不会改变业务结果，却会消耗 Provider 输入、缓存输入和输出用量。",
+      "whyAgent": "每个 case 都包含多步实体发现、跨对象写入、回读与终态核验；必须让同一个 Agent 在真实 Tool Gateway 上完成任务后，才能证明去掉 schema 加载往返没有破坏执行能力。",
+      "factors": [
+        {
+          "name": "tool",
+          "before": "state-contract-compact-v2：已选 Tool 仍通过 progressive search/load 暴露 schema",
+          "after": "state-contract-preloaded-v3：启动时预载完全相同的已选 Tool schema",
+          "reason": "Trace 显示 compact-v2 在已知每题 Tool allowlist 后仍发生 18 次 tool_load；预载只改变 schema 披露方式，不改变任务 Prompt、Tool 集、业务数据库、模型或评分合同。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "dataset_and_gold",
+          "value": "enterpriseops-csm-suite-v2 Validation；同一 3 个 task、31 条 Host-private verifier；manifest d5ef3eb6",
+          "reason": "不缩分母、不换题、不修改 Gold，避免把 evaluator 变化计成成本优化。"
+        },
+        {
+          "name": "prompt_and_runtime",
+          "value": "prompt contract a16bb73f；同一 managed Pi Runtime、89-Tool live catalog 与 900 秒 timeout",
+          "reason": "Prompt 字节身份与 Runtime 边界冻结，使结果只归因于 Tool schema disclosure。"
+        },
+        {
+          "name": "provider_identity",
+          "value": "openai-codex / gpt-5.6-sol / max；当前 ChatGPT OAuth 由用户指定为 Aed 20xpro，账户标签不能机器证明",
+          "reason": "三类 usage 只在同 provider、model、thinking 下比较；不读取或使用 x1top 配置。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "OAuth receipt 的未缓存输入、缓存输入、输出三分类",
+          "reason": "OAuth 没有账单单价，因此只在三类都不增加且至少一类严格下降时证明成本下降；耗时不参与 Keep。"
+        }
+      ],
+      "star": {
+        "situation": "compact-v2 已在冻结 Validation 上完成 3/3 任务、31/31 verifier 与 0 Tool failure，但 Trace 仍显示重复 Tool schema 加载。",
+        "task": "在不改变任务、Prompt、模型、Tool 能力或 Host-private Gold 的前提下，减少真实 Provider 用量，并保持最终业务状态与安全门禁。",
+        "action": "给 Runner 增加 preloaded selected-schema profile，使已选 Tool schema 在 Session 启动时一次性可用；随后用相同 3 个 case 完整重跑。",
+        "result": "candidate 仍完成 3/3 任务、31/31 verifier、0 Tool failure、3/3 数据库清理；未缓存输入 120353→93131、缓存输入 2309632→1242240、输出 23205→21504，三类都严格下降。"
+      },
+      "dataset": {
+        "id": "enterpriseops-csm-suite-v2-post-heldout-validation",
+        "split": "validation",
+        "caseCount": 3,
+        "unit": "3 个端到端 CSM task；31 条 Host-private SQL verifier",
+        "manifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+        "heldOutConsumed": true,
+        "oneShotReceiptRef": "eval/interview-metrics/runs/enterpriseops-csm-suite-v2-heldout-one-shot-20260901.v1.json"
+      },
+      "scoringContract": {
+        "primaryMetric": "3/3 whole-task success and 31/31 verifier pass；quality non-regression 后比较三类 Provider usage",
+        "evaluatorAuthority": "suite-v2 Host-private SQL verifier + provider usage receipts",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "3/3 task success",
+          "31/31 verifier pass",
+          "every turn_completed",
+          "zero Tool failure",
+          "3/3 temporary database cleanup",
+          "same provider/model/thinking and complete usage categories",
+          "Gold and seed hidden from Agent"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "保持最终任务与全部质量、安全门禁，同时降低同路由真实 Provider 用量。",
+        "candidateSearchSpace": [
+          {
+            "axis": "tool_disclosure",
+            "candidatesEvaluated": 1,
+            "values": [
+              "progressive selected-tool discovery/schema loading",
+              "preloaded selected-tool schemas"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "3-task / 31-verifier manifest",
+          "task Prompt contract a16bb73f",
+          "selected Tool allowlists and live CSM environment",
+          "openai-codex / gpt-5.6-sol / max",
+          "900-second timeout and Host verifier",
+          "no new Held-out consumption"
+        ],
+        "selectionRule": "Candidate 必须完成 3/3、31/31、0 Tool failure、3/3 cleanup；相对 immediate baseline 质量不退化，三类 usage 全不增且至少一类严格下降才 Keep。",
+        "stopRule": "首个满足全部质量硬门和三类 usage dominance 的单变量候选即冻结；不得改分母或用更老 run 拼接更好数字。",
+        "heldOutRule": "旧的一次性 Held-out 已消费且曾拒绝旧 workflow；本成本候选只报告 Validation，不重跑或重解释旧 Held-out。"
+      },
+      "bestKnown": {
+        "configId": "state-contract-preloaded-v3",
+        "configSha256": "46f8de65edde889af06076c2f83fc06e64e5832ef174bf6acedce65869f55326",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "taskSuccessRate 1.0→1.0",
+            "verifierPassRate 1.0→1.0"
+          ],
+          "reason": "三个真实 CSM case 的数据库终态继续由相同 31 条 Host-private verifier 判定。"
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "3 个逐 Case task/verifier/usage 回执",
+            "Prompt 与 manifest SHA 身份"
+          ],
+          "reason": "Baseline、candidate raw report 与独立 comparison receipt 双向绑定；逐 Case 结果和用量可追踪。"
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "failedToolCalls 0→0",
+            "turn_completed 3/3→3/3"
+          ],
+          "reason": "真实 managed Pi Runtime 与 live 89-Tool Gateway 完整运行，没有用 fixture 替代终态。"
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "uncached input 120353→93131",
+            "cached input 2309632→1242240",
+            "output 23205→21504",
+            "latency 624430.913ms→564545.941ms（信息项）"
+          ],
+          "reason": "同一 openai-codex、Sol/max 的三类 Provider usage 全部严格下降；没有把 API 估价冒充 OAuth 账单，耗时不参与 Keep。"
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "temporary database cleanup 3/3→3/3",
+            "Gold/seed hidden",
+            "x1top configuration not read or used"
+          ],
+          "reason": "业务写入只落在每题临时数据库，运行后全部清理；Provider 与 Gold 边界保留。"
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "workflow",
+          "ref": "scripts/run_enterpriseops_csm_eval.py",
+          "change": "增加 state-contract-preloaded-v3，只将已选 Tool schema 标记为 always available。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "tests/test_run_enterpriseops_csm_eval.py",
+          "change": "锁定 v2/v3 Prompt 身份，并验证 regular 与 preloaded manifest disclosure。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
+          "change": "保存 immediate baseline 的 3 个逐 Case 终态、Verifier、Tool 与 Provider usage 回执。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
+          "change": "保存 candidate 的相同 Case 真实重跑回执。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json",
+          "change": "绑定两条 raw run、身份控制、逐 Case 差异和三类 usage dominance；耗时仅作信息。"
+        }
+      ],
+      "baseline": {
+        "runId": "enterpriseops-csm-sol-max-compact-validation-20260904-v1",
+        "metrics": {
+          "taskSuccessRate": 1.0,
+          "verifierPassRate": 1.0,
+          "taskSuccessCount": 3,
+          "taskCount": 3,
+          "verifierPassCount": 31,
+          "verifierCount": 31,
+          "toolCalls": 53,
+          "failedToolCalls": 0,
+          "databasesCleaned": 3,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 120353,
+          "cachedInputTokens": 2309632,
+          "outputTokens": 23205,
+          "latencyMs": 624430.913
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+            "input": "同一冻结客户支持请求、Tool allowlist、临时数据库 seed 与 11 条 Host-private verifier。",
+            "output": "任务成功、11/11 verifier、0 Tool failure；progressive disclosure 使用 37985 未缓存输入、263808 缓存输入、4639 输出 token。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "enterpriseops-preload-selected-tool-schemas",
+          "targetLayer": "tool",
+          "observation": "compact-v2 已知每题 selected Tool allowlist，但三个 case 仍累计 18 次 tool_load，重复把 schema 带入模型往返。",
+          "hypothesis": "若 selected Tool schema 在 Session 启动时预载，Agent 可直接执行相同业务动作，并减少三类 Provider usage 而不改变最终状态。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
+            "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
+            "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json"
+          ],
+          "proposedChange": "仅把同一 selected Tool schema 标记为 preloaded/always available；其余合同不变。",
+          "attribution": {
+            "detectedBy": "trace_and_usage_receipts",
+            "proposedBy": "implementation_agent",
+            "authorizedBy": "user",
+            "implementedBy": "sol_max_implementation_agent",
+            "verifiedBy": "host_verifier_and_provider_usage_receipts"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "considered_no_change",
+          "reason": "v2 与 v3 的 task Prompt contract SHA 完全相同。"
+        },
+        {
+          "layer": "tool",
+          "status": "changed",
+          "reason": "只改变已选 Tool schema 是 progressive load 还是 Session 启动时预载。"
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "state contract、业务动作顺序、Runtime、timeout 与 Host verifier 不变。"
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "未增加或替换 Skill。"
+        }
+      ],
+      "candidate": {
+        "runId": "enterpriseops-csm-sol-max-preloaded-validation-20260904-v1",
+        "metrics": {
+          "taskSuccessRate": 1.0,
+          "verifierPassRate": 1.0,
+          "taskSuccessCount": 3,
+          "taskCount": 3,
+          "verifierPassCount": 31,
+          "verifierCount": 31,
+          "toolCalls": 54,
+          "failedToolCalls": 0,
+          "databasesCleaned": 3,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 93131,
+          "cachedInputTokens": 1242240,
+          "outputTokens": 21504,
+          "latencyMs": 564545.941
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+            "input": "同一冻结客户支持请求、Tool allowlist、临时数据库 seed 与 11 条 Host-private verifier；只预载 selected Tool schema。",
+            "output": "任务成功、11/11 verifier、0 Tool failure；使用 26668 未缓存输入、190208 缓存输入、5376 输出 token。"
+          }
+        ]
+      },
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "同一冻结候选保持 3/3 任务、31/31 verifier、0 Tool failure 与 3/3 cleanup；同 openai-codex/Sol/max 的未缓存输入、缓存输入、输出三类 usage 全部严格下降，因此按预设规则 Keep。耗时下降只作信息，不参与决定。",
+        "metricDeltas": [
+          {
+            "metric": "taskSuccessRate",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "verifierPassRate",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "failedToolCalls",
+            "before": 0,
+            "after": 0,
+            "delta": 0
+          },
+          {
+            "metric": "uncachedInputTokens",
+            "before": 120353,
+            "after": 93131,
+            "delta": -27222
+          },
+          {
+            "metric": "cachedInputTokens",
+            "before": 2309632,
+            "after": 1242240,
+            "delta": -1067392
+          },
+          {
+            "metric": "outputTokens",
+            "before": 23205,
+            "after": 21504,
+            "delta": -1701
+          },
+          {
+            "metric": "latencyMs",
+            "before": 624430.913,
+            "after": 564545.941,
+            "delta": -59884.972
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "compact-v2：3/3 task、31/31 verifier、0 Tool failure；120353 uncached input、2309632 cached input、23205 output。",
+            "after": "preloaded-v3：同样 3/3、31/31、0 Tool failure；93131 uncached input、1242240 cached input、21504 output。"
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 EnterpriseOps CSM 的 3-task/31-verifier 冻结 Validation 上，仅预载已选 Tool schema，保持 3/3、31/31 与 0 Tool failure，同时把同 Sol/max OAuth 回执的未缓存输入、缓存输入、输出分别从 120353/2309632/23205 降至 93131/1242240/21504。",
+        "allowed": "A same-provider/model/thinking, same-prompt three-case Validation comparison where task quality and hard gates were unchanged and all three usage categories strictly decreased.",
+        "forbidden": "Provider-billed USD savings, production or installed PAWOS acceptance, a new Held-out success, multi-run statistical stability, or a cost claim against the older state-contract-v1 run whose uncached input was lower."
+      },
+      "openGaps": [
+        "当前结果是一轮随机 Validation 对照，不是重复运行置信区间",
+        "OAuth Provider 没有返回账单单价，只能证明同价表下三类 usage dominance",
+        "旧的一次性 Held-out 已消费且失败，本候选没有新的 Held-out 泛化证明",
+        "source-local candidate 未安装到当前 PAWOS"
+      ]
+    },
+    {
+      "id": "enterprise-rag.sol-max-budget3-r3.v1",
+      "title": "Enterprise RAG · Sol Max 预算 3 组合候选（Reject）",
+      "vertical": "enterprise-knowledge-retrieval",
+      "evaluationKind": "answer_evidence",
+      "status": "rejected",
+      "claimStatus": "diagnostic",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "compound_repair",
+      "businessProblem": "企业知识问答不仅要给出正确结论，还必须把每个必要事实绑定到冻结证据；答案正确、引用可解析但引用 Gold 未覆盖时，不能把整题算成功，更不能进入成本选优。",
+      "whyAgent": "四个 case 要在同一受约束 Session 中完成检索、可选子 Agent 审阅、结构化答案、拒答与独立 Judge；只有完整 Tool/终态/逐事实引用链才能区分答案质量、Golden 覆盖和运行成本。",
+      "factors": [
+        {
+          "name": "skill",
+          "before": "baseline lane 不加载 RAG 优化 Skill",
+          "after": "agentic lane 加载冻结 rag-retrieval-optimization Skill",
+          "reason": "把检索与引用规则显式绑定到候选，但不改变问题、语料或评分 Gold。"
+        },
+        {
+          "name": "tool",
+          "before": "lexical single-pass，最多每题一次主检索",
+          "after": "hybrid + 独立 Qwen3 reranker，父 Agent 最多补充 3 次原子检索",
+          "reason": "提高必要事实召回；语义索引、reranker 身份和搜索上限都进入回执。"
+        },
+        {
+          "name": "workflow",
+          "before": "单 Agent 直接合成",
+          "after": "父 Agent 首轮检索后调用一个低思考 reviewer，再选择性补检索并合成",
+          "reason": "在不向 Agent 暴露 qrels、参考答案或 Judge 反馈的前提下增加覆盖审阅。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "dataset_and_gold",
+          "value": "同一 Validation 4 case（2 可回答 + 2 应拒答）、9 个必要事实、5,101 文档与 29,846 chunk；manifest f154bbc5",
+          "reason": "不缩分母、不换题、不改 qrels/evidence manifest；漏标问题只能另走 candidate-blind Golden 审计。"
+        },
+        {
+          "name": "provider_identity",
+          "value": "openai-codex / gpt-5.6-sol / max；当前 ChatGPT OAuth 由用户指定为 Aed 20xpro，账户标签不能机器证明",
+          "reason": "四条 lane 与 Judge 走同一 Provider/model/thinking；未读取或使用 x1top 配置。"
+        },
+        {
+          "name": "agent_contract",
+          "value": "prompt contract rag-agent-evidence-state-budget-routing-v19；qrels、参考答案和 Judge 反馈不进入候选 Prompt",
+          "reason": "答案生成与评分解耦，避免把 Golden 泄漏当成模型提升。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "只有 complete 的未缓存输入、缓存输入、输出三分类 Provider receipt 才可参与成本比较",
+          "reason": "本次 agentic child 分类回执不完整，因此即使总 token 可见也必须 fail closed。"
+        }
+      ],
+      "star": {
+        "situation": "旧 Luna 消融留有多条失败记录，但不能代表当前 Sol/max、完整 4-lane + Judge 的结果；同时 Agentic workflow 需要寻找质量不退化的成本预算。",
+        "task": "在冻结 Validation 的 4 个 case 上运行 baseline、skill、tuned、agentic 四条 lane 与匿名 Judge；候选只有通过最终引用/拒答硬门后才允许进入同 hash 成本 baseline 比较。",
+        "action": "用 Sol/max 执行完整 r3；agentic lane 使用 Skill、hybrid + reranker、一个 reviewer 和 supplemental budget 3。运行后保持冻结 Gold 不变，并公开两条无答案正文的逐 Case lane 回执。",
+        "result": "四条 lane 均 turn_completed；agentic Judge correctness 1.0、答案成功 2/2、拒答 2/2、Tool 成功 1.0，但冻结引用事实仅 4/9，两条可回答 case 的 citationSupport 均失败；子 Agent usage 分类回执也不完整，因此 Reject 且不跑/不宣称成本 baseline。"
+      },
+      "dataset": {
+        "id": "enterprise-rag-answer-evidence-validation-v1",
+        "split": "validation",
+        "caseCount": 4,
+        "unit": "2 个可回答 enterprise question + 2 个 info-not-found 拒答案例；9 个必要事实",
+        "manifestSha256": "f154bbc55dba2733e10e0ebac91da6af50493565e688b19e80327bc028f21c96",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "final agent case success = answer/Judge + exact-source citation support + abstention + Tool success",
+        "evaluatorAuthority": "冻结 exact-source evidence manifest、确定性 citation scorer 与匿名 Sol/max answer Judge",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "4/4 terminal completion and valid output protocol",
+          "2/2 answerable answers correct by independent Judge",
+          "9/9 required facts supported by accepted exact-source citations",
+          "2/2 info-not-found abstentions correct",
+          "zero Tool failure and cleanup passed",
+          "complete Provider usage categories before any cost claim"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "先让冻结答案/引用/拒答合同全部通过，再在同模型、同 Case、同 Gold 下寻找三类 Provider usage 全不增且至少一类下降的单变量候选。",
+        "candidateSearchSpace": [
+          {
+            "axis": "rag_lane_profile",
+            "candidatesEvaluated": 1,
+            "values": [
+              "lexical baseline single-pass",
+              "Skill + hybrid reranker + one-reviewer agentic budget 3"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "4-case / 9-fact Validation manifest f154bbc5",
+          "5,101-document / 29,846-chunk corpus",
+          "openai-codex / gpt-5.6-sol / max",
+          "prompt contract v19 and hidden-Gold boundary",
+          "exact-source qrels/evidence manifest",
+          "no Held-out consumption"
+        ],
+        "selectionRule": "答案、引用、拒答、Tool、终态和 cleanup 全通过后，才比较同路由三类 usage；任一类别缺失或任一硬门失败即 Reject。",
+        "stopRule": "r3 在 citationSupport 与 usage completeness 处失败，立即保留 Reject；不为获得好结果改 qrels、缩 Case 或补跑成本 baseline。",
+        "heldOutRule": "Validation 组合候选未过门禁，不打开 Held-out，也不把开发期 Golden 审计解释为 Promotion。"
+      },
+      "bestKnown": {
+        "configId": "sol-max-agentic-budget3-r3-rejected",
+        "configSha256": "dcd068af998d21d7e7560a77e8b19ed6e6512d13888d018164d414746d592651",
+        "decision": "reject"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "answerJudgeCorrectnessRate 0.5→1.0",
+            "final agentSuccessRate 0.5→0.5",
+            "infoNotFoundAbstentionRecall 1.0→1.0"
+          ],
+          "reason": "Agentic 答案更完整，但 exact-source 引用硬门仍使两个可回答 case 失败；最终任务成功率没有提高。"
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "highLevelFactCoverage 6/9→9/9",
+            "citationFactCoverage 2/9→4/9",
+            "citationSupport 0/2→0/2"
+          ],
+          "reason": "Judge 和引用 scorer 分开记录；当前差异提示 Golden/evidence binding 待独立审计，但不会倒签本次结果。"
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "4/4 lanes turn_completed",
+            "failedToolCalls 0→0",
+            "agentic search calls 8"
+          ],
+          "reason": "完整 4-lane 与 Judge 路径真实运行；没有把 runner failure 混入模型质量。"
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "open_gap",
+          "metrics": [],
+          "reason": "Agentic 总量 286827 可见，但 child 分类回执不完整；不得与 baseline 的 complete usage 做成本或节省声明。"
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "Gold hidden from Agent",
+            "cleanup passed",
+            "x1top configuration not read or used"
+          ],
+          "reason": "运行限定在 source-local benchmark root；公开回执省略答案、引用正文、qrels、路径和凭据。"
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "workflow",
+          "ref": "scripts/run_rag_agent_ablation.py",
+          "change": "执行冻结 4-lane + Judge，并在 complete/observation/transcript usage 权威之间 fail closed。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "tests/test_run_rag_agent_ablation.py",
+          "change": "覆盖 child usage 完整、Observation fallback、settled transcript exact settlement 与 mismatch 拒绝。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "rag_ime/eval_lab_evidence.py",
+          "change": "把 raw RAG lane-list 的 agentic answerCases 安全投影成逐 Case 门禁，不复制答案、引用或 Golden。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-baseline-lane-20260904.r3.json",
+          "change": "保存 r3 baseline lane 的冻结身份、逐 Case 结果、门禁与完整 usage 回执。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-agentic-lane-20260904.r3.json",
+          "change": "保存 r3 agentic lane 的逐 Case Reject、Judge/引用差异和 usage incomplete 边界。"
+        }
+      ],
+      "baseline": {
+        "runId": "enterprise-rag-sol-max-budget3-baseline-lane-20260904-r3",
+        "metrics": {
+          "agentCaseCount": 4,
+          "agentSuccessRate": 0.5,
+          "answerableCaseCount": 2,
+          "answerSuccessRate": 0.5,
+          "answerJudgeCorrectnessRate": 0.5,
+          "highLevelFactCoverage": 0.6666666666666666,
+          "citationFactCoverage": 0.2222222222222222,
+          "answerableCitationSupportRate": 0.0,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "citationHardGatePassed": 0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "failedToolCalls": 0,
+          "searchCalls": 5,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 26079,
+          "cachedInputTokens": 81280,
+          "outputTokens": 1513,
+          "latencyMs": 61177.695
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-baseline-lane-20260904.r3.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一冻结 Validation 的 4 个 case；lexical baseline single-pass。",
+            "output": "4/4 输出协议，Judge 1/2 可回答题正确、必要事实 6/9、引用事实 2/9、拒答 2/2；citationSupport 0/2，Reject。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "enterprise-rag-budget3-after-golden-audit",
+          "targetLayer": "workflow",
+          "observation": "Agentic r3 的两条答案被匿名 Judge 判为正确，但冻结 exact-source citation scorer 仅计 4/9；同时 child usage 分类不完整。",
+          "hypothesis": "只有 candidate-blind Golden 审计确认等价证据绑定并冻结新 suite、且真实重跑产生 complete child usage 后，预算 3 才可能成为可比较成本候选。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-baseline-lane-20260904.r3.json",
+            "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-agentic-lane-20260904.r3.json"
+          ],
+          "proposedChange": "不改 qrels-v1；等待独立审计决定是否另建冻结 qrels-v2 suite，再以同 Case 运行 budget3 candidate 与同 hash baseline。",
+          "attribution": {
+            "detectedBy": "deterministic citation scorer and anonymous answer Judge",
+            "proposedBy": "sol_max_implementation_agent",
+            "authorizedBy": "root_agent_after_independent_golden_audit",
+            "implementedBy": "not_implemented",
+            "verifiedBy": "not_verified"
+          },
+          "status": "rejected"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "considered_no_change",
+          "reason": "共同的答案协议、隐藏 Gold 与 Judge 边界不变；lane-specific profile 文本由已声明的 Skill/Tool/Workflow 组合产生。"
+        },
+        {
+          "layer": "tool",
+          "status": "changed",
+          "reason": "候选启用 hybrid retrieval、独立 reranker 与有上限的补充检索。"
+        },
+        {
+          "layer": "workflow",
+          "status": "changed",
+          "reason": "候选增加一个 reviewer 子 Agent 和选择性补检索。"
+        },
+        {
+          "layer": "skill",
+          "status": "changed",
+          "reason": "候选加载冻结 RAG 优化 Skill。"
+        }
+      ],
+      "candidate": {
+        "runId": "enterprise-rag-sol-max-budget3-agentic-lane-20260904-r3",
+        "metrics": {
+          "agentCaseCount": 4,
+          "agentSuccessRate": 0.5,
+          "answerableCaseCount": 2,
+          "answerSuccessRate": 1.0,
+          "answerJudgeCorrectnessRate": 1.0,
+          "highLevelFactCoverage": 1.0,
+          "citationFactCoverage": 0.4444444444444444,
+          "answerableCitationSupportRate": 0.0,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "citationHardGatePassed": 0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "failedToolCalls": 0,
+          "searchCalls": 8,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 0,
+          "categoryReceiptComplete": 0,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 67119,
+          "cachedInputTokens": 207104,
+          "outputTokens": 8147,
+          "latencyMs": 236499.062
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-agentic-lane-20260904.r3.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一 4 个 case；Skill + hybrid reranker + one-reviewer agentic workflow，补充预算 3。",
+            "output": "Judge 2/2 可回答题正确、必要事实 9/9、引用事实 4/9、拒答 2/2、0 Tool failure；citationSupport 0/2 且 usage 分类不完整，Reject。"
+          }
+        ]
+      },
+      "comparison": {
+        "decision": "reject",
+        "decisionReason": "Agentic 组合让答案正确率与必要事实覆盖提高，但两个可回答 case 仍未通过冻结 exact-source citationSupport，最终 task success 只有 2/4；child Provider usage 分类回执也不完整。按预设顺序先 Reject 质量/合同，不运行同 hash 成本 baseline，不宣称成本改善。",
+        "metricDeltas": [
+          {
+            "metric": "agentSuccessRate",
+            "before": 0.5,
+            "after": 0.5,
+            "delta": 0.0
+          },
+          {
+            "metric": "answerJudgeCorrectnessRate",
+            "before": 0.5,
+            "after": 1.0,
+            "delta": 0.5
+          },
+          {
+            "metric": "highLevelFactCoverage",
+            "before": 0.6666666666666666,
+            "after": 1.0,
+            "delta": 0.33333333333333337
+          },
+          {
+            "metric": "citationFactCoverage",
+            "before": 0.2222222222222222,
+            "after": 0.4444444444444444,
+            "delta": 0.2222222222222222
+          },
+          {
+            "metric": "answerableCitationSupportRate",
+            "before": 0.0,
+            "after": 0.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "failedToolCalls",
+            "before": 0,
+            "after": 0,
+            "delta": 0
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "case-01",
+            "before": "答案不完整且 citationSupport 失败；必要事实 2/5、引用事实 0/5。",
+            "after": "Judge 判答案正确，但 citationSupport 仍失败；必要事实 5/5、冻结引用事实 2/5。"
+          },
+          {
+            "caseId": "case-02",
+            "before": "Judge 判答案正确，但 citationSupport 失败；必要事实 4/4、冻结引用事实 2/4。",
+            "after": "Judge 仍判答案正确，citationSupport 仍失败；必要事实 4/4、冻结引用事实仍为 2/4。"
+          },
+          {
+            "caseId": "case-03",
+            "before": "正确拒答并通过 Tool/协议门禁。",
+            "after": "仍正确拒答并通过 Tool/协议门禁。"
+          },
+          {
+            "caseId": "case-04",
+            "before": "正确拒答并通过 Tool/协议门禁。",
+            "after": "仍正确拒答并通过 Tool/协议门禁。"
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 Enterprise RAG 的 4-case/9-fact 冻结 Validation 上，Sol/max Agentic 组合把 Judge 正确率从 0.5 提到 1.0、必要事实覆盖从 6/9 提到 9/9，但 exact-source 引用仅 4/9 且 usage 分类不完整，因此按硬门 Reject。",
+        "allowed": "A source-local Validation diagnosis showing correct answers and abstentions, a 4/9 frozen citation score, complete terminal/Tool execution, and an explicit Reject with no cost claim.",
+        "forbidden": "RAG candidate passed, qrels-v1 was changed, the citation miss is a model failure, cost decreased, Provider-billed savings, Held-out or production acceptance, or post-run transcript usage recovery was proven on a real child Session."
+      },
+      "openGaps": [
+        "等待独立 candidate-blind Golden 审计；qrels-v1 保持 immutable，是否另建 qrels-v2 由 Root 决定",
+        "settled transcript child usage recovery 已有 focused tests，但尚未在新的真实子 Session 上动态证明",
+        "只有新冻结 suite 下 candidate 通过全部硬门后，才能运行同 hash baseline 并比较三类 usage",
+        "当前仅 source-local Validation；未安装、未做 foreground、未打开 Held-out"
+      ]
+    },
+    {
+      "id": "cloudops.alert-first-sol-max.v1",
+      "title": "CloudOps · Alert-first Prompt 成本优化",
+      "vertical": "cloudops-incident-diagnosis",
+      "evaluationKind": "workflow",
+      "status": "kept",
+      "claimStatus": "headline",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "single_factor",
+      "businessProblem": "冻结的 12 个告警诊断全部能完成，但标准 Prompt 产生大量宽泛 list/read 往返；需要保持最终根因判断和质量分数，同时减少 Provider 上下文用量。",
+      "whyAgent": "每题都要跨多条时序告警和资源证据形成诊断；Host scorer 独立评估最终答案、故障对象、根因和 Top-3，不能用单条自然语言口播替代。",
+      "factors": [
+        {
+          "name": "prompt",
+          "before": "baseline-v1 标准诊断 Prompt",
+          "after": "alert-first-v5：先定位告警对象，再读取判别证据",
+          "reason": "只收紧诊断顺序与证据读取预算；standard-v1 context projection、Tool、Case、模型和评分合同不变。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "dataset_and_gold",
+          "value": "cloudops-smoke-v1 Validation；12 case / 3×4；suite 31939ae6，contract 99126a25",
+          "reason": "相同 caseId、Host-private Gold 与 scorer，不缩分母。"
+        },
+        {
+          "name": "provider_identity",
+          "value": "openai-codex / gpt-5.6-sol / max；用户指定当前 ChatGPT OAuth 为 Aed 20xpro",
+          "reason": "同 Provider/model/thinking 比较三类 usage；未读取或使用 x1top。"
+        },
+        {
+          "name": "context_and_runtime",
+          "value": "standard-v1 projection、managed Pi 0.84.2、同 Tool profile、900 秒 timeout",
+          "reason": "唯一变量是 Prompt workflow profile。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "complete 的未缓存输入、缓存输入、输出 Provider usage",
+          "reason": "三类全不增且至少一类下降才 Keep；耗时不进门禁。"
+        }
+      ],
+      "star": {
+        "situation": "标准 Sol/max baseline 已 12/12 AnswerCoverage 与 CA 1.0，但累计 142 次 Tool 与高上下文用量。",
+        "task": "只改变诊断 Prompt，在同一 12-case suite 保持最终成功和全部质量硬门，同时降低三类 usage。",
+        "action": "将 baseline-v1 改成 alert-first-v5，要求先锁定告警对象、再读取能区分竞争假设的证据；完整重跑 3×4 batch。",
+        "result": "仍为 12/12、CA 1.0、FA/JRA 0.8333；Top3JRA 0.8333→1.0。未缓存输入 450205→279774、缓存输入 12995072→4586112、输出 40601→35356，三类均下降；1 次 Tool 失败被恢复且不属于该 suite 的最终硬门。"
+      },
+      "dataset": {
+        "id": "cloudops-smoke-v1",
+        "split": "validation",
+        "caseCount": 12,
+        "unit": "12 个冻结告警诊断 case，3×4 顺序 batch",
+        "manifestSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "12/12 AnswerCoverage + CA 1.0；FA/JRA 不退化；Top3JRA 作为质量增益",
+        "evaluatorAuthority": "冻结 CloudOps Host scorer + Provider usage receipts",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "12/12 canonical answers",
+          "AnswerCoverage = 1 and CA = 1",
+          "FA and JRA non-regression",
+          "same runtime and scoring identities",
+          "complete usage categories",
+          "Gateway binding cleanup"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "保持 12-case 最终诊断成功与质量门禁，同时降低同 Sol/max 的三类 Provider usage。",
+        "candidateSearchSpace": [
+          {
+            "axis": "prompt_contract",
+            "candidatesEvaluated": 1,
+            "values": [
+              "baseline-v1",
+              "alert-first-v5"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "12-case suite and Host Gold",
+          "standard-v1 context projection",
+          "openai-codex / gpt-5.6-sol / max",
+          "Tool/runtime identities",
+          "900-second timeout"
+        ],
+        "selectionRule": "最终 Coverage/CA 全通过，FA/JRA 不退化，并且三类 usage 全不增且至少一类下降才 Keep。",
+        "stopRule": "首个通过质量与成本 dominance 的单变量候选即冻结；历史 r3-r6 继续保留 Reject。",
+        "heldOutRule": "只报告 Validation，不将其解释为 Held-out 或生产结果。"
+      },
+      "bestKnown": {
+        "configId": "alert-first-v5",
+        "configSha256": "ca30856be7d35566192f86302b22bb2fea0fc6143b9a1b98d1213a2e0024c7f9",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "AnswerCoverage 1.0→1.0",
+            "CA 1.0→1.0",
+            "Top3JRA 0.8333→1.0"
+          ],
+          "reason": "同一 Host scorer 的 12-case 结果不退化且 Top-3 根因质量提高。"
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "12 个 caseId 的 CA/FA/JRA/Top3JRA",
+            "4 条 Trace/Eval ID 每 run"
+          ],
+          "reason": "公开 case projection 由私有 terminal receipt 去除答案与 Gold 后生成。"
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "3/3 batch turn_completed",
+            "Tool calls 142→99",
+            "candidate recovered Tool failure 1"
+          ],
+          "reason": "一次 Tool 失败被同一 run 恢复，最终 12/12 与 CA 1.0；它仍作为诊断事实展示。"
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "uncached 450205→279774",
+            "cached 12995072→4586112",
+            "output 40601→35356"
+          ],
+          "reason": "同路由三类 usage 全部严格下降；没有虚构 OAuth 账单价格。"
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "Gold hidden",
+            "Gateway bindings removed",
+            "temporary outputs removed"
+          ],
+          "reason": "运行只读且清理通过，公开投影不含答案、Gold、路径或凭据。"
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "workflow",
+          "ref": "scripts/run_cloudops_agent_eval.py",
+          "change": "增加 alert-first-v5 单变量 Prompt profile 与真实 cost comparison。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "tests/test_run_cloudops_agent_eval.py",
+          "change": "锁定同 Case、身份、质量与三类 usage 门禁。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-max-standard-baseline-20260904.r2.json",
+          "change": "保存 12-case baseline 运行回执。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-candidate-20260904.r7.json",
+          "change": "保存 12-case candidate 运行回执。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json",
+          "change": "绑定 identity、quality、usage dominance 与 Keep。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+          "change": "只投影 12 个 caseId 与 Host score，不复制答案或 Gold。"
+        }
+      ],
+      "baseline": {
+        "runId": "cloudops-sol-max-standard-baseline-20260904-r2",
+        "metrics": {
+          "answerCoverage": 1.0,
+          "ca": 1.0,
+          "fa": 0.8333333333333334,
+          "jra": 0.8333333333333334,
+          "top3Jra": 0.8333333333333334,
+          "formalScoreProduced": 1,
+          "toolCalls": 142,
+          "failedToolCalls": 0,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 450205,
+          "cachedInputTokens": 12995072,
+          "outputTokens": 40601,
+          "latencyMs": 1175529
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-sol-max-standard-baseline-20260904.r2.json",
+          "eval/interview-metrics/runs/cloudops-sol-max-standard-baseline-case-projection-20260904.r2.json",
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一 12-case CloudOps Validation；baseline-v1。",
+            "output": "12/12、CA 1.0、FA/JRA/Top3JRA 0.8333；142 Tool，450205/12995072/40601 三类 usage。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "cloudops-alert-first-v5",
+          "targetLayer": "system_prompt",
+          "observation": "baseline-v1 最终正确但重复宽泛读取，三类 Provider usage 偏高。",
+          "hypothesis": "先定位告警对象再读判别证据可保持最终答案并压缩上下文。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/cloudops-sol-max-standard-baseline-20260904.r2.json",
+            "eval/interview-metrics/runs/cloudops-sol-max-alert-first-candidate-20260904.r7.json",
+            "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json"
+          ],
+          "proposedChange": "只使用 alert-first-v5 Prompt profile。",
+          "attribution": {
+            "detectedBy": "Trace and usage receipts",
+            "proposedBy": "sol_max_implementation_agent",
+            "authorizedBy": "user",
+            "implementedBy": "sol_max_implementation_agent",
+            "verifiedBy": "Host scorer and usage comparison"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "changed",
+          "reason": "唯一变化是 baseline-v1→alert-first-v5 Prompt。"
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "Tool catalog/contract identity相同。"
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "3×4 顺序批次与 Runtime 不变。"
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "未加载或更换 Skill。"
+        }
+      ],
+      "candidate": {
+        "runId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+        "metrics": {
+          "answerCoverage": 1.0,
+          "ca": 1.0,
+          "fa": 0.8333333333333334,
+          "jra": 0.8333333333333334,
+          "top3Jra": 1.0,
+          "formalScoreProduced": 1,
+          "toolCalls": 99,
+          "failedToolCalls": 1,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 279774,
+          "cachedInputTokens": 4586112,
+          "outputTokens": 35356,
+          "latencyMs": 1036278
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-candidate-20260904.r7.json",
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一 12 case / standard-v1 context；仅换 alert-first-v5 Prompt。",
+            "output": "12/12、CA 1.0、FA/JRA 0.8333、Top3JRA 1.0；99 Tool，279774/4586112/35356 三类 usage。"
+          }
+        ]
+      },
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "最终 12/12 与 CA 1.0，FA/JRA 不退化、Top3JRA 提高；同 Sol/max 的三类 usage 全部严格下降。一次可恢复 Tool failure 不在该 suite 的最终硬门，仍保留展示；耗时仅信息。",
+        "metricDeltas": [
+          {
+            "metric": "answerCoverage",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "ca",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "top3Jra",
+            "before": 0.8333333333333334,
+            "after": 1.0,
+            "delta": 0.16666666666666663
+          },
+          {
+            "metric": "toolCalls",
+            "before": 142,
+            "after": 99,
+            "delta": -43
+          },
+          {
+            "metric": "failedToolCalls",
+            "before": 0,
+            "after": 1,
+            "delta": 1
+          },
+          {
+            "metric": "uncachedInputTokens",
+            "before": 450205,
+            "after": 279774,
+            "delta": -170431
+          },
+          {
+            "metric": "cachedInputTokens",
+            "before": 12995072,
+            "after": 4586112,
+            "delta": -8408960
+          },
+          {
+            "metric": "outputTokens",
+            "before": 40601,
+            "after": 35356,
+            "delta": -5245
+          },
+          {
+            "metric": "latencyMs",
+            "before": 1175529,
+            "after": 1036278,
+            "delta": -139251
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "trainticket/performance/1",
+            "before": "CA 1、FA/JRA/Top3JRA 0。",
+            "after": "CA 1、FA/JRA 0、Top3JRA 1。"
+          },
+          {
+            "caseId": "trainticket/performance/2",
+            "before": "CA 1、FA/JRA/Top3JRA 0。",
+            "after": "CA 1、FA/JRA 0、Top3JRA 1。"
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 CloudOps 12-case 冻结 Validation 上，仅将 Prompt 改为 alert-first-v5，保持 12/12 与 CA 1.0、FA/JRA 不退化、Top3JRA 提至 1.0，并将同 Sol/max 三类 usage 从 450205/12995072/40601 降至 279774/4586112/35356。",
+        "allowed": "同一 12-case Validation、同 Sol/max、单 Prompt 变量下的最终成功、质量不退化和 usage dominance Keep。",
+        "forbidden": "零 Tool failure、Provider 账单金额、逐 Case token 归因、Held-out/生产/安装 acceptance 或多轮统计稳定性。"
+      },
+      "openGaps": [
+        "一次可恢复 Tool failure 只能定位到 batch-2，公开回执不能诚实归因到具体 case",
+        "Provider 未返回 OAuth 账单价格",
+        "仅单轮 source-local Validation，未安装或做 foreground acceptance"
+      ]
+    },
+    {
+      "id": "memory.maintenance-concise-contract-sol-max.v1",
+      "title": "Memory Maintenance · 精简 JSON Prompt 成本优化",
+      "vertical": "memory-maintenance",
+      "evaluationKind": "memory",
+      "status": "kept",
+      "claimStatus": "headline",
+      "projectionState": "current",
+      "effectStatus": "neutral",
+      "candidateType": "single_factor",
+      "businessProblem": "Memory shadow lifecycle 已通过全部整理、检索、回滚和重放门禁，但标准 JSON Prompt 含重复包装说明与冗长 rationale；需要在不改变输入 packet 和治理语义的前提下降低用量。",
+      "whyAgent": "模型先做五例 atom-first 整理，再由隔离 verifier 判断 evidence、lineage、book、检索、拒答、rollback/replay；只有完整生命周期才能证明精简输出合同没有破坏 Memory。",
+      "factors": [
+        {
+          "name": "prompt",
+          "before": "standard-v1 完整 JSON 指令与未限长 rationale",
+          "after": "concise-json-v1：删除重复包装并限制 rationale 字段",
+          "reason": "Trace 显示主要冗余在输出合同；输入 semantic packet、context profile、模型、fixture 与 verifier 全部冻结。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "dataset_and_gold",
+          "value": "同一 private-shadow fixture 58712216；5 case（4 durable + 1 non-memory）",
+          "reason": "不改案例、期望决策或检索/恢复门禁。"
+        },
+        {
+          "name": "context_and_model",
+          "value": "full-json-v1 context；openai-codex / gpt-5.6-sol / max；2 个真实 model request",
+          "reason": "唯一变量是 Prompt 输出合同。"
+        },
+        {
+          "name": "safety_boundary",
+          "value": "生产数据库不打开、不写；source shadow 不变；rollback/replay 必须通过",
+          "reason": "成本优化不能降低 Memory 治理或恢复能力。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "complete uncached/cached/output Codex usage；无账单价格",
+          "reason": "三类全不增且至少一类下降才 Keep；耗时仅信息。"
+        }
+      ],
+      "star": {
+        "situation": "full-json baseline 已通过全部 5-case lifecycle gates，但两次真实 Sol/max request 输出 2207 token。",
+        "task": "只精简 JSON Prompt 合同，保持五例、向量、lineage、book、rollback、replay 与合法 JSON 全通过，同时降低三类 usage。",
+        "action": "保持 full-json-v1 semantic packet 不变，把 standard-v1 改为 concise-json-v1，删除重复说明并限制 rationale；重新运行 curation 与隔离 verifier。",
+        "result": "5/5 retrieval、4/4 durable、1/1 abstention，vector/curation/lineage/book/rollback/replay/JSON 全通过；uncached 39799→39638、cached 0→0、output 2207→1650。"
+      },
+      "dataset": {
+        "id": "memory-maintenance-public-safe-fixture-v1",
+        "split": "shadow_validation",
+        "caseCount": 5,
+        "unit": "4 durable memory cases + 1 temporary non-memory control",
+        "manifestSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "完整 memory lifecycle：5/5 curation/retrieval、4/4 durable、1/1 abstention、vector/lineage/book/rollback/replay/JSON",
+        "evaluatorAuthority": "private-shadow deterministic lifecycle verifier + two real Codex receipts",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "五例整理和检索全部通过",
+          "4/4 durable recall and 1/1 abstention",
+          "vector coverage = 1",
+          "evidence lineage and book projection valid",
+          "rollback and exact replay pass",
+          "legal JSON receipt",
+          "production database remains closed"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "保持完整 Memory lifecycle 质量与安全，同时降低同 Sol/max 的三类 usage。",
+        "candidateSearchSpace": [
+          {
+            "axis": "prompt_contract",
+            "candidatesEvaluated": 1,
+            "values": [
+              "standard-v1",
+              "concise-json-v1"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "5-case fixture 58712216",
+          "full-json-v1 semantic packet",
+          "openai-codex / gpt-5.6-sol / max",
+          "curation and isolated verifier phases",
+          "private-shadow and recovery gates"
+        ],
+        "selectionRule": "所有 lifecycle gate 不退化且三类 usage 全不增、至少一类下降才 Keep。",
+        "stopRule": "首个通过质量与 usage dominance 的单 Prompt 候选即冻结。",
+        "heldOutRule": "仅 private shadow Validation；不推断生产或安装态。"
+      },
+      "bestKnown": {
+        "configId": "concise-json-v1",
+        "configSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "curation 5/5→5/5",
+            "durable 4/4→4/4",
+            "abstention 1/1→1/1"
+          ],
+          "reason": "同一 fixture 的最终 Memory 决策与检索结果不退化。"
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "legal lineage 7/7",
+            "book projection in sync",
+            "fixture SHA bound"
+          ],
+          "reason": "同一 deterministic verifier 与 evidence hashes 验收。"
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "2/2 model requests exit 0",
+            "legal JSON",
+            "replay reused receipts"
+          ],
+          "reason": "curation 与隔离 verifier 均真实完成。"
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "uncached 39799→39638",
+            "cached 0→0",
+            "output 2207→1650"
+          ],
+          "reason": "同路由三类 usage 全不增且两类严格下降。"
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "production DB closed",
+            "rollback pass",
+            "replay pass",
+            "source shadow unchanged"
+          ],
+          "reason": "优化运行只在 private shadow，恢复和不变性全部验收。"
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "workflow",
+          "ref": "scripts/eval_personal_memory_luna.py",
+          "change": "增加 concise-json-v1 单变量 Prompt 合同和真实 usage comparison。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "tests/test_eval_personal_memory_cost_optimization.py",
+          "change": "锁定 identity、lifecycle quality 与三类 usage 门禁。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/memory-maintenance-sol-max-full-json-baseline-20260904.r2.json",
+          "change": "保存 full-json baseline 回执。"
+        },
+        {
+          "kind": "workflow",
+          "ref": "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-candidate-20260904.r3.json",
+          "change": "保存 concise candidate 回执。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json",
+          "change": "绑定质量、恢复与 usage dominance Keep。"
+        }
+      ],
+      "baseline": {
+        "runId": "memory-maintenance-sol-max-full-json-baseline-20260904-r2",
+        "metrics": {
+          "curationCases": 5,
+          "curationPassed": 5,
+          "durableRecallPassed": 4,
+          "durableRecallTotal": 4,
+          "abstentionPassed": 1,
+          "abstentionTotal": 1,
+          "vectorCoverage": 1,
+          "rollbackPassed": 1,
+          "replayPassed": 1,
+          "receiptJsonValid": 1,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 39799,
+          "cachedInputTokens": 0,
+          "outputTokens": 2207,
+          "latencyMs": 56610
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-full-json-baseline-20260904.r2.json",
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一 5-case private-shadow fixture；standard-v1 Prompt。",
+            "output": "5/5、4/4 durable、1/1 abstention、全部治理/恢复门禁通过；39799/0/2207 usage。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "memory-concise-json-v1",
+          "targetLayer": "system_prompt",
+          "observation": "标准 JSON 合同重复包装并允许冗长 rationale。",
+          "hypothesis": "精简重复说明和限制 rationale 可减少输出，而不改变 semantic packet 或 lifecycle 决策。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/memory-maintenance-sol-max-full-json-baseline-20260904.r2.json",
+            "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-candidate-20260904.r3.json",
+            "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json"
+          ],
+          "proposedChange": "采用 concise-json-v1 Prompt 输出合同。",
+          "attribution": {
+            "detectedBy": "model receipts and prompt diff",
+            "proposedBy": "sol_max_implementation_agent",
+            "authorizedBy": "user",
+            "implementedBy": "sol_max_implementation_agent",
+            "verifiedBy": "lifecycle verifier and usage comparison"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "changed",
+          "reason": "唯一变化是 standard-v1→concise-json-v1。"
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "无 Tool 能力变化。"
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "curation、isolated verifier、rollback/replay 流程不变。"
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "未增加或替换 Skill。"
+        }
+      ],
+      "candidate": {
+        "runId": "memory-maintenance-sol-max-concise-contract-candidate-20260904-r3",
+        "metrics": {
+          "curationCases": 5,
+          "curationPassed": 5,
+          "durableRecallPassed": 4,
+          "durableRecallTotal": 4,
+          "abstentionPassed": 1,
+          "abstentionTotal": 1,
+          "vectorCoverage": 1,
+          "rollbackPassed": 1,
+          "replayPassed": 1,
+          "receiptJsonValid": 1,
+          "sameProviderModelThinking": 1,
+          "usageReceiptAvailable": 1,
+          "categoryReceiptComplete": 1,
+          "providerBillAvailable": 0,
+          "uncachedInputTokens": 39638,
+          "cachedInputTokens": 0,
+          "outputTokens": 1650,
+          "latencyMs": 48010
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-candidate-20260904.r3.json",
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一 fixture/full-json context；只换 concise-json-v1 Prompt。",
+            "output": "全部 5-case、治理、检索、rollback/replay/JSON 门禁通过；39638/0/1650 usage。"
+          }
+        ]
+      },
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "同一 5-case private-shadow candidate 保持所有 lifecycle 与恢复门禁；同 Sol/max 三类 usage 全不增，uncached 与 output 严格下降。耗时只作信息。",
+        "metricDeltas": [
+          {
+            "metric": "curationPassed",
+            "before": 5,
+            "after": 5,
+            "delta": 0
+          },
+          {
+            "metric": "durableRecallPassed",
+            "before": 4,
+            "after": 4,
+            "delta": 0
+          },
+          {
+            "metric": "abstentionPassed",
+            "before": 1,
+            "after": 1,
+            "delta": 0
+          },
+          {
+            "metric": "uncachedInputTokens",
+            "before": 39799,
+            "after": 39638,
+            "delta": -161
+          },
+          {
+            "metric": "cachedInputTokens",
+            "before": 0,
+            "after": 0,
+            "delta": 0
+          },
+          {
+            "metric": "outputTokens",
+            "before": 2207,
+            "after": 1650,
+            "delta": -557
+          },
+          {
+            "metric": "latencyMs",
+            "before": 56610,
+            "after": 48010,
+            "delta": -8600
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "5/5 lifecycle gates；39799 uncached、0 cached、2207 output。",
+            "after": "同样 5/5；39638 uncached、0 cached、1650 output。"
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 Memory Maintenance 的 5-case private-shadow Validation 上，仅精简 JSON Prompt，保持 curation/retrieval/lineage/book/vector/rollback/replay 全通过，并将同 Sol/max usage 从 39799/0/2207 降至 39638/0/1650。",
+        "allowed": "同一 fixture、同 Sol/max、单 Prompt 变量下的 private-shadow lifecycle quality non-regression and usage dominance Keep。",
+        "forbidden": "生产数据库、安装/前台 acceptance、Provider 账单金额、Held-out 泛化或逐 Case token 归因。"
+      },
+      "openGaps": [
+        "公开 run receipt 当前只给五个 case 的 aggregate/best-rank，不提供逐 Case Provider usage",
+        "仅一轮 private-shadow Validation，不是生产或重复运行置信区间",
+        "Provider 没有返回 OAuth 账单价格"
+      ]
+    },
+    {
       "id": "enterprise-rag.tag-graph-readiness.v1",
       "title": "Enterprise RAG · Graph + Tag 重排就绪检查",
       "vertical": "enterprise-knowledge-retrieval",
@@ -3093,7 +4570,9 @@
       },
       "openGaps": [
         "需要先构建 documentId + chunkId 绑定的企业 Knowledge 图"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1"
     },
     {
       "id": "enterprise-rag.answer-luna-baseline.v20",
@@ -3425,7 +4904,9 @@
         "安全逐 query 排名回执待补",
         "答案与引用 Validation 尚未产生可 Promotion 结果",
         "Held-out 仍封存"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1"
     },
     {
       "id": "enterprise-rag.answer-luna-skill.v20",
@@ -3757,7 +5238,9 @@
         "安全逐 query 排名回执待补",
         "答案与引用 Validation 尚未产生可 Promotion 结果",
         "Held-out 仍封存"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1"
     },
     {
       "id": "enterprise-rag.answer-luna-tuned.v20",
@@ -4089,7 +5572,9 @@
         "安全逐 query 排名回执待补",
         "答案与引用 Validation 尚未产生可 Promotion 结果",
         "Held-out 仍封存"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1"
     },
     {
       "id": "enterprise-rag.answer-luna-agentic.v20",
@@ -4417,7 +5902,9 @@
         "安全逐 query 排名回执待补",
         "答案与引用 Validation 尚未产生可 Promotion 结果",
         "Held-out 仍封存"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.sol-max-budget3-r3.v1"
     },
     {
       "id": "cloudops.validation-baseline.v1",
@@ -4697,7 +6184,9 @@
         "Provider usage 与 process signals 待投影",
         "candidate 尚未安装到当前 PAWOS",
         "Held-out 未观察"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "cloudops.alert-first-sol-max.v1"
     },
     {
       "id": "cloudops.evidence-search.v2",
@@ -4997,7 +6486,9 @@
       "openGaps": [
         "Provider usage 与 process signals 待投影",
         "Held-out 与安装态未执行"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "cloudops.validation-baseline.v1"
     },
     {
       "id": "cloudops.observation-id.v4",
@@ -5296,7 +6787,9 @@
         "Provider usage 与 process signals 待投影",
         "Held-out 与安装态未执行",
         "同一 Validation 禁止继续开 V5"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "cloudops.validation-baseline.v1"
     },
     {
       "id": "cloudops.runtime-selection-repair-retry3.v1",
@@ -5617,7 +7110,9 @@
         "retry3 usage 不可用，failed-run burn unpriced",
         "candidate 未安装",
         "Held-out 未观察"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "cloudops.validation-baseline.v1"
     },
     {
       "id": "memory.maintenance-observed-failure.v0",
@@ -5869,7 +7364,9 @@
         "Held-out 未消费",
         "USD 成本不可用",
         "candidate 未安装"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-luna-shadow-v5.v1"
     },
     {
       "id": "memory.maintenance-shadow-v1",
@@ -6181,7 +7678,9 @@
         "Held-out 未消费",
         "USD 成本不可用",
         "candidate 未安装"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-luna-shadow-v5.v1"
     },
     {
       "id": "memory.maintenance-shadow-v3",
@@ -6489,7 +7988,9 @@
         "Held-out 未消费",
         "USD 成本不可用",
         "candidate 未安装"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-luna-shadow-v5.v1"
     },
     {
       "id": "memory.maintenance-shadow-v4",
@@ -6797,7 +8298,9 @@
         "Held-out 未消费",
         "USD 成本不可用",
         "candidate 未安装"
-      ]
+      ],
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-luna-shadow-v5.v1"
     }
   ]
 }

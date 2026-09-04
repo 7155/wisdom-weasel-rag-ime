@@ -2514,7 +2514,7 @@ describe('Agent experience', () => {
     );
   });
 
-  it('terminalizes an unresolved pending receipt without resending or offering retry actions', async () => {
+  it('keeps an unresolved pending receipt in confirmation without resending or retry actions', async () => {
     const transport = featureTransport(
       previewModelCatalog('session-preview'),
       { ok: true, items: toolCatalog() },
@@ -2546,17 +2546,19 @@ describe('Agent experience', () => {
     await user.type(composer, '这条操作不能重复执行');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
-    const warning = await screen.findByText(
+    const detail = await screen.findByText(
       /无法确认这条消息是否已执行/,
     );
-    const failure = warning.closest('[role="alert"]');
-    expect(failure).not.toBeNull();
-    expect(failure).toHaveTextContent('为避免重复执行');
-    expect(within(failure as HTMLElement).queryByRole(
+    const confirmation = detail.closest('[role="status"]');
+    expect(confirmation).not.toBeNull();
+    expect(confirmation).toHaveTextContent('正在确认接收状态');
+    expect(confirmation).toHaveTextContent('为避免重复执行');
+    expect(detail.closest('[role="alert"]')).toBeNull();
+    expect(within(confirmation as HTMLElement).queryByRole(
       'button',
       { name: '重试本轮' },
     )).not.toBeInTheDocument();
-    expect(within(failure as HTMLElement).queryByRole(
+    expect(within(confirmation as HTMLElement).queryByRole(
       'button',
       { name: '切换模型' },
     )).not.toBeInTheDocument();
@@ -2578,7 +2580,7 @@ describe('Agent experience', () => {
     ));
     expect(matchingMessages).toHaveLength(1);
     expect(matchingMessages[0]).toMatchObject({
-      status: 'failed',
+      status: 'queued',
       admissionState: 'unresolved',
     });
   });
@@ -2615,17 +2617,19 @@ describe('Agent experience', () => {
     await user.type(composer, '等待服务端确认且不能重复执行');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
-    const warning = await screen.findByText(
+    const detail = await screen.findByText(
       /服务端仍在确认这条消息是否已接收/,
     );
-    const failure = warning.closest('[role="alert"]');
-    expect(failure).not.toBeNull();
-    expect(failure).toHaveTextContent('系统不会自动重试');
-    expect(within(failure as HTMLElement).queryByRole(
+    const confirmation = detail.closest('[role="status"]');
+    expect(confirmation).not.toBeNull();
+    expect(confirmation).toHaveTextContent('正在确认接收状态');
+    expect(confirmation).toHaveTextContent('系统不会自动重试');
+    expect(detail.closest('[role="alert"]')).toBeNull();
+    expect(within(confirmation as HTMLElement).queryByRole(
       'button',
       { name: '重试本轮' },
     )).not.toBeInTheDocument();
-    expect(within(failure as HTMLElement).queryByRole(
+    expect(within(confirmation as HTMLElement).queryByRole(
       'button',
       { name: '切换模型' },
     )).not.toBeInTheDocument();
@@ -2645,7 +2649,7 @@ describe('Agent experience', () => {
         (message) => message.clientMessageId === clientMessageId,
       ),
     ).toMatchObject({
-      status: 'failed',
+      status: 'queued',
       admissionState: 'pending',
     });
   });

@@ -1,0 +1,323 @@
+{
+  "claimBoundary": [
+    "private-shadow validation only",
+    "real Codex model requests and independent verifier retained in private artifacts",
+    "installed Gateway and foreground acceptance are not evaluated"
+  ],
+  "contextProfile": "full-json-v1",
+  "evaluationScope": "validation-only",
+  "evidence": {
+    "appliedAtomSetSha256": "9ce62862612d8aacc92ae1922d85baba76cdfb2912b7fc94629312dbac4c1d37",
+    "appliedStateSha256": "fe8d8eb77fc53ce8b8076b2840aad01d056931603d5cb26d2f8cdcea3088177c",
+    "replayAtomSetSha256": "9ce62862612d8aacc92ae1922d85baba76cdfb2912b7fc94629312dbac4c1d37",
+    "replayBaselineSha256": "d1a78db300fd66e0ff61aadd0830301fc85196b8435008404e59411f4cb73c98",
+    "syntheticFixtureSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20"
+  },
+  "hardGates": {
+    "heldOutEvaluated": false,
+    "privateShadow": true,
+    "productionDatabaseOpened": false,
+    "productionMutationPerformed": false,
+    "replayVerified": true,
+    "rollbackVerified": true,
+    "sourceShadowUnchanged": true
+  },
+  "heldOutEvaluated": false,
+  "localOnly": true,
+  "metrics": {
+    "curation": {
+      "bookProjectionInSync": true,
+      "currentAtomCount": 7,
+      "governedCurrentAtomCount": 7,
+      "legalLineageCurrentAtomCount": 7,
+      "modelDecisionCount": 5,
+      "ok": true,
+      "sourceCount": 5
+    },
+    "fixture": {
+      "allCandidateEvidence": true,
+      "allStored": true,
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "nonMemoryCaseCount": 1
+    },
+    "recovery": {
+      "replayAtomSetStable": true,
+      "replayPassed": true,
+      "replayRagPassed": true,
+      "replayRestoredAppliedState": true,
+      "replayReusedModelRequests": true,
+      "rollbackPassed": true,
+      "rollbackRagCleared": true,
+      "rollbackRestoredBaseline": true
+    },
+    "retrieval": {
+      "allCasesPassed": true,
+      "bestRanks": {
+        "durable-explanation-preference": 5,
+        "durable-recoverability-principle": 7,
+        "durable-verification-habit": 5,
+        "project-room-layout": 1,
+        "temporary-test-task": 0
+      },
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "passed": true,
+      "projectionBacklog": 0,
+      "projectionFresh": true,
+      "vectorCoverage": 1.0
+    }
+  },
+  "model": "gpt-5.6-sol",
+  "modelRequests": [
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 32.11,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6343,
+      "inputSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "isolated": false,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "a823348af638306d763f8a49718723c711b78216696681204ce017151de57e93",
+      "phase": "atom-first-curation",
+      "projectedPacketChars": 1944,
+      "promptSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "resumed": false,
+      "schemaSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+      "semanticPacketSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+      "sourcePacketChars": 1944,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "ee9d7d0d1c2d808f61ef86f3fe175382e4282010ed4fcce78d0d4ac40ed5b9b9",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 20512,
+        "outputTokens": 1316,
+        "uncachedInputTokens": 20512
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 14.154,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 5232,
+      "inputSha256": "0425b90e0c0af1d833bb362db6dd286965b1c15160fbe98073ec1ad37e81f186",
+      "isolated": true,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "9b4079460e3e5eb3ffbe6220629699efdd0a3a30e1dd577ce46f1ecf24ced26e",
+      "phase": "atom-first-verifier",
+      "projectedPacketChars": 3745,
+      "promptSha256": "0425b90e0c0af1d833bb362db6dd286965b1c15160fbe98073ec1ad37e81f186",
+      "resumed": false,
+      "schemaSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+      "semanticPacketSha256": "48ac7845814a3c92c948a77e151548e4bffbf22abde8120dee248fe7255aae0c",
+      "sourcePacketChars": 3745,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "b3bd058cb731924b511f95330c876b3f3f811b812fd6bc44f626c57a93028e22",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 19126,
+        "outputTokens": 334,
+        "uncachedInputTokens": 19126
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 32.11,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6343,
+      "inputSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "isolated": false,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "a823348af638306d763f8a49718723c711b78216696681204ce017151de57e93",
+      "phase": "atom-first-curation",
+      "projectedPacketChars": 1944,
+      "promptSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "resumed": true,
+      "schemaSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+      "semanticPacketSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+      "sourcePacketChars": 1944,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "ee9d7d0d1c2d808f61ef86f3fe175382e4282010ed4fcce78d0d4ac40ed5b9b9",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 20512,
+        "outputTokens": 1316,
+        "uncachedInputTokens": 20512
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 14.154,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 5232,
+      "inputSha256": "0425b90e0c0af1d833bb362db6dd286965b1c15160fbe98073ec1ad37e81f186",
+      "isolated": true,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "9b4079460e3e5eb3ffbe6220629699efdd0a3a30e1dd577ce46f1ecf24ced26e",
+      "phase": "atom-first-verifier",
+      "projectedPacketChars": 3745,
+      "promptSha256": "0425b90e0c0af1d833bb362db6dd286965b1c15160fbe98073ec1ad37e81f186",
+      "resumed": true,
+      "schemaSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+      "semanticPacketSha256": "48ac7845814a3c92c948a77e151548e4bffbf22abde8120dee248fe7255aae0c",
+      "sourcePacketChars": 3745,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "b3bd058cb731924b511f95330c876b3f3f811b812fd6bc44f626c57a93028e22",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 19126,
+        "outputTokens": 334,
+        "uncachedInputTokens": 19126
+      }
+    }
+  ],
+  "optimizationComparison": {
+    "baselineContextProfile": "full-json-v1",
+    "baselinePromptContract": "standard-v1",
+    "baselineQuality": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allRetrievalCases": true,
+        "allStored": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "retrievalCases": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceCount": true,
+        "sourceShadowUnchanged": true,
+        "status": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "candidateContextProfile": "full-json-v1",
+    "candidatePromptContract": "concise-json-v1",
+    "candidateQuality": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allRetrievalCases": true,
+        "allStored": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "retrievalCases": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceCount": true,
+        "sourceShadowUnchanged": true,
+        "status": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "costAuthority": "same-provider-model-usage-categories",
+    "costGatePassed": true,
+    "decision": "keep",
+    "elapsedIsKeepGate": false,
+    "identityChecks": {
+      "evaluationScope": true,
+      "fixture": true,
+      "model": true,
+      "singleVariable": true,
+      "thinking": true
+    },
+    "identityGatePassed": true,
+    "providerBillAvailable": false,
+    "qualityGatePassed": true,
+    "schemaVersion": "paw.memory-maintenance-cost-optimization-comparison.v1",
+    "singleVariable": "concise_json_prompt_contract",
+    "usage": {
+      "cachedInputTokens": {
+        "after": 0,
+        "before": 0,
+        "delta": 0,
+        "nonIncreasing": true,
+        "strictlyDecreased": false
+      },
+      "outputTokens": {
+        "after": 1650,
+        "before": 2207,
+        "delta": -557,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      },
+      "uncachedInputTokens": {
+        "after": 39638,
+        "before": 39799,
+        "delta": -161,
+        "nonIncreasing": true,
+        "strictlyDecreased": true
+      }
+    }
+  },
+  "promptContract": "concise-json-v1",
+  "runId": "memory-maintenance-sol-max-concise-contract-candidate-20260904-r3",
+  "schemaVersion": "paw.memory-maintenance-validation-receipt.v1",
+  "status": "passed",
+  "thinking": "max",
+  "timing": {
+    "evaluationElapsedMs": 48010,
+    "keepGate": false,
+    "modelElapsedMs": 46264
+  },
+  "transport": "codex_cli_ephemeral",
+  "usage": {
+    "available": true,
+    "cacheWriteInputTokens": 0,
+    "cachedInputTokens": 0,
+    "inputTokens": 39638,
+    "outputTokens": 1650,
+    "providerCallCount": 2,
+    "uncachedInputTokens": 39638
+  }
+}

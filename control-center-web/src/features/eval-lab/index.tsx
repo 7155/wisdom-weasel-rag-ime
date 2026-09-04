@@ -84,7 +84,10 @@ export function EvalLabFeature() {
   const [roomPersonas, setRoomPersonas] = useState<AgentPersonaV1[]>([]);
   const [roomCatalogError, setRoomCatalogError] = useState('');
   const [candidateLaunch, setCandidateLaunch] = useState<CandidateLaunch>();
-  const sourceEvidence = useEvalLabEvidenceCatalog(page === 'sessions' || page === 'details');
+  // The overview itself now reports whether each project is backed by a real
+  // transcript, a report-only receipt, or a controlled fixture. Load the
+  // bounded catalog up front so that status is not inferred from titles.
+  const sourceEvidence = useEvalLabEvidenceCatalog(true);
 
   const wizardBusy = roomAction?.runId === 'evaluation-wizard'
     && (roomAction.state === 'creating' || roomAction.state === 'sending');
@@ -345,8 +348,8 @@ export function EvalLabFeature() {
       <section aria-label="Agent Lab 三步流程" className="eval-lab__primer">
         <div><strong>1 · 选择真实任务</strong><span>给出输入、期望结果和不能违反的限制</span></div>
         <div><strong>2 · 一次只改一项</strong><span>模型、提示词、技能、工具、检索、记忆或协作流程</span></div>
-        <div><strong>3 · 按同一标准重跑</strong><span>先比正确与安全，再比时间和成本</span></div>
-        <p>每轮实验都会保留输入、输出、验收结果与 Agent 对话；失败方案也不会被删除。</p>
+        <div><strong>3 · 按同一标准重跑</strong><span>先比正确与安全，再比成本；耗时只作诊断</span></div>
+        <p>当前结论只使用仍有效的实验；被新回执替代的失败方案移入只读历史，不再参与当前比较。</p>
       </section>
 
       {runs.isLoading ? <div aria-live="polite" className="eval-lab__state" role="status">正在读取评测回执…</div> : null}
@@ -376,7 +379,7 @@ export function EvalLabFeature() {
           </nav>
           <section aria-label="评测批次列表" className="eval-lab__runs">
             {page === 'overview' && runs.data.experiments.length ? (
-              <ExperimentMatrix experiments={runs.data.experiments} onOpenExperiment={(experimentId) => { setSelectedExperimentId(experimentId); setPage('details'); }} />
+              <ExperimentMatrix evidenceCatalog={sourceEvidence.data} experiments={runs.data.experiments} onOpenExperiment={(experimentId) => { setSelectedExperimentId(experimentId); setPage('details'); }} />
             ) : null}
             {page === 'paths' && runs.data.pathSearches?.length ? <OptimalPathPanel searches={runs.data.pathSearches} /> : null}
             {page === 'paths' && !runs.data.pathSearches?.length ? <EmptyState icon={GitBranch} title="还没有可比较的方案路径" description="先新建评测并运行至少一个新方案，这里会显示每一步为何保留或淘汰。" /> : null}
@@ -507,18 +510,25 @@ function CandidateConfirmation({ launch, onCancel, onConfirm, onToggle }: {
   );
 }
 
-function ExperimentMatrix({ experiments, onOpenExperiment }: { experiments: readonly EvalLabExperiment[]; onOpenExperiment?: (experimentId: string) => void }) {
-  const projects = groupProjectExperiments(experiments);
+function ExperimentMatrix({ evidenceCatalog, experiments, onOpenExperiment }: {
+  evidenceCatalog?: EvalLabEvidenceResponse;
+  experiments: readonly EvalLabExperiment[];
+  onOpenExperiment?: (experimentId: string) => void;
+}) {
+  const projectExperiments = experiments.filter((experiment) => projectKeyForExperiment(experiment) !== null);
+  const currentExperiments = projectExperiments.filter((experiment) => !isHistoricalExperiment(experiment));
+  const historicalExperiments = projectExperiments.filter(isHistoricalExperiment);
+  const projects = groupProjectExperiments(currentExperiments);
   return (
     <section aria-label="Agent Lab 实验结果" className="eval-lab__matrix">
       <header className="eval-lab__matrix-header">
         <div>
           <p className="eval-lab__eyebrow"><ClipboardList aria-hidden="true" size={15} /> 实验结果</p>
           <h2>每一轮都回答：为什么改、改了什么、结果如何</h2>
-          <p>下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较时间与成本。</p>
+          <p>下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较成本；耗时只用于诊断，不阻止保留正确方案。</p>
           <p className="eval-lab__matrix-guide"><span><i className="eval-lab__legend-dot eval-lab__legend-dot--good" />效果变好</span><span><i className="eval-lab__legend-dot eval-lab__legend-dot--warn" />还不能下结论</span><span><i className="eval-lab__legend-dot eval-lab__legend-dot--bad" />已回到原方案</span> 打开完整报告可核对原始输入、输出、验收结果和 Agent 对话。</p>
         </div>
-        <span className="eval-lab__matrix-count">{projects.length} 个项目 · {projects.reduce((total, project) => total + project.experiments.length, 0)} 轮实验</span>
+        <span className="eval-lab__matrix-count">{projects.length} 个项目 · {currentExperiments.length} 个当前实验 · {historicalExperiments.length} 条历史记录</span>
       </header>
       <div className="eval-lab__project-matrices">
         {projects.map((project, index) => (
@@ -528,6 +538,7 @@ function ExperimentMatrix({ experiments, onOpenExperiment }: { experiments: read
               <div><h3>{project.title}</h3><small>{project.codeName}</small><p>{project.goal}</p></div>
               <span>{project.experiments.length} 轮实验</span>
             </header>
+            <ProjectQualificationSummary evidenceCatalog={evidenceCatalog} project={project} />
             <div className="eval-lab__matrix-cards">
               {project.experiments.map((experiment) => (
                 <article className="eval-lab__matrix-card" data-status={experiment.status} key={experiment.experimentId}>
@@ -543,7 +554,7 @@ function ExperimentMatrix({ experiments, onOpenExperiment }: { experiments: read
                     <div><dt>本轮改了什么</dt><dd>{publicChangeSummary(experiment)}</dd></div>
                     <div><dt>质量结果</dt><dd>{matrixQuality(experiment)}</dd></div>
                     <div><dt>可靠性与安全</dt><dd>{matrixReliability(experiment)}</dd></div>
-                    <div><dt>耗时与成本</dt><dd>{matrixEfficiency(experiment)}</dd></div>
+                    <div><dt>成本与耗时观察</dt><dd>{matrixEfficiency(experiment)}</dd></div>
                   </dl>
                   <footer><div><strong>结论</strong><span>{publicDecisionSummary(experiment)}</span></div><button className="eval-lab__matrix-open" onClick={() => onOpenExperiment?.(experiment.experimentId)} type="button">查看完整报告</button></footer>
                 </article>
@@ -553,8 +564,322 @@ function ExperimentMatrix({ experiments, onOpenExperiment }: { experiments: read
           </article>
         ))}
       </div>
+      {historicalExperiments.length ? (
+        <details className="eval-lab__experiment-history">
+          <summary><span>查看 {historicalExperiments.length} 条历史记录</span><small>历史失败不参与当前结论</small></summary>
+          <div>
+            {historicalExperiments.map((experiment) => (
+              <article key={experiment.experimentId}>
+                <div>
+                  <span>{projectTitleForExperiment(experiment)} · {statusLabel(experiment.status)}</span>
+                  <strong>{candidateLabel(experiment)}</strong>
+                  <small>{experiment.supersededBy ? `已由 ${experiment.supersededBy} 替代` : '已从当前比较中隔离'}</small>
+                </div>
+                <button aria-label={`查看历史实验 ${candidateLabel(experiment)}`} onClick={() => onOpenExperiment?.(experiment.experimentId)} type="button">查看历史报告</button>
+              </article>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
+}
+
+type ProjectQualification = {
+  status: 'qualified' | 'incomplete';
+  quality: string;
+  cost: string;
+  evidence: string;
+  reason: string;
+};
+
+type ProjectCostComparison = {
+  experiment: EvalLabExperiment;
+  improves: boolean;
+  qualifies: boolean;
+  summary: string;
+  mode: 'provider_bill' | 'oauth_token_dominance' | 'api_estimate';
+};
+
+function ProjectQualificationSummary({ evidenceCatalog, project }: {
+  evidenceCatalog?: EvalLabEvidenceResponse;
+  project: ProjectExperimentGroup;
+}) {
+  const qualification = projectQualification(project, evidenceCatalog);
+  return (
+    <section aria-label={`${project.title} 项目验收`} className="eval-lab__project-qualification" data-status={qualification.status}>
+      <header>
+        <strong>{qualification.status === 'qualified' ? '项目验收：已达标' : '项目验收：未完成'}</strong>
+        <span>必须由同一冻结候选证明任务成功、质量不退化且成本下降；耗时只作诊断。</span>
+      </header>
+      <dl>
+        <div><dt>质量 / 任务结果</dt><dd>{qualification.quality}</dd></div>
+        <div><dt>成本</dt><dd>{qualification.cost}</dd></div>
+        <div><dt>证据形态</dt><dd>{qualification.evidence}</dd></div>
+      </dl>
+      <p>{qualification.reason}</p>
+    </section>
+  );
+}
+
+function projectQualification(project: ProjectExperimentGroup, evidenceCatalog?: EvalLabEvidenceResponse): ProjectQualification {
+  const qualityExperiments = project.experiments.filter(experimentShowsQualityImprovement);
+  const finalContractExperiments = project.experiments.filter(experimentPassesFinalTaskContract);
+  const nonRegressingFinalExperiments = finalContractExperiments.filter(experimentQualityDoesNotRegress);
+  const costComparisons = project.experiments.flatMap((experiment) => {
+    const comparison = projectCostComparison(experiment, evidenceCatalog);
+    return comparison ? [comparison] : [];
+  });
+  const qualified = costComparisons.find(({ experiment, improves, qualifies }) => (
+    experiment.status === 'kept'
+    && experimentPassesFinalTaskContract(experiment)
+    && experimentQualityDoesNotRegress(experiment)
+    && qualifies
+    && improves
+  ));
+  const lowerCostProof = costComparisons.find(({ improves, qualifies }) => qualifies && improves);
+  const comparableCost = costComparisons.find(({ qualifies }) => qualifies);
+  const lowerEstimate = costComparisons.find(({ improves, mode }) => mode === 'api_estimate' && improves);
+  const evidence = projectEvidenceShape(project, evidenceCatalog);
+  if (qualified) {
+    return {
+      status: 'qualified',
+      quality: `${experimentShowsQualityImprovement(qualified.experiment) ? '最终任务成功且质量提高' : '最终任务成功且质量不退化'}：${candidateLabel(qualified.experiment)}`,
+      cost: qualified.summary,
+      evidence,
+      reason: '同一冻结候选已证明任务成功、质量不退化且成本下降。',
+    };
+  }
+  return {
+    status: 'incomplete',
+    quality: nonRegressingFinalExperiments.length
+      ? `最终任务成功且质量不退化：${nonRegressingFinalExperiments.map(candidateLabel).join('、')}`
+      : finalContractExperiments.length
+        ? `最终任务成功，但相对基线的质量不退化尚未证明：${finalContractExperiments.map(candidateLabel).join('、')}`
+      : qualityExperiments.length
+        ? `质量有改善，但最终任务合同尚未全部通过：${qualityExperiments.map(candidateLabel).join('、')}`
+        : '尚无同时通过最终任务与质量门禁的候选',
+    cost: lowerCostProof
+      ? `${lowerCostProof.summary}，但该候选未同时通过质量门禁`
+      : comparableCost
+        ? `${comparableCost.summary}；三类未共同不增，不能证明成本下降`
+      : lowerEstimate
+        ? `${lowerEstimate.summary}；这是历史 API 估价，不是 OAuth 实际成本证明`
+        : '同一候选缺少同模型用量三分类回执或 Provider 账单',
+    evidence,
+    reason: '同一冻结候选尚未同时证明任务成功、质量不退化与成本下降。',
+  };
+}
+
+function projectCostComparison(experiment: EvalLabExperiment, evidenceCatalog?: EvalLabEvidenceResponse): ProjectCostComparison | undefined {
+  const baseline = experiment.baseline.metrics;
+  const candidate = experiment.candidate.metrics;
+  const billedBefore = firstMetric(baseline, ['providerBilledCostUsd', 'billedCostUsd']);
+  const billedAfter = firstMetric(candidate, ['providerBilledCostUsd', 'billedCostUsd']);
+  if (
+    baseline.providerBillAvailable === 1
+    && candidate.providerBillAvailable === 1
+    && billedBefore !== undefined
+    && billedAfter !== undefined
+    && billedBefore > 0
+  ) {
+    return {
+      experiment,
+      improves: billedAfter < billedBefore,
+      qualifies: true,
+      summary: `Provider 账单 ${usdPair(billedBefore, billedAfter)}`,
+      mode: 'provider_bill',
+    };
+  }
+
+  const sameRoute = baseline.sameProviderModelThinking === 1
+    && candidate.sameProviderModelThinking === 1;
+  const usageReceipts = [baseline, candidate].every((metrics) => (
+    metrics.usageReceiptAvailable === 1 || metrics.costReceiptAvailable === 1
+  ));
+  const beforeTokens = usageTokenCategories(baseline);
+  const afterTokens = usageTokenCategories(candidate);
+  if (sameRoute && usageReceipts && beforeTokens && afterTokens) {
+    const categories = (['uncachedInput', 'cachedInput', 'output'] as const);
+    const nonIncreasing = categories.every((category) => afterTokens[category] <= beforeTokens[category]);
+    const strictDecrease = categories.some((category) => afterTokens[category] < beforeTokens[category]);
+    return {
+      experiment,
+      improves: nonIncreasing && strictDecrease,
+      qualifies: true,
+      summary: `同模型 OAuth 用量回执：未缓存输入 ${formatMetric(beforeTokens.uncachedInput)} → ${formatMetric(afterTokens.uncachedInput)} · 缓存输入 ${formatMetric(beforeTokens.cachedInput)} → ${formatMetric(afterTokens.cachedInput)} · 输出 ${formatMetric(beforeTokens.output)} → ${formatMetric(afterTokens.output)}`,
+      mode: 'oauth_token_dominance',
+    };
+  }
+
+  const baselineEvidence = costEvidenceRun(evidenceCatalog, experiment.baseline);
+  const candidateEvidence = costEvidenceRun(evidenceCatalog, experiment.candidate);
+  if (baselineEvidence && candidateEvidence && sameEvidenceRoute(baselineEvidence, candidateEvidence)) {
+    const evidenceBefore = usageTokenCategories(usageReceiptMetrics(baselineEvidence));
+    const evidenceAfter = usageTokenCategories(usageReceiptMetrics(candidateEvidence));
+    if (evidenceBefore && evidenceAfter) {
+      const categories = (['uncachedInput', 'cachedInput', 'output'] as const);
+      const nonIncreasing = categories.every((category) => evidenceAfter[category] <= evidenceBefore[category]);
+      const strictDecrease = categories.some((category) => evidenceAfter[category] < evidenceBefore[category]);
+      return {
+        experiment,
+        improves: nonIncreasing && strictDecrease,
+        qualifies: true,
+        summary: `同模型 OAuth 用量回执：未缓存输入 ${formatMetric(evidenceBefore.uncachedInput)} → ${formatMetric(evidenceAfter.uncachedInput)} · 缓存输入 ${formatMetric(evidenceBefore.cachedInput)} → ${formatMetric(evidenceAfter.cachedInput)} · 输出 ${formatMetric(evidenceBefore.output)} → ${formatMetric(evidenceAfter.output)}`,
+        mode: 'oauth_token_dominance',
+      };
+    }
+  }
+
+  const estimateBefore = firstMetric(baseline, ['apiCostUsd', 'estimatedApiCostUsd']);
+  const estimateAfter = firstMetric(candidate, ['apiCostUsd', 'estimatedApiCostUsd']);
+  const estimateReceipts = baseline.costReceiptAvailable === 1
+    && candidate.costReceiptAvailable === 1;
+  if (estimateReceipts && estimateBefore !== undefined && estimateAfter !== undefined && estimateBefore > 0) {
+    return {
+      experiment,
+      improves: estimateAfter < estimateBefore,
+      qualifies: false,
+      summary: `API 价格估算 ${usdPair(estimateBefore, estimateAfter)}`,
+      mode: 'api_estimate',
+    };
+  }
+  return undefined;
+}
+
+function usageTokenCategories(metrics: Readonly<Record<string, number>>): {
+  uncachedInput: number;
+  cachedInput: number;
+  output: number;
+} | undefined {
+  const uncachedInput = firstMetric(metrics, ['uncachedInputTokens', 'inputTokens', 'input']);
+  const cachedInput = firstMetric(metrics, ['cachedInputTokens', 'cacheReadTokens', 'cacheRead']);
+  const output = firstMetric(metrics, ['outputTokens', 'output']);
+  if (uncachedInput === undefined || cachedInput === undefined || output === undefined) return undefined;
+  if (uncachedInput < 0 || cachedInput < 0 || output < 0) return undefined;
+  return { uncachedInput, cachedInput, output };
+}
+
+function costEvidenceRun(
+  catalog: EvalLabEvidenceResponse | undefined,
+  version: EvalLabExperiment['baseline'],
+): EvalLabEvidenceRun | undefined {
+  if (!catalog) return undefined;
+  const bindings = experimentRunBindings(version);
+  return catalog.runs.find((run) => {
+    const origin = `${run.sourceId ?? ''} ${run.sourceLabel ?? ''}`.toLocaleLowerCase();
+    const receipt = run.environment.usageReceipt;
+    return !origin.includes('preview')
+      && Boolean(receipt)
+      && receipt?.categoryReceiptComplete !== false
+      && bindings.some((binding) => evidenceRunMatches(binding, run.runId));
+  });
+}
+
+function sameEvidenceRoute(baseline: EvalLabEvidenceRun, candidate: EvalLabEvidenceRun): boolean {
+  return (['provider', 'model', 'thinking'] as const).every((key) => {
+    const before = baseline.environment[key]?.trim();
+    const after = candidate.environment[key]?.trim();
+    return Boolean(before) && before === after;
+  });
+}
+
+function usageReceiptMetrics(run: EvalLabEvidenceRun): Readonly<Record<string, number>> {
+  return Object.fromEntries(Object.entries(run.environment.usageReceipt ?? {}).filter((entry): entry is [string, number] => (
+    typeof entry[1] === 'number' && Number.isFinite(entry[1])
+  )));
+}
+
+function experimentShowsQualityImprovement(experiment: EvalLabExperiment): boolean {
+  if (experiment.status === 'rejected' || experiment.status === 'open_gap') return false;
+  const effect = candidateEffect(experiment);
+  return effect === 'improved' || effect === 'scoring_recovered';
+}
+
+function experimentQualityDoesNotRegress(experiment: EvalLabExperiment): boolean {
+  if (!experimentPassesFinalTaskContract(experiment)) return false;
+  const effect = candidateEffect(experiment);
+  if (['regressed', 'runtime_failed', 'unverified', 'not_run', 'observed_failure', 'partial'].includes(effect)) return false;
+  const higherIsBetter = [
+    'taskSuccessRate', 'verifierPassRate', 'taskSuccess', 'answerCoverage', 'answerSuccessRate',
+    'answerJudgeCorrectnessRate', 'highLevelFactCoverage', 'citationFactCoverage',
+    'answerableCitationSupportRate', 'citationResolutionRate', 'toolSuccessRate', 'outputProtocolRate',
+    'abstentionAccuracy', 'abstentionF1', 'ca', 'jra', 'top3Jra', 'recallAt10', 'mrr', 'ndcgAt10',
+  ];
+  const lowerIsBetter = [
+    'failedTasks',
+    'falseAbstentionRate',
+    ...(zeroToolFailuresRequired(experiment) ? ['failedToolCalls'] : []),
+  ];
+  const baseline = experiment.baseline.metrics;
+  const candidate = experiment.candidate.metrics;
+  if (higherIsBetter.some((key) => hasMetric(baseline, key) && hasMetric(candidate, key) && candidate[key] < baseline[key])) return false;
+  if (lowerIsBetter.some((key) => hasMetric(baseline, key) && hasMetric(candidate, key) && candidate[key] > baseline[key])) return false;
+  return true;
+}
+
+function zeroToolFailuresRequired(experiment: EvalLabExperiment): boolean {
+  return experiment.scoring.hardGates.some((gate) => (
+    /(?:zero|0|零)\s*(?:failed\s*)?(?:tool|工具)[\s_-]*(?:failure|failures|失败)/iu.test(gate)
+    || /(?:tool|工具)[\s_-]*(?:failure|failures|失败)\s*(?:=|为|must be)?\s*(?:zero|0|零)/iu.test(gate)
+  ));
+}
+
+function experimentPassesFinalTaskContract(experiment: EvalLabExperiment): boolean {
+  const metrics = experiment.candidate.metrics;
+  const noToolFailure = !zeroToolFailuresRequired(experiment)
+    || !hasMetric(metrics, 'failedToolCalls')
+    || metrics.failedToolCalls === 0;
+  if (hasMetric(metrics, 'taskPassed') && hasMetric(metrics, 'taskTotal')) {
+    return metrics.taskTotal > 0 && metrics.taskPassed === metrics.taskTotal && noToolFailure;
+  }
+  if (hasMetric(metrics, 'taskSuccessRate')) {
+    const verifierPassed = !hasMetric(metrics, 'verifierPassRate') || metrics.verifierPassRate === 1;
+    return metrics.taskSuccessRate === 1 && verifierPassed && noToolFailure;
+  }
+  if (experiment.evaluationKind === 'answer_evidence') {
+    const success = firstMetric(metrics, ['answerSuccessRate', 'answerJudgeCorrectnessRate']);
+    const citationGate = firstMetric(metrics, ['citationHardGatePassed', 'citationGatePassed', 'formalAcceptancePassed']);
+    const protocol = firstMetric(metrics, ['outputProtocolRate']);
+    return success === 1 && citationGate === 1 && (protocol === undefined || protocol === 1);
+  }
+  if (experiment.evaluationKind === 'memory' && hasMetric(metrics, 'curationCases')) {
+    return metrics.curationCases > 0
+      && metrics.curationPassed === metrics.curationCases
+      && metrics.durableRecallPassed === metrics.durableRecallTotal
+      && metrics.abstentionPassed === metrics.abstentionTotal
+      && metrics.vectorCoverage === 1
+      && metrics.rollbackPassed === 1
+      && metrics.replayPassed === 1
+      && metrics.receiptJsonValid === 1;
+  }
+  if (hasMetric(metrics, 'answerCoverage') && hasMetric(metrics, 'ca')) {
+    return metrics.answerCoverage === 1
+      && metrics.ca === 1
+      && metrics.formalScoreProduced === 1
+      && noToolFailure;
+  }
+  return false;
+}
+
+function projectEvidenceShape(project: ProjectExperimentGroup, catalog?: EvalLabEvidenceResponse): string {
+  if (project.experiments.some((experiment) => /fixture/u.test(`${experiment.dataset.datasetId} ${experiment.dataset.unit}`.toLocaleLowerCase()))) {
+    const alsoUnverified = project.experiments.some((experiment) => experiment.effectStatus === 'unverified');
+    return alsoUnverified
+      ? '受控 Fixture 回执；另有未验证记录 · 不代表生产结果'
+      : '受控 Fixture 回执 · 不代表生产结果';
+  }
+  const matches = catalog
+    ? project.experiments.flatMap((experiment) => matchingEvidenceRuns(catalog, experiment))
+    : [];
+  const unique = [...new Map(matches.map((run) => [run.runId, run])).values()];
+  if (unique.some((run) => `${run.sourceId ?? ''} ${run.sourceLabel ?? ''}`.toLocaleLowerCase().includes('preview'))) {
+    return '示例投影 · 不代表真实验收';
+  }
+  const transcriptCount = unique.reduce((total, run) => total + Math.max(0, run.transcriptCount), 0);
+  if (transcriptCount > 0) return `真实运行 · ${transcriptCount} 份 Transcript 可回溯`;
+  if (unique.some((run) => run.reportAvailable)) return '公开回执可回溯 · Transcript 未公开';
+  return '未验证 · 尚无精确 runId 证据绑定';
 }
 
 function OptimalPathPanel({ searches }: { searches: readonly EvalLabPathSearch[] }) {
@@ -570,7 +895,7 @@ function OptimalPathPanel({ searches }: { searches: readonly EvalLabPathSearch[]
         <div>
           <p className="eval-lab__eyebrow"><GitBranch aria-hidden="true" size={15} /> 方案路径</p>
           <h2>方案是怎样一步步筛出来的</h2>
-          <p>每轮只改变一个因素。先淘汰做错任务或不安全的方案，再从合格方案中比较时间和成本。</p>
+          <p>每轮只改变一个因素。先淘汰做错任务或不安全的方案，再从合格方案中比较成本；耗时保留为诊断信息。</p>
         </div>
         <span className="eval-lab__path-searches-count"><Scale aria-hidden="true" size={14} /> {searches.length} 条方案路径</span>
       </header>
@@ -734,7 +1059,7 @@ type ProjectExperimentGroup = {
 const PROJECT_DEFINITIONS: ReadonlyArray<Omit<ProjectExperimentGroup, 'experiments'>> = [
   { key: 'enterpriseops', title: '企业客户支持', codeName: 'EnterpriseOps', goal: '让 Agent 真正完成跨系统客户任务，并在结果不变差的前提下降低成本。' },
   { key: 'enterprise-rag', title: '企业知识库问答', codeName: 'Enterprise RAG', goal: '让关键资料稳定被找到、答案有据可查，没有依据时明确拒答。' },
-  { key: 'cloudops', title: '云上事故诊断', codeName: 'CloudOps', goal: '从日志和观测中定位故障根因，同时控制错误调用、耗时和成本。' },
+  { key: 'cloudops', title: '云上事故诊断', codeName: 'CloudOps', goal: '从日志和观测中定位故障根因，同时控制错误调用和成本；耗时只用于排查循环与阻塞。' },
   { key: 'memory', title: '长期记忆整理', codeName: 'Memory Maintenance', goal: '保留真正长期有用的信息，拒绝临时、重复或越界内容，并确保可回滚。' },
 ];
 
@@ -751,8 +1076,26 @@ function projectKeyForExperiment(experiment: EvalLabExperiment): ProjectKey | nu
 function groupProjectExperiments(experiments: readonly EvalLabExperiment[]): ProjectExperimentGroup[] {
   return PROJECT_DEFINITIONS.map((project) => ({
     ...project,
-    experiments: experiments.filter((experiment) => projectKeyForExperiment(experiment) === project.key),
+    experiments: experiments
+      .filter((experiment) => projectKeyForExperiment(experiment) === project.key)
+      .sort(compareProjectExperimentPriority),
   })).filter((project) => project.experiments.length > 0);
+}
+
+function compareProjectExperimentPriority(left: EvalLabExperiment, right: EvalLabExperiment): number {
+  const rank: Record<EvalLabExperiment['status'], number> = {
+    kept: 0,
+    diagnostic: 1,
+    open_gap: 2,
+    rejected: 3,
+  };
+  return rank[left.status] - rank[right.status]
+    || Number(right.importedAtMs) - Number(left.importedAtMs)
+    || left.experimentId.localeCompare(right.experimentId);
+}
+
+function isHistoricalExperiment(experiment: EvalLabExperiment): boolean {
+  return experiment.projectionState === 'history';
 }
 
 function projectTitleForExperiment(experiment: EvalLabExperiment): string {
@@ -762,7 +1105,9 @@ function projectTitleForExperiment(experiment: EvalLabExperiment): string {
 
 function activeProjectExperiment(experiments: readonly EvalLabExperiment[], selectedId: string): EvalLabExperiment | undefined {
   const projectExperiments = experiments.filter((experiment) => projectKeyForExperiment(experiment) !== null);
-  return projectExperiments.find((experiment) => experiment.experimentId === selectedId) ?? projectExperiments[0];
+  return projectExperiments.find((experiment) => experiment.experimentId === selectedId)
+    ?? projectExperiments.find((experiment) => !isHistoricalExperiment(experiment))
+    ?? projectExperiments[0];
 }
 
 function candidateLabel(experiment: EvalLabExperiment): string {
@@ -842,7 +1187,7 @@ function ProjectExperimentPicker({ experiments, selectedId, onSelect }: {
   selectedId: string;
   onSelect: (experimentId: string) => void;
 }) {
-  const projects = groupProjectExperiments(experiments);
+  const projects = groupProjectExperiments(experiments.filter((experiment) => !isHistoricalExperiment(experiment)));
   const active = activeProjectExperiment(experiments, selectedId);
   const activeProjectKey = active ? projectKeyForExperiment(active) : projects[0]?.key;
   const activeProject = projects.find((project) => project.key === activeProjectKey) ?? projects[0];
@@ -876,6 +1221,7 @@ function ProjectExperimentPicker({ experiments, selectedId, onSelect }: {
           </button>
         ))}</div>
       </nav> : null}
+      {active && isHistoricalExperiment(active) ? <div className="eval-lab__history-selection"><span>当前打开的是只读历史记录，不参与当前结论。</span><button onClick={() => onSelect(activeProject?.experiments[0]?.experimentId ?? '')} type="button">返回当前结果</button></div> : null}
     </div>
   );
 }
@@ -1453,6 +1799,7 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
             <h2>{candidateLabel(experiment)}</h2>
             <span className={`eval-lab__status eval-lab__status--${experiment.status}`}>{statusLabel(experiment.status)}</span>
             <span className="eval-lab__lane">{splitLabel(experiment.dataset.split)}</span>
+            {isHistoricalExperiment(experiment) ? <span className="eval-lab__history-badge">历史记录 · 不参与当前结论</span> : null}
           </div>
           <p>{projectTitleForExperiment(experiment)} · {publicDatasetSummary(experiment)}</p>
         </div>
@@ -1604,6 +1951,7 @@ function ExperimentRecordBrowser({ evidenceCatalog, experiment }: {
             <div><dt>本轮任务</dt><dd>{humanClaimText(experiment.star.task)}</dd></div>
             <div><dt>为什么使用 Agent</dt><dd>{humanClaimText(experiment.whyAgent)}</dd></div>
             <div><dt>成功定义</dt><dd>{metricLabel(experiment.scoring.primaryMetric)}；{experiment.scoring.hardGates.map(humanClaimText).join('；') || '未记录硬门禁'}</dd></div>
+            <div><dt>冻结条件</dt><dd>{experiment.frozenControls.map((control) => `${controlLabel(control.name)}：${humanClaimText(control.value)}`).join('；') || '未记录冻结条件'}</dd></div>
           </dl>
         ) : null}
         {view === 'dataset' ? (
@@ -1615,12 +1963,15 @@ function ExperimentRecordBrowser({ evidenceCatalog, experiment }: {
               <div><dt>原始数据</dt><dd>{datasetExplanation.source}</dd></div>
               <div><dt>构造方法</dt><dd>{datasetExplanation.preparation}</dd></div>
               <div><dt>Golden Data</dt><dd>{datasetExplanation.gold}</dd></div>
+              <div><dt>评测权威</dt><dd>{humanClaimText(experiment.scoring.evaluatorAuthority)}</dd></div>
+              <div><dt>泄漏边界</dt><dd>{datasetLeakBoundary(experiment)}</dd></div>
+              <div><dt>负例 / 拒答</dt><dd>{datasetNegativeContract(experiment)}</dd></div>
             </dl>
             <ExperimentDatasetCases evidenceRuns={evidenceRuns} experiment={experiment} />
           </div>
         ) : null}
         {view === 'baseline' ? <ExperimentResultRecord experiment={experiment} kind="baseline" evidenceRuns={evidenceRuns} /> : null}
-        {view === 'change' ? <ExperimentChangeRecord experiment={experiment} /> : null}
+        {view === 'change' ? <ExperimentChangeRecord evidenceRuns={evidenceRuns} experiment={experiment} /> : null}
         {view === 'candidate' ? <ExperimentResultRecord experiment={experiment} kind="candidate" evidenceRuns={evidenceRuns} /> : null}
       </div>
     </section>
@@ -1671,7 +2022,7 @@ function ExperimentResultRecord({ evidenceRuns, experiment, kind }: {
       <div className="eval-lab__result-verdicts">
         <div><span>任务结果</span><strong>{matrixQuality(experiment)}</strong></div>
         <div><span>发布 / 可靠性门禁</span><strong>{matrixReliability(experiment)}</strong></div>
-        <div><span>时间与成本</span><strong>{matrixEfficiency(experiment)}</strong></div>
+        <div><span>成本与耗时观察</span><strong>{matrixEfficiency(experiment)}</strong></div>
       </div>
       <MetricList metrics={result.metrics} />
       <footer><span>Run ID</span><code>{result.runId}</code><span>{runs.length ? `${runs.length} 个证据批次已绑定` : '没有匹配的公开运行证据'}</span></footer>
@@ -1679,13 +2030,87 @@ function ExperimentResultRecord({ evidenceRuns, experiment, kind }: {
   );
 }
 
-function ExperimentChangeRecord({ experiment }: { experiment: EvalLabExperiment }) {
+type ExperimentCaseDiff = {
+  caseId: string;
+  result: string;
+  gates: string;
+  usage: string;
+};
+
+function evidenceRunMatchesVersion(run: EvalLabEvidenceRun, version: EvalLabExperiment['baseline']): boolean {
+  return experimentRunBindings(version).some((binding) => evidenceRunMatches(binding, run.runId));
+}
+
+function evidenceTaskKey(task: EvalLabEvidenceTask): string {
+  return task.taskLabel.trim() || `case-${task.taskIndex}`;
+}
+
+function evidenceTaskResult(task: EvalLabEvidenceTask): string {
+  if (task.taskSucceeded === true) return '成功';
+  if (task.taskSucceeded === false) return '失败';
+  return task.terminalEvent || '未记录';
+}
+
+function evidenceTaskGates(task: EvalLabEvidenceTask): string {
+  const parts: string[] = [];
+  if (typeof task.verifierPassed === 'number' && typeof task.verifierTotal === 'number') {
+    parts.push(`验收 ${task.verifierPassed}/${task.verifierTotal}`);
+  }
+  if (task.terminalEvent) parts.push(`终态 ${task.terminalEvent}`);
+  parts.push(task.toolReceiptComplete === false ? 'Tool 失败未按 Case 归属' : `Tool 失败 ${task.toolFailures}`);
+  if (task.cleanupStatus) parts.push(`清理 ${task.cleanupStatus}`);
+  return parts.join(' · ');
+}
+
+function evidenceTaskUsage(task: EvalLabEvidenceTask): { input: number; cacheRead: number; output: number } | undefined {
+  if (typeof task.inputTokens !== 'number' || typeof task.cacheReadTokens !== 'number' || typeof task.outputTokens !== 'number') return undefined;
+  return { input: task.inputTokens, cacheRead: task.cacheReadTokens, output: task.outputTokens };
+}
+
+function experimentCaseDiffs(experiment: EvalLabExperiment, evidenceRuns: readonly EvalLabEvidenceRun[]): ExperimentCaseDiff[] {
+  const baselineRuns = evidenceRuns.filter((run) => evidenceRunMatchesVersion(run, experiment.baseline)).sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  const candidateRuns = evidenceRuns.filter((run) => evidenceRunMatchesVersion(run, experiment.candidate)).sort((left, right) => right.updatedAtMs - left.updatedAtMs);
+  const baselineTasks = new Map<string, EvalLabEvidenceTask>();
+  const candidateTasks = new Map<string, EvalLabEvidenceTask>();
+  for (const run of baselineRuns) for (const task of run.tasks ?? []) if (!baselineTasks.has(evidenceTaskKey(task))) baselineTasks.set(evidenceTaskKey(task), task);
+  for (const run of candidateRuns) for (const task of run.tasks ?? []) if (!candidateTasks.has(evidenceTaskKey(task))) candidateTasks.set(evidenceTaskKey(task), task);
+  return [...baselineTasks.entries()].flatMap(([caseId, before]) => {
+    const after = candidateTasks.get(caseId);
+    if (!after) return [];
+    const beforeUsage = evidenceTaskUsage(before);
+    const afterUsage = evidenceTaskUsage(after);
+    return [{
+      caseId,
+      result: `${evidenceTaskResult(before)} → ${evidenceTaskResult(after)}`,
+      gates: `${evidenceTaskGates(before)} → ${evidenceTaskGates(after)}`,
+      usage: beforeUsage && afterUsage
+        ? `未缓存输入 ${formatMetric(beforeUsage.input)} → ${formatMetric(afterUsage.input)} · 缓存输入 ${formatMetric(beforeUsage.cacheRead)} → ${formatMetric(afterUsage.cacheRead)} · 输出 ${formatMetric(beforeUsage.output)} → ${formatMetric(afterUsage.output)}`
+        : '逐 Case 用量分类未记录',
+    }];
+  }).slice(0, experiment.dataset.caseCount);
+}
+
+function ExperimentChangeRecord({ evidenceRuns, experiment }: { evidenceRuns: readonly EvalLabEvidenceRun[]; experiment: EvalLabExperiment }) {
+  const caseDiffs = experimentCaseDiffs(experiment, evidenceRuns);
   return (
     <div className="eval-lab__change-record">
       <section><h4>为什么改</h4><p>{publicProblemSummary(experiment)}</p></section>
-      <section><h4>实际改动</h4>{experiment.factors.length ? <ol>{experiment.factors.map((factor) => <li key={factor.name}><strong>{factorLabel(factor.name)}</strong><span>{humanClaimText(factor.before)} → {humanClaimText(factor.after)}</span><small>{humanClaimText(factor.reason)}</small></li>)}</ol> : <p>本轮没有记录可归因的改动。</p>}</section>
+      <section><h4>实际改动</h4>{experiment.factors.length ? <ol>{experiment.factors.map((factor) => <li key={factor.name}><strong>{factorLabel(factor.name)}</strong><span>{humanClaimText(factor.reason)}</span></li>)}</ol> : <p>本轮没有记录可归因的改动。</p>}</section>
+      {experiment.factors.length ? <section aria-label="改动 diff" className="eval-lab__factor-diffs"><h4>改动 diff</h4>{experiment.factors.map((factor) => (
+        <article className="eval-lab__factor-diff" key={`${factor.name}-diff`}>
+          <header><strong>{factorLabel(factor.name)}</strong><span>{humanClaimText(factor.reason)}</span></header>
+          <div>
+            <div data-kind="before"><span>修改前</span><pre><code>{humanClaimText(factor.before)}</code></pre></div>
+            <div data-kind="after"><span>修改后</span><pre><code>{humanClaimText(factor.after)}</code></pre></div>
+          </div>
+        </article>
+      ))}</section> : null}
       <section><h4>保持不变</h4><p>{experiment.frozenControls.map((control) => controlLabel(control.name)).join('、') || '未记录冻结控制'}</p></section>
+      <section><h4>受影响 Case</h4>{caseDiffs.length ? <ol className="eval-lab__case-diffs">{caseDiffs.map((item) => <li key={item.caseId}><strong>{item.caseId}</strong><dl><div><dt>任务结果</dt><dd>{item.result}</dd></div><div><dt>门禁变化</dt><dd>{item.gates}</dd></div><div><dt>用量变化</dt><dd>{item.usage}</dd></div></dl></li>)}</ol> : <p>未单独记录逐 Case 影响归属；本轮仍按固定 {experiment.dataset.caseCount} 个 case 的原分母复核。</p>}</section>
       <section><h4>前后差值</h4>{experiment.comparison.metricDeltas.length ? <ul>{experiment.comparison.metricDeltas.map((delta) => <li key={delta.metric}><span>{metricLabel(delta.metric)}</span><strong>{formatMetricByName(delta.metric, delta.before)} → {formatMetricByName(delta.metric, delta.after)}</strong></li>)}</ul> : <p>暂无可比较的指标变化。</p>}</section>
+      <section className="eval-lab__run-lineage"><h4>Run 与证据链</h4><p>{experiment.baseline.runId === experiment.candidate.runId
+        ? <code>{experiment.baseline.runId}</code>
+        : <><code>{experiment.baseline.runId}</code><span> → </span><code>{experiment.candidate.runId}</code></>}</p><small>Baseline {experiment.baseline.evidenceRefs.length} 条证据引用 · Candidate {experiment.candidate.evidenceRefs.length} 条证据引用；Case、Trace 与报告从相邻档案页签继续核对。</small></section>
       <footer><strong>{experiment.comparison.decision === 'keep' ? 'Keep' : experiment.comparison.decision === 'reject' ? 'Reject' : '待定'}</strong><span>{humanClaimText(experiment.comparison.decisionReason)}</span></footer>
     </div>
   );
@@ -1703,7 +2128,7 @@ function ExperimentOutcomeSummary({ experiment }: { experiment: EvalLabExperimen
         <div><dt>本轮怎么改</dt><dd>{publicChangeSummary(experiment)}</dd></div>
         <div><dt>结果怎样</dt><dd>{matrixQuality(experiment)}</dd></div>
         <div><dt>可靠性与安全</dt><dd>{matrixReliability(experiment)}</dd></div>
-        <div><dt>耗时与成本</dt><dd>{matrixEfficiency(experiment)}</dd></div>
+        <div><dt>成本与耗时观察</dt><dd>{matrixEfficiency(experiment)}</dd></div>
         <div><dt>为什么这样决定</dt><dd>{publicDecisionSummary(experiment)}</dd></div>
       </dl>
     </section>
@@ -2784,6 +3209,42 @@ type DatasetExplanation = {
   boundary: string;
 };
 
+function datasetLeakBoundary(experiment: EvalLabExperiment): string {
+  const gold = experiment.scoring.goldHiddenFromAgent
+    ? 'Golden / qrels /验收条件对 Agent 隐藏'
+    : 'Golden 可见，不能作为盲测证据';
+  const heldOut = experiment.dataset.heldOutConsumed
+    ? 'Held-out 已消费，禁止重复调参'
+    : 'Held-out 未消费';
+  return `${gold}；${heldOut}；App 只展示 public-safe 摘要。`;
+}
+
+function datasetNegativeContract(experiment: EvalLabExperiment): string {
+  const baseline = experiment.baseline.metrics;
+  const candidate = experiment.candidate.metrics;
+  const refusalCases = firstMetric(candidate, ['infoNotFoundCaseCount', 'abstentionTotal'])
+    ?? firstMetric(baseline, ['infoNotFoundCaseCount', 'abstentionTotal']);
+  if (refusalCases !== undefined) {
+    const label = experiment.evaluationKind === 'memory' ? '拒记负例' : '必须拒答的 info_not_found case';
+    return `${integerMetric(refusalCases)} 个${label}；是否正确由 Host 侧 Golden 判定。`;
+  }
+  return '没有单独公开负例/拒答标签；不得从总 case 数反推，需以逐 Case 验收回执为准。';
+}
+
+function currentExperimentBoundary(experiment: EvalLabExperiment, scope: string): string {
+  const run = experiment.candidate.runId;
+  if (experiment.status === 'open_gap' || candidateEffect(experiment) === 'not_run') {
+    return `当前 run ${run} 尚未形成可验收候选；${scope}`;
+  }
+  if (experiment.status === 'rejected') {
+    return `当前 run ${run} 已拒绝：${matrixReliability(experiment)}；${scope}`;
+  }
+  if (experimentPassesFinalTaskContract(experiment)) {
+    return `当前 run ${run} 已通过最终任务与质量硬门禁；${scope}`;
+  }
+  return `当前 run ${run} 尚未通过最终任务与质量硬门禁：${matrixReliability(experiment)}；${scope}`;
+}
+
 function experimentDatasetExplanation(experiment: EvalLabExperiment): DatasetExplanation {
   const project = projectKeyForExperiment(experiment);
   if (project === 'enterpriseops') {
@@ -2810,9 +3271,16 @@ function experimentDatasetExplanation(experiment: EvalLabExperiment): DatasetExp
         ? '2 个可回答问题共有 9 条必要事实，逐条绑定 source、chunk 和原文；另 2 个 case 的正确行为是明确说找不到。答案正确、引用支持和拒答分别计分。'
         : '公开标注的相关文档是检索金标准；用 Recall@10、MRR 和 nDCG@10 评分，标准答案不放进 Agent 上下文。',
       agentContract: '只根据可回跳的业务原文回答；数字、日期、否定和适用范围不得改写。Room 简报、Agent 消息和指标账本不是业务原文，不能把它们的事件 ID 冒充 sourceId/chunkId；没有原文与绑定关系时必须明确拒答。',
-      boundary: answerLane
-        ? '当前只证明检索显著改善；最终回答的引用门禁仍未通过，因此候选被拒绝。'
-        : '结果只代表这 16 个 Validation 查询；Graph + Tag 尚无合法企业图，不能伪造对比分数。',
+      boundary: isHistoricalExperiment(experiment)
+        ? answerLane
+          ? '当前只证明检索显著改善；最终回答的引用门禁仍未通过，因此候选被拒绝。'
+          : '结果只代表这 16 个 Validation 查询；Graph + Tag 尚无合法企业图，不能伪造对比分数。'
+        : currentExperimentBoundary(
+          experiment,
+          answerLane
+            ? '结果只代表这 4 个冻结 Validation case，不自动外推到生产或 Held-out。'
+            : '结果只代表这 16 个冻结 Validation 查询；未运行的 Graph + Tag 不生成分数。',
+        ),
     };
   }
   if (project === 'cloudops') {
@@ -2821,7 +3289,9 @@ function experimentDatasetExplanation(experiment: EvalLabExperiment): DatasetExp
       preparation: '固定 case、观测数据、模型/Runtime、Tool 地址和评分器；每个候选只改变一项搜索或工具策略。',
       gold: 'Host-only scorer 比较最终根因与标准根因，分别计算诊断正确率、根因覆盖和 Top-3 覆盖；Tool failure 单独作为硬门禁。',
       agentContract: '只依据冻结日志、指标、Trace 与 runbook；观察、推断和未知分开写，没有证据就不猜根因。',
-      boundary: '降低 Tool 次数不能抵消诊断质量下降或一次工具失败，所以更省调用的候选仍被回退。',
+      boundary: isHistoricalExperiment(experiment)
+        ? '降低 Tool 次数不能抵消诊断质量下降或一次工具失败，所以更省调用的候选仍被回退。'
+        : currentExperimentBoundary(experiment, '结果只代表同一冻结 CloudOps case 与观测快照。'),
     };
   }
   if (project === 'memory') {
@@ -2837,9 +3307,9 @@ function experimentDatasetExplanation(experiment: EvalLabExperiment): DatasetExp
         ? '这条基线只判定是否形成合法 JSON 和持久化回执，不给内容质量打分。'
         : '结构化门禁由程序判：5/5 决策、4/4 可召回、1/1 拒记、向量覆盖、去重、合法 JSON、回滚和重复运行一致；表达质量由人工样例标准复核。',
       agentContract: '严格按人工冻结的“长期保留 / 临时拒记”标准整理；输出合法 JSON，不重复写入，能够回滚并再次读取。',
-      boundary: observedFailure
+      boundary: isHistoricalExperiment(experiment) || observedFailure
         ? '真实失败与五例 shadow 不是同一分母，不能直接计算成功率提升。'
-        : 'v5 是私有 shadow 上的复合修复结果，不等于生产记忆已经修好，也没有公开 benchmark 泛化结论。',
+        : currentExperimentBoundary(experiment, 'Shadow fixture 不等于生产记忆，也不证明公开 benchmark 泛化。'),
     };
   }
   return {

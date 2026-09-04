@@ -19,6 +19,7 @@ from rag_ime.agent_command_receipts import (
     AgentCommandReceiptPending,
 )
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
+from rag_ime.agent_execution_policy import workspace_scope_sha256
 from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
@@ -26,6 +27,7 @@ from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeDriverFactory, PiRuntimeError
 from rag_ime.pi_runtime_values import (
+    PiRuntimeCommandAcceptanceUnknown,
     PiRuntimeCommandRejected,
     PiRuntimeTurnConflict,
 )
@@ -219,12 +221,13 @@ class AgentServiceTests(unittest.TestCase):
                 "ownerAppId": "extension:trace-agent",
                 "surfaceKey": "diagnostic",
                 **policy,
+                "workspaceRoots": [str(self.root)],
             }
         )["session"]
         self.assertEqual(session["mode"], "coordinator")
         self.assertEqual(session["toolProfileVersion"], "control-center-auto-approve-v1")
         self.assertEqual(session["executionMode"], "full_trust")
-        self.assertEqual(session["workspaceRoots"], ["/"])
+        self.assertEqual(session["workspaceRoots"], [str(self.root.resolve())])
         self.assertEqual(session["toolAllowlistMode"], "profile")
         self.assertTrue(session["projectContextEnabled"])
         self.assertTrue(session["piSkillsEnabled"])
@@ -341,6 +344,195 @@ class AgentServiceTests(unittest.TestCase):
                 }
             )
 
+    def test_trace_diagnostic_report_freezes_matching_source_project_binding(self) -> None:
+        source_root = self.root / "source-project"
+        source_root.mkdir()
+        source = self.service.create_session(
+            {
+                "title": "Source project Session",
+                "mode": "coordinator",
+                "workspaceRoots": [str(source_root)],
+            }
+        )["session"]
+        diagnostic = self.service.create_session(
+            {
+                "title": "Bound Trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": [str(source_root)],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            }
+        )["session"]
+        source_snapshot = {
+            "ok": True,
+            "sessionId": source["id"],
+            "status": "idle",
+            "items": [],
+            "liveEvents": [],
+        }
+
+        with patch.object(self.service, "messages", return_value=source_snapshot):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": diagnostic["id"],
+                    "title": "Frozen source binding",
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": source["id"],
+                            "title": "Source project Session",
+                        }
+                    ],
+                }
+            )
+
+        environment = report["inspection"]["environment"]["targets"][0]
+        self.assertEqual(
+            environment["workspaceScopeSha256"],
+            workspace_scope_sha256([str(source_root.resolve())]),
+        )
+        self.assertEqual(
+            diagnostic["workspaceRoots"],
+            [str(source_root.resolve())],
+        )
+
+        updated = self.service.update_session(
+            diagnostic["id"],
+            {
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "workspaceRoots": [str(source_root)],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            },
+        )["session"]
+        self.assertEqual(updated["workspaceRoots"], [str(source_root.resolve())])
+
+    def test_trace_diagnostic_session_requires_a_project_binding(self) -> None:
+        base = {
+            "title": "Unbound Trace diagnostic",
+            "surfaceKind": "extension_app",
+            "ownerAppId": "extension:trace-agent",
+            "surfaceKey": "diagnostic",
+            "mode": "coordinator",
+            "toolProfileVersion": "control-center-auto-approve-v1",
+            "executionMode": "full_trust",
+            "toolAllowlistMode": "profile",
+            "projectContextEnabled": True,
+            "piSkillsEnabled": True,
+            "codexSkillsEnabled": True,
+        }
+        for workspace_roots in ([], ["/"]):
+            with self.subTest(workspace_roots=workspace_roots):
+                with self.assertRaisesRegex(ValueError, "binding_required"):
+                    self.service.create_session(
+                        {**base, "workspaceRoots": workspace_roots}
+                    )
+
+    def test_trace_diagnostic_report_rejects_an_unbound_source(self) -> None:
+        source = self.service.create_session(
+            {"title": "Unbound source Session"}
+        )["session"]
+        project_root = self.root / "selected-project"
+        project_root.mkdir()
+        diagnostic = self.service.create_session(
+            {
+                "title": "Bound Trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "workspaceRoots": [str(project_root)],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            }
+        )["session"]
+
+        with self.assertRaisesRegex(ValueError, "binding_required"):
+            self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": diagnostic["id"],
+                    "title": "No source project authority",
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": source["id"],
+                            "title": "Unbound source Session",
+                        }
+                    ],
+                }
+            )
+
+    def test_trace_diagnostic_report_rejects_wrong_source_project_binding(self) -> None:
+        source_root = self.root / "source-project"
+        wrong_root = self.root / "wrong-project"
+        source_root.mkdir()
+        wrong_root.mkdir()
+        source = self.service.create_session(
+            {
+                "title": "Source project Session",
+                "mode": "coordinator",
+                "workspaceRoots": [str(source_root)],
+            }
+        )["session"]
+        diagnostic = self.service.create_session(
+            {
+                "title": "Wrongly bound Trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": [str(wrong_root)],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            }
+        )["session"]
+        source_snapshot = {
+            "ok": True,
+            "sessionId": source["id"],
+            "status": "idle",
+            "items": [],
+            "liveEvents": [],
+        }
+
+        with (
+            patch.object(self.service, "messages", return_value=source_snapshot),
+            self.assertRaisesRegex(ValueError, "project workspace binding"),
+        ):
+            self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": diagnostic["id"],
+                    "title": "Must reject wrong binding",
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": source["id"],
+                            "title": "Source project Session",
+                        }
+                    ],
+                }
+            )
+
     def test_trace_diagnostic_finalize_requires_exact_revision(self) -> None:
         session = self.service.create_session(
             {
@@ -352,7 +544,7 @@ class AgentServiceTests(unittest.TestCase):
                 "toolProfileVersion": "control-center-auto-approve-v1",
                 "executionMode": "full_trust",
                 "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
-                "workspaceRoots": ["/"],
+                "workspaceRoots": [str(self.root)],
                 "toolAllowlistMode": "profile",
                 "projectContextEnabled": True,
                 "piSkillsEnabled": True,
@@ -379,6 +571,149 @@ class AgentServiceTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires expectedRevision"):
                     self.service.finalize_trace_diagnostic_report(report["reportId"], payload)
 
+    def test_trace_diagnostic_reconcile_fails_admitted_idle_turn_without_result(self) -> None:
+        session = self.service.create_session(
+            {
+                "title": "Admitted Trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": [str(self.root)],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            }
+        )["session"]
+        pre_prompt_snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "idle",
+            "items": [],
+            "liveEvents": [],
+        }
+        with patch.object(self.service, "messages", return_value=pre_prompt_snapshot):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": session["id"],
+                    "title": "Admitted turn without result",
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": session["id"],
+                            "title": "Admitted Trace diagnostic",
+                        }
+                    ],
+                }
+            )
+        admitted_idle_snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "idle",
+            "items": [
+                {
+                    "messageId": "message:user:admitted",
+                    "turnId": "turn:admitted",
+                    "role": "user",
+                    "status": "completed",
+                    "createdAtMs": report["createdAtMs"] + 1,
+                    "timelineSequence": 1,
+                    "blocks": [
+                        {
+                            "status": "completed",
+                            "data": {"text": "分析这次真实失败并输出结构化报告。"},
+                        }
+                    ],
+                }
+            ],
+            "liveEvents": [],
+        }
+
+        older_idle_snapshot = {
+            **admitted_idle_snapshot,
+            "items": [
+                {
+                    **admitted_idle_snapshot["items"][0],
+                    "messageId": "message:user:older",
+                    "turnId": "turn:older",
+                    "createdAtMs": report["createdAtMs"] - 1,
+                }
+            ],
+        }
+
+        with patch.object(
+            self.service,
+            "messages",
+            return_value=older_idle_snapshot,
+        ):
+            before_current_prompt = self.service.trace_diagnostic_report(
+                report["reportId"]
+            )
+
+        with patch.object(
+            self.service,
+            "messages",
+            return_value=admitted_idle_snapshot,
+        ):
+            reconciled = self.service.trace_diagnostic_report(report["reportId"])
+
+        self.assertEqual(report["status"], "generating")
+        self.assertEqual(before_current_prompt["status"], "generating")
+        self.assertEqual(reconciled["status"], "failed")
+        self.assertEqual(reconciled["revision"], report["revision"] + 1)
+        self.assertIn("未生成可校验的结构化报告", reconciled["failureReason"])
+        self.assertIsNone(reconciled["result"])
+
+    def test_trace_diagnostic_reconcile_keeps_pre_prompt_idle_report_generating(self) -> None:
+        session = self.service.create_session(
+            {
+                "title": "Pre-prompt Trace diagnostic",
+                "surfaceKind": "extension_app",
+                "ownerAppId": "extension:trace-agent",
+                "surfaceKey": "diagnostic",
+                "mode": "coordinator",
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                "workspaceRoots": [str(self.root)],
+                "toolAllowlistMode": "profile",
+                "projectContextEnabled": True,
+                "piSkillsEnabled": True,
+                "codexSkillsEnabled": True,
+            }
+        )["session"]
+        pre_prompt_snapshot = {
+            "ok": True,
+            "sessionId": session["id"],
+            "status": "idle",
+            "items": [],
+            "liveEvents": [],
+        }
+
+        with patch.object(self.service, "messages", return_value=pre_prompt_snapshot):
+            report = self.service.create_trace_diagnostic_report(
+                {
+                    "diagnosticSessionId": session["id"],
+                    "title": "Not prompted yet",
+                    "targets": [
+                        {
+                            "kind": "session",
+                            "id": session["id"],
+                            "title": "Pre-prompt Trace diagnostic",
+                        }
+                    ],
+                }
+            )
+
+        with patch.object(self.service, "messages", return_value=pre_prompt_snapshot):
+            reconciled = self.service.trace_diagnostic_report(report["reportId"])
+
+        self.assertEqual(reconciled, report)
+
     def test_trace_diagnostic_inspection_rejects_malformed_eval_projection(self) -> None:
         def consume_eval_reader(**kwargs):
             kwargs["eval_reader"]("trace:malformed")
@@ -404,7 +739,7 @@ class AgentServiceTests(unittest.TestCase):
                 "toolProfileVersion": "control-center-auto-approve-v1",
                 "executionMode": "full_trust",
                 "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
-                "workspaceRoots": ["/"],
+                "workspaceRoots": [str(self.root)],
                 "toolAllowlistMode": "profile",
                 "projectContextEnabled": True,
                 "piSkillsEnabled": True,
@@ -474,7 +809,7 @@ class AgentServiceTests(unittest.TestCase):
                         "toolProfileVersion": "control-center-auto-approve-v1",
                         "executionMode": "full_trust",
                         "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
-                        "workspaceRoots": ["/"],
+                        "workspaceRoots": [str(self.root)],
                         "toolAllowlistMode": "profile",
                         "projectContextEnabled": True,
                         "piSkillsEnabled": True,
@@ -3390,7 +3725,8 @@ class AgentServiceTests(unittest.TestCase):
         ) -> dict[str, object]:
             self.assertEqual(session_id, target_session_id)
             self.assertNotIn("调用 room_post", prompt_text)
-            self.assertIn("不要新建消息或任务", prompt_text)
+            self.assertIn("不要公开重复或回复礼貌回声", prompt_text)
+            self.assertIn("无需行动时直接结束本轮", prompt_text)
             self.service.events.publish(
                 session_id,
                 "text_delta",
@@ -6117,6 +6453,91 @@ class AgentServiceTests(unittest.TestCase):
             unresolved.exception.recovery_state,
             "unresolved",
         )
+
+    def test_lost_runtime_ack_recovers_from_correlated_event_without_reexecution(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "ACK 丢失恢复"}
+        )["session"]
+        session_id = str(session["id"])
+        client_message_id = "client:lost-ack:event-proof"
+        payload = {
+            "message": "这条请求只能执行一次",
+            "clientMessageId": client_message_id,
+        }
+
+        def accept_then_lose_ack(
+            _session_id: str,
+            _message: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            turn_id = "turn:lost-ack:event-proof"
+            self.service.events.publish(
+                session_id,
+                "message_completed",
+                {
+                    "clientMessageId": client_message_id,
+                    "message": {
+                        "schemaVersion": "rag-ime.agent-message.v1",
+                        "id": "message:lost-ack:user",
+                        "sessionId": session_id,
+                        "turnId": turn_id,
+                        "role": "user",
+                        "status": "completed",
+                        "blocks": [{
+                            "id": "text:lost-ack:user",
+                            "type": "text",
+                            "status": "completed",
+                            "presentationKind": "plain",
+                            "data": {"text": "这条请求只能执行一次"},
+                        }],
+                        "attachments": [],
+                        "citations": [],
+                        "createdAtMs": 10,
+                        "completedAtMs": 10,
+                        "clientMessageId": client_message_id,
+                    },
+                },
+                turn_id=turn_id,
+            )
+            self.assertTrue(self.service.events.flush())
+            raise PiRuntimeCommandAcceptanceUnknown(
+                "host accepted; acknowledgement was lost"
+            )
+
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=accept_then_lose_ack,
+        ) as runtime_prompt:
+            recovered = self.service.prompt(session_id, payload)
+
+        runtime_prompt.assert_called_once()
+        self.assertTrue(recovered["accepted"])
+        self.assertEqual(recovered["turnId"], "turn:lost-ack:event-proof")
+        self.assertTrue(recovered["recoveredFromDurableEvent"])
+        self.assertEqual(
+            recovered["commandReceipt"],
+            {
+                "state": "accepted",
+                "clientMessageId": client_message_id,
+                "recoveredFromDurableEvidence": True,
+                "projectionState": "partial",
+                "recoveredFromDurableEvent": True,
+            },
+        )
+
+        with patch.object(self.service.runtime, "prompt") as replay_prompt:
+            replay = self.service.prompt(session_id, payload)
+        replay_prompt.assert_not_called()
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(replay["turnId"], recovered["turnId"])
+        events, _ = self.service.events.replay(session_id)
+        self.assertFalse(any(
+            event.event_type == "turn_failed" and not event.turn_id
+            for event in events
+        ))
 
     def test_prompt_retry_requires_a_failed_equivalent_predecessor(
         self,
