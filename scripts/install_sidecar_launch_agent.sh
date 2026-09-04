@@ -27,6 +27,7 @@ EVAL_LAB_SOURCE_DIR="$ROOT/eval/interview-metrics"
 EVAL_LAB_INSTALL_DIR="$APP_CODE_DIR/eval/interview-metrics"
 EVAL_LAB_IMPORTER_SOURCE="$ROOT/scripts/import_agent_lab_experiments.py"
 EVAL_LAB_IMPORTER_TARGET="$APP_CODE_DIR/scripts/import_agent_lab_experiments.py"
+EVAL_LAB_RECEIPT_MANIFEST_SOURCE="$ROOT/scripts/list_agent_lab_install_receipts.py"
 MANAGED_PI_SKILLS_DIR="$APP_SUPPORT_DIR/Agent/config/skills"
 MANAGED_PI_PROMPTS_DIR="$APP_SUPPORT_DIR/Agent/config/prompts"
 DB_PATH="${RAG_IME_DB_PATH:-$APP_SUPPORT_DIR/rag-ime.sqlite}"
@@ -296,13 +297,6 @@ if [[ -n "$(find "$VERTICAL_AGENT_SOURCE_DIR" -type l -print -quit)" ]]; then
   echo "vertical Agent fixture source must not contain symlinks: $VERTICAL_AGENT_SOURCE_DIR" >&2
   exit 1
 fi
-
-SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
-
-mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
-rm -f "$INSTALL_MARKER"
-rm -rf "$APP_CODE_DIR/rag_ime"
-cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 if [[ ! -f "$EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json" ]]; then
   echo "missing Agent Lab projection ledger: $EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json" >&2
   exit 1
@@ -311,18 +305,35 @@ if [[ ! -f "$EVAL_LAB_IMPORTER_SOURCE" ]]; then
   echo "missing Agent Lab public projection module: $EVAL_LAB_IMPORTER_SOURCE" >&2
   exit 1
 fi
+if [[ ! -f "$EVAL_LAB_RECEIPT_MANIFEST_SOURCE" ]]; then
+  echo "missing Agent Lab receipt manifest helper: $EVAL_LAB_RECEIPT_MANIFEST_SOURCE" >&2
+  exit 1
+fi
+# Resolve and validate every bound receipt before replacing the installed
+# projection. A plain assignment preserves the helper's non-zero exit status;
+# process substitution would let a failed manifest silently produce a partial
+# installation.
+EVAL_LAB_RECEIPTS="$(
+  "$PYTHON_EXECUTABLE" \
+    "$EVAL_LAB_RECEIPT_MANIFEST_SOURCE" \
+    "$EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json"
+)"
+
+SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
+
+mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
+rm -f "$INSTALL_MARKER"
+rm -rf "$APP_CODE_DIR/rag_ime"
+cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 rm -rf -- "$EVAL_LAB_INSTALL_DIR"
 mkdir -p "$EVAL_LAB_INSTALL_DIR/runs"
 mkdir -p "$(dirname "$EVAL_LAB_IMPORTER_TARGET")"
 cp "$EVAL_LAB_SOURCE_DIR/agent-experiments.v1.json" "$EVAL_LAB_INSTALL_DIR/agent-experiments.v1.json"
 cp "$EVAL_LAB_IMPORTER_SOURCE" "$EVAL_LAB_IMPORTER_TARGET"
-if [[ -d "$EVAL_LAB_SOURCE_DIR/runs" ]]; then
+if [[ -n "$EVAL_LAB_RECEIPTS" ]]; then
   while IFS= read -r receipt; do
     cp "$receipt" "$EVAL_LAB_INSTALL_DIR/runs/$(basename "$receipt")"
-  done < <(
-    find "$EVAL_LAB_SOURCE_DIR/runs" -maxdepth 1 -type f \
-      -name 'agent-lab-optimal-path-*.json' -print | LC_ALL=C sort
-  )
+  done <<< "$EVAL_LAB_RECEIPTS"
 fi
 rm -rf "$VERTICAL_AGENT_INSTALL_DIR"
 mkdir -p "$(dirname "$VERTICAL_AGENT_INSTALL_DIR")"

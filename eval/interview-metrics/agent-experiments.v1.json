@@ -5265,9 +5265,12 @@
       "baseline": {
         "runId": "memory-maintenance-sol-max-concise-contract-model-baseline-20260904-r4",
         "metrics": {
+          "curationCases": 5,
           "curationPassed": 5,
           "durableRecallPassed": 4,
+          "durableRecallTotal": 4,
           "abstentionPassed": 1,
+          "abstentionTotal": 1,
           "vectorCoverage": 1.0,
           "legalLineagePassed": 1,
           "bookProjectionPassed": 1,
@@ -5295,9 +5298,12 @@
       "candidate": {
         "runId": "memory-maintenance-luna-max-model-only-20260904-r1",
         "metrics": {
+          "curationCases": 5,
           "curationPassed": 5,
           "durableRecallPassed": 4,
+          "durableRecallTotal": 4,
           "abstentionPassed": 1,
+          "abstentionTotal": 1,
           "vectorCoverage": 1.0,
           "legalLineagePassed": 1,
           "bookProjectionPassed": 1,
@@ -5573,6 +5579,7 @@
         "metrics": {
           "answerCoverage": 1.0,
           "ca": 1.0,
+          "formalScoreProduced": 1,
           "fa": 0.8333333333333334,
           "jra": 0.8333333333333334,
           "top3Jra": 1.0,
@@ -5895,6 +5902,7 @@
         "metrics": {
           "answerCoverage": 1.0,
           "ca": 1.0,
+          "formalScoreProduced": 1,
           "fa": 0.8333333333333334,
           "jra": 0.8333333333333334,
           "top3Jra": 1.0,
@@ -5923,6 +5931,7 @@
         "metrics": {
           "answerCoverage": 1.0,
           "ca": 1.0,
+          "formalScoreProduced": 1,
           "fa": 0.9166666666666666,
           "jra": 0.9166666666666666,
           "top3Jra": 1.0,

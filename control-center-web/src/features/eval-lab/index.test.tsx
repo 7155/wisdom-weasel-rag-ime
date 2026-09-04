@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -615,6 +615,39 @@ describe('Agent Lab', () => {
     expect(screen.getByRole('heading', { level: 2, name: '方案是怎样一步步筛出来的' })).toBeInTheDocument();
   });
 
+  it('keeps project qualification in an evidence-checking state until the catalog settles', async () => {
+    let resolveEvidence!: (value: ReturnType<typeof previewEvalLabEvidence>) => void;
+    const pendingEvidence = new Promise<ReturnType<typeof previewEvalLabEvidence>>((resolve) => {
+      resolveEvidence = resolve;
+    });
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': response,
+      'agent.eval-lab.evidence': () => pendingEvidence,
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    const overview = await screen.findByLabelText('Agent Lab 实验结果');
+    expect(within(overview).getByText('项目验收：正在核对证据')).toBeInTheDocument();
+    expect(within(overview).queryByText('项目验收：未完成')).not.toBeInTheDocument();
+    expect(overview).not.toHaveTextContent('缺少绑定且可核验的价格回执');
+
+    await act(async () => {
+      resolveEvidence(previewEvalLabEvidence());
+    });
+
+    expect(await within(overview).findByText('项目验收：未完成')).toBeInTheDocument();
+    expect(within(overview).queryByText('项目验收：正在核对证据')).not.toBeInTheDocument();
+  });
+
   it('keeps OAuth token-category dominance visible without treating it as price proof', async () => {
     const oauthResponse = structuredClone(response) as any;
     const experiment = oauthResponse.experiments[0];
@@ -1062,6 +1095,17 @@ describe('Agent Lab', () => {
       evidenceKind: 'report_only', reportAvailable: true, databaseAvailable: false, tasks: [], sessionCount: 0, transcriptCount: 0,
       environment: runtimeReconciledCostEnvironment({ sourceRunId, usage, estimate, pricingIdentity, receiptHex, requestCount: 5 }),
     });
+    const estimateRun = (runId: string, sourceRunId: string, model: string, usage: Record<string, number>, estimate: Record<string, string>) => ({
+      ...catalog.runs[0], runId, sourceId: 'checked-in-ledger', sourceLabel: '仓库公开评测回执（只读）',
+      evidenceKind: 'report_only', reportAvailable: true, databaseAvailable: false, tasks: [], sessionCount: 0, transcriptCount: 0,
+      environment: {
+        costAuthority: 'pricing_estimate',
+        usageReceipt: { available: true, ...usage, sourceRef: `public-report:${sourceRunId}`, sourceSha256: (model.includes('luna') ? 'e' : 'd').repeat(64) },
+        costEstimate: estimate,
+        pricingIdentity: { ...pricingIdentity, model, pricingId: `pricing:sha256:${(model.includes('luna') ? '7' : '8').repeat(64)}`, rates: model.includes('luna') ? { uncachedInputUsd: '0.2', cachedInputUsd: '0.02', outputUsd: '1.2' } : pricingIdentity.rates },
+        billing: { status: 'not_provided' },
+      },
+    });
     catalog.runs = [
       costRun(
         'ledger--agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1',
@@ -1077,19 +1121,19 @@ describe('Agent Lab', () => {
         { uncachedInputCostUsd: '0.459225', cachedInputCostUsd: '0.589824', outputCostUsd: '0.51666', totalCostUsd: '1.565709' },
         'b',
       ),
-      costRun(
+      estimateRun(
         'ledger--agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1',
         'memory-maintenance-sol-max-full-json-baseline-20260904-r2',
+        'gpt-5.6-sol',
         { uncachedInputTokens: 39_799, cachedInputTokens: 0, outputTokens: 2_207 },
         { uncachedInputCostUsd: '0.198995', cachedInputCostUsd: '0', outputCostUsd: '0.06621', totalCostUsd: '0.265205' },
-        'c',
       ),
-      costRun(
+      estimateRun(
         'ledger--agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1',
         'memory-maintenance-sol-max-concise-contract-candidate-20260904-r3',
+        'gpt-5.6-sol',
         { uncachedInputTokens: 39_638, cachedInputTokens: 0, outputTokens: 1_650 },
         { uncachedInputCostUsd: '0.19819', cachedInputCostUsd: '0', outputCostUsd: '0.0495', totalCostUsd: '0.24769' },
-        'd',
       ),
     ];
     const transport = new MockControlTransport({ routes: {
@@ -1110,7 +1154,7 @@ describe('Agent Lab', () => {
     expect(within(enterpriseProject as HTMLElement).getByText('项目验收：已达标')).toBeInTheDocument();
     expect(within(enterpriseProject as HTMLElement).getByText(/Runtime 对账 API 成本 \$2\.2584 USD → \$1\.5657 USD（降低 30\.7%）/)).toBeInTheDocument();
     expect(within(memoryProject as HTMLElement).getByText('项目验收：已达标')).toBeInTheDocument();
-    expect(within(memoryProject as HTMLElement).getByText(/Runtime 对账 API 成本 \$0\.2652 USD → \$0\.2477 USD（降低 6\.6%）/)).toBeInTheDocument();
+    expect(within(memoryProject as HTMLElement).getByText(/绑定用量 API 估算 \$0\.2652 USD → \$0\.2477 USD（降低 6\.6%）/)).toBeInTheDocument();
     expect(`${enterpriseProject?.textContent ?? ''}${memoryProject?.textContent ?? ''}`).not.toContain('80%');
   });
 
@@ -1685,7 +1729,7 @@ describe('Agent Lab', () => {
     expect(screen.getByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-owned-b');
   });
 
-  it('requires a six-part Validation confirmation before creating a managed candidate Room', async () => {
+  it('creates a managed Validation Room after workspace selection without a second approval', async () => {
     const transport = new MockControlTransport({
       pickedFiles: [{ id: 'workspace', name: 'candidate', mimeType: 'inode/directory', byteSize: 0, path: '/workspace/candidate' }],
       routes: {
@@ -1709,15 +1753,9 @@ describe('Agent Lab', () => {
     await user.click(await screen.findByRole('button', { name: '查看完整报告' }));
     await user.click(screen.getByRole('button', { name: '测试新方案' }));
     expect(transport.filePickCalls[0]).toMatchObject({ purpose: 'workspace-root', selection: 'directory', multiple: false });
-    for (const label of ['失败原因', '具体问题', '改变层', '预期指标', '不影响门禁', '验证方法']) {
-      expect(screen.getByText(label)).toBeInTheDocument();
-    }
-    expect(screen.getAllByText(/Validation only/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Held-out.*封存/).length).toBeGreaterThan(0);
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.rooms.create')).toHaveLength(0);
-
-    await user.click(screen.getByRole('checkbox', { name: /我已核对以上六项/ }));
-    await user.click(screen.getByRole('button', { name: '确认并创建候选 Room' }));
+    expect(screen.queryByRole('checkbox', { name: /我已核对以上六项/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认并创建候选 Room' })).not.toBeInTheDocument();
+    expect(await screen.findByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-candidate-1');
     const create = transport.requests.find(({ request }) => request.pathId === 'agent.rooms.create')?.request;
     expect(create?.body).toMatchObject({
       workspaceRoots: ['/workspace/candidate'],
@@ -1731,9 +1769,13 @@ describe('Agent Lab', () => {
       ownerAppId: 'extension:agent-lab',
     });
     expect(create?.body).not.toHaveProperty('executionMode');
-    expect(String((create?.body as Record<string, unknown>)?.scenarioPrompt)).toContain('Validation only');
-    expect(String((create?.body as Record<string, unknown>)?.scenarioPrompt)).toContain('Held-out sealed');
-    expect(await screen.findByLabelText('Agent Lab Room workspace')).toHaveAttribute('data-room-id', 'room-candidate-1');
+    const scenarioPrompt = String((create?.body as Record<string, unknown>)?.scenarioPrompt);
+    expect(scenarioPrompt).toContain('点击“测试新方案”并选定 workspace，即构成本次 Validation dispatch 授权；无需二次批准，直接执行。');
+    expect(scenarioPrompt).toContain('Validation only');
+    expect(scenarioPrompt).toContain('不得读取或运行 Held-out');
+    expect(scenarioPrompt).toContain('不得安装、发布或触发工作区之外的外部副作用');
+    const dispatch = transport.requests.find(({ request }) => request.pathId === 'agent.room.message')?.request;
+    expect(String((dispatch?.body as Record<string, unknown>)?.message)).toContain('无需二次批准，直接执行');
   });
 
   it('renders an experiment ledger even when no Session run has been imported yet', async () => {

@@ -59,13 +59,6 @@ const EVAL_LAB_CANDIDATE_PERMISSION_POLICY: RoomPermissionPolicy = {
 type EvalLabPage = 'overview' | 'paths' | 'details' | 'sessions';
 type ExperimentRecordView = 'task' | 'dataset' | 'baseline' | 'optimization' | 'candidate';
 type RoomAction = { runId: string; state: 'creating' | 'sending' | 'error'; message?: string };
-type CandidateLaunch = {
-  experiment: EvalLabExperiment;
-  workspaceRoot: string;
-  confirmed: boolean;
-  state: 'confirming' | 'creating' | 'error';
-  message?: string;
-};
 const EVAL_LAB_PAGES = [
   ['overview', '实验结果'],
   ['paths', '方案路径'],
@@ -84,7 +77,6 @@ export function EvalLabFeature() {
   const [activeRoomId, setActiveRoomId] = useState('');
   const [roomPersonas, setRoomPersonas] = useState<AgentPersonaV1[]>([]);
   const [roomCatalogError, setRoomCatalogError] = useState('');
-  const [candidateLaunch, setCandidateLaunch] = useState<CandidateLaunch>();
   // The overview itself now reports whether each project is backed by a real
   // transcript, a report-only receipt, or a controlled fixture. Load the
   // bounded catalog up front so that status is not inferred from titles.
@@ -268,60 +260,60 @@ export function EvalLabFeature() {
 
   async function prepareCandidateRoom(experiment: EvalLabExperiment): Promise<void> {
     if (!transport.pickFiles) {
-      setCandidateLaunch({ experiment, workspaceRoot: '', confirmed: false, state: 'error', message: '当前环境不能选择候选目录。' });
+      setRoomAction({ runId: experiment.experimentId, state: 'error', message: '当前环境不能选择候选目录。' });
       return;
     }
     try {
       const picked = await transport.pickFiles({ purpose: 'workspace-root', selection: 'directory', multiple: false, maxFiles: 1 });
       const workspaceRoot = picked[0]?.path?.trim() ?? '';
       if (!workspaceRoot) return;
-      setCandidateLaunch({ experiment, workspaceRoot, confirmed: false, state: 'confirming' });
+      await createCandidateRoom(experiment, workspaceRoot);
     } catch {
-      setCandidateLaunch({ experiment, workspaceRoot: '', confirmed: false, state: 'error', message: '候选目录没有选定，请重试。' });
+      setRoomAction({ runId: experiment.experimentId, state: 'error', message: '候选目录没有选定，请重试。' });
     }
   }
 
-  async function confirmCandidateRoom(): Promise<void> {
-    if (!candidateLaunch?.confirmed || !candidateLaunch.workspaceRoot || candidateLaunch.state === 'creating') return;
-    const launch = candidateLaunch;
-    setCandidateLaunch({ ...launch, state: 'creating' });
+  async function createCandidateRoom(experiment: EvalLabExperiment, workspaceRoot: string): Promise<void> {
+    if (roomAction?.state === 'creating' || roomAction?.state === 'sending') return;
+    setRoomAction({ runId: experiment.experimentId, state: 'creating' });
     try {
       const rolesResponse = await transport.request({ pathId: 'agent.roles.list' });
       const personas = roleItems(rolesResponse);
-      const participants = buildRoomParticipants(launch.experiment, personas);
-      const confirmation = candidateConfirmation(launch.experiment);
+      const participants = buildRoomParticipants(experiment, personas);
+      const confirmation = candidateConfirmation(experiment);
       const roomResponse = await transport.request<Record<string, unknown>>({
         pathId: 'agent.rooms.create',
         body: {
-          title: `Agent Lab · 新候选 · ${launch.experiment.title}`,
+          title: `Agent Lab · 新候选 · ${experiment.title}`,
           roomKind: 'collaboration',
           avatar: 'briefcase',
-          description: '用户确认后的新候选工作区；只允许运行冻结 Validation',
-          scenarioPrompt: buildCandidateRoomContext(launch.experiment, confirmation),
+          description: '用户选定工作区的新候选；只允许运行冻结 Validation',
+          scenarioPrompt: buildCandidateRoomContext(experiment, confirmation),
           participants,
           routingPolicy: 'natural',
           routingConfig: { maxResponders: 1, naturalJitter: 0, fallbackParticipantId: '' },
-          workspaceRoots: [launch.workspaceRoot],
+          workspaceRoots: [workspaceRoot],
           permissionPolicy: EVAL_LAB_CANDIDATE_PERMISSION_POLICY,
           workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
           ownerAppId: AGENT_LAB_OWNER_APP_ID,
-          surfaceKey: `candidate.${launch.experiment.experimentId}`.slice(0, 64),
+          surfaceKey: `candidate.${experiment.experimentId}`.slice(0, 64),
         },
       });
       const room = record(roomResponse).room;
       if (!isAgentLabRoom(room)) throw new Error('服务端没有返回可验证的候选 Room。');
       showOwnedRoom(room, personas);
+      setRoomAction({ runId: experiment.experimentId, state: 'sending' });
       await transport.request({
         pathId: 'agent.room.message',
         params: { roomId: room.id },
         body: {
-          message: candidateConfirmationMessage(launch.experiment, confirmation),
-          clientMessageId: `eval-lab:candidate:${launch.experiment.experimentId}`,
+          message: candidateConfirmationMessage(experiment, confirmation),
+          clientMessageId: `eval-lab:candidate:${experiment.experimentId}`,
         },
       });
-      setCandidateLaunch(undefined);
+      setRoomAction(undefined);
     } catch (error) {
-      setCandidateLaunch({ ...launch, state: 'error', message: error instanceof Error ? error.message : '候选 Room 暂时无法创建。' });
+      setRoomAction({ runId: experiment.experimentId, state: 'error', message: error instanceof Error ? error.message : '候选 Room 暂时无法创建。' });
     }
   }
 
@@ -380,7 +372,7 @@ export function EvalLabFeature() {
           </nav>
           <section aria-label="评测批次列表" className="eval-lab__runs">
             {page === 'overview' && runs.data.experiments.length ? (
-              <ExperimentMatrix evidenceCatalog={sourceEvidence.data} experiments={runs.data.experiments} onOpenExperiment={(experimentId) => { setSelectedExperimentId(experimentId); setPage('details'); }} />
+              <ExperimentMatrix evidenceCatalog={sourceEvidence.data} evidenceLoading={sourceEvidence.isLoading} experiments={runs.data.experiments} onOpenExperiment={(experimentId) => { setSelectedExperimentId(experimentId); setPage('details'); }} />
             ) : null}
             {page === 'paths' && runs.data.pathSearches?.length ? <OptimalPathPanel searches={runs.data.pathSearches} /> : null}
             {page === 'paths' && !runs.data.pathSearches?.length ? <EmptyState icon={GitBranch} title="还没有可比较的方案路径" description="先新建评测并运行至少一个新方案，这里会显示每一步为何保留或淘汰。" /> : null}
@@ -438,14 +430,6 @@ export function EvalLabFeature() {
           </section>
         </>
       ) : null}
-      {candidateLaunch ? (
-        <CandidateConfirmation
-          launch={candidateLaunch}
-          onCancel={() => setCandidateLaunch(undefined)}
-          onConfirm={() => void confirmCandidateRoom()}
-          onToggle={(confirmed) => setCandidateLaunch((current) => current ? { ...current, confirmed, state: current.state === 'error' ? 'confirming' : current.state } : current)}
-        />
-      ) : null}
     </main>
   );
 }
@@ -487,32 +471,9 @@ function AgentLabRoomDeck({ activeRoomId, error, onRoomUpdated, onSelect, person
   );
 }
 
-function CandidateConfirmation({ launch, onCancel, onConfirm, onToggle }: {
-  launch: CandidateLaunch;
-  onCancel: () => void;
-  onConfirm: () => void;
-  onToggle: (confirmed: boolean) => void;
-}) {
-  const confirmation = candidateConfirmation(launch.experiment);
-  return (
-    <div className="eval-lab__candidate-confirmation-backdrop" role="presentation">
-      <section aria-labelledby="eval-lab-candidate-confirmation-title" aria-modal="true" className="eval-lab__candidate-confirmation" role="dialog">
-        <header><div><p className="eval-lab__eyebrow"><ShieldCheck aria-hidden="true" size={15} /> Validation 授权边界</p><h2 id="eval-lab-candidate-confirmation-title">运行新候选</h2></div><button aria-label="关闭候选确认" onClick={onCancel} type="button">×</button></header>
-        <p>这里会创建一个隔离的测试 Room，但不会立即运行。目录只用于本次测试；最终盲测数据继续封存。</p>
-        <dl>
-          {confirmation.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
-        </dl>
-        <p className="eval-lab__candidate-workspace"><span>候选目录</span><code>{launch.workspaceRoot || '未选择'}</code></p>
-        {launch.message ? <p className="eval-lab__room-error" role="alert">{launch.message}</p> : null}
-        <label className="eval-lab__candidate-consent"><input checked={launch.confirmed} onChange={(event) => onToggle(event.target.checked)} type="checkbox" />我已核对以上六项，同意创建只运行 Validation 的候选 Room。</label>
-        <footer><Button onClick={onCancel} variant="quiet">取消</Button><Button disabled={!launch.confirmed || !launch.workspaceRoot} loading={launch.state === 'creating'} onClick={onConfirm} variant="primary">确认并创建候选 Room</Button></footer>
-      </section>
-    </div>
-  );
-}
-
-function ExperimentMatrix({ evidenceCatalog, experiments, onOpenExperiment }: {
+function ExperimentMatrix({ evidenceCatalog, evidenceLoading, experiments, onOpenExperiment }: {
   evidenceCatalog?: EvalLabEvidenceResponse;
+  evidenceLoading: boolean;
   experiments: readonly EvalLabExperiment[];
   onOpenExperiment?: (experimentId: string) => void;
 }) {
@@ -539,7 +500,7 @@ function ExperimentMatrix({ evidenceCatalog, experiments, onOpenExperiment }: {
               <div><h3>{project.title}</h3><small>{project.codeName}</small><p>{project.goal}</p></div>
               <span>{project.experiments.length} 轮实验</span>
             </header>
-            <ProjectQualificationSummary evidenceCatalog={evidenceCatalog} project={project} />
+            <ProjectQualificationSummary evidenceCatalog={evidenceCatalog} evidenceLoading={evidenceLoading} project={project} />
             <div className="eval-lab__matrix-cards">
               {project.experiments.map((experiment) => (
                 <article className="eval-lab__matrix-card" data-status={experiment.status} key={experiment.experimentId}>
@@ -587,7 +548,7 @@ function ExperimentMatrix({ evidenceCatalog, experiments, onOpenExperiment }: {
 }
 
 type ProjectQualification = {
-  status: 'qualified' | 'incomplete';
+  status: 'qualified' | 'incomplete' | 'checking';
   quality: string;
   cost: string;
   evidence: string;
@@ -599,12 +560,12 @@ type ProjectCostComparison = {
   improves: boolean;
   qualifies: boolean;
   summary: string;
-  mode: 'provider_bill' | 'runtime_reconciled' | 'usage_only' | 'invalid_receipt';
+  mode: 'provider_bill' | 'runtime_reconciled' | 'pricing_estimate' | 'usage_only' | 'invalid_receipt';
 };
 
 type VerifiedPriceReceipt = {
-  authority: 'runtime_cost_reconciled';
-  requestCount: number;
+  authority: 'runtime_cost_reconciled' | 'pricing_estimate';
+  requestCount?: number;
   totalEstimateUsd: number;
   billedTotalUsd?: number;
   billingStatus: 'provided' | 'not_provided';
@@ -621,15 +582,24 @@ type VerifiedPriceReceipt = {
   };
 };
 
-function ProjectQualificationSummary({ evidenceCatalog, project }: {
+function ProjectQualificationSummary({ evidenceCatalog, evidenceLoading, project }: {
   evidenceCatalog?: EvalLabEvidenceResponse;
+  evidenceLoading: boolean;
   project: ProjectExperimentGroup;
 }) {
-  const qualification = projectQualification(project, evidenceCatalog);
+  const qualification: ProjectQualification = evidenceLoading && !evidenceCatalog
+    ? {
+        status: 'checking',
+        quality: '正在核对同一冻结候选的任务与质量门禁',
+        cost: '正在核对绑定且可核验的价格回执',
+        evidence: '正在读取可回溯的运行证据',
+        reason: '证据目录加载完成后再生成项目验收结论。',
+      }
+    : projectQualification(project, evidenceCatalog);
   return (
     <section aria-label={`${project.title} 项目验收`} className="eval-lab__project-qualification" data-status={qualification.status}>
       <header>
-        <strong>{qualification.status === 'qualified' ? '项目验收：已达标' : '项目验收：未完成'}</strong>
+        <strong>{qualification.status === 'checking' ? '项目验收：正在核对证据' : qualification.status === 'qualified' ? '项目验收：已达标' : '项目验收：未完成'}</strong>
         <span>必须由同一冻结候选证明任务成功、质量不退化且成本下降；耗时只作诊断。</span>
       </header>
       <dl>
@@ -764,12 +734,23 @@ function projectCostComparison(experiment: EvalLabExperiment, evidenceCatalog?: 
       && candidatePrice.receipt.billedTotalUsd !== undefined;
     const before = bothBilled ? baselinePrice.receipt.billedTotalUsd! : baselinePrice.receipt.totalEstimateUsd;
     const after = bothBilled ? candidatePrice.receipt.billedTotalUsd! : candidatePrice.receipt.totalEstimateUsd;
+    const estimateOnly = baselinePrice.receipt.authority === 'pricing_estimate'
+      && candidatePrice.receipt.authority === 'pricing_estimate';
+    if (baselinePrice.receipt.authority !== candidatePrice.receipt.authority) {
+      return {
+        experiment,
+        improves: false,
+        qualifies: false,
+        summary: 'Baseline 与 Candidate 的成本证据等级不同，价格比较已关闭',
+        mode: 'invalid_receipt',
+      };
+    }
     return {
       experiment,
       improves: after < before,
       qualifies: true,
       summary: verifiedPriceSummary(baselinePrice.receipt, candidatePrice.receipt, before, after, bothBilled),
-      mode: bothBilled ? 'provider_bill' : 'runtime_reconciled',
+      mode: bothBilled ? 'provider_bill' : estimateOnly ? 'pricing_estimate' : 'runtime_reconciled',
     };
   }
 
@@ -856,11 +837,14 @@ function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string)
   const sourceRef = strictText(usage.sourceRef);
   const usageSourceSha = strictSha256(usage.sourceSha256);
   const sourceIdentity = sourceRef?.split(':').at(-1) ?? '';
+  const isRuntimeReceipt = costAuthority === 'runtime_cost_reconciled';
+  const isBoundEstimate = costAuthority === 'pricing_estimate';
   if (
-    costAuthority !== 'runtime_cost_reconciled'
+    (!isRuntimeReceipt && !isBoundEstimate)
     || usage.available !== true
     || !sourceRef
-    || !sourceRef.startsWith('runtime-cost:')
+    || (isRuntimeReceipt && !sourceRef.startsWith('runtime-cost:'))
+    || (isBoundEstimate && !sourceRef.startsWith('public-report:'))
     || !usageSourceSha
     || canonicalEvidenceRunId(sourceIdentity) !== canonicalEvidenceRunId(sourceRunId)
   ) return undefined;
@@ -874,7 +858,7 @@ function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string)
   const cachedInputCostUsd = strictDecimal(estimate.cachedInputCostUsd);
   const outputCostUsd = strictDecimal(estimate.outputCostUsd);
   const totalEstimateUsd = strictDecimal(estimate.totalCostUsd);
-  const requestCount = strictPositiveInteger(runtimeCost.requestCount);
+  const requestCount = isRuntimeReceipt ? strictPositiveInteger(runtimeCost.requestCount) : undefined;
   const runtimeDbSha256 = strictSha256(runtimeCost.runtimeDbSha256);
   const runtimeSourceSha256 = strictSha256(runtimeCost.sourceSha256);
   const transcriptSha256s = Array.isArray(runtimeCost.transcriptSha256s)
@@ -890,13 +874,6 @@ function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string)
     || uncachedInputUsd === undefined || cachedInputUsd === undefined || outputUsd === undefined
     || uncachedInputCostUsd === undefined || cachedInputCostUsd === undefined || outputCostUsd === undefined
     || totalEstimateUsd === undefined || totalEstimateUsd <= 0
-    || requestCount === undefined || !runtimeDbSha256 || !runtimeSourceSha256
-    || runtimeSourceSha256 !== usageSourceSha
-    || transcriptSha256s.length === 0
-    || transcriptSha256s.some((value) => !value)
-    || new Set(transcriptSha256s).size !== transcriptSha256s.length
-    || reportedInputCostUsd === undefined || reportedCachedCostUsd === undefined
-    || reportedOutputCostUsd === undefined || reportedTotalCostUsd === undefined
   ) return undefined;
   const expectedParts = [
     uncachedInputTokens * uncachedInputUsd / 1_000_000,
@@ -908,11 +885,20 @@ function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string)
     || !approximatelyEqual(cachedInputCostUsd, expectedParts[1])
     || !approximatelyEqual(outputCostUsd, expectedParts[2])
     || !approximatelyEqual(totalEstimateUsd, expectedParts.reduce((sum, value) => sum + value, 0))
+  ) return undefined;
+  if (isRuntimeReceipt && (
+    requestCount === undefined || !runtimeDbSha256 || !runtimeSourceSha256
+    || runtimeSourceSha256 !== usageSourceSha
+    || transcriptSha256s.length === 0
+    || transcriptSha256s.some((value) => !value)
+    || new Set(transcriptSha256s).size !== transcriptSha256s.length
+    || reportedInputCostUsd === undefined || reportedCachedCostUsd === undefined
+    || reportedOutputCostUsd === undefined || reportedTotalCostUsd === undefined
     || !approximatelyEqual(reportedInputCostUsd, uncachedInputCostUsd)
     || !approximatelyEqual(reportedCachedCostUsd, cachedInputCostUsd)
     || !approximatelyEqual(reportedOutputCostUsd, outputCostUsd)
     || !approximatelyEqual(reportedTotalCostUsd, totalEstimateUsd)
-  ) return undefined;
+  )) return undefined;
   const pricingId = strictText(pricing.pricingId);
   const provider = strictText(pricing.provider);
   const model = strictText(pricing.model);
@@ -938,8 +924,8 @@ function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string)
     ) return undefined;
   } else if (billingStatus !== 'not_provided') return undefined;
   return {
-    authority: 'runtime_cost_reconciled',
-    requestCount,
+    authority: costAuthority as VerifiedPriceReceipt['authority'],
+    ...(requestCount !== undefined ? { requestCount } : {}),
     totalEstimateUsd,
     ...(billedTotalUsd !== undefined ? { billedTotalUsd } : {}),
     billingStatus,
@@ -955,8 +941,6 @@ function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string)
 
 function priceProvenanceMatches(before: VerifiedPriceReceipt, after: VerifiedPriceReceipt): boolean {
   const sameSource = before.provider === after.provider
-    && before.publishedDate === after.publishedDate
-    && before.sourceUrl === after.sourceUrl
     && before.sourceSha256 === after.sourceSha256;
   if (!sameSource) return false;
   if (before.pricingId !== after.pricingId) return true;
@@ -1002,10 +986,13 @@ function verifiedPriceSummary(
   const billStatus = beforeReceipt.billingStatus === afterReceipt.billingStatus
     ? beforeReceipt.billingStatus === 'provided' ? '已提供并绑定' : '未提供'
     : `Baseline ${beforeReceipt.billingStatus} / Candidate ${afterReceipt.billingStatus}`;
-  const requestCounts = beforeReceipt.requestCount === afterReceipt.requestCount
-    ? `${beforeReceipt.requestCount}`
-    : `${beforeReceipt.requestCount} → ${afterReceipt.requestCount}`;
-  return `${billed ? 'Provider 账单' : 'Runtime 对账 API 成本'} $${before.toFixed(4)} USD → $${after.toFixed(4)} USD（${decrease >= 0 ? '降低' : '增加'} ${Math.abs(decrease).toFixed(1)}%） · 逐请求回执 ${requestCounts} 次 · 价格版本 ${pricingId} · 发布日 ${dates} · 费率/百万 Token：${rates} · Provider 账单：${billStatus}`;
+  const runtimeReconciled = beforeReceipt.authority === 'runtime_cost_reconciled'
+    && afterReceipt.authority === 'runtime_cost_reconciled';
+  const requestEvidence = runtimeReconciled
+    ? `逐请求回执 ${beforeReceipt.requestCount === afterReceipt.requestCount ? beforeReceipt.requestCount : `${beforeReceipt.requestCount} → ${afterReceipt.requestCount}`} 次`
+    : '报告用量回执已绑定';
+  const priceLabel = billed ? 'Provider 账单' : runtimeReconciled ? 'Runtime 对账 API 成本' : '绑定用量 API 估算';
+  return `${priceLabel} $${before.toFixed(4)} USD → $${after.toFixed(4)} USD（${decrease >= 0 ? '降低' : '增加'} ${Math.abs(decrease).toFixed(1)}%） · ${requestEvidence} · 价格版本 ${pricingId} · 发布日 ${dates} · 费率/百万 Token：${rates} · Provider 账单：${billStatus}`;
 }
 
 function priceRatesSummary(receipt: VerifiedPriceReceipt): string {
@@ -1141,7 +1128,7 @@ function experimentPassesFinalTaskContract(experiment: EvalLabExperiment): boole
     const protocol = firstMetric(metrics, ['outputProtocolRate']);
     return success === 1 && citationGate === 1 && (protocol === undefined || protocol === 1);
   }
-  if (experiment.evaluationKind === 'memory' && hasMetric(metrics, 'curationCases')) {
+  if (projectKeyForExperiment(experiment) === 'memory' && hasMetric(metrics, 'curationCases')) {
     return metrics.curationCases > 0
       && metrics.curationPassed === metrics.curationCases
       && metrics.durableRecallPassed === metrics.durableRecallTotal
@@ -3802,11 +3789,12 @@ function buildCandidateRoomContext(
 ): string {
   return [
     '$agent-eval-room-optimizer',
-    '这是用户明确确认后的隔离候选 Room。Validation only. Held-out sealed.',
+    '用户点击“测试新方案”并选定 workspace，即构成本次 Validation dispatch 授权；无需二次批准，直接执行。',
+    '这是隔离候选 Room。Validation only. Held-out sealed.',
     scenarioTaskContract(experiment),
     `实验：${experiment.experimentId} · revision ${experiment.revisionSha256}`,
     ...confirmation.map(([label, value]) => `${label}：${value}`),
-    '只允许在已授权 workspaceRoots 内准备候选并运行冻结 Validation；不得读取或运行 Held-out，不得宣称已安装、已发布或已通过。',
+    '只允许在已授权 workspaceRoots 内准备候选并运行冻结 Validation；不得读取或运行 Held-out，不得安装、发布或触发工作区之外的外部副作用，也不得宣称已安装、已发布或已通过。',
     '每次运行必须返回真实命令、Sandbox/Trace/Eval 回执或具体失败阻断。',
   ].join('\n');
 }
@@ -3816,9 +3804,10 @@ function candidateConfirmationMessage(
   confirmation: ReadonlyArray<readonly [string, string]>,
 ): string {
   return [
-    `用户已确认创建新候选：${experiment.title}`,
+    '用户点击“测试新方案”并选定 workspace，即构成本次 Validation dispatch 授权；无需二次批准，直接执行。',
+    `新候选：${experiment.title}`,
     ...confirmation.map(([label, value]) => `${label}：${value}`),
-    '请先复述单一改变层和冻结门禁，再在本 Room 授权目录内推进 Validation。Held-out 仍封存。',
+    '请直接在本 Room 授权目录内推进冻结 Validation。Held-out 仍封存；不得安装、发布或触发工作区之外的外部副作用。',
   ].join('\n');
 }
 

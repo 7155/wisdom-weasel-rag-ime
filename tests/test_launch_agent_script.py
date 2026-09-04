@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,8 +12,137 @@ import unittest
 from pathlib import Path
 
 
+class AgentLabInstallReceiptManifestTests(unittest.TestCase):
+    def _run_manifest(
+        self,
+        tmp: str,
+        *,
+        refs: list[str],
+        files: dict[str, str] | None = None,
+        symlink: tuple[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        repository = Path(tmp) / "repository"
+        metrics = repository / "eval" / "interview-metrics"
+        runs = metrics / "runs"
+        runs.mkdir(parents=True)
+        for relative, content in (files or {}).items():
+            path = repository / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        if symlink is not None:
+            link, target = symlink
+            (repository / link).symlink_to(repository / target)
+        ledger = metrics / "agent-experiments.v1.json"
+        ledger.write_text(json.dumps({"experiments": [{"evidenceRefs": refs}]}), encoding="utf-8")
+        script = Path(__file__).resolve().parents[1] / "scripts" / "list_agent_lab_install_receipts.py"
+        return subprocess.run(
+            [sys.executable, str(script), str(ledger)],
+            cwd=repository,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+
+    def test_manifest_lists_only_existing_bound_receipts_and_optimal_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paw-eval-install-manifest-") as tmp:
+            result = self._run_manifest(
+                tmp,
+                refs=[
+                    "eval/interview-metrics/runs/cost.json",
+                    "eval/interview-metrics/runs/cost.json",
+                ],
+                files={
+                    "eval/interview-metrics/runs/cost.json": "{}",
+                    "eval/interview-metrics/runs/agent-lab-optimal-path-current.json": "{}",
+                    "eval/interview-metrics/runs/unreferenced.json": "{}",
+                },
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            [Path(line).name for line in result.stdout.splitlines()],
+            ["agent-lab-optimal-path-current.json", "cost.json"],
+        )
+
+    def test_manifest_rejects_a_missing_bound_receipt(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paw-eval-install-manifest-") as tmp:
+            result = self._run_manifest(
+                tmp,
+                refs=["eval/interview-metrics/runs/missing.json"],
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid Agent Lab evidence ref", result.stderr)
+
+    def test_manifest_rejects_a_traversal_receipt(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paw-eval-install-manifest-") as tmp:
+            result = self._run_manifest(
+                tmp,
+                refs=["eval/interview-metrics/runs/../outside.json"],
+                files={"eval/interview-metrics/outside.json": "{}"},
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid Agent Lab evidence ref", result.stderr)
+
+    def test_manifest_rejects_a_receipt_symlink_outside_runs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="paw-eval-install-manifest-") as tmp:
+            result = self._run_manifest(
+                tmp,
+                refs=["eval/interview-metrics/runs/linked.json"],
+                files={"outside.json": "{}"},
+                symlink=("eval/interview-metrics/runs/linked.json", "outside.json"),
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid Agent Lab evidence ref", result.stderr)
+
+
 
 class LaunchAgentScriptTests(unittest.TestCase):
+    def test_sidecar_installer_manifest_failure_preserves_existing_app_tree(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-launchd-manifest-failure-") as tmp:
+            home = Path(tmp) / "home"
+            app_dir = home / "Library" / "Application Support" / "RagIme" / "app"
+            old_backend = app_dir / "rag_ime" / "old-backend.txt"
+            old_evidence = app_dir / "eval" / "interview-metrics" / "old-evidence.txt"
+            marker = app_dir / "rag-ime-install-marker.json"
+            for path, content in (
+                (old_backend, "old backend"),
+                (old_evidence, "old evidence"),
+                (marker, '{"generation":"old"}'),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            fake_python = Path(tmp) / "fail-agent-lab-manifest-python"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in *list_agent_lab_install_receipts.py) exit 23 ;; esac\n"
+                f"exec {shlex.quote(sys.executable)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "RAG_IME_PYTHON": str(fake_python),
+                    "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
+                    "RAG_IME_SIDECAR_PORT": "18765",
+                },
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(old_backend.read_text(encoding="utf-8"), "old backend")
+            self.assertEqual(old_evidence.read_text(encoding="utf-8"), "old evidence")
+            self.assertEqual(marker.read_text(encoding="utf-8"), '{"generation":"old"}')
+
     def test_stop_runtime_proves_all_launch_agents_ports_and_processes_absent(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-stop-proof-") as tmp:
@@ -225,6 +355,13 @@ class LaunchAgentScriptTests(unittest.TestCase):
                     eval_lab_dir
                     / "runs"
                     / "agent-lab-optimal-path-20260901.v1.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    eval_lab_dir
+                    / "runs"
+                    / "agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r4.v1.json"
                 ).is_file()
             )
             projection = subprocess.run(

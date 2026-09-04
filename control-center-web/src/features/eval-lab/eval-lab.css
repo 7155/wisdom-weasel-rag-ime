@@ -844,23 +844,6 @@
 .eval-lab__room-deck nav button[aria-pressed='true'] { background: #eaf2fb; border-color: #9bbadd; color: #254f78; }
 .eval-lab__room-workspace { background: #fff; height: 520px; min-height: 520px; overflow: hidden; }
 
-.eval-lab__candidate-confirmation-backdrop { align-items: center; background: rgba(19, 31, 45, .48); display: flex; inset: 0; justify-content: center; padding: 24px; position: fixed; z-index: 90; }
-.eval-lab__candidate-confirmation { background: #fff; border: 1px solid #dce3ea; border-radius: 18px; box-shadow: 0 24px 70px rgba(19, 31, 45, .28); max-height: min(760px, calc(100vh - 48px)); max-width: 760px; overflow: auto; padding: 20px; width: 100%; }
-.eval-lab__candidate-confirmation > header { align-items: flex-start; display: flex; justify-content: space-between; }
-.eval-lab__candidate-confirmation > header h2 { color: #243d57; font-size: 21px; margin: 4px 0 0; }
-.eval-lab__candidate-confirmation > header > button { background: transparent; border: 0; color: #748294; cursor: pointer; font-size: 24px; line-height: 1; }
-.eval-lab__candidate-confirmation > p { color: #617184; font-size: 12px; line-height: 1.55; }
-.eval-lab__candidate-confirmation dl { border: 1px solid #e3e9ef; border-radius: 12px; display: grid; margin: 16px 0; overflow: hidden; }
-.eval-lab__candidate-confirmation dl > div { display: grid; gap: 12px; grid-template-columns: 96px minmax(0, 1fr); padding: 10px 12px; }
-.eval-lab__candidate-confirmation dl > div + div { border-top: 1px solid #edf1f4; }
-.eval-lab__candidate-confirmation dt { color: #52667d; font-size: 11px; font-weight: 800; }
-.eval-lab__candidate-confirmation dd { color: #526176; font-size: 11px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
-.eval-lab__candidate-workspace { background: #f5f8fb; border-radius: 9px; display: grid; gap: 5px; padding: 9px 11px; }
-.eval-lab__candidate-workspace span { color: #7b8795; font-size: 10px; }
-.eval-lab__candidate-workspace code { color: #415a73; font-size: 11px; overflow-wrap: anywhere; }
-.eval-lab__candidate-consent { align-items: flex-start; color: #43586e; display: flex; font-size: 12px; gap: 8px; line-height: 1.45; margin-top: 14px; }
-.eval-lab__candidate-consent input { margin-top: 2px; }
-.eval-lab__candidate-confirmation footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 
 @media (max-width: 760px) {
   .eval-lab { padding: 20px; }
@@ -943,7 +926,4 @@
   .eval-lab__room-deck > header { flex-direction: column; }
   .eval-lab__room-deck nav { justify-content: flex-start; max-width: none; }
   .eval-lab__room-workspace { height: 460px; min-height: 460px; }
-  .eval-lab__candidate-confirmation-backdrop { align-items: flex-end; padding: 0; }
-  .eval-lab__candidate-confirmation { border-radius: 18px 18px 0 0; max-height: 92vh; }
-  .eval-lab__candidate-confirmation dl > div { grid-template-columns: 1fr; gap: 4px; }
 }
