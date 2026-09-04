@@ -874,7 +874,6 @@ def _resolve_skill_source_collisions(
         non_bundled_sources = {entry["source"] for entry in entries if entry["source"] != "bundled"}
         bundled_is_explicit_winner = (
             len(bundled_entries) == 1
-            and len(entries) == len({entry["source"] for entry in entries})
             and all(name in bundled_wins[source] for source in non_bundled_sources)
         )
         if bundled_is_explicit_winner:
@@ -1683,7 +1682,7 @@ def _runtime_host_banner(
         'const __ragImeSourcePaths = { bundled: __ragImeSkillPaths, configured: __ragImeConfiguredSkills, "pi-installed": __ragImePiInstalledSkills }; '
         'const __ragImeCandidates = new Map(); '
         'for (const [source, paths] of Object.entries(__ragImeSourcePaths)) for (const path of paths.flatMap(__ragImeFindSkillFiles)) { const canonical = __realpathSync(path); const body = __readFileSync(canonical, "utf8"); const frontmatter = /^---\\s*\\r?\\n([\\s\\S]*?)\\r?\\n---(?:\\s*\\r?\\n|\\s*$)/.exec(body); const match = frontmatter && /^name:\\s*["\']?([^"\'#\\r\\n]+)["\']?\\s*$/m.exec(frontmatter[1]); if (!match) throw new Error(`Invalid ${source} Skill frontmatter at ${canonical}: missing name`); const name = match[1].trim(); if (name !== __basename(__dirname(canonical))) throw new Error(`Invalid ${source} Skill frontmatter at ${canonical}: name "${name}" does not match directory`); const entries = __ragImeCandidates.get(name) || []; if (!entries.some((entry) => entry.path === canonical)) entries.push({ name, source, path: canonical }); __ragImeCandidates.set(name, entries); } '
-        'for (const [name, entries] of [...__ragImeCandidates].sort(([a], [b]) => a.localeCompare(b))) { if (entries.length < 2) continue; const bundled = entries.filter((entry) => entry.source === "bundled"); const otherSources = new Set(entries.filter((entry) => entry.source !== "bundled").map((entry) => entry.source)); const explicitBundledWinner = bundled.length === 1 && entries.length === new Set(entries.map((entry) => entry.source)).size && [...otherSources].every((source) => (__ragImeSkillCollisionPolicy.bundledWins[source] || []).includes(name)); if (!explicitBundledWinner) throw new Error(`Unresolved Skill name collision for "${name}": ${entries.map((entry) => `${entry.source}=${entry.path}`).join("; ")}; collisionPolicy.default=reject`); } '
+        'for (const [name, entries] of [...__ragImeCandidates].sort(([a], [b]) => a.localeCompare(b))) { if (entries.length < 2) continue; const bundled = entries.filter((entry) => entry.source === "bundled"); const otherSources = new Set(entries.filter((entry) => entry.source !== "bundled").map((entry) => entry.source)); const explicitBundledWinner = bundled.length === 1 && [...otherSources].every((source) => (__ragImeSkillCollisionPolicy.bundledWins[source] || []).includes(name)); if (!explicitBundledWinner) throw new Error(`Unresolved Skill name collision for "${name}": ${entries.map((entry) => `${entry.source}=${entry.path}`).join("; ")}; collisionPolicy.default=reject`); } '
         'process.env.RAG_IME_PI_SKILL_PATHS = '
         '[...__ragImeSkillPaths, ...__ragImeConfiguredSkills].filter(Boolean).join(__pathDelimiter); '
         'process.env.RAG_IME_PI_SKILL_ROUTING_CARDS = '

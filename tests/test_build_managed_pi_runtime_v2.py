@@ -1620,6 +1620,91 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             ),
         )
 
+    def test_explicit_bundled_winner_shadows_multiple_pi_installed_copies(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-skill-shadow-copies-") as temporary:
+            root = Path(temporary)
+            bundled = root / "bundled" / "plugin-creator"
+            installed = root / "pi-installed" / "plugin-creator"
+            installed_system = root / "pi-installed" / ".system" / "plugin-creator"
+            for path, description in (
+                (bundled, "bundled"),
+                (installed, "installed"),
+                (installed_system, "installed system"),
+            ):
+                path.mkdir(parents=True)
+                (path / "SKILL.md").write_text(
+                    f"---\nname: plugin-creator\ndescription: {description}\n---\n",
+                    encoding="utf-8",
+                )
+
+            resolved = _resolve_skill_source_collisions(
+                bundled=(bundled,),
+                configured=(),
+                pi_installed=(root / "pi-installed",),
+                collision_policy={
+                    "default": "reject",
+                    "bundledWins": {
+                        "configured": [],
+                        "pi-installed": ["plugin-creator"],
+                    },
+                },
+            )
+
+        self.assertEqual(resolved["plugin-creator"]["source"], "bundled")
+        self.assertEqual(
+            Path(resolved["plugin-creator"]["path"]),
+            (bundled / "SKILL.md").resolve(),
+        )
+
+    def test_runtime_banner_starts_with_multiple_authorized_installed_shadows(self) -> None:
+        node = _default_node()
+        if not node:
+            self.skipTest("Node.js is unavailable")
+        with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-skill-shadows-") as temporary:
+            root = Path(temporary)
+            runtime_host = root / "runtime-host"
+            bundled = runtime_host / "skills" / "plugin-creator"
+            installed = root / "agent" / "skills" / "plugin-creator"
+            installed_system = root / "agent" / "skills" / ".system" / "plugin-creator"
+            for path, description in (
+                (bundled, "bundled"),
+                (installed, "installed"),
+                (installed_system, "installed system"),
+            ):
+                path.mkdir(parents=True)
+                (path / "SKILL.md").write_text(
+                    f"---\nname: plugin-creator\ndescription: {description}\n---\n",
+                    encoding="utf-8",
+                )
+            entrypoint = runtime_host / "collision-smoke.mjs"
+            entrypoint.write_text(
+                _runtime_host_banner(
+                    runtime_host / "skills",
+                    {
+                        "default": "reject",
+                        "bundledWins": {
+                            "configured": [],
+                            "pi-installed": ["plugin-creator"],
+                        },
+                    },
+                )
+                + "\nconsole.log('runtime-host-ready');\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [node, str(entrypoint)],
+                cwd=runtime_host,
+                env={
+                    **os.environ,
+                    "PI_CODING_AGENT_DIR": str(root / "agent"),
+                },
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "runtime-host-ready")
+
     def test_project_routing_card_drift_is_rejected(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
         catalog = json.loads(SKILL_ROUTING_CARDS.read_text(encoding="utf-8"))
