@@ -3,8 +3,10 @@ import {
   Bot,
   BookOpen,
   CircleAlert,
+  Eye,
   Fingerprint,
   FlaskConical,
+  FolderOpen,
   Gauge,
   History,
   Keyboard,
@@ -297,10 +299,7 @@ function PawAppearanceSettings() {
   );
 }
 
-/**
- * Execution permission uses the two user-facing coordinator profiles. Legacy
- * values remain readable in stored settings but are not offered as choices.
- */
+/** Every persisted Session execution mode remains a first-class default. */
 const agentExecutionModes: readonly {
   value: AgentExecutionMode;
   title: string;
@@ -309,11 +308,23 @@ const agentExecutionModes: readonly {
   recommended?: boolean;
 }[] = [
   {
+    value: 'read_only',
+    title: '只读',
+    detail: '源文件只读、网络关闭；允许前台验证命令，阻止写入、后台任务与应用动作。',
+    icon: Eye,
+  },
+  {
     value: 'per_action',
     title: '全权限',
     detail: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认。',
     icon: ShieldCheck,
     recommended: true,
+  },
+  {
+    value: 'workspace_managed',
+    title: '工作区托管',
+    detail: '新对话需选择并确认项目范围；范围内动作自动批准。',
+    icon: FolderOpen,
   },
   {
     value: 'full_trust',
@@ -439,7 +450,7 @@ function PawAgentSettings() {
           {modelRouting.saveError ? <InlineNotice title="模型分工没有保存" tone="danger">{modelRouting.saveError}</InlineNotice> : null}
 
           <ManagementSection
-            description="全权限覆盖整个系统与所有 Tool，有影响的操作逐项请求确认；全自动则自动批准每个动作，仍受操作系统边界约束。"
+            description="新对话可以默认使用只读、全权限、工作区托管或全自动；每种选择都会原样保存。"
             title="Agent 执行权限"
           >
             <div aria-label="Agent 执行权限" className="paw-agent-modes" role="radiogroup">
@@ -449,9 +460,7 @@ function PawAgentSettings() {
                   <label className="paw-agent-mode" key={mode.value}>
                     <input
                       aria-label={mode.title}
-                      checked={mode.value === 'full_trust'
-                        ? preferences.executionMode === 'full_trust'
-                        : preferences.executionMode !== 'full_trust'}
+                      checked={mode.value === preferences.executionMode}
                       disabled={controlsDisabled}
                       name="paw-agent-execution-mode"
                       onChange={() => { void authority.save({ executionMode: mode.value }); }}

@@ -1,0 +1,70 @@
+{
+  "authority": "runtime_cost_reconciled",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "2.179776",
+    "outputCostUsd": "1.05036",
+    "totalCostUsd": "4.568166",
+    "uncachedInputCostUsd": "1.33803"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-sol",
+    "pricingId": "pricing:sha256:80067d14fbe8bca408a20e095bb0b4323b390bb14031157fb83bc7eb6490a04e",
+    "provider": "openai-codex",
+    "publishedDate": "2026-07-30",
+    "rates": {
+      "cachedInputUsd": "0.5",
+      "outputUsd": "30",
+      "uncachedInputUsd": "5"
+    },
+    "sourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+    "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "2b0a3a3a0ffd3c7fd52c70132633dcdf713104cbdfcfcaf7b9e1e2582783ec1b",
+  "runtimeCostReceipt": {
+    "databaseUsage": {
+      "cachedInputTokens": 4359552,
+      "outputTokens": 35012,
+      "uncachedInputTokens": 267606
+    },
+    "reportedCostUsd": {
+      "cacheRead": "2.179776",
+      "input": "1.33803",
+      "output": "1.05036",
+      "total": "4.568166"
+    },
+    "requestCount": 108,
+    "runtimeDbSha256": "60d04848845bb69da7047444f0b120337848cde64a00def0acc853126cb9208c",
+    "sourceSha256": "65db3c562bae34226dffcb69b54e4736993e61587aa5d662184901516121842a",
+    "transcriptSha256s": [
+      "e4c21c6f91d908207148a0ff1245c6174363c2af4545a4af1f88ff04ceafa134",
+      "3b66a366092ece037ba0aca1409c90620680ec18a3921abf6f549cf5ca4e1412",
+      "632f729a79e112746505a138190b5df13544f7d178007df982950f09d62f70c7"
+    ],
+    "trialAggregate": {
+      "cachedInputTokens": 4586112,
+      "outputTokens": 35356,
+      "sourceRef": "agent-artifact:cloudops-sol-max-alert-first-candidate-20260904-r7:trial_completed",
+      "sourceSha256": "9dcb2bcf4cbc9fe8f1b2f2d6f6a902d70860673ea3bb0c2c1902cbe9be01ff31",
+      "uncachedInputTokens": 279774
+    }
+  },
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 4359552,
+    "outputTokens": 35012,
+    "sourceRef": "runtime-cost:cloudops-sol-max-alert-first-candidate-20260904-r7",
+    "sourceSha256": "65db3c562bae34226dffcb69b54e4736993e61587aa5d662184901516121842a",
+    "uncachedInputTokens": 267606
+  }
+}

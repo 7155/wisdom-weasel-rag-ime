@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
 from threading import RLock
@@ -21,6 +22,7 @@ from .agent_role_identity import (
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
     PER_ACTION_EXECUTION_MODE,
+    READ_ONLY_EXECUTION_MODE,
     ROOM_UNRESTRICTED_EXECUTION_MODE,
     WORKSPACE_MANAGED_EXECUTION_MODE,
     canonical_tool_profile,
@@ -28,6 +30,7 @@ from .agent_execution_policy import (
     workspace_scope_is_granted,
     workspace_scope_sha256,
 )
+from .agent_events import AgentTerminalProjectionDuplicate
 from .agent_tool_ids import (
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
     FULL_ACCESS_TOOL_PROFILE,
@@ -136,6 +139,12 @@ class AgentSessionStore:
         self._persistent_reads = bool(persistent_reads)
         self._read_lock = RLock()
         self._read_connection: sqlite3.Connection | None = None
+        self._approval_creation_context: ContextVar[
+            dict[str, object] | None
+        ] = ContextVar(
+            "rag_ime_agent_approval_creation_context",
+            default=None,
+        )
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1706,6 +1715,165 @@ class AgentSessionStore:
                 turn_ids.append(turn_id)
         return turn_ids
 
+    def has_runtime_approval_resolution(
+        self,
+        session_id: str,
+        approval_id: str,
+        *,
+        limit: int = 512,
+    ) -> bool:
+        """Return whether one exact approval terminal is durably recorded."""
+
+        normalized_approval_id = str(approval_id or "").strip()
+        if not normalized_approval_id:
+            return False
+        self.get(session_id)
+        bounded_limit = max(1, min(int(limit), 1000))
+        with self._connect() as conn:
+            marker = conn.execute(
+                """
+                SELECT 1
+                FROM agent_approval_terminal_projections
+                WHERE session_id = ? AND approval_id = ?
+                  AND projection_kind = 'approval_resolved'
+                LIMIT 1
+                """,
+                (session_id, normalized_approval_id),
+            ).fetchone()
+            if marker is not None:
+                return True
+            rows = conn.execute(
+                """
+                SELECT metrics_json
+                FROM agent_runtime_events
+                WHERE session_id = ? AND event_type = 'approval_resolved'
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (session_id, bounded_limit),
+            ).fetchall()
+        for row in rows:
+            try:
+                metrics = json.loads(str(row["metrics_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            identity = (
+                metrics.get("approvalIdentity")
+                if isinstance(metrics, dict)
+                else None
+            )
+            if (
+                isinstance(identity, dict)
+                and str(identity.get("approvalId") or "")
+                == normalized_approval_id
+            ):
+                return True
+        return False
+
+    def has_runtime_tool_terminal(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        *,
+        turn_id: str = "",
+        tool_name: str = "",
+        requested_after_ms: int = 0,
+        limit: int = 1000,
+    ) -> bool:
+        """Return whether one exact Tool terminal is durably recorded.
+
+        New rows carry a content-free Tool identity in ``metrics_json``.
+        Older installed rows predate that index, so a bounded fallback accepts
+        only a terminal in the exact owning turn, after the approval request,
+        with the same redacted Tool name. This avoids synthesizing duplicate
+        terminals for pre-upgrade successful operations.
+        """
+
+        normalized_tool_call_id = str(tool_call_id or "").strip()
+        if not normalized_tool_call_id:
+            return False
+        normalized_turn_id = str(turn_id or "").strip()
+        normalized_tool_name = str(tool_name or "").strip()
+        self.get(session_id)
+        bounded_limit = max(1, min(int(limit), 2000))
+        with self._connect() as conn:
+            marker = conn.execute(
+                """
+                SELECT 1
+                FROM agent_approval_terminal_projections
+                WHERE session_id = ?
+                  AND projection_kind = 'tool_finished'
+                  AND tool_call_id = ?
+                  AND (? = '' OR turn_id = ?)
+                  AND (? = '' OR tool_name = ?)
+                  AND projected_at_ms >= ?
+                LIMIT 1
+                """,
+                (
+                    session_id,
+                    normalized_tool_call_id,
+                    normalized_turn_id,
+                    normalized_turn_id,
+                    normalized_tool_name,
+                    normalized_tool_name,
+                    max(0, int(requested_after_ms or 0)),
+                ),
+            ).fetchone()
+            if marker is not None:
+                return True
+            rows = conn.execute(
+                """
+                SELECT turn_id, created_at_ms, redacted_summary, metrics_json
+                FROM agent_runtime_events
+                WHERE session_id = ? AND event_type = 'tool_finished'
+                  AND created_at_ms >= ?
+                ORDER BY sequence DESC
+                LIMIT ?
+                """,
+                (
+                    session_id,
+                    max(0, int(requested_after_ms or 0)),
+                    bounded_limit,
+                ),
+            ).fetchall()
+        for row in rows:
+            try:
+                metrics = json.loads(str(row["metrics_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                metrics = {}
+            identity = (
+                metrics.get("toolIdentity")
+                if isinstance(metrics, dict)
+                else None
+            )
+            if isinstance(identity, dict):
+                if (
+                    str(identity.get("toolCallId") or "")
+                    == normalized_tool_call_id
+                    and (
+                        not normalized_turn_id
+                        or str(row["turn_id"] or "") == normalized_turn_id
+                    )
+                    and (
+                        not normalized_tool_name
+                        or str(identity.get("toolName") or "")
+                        == normalized_tool_name
+                    )
+                ):
+                    return True
+                # An indexed row belongs to another Tool and must not enter
+                # the legacy turn/name fallback.
+                continue
+            if (
+                normalized_turn_id
+                and str(row["turn_id"] or "") == normalized_turn_id
+                and normalized_tool_name
+                and str(row["redacted_summary"] or "")
+                == normalized_tool_name
+            ):
+                return True
+        return False
+
     def prompt_acceptance_evidence(
         self,
         session_id: str,
@@ -2556,7 +2724,20 @@ class AgentSessionStore:
         if len(metrics_json.encode("utf-8")) > 8_192:
             raise ValueError("runtime event metrics are too large")
         with self._connect() as conn:
-            conn.execute(
+            projection_claim = self._claim_terminal_projection(
+                conn,
+                event_id=event_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                event_type=event_type,
+                created_at_ms=created_at_ms,
+                redacted_summary=redacted_summary,
+                metrics=metrics or {},
+            )
+            if projection_claim == "existing":
+                return
+            cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO agent_runtime_events(
                     event_id, session_id, turn_id, sequence, event_type,
@@ -2574,9 +2755,14 @@ class AgentSessionStore:
                     metrics_json,
                 ),
             )
+            if projection_claim == "claimed" and cursor.rowcount != 1:
+                raise sqlite3.IntegrityError(
+                    "terminal projection event identity was already used"
+                )
             stale_rows = conn.execute(
                 """
-                SELECT event_id, metrics_json
+                SELECT event_id, turn_id, sequence, event_type,
+                       created_at_ms, redacted_summary, metrics_json
                 FROM agent_runtime_events
                 WHERE session_id = ? AND sequence <= (
                     SELECT COALESCE(MAX(sequence), 0) - ?
@@ -2613,6 +2799,24 @@ class AgentSessionStore:
                 except (TypeError, ValueError):
                     stale_metrics = {}
                 if isinstance(stale_metrics, dict):
+                    if stale_row["event_type"] in {
+                        "approval_resolved",
+                        "tool_finished",
+                    }:
+                        self._claim_terminal_projection(
+                            conn,
+                            event_id=str(stale_row["event_id"]),
+                            session_id=session_id,
+                            turn_id=str(stale_row["turn_id"] or ""),
+                            sequence=int(stale_row["sequence"]),
+                            event_type=str(stale_row["event_type"]),
+                            created_at_ms=int(stale_row["created_at_ms"]),
+                            redacted_summary=str(
+                                stale_row["redacted_summary"] or ""
+                            ),
+                            metrics=stale_metrics,
+                            allow_existing=True,
+                        )
                     acceptance = stale_metrics.get(
                         "promptAcceptance"
                     )
@@ -2641,6 +2845,78 @@ class AgentSessionStore:
                     for stale_event_id in deletable_event_ids
                 ),
             )
+
+    def _claim_terminal_projection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        event_id: str,
+        session_id: str,
+        turn_id: str,
+        sequence: int,
+        event_type: str,
+        created_at_ms: int,
+        redacted_summary: str,
+        metrics: Mapping[str, object],
+        allow_existing: bool = False,
+    ) -> str:
+        """Claim an unpruned exactly-once owner in the event transaction."""
+
+        candidate = _terminal_projection_candidate(
+            conn,
+            session_id=session_id,
+            turn_id=turn_id,
+            event_type=event_type,
+            redacted_summary=redacted_summary,
+            metrics=metrics,
+        )
+        if candidate is None:
+            return "none"
+        approval_id = str(candidate["approval_id"])
+        existing = conn.execute(
+            """
+            SELECT event_id, event_sequence, turn_id, projected_at_ms
+            FROM agent_approval_terminal_projections
+            WHERE session_id = ? AND approval_id = ?
+              AND projection_kind = ?
+            """,
+            (session_id, approval_id, event_type),
+        ).fetchone()
+        if existing is not None:
+            if allow_existing or str(existing["event_id"]) == str(event_id):
+                return "existing"
+            raise AgentTerminalProjectionDuplicate(
+                event_id=str(existing["event_id"]),
+                sequence=int(existing["event_sequence"]),
+                turn_id=str(existing["turn_id"] or ""),
+                created_at_ms=int(existing["projected_at_ms"]),
+            )
+        conn.execute(
+            """
+            INSERT INTO agent_approval_terminal_projections(
+                session_id, approval_id, projection_kind, tool_call_id,
+                turn_id, tool_name, room_id, room_root_id,
+                room_dispatch_id, room_generation, event_id,
+                event_sequence, projected_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                approval_id,
+                event_type,
+                str(candidate["tool_call_id"] or ""),
+                str(turn_id or candidate["causal_turn_id"] or ""),
+                str(candidate["tool_name"] or ""),
+                str(candidate["room_id"] or ""),
+                str(candidate["room_root_id"] or ""),
+                str(candidate["room_dispatch_id"] or ""),
+                int(candidate["room_generation"] or 0),
+                str(event_id),
+                int(sequence),
+                int(created_at_ms),
+            ),
+        )
+        return "claimed"
 
     def lifecycle_cancellation_audit(
         self,
@@ -2894,18 +3170,23 @@ class AgentSessionStore:
         normalized_reason = " ".join(str(reason or "user_abort").split())[:240]
         normalized_turn_id = " ".join(str(turn_id or "").split())[:240]
         cancelled: list[str] = []
+        executing: list[str] = []
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 """
                 SELECT *
                 FROM agent_approvals
-                WHERE session_id = ? AND state = 'pending'
+                WHERE session_id = ? AND state IN ('pending', 'approved')
                 ORDER BY requested_at_ms, approval_id
                 """,
                 (session_id,),
             ).fetchall()
             for row in rows:
                 approval_id = str(row["approval_id"])
+                if int(row["execution_claimed_at_ms"] or 0) > 0:
+                    executing.append(approval_id)
+                    continue
                 causal_turn_id = str(row["causal_turn_id"] or "")
                 receipt = {
                     "schemaVersion": (
@@ -2924,7 +3205,9 @@ class AgentSessionStore:
                     UPDATE agent_approvals
                     SET state = 'stale', decided_at_ms = ?,
                         decided_by = ?, receipt_json = ?
-                    WHERE approval_id = ? AND state = 'pending'
+                    WHERE approval_id = ?
+                      AND state IN ('pending', 'approved')
+                      AND execution_claimed_at_ms = 0
                     """,
                     (
                         timestamp,
@@ -2948,8 +3231,75 @@ class AgentSessionStore:
             "turnId": normalized_turn_id,
             "reason": normalized_reason,
             "cancelledApprovalIds": cancelled,
+            "executingApprovalIds": executing,
             "createdAtMs": timestamp,
         }
+
+    @contextmanager
+    def approval_creation_scope(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        room_context: Mapping[str, object] | None = None,
+    ) -> Iterator[None]:
+        """Bind one request identity to any approval created in this call.
+
+        Tool-specific preparation methods all converge on ``create_approval``.
+        Keeping the request identity in a ContextVar avoids threading it
+        through every preview builder while remaining isolated across
+        concurrent Runtime calls. The eventual INSERT persists the Tool and
+        exact Room dispatch identity in the same transaction as the approval.
+        """
+
+        normalized_session_id = str(session_id).strip()
+        normalized_tool_call_id = str(tool_call_id).strip()
+        if not normalized_session_id:
+            raise ValueError("approval sessionId must not be empty")
+        if not normalized_tool_call_id or len(normalized_tool_call_id) > 512:
+            raise ValueError(
+                "approval toolCallId must contain between 1 and 512 characters"
+            )
+        normalized_room_context: dict[str, object] | None = None
+        if room_context is not None:
+            room_id = " ".join(
+                str(room_context.get("roomId") or "").split()
+            )[:240]
+            root_id = " ".join(
+                str(room_context.get("rootId") or "").split()
+            )[:240]
+            dispatch_id = " ".join(
+                str(room_context.get("dispatchId") or "").split()
+            )[:240]
+            try:
+                generation = int(room_context.get("generation") or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Room approval binding requires an active Room root, "
+                    "dispatch, and Runtime generation"
+                ) from exc
+            if not room_id or not root_id or not dispatch_id or generation <= 0:
+                raise ValueError(
+                    "Room approval binding requires an active Room root, "
+                    "dispatch, and Runtime generation"
+                )
+            normalized_room_context = {
+                "roomId": room_id,
+                "rootId": root_id,
+                "dispatchId": dispatch_id,
+                "generation": generation,
+            }
+        token = self._approval_creation_context.set(
+            {
+                "sessionId": normalized_session_id,
+                "toolCallId": normalized_tool_call_id,
+                "roomContext": normalized_room_context,
+            }
+        )
+        try:
+            yield
+        finally:
+            self._approval_creation_context.reset(token)
 
     def create_approval(
         self,
@@ -2982,8 +3332,25 @@ class AgentSessionStore:
         effective_ttl_ms = max(ttl_ms, 180_000) if execution_mode == FULL_TRUST_EXECUTION_MODE else ttl_ms
         bounded_ttl = max(1_000, min(int(effective_ttl_ms), 5 * 60_000))
         approval_id = f"approval:{uuid.uuid4()}"
+        request_context = self._approval_creation_context.get()
+        if (
+            not isinstance(request_context, Mapping)
+            or str(request_context.get("sessionId") or "") != session_id
+        ):
+            request_context = {}
+        bound_tool_call_id = str(
+            request_context.get("toolCallId") or ""
+        ).strip()
+        room_context = (
+            request_context.get("roomContext")
+            if isinstance(request_context.get("roomContext"), Mapping)
+            else None
+        )
         preview_payload = dict(preview)
-        if execution_mode == FULL_TRUST_EXECUTION_MODE:
+        if (
+            execution_mode == FULL_TRUST_EXECUTION_MODE
+            and room_context is None
+        ):
             preview_payload["approvalArbitration"] = pending_model_arbitration()
         preview_json = json.dumps(
             preview_payload,
@@ -2998,14 +3365,26 @@ class AgentSessionStore:
                 preview=preview,
                 supplied=causal_metadata,
             )
+            if room_context is not None:
+                causal.update(
+                    {
+                        "roomBound": True,
+                        "roomId": str(room_context["roomId"]),
+                        "rootId": str(room_context["rootId"]),
+                        "dispatchId": str(room_context["dispatchId"]),
+                        "generation": int(room_context["generation"]),
+                    }
+                )
             conn.execute(
                 """
                 INSERT INTO agent_approvals(
                     approval_id, session_id, tool_name, operation, payload_sha256,
                     preview_json, risk_level, state, requested_at_ms, expires_at_ms,
                     causal_todo_id, causal_todo_revision, causal_goal_id,
-                    causal_goal_revision, causal_turn_id, room_bound
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+                    causal_goal_revision, causal_turn_id, room_bound,
+                    tool_call_id, room_id, room_root_id, room_dispatch_id,
+                    room_generation
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
@@ -3023,6 +3402,11 @@ class AgentSessionStore:
                     causal["goalRevision"],
                     causal["turnId"],
                     int(bool(causal["roomBound"])),
+                    bound_tool_call_id,
+                    str(causal["roomId"]),
+                    str(causal["rootId"]),
+                    str(causal["dispatchId"]),
+                    int(causal["generation"]),
                 ),
             )
         return self.get_approval(approval_id, now_ms=timestamp)
@@ -3077,6 +3461,356 @@ class AgentSessionStore:
                     (normalized_tool_call_id, approval_id),
                 )
         return self.get_approval(approval_id)
+
+    def bind_approval_room_dispatch(
+        self,
+        approval_id: str,
+        *,
+        room_context: Mapping[str, object],
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Durably bind a pending approval to an already-authorized Room dispatch.
+
+        The Tool gateway validates the live dispatch before calling this method.
+        Persisting the binding keeps the approval application from losing the
+        Room policy when it re-reads the ordinary Session row.  A stale
+        full-trust model-arbitration preview is removed at the same boundary so
+        the UI never claims an independent approval Agent is involved.
+        """
+
+        timestamp = _timestamp(now_ms)
+        room_id = " ".join(str(room_context.get("roomId") or "").split())[:240]
+        root_id = " ".join(str(room_context.get("rootId") or "").split())[:240]
+        dispatch_id = " ".join(
+            str(room_context.get("dispatchId") or "").split()
+        )[:240]
+        generation = max(0, int(room_context.get("generation") or 0))
+        if not room_id or not root_id or not dispatch_id or generation <= 0:
+            raise ValueError(
+                "Room approval binding requires an active Room root, dispatch, "
+                "and Runtime generation"
+            )
+        with self._connect() as conn:
+            self._expire_approvals(conn, timestamp, approval_id=approval_id)
+            row = conn.execute(
+                "SELECT state, preview_json FROM agent_approvals WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                raise AgentApprovalNotFound(approval_id)
+            if str(row["state"]) != "pending":
+                raise ValueError("only pending approvals can bind a Room dispatch")
+            preview = json.loads(str(row["preview_json"] or "{}"))
+            preview_payload = preview if isinstance(preview, dict) else {}
+            preview_payload.pop("approvalArbitration", None)
+            conn.execute(
+                """
+                UPDATE agent_approvals
+                SET room_bound = 1, room_id = ?, room_root_id = ?,
+                    room_dispatch_id = ?, room_generation = ?, preview_json = ?
+                WHERE approval_id = ? AND state = 'pending'
+                """,
+                (
+                    room_id,
+                    root_id,
+                    dispatch_id,
+                    generation,
+                    json.dumps(
+                        preview_payload,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    approval_id,
+                ),
+            )
+        return self.get_approval(approval_id, now_ms=timestamp)
+
+    def claim_approval_execution(
+        self,
+        approval_id: str,
+        *,
+        room_context: Mapping[str, object] | None = None,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Atomically fence cancellation and Room rotation before an effect."""
+
+        timestamp = _timestamp(now_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT approval.*, COALESCE(binding.generation, 0)
+                       AS current_runtime_generation,
+                       session.execution_mode AS current_execution_mode,
+                       session.tool_profile_version AS current_tool_profile_version
+                FROM agent_approvals AS approval
+                JOIN agent_sessions AS session
+                  ON session.id = approval.session_id
+                LEFT JOIN agent_runtime_bindings AS binding
+                  ON binding.session_id = approval.session_id
+                WHERE approval.approval_id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                raise AgentApprovalNotFound(approval_id)
+            if (
+                str(row["state"]) != "approved"
+                or int(row["execution_claimed_at_ms"] or 0) != 0
+            ):
+                raise ValueError(
+                    "approval execution cannot start from "
+                    f"state {row['state']} with claim {row['execution_claimed_at_ms']}"
+                )
+
+            current_mode = normalize_execution_mode(
+                row["current_execution_mode"],
+                tool_profile_version=row["current_tool_profile_version"],
+            )
+            if current_mode == READ_ONLY_EXECUTION_MODE:
+                conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET state = 'rejected', decided_at_ms = ?, decided_by = ?
+                    WHERE approval_id = ? AND state = 'approved'
+                      AND execution_claimed_at_ms = 0
+                    """,
+                    (
+                        timestamp,
+                        "execution-policy:read_only",
+                        approval_id,
+                    ),
+                )
+            elif bool(row["room_bound"]):
+                live = room_context if isinstance(room_context, Mapping) else {}
+                persisted_room_id = str(row["room_id"] or "").strip()
+                persisted_root_id = str(row["room_root_id"] or "").strip()
+                persisted_dispatch_id = str(
+                    row["room_dispatch_id"] or ""
+                ).strip()
+                persisted_generation = int(row["room_generation"] or 0)
+                live_room_id = str(live.get("roomId") or "").strip()
+                live_root_id = str(live.get("rootId") or "").strip()
+                live_dispatch_id = str(
+                    live.get("dispatchId") or ""
+                ).strip()
+                live_generation = int(live.get("generation") or 0)
+                current_runtime_generation = int(
+                    row["current_runtime_generation"] or 0
+                )
+                binding_matches = (
+                    bool(persisted_room_id)
+                    and bool(persisted_root_id)
+                    and bool(persisted_dispatch_id)
+                    and persisted_generation > 0
+                    and bool(live_room_id)
+                    and bool(live_root_id)
+                    and bool(live_dispatch_id)
+                    and live_generation > 0
+                    and current_runtime_generation > 0
+                    and live_room_id == persisted_room_id
+                    and live_root_id == persisted_root_id
+                    and live_dispatch_id == persisted_dispatch_id
+                    and live_generation == persisted_generation
+                    and current_runtime_generation == persisted_generation
+                )
+                if not binding_matches:
+                    conn.execute(
+                        """
+                        UPDATE agent_approvals
+                        SET state = 'stale', decided_at_ms = ?, decided_by = ?
+                        WHERE approval_id = ? AND state = 'approved'
+                          AND execution_claimed_at_ms = 0
+                        """,
+                        (
+                            timestamp,
+                            "execution-policy:room_dispatch_stale",
+                            approval_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE agent_approvals
+                        SET execution_claimed_at_ms = ?
+                        WHERE approval_id = ? AND state = 'approved'
+                          AND execution_claimed_at_ms = 0
+                        """,
+                        (timestamp, approval_id),
+                    )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET execution_claimed_at_ms = ?
+                    WHERE approval_id = ? AND state = 'approved'
+                      AND execution_claimed_at_ms = 0
+                    """,
+                    (timestamp, approval_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("approval execution claim was lost")
+        return self.get_approval(approval_id, now_ms=timestamp)
+
+    def fail_abandoned_approval_executions(
+        self,
+        *,
+        now_ms: int | None = None,
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        """Close interrupted approvals inherited from an earlier Host.
+
+        A claim is the irreversible boundary immediately before the Tool
+        executor.  After a process restart PAW cannot prove whether the
+        external effect happened, so replaying it could duplicate a
+        non-idempotent action. Room approvals interrupted before that boundary
+        are known not to have executed and can be made retryable without ever
+        asking a human or a model. Persist an explicit receipt for both cases;
+        terminal claimed rows are also returned so missing Session/Room
+        projections can be repaired without replaying the effect.
+        """
+
+        timestamp = _timestamp(now_ms)
+        recovered_ids: list[str] = []
+        reconciliation_ids: list[str] = []
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM agent_approvals
+                WHERE (
+                    state = 'approved' AND execution_claimed_at_ms > 0
+                ) OR (
+                    room_bound = 1
+                    AND room_id <> ''
+                    AND room_root_id <> ''
+                    AND room_dispatch_id <> ''
+                    AND room_generation > 0
+                    AND state IN ('pending', 'approved')
+                    AND execution_claimed_at_ms = 0
+                )
+                ORDER BY requested_at_ms, approval_id
+                """
+            ).fetchall()
+            for row in rows:
+                approval_id = str(row["approval_id"])
+                claimed_at_ms = int(row["execution_claimed_at_ms"] or 0)
+                effect_may_have_occurred = claimed_at_ms > 0
+                reason = (
+                    "abandoned_execution_claim"
+                    if effect_may_have_occurred
+                    else "room_execution_interrupted_before_claim"
+                    if str(row["state"] or "") == "approved"
+                    else "room_execution_interrupted_before_decision"
+                )
+                receipt = {
+                    "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                    "approvalId": approval_id,
+                    "toolId": str(row["tool_name"] or ""),
+                    "operation": str(row["operation"] or ""),
+                    "summary": (
+                        "上次运行在工具执行后、终态保存前中断；"
+                        "结果未知，本次不会自动重放。"
+                        if effect_may_have_occurred
+                        else "Room 在工具执行前中断；原操作没有执行，可以重新发起任务。"
+                    ),
+                    "reason": reason,
+                    "mutationApplied": (
+                        None if effect_may_have_occurred else False
+                    ),
+                    "executionOutcome": (
+                        "unknown"
+                        if effect_may_have_occurred
+                        else "not_started"
+                    ),
+                    "effectMayHaveOccurred": effect_may_have_occurred,
+                    "replayAllowed": not effect_may_have_occurred,
+                    "retryTaskAllowed": not effect_may_have_occurred,
+                    "executionClaimedAtMs": claimed_at_ms,
+                    "reconciledAtMs": timestamp,
+                }
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET state = 'failed', decided_at_ms = ?, decided_by = ?,
+                        receipt_json = ?
+                    WHERE approval_id = ?
+                      AND state = ?
+                      AND execution_claimed_at_ms = ?
+                    """,
+                    (
+                        timestamp,
+                        "startup-recovery",
+                        json.dumps(
+                            receipt,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        approval_id,
+                        str(row["state"] or ""),
+                        claimed_at_ms,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    recovered_ids.append(approval_id)
+            # The approval row and its public Session/Room projection cannot be
+            # committed in one SQLite transaction because projection owners
+            # are separate services. Include earlier unknown-outcome rows on
+            # every failed startup retry; downstream projection keys are
+            # idempotent, so a crash after the state transition can heal
+            # without ever replaying the Tool effect itself.
+            retry_rows = conn.execute(
+                """
+                SELECT *
+                FROM agent_approvals
+                WHERE (
+                    execution_claimed_at_ms > 0
+                    AND state IN ('applied', 'failed', 'stale')
+                ) OR (
+                    room_bound = 1
+                    AND room_id <> ''
+                    AND room_root_id <> ''
+                    AND room_dispatch_id <> ''
+                    AND room_generation > 0
+                    AND state = 'failed'
+                )
+                ORDER BY requested_at_ms, approval_id
+                """
+            ).fetchall()
+            for row in retry_rows:
+                try:
+                    receipt = json.loads(str(row["receipt_json"] or "{}"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                exact_room_binding = (
+                    bool(row["room_bound"])
+                    and bool(str(row["room_id"] or "").strip())
+                    and bool(str(row["room_root_id"] or "").strip())
+                    and bool(str(row["room_dispatch_id"] or "").strip())
+                    and int(row["room_generation"] or 0) > 0
+                )
+                if isinstance(receipt, dict) and (
+                    exact_room_binding
+                    or receipt.get("reason") == "abandoned_execution_claim"
+                    or (
+                        receipt.get("effectMayHaveOccurred") is True
+                        and receipt.get("executionOutcome") == "unknown"
+                        and receipt.get("replayAllowed") is False
+                    )
+                ):
+                    reconciliation_ids.append(str(row["approval_id"]))
+        return (
+            [
+                self.get_approval(value, now_ms=timestamp)
+                for value in recovered_ids
+            ],
+            [
+                self.get_approval(value, now_ms=timestamp)
+                for value in reconciliation_ids
+            ],
+        )
 
     def list_approvals(
         self,
@@ -3223,6 +3957,84 @@ class AgentSessionStore:
                 if row is None:
                     raise AgentApprovalNotFound(approval_id)
                 raise ValueError(f"approval cannot complete from state {row['state']}")
+        return self.get_approval(approval_id)
+
+    def fail_claimed_approval_execution(
+        self,
+        approval_id: str,
+        *,
+        receipt: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Persist an unknown outcome after crossing the execution claim.
+
+        This is deliberately separate from ``complete_approval``. It is the
+        narrow recovery write used when the executor may have produced an
+        external effect but the ordinary terminal write failed. A terminal
+        row that actually committed before its caller saw an exception wins;
+        only an ``approved`` row with an irreversible claim can become the
+        unknown/fail-closed terminal.
+        """
+
+        normalized_receipt = dict(receipt)
+        if (
+            normalized_receipt.get("effectMayHaveOccurred") is not True
+            or normalized_receipt.get("executionOutcome") != "unknown"
+            or normalized_receipt.get("replayAllowed") is not False
+            or normalized_receipt.get("mutationApplied") is False
+        ):
+            raise ValueError(
+                "claimed approval recovery requires an unknown, non-replayable receipt"
+            )
+        receipt_json = json.dumps(
+            normalized_receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        terminal_state = ""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT state, execution_claimed_at_ms
+                FROM agent_approvals
+                WHERE approval_id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                raise AgentApprovalNotFound(approval_id)
+            terminal_state = str(row["state"])
+            if terminal_state in {
+                "external_pending",
+                "rejected",
+                "expired",
+                "stale",
+                "applied",
+                "failed",
+            }:
+                pass
+            elif (
+                terminal_state == "approved"
+                and int(row["execution_claimed_at_ms"] or 0) > 0
+            ):
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET state = 'failed', receipt_json = ?
+                    WHERE approval_id = ? AND state = 'approved'
+                      AND execution_claimed_at_ms > 0
+                    """,
+                    (receipt_json, approval_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError(
+                        "claimed approval recovery lost its execution fence"
+                    )
+            else:
+                raise ValueError(
+                    "approval has no claimed execution to reconcile"
+                )
         return self.get_approval(approval_id)
 
     def finalize_external_approval(
@@ -4435,6 +5247,10 @@ def _approval_causal_metadata(
         ),
         "turnId": str(latest_turn["turn_id"]) if latest_turn is not None else "",
         "roomBound": room_bound,
+        "roomId": "",
+        "rootId": "",
+        "dispatchId": "",
+        "generation": 0,
     }
     if supplied is not None:
         for key in (
@@ -4444,6 +5260,10 @@ def _approval_causal_metadata(
             "goalRevision",
             "turnId",
             "roomBound",
+            "roomId",
+            "rootId",
+            "dispatchId",
+            "generation",
         ):
             if key in supplied and key != "roomBound":
                 causal[key] = supplied[key]
@@ -4452,6 +5272,10 @@ def _approval_causal_metadata(
     causal["goalId"] = str(causal["goalId"] or "").strip()[:240]
     causal["goalRevision"] = max(0, int(causal["goalRevision"] or 0))
     causal["turnId"] = str(causal["turnId"] or "").strip()[:240]
+    causal["roomId"] = str(causal["roomId"] or "").strip()[:240]
+    causal["rootId"] = str(causal["rootId"] or "").strip()[:240]
+    causal["dispatchId"] = str(causal["dispatchId"] or "").strip()[:240]
+    causal["generation"] = max(0, int(causal["generation"] or 0))
     causal["roomBound"] = room_bound or bool(
         supplied.get("roomBound") if supplied is not None else False
     )
@@ -4637,6 +5461,10 @@ def _approval_payload(row: sqlite3.Row) -> dict[str, object]:
             "goalRevision": int(row["causal_goal_revision"] or 0),
             "turnId": str(row["causal_turn_id"] or ""),
             "roomBound": bool(row["room_bound"]),
+            "roomId": str(row["room_id"] or ""),
+            "rootId": str(row["room_root_id"] or ""),
+            "dispatchId": str(row["room_dispatch_id"] or ""),
+            "generation": int(row["room_generation"] or 0),
         },
     }
     tool_call_id = str(row["tool_call_id"] or "")
@@ -4644,6 +5472,100 @@ def _approval_payload(row: sqlite3.Row) -> dict[str, object]:
         payload["toolCallId"] = tool_call_id
     validate_contract(payload, "agent-approval.v1.json")
     return payload
+
+
+def _terminal_projection_candidate(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    turn_id: str,
+    event_type: str,
+    redacted_summary: str,
+    metrics: Mapping[str, object],
+) -> sqlite3.Row | None:
+    columns = """
+        approval_id, tool_call_id, causal_turn_id, tool_name,
+        room_id, room_root_id, room_dispatch_id, room_generation
+    """
+    if event_type == "approval_resolved":
+        identity = metrics.get("approvalIdentity")
+        approval_id = (
+            str(identity.get("approvalId") or "").strip()
+            if isinstance(identity, Mapping)
+            else ""
+        )
+        if not approval_id:
+            return None
+        return conn.execute(
+            f"""
+            SELECT {columns}
+            FROM agent_approvals
+            WHERE session_id = ? AND approval_id = ?
+              AND state IN ('rejected', 'expired', 'stale', 'applied', 'failed')
+            LIMIT 1
+            """,  # noqa: S608 -- selected columns are static above.
+            (session_id, approval_id),
+        ).fetchone()
+    if event_type != "tool_finished":
+        return None
+
+    identity = metrics.get("toolIdentity")
+    tool_call_id = (
+        str(identity.get("toolCallId") or "").strip()
+        if isinstance(identity, Mapping)
+        else ""
+    )
+    tool_name = (
+        str(identity.get("toolName") or "").strip()
+        if isinstance(identity, Mapping)
+        else ""
+    )
+    normalized_turn_id = str(turn_id or "").strip()
+    if tool_call_id:
+        return conn.execute(
+            f"""
+            SELECT {columns}
+            FROM agent_approvals
+            WHERE session_id = ? AND tool_call_id = ?
+              AND state IN (
+                  'rejected', 'expired', 'stale', 'applied', 'failed'
+              )
+              AND (? = '' OR causal_turn_id IN ('', ?))
+            ORDER BY
+                CASE WHEN causal_turn_id = ? THEN 0 ELSE 1 END,
+                requested_at_ms DESC,
+                approval_id DESC
+            LIMIT 1
+            """,  # noqa: S608 -- selected columns are static above.
+            (
+                session_id,
+                tool_call_id,
+                normalized_turn_id,
+                normalized_turn_id,
+                normalized_turn_id,
+            ),
+        ).fetchone()
+
+    # Rows created before the Tool identity index can still be claimed while
+    # they are in the bounded event ledger. Match only the exact owning turn
+    # and the already-redacted Tool name, mirroring the legacy read fallback.
+    legacy_tool_name = " ".join(str(redacted_summary or "").split())[:120]
+    if not normalized_turn_id or not legacy_tool_name:
+        return None
+    return conn.execute(
+        f"""
+        SELECT {columns}
+        FROM agent_approvals
+        WHERE session_id = ? AND causal_turn_id = ? AND tool_name = ?
+          AND tool_call_id <> ''
+          AND state IN (
+              'rejected', 'expired', 'stale', 'applied', 'failed'
+          )
+        ORDER BY requested_at_ms DESC, approval_id DESC
+        LIMIT 1
+        """,  # noqa: S608 -- selected columns are static above.
+        (session_id, normalized_turn_id, legacy_tool_name),
+    ).fetchone()
 
 
 def _workspace_roots(values: Iterable[str]) -> list[str]:

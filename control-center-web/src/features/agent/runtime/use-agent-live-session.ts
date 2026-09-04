@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { UiAgentEvent } from '@/contracts/ui-events';
+import {
+  ownerRecoveryDelayMs,
+  retryAfterMsFromError,
+} from '@/platform/recovery-policy';
 import type { ControlTransport } from '@/platform/transport';
 import { agentProjection, useAgentLiveStore } from '../state/live-store';
 
@@ -169,7 +173,6 @@ function createSharedAgentLiveSession(
   let snapshotAttempted = false;
   let loadedView: AgentSnapshotView | undefined;
   let latestSnapshot: AgentLiveSnapshot | undefined;
-  let lastSnapshotError: AgentLiveSnapshotError | undefined;
   let lastConnectionError: unknown;
   let connected = false;
   let snapshotTask: Promise<boolean> | undefined;
@@ -211,12 +214,23 @@ function createSharedAgentLiveSession(
     recoveryAttempt = 0;
     clearRecoveryTimer();
   };
-  const scheduleAutomaticRecovery = () => {
+  const markConnectionStable = () => {
+    resetRecoveryBackoff();
+    if (connected && recoveryState === 'synced') return;
+    connected = true;
+    lastConnectionError = undefined;
+    setRecoveryState('synced');
+    broadcast((listener) => listener.onConnectionRestored?.(sessionId));
+  };
+  const scheduleAutomaticRecovery = (error?: unknown) => {
     if (!active || !shouldStream() || recoveryTimer !== undefined) return;
-    const delayMs = Math.min(
-      AGENT_RECOVERY_BASE_DELAY_MS * (2 ** recoveryAttempt),
-      AGENT_RECOVERY_MAX_DELAY_MS,
-    );
+    const delayMs = ownerRecoveryDelayMs({
+      ownerId: `agent:${sessionId}`,
+      attempt: recoveryAttempt,
+      baseDelayMs: AGENT_RECOVERY_BASE_DELAY_MS,
+      maxDelayMs: AGENT_RECOVERY_MAX_DELAY_MS,
+      retryAfterMs: retryAfterMsFromError(error),
+    });
     recoveryAttempt += 1;
     setRecoveryState(
       recoveryAttempt >= AGENT_RECOVERY_VISIBLE_FAILURE_ATTEMPT
@@ -387,7 +401,6 @@ function createSharedAgentLiveSession(
       snapshotAttempted = true;
       loadedView = actualView;
       latestSnapshot = snapshot;
-      lastSnapshotError = undefined;
       setLoading(false);
       broadcast((listener) => listener.onSnapshot?.(snapshot));
       if (shouldStream()) maybeSubscribe();
@@ -403,13 +416,12 @@ function createSharedAgentLiveSession(
         error,
         recoverable,
       };
-      lastSnapshotError = failure;
       setLoading(false);
       setRecoveryState('failed');
       broadcast((listener) => listener.onSnapshotError?.(failure));
       const resumeStream = recoverable && shouldStream();
       if (resumeStream) maybeSubscribe();
-      if (shouldStream()) scheduleAutomaticRecovery();
+      if (shouldStream()) scheduleAutomaticRecovery(error);
       return resumeStream;
     }
   }
@@ -472,6 +484,7 @@ function createSharedAgentLiveSession(
   function maybeSubscribe(): void {
     if (!active || !shouldStream() || !snapshotAttempted || unsubscribe) return;
     const subscriptionGeneration = ++streamGeneration;
+    if (!connected) setRecoveryState('recovering');
     try {
       unsubscribe = transport.subscribe<UiAgentEvent>(
         {
@@ -480,12 +493,9 @@ function createSharedAgentLiveSession(
           lastEventId: currentResumeToken(),
         },
         {
-          open: () => {
+          stable: () => {
             if (!active || subscriptionGeneration !== streamGeneration) return;
-            if (lastSnapshotError === undefined) resetRecoveryBackoff();
-            connected = true;
-            lastConnectionError = undefined;
-            broadcast((listener) => listener.onConnectionRestored?.(sessionId));
+            markConnectionStable();
           },
           next: (event) => {
             if (!active || subscriptionGeneration !== streamGeneration) return;
@@ -508,6 +518,9 @@ function createSharedAgentLiveSession(
             }
             batcher.push(event);
             broadcast((listener) => listener.onEvent?.(event));
+            // A schema-validated durable event is also sufficient evidence for
+            // transports that predate the optional stable callback.
+            markConnectionStable();
           },
           error: (error) => {
             if (!active || subscriptionGeneration !== streamGeneration) return;
@@ -518,7 +531,7 @@ function createSharedAgentLiveSession(
             lastConnectionError = error;
             setRecoveryState('recovering');
             broadcast((listener) => listener.onConnectionError?.(sessionId, error));
-            scheduleAutomaticRecovery();
+            scheduleAutomaticRecovery(error);
           },
         },
       );
@@ -528,7 +541,7 @@ function createSharedAgentLiveSession(
       lastConnectionError = error;
       setRecoveryState('recovering');
       broadcast((listener) => listener.onConnectionError?.(sessionId, error));
-      scheduleAutomaticRecovery();
+      scheduleAutomaticRecovery(error);
     }
   }
 
@@ -558,7 +571,6 @@ function createSharedAgentLiveSession(
     snapshotAttempted = false;
     loadedView = undefined;
     latestSnapshot = undefined;
-    lastSnapshotError = undefined;
     lastConnectionError = undefined;
   }
 

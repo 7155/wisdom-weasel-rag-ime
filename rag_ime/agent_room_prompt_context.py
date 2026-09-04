@@ -132,8 +132,10 @@ def room_participant_prompt(
         authority = (work_document_authorities or {}).get(f"room_work_item:{work_id}", {})
         if authority:
             rows.append(
-                "活动文档 authority："
-                f"revision={_integer(authority.get('authorityRevision'))}；"
+                "活动文档 authority（使用此回执，不要猜 WorkItem revision）："
+                "authorityKind=room_work_item；"
+                f"authorityId={work_id}；"
+                f"authorityRevision={_integer(authority.get('authorityRevision'))}；"
                 f"transitionReceiptId={_text(authority.get('transitionReceiptId'), 240)}"
             )
         context.append("\n".join(rows))

@@ -36,6 +36,7 @@ import {
   type EvalLabTask,
 } from './api';
 import { createEvalLabExperimentAuditDownload } from './experiment-audit-html';
+import { LinkedOptimizationWorkbench } from './optimization/OptimizationWorkbench';
 import './eval-lab.css';
 
 /** The Room/Session owner used by the Agent Lab product surface. */
@@ -56,7 +57,7 @@ const EVAL_LAB_CANDIDATE_PERMISSION_POLICY: RoomPermissionPolicy = {
 };
 
 type EvalLabPage = 'overview' | 'paths' | 'details' | 'sessions';
-type ExperimentRecordView = 'task' | 'dataset' | 'baseline' | 'change' | 'candidate';
+type ExperimentRecordView = 'task' | 'dataset' | 'baseline' | 'optimization' | 'candidate';
 type RoomAction = { runId: string; state: 'creating' | 'sending' | 'error'; message?: string };
 type CandidateLaunch = {
   experiment: EvalLabExperiment;
@@ -330,7 +331,7 @@ export function EvalLabFeature() {
         <div>
           <p className="eval-lab__eyebrow"><FlaskConical aria-hidden="true" size={15} /> Agent Lab · 真实任务对照评测</p>
           <h1 id="eval-lab-title">Agent 工作流实验室</h1>
-          <p className="eval-lab__lede">把任何能重复验收的 Agent 工作带进来：代码、知识库、长期记忆或多人协作，都可以在同一标准下比较不同方案。</p>
+          <p className="eval-lab__lede">把任何能重复验收的 Agent 能力注册成测评：每个测评使用自己冻结的数据与评分标准，PAW 在统一证据框架下比较方案。</p>
         </div>
         <div className="eval-lab__header-actions">
           <span className={`eval-lab__source-badge eval-lab__source-badge--${transport.kind}`}>{transport.kind === 'mock' ? '示例数据' : '本机数据'}</span>
@@ -598,7 +599,26 @@ type ProjectCostComparison = {
   improves: boolean;
   qualifies: boolean;
   summary: string;
-  mode: 'provider_bill' | 'oauth_token_dominance' | 'api_estimate';
+  mode: 'provider_bill' | 'runtime_reconciled' | 'usage_only' | 'invalid_receipt';
+};
+
+type VerifiedPriceReceipt = {
+  authority: 'runtime_cost_reconciled';
+  requestCount: number;
+  totalEstimateUsd: number;
+  billedTotalUsd?: number;
+  billingStatus: 'provided' | 'not_provided';
+  pricingId: string;
+  provider: string;
+  model: string;
+  publishedDate: string;
+  sourceUrl: string;
+  sourceSha256: string;
+  rates: {
+    uncachedInputUsd: number;
+    cachedInputUsd: number;
+    outputUsd: number;
+  };
 };
 
 function ProjectQualificationSummary({ evidenceCatalog, project }: {
@@ -639,7 +659,8 @@ function projectQualification(project: ProjectExperimentGroup, evidenceCatalog?:
   ));
   const lowerCostProof = costComparisons.find(({ improves, qualifies }) => qualifies && improves);
   const comparableCost = costComparisons.find(({ qualifies }) => qualifies);
-  const lowerEstimate = costComparisons.find(({ improves, mode }) => mode === 'api_estimate' && improves);
+  const invalidReceipt = costComparisons.find(({ mode }) => mode === 'invalid_receipt');
+  const usageOnly = costComparisons.find(({ mode }) => mode === 'usage_only');
   const evidence = projectEvidenceShape(project, evidenceCatalog);
   if (qualified) {
     return {
@@ -662,10 +683,10 @@ function projectQualification(project: ProjectExperimentGroup, evidenceCatalog?:
     cost: lowerCostProof
       ? `${lowerCostProof.summary}，但该候选未同时通过质量门禁`
       : comparableCost
-        ? `${comparableCost.summary}；三类未共同不增，不能证明成本下降`
-      : lowerEstimate
-        ? `${lowerEstimate.summary}；这是历史 API 估价，不是 OAuth 实际成本证明`
-        : '同一候选缺少同模型用量三分类回执或 Provider 账单',
+        ? `${comparableCost.summary}；价格没有下降`
+        : invalidReceipt?.summary
+          ?? usageOnly?.summary
+          ?? '同一候选缺少绑定且可核验的价格回执；Token 用量不能替代价格',
     evidence,
     reason: '同一冻结候选尚未同时证明任务成功、质量不退化与成本下降。',
   };
@@ -674,24 +695,6 @@ function projectQualification(project: ProjectExperimentGroup, evidenceCatalog?:
 function projectCostComparison(experiment: EvalLabExperiment, evidenceCatalog?: EvalLabEvidenceResponse): ProjectCostComparison | undefined {
   const baseline = experiment.baseline.metrics;
   const candidate = experiment.candidate.metrics;
-  const billedBefore = firstMetric(baseline, ['providerBilledCostUsd', 'billedCostUsd']);
-  const billedAfter = firstMetric(candidate, ['providerBilledCostUsd', 'billedCostUsd']);
-  if (
-    baseline.providerBillAvailable === 1
-    && candidate.providerBillAvailable === 1
-    && billedBefore !== undefined
-    && billedAfter !== undefined
-    && billedBefore > 0
-  ) {
-    return {
-      experiment,
-      improves: billedAfter < billedBefore,
-      qualifies: true,
-      summary: `Provider 账单 ${usdPair(billedBefore, billedAfter)}`,
-      mode: 'provider_bill',
-    };
-  }
-
   const sameRoute = baseline.sameProviderModelThinking === 1
     && candidate.sameProviderModelThinking === 1;
   const usageReceipts = [baseline, candidate].every((metrics) => (
@@ -699,52 +702,347 @@ function projectCostComparison(experiment: EvalLabExperiment, evidenceCatalog?: 
   ));
   const beforeTokens = usageTokenCategories(baseline);
   const afterTokens = usageTokenCategories(candidate);
-  if (sameRoute && usageReceipts && beforeTokens && afterTokens) {
-    const categories = (['uncachedInput', 'cachedInput', 'output'] as const);
-    const nonIncreasing = categories.every((category) => afterTokens[category] <= beforeTokens[category]);
-    const strictDecrease = categories.some((category) => afterTokens[category] < beforeTokens[category]);
+  const metricUsage = sameRoute && usageReceipts && beforeTokens && afterTokens
+    ? usageComparisonSummary(beforeTokens, afterTokens)
+    : undefined;
+
+  if (
+    baseline.categoryReceiptComplete === 0
+    || candidate.categoryReceiptComplete === 0
+    || baseline.usageReceiptAvailable === 0
+    || candidate.usageReceiptAvailable === 0
+  ) {
     return {
       experiment,
-      improves: nonIncreasing && strictDecrease,
-      qualifies: true,
-      summary: `同模型 OAuth 用量回执：未缓存输入 ${formatMetric(beforeTokens.uncachedInput)} → ${formatMetric(afterTokens.uncachedInput)} · 缓存输入 ${formatMetric(beforeTokens.cachedInput)} → ${formatMetric(afterTokens.cachedInput)} · 输出 ${formatMetric(beforeTokens.output)} → ${formatMetric(afterTokens.output)}`,
-      mode: 'oauth_token_dominance',
+      improves: false,
+      qualifies: false,
+      summary: `${metricUsage?.summary ?? 'Usage 回执'}；Usage 分类不完整，价格比较已关闭`,
+      mode: 'invalid_receipt',
     };
   }
 
-  const baselineEvidence = costEvidenceRun(evidenceCatalog, experiment.baseline);
-  const candidateEvidence = costEvidenceRun(evidenceCatalog, experiment.candidate);
-  if (baselineEvidence && candidateEvidence && sameEvidenceRoute(baselineEvidence, candidateEvidence)) {
+  const baselinePrice = priceReceiptForRun(evidenceCatalog, experiment.baseline);
+  const candidatePrice = priceReceiptForRun(evidenceCatalog, experiment.candidate);
+  if (baselinePrice.issue || candidatePrice.issue) {
+    return {
+      experiment,
+      improves: false,
+      qualifies: false,
+      summary: [baselinePrice.issue, candidatePrice.issue].filter(Boolean).join('；'),
+      mode: 'invalid_receipt',
+    };
+  }
+  if (baselinePrice.receipt && candidatePrice.receipt) {
+    if (!priceProvenanceMatches(baselinePrice.receipt, candidatePrice.receipt)) {
+      return {
+        experiment,
+        improves: false,
+        qualifies: false,
+        summary: 'Baseline 与 Candidate 的价格回执 provenance 不一致，价格比较已关闭',
+        mode: 'invalid_receipt',
+      };
+    }
+    const factorShapeIsComparable = (
+      experiment.candidateType === 'single_factor'
+      && experiment.factors.length === 1
+    ) || (
+      experiment.candidateType === 'compound_repair'
+      && experiment.factors.length > 1
+    );
+    if (!factorShapeIsComparable || experiment.baseline.runId === experiment.candidate.runId) {
+      return {
+        experiment,
+        improves: false,
+        qualifies: false,
+        summary: '价格回执已找到，但实验缺少明确的单因素或多阶段候选合同，价格比较已关闭',
+        mode: 'invalid_receipt',
+      };
+    }
+    const bothBilled = baselinePrice.receipt.billingStatus === 'provided'
+      && candidatePrice.receipt.billingStatus === 'provided'
+      && baselinePrice.receipt.billedTotalUsd !== undefined
+      && candidatePrice.receipt.billedTotalUsd !== undefined;
+    const before = bothBilled ? baselinePrice.receipt.billedTotalUsd! : baselinePrice.receipt.totalEstimateUsd;
+    const after = bothBilled ? candidatePrice.receipt.billedTotalUsd! : candidatePrice.receipt.totalEstimateUsd;
+    return {
+      experiment,
+      improves: after < before,
+      qualifies: true,
+      summary: verifiedPriceSummary(baselinePrice.receipt, candidatePrice.receipt, before, after, bothBilled),
+      mode: bothBilled ? 'provider_bill' : 'runtime_reconciled',
+    };
+  }
+
+  const baselineEvidence = usageEvidenceRun(evidenceCatalog, experiment.baseline);
+  const candidateEvidence = usageEvidenceRun(evidenceCatalog, experiment.candidate);
+  if (!metricUsage && baselineEvidence && candidateEvidence && sameEvidenceRoute(baselineEvidence, candidateEvidence)) {
     const evidenceBefore = usageTokenCategories(usageReceiptMetrics(baselineEvidence));
     const evidenceAfter = usageTokenCategories(usageReceiptMetrics(candidateEvidence));
     if (evidenceBefore && evidenceAfter) {
-      const categories = (['uncachedInput', 'cachedInput', 'output'] as const);
-      const nonIncreasing = categories.every((category) => evidenceAfter[category] <= evidenceBefore[category]);
-      const strictDecrease = categories.some((category) => evidenceAfter[category] < evidenceBefore[category]);
+      const usage = usageComparisonSummary(evidenceBefore, evidenceAfter);
       return {
         experiment,
-        improves: nonIncreasing && strictDecrease,
-        qualifies: true,
-        summary: `同模型 OAuth 用量回执：未缓存输入 ${formatMetric(evidenceBefore.uncachedInput)} → ${formatMetric(evidenceAfter.uncachedInput)} · 缓存输入 ${formatMetric(evidenceBefore.cachedInput)} → ${formatMetric(evidenceAfter.cachedInput)} · 输出 ${formatMetric(evidenceBefore.output)} → ${formatMetric(evidenceAfter.output)}`,
-        mode: 'oauth_token_dominance',
+        improves: usage.improves,
+        qualifies: false,
+        summary: usage.summary,
+        mode: 'usage_only',
       };
     }
   }
-
-  const estimateBefore = firstMetric(baseline, ['apiCostUsd', 'estimatedApiCostUsd']);
-  const estimateAfter = firstMetric(candidate, ['apiCostUsd', 'estimatedApiCostUsd']);
-  const estimateReceipts = baseline.costReceiptAvailable === 1
-    && candidate.costReceiptAvailable === 1;
-  if (estimateReceipts && estimateBefore !== undefined && estimateAfter !== undefined && estimateBefore > 0) {
+  if (metricUsage) {
     return {
       experiment,
-      improves: estimateAfter < estimateBefore,
+      improves: metricUsage.improves,
       qualifies: false,
-      summary: `API 价格估算 ${usdPair(estimateBefore, estimateAfter)}`,
-      mode: 'api_estimate',
+      summary: metricUsage.summary,
+      mode: 'usage_only',
     };
   }
   return undefined;
+}
+
+function usageComparisonSummary(
+  before: { uncachedInput: number; cachedInput: number; output: number },
+  after: { uncachedInput: number; cachedInput: number; output: number },
+): { improves: boolean; summary: string } {
+  const categories = (['uncachedInput', 'cachedInput', 'output'] as const);
+  const nonIncreasing = categories.every((category) => after[category] <= before[category]);
+  const strictDecrease = categories.some((category) => after[category] < before[category]);
+  const improves = nonIncreasing && strictDecrease;
+  const observation = `同模型 OAuth 用量回执：未缓存输入 ${formatMetric(before.uncachedInput)} → ${formatMetric(after.uncachedInput)} · 缓存输入 ${formatMetric(before.cachedInput)} → ${formatMetric(after.cachedInput)} · 输出 ${formatMetric(before.output)} → ${formatMetric(after.output)}`;
+  return {
+    improves,
+    summary: improves
+      ? `${observation}；用量下降，但缺少绑定且可核验的价格回执，不能证明成本下降`
+      : `${observation}；用量未全面下降，且缺少绑定且可核验的价格回执`,
+  };
+}
+
+function priceReceiptForRun(
+  catalog: EvalLabEvidenceResponse | undefined,
+  version: EvalLabExperiment['baseline'],
+): { receipt?: VerifiedPriceReceipt; issue?: string } {
+  if (!catalog) return {};
+  const bindings = experimentRunBindings(version);
+  const candidates = catalog.runs.filter((run) => (
+    bindings.some((binding) => evidenceRunMatches(binding, run.runId))
+    && Boolean(run.environment.costEstimate || run.environment.pricingIdentity || run.environment.billing)
+  ));
+  if (!candidates.length) return {};
+  for (const run of candidates) {
+    const receipt = parseVerifiedPriceReceipt(run, version.runId);
+    if (!receipt) continue;
+    if (pricingIdentityHasCollision(catalog, receipt)) {
+      return { issue: `价格版本 ${receipt.pricingId} 在证据目录中对应多组费率，provenance 不一致或不唯一，价格比较已关闭` };
+    }
+    return { receipt };
+  }
+  return {
+    issue: `${version.runId} 缺少 Runtime 逐请求成本对账权限，或价格回执没有通过绑定、Usage、定价来源与金额校验`,
+  };
+}
+
+function parseVerifiedPriceReceipt(run: EvalLabEvidenceRun, sourceRunId: string): VerifiedPriceReceipt | undefined {
+  const origin = `${run.sourceId ?? ''} ${run.sourceLabel ?? ''}`.toLocaleLowerCase();
+  if (origin.includes('preview') || !run.reportAvailable) return undefined;
+  const usage = record(run.environment.usageReceipt);
+  const estimate = record(run.environment.costEstimate);
+  const pricing = record(run.environment.pricingIdentity);
+  const rates = record(pricing.rates);
+  const billing = record(run.environment.billing);
+  const runtimeCost = record(run.environment.runtimeCostReceipt);
+  const reportedCost = record(runtimeCost.reportedCostUsd);
+  const costAuthority = strictText(run.environment.costAuthority);
+  const sourceRef = strictText(usage.sourceRef);
+  const usageSourceSha = strictSha256(usage.sourceSha256);
+  const sourceIdentity = sourceRef?.split(':').at(-1) ?? '';
+  if (
+    costAuthority !== 'runtime_cost_reconciled'
+    || usage.available !== true
+    || !sourceRef
+    || !sourceRef.startsWith('runtime-cost:')
+    || !usageSourceSha
+    || canonicalEvidenceRunId(sourceIdentity) !== canonicalEvidenceRunId(sourceRunId)
+  ) return undefined;
+  const uncachedInputTokens = strictTokenCount(usage.uncachedInputTokens);
+  const cachedInputTokens = strictTokenCount(usage.cachedInputTokens);
+  const outputTokens = strictTokenCount(usage.outputTokens);
+  const uncachedInputUsd = strictDecimal(rates.uncachedInputUsd);
+  const cachedInputUsd = strictDecimal(rates.cachedInputUsd);
+  const outputUsd = strictDecimal(rates.outputUsd);
+  const uncachedInputCostUsd = strictDecimal(estimate.uncachedInputCostUsd);
+  const cachedInputCostUsd = strictDecimal(estimate.cachedInputCostUsd);
+  const outputCostUsd = strictDecimal(estimate.outputCostUsd);
+  const totalEstimateUsd = strictDecimal(estimate.totalCostUsd);
+  const requestCount = strictPositiveInteger(runtimeCost.requestCount);
+  const runtimeDbSha256 = strictSha256(runtimeCost.runtimeDbSha256);
+  const runtimeSourceSha256 = strictSha256(runtimeCost.sourceSha256);
+  const transcriptSha256s = Array.isArray(runtimeCost.transcriptSha256s)
+    ? runtimeCost.transcriptSha256s.map(strictSha256)
+    : [];
+  const reportedInputCostUsd = strictDecimal(reportedCost.input);
+  const reportedCachedCostUsd = strictDecimal(reportedCost.cacheRead);
+  const reportedOutputCostUsd = strictDecimal(reportedCost.output);
+  const reportedTotalCostUsd = strictDecimal(reportedCost.total);
+  if (
+    uncachedInputTokens === undefined || cachedInputTokens === undefined || outputTokens === undefined
+    || uncachedInputTokens + cachedInputTokens + outputTokens <= 0
+    || uncachedInputUsd === undefined || cachedInputUsd === undefined || outputUsd === undefined
+    || uncachedInputCostUsd === undefined || cachedInputCostUsd === undefined || outputCostUsd === undefined
+    || totalEstimateUsd === undefined || totalEstimateUsd <= 0
+    || requestCount === undefined || !runtimeDbSha256 || !runtimeSourceSha256
+    || runtimeSourceSha256 !== usageSourceSha
+    || transcriptSha256s.length === 0
+    || transcriptSha256s.some((value) => !value)
+    || new Set(transcriptSha256s).size !== transcriptSha256s.length
+    || reportedInputCostUsd === undefined || reportedCachedCostUsd === undefined
+    || reportedOutputCostUsd === undefined || reportedTotalCostUsd === undefined
+  ) return undefined;
+  const expectedParts = [
+    uncachedInputTokens * uncachedInputUsd / 1_000_000,
+    cachedInputTokens * cachedInputUsd / 1_000_000,
+    outputTokens * outputUsd / 1_000_000,
+  ];
+  if (
+    !approximatelyEqual(uncachedInputCostUsd, expectedParts[0])
+    || !approximatelyEqual(cachedInputCostUsd, expectedParts[1])
+    || !approximatelyEqual(outputCostUsd, expectedParts[2])
+    || !approximatelyEqual(totalEstimateUsd, expectedParts.reduce((sum, value) => sum + value, 0))
+    || !approximatelyEqual(reportedInputCostUsd, uncachedInputCostUsd)
+    || !approximatelyEqual(reportedCachedCostUsd, cachedInputCostUsd)
+    || !approximatelyEqual(reportedOutputCostUsd, outputCostUsd)
+    || !approximatelyEqual(reportedTotalCostUsd, totalEstimateUsd)
+  ) return undefined;
+  const pricingId = strictText(pricing.pricingId);
+  const provider = strictText(pricing.provider);
+  const model = strictText(pricing.model);
+  const publishedDate = strictText(pricing.publishedDate);
+  const sourceUrl = strictText(pricing.sourceUrl);
+  const sourceSha256 = strictSha256(pricing.sourceSha256);
+  if (
+    !pricingId || !/^pricing:sha256:[a-f0-9]{64}$/u.test(pricingId) || !provider || !model
+    || pricing.currency !== 'USD' || pricing.unit !== 'per_million_tokens'
+    || !publishedDate || !/^20\d{2}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/u.test(publishedDate)
+    || !sourceUrl || !sourceUrl.startsWith('https://') || !sourceSha256
+  ) return undefined;
+  const billingStatus = billing.status;
+  let billedTotalUsd: number | undefined;
+  if (billingStatus === 'provided') {
+    billedTotalUsd = strictDecimal(billing.totalUsd);
+    if (
+      billing.currency !== 'USD'
+      || billedTotalUsd === undefined
+      || billedTotalUsd <= 0
+      || !strictText(billing.receiptRef)
+      || !strictSha256(billing.receiptSha256)
+    ) return undefined;
+  } else if (billingStatus !== 'not_provided') return undefined;
+  return {
+    authority: 'runtime_cost_reconciled',
+    requestCount,
+    totalEstimateUsd,
+    ...(billedTotalUsd !== undefined ? { billedTotalUsd } : {}),
+    billingStatus,
+    pricingId,
+    provider,
+    model,
+    publishedDate,
+    sourceUrl,
+    sourceSha256,
+    rates: { uncachedInputUsd, cachedInputUsd, outputUsd },
+  };
+}
+
+function priceProvenanceMatches(before: VerifiedPriceReceipt, after: VerifiedPriceReceipt): boolean {
+  const sameSource = before.provider === after.provider
+    && before.publishedDate === after.publishedDate
+    && before.sourceUrl === after.sourceUrl
+    && before.sourceSha256 === after.sourceSha256;
+  if (!sameSource) return false;
+  if (before.pricingId !== after.pricingId) return true;
+  return before.model === after.model
+    && before.rates.uncachedInputUsd === after.rates.uncachedInputUsd
+    && before.rates.cachedInputUsd === after.rates.cachedInputUsd
+    && before.rates.outputUsd === after.rates.outputUsd;
+}
+
+function pricingIdentityHasCollision(catalog: EvalLabEvidenceResponse, receipt: VerifiedPriceReceipt): boolean {
+  return catalog.runs.some((run) => {
+    const pricing = record(run.environment.pricingIdentity);
+    if (strictText(pricing.pricingId) !== receipt.pricingId) return false;
+    const rates = record(pricing.rates);
+    return strictText(pricing.provider) !== receipt.provider
+      || strictText(pricing.model) !== receipt.model
+      || strictText(pricing.publishedDate) !== receipt.publishedDate
+      || strictText(pricing.sourceUrl) !== receipt.sourceUrl
+      || strictText(pricing.sourceSha256) !== receipt.sourceSha256
+      || strictDecimal(rates.uncachedInputUsd) !== receipt.rates.uncachedInputUsd
+      || strictDecimal(rates.cachedInputUsd) !== receipt.rates.cachedInputUsd
+      || strictDecimal(rates.outputUsd) !== receipt.rates.outputUsd;
+  });
+}
+
+function verifiedPriceSummary(
+  beforeReceipt: VerifiedPriceReceipt,
+  afterReceipt: VerifiedPriceReceipt,
+  before: number,
+  after: number,
+  billed: boolean,
+): string {
+  const decrease = ((before - after) / before) * 100;
+  const pricingId = beforeReceipt.pricingId === afterReceipt.pricingId
+    ? beforeReceipt.pricingId
+    : `${beforeReceipt.pricingId} → ${afterReceipt.pricingId}`;
+  const dates = beforeReceipt.publishedDate === afterReceipt.publishedDate
+    ? beforeReceipt.publishedDate
+    : `${beforeReceipt.publishedDate} → ${afterReceipt.publishedDate}`;
+  const beforeRates = priceRatesSummary(beforeReceipt);
+  const afterRates = priceRatesSummary(afterReceipt);
+  const rates = beforeRates === afterRates ? beforeRates : `Baseline ${beforeRates}；Candidate ${afterRates}`;
+  const billStatus = beforeReceipt.billingStatus === afterReceipt.billingStatus
+    ? beforeReceipt.billingStatus === 'provided' ? '已提供并绑定' : '未提供'
+    : `Baseline ${beforeReceipt.billingStatus} / Candidate ${afterReceipt.billingStatus}`;
+  const requestCounts = beforeReceipt.requestCount === afterReceipt.requestCount
+    ? `${beforeReceipt.requestCount}`
+    : `${beforeReceipt.requestCount} → ${afterReceipt.requestCount}`;
+  return `${billed ? 'Provider 账单' : 'Runtime 对账 API 成本'} $${before.toFixed(4)} USD → $${after.toFixed(4)} USD（${decrease >= 0 ? '降低' : '增加'} ${Math.abs(decrease).toFixed(1)}%） · 逐请求回执 ${requestCounts} 次 · 价格版本 ${pricingId} · 发布日 ${dates} · 费率/百万 Token：${rates} · Provider 账单：${billStatus}`;
+}
+
+function priceRatesSummary(receipt: VerifiedPriceReceipt): string {
+  return `未缓存输入 $${formatCompactUsd(receipt.rates.uncachedInputUsd)} · 缓存输入 $${formatCompactUsd(receipt.rates.cachedInputUsd)} · 输出 $${formatCompactUsd(receipt.rates.outputUsd)}`;
+}
+
+function formatCompactUsd(value: number): string {
+  return Number.isInteger(value) ? value.toFixed(0) : String(value);
+}
+
+function strictText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function strictSha256(value: unknown): string | undefined {
+  const text = strictText(value);
+  return text && /^[a-f0-9]{64}$/u.test(text) ? text : undefined;
+}
+
+function strictDecimal(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d*)(\.\d+)?$/u.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function strictPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function strictTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function approximatelyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) <= Math.max(1e-9, Math.abs(right) * 1e-9);
 }
 
 function usageTokenCategories(metrics: Readonly<Record<string, number>>): {
@@ -760,7 +1058,7 @@ function usageTokenCategories(metrics: Readonly<Record<string, number>>): {
   return { uncachedInput, cachedInput, output };
 }
 
-function costEvidenceRun(
+function usageEvidenceRun(
   catalog: EvalLabEvidenceResponse | undefined,
   version: EvalLabExperiment['baseline'],
 ): EvalLabEvidenceRun | undefined {
@@ -1174,7 +1472,7 @@ function publicChangeSummary(experiment: EvalLabExperiment): string {
 }
 
 function publicDecisionSummary(experiment: EvalLabExperiment): string {
-  if (experiment.status === 'kept' && experiment.evaluationKind === 'model_cost') return '任务质量保持不变且成本下降，作为低成本方案保留。';
+  if (experiment.status === 'kept' && experiment.evaluationKind === 'model_cost') return '方案在实验账本中标记为保留；成本结论仍以项目验收中的绑定价格回执为准。';
   if (experiment.status === 'kept') return '主要质量指标变好，并通过当前可靠性检查，因此保留。';
   if (experiment.status === 'rejected') return '关键质量或可靠性没有通过，因此不采用，并回到上一版。';
   if (experiment.status === 'open_gap') return '还缺少完整运行或关键证据，暂时不能作为可用方案。';
@@ -1337,7 +1635,7 @@ function matrixReliability(experiment: EvalLabExperiment): string {
         ? experiment.comparison.decision === 'keep' ? '质量门禁通过' : '质量未回退，但候选已拒绝'
         : '质量门禁未通过，候选已拒绝';
     return receiptReady
-      ? `${quality} · 用量和价格回执已绑定 · ${experiment.dataset.heldOutConsumed ? '最终盲测单独计入' : '最终盲测未使用'}`
+      ? `${quality} · 账面成本回执标记已记录，价格身份由项目验收另行校验 · ${experiment.dataset.heldOutConsumed ? '最终盲测单独计入' : '最终盲测未使用'}`
       : `${quality} · 模型用量记录缺失，暂时不能比较成本`;
   }
   if (experiment.evaluationKind === 'rag_retrieval') return '相关性标准答案隐藏 · 引用门禁待验';
@@ -1367,7 +1665,7 @@ function matrixEfficiency(experiment: EvalLabExperiment): string {
   if (experiment.evaluationKind === 'answer_evidence') return answerEvidenceEfficiencySummary(experiment);
   if (experiment.evaluationKind === 'model_cost') {
     const cost = hasMetric(baseline, 'apiCostUsd') && hasMetric(candidate, 'apiCostUsd')
-      ? `API 估算 ${usdPair(baseline.apiCostUsd, candidate.apiCostUsd)}`
+      ? `账面 API 估算 $${baseline.apiCostUsd.toFixed(4)} → $${candidate.apiCostUsd.toFixed(4)}（未通过绑定价格回执门禁，不作为成本下降结论）`
       : '成本待补';
     return `工具调用 ${integerMetric(baseline.toolCalls)} → ${integerMetric(candidate.toolCalls)} · 延迟 ${durationMetricPair(baseline.latencyMs, candidate.latencyMs)} · ${cost}`;
   }
@@ -1756,6 +2054,7 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
   rooms: RoomSummary[];
 }) {
   const currentRoomAction = roomAction?.runId === experiment.experimentId ? roomAction : undefined;
+  const historical = isHistoricalExperiment(experiment);
   const factors = experiment.factors ?? [];
   const frozenControls = experiment.frozenControls ?? [];
   const datasetExplanation = experimentDatasetExplanation(experiment);
@@ -1804,15 +2103,17 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
           <p>{projectTitleForExperiment(experiment)} · {publicDatasetSummary(experiment)}</p>
         </div>
         <div className="eval-lab__run-actions">
-          <Button
-            leadingIcon={currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending' ? <LoaderCircle className="ui-spin" size={15} /> : <Users size={15} />}
-            loading={currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending'}
-            onClick={() => onCreateRoom(linkedRuns[0])}
-            variant="primary"
-          >
-            {currentRoomAction?.state === 'sending' ? '正在发送任务…' : '和 Agent 一起继续优化'}
-          </Button>
-          <Button onClick={onRunCandidate} variant="secondary">测试新方案</Button>
+          {!historical ? <>
+            <Button
+              leadingIcon={currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending' ? <LoaderCircle className="ui-spin" size={15} /> : <Users size={15} />}
+              loading={currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending'}
+              onClick={() => onCreateRoom(linkedRuns[0])}
+              variant="primary"
+            >
+              {currentRoomAction?.state === 'sending' ? '正在发送任务…' : '和 Agent 一起继续优化'}
+            </Button>
+            <Button onClick={onRunCandidate} variant="secondary">测试新方案</Button>
+          </> : null}
           <Button leadingIcon={<Download size={15} />} onClick={downloadAudit} variant="secondary">导出报告</Button>
           <span className="eval-lab__read-only"><ShieldCheck size={14} /> 证据只读</span>
         </div>
@@ -1820,8 +2121,8 @@ function ExperimentSection({ desktop, evidenceCatalog, experiment, linkedRuns, o
       {currentRoomAction?.state === 'error' ? <p aria-live="assertive" className="eval-lab__room-error" role="alert">{currentRoomAction.message}</p> : null}
 
       <ExperimentOutcomeSummary experiment={experiment} />
-      <ExperimentRecordBrowser evidenceCatalog={evidenceCatalog} experiment={experiment} />
-      <CandidateProposal experiment={experiment} onEnterRoom={() => onCreateRoom(linkedRuns[0])} busy={Boolean(currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending')} />
+      <ExperimentRecordBrowser evidenceCatalog={evidenceCatalog} experiment={experiment} linkedRuns={linkedRuns} />
+      <CandidateProposal experiment={experiment} onEnterRoom={() => onCreateRoom(linkedRuns[0])} busy={Boolean(currentRoomAction?.state === 'creating' || currentRoomAction?.state === 'sending')} readOnly={historical} />
       <RoomReviewEvidence onOpenRoom={onOpenRoom} rooms={rooms} />
       <div className="eval-lab__experiment-context">
         <div><span>为什么需要 Agent</span><strong>{humanClaimText(experiment.whyAgent)}</strong></div>
@@ -1915,13 +2216,14 @@ const EXPERIMENT_RECORD_VIEWS = [
   ['task', '任务定义'],
   ['dataset', '数据集 Cases'],
   ['baseline', '原结果'],
-  ['change', '优化记录'],
+  ['optimization', '优化'],
   ['candidate', '新结果'],
 ] as const satisfies readonly (readonly [ExperimentRecordView, string])[];
 
-function ExperimentRecordBrowser({ evidenceCatalog, experiment }: {
+function ExperimentRecordBrowser({ evidenceCatalog, experiment, linkedRuns }: {
   evidenceCatalog?: EvalLabEvidenceResponse;
   experiment: EvalLabExperiment;
+  linkedRuns: readonly EvalLabRun[];
 }) {
   const [view, setView] = useState<ExperimentRecordView>('task');
   const datasetExplanation = experimentDatasetExplanation(experiment);
@@ -1971,7 +2273,10 @@ function ExperimentRecordBrowser({ evidenceCatalog, experiment }: {
           </div>
         ) : null}
         {view === 'baseline' ? <ExperimentResultRecord experiment={experiment} kind="baseline" evidenceRuns={evidenceRuns} /> : null}
-        {view === 'change' ? <ExperimentChangeRecord evidenceRuns={evidenceRuns} experiment={experiment} /> : null}
+        {view === 'optimization' ? <div className="eval-lab__optimization-record">
+          <LinkedOptimizationWorkbench evidenceRuns={evidenceRuns} experiment={experiment} linkedRuns={linkedRuns} />
+          <ExperimentChangeRecord evidenceRuns={evidenceRuns} experiment={experiment} />
+        </div> : null}
         {view === 'candidate' ? <ExperimentResultRecord experiment={experiment} kind="candidate" evidenceRuns={evidenceRuns} /> : null}
       </div>
     </section>
@@ -2135,10 +2440,11 @@ function ExperimentOutcomeSummary({ experiment }: { experiment: EvalLabExperimen
   );
 }
 
-function CandidateProposal({ experiment, onEnterRoom, busy }: {
+function CandidateProposal({ experiment, onEnterRoom, busy, readOnly = false }: {
   experiment: EvalLabExperiment;
   onEnterRoom: () => void;
   busy: boolean;
+  readOnly?: boolean;
 }) {
   const factors = experiment.factors ?? [];
   const changedLayer = factors.length === 1
@@ -2191,9 +2497,9 @@ function CandidateProposal({ experiment, onEnterRoom, busy }: {
         <div><dt>结果与决策</dt><dd>{humanClaimText(experiment.star.result)} {humanClaimText(experiment.comparison.decisionReason)}</dd></div>
       </dl>
       {factors.length > 1 ? <p className="eval-lab__proposal-warning">这是一条历史组合修复回执；下一轮候选会拆成单独的模型、Prompt、Skill、Tool 或工作流改动，不能把组合结果归因给某一层。</p> : null}
-      <Button leadingIcon={<Users size={15} />} loading={busy} onClick={onEnterRoom} variant="secondary">
+      {!readOnly ? <Button leadingIcon={<Users size={15} />} loading={busy} onClick={onEnterRoom} variant="secondary">
         在 Room 中继续下一轮
-      </Button>
+      </Button> : null}
     </section>
   );
 }

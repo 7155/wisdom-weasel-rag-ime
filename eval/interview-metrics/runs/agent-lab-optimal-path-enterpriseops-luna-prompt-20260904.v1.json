@@ -1,0 +1,247 @@
+{
+  "schemaVersion": "rag-ime.agent-lab-path-search.v1",
+  "searchId": "enterpriseops-csm-luna-prompt-20260904-v1",
+  "title": "EnterpriseOps CSM · Sol 到 Luna Prompt 适配路径",
+  "objective": {
+    "userNeed": "在冻结的 3-task / 31-verifier Validation、Runtime、Tool、runner 与安全门禁下，先判断 Luna model-only 是否保持质量；若回退，只用通用 Prompt 适配恢复质量，再比较精确 Runtime 成本。",
+    "metrics": [
+      {
+        "name": "taskSuccessRate",
+        "direction": "max",
+        "weight": 0.4,
+        "class": "quality",
+        "scale": 1,
+        "nonRegression": true
+      },
+      {
+        "name": "verifierPassRate",
+        "direction": "max",
+        "weight": 0.25,
+        "class": "quality",
+        "scale": 1,
+        "nonRegression": true
+      },
+      {
+        "name": "failedToolCalls",
+        "direction": "min",
+        "weight": 0.1,
+        "class": "reliability",
+        "scale": 10,
+        "nonRegression": true
+      },
+      {
+        "name": "toolCalls",
+        "direction": "min",
+        "weight": 0.05,
+        "class": "efficiency",
+        "scale": 100
+      },
+      {
+        "name": "apiCostUsd",
+        "direction": "min",
+        "weight": 0.18,
+        "class": "cost",
+        "scale": 2
+      },
+      {
+        "name": "latencyMs",
+        "direction": "min",
+        "weight": 0.02,
+        "class": "efficiency",
+        "scale": 900000
+      }
+    ],
+    "gates": [
+      {
+        "name": "all tasks complete",
+        "metric": "taskSuccessRate",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "name": "all host-private verifiers pass",
+        "metric": "verifierPassRate",
+        "operator": "gte",
+        "value": 1
+      },
+      {
+        "name": "no Tool failures",
+        "metric": "failedToolCalls",
+        "operator": "lte",
+        "value": 0
+      },
+      {
+        "name": "temporary databases cleaned",
+        "metric": "allDatabasesCleaned",
+        "operator": "eq",
+        "value": 1
+      },
+      {
+        "name": "exact Runtime cost receipt available",
+        "metric": "costReceiptAvailable",
+        "operator": "eq",
+        "value": 1
+      }
+    ],
+    "selectionPolicy": "lexicographic_pareto"
+  },
+  "frozenControls": [
+    {
+      "name": "dataset_and_verifier",
+      "value": "enterpriseops-csm-suite-v2 validation; 3 tasks / 31 host-private verifiers; manifest d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec"
+    },
+    {
+      "name": "runtime_binary",
+      "value": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad; manifest 1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22"
+    },
+    {
+      "name": "tool_catalog",
+      "value": "89 live Tools; selected schemas preloaded; catalog 349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077"
+    },
+    {
+      "name": "runner",
+      "value": "51de12fde0becf219686219baf9011781b07d60943794998b43048898a9f6756"
+    },
+    {
+      "name": "provider_thinking_transport",
+      "value": "openai-codex / max / loopback-http-v1 / 900 seconds"
+    },
+    {
+      "name": "causal_stages",
+      "value": "model-only freezes prompt a16bb73f; prompt stage freezes Luna identity f0dfcbe6 and changes only general Prompt d35237c1"
+    }
+  ],
+  "baseline": {
+    "nodeId": "enterpriseops-sol-r8",
+    "parentNodeId": null,
+    "changedFactor": "baseline",
+    "configRevision": "state-contract-preloaded-v3:sol-r8:a16bb73f",
+    "frozenControlHash": "e0e3cc233f10b89a994fc1c15f60416765e7187194df082a044b2d85cd9b56c2",
+    "metrics": {
+      "taskSuccessRate": 1.0,
+      "verifierPassRate": 1.0,
+      "failedToolCalls": 0.0,
+      "toolCalls": 51.0,
+      "apiCostUsd": 1.711214,
+      "latencyMs": 583475.2999999999,
+      "allDatabasesCleaned": 1.0,
+      "costReceiptAvailable": 1.0
+    },
+    "evidenceRefs": [
+      "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+      "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json",
+      "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json"
+    ],
+    "status": "eligible"
+  },
+  "candidates": [
+    {
+      "nodeId": "enterpriseops-luna-model-only-r5",
+      "parentNodeId": "enterpriseops-sol-r8",
+      "changedFactor": "model",
+      "configRevision": "state-contract-preloaded-v3:luna-r5:a16bb73f",
+      "frozenControlHash": "e0e3cc233f10b89a994fc1c15f60416765e7187194df082a044b2d85cd9b56c2",
+      "metrics": {
+        "taskSuccessRate": 0.6666666666666666,
+        "verifierPassRate": 0.967741935483871,
+        "failedToolCalls": 0.0,
+        "toolCalls": 59.0,
+        "apiCostUsd": 0.09453296,
+        "latencyMs": 678614.268,
+        "allDatabasesCleaned": 1.0,
+        "costReceiptAvailable": 1.0
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+        "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-preloaded-model-only-20260904.r5.v1.json",
+        "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json"
+      ],
+      "status": "rejected",
+      "reason": "Luna model-only 使用相同 Prompt、任务、Tool、runner 与 Runtime binary，但仅完成 2/3 task、30/31 verifier；质量硬门失败，所以即使 exact Runtime 成本较低也 Reject。"
+    },
+    {
+      "nodeId": "enterpriseops-luna-prompt-r7",
+      "parentNodeId": "enterpriseops-luna-model-only-r5",
+      "changedFactor": "prompt",
+      "configRevision": "luna-explicit-enum-preloaded-v6:r7:d35237c1",
+      "frozenControlHash": "e0e3cc233f10b89a994fc1c15f60416765e7187194df082a044b2d85cd9b56c2",
+      "metrics": {
+        "taskSuccessRate": 1.0,
+        "verifierPassRate": 1.0,
+        "failedToolCalls": 0.0,
+        "toolCalls": 55.0,
+        "apiCostUsd": 0.07291692,
+        "latencyMs": 574319.984,
+        "allDatabasesCleaned": 1.0,
+        "costReceiptAvailable": 1.0
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json",
+        "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json",
+        "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json"
+      ],
+      "status": "eligible",
+      "reason": "冻结 Luna/max 与其余控制，只增加不含 case ID、答案或 Gold 的通用角色/地区/tenure、已选 Tool 权威和 exact enum 规则；恢复 3/3、31/31 且 exact Runtime 成本最低，因此 Keep。"
+    }
+  ],
+  "selectedPath": [
+    {
+      "nodeId": "enterpriseops-sol-r8",
+      "decision": "baseline",
+      "reason": "当前 Runtime 下重跑的 Sol/max 质量基线：3/3 task、31/31 verifier。"
+    },
+    {
+      "nodeId": "enterpriseops-luna-model-only-r5",
+      "decision": "reject",
+      "reason": "仅换模型后质量回退到 2/3、30/31；保留为 Prompt 适配必要性的因果证据。"
+    },
+    {
+      "nodeId": "enterpriseops-luna-prompt-r7",
+      "decision": "keep",
+      "reason": "只做通用 Prompt 适配后恢复全部质量门禁，并把 exact Runtime 成本从 Sol 的 $1.711214 降至 $0.07291692。"
+    }
+  ],
+  "hardGates": [
+    {
+      "name": "all tasks complete",
+      "status": "pass",
+      "reason": "selected taskSuccessRate=1。"
+    },
+    {
+      "name": "all host-private verifiers pass",
+      "status": "pass",
+      "reason": "selected verifierPassRate=1。"
+    },
+    {
+      "name": "no Tool failures",
+      "status": "pass",
+      "reason": "selected failedToolCalls=0。"
+    },
+    {
+      "name": "temporary databases cleaned",
+      "status": "pass",
+      "reason": "selected allDatabasesCleaned=1。"
+    },
+    {
+      "name": "exact Runtime cost receipt available",
+      "status": "pass",
+      "reason": "selected costReceiptAvailable=1，authority=runtime_cost_reconciled。"
+    },
+    {
+      "name": "quality non-regression",
+      "status": "pass",
+      "reason": "selected 3/3 task、31/31 verifier、0 Tool failure，与 Sol 基线相同。"
+    }
+  ],
+  "claim": {
+    "status": "best_known",
+    "summary": "声明的三节点搜索中，Luna model-only 因质量回退被淘汰；Luna+通用 Prompt 恢复 3/3、31/31，并以 $0.07291692 成为当前选中路径。",
+    "limitations": [
+      "每阶段仅单轮 Validation（source-local），没有重复运行置信区间，也不是 Held-out、安装态或前台验收。",
+      "API 成本来自内容寻址费率与逐请求 exact Runtime reconciliation；Provider 账单未提供，不能称真实扣款节省。",
+      "Sol 与 Luna 的 Runtime binary、Tool、dataset 和 runner 相同；runtime identitySha 因模型字段变化而不同，两个 Luna 阶段的 identitySha 相同。",
+      "Prompt 适配只包含通用角色/地区/tenure、已选 Tool 目录权威和 exact enum 优先规则，不含 case ID、预期答案或 Host-private Gold。"
+    ]
+  },
+  "generatedAtMs": 1788451200000
+}

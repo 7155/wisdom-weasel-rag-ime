@@ -38,9 +38,11 @@
     "baselineRef": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
     "baselineFileSha256": "cbda71f1ebf6abf709620d668ab660f17886cba710d88f032b95817605076654",
     "baselineReportSha256": "a80782690b1dcf6e0906f59f7fcfdff441011de175109cc67994962676aaff11",
+    "baselineCostReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json",
     "candidateRef": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
     "candidateFileSha256": "35f5a263b41a6b64139db5e575f5eea2e5d7136491ddc84faef28479dc899d28",
-    "candidateReportSha256": "a6a4f9cb967f8b5d95d5f449c7f8e8d55c2bb1d807eb650285efaef58502c51e"
+    "candidateReportSha256": "a6a4f9cb967f8b5d95d5f449c7f8e8d55c2bb1d807eb650285efaef58502c51e",
+    "candidateCostReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json"
   },
   "comparison": {
     "schemaVersion": "paw.enterpriseops-cost-optimization-comparison.v1",
@@ -83,28 +85,37 @@
         "nonRegressed": true
       }
     },
-    "costAuthority": "same-provider-model-usage-categories",
+    "costAuthority": "runtime_cost_reconciled",
+    "costComparison": {
+      "baselineCostReceipt": "agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json",
+      "baselineTotalUsd": "2.258372",
+      "candidateCostReceipt": "agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json",
+      "candidateTotalUsd": "1.565709",
+      "decreasePercent": "30.670899214124159",
+      "pricingId": "pricing:sha256:80067d14fbe8bca408a20e095bb0b4323b390bb14031157fb83bc7eb6490a04e",
+      "providerBillAvailable": false
+    },
     "providerBillAvailable": false,
     "costGatePassed": true,
     "usage": {
       "uncachedInputTokens": {
-        "before": 120353,
-        "after": 93131,
-        "delta": -27222,
+        "before": 118600,
+        "after": 91845,
+        "delta": -26755,
         "nonIncreasing": true,
         "strictlyDecreased": true
       },
       "cachedInputTokens": {
-        "before": 2309632,
-        "after": 1242240,
-        "delta": -1067392,
+        "before": 2221824,
+        "after": 1179648,
+        "delta": -1042176,
         "nonIncreasing": true,
         "strictlyDecreased": true
       },
       "outputTokens": {
-        "before": 23205,
-        "after": 21504,
-        "delta": -1701,
+        "before": 18482,
+        "after": 17222,
+        "delta": -1260,
         "nonIncreasing": true,
         "strictlyDecreased": true
       }
@@ -182,8 +193,23 @@
   },
   "claimBoundary": [
     "Validation-only source-local candidate; installed and foreground acceptance remain separate",
-    "cost verdict is same-provider/model/thinking usage-category dominance, not a Provider bill",
+    "cost verdict is reconciled against retained per-request Runtime usage.cost receipts and one hashed pricing source, not a Provider bill",
     "elapsed time is informational and is not a Keep gate",
+    "30.7% is the qualified Runtime-reconciled reduction for this Sol-only Tool-schema experiment; 80% is forbidden",
     "the older state-contract-v1 baseline is not the named comparator because its uncached input was lower than this candidate; no cross-run cherry-pick claim is made"
+  ],
+  "nextExperiments": [
+    {
+      "stage": "luna_model_only_diagnostic",
+      "status": "not_run",
+      "change": "Freeze the current prompt, skills, tools, workflow, dataset, scorer and pricing procedure; change only gpt-5.6-sol/max to gpt-5.6-luna/max.",
+      "acceptance": "First require a complete scorable runtime terminal state and non-regressed quality; do not infer a result before execution."
+    },
+    {
+      "stage": "luna_prompt_only_repair",
+      "status": "not_run",
+      "change": "Only after the model-only diagnostic is scorable, freeze Luna/max and every other control and change only the prompt.",
+      "acceptance": "Compare against the Luna model-only run with the same quality and cost receipt gates; do not manufacture an unrun result."
+    }
   ]
 }

@@ -572,9 +572,16 @@ class ModelRuntimePlanTests(unittest.TestCase):
                     ROOT / "examples" / "vertical_agents",
                     runtime_root / "examples" / "vertical_agents",
                 )
+                eval_metrics = runtime_root / "eval" / "interview-metrics"
+                eval_metrics.mkdir(parents=True)
+                shutil.copy2(
+                    ROOT / "eval" / "interview-metrics" / "agent-experiments.v1.json",
+                    eval_metrics / "agent-experiments.v1.json",
+                )
                 for name in (
                     "restart_rag_ime_runtime.sh",
                     "install_sidecar_launch_agent.sh",
+                    "import_agent_lab_experiments.py",
                     "sidecar_launch.py",
                     "portable_restore_supervisor.py",
                 ):

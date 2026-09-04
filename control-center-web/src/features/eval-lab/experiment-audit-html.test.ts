@@ -139,6 +139,23 @@ describe('Eval Lab per-experiment engineering audit export', () => {
     expect(document.body.textContent).not.toContain('business tool calls');
   });
 
+  it('does not turn ledger-only API estimates into a verified savings claim', () => {
+    const experiment = experimentFixture();
+    experiment.evaluationKind = 'model_cost';
+    experiment.baseline.metrics = { taskSuccessRate: 1, apiCostUsd: 3.243385 };
+    experiment.candidate.metrics = { taskSuccessRate: 2 / 3, apiCostUsd: 0.725239 };
+    experiment.comparison.metricDeltas = [
+      { metric: 'apiCostUsd', before: 3.243385, after: 0.725239, delta: -2.518146 },
+    ];
+
+    const html = buildEvalLabExperimentAuditHtml(experiment);
+    const text = new DOMParser().parseFromString(html, 'text/html').body.textContent ?? '';
+
+    expect(text).toContain('账面估算 API 成本（未核验）');
+    expect(text).toContain('账面减少 $2.5181（不构成成本下降结论）');
+    expect(text).not.toContain('降低 $2.5181');
+  });
+
   it('builds a typed Blob and a disposable download URL', () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:eval-lab-audit');
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);

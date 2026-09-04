@@ -425,6 +425,199 @@ describe('HttpControlTransport', () => {
     expect(fetchMock.mock.calls[1]?.[0].toString()).toContain('lastEventId=session-1%3A1');
   });
 
+  it('backs off early 200 EOF responses until a complete SSE frame proves stability', async () => {
+    const responses = ['', '', ': heartbeat\n\n'];
+    const reconnects: { attempt: number; delayMs: number }[] = [];
+    const fetchMock = vi.fn(async () => new Response(responses.shift() ?? '', {
+      headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+    })) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+      reconnectBaseDelayMs: 0,
+      reconnectMaxDelayMs: 0,
+      random: () => 0.5,
+    });
+    let cancel = () => {};
+    const observed = new Promise<void>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next: vi.fn(),
+          reconnect(notice) {
+            reconnects.push(notice);
+            if (reconnects.length === 3) {
+              cancel();
+              resolve();
+            }
+          },
+        },
+      );
+    });
+
+    await observed;
+    expect(reconnects.map(({ attempt }) => attempt)).toEqual([1, 2, 1]);
+  });
+
+  it('does not report an HTTP SSE connection stable until a complete heartbeat arrives', async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.fn(async () => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+    const opened = vi.fn();
+    const stable = vi.fn();
+    const cancel = transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-1' },
+        lastEventId: 'session-1:0',
+      },
+      {
+        next: vi.fn(),
+        open: opened,
+        stable,
+      },
+    );
+
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
+    expect(stable).not.toHaveBeenCalled();
+    streamController?.enqueue(new TextEncoder().encode(': heartbeat\n'));
+    await Promise.resolve();
+    expect(stable).not.toHaveBeenCalled();
+    streamController?.enqueue(new TextEncoder().encode('\n'));
+    await vi.waitFor(() => expect(stable).toHaveBeenCalledTimes(1));
+    expect(stable).toHaveBeenLastCalledWith('session-1:0');
+    cancel();
+  });
+
+  it('parses and caps a 503 Retry-After hint for the owning recovery loop', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ error: 'event stream capacity exhausted' }),
+      {
+        status: 503,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '999999',
+        },
+      },
+    )) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+      reconnectBaseDelayMs: 0,
+      reconnectMaxDelayMs: 0,
+    });
+    let failure: Error | undefined;
+    let cancel = () => {};
+    const observed = new Promise<void>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next: vi.fn(),
+          error(error) {
+            failure = error;
+          },
+          reconnect() {
+            cancel();
+            resolve();
+          },
+        },
+      );
+    });
+
+    await observed;
+    expect(failure).toMatchObject({
+      status: 503,
+      retryAfterMs: 60_000,
+    });
+  });
+
+  it('rejects a 200 response that is not an SSE stream', async () => {
+    const fetchMock = vi.fn(async () => new Response('<html>not an event stream</html>', {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    })) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+      reconnectBaseDelayMs: 0,
+      reconnectMaxDelayMs: 0,
+    });
+    let failure: Error | undefined;
+    let cancel = () => {};
+    const stopped = new Promise<void>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next: vi.fn(),
+          error(error) {
+            failure = error;
+          },
+          reconnect() {
+            cancel();
+            resolve();
+          },
+        },
+      );
+    });
+
+    await stopped;
+    expect(failure?.message).toMatch(/text\/event-stream/);
+  });
+
+  it('reports validation-runtime loading failures without opening the network stream', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('fetch must not run');
+    }) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+      validationRuntimeLoader: async () => {
+        throw new Error('validator chunk unavailable');
+      },
+    });
+    let cancel = () => {};
+    const failure = new Promise<Error>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next: vi.fn(),
+          error(error) {
+            cancel();
+            resolve(error);
+          },
+        },
+      );
+    });
+
+    await expect(failure).resolves.toMatchObject({ message: 'validator chunk unavailable' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('does not replace the durable reconnect cursor with a transient snapshot-required id', async () => {
     const headers: string[] = [];
     let resolveSecondRequest = () => {};
@@ -579,6 +772,80 @@ describe('HttpControlTransport', () => {
     expect(attempted).toEqual(['session-1:1', 'session-1:1']);
     expect(headers.slice(0, 2)).toEqual(['session-1:0', 'session-1:0']);
     expect(cancelledBodies).toHaveLength(1);
+  });
+
+  it('cancels the active SSE response body when a subscription is released', async () => {
+    let markOpened = () => {};
+    const streamOpened = new Promise<void>((resolve) => {
+      markOpened = resolve;
+    });
+    const cancelledBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (): Promise<Response> => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(': connected\n\n'));
+        },
+        cancel(reason) {
+          cancelledBodies.push(reason);
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+
+    const cancel = transport.subscribe(
+      {
+        pathId: 'agent.session.events',
+        params: { sessionId: 'session-1' },
+        lastEventId: 'session-1:0',
+      },
+      { open: markOpened, next: vi.fn() },
+    );
+    await streamOpened;
+    cancel();
+    await vi.waitFor(() => expect(cancelledBodies).toHaveLength(1));
+  });
+
+  it('cancels an SSE body when the observer releases it during open', async () => {
+    const cancelledBodies: unknown[] = [];
+    const fetchMock = vi.fn(async (): Promise<Response> => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(': connected\n\n'));
+        },
+        cancel(reason) {
+          cancelledBodies.push(reason);
+        },
+      }),
+      { headers: { 'Content-Type': 'text/event-stream' } },
+    )) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+    let cancel = () => {};
+    const opened = new Promise<void>((resolve) => {
+      cancel = transport.subscribe(
+        {
+          pathId: 'agent.session.events',
+          params: { sessionId: 'session-1' },
+          lastEventId: 'session-1:0',
+        },
+        {
+          next: vi.fn(),
+          open() {
+            cancel();
+            resolve();
+          },
+        },
+      );
+    });
+
+    await opened;
+    await vi.waitFor(() => expect(cancelledBodies).toHaveLength(1));
   });
 
   it('aborts an in-flight request and cancels reconnect work', async () => {

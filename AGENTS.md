@@ -25,57 +25,37 @@ clone Tutti or CodingTo.
 
 ## Skill Routing
 
-Skills sit below Pi and guide how an Agent works. They do not replace Pi's
-Agent loop, Tool loop, context, compaction, Steer, Stop, or cancellation, and
-they never become Kernel completion gates. Load the smallest applicable Skill;
-simple coherent work needs no workflow Skill.
+Skills guide work below Pi; they never replace its Agent/Tool loop, context,
+compaction, Steer, Stop, cancellation, or completion authority. Load only the
+smallest matching Skill; coherent work needs no workflow Skill.
 
-- `alignment-and-decision`: a material user-owned choice remains after facts
-  have been inspected, or the user explicitly asks for Grill Mode.
-- `implementation-planning`: a confirmed change needs a dependency-aware plan
-  across multiple steps, owners, shared contracts, integration points, or
-  rollback seams. It plans only; it does not create or dispatch Agents.
-- `systematic-debugging`: the cause of a failure or regression is not yet
-  supported by repeatable evidence.
-- `test-driven-implementation`: the desired behavior, owning seam, and a
-  meaningful executable check are already known.
-- `orchestrate-session`: one or more private child Sessions provide concrete
-  leverage while the current Session keeps visible ownership, integration, and
-  the final result. A single useful child is valid; parallel batches require
-  independent work and a material concurrency benefit.
-- `facilitate-room`: only the designated Room Facilitator, and only when the
-  current request truly needs visible independently accountable
-  responsibilities, dependency stages, or useful concurrency. One coherent
-  action stays in the Facilitator without loading a Room workflow.
-- `independent-review`: the user asks for a distinct fixed-scope review or the
-  change has enough risk to justify one. It is optional, read-only, and not a
-  default quality gate.
-- `organize-work-documents`: the background organizer or an explicit cleanup
-  request links and condenses accepted document updates. It does not perform
-  active work or infer Runtime state.
-- `bootstrap-project-context`: a project-bound Session has no root `AGENTS.md`,
-  or the user explicitly requests project context initialization. It creates a
-  stable docs entrypoint and never records live Session or WorkItem state.
-- `pawos-app-builder`: the user asks PAWOS to self-build, sandbox, install, or
-  evolve a source-isolated vertical Extension App and its App-specific Skill.
+- `alignment-and-decision`: a material user-owned choice remains, or Grill Mode
+  was requested.
+- `implementation-planning`: plan a confirmed multi-seam change; never dispatch.
+- `systematic-debugging`: a failure cause lacks repeatable evidence.
+- `test-driven-implementation`: behavior, owner, and executable check are known.
+- `orchestrate-session`: bounded private children add concrete leverage;
+  parallelize only independent work with real concurrency benefit.
+- `facilitate-room`: only the designated Facilitator for visibly accountable or
+  concurrent Room work; keep one coherent action in the Facilitator.
+- `independent-review`: optional read-only review of a fixed result.
+- `organize-work-documents`: link and condense accepted docs; never infer live
+  Runtime state.
+- `bootstrap-project-context`: create a missing root project guide.
+- `pawos-app-builder`: self-build a source-isolated vertical Extension App.
 
-Read a Skill body only after its trigger matches. A Partner or Tool Agent uses
-the same task Skills as a standalone Session; Room does not define a second
-workflow suite. Runtime context supplies current state, and the live Tool schema
-supplies legal operations; a Skill must not duplicate either as a static manual.
+Read a Skill only after its trigger matches. Partner and Tool Agents use normal
+task Skills; Runtime state and live Tool schemas must not be copied into them.
 
 ## Session, Tool Agent, And Room Choice
 
 - Use one ordinary Session by default.
-- Use a private Tool Agent when the parent needs a bounded result and can retain
-  responsibility for integration. The parent chooses model/model card,
-  thinking level, persona, access, tools, SkillRefs, peer-call access, and
-  child-spawn permission within its granted capabilities.
+- Use a private Tool Agent for a bounded result while the parent retains
+  integration; pass only the needed model, access, tools, Skills, and spawning.
 - Use a Room Partner only when work needs a visible, independently accountable
   responsibility in the Room timeline.
-- Use several writers only when concurrency has a concrete benefit. Shared
-  write access is allowed when the owner accepts conflict risk; an isolated
-  worktree is an explicit option, not mandatory ceremony.
+- Use several writers only for concrete concurrency. Shared writes accept
+  conflict risk; isolated worktrees are optional.
 - Child and Partner prose is evidence, not automatic acceptance. The parent or
   Facilitator verifies and integrates it.
 
@@ -126,6 +106,17 @@ Do not dump private reasoning or raw Tool history into parent context.
   accepted, worktree, approval, or Tool state.
 
 ## Product Boundaries
+
+### Experience-First Priority
+
+- Prioritize visible task completion, frontend/backend consistency, and recovery.
+  Safety, permissions, hashes, and audit are supporting constraints; do not turn
+  them into redundant approvals, reviewers, confirmations, or foreground gates.
+- When optional provenance is incomplete, prefer truthful, recoverable best
+  effort. A missing optional hash must not block normal use. Never claim success
+  before the result is known or replay an uncertain irreversible effect.
+- Exact active Room dispatch is the execution approval boundary. Add no second
+  human/model per-Tool approval; record binding and outcome in the background.
 
 - Product center: explicit Agent Sessions, lightweight multi-Agent Rooms,
   Tools, governed memory/knowledge, and the Control Center.

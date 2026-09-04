@@ -1,0 +1,217 @@
+{
+  "claimBoundary": [
+    "private-shadow validation only",
+    "real Codex model requests and independent verifier retained in private artifacts",
+    "installed Gateway and foreground acceptance are not evaluated"
+  ],
+  "contextProfile": "full-json-v1",
+  "evaluationScope": "validation-only",
+  "evidence": {
+    "appliedAtomSetSha256": "5781a0b04b7ae37a73bdf98b03d743d50f0f9cede8a223d074c046ba36d697ac",
+    "appliedStateSha256": "88351a50e718db3e4e29a33a2fe06fa5edf9e0b7bc11a80cc589c9e4765e326c",
+    "replayAtomSetSha256": "5781a0b04b7ae37a73bdf98b03d743d50f0f9cede8a223d074c046ba36d697ac",
+    "replayBaselineSha256": "60b3ad00b08f30b5512a06460177c1e0fc6beb4ce30568a58a507fbcd2903408",
+    "syntheticFixtureSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20"
+  },
+  "hardGates": {
+    "heldOutEvaluated": false,
+    "privateShadow": true,
+    "productionDatabaseOpened": false,
+    "productionMutationPerformed": false,
+    "replayVerified": true,
+    "rollbackVerified": true,
+    "sourceShadowUnchanged": true
+  },
+  "heldOutEvaluated": false,
+  "localOnly": true,
+  "metrics": {
+    "curation": {
+      "bookProjectionInSync": true,
+      "currentAtomCount": 7,
+      "governedCurrentAtomCount": 7,
+      "legalLineageCurrentAtomCount": 7,
+      "modelDecisionCount": 5,
+      "ok": true,
+      "sourceCount": 5
+    },
+    "fixture": {
+      "allCandidateEvidence": true,
+      "allStored": true,
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "nonMemoryCaseCount": 1
+    },
+    "recovery": {
+      "replayAtomSetStable": true,
+      "replayPassed": true,
+      "replayRagPassed": true,
+      "replayRestoredAppliedState": true,
+      "replayReusedModelRequests": true,
+      "rollbackPassed": true,
+      "rollbackRagCleared": true,
+      "rollbackRestoredBaseline": true
+    },
+    "retrieval": {
+      "allCasesPassed": true,
+      "bestRanks": {
+        "durable-explanation-preference": 4,
+        "durable-recoverability-principle": 6,
+        "durable-verification-habit": 4,
+        "project-room-layout": 1,
+        "temporary-test-task": 0
+      },
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "passed": true,
+      "projectionBacklog": 0,
+      "projectionFresh": true,
+      "vectorCoverage": 1.0
+    }
+  },
+  "model": "gpt-5.6-sol",
+  "modelOnlyComparison": null,
+  "modelRequests": [
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 54.079,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6343,
+      "inputSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "isolated": false,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "b1d725eafa4128e55226fb98b602a1130f0d4901d95a6a243d4b78266f075ea6",
+      "phase": "atom-first-curation",
+      "projectedPacketChars": 1944,
+      "promptSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "resumed": false,
+      "schemaSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+      "semanticPacketSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+      "sourcePacketChars": 1944,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "54b19a9c08a918736ff7d0743586d2030465a23594edd3193189c6bc8f9052b3",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 20702,
+        "outputTokens": 2046,
+        "uncachedInputTokens": 20702
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 12.223,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 5334,
+      "inputSha256": "53705ff559a001712be12a8087caa0dbca65d2f87863f164158e54b18c7040b4",
+      "isolated": true,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "5a149792e6dc3ea73157f2a9ed72191e388e0fec4ccecbd14483d67c31b2cc90",
+      "phase": "atom-first-verifier",
+      "projectedPacketChars": 3847,
+      "promptSha256": "53705ff559a001712be12a8087caa0dbca65d2f87863f164158e54b18c7040b4",
+      "resumed": false,
+      "schemaSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+      "semanticPacketSha256": "1da483fc5ef019620b98cf0497c349320f9c41f0544d391e9065bbb288f15c22",
+      "sourcePacketChars": 3847,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "cafa2733f1db83474da03a7a999325dee5f1a3f605ed464bd41c17798d9ff1d7",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 19429,
+        "outputTokens": 236,
+        "uncachedInputTokens": 19429
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 54.079,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6343,
+      "inputSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "isolated": false,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "b1d725eafa4128e55226fb98b602a1130f0d4901d95a6a243d4b78266f075ea6",
+      "phase": "atom-first-curation",
+      "projectedPacketChars": 1944,
+      "promptSha256": "b7cce71dd8f1deab84a7a8565d404d926a7c13fffb425b2c61174555c7362d91",
+      "resumed": true,
+      "schemaSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+      "semanticPacketSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+      "sourcePacketChars": 1944,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "54b19a9c08a918736ff7d0743586d2030465a23594edd3193189c6bc8f9052b3",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 20702,
+        "outputTokens": 2046,
+        "uncachedInputTokens": 20702
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 12.223,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 5334,
+      "inputSha256": "53705ff559a001712be12a8087caa0dbca65d2f87863f164158e54b18c7040b4",
+      "isolated": true,
+      "model": "gpt-5.6-sol",
+      "outputSha256": "5a149792e6dc3ea73157f2a9ed72191e388e0fec4ccecbd14483d67c31b2cc90",
+      "phase": "atom-first-verifier",
+      "projectedPacketChars": 3847,
+      "promptSha256": "53705ff559a001712be12a8087caa0dbca65d2f87863f164158e54b18c7040b4",
+      "resumed": true,
+      "schemaSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+      "semanticPacketSha256": "1da483fc5ef019620b98cf0497c349320f9c41f0544d391e9065bbb288f15c22",
+      "sourcePacketChars": 3847,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "cafa2733f1db83474da03a7a999325dee5f1a3f605ed464bd41c17798d9ff1d7",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 19429,
+        "outputTokens": 236,
+        "uncachedInputTokens": 19429
+      }
+    }
+  ],
+  "optimizationComparison": null,
+  "promptContract": "concise-json-v1",
+  "provider": "openai-codex",
+  "runId": "memory-maintenance-sol-max-concise-contract-model-baseline-20260904-r4",
+  "schemaVersion": "paw.memory-maintenance-validation-receipt.v1",
+  "status": "passed",
+  "thinking": "max",
+  "timing": {
+    "evaluationElapsedMs": 67659,
+    "keepGate": false,
+    "modelElapsedMs": 66302
+  },
+  "transport": "codex_cli_ephemeral",
+  "usage": {
+    "available": true,
+    "cacheWriteInputTokens": 0,
+    "cachedInputTokens": 0,
+    "inputTokens": 40131,
+    "outputTokens": 2282,
+    "providerCallCount": 2,
+    "uncachedInputTokens": 40131
+  }
+}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import unittest
 from pathlib import Path
@@ -152,6 +153,31 @@ class AgentLabCostTests(unittest.TestCase):
         first = build_agent_lab_cost_receipt(_request())
         second = build_agent_lab_cost_receipt(_request())
         self.assertEqual(first, second)
+
+    def test_repository_retained_sol_receipts_are_strict_and_recomputable(self) -> None:
+        expected = {
+            "agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json": "2.258372",
+            "agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json": "1.565709",
+            "agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json": "0.265205",
+            "agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json": "0.24769",
+        }
+        runs = ROOT / "eval" / "interview-metrics" / "runs"
+
+        for filename, total_usd in expected.items():
+            with self.subTest(filename=filename):
+                receipt = json.loads((runs / filename).read_text(encoding="utf-8"))
+                validate_contract(receipt, "agent-lab-cost-receipt.v1.json")
+                request = {
+                    "schemaVersion": "rag-ime.agent-lab-cost-request.v1",
+                    "pricingIdentity": receipt["pricingIdentity"],
+                    "usage": receipt["usage"],
+                }
+                if receipt.get("runtimeCostReceipt") is not None:
+                    request["runtimeCostReceipt"] = receipt["runtimeCostReceipt"]
+                rebuilt = build_agent_lab_cost_receipt(request)
+                self.assertEqual(rebuilt, receipt)
+                self.assertEqual(receipt["estimate"]["totalCostUsd"], total_usd)
+                self.assertEqual(receipt["billing"], {"status": "not_provided"})
 
     def test_decimal_serialization_does_not_round_a_valid_exact_cost(self) -> None:
         request = _request(

@@ -1,0 +1,388 @@
+{
+  "databaseIdentityVisibleToAgent": false,
+  "evaluationContract": {
+    "contractSha256": "eb0613eb46de69fe0c172e626651876ddd1c1c762c431bd77f193455a5fe3a2c",
+    "effectiveTimeoutSeconds": 900.0,
+    "mcpEndpoint": "/mcp",
+    "model": "gpt-5.6-luna",
+    "overlaySha256": "40ac966afefb0a71bb1f3e04560bdbf4953fac2788ce2ba90e05b86cfe26677b",
+    "promptContract": [
+      {
+        "promptSha256": "ee8946183b64d2810b258005b5e5f440feb9ccd1e3d75afc0a48f53a675d6f45",
+        "taskId": "task_20251205_153330_906_a8eea1c0_8c7a6205"
+      },
+      {
+        "promptSha256": "a924fbfe3c5e27f9ec492d3e17b0e176620499c95fb0629a13783b685df229e1",
+        "taskId": "task_20260101_122222_300_ad5a67e3_3757206c"
+      },
+      {
+        "promptSha256": "6cf078bc706898cff3a65df7a61f1c797c3e55d966c7ea1379c362980de4017a",
+        "taskId": "task_20260102_161510_799_ad5a67e3_7221f3c8"
+      }
+    ],
+    "promptContractSha256": "bf71534acb5d406442181c75643a7a5102c47b8b1a90948e7911e5795b6e2202",
+    "provider": "openai-codex",
+    "runnerSha256": "0ad5c4a43ad5eb0f5ee89e34afa79f6669880897477146070e444f3089cef682",
+    "runtimeIdentitySha256": "f0dfcbe60ac84b83271877e5cfed8f5145657cadfd3125f9458a3c60715371af",
+    "runtimeProvenanceSha256": "4f94af91ad10f53c2dd31cd45f21c55e648fe5440cbb8d9425bb17cc96ea25dd",
+    "schemaVersion": "paw.enterpriseops-csm-evaluation-contract.v1",
+    "split": "validation",
+    "suiteRevision": "enterpriseops-csm-suite-v2",
+    "taskManifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+    "thinking": "max",
+    "timeoutSeconds": 900.0,
+    "toolCatalogSha256": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077",
+    "toolDisclosureMode": "preloaded_selected_schemas",
+    "transport": "loopback-http-v1",
+    "workflowProfile": "luna-selected-catalog-preloaded-v5"
+  },
+  "excluded": [
+    {
+      "reason": "missing_seed",
+      "seedPathSha256": "f59b8cc56ac40053115fa4c2877c113a128a0fd88c374f8f48f1f1621d09b3c7",
+      "taskId": "task_20251209_132736_542_99ba2325_6705caf4"
+    }
+  ],
+  "lane": {
+    "allDatabasesCleaned": true,
+    "failedToolCalls": 0,
+    "latencyMs": 490683.888,
+    "taskCount": 3,
+    "taskSuccessCount": 2,
+    "taskSuccessRate": 0.6666666666666666,
+    "tasks": [
+      {
+        "databaseCleanupStatus": "deleted",
+        "failedToolCalls": 0,
+        "latencyMs": 100558.735,
+        "modelIdentitySha256": "e4dce5df863df5957bd532cc94d43681d6c5bcad6c582d994365317f1a0ac633",
+        "runtimeErrorFingerprint": "",
+        "runtimeErrorType": "",
+        "runtimeStage": "wait_terminal",
+        "sessionIdSha256": "938bf4db98596347223f00ca456b9564ca9643021745ca752749a27cd525b32a",
+        "successfulToolCalls": 12,
+        "taskId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+        "taskSucceeded": true,
+        "terminalEvent": "turn_completed",
+        "toolCalls": 12,
+        "turnIdSha256": "70388176821db39f653b9fff27c24c1e6e3c06f7b70c39c9e9aa88c9c001c72d",
+        "usage": {
+          "available": true,
+          "cacheRead": 85504,
+          "cacheWrite": 0,
+          "input": 40221,
+          "output": 3827,
+          "totalTokens": 129552
+        },
+        "verifier": {
+          "failedVerifierIndexes": [],
+          "overallSuccess": true,
+          "passRate": 1.0,
+          "passed": 11,
+          "total": 11
+        },
+        "verifierExecutionErrorType": "",
+        "verifierResults": [
+          {
+            "passed": true,
+            "verifierIndex": 1
+          },
+          {
+            "passed": true,
+            "verifierIndex": 2
+          },
+          {
+            "passed": true,
+            "verifierIndex": 3
+          },
+          {
+            "passed": true,
+            "verifierIndex": 4
+          },
+          {
+            "passed": true,
+            "verifierIndex": 5
+          },
+          {
+            "passed": true,
+            "verifierIndex": 6
+          },
+          {
+            "passed": true,
+            "verifierIndex": 7
+          },
+          {
+            "passed": true,
+            "verifierIndex": 8
+          },
+          {
+            "passed": true,
+            "verifierIndex": 9
+          },
+          {
+            "passed": true,
+            "verifierIndex": 10
+          },
+          {
+            "passed": true,
+            "verifierIndex": 11
+          }
+        ]
+      },
+      {
+        "databaseCleanupStatus": "deleted",
+        "failedToolCalls": 0,
+        "latencyMs": 106678.657,
+        "modelIdentitySha256": "94cc0b0f71d3a8d6c7984a5ea4d88754b974db22fc37597ca7b21c9f4463d3d2",
+        "runtimeErrorFingerprint": "",
+        "runtimeErrorType": "",
+        "runtimeStage": "wait_terminal",
+        "sessionIdSha256": "50c32d554bd7b2ad0f19173ff06d9188ae25a591f797f656f2a4872673ad1e5e",
+        "successfulToolCalls": 14,
+        "taskId": "task_20260101_122222_300_ad5a67e3_3757206c",
+        "taskSucceeded": true,
+        "terminalEvent": "turn_completed",
+        "toolCalls": 14,
+        "turnIdSha256": "59a28920d569d9ce30208fb6d539cf12919a0836e87fca91d539cf43fbd63496",
+        "usage": {
+          "available": true,
+          "cacheRead": 91136,
+          "cacheWrite": 0,
+          "input": 29986,
+          "output": 4510,
+          "totalTokens": 125632
+        },
+        "verifier": {
+          "failedVerifierIndexes": [],
+          "overallSuccess": true,
+          "passRate": 1.0,
+          "passed": 5,
+          "total": 5
+        },
+        "verifierExecutionErrorType": "",
+        "verifierResults": [
+          {
+            "passed": true,
+            "verifierIndex": 1
+          },
+          {
+            "passed": true,
+            "verifierIndex": 2
+          },
+          {
+            "passed": true,
+            "verifierIndex": 3
+          },
+          {
+            "passed": true,
+            "verifierIndex": 4
+          },
+          {
+            "passed": true,
+            "verifierIndex": 5
+          }
+        ]
+      },
+      {
+        "databaseCleanupStatus": "deleted",
+        "failedToolCalls": 0,
+        "latencyMs": 283446.496,
+        "modelIdentitySha256": "0528022f3587f91b5384b3ca32656cbfba8491e201c29ecb9c00b9bcfab9b89d",
+        "runtimeErrorFingerprint": "",
+        "runtimeErrorType": "",
+        "runtimeStage": "wait_terminal",
+        "sessionIdSha256": "cefffc72b2711b9e347ef63cc47cf4c379e581a8df6a09562642ac3e892c014b",
+        "successfulToolCalls": 29,
+        "taskId": "task_20260102_161510_799_ad5a67e3_7221f3c8",
+        "taskSucceeded": false,
+        "terminalEvent": "turn_completed",
+        "toolCalls": 29,
+        "turnIdSha256": "bbc3f76888d076178c07c07a1388d1c83a7d58c912dd6001559f269b151cf36f",
+        "usage": {
+          "available": true,
+          "cacheRead": 754176,
+          "cacheWrite": 0,
+          "input": 61280,
+          "output": 9615,
+          "totalTokens": 825071
+        },
+        "verifier": {
+          "failedVerifierIndexes": [
+            8
+          ],
+          "overallSuccess": false,
+          "passRate": 0.9333333333333333,
+          "passed": 14,
+          "total": 15
+        },
+        "verifierExecutionErrorType": "",
+        "verifierResults": [
+          {
+            "passed": true,
+            "verifierIndex": 1
+          },
+          {
+            "passed": true,
+            "verifierIndex": 2
+          },
+          {
+            "passed": true,
+            "verifierIndex": 3
+          },
+          {
+            "passed": true,
+            "verifierIndex": 4
+          },
+          {
+            "passed": true,
+            "verifierIndex": 5
+          },
+          {
+            "passed": true,
+            "verifierIndex": 6
+          },
+          {
+            "passed": true,
+            "verifierIndex": 7
+          },
+          {
+            "passed": false,
+            "verifierIndex": 8
+          },
+          {
+            "passed": true,
+            "verifierIndex": 9
+          },
+          {
+            "passed": true,
+            "verifierIndex": 10
+          },
+          {
+            "passed": true,
+            "verifierIndex": 11
+          },
+          {
+            "passed": true,
+            "verifierIndex": 12
+          },
+          {
+            "passed": true,
+            "verifierIndex": 13
+          },
+          {
+            "passed": true,
+            "verifierIndex": 14
+          },
+          {
+            "passed": true,
+            "verifierIndex": 15
+          }
+        ]
+      }
+    ],
+    "toolCalls": 55,
+    "verifierCount": 31,
+    "verifierPassCount": 30,
+    "verifierPassRate": 0.967741935483871,
+    "workflowProfile": "luna-selected-catalog-preloaded-v5"
+  },
+  "liveToolCount": 89,
+  "manifest": {
+    "domain": "csm",
+    "manifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+    "overlaySha256": "40ac966afefb0a71bb1f3e04560bdbf4953fac2788ce2ba90e05b86cfe26677b",
+    "rawVerifierCount": 31,
+    "schemaVersion": "paw.enterpriseops-csm-task-manifest.v1",
+    "split": "validation",
+    "suiteRevision": "enterpriseops-csm-suite-v2",
+    "taskCount": 3,
+    "taskIds": [
+      "task_20251205_153330_906_a8eea1c0_8c7a6205",
+      "task_20260101_122222_300_ad5a67e3_3757206c",
+      "task_20260102_161510_799_ad5a67e3_7221f3c8"
+    ],
+    "tasks": [
+      {
+        "businessAsOfDate": "2025-11-04",
+        "rawVerifierCount": 11,
+        "seedSha256": "71c8e714b920a0f67abd16f06c29818284b741608e0fa3f1a28c1f331aa9e6dc",
+        "selectedToolCount": 11,
+        "selectedToolsSha256": "f99fa653188b30f0f7e70739535867fc3f118ccf9a38a941fd60f63e7d874585",
+        "taskConfigSha256": "a6cdaa09c27d7d302efe464f1a4899ab74fa0b09be1592a02a2e51f06f823179",
+        "taskId": "task_20251205_153330_906_a8eea1c0_8c7a6205",
+        "userPromptSha256": "bd9feface09531fcb620e22c3d967692875a854303c06de26fa0f39e5ac70ef5"
+      },
+      {
+        "businessAsOfDate": "2025-11-04",
+        "rawVerifierCount": 5,
+        "seedSha256": "71c8e714b920a0f67abd16f06c29818284b741608e0fa3f1a28c1f331aa9e6dc",
+        "selectedToolCount": 10,
+        "selectedToolsSha256": "aa94b81d1f39352f99f33afe4c9d04216a75f37fe3efa12f1f660e563250df22",
+        "taskConfigSha256": "ea3619b9d64e2f90458555723bd0e7f8472f485bbaadc7f568902e53c78ab33b",
+        "taskId": "task_20260101_122222_300_ad5a67e3_3757206c",
+        "userPromptSha256": "ecc0d91b552131e1107f8d21a272f5dea30dfc32d06b92e974546460480ee4ef"
+      },
+      {
+        "businessAsOfDate": "2025-11-04",
+        "rawVerifierCount": 15,
+        "seedSha256": "71c8e714b920a0f67abd16f06c29818284b741608e0fa3f1a28c1f331aa9e6dc",
+        "selectedToolCount": 20,
+        "selectedToolsSha256": "6f8f425c33fbe8ff24095238d99d4eb2541ec34c3999d415a9fcf6511db00674",
+        "taskConfigSha256": "547e9164b7f69781619de678fc571453eeacd07cf3c13b68b62decfefffafb9b",
+        "taskId": "task_20260102_161510_799_ad5a67e3_7221f3c8",
+        "userPromptSha256": "01a292ff66cbcaa1da954f25e937dc1c22e8296cdc8426ebc52295ef7cdbc4f4"
+      }
+    ]
+  },
+  "reportSha256": "0496cdb1ffe3f0b0c13bc7b0813caf2bb7058538040ec788eaf9b37ce1d88b01",
+  "runtimeIdentity": {
+    "entrypointSha256": "2426598570097198846d556692e816a89d8a1c9a77c48187a0fe031f2f7a76d9",
+    "extensionSha256": "f0a06ecd627e76e602417989d36c47a75f56744bfafdc0ae8641ec23db899b04",
+    "identitySha256": "f0dfcbe60ac84b83271877e5cfed8f5145657cadfd3125f9458a3c60715371af",
+    "installActionPerformed": false,
+    "manifestSha256": "1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22",
+    "model": "gpt-5.6-luna",
+    "nodeSha256": "27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1",
+    "piVersion": "0.84.2",
+    "protocolVersion": "2",
+    "provider": "openai-codex",
+    "runtimeVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad",
+    "schemaVersion": "paw.cloudops-runtime-candidate.v1",
+    "sourceConfigFiles": [
+      "auth.json",
+      "models-store.json",
+      "models.json",
+      "settings.json"
+    ],
+    "toolProfileSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120"
+  },
+  "runtimeProvenance": {
+    "authCredentialMaterialPublished": false,
+    "candidateManifestSha256": "1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22",
+    "candidateMatchesRunnerProductCommit": false,
+    "candidateSource": {
+      "commit": "9c3f93c8b1c409e82e14d458510c146088c44561",
+      "handlersCommit": "9c3f93c8b1c409e82e14d458510c146088c44561",
+      "productCommit": "c0ef0f4c32efcb7f4041e912dede2dcb564c6b96",
+      "repository": "https://github.com/7155/pi.git",
+      "sourceContractSha256": "9de8f80b93040aec30db7882470065d49278ab7a84f683b5b4ef2a59692a0a3d"
+    },
+    "installActionPerformed": false,
+    "nonSecretConfigBindings": {
+      "models-store.json": "867c9fe491a9134fc9ac0041f478ec041d7638f41b4022939349c2654075dd56",
+      "models.json": "2a3e1929966e0682c3883b42c80b3506771c9b66397096fd142b2480d579565c",
+      "settings.json": "05fbbceb4612d70b498b0e59c909bd761bee04f61b6133f4368ef4dc1111bc96"
+    },
+    "provenanceSha256": "4f94af91ad10f53c2dd31cd45f21c55e648fe5440cbb8d9425bb17cc96ea25dd",
+    "runnerProductCommit": "0c1ad2dfca15f7d03fc8bb364e1aec70e4e50ff6",
+    "schemaVersion": "paw.enterpriseops-runtime-provenance.v1"
+  },
+  "schemaVersion": "paw.enterpriseops-csm-eval.v1",
+  "seedVisibleToAgent": false,
+  "selectedToolNamesVisibleToAgent": true,
+  "split": "validation",
+  "status": "completed",
+  "toolSelectionMode": "task_selected_oracle",
+  "verifierDuplicateNamesCollapsed": false,
+  "verifierGoldVisibleToAgent": false
+}

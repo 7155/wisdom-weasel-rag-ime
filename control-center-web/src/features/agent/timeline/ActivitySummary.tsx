@@ -407,12 +407,13 @@ const ActivityRow = memo(function ActivityRow({
   const payload = activity.payload;
   const approvalId = text(payload.approvalId);
   const hash = text(payload.payloadSha256);
+  const roomExecutionBridge = isAuthorizedRoomExecutionBridge(payload);
   const boundToTool = Boolean(approvalId && text(payload.toolCallId));
   const displayActivity: AgentActivityProjection = boundToTool && activity.kind.includes('approval')
     ? { ...activity, kind: 'tool_progress' }
     : activity;
   const presentation = activityPresentation(displayActivity);
-  const approvalPresentation = approvalId
+  const approvalPresentation = approvalId && !roomExecutionBridge
     ? activityPresentation({
         ...activity,
         kind: activity.status === 'waiting' ? 'approval_required' : 'approval_resolved',
@@ -427,7 +428,7 @@ const ActivityRow = memo(function ActivityRow({
   const visibleSummary = activity.kind === 'turn_failed'
     ? publicAgentErrorText(activity.summary, '模型服务请求失败，请重试或切换模型。')
     : publicActivitySummary(publicProgressSummary(activity.summary, activity), presentation.title);
-  const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
+  const canDecide = !roomExecutionBridge && activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
   const routePlan = useMemo(() => routeDecisionPlanView(payload), [payload]);
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const [rowOpen, setRowOpen] = useActivityDisclosure(
@@ -537,7 +538,7 @@ const ActivityRow = memo(function ActivityRow({
               ) : null}
             </section>
           ) : null}
-          {toolView?.recovery === 'approval' && onOpenApproval ? (
+          {toolView?.recovery === 'approval' && onOpenApproval && !roomExecutionBridge ? (
             <div className="agent-tool-recovery">
               <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={() => onOpenApproval(activity)}>去审批</Button>
             </div>
@@ -551,6 +552,14 @@ const ActivityRow = memo(function ActivityRow({
     </details>
   );
 });
+
+function isAuthorizedRoomExecutionBridge(payload: Record<string, unknown>): boolean {
+  const causal = objectValue(payload.causalMetadata);
+  return causal.roomBound === true
+    && Boolean(text(causal.roomId))
+    && Boolean(text(causal.rootId))
+    && Boolean(text(causal.dispatchId));
+}
 
 /* One rule for every live surface in the conversation: a still-working row
    shows a planet, a settled row keeps its ordinary glyph or dot. `thinking`

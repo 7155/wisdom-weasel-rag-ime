@@ -31,6 +31,7 @@ import {
   publicErrorText,
   stringValue,
 } from '@/features/overview/management-ui';
+import { isModelQuotaError } from '@/features/agent/public-error';
 import type { JsonValue } from '@/platform/transport';
 import { useMemoryCurationQueries } from './api';
 import { knowledgeMutationPathIds, useKnowledgeMutationBoundary } from './knowledge-workbench-api';
@@ -537,6 +538,8 @@ function vectorProjectionLabel(fingerprint: string, coverage: number): string {
 }
 
 function modelRunErrorLabel(value: string): string {
+  if (isModelQuotaError(value)) return '模型服务额度暂时用尽；本轮没有改动记忆，稍后可继续整理。';
+  if (/memory\s+curation\s+packet.*(?:input\s+limit|too\s+long|exceed)/i.test(value)) return '本轮输入上下文过大；冻结输入已保留，下一轮会从保留位置继续。';
   if (/prompt-acceptance proof/i.test(value)) return '上一次续跑缺少精确接收回执，模型没有被重复调用';
   if (/active turn/i.test(value)) return '上一次模型会话仍有活动轮次';
   if (/timeout/i.test(value)) return '上一次模型请求超时';
@@ -545,6 +548,8 @@ function modelRunErrorLabel(value: string): string {
 }
 
 function ownerRunErrorLabel(value: string): string {
+  if (isModelQuotaError(value)) return '模型服务额度暂时用尽，本轮未改动记忆；稍后可以继续整理。';
+  if (/memory\s+curation\s+packet.*(?:input\s+limit|too\s+long|exceed)/i.test(value)) return '本轮输入上下文过大，系统已保留进度，下一轮会从保留位置继续。';
   if (/prompt-acceptance proof/i.test(value)) return '上次续跑缺少精确接收回执，系统拒绝重复调用模型。';
   if (/active turn/i.test(value)) return '等待已有活动轮次结束后再续跑。';
   if (/fetch failed|request failed/i.test(value)) return '模型请求未完成，系统会稍后重试。';

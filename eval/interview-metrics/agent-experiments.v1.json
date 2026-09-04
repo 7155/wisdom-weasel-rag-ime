@@ -1,6 +1,6 @@
 {
   "schemaVersion": "paw.interview-agent-experiment-ledger.v1",
-  "generatedAt": "2026-09-04",
+  "generatedAt": "2026-09-05",
   "narrativePolicy": {
     "headline": "Use the strongest evidence-backed improvement as the first resume sentence; keep denominators and evaluation scope attached to every number.",
     "deepDive": "Show the original task, baseline output, Eval and Trace findings, authorized change, candidate output, metric delta and Keep or Reject decision when the interviewer drills down.",
@@ -2542,7 +2542,7 @@
       "status": "rejected",
       "claimStatus": "supporting",
       "projectionState": "history",
-      "supersededBy": "enterpriseops-csm.preloaded-tool-cost.v1",
+      "supersededBy": "enterpriseops-csm.luna-model-only-r5.v1",
       "effectStatus": "regressed",
       "candidateType": "single_factor",
       "businessProblem": "高质量 Agent 评测同时要关注完成度和 API 成本；低价模型即使更快、更省，也不能越过任务与 Verifier 质量门禁。",
@@ -2879,8 +2879,9 @@
       "evaluationKind": "workflow",
       "status": "kept",
       "claimStatus": "headline",
-      "projectionState": "current",
-      "effectStatus": "neutral",
+      "projectionState": "history",
+      "supersededBy": "enterpriseops-csm.luna-prompt-adaptation-r7.v1",
+      "effectStatus": "improved",
       "candidateType": "single_factor",
       "businessProblem": "已经通过全部客户支持任务与 Host 验收的 Agent 仍会在每个任务里重复搜索并加载已选 Tool schema；这些元数据往返不会改变业务结果，却会消耗 Provider 输入、缓存输入和输出用量。",
       "whyAgent": "每个 case 都包含多步实体发现、跨对象写入、回读与终态核验；必须让同一个 Agent 在真实 Tool Gateway 上完成任务后，才能证明去掉 schema 加载往返没有破坏执行能力。",
@@ -2910,15 +2911,15 @@
         },
         {
           "name": "cost_authority",
-          "value": "OAuth receipt 的未缓存输入、缓存输入、输出三分类",
-          "reason": "OAuth 没有账单单价，因此只在三类都不增加且至少一类严格下降时证明成本下降；耗时不参与 Keep。"
+          "value": "完整三类 usage + openai-api-gpt-5.6-sol-2026-09-01 冻结费率的确定性 API 定价估算",
+          "reason": "原始 usage 文件哈希、费率来源/hash 和两侧 cost receipt 均绑定；Provider 账单仍未提供，耗时不参与 Keep。"
         }
       ],
       "star": {
         "situation": "compact-v2 已在冻结 Validation 上完成 3/3 任务、31/31 verifier 与 0 Tool failure，但 Trace 仍显示重复 Tool schema 加载。",
         "task": "在不改变任务、Prompt、模型、Tool 能力或 Host-private Gold 的前提下，减少真实 Provider 用量，并保持最终业务状态与安全门禁。",
         "action": "给 Runner 增加 preloaded selected-schema profile，使已选 Tool schema 在 Session 启动时一次性可用；随后用相同 3 个 case 完整重跑。",
-        "result": "candidate 仍完成 3/3 任务、31/31 verifier、0 Tool failure、3/3 数据库清理；未缓存输入 120353→93131、缓存输入 2309632→1242240、输出 23205→21504，三类都严格下降。"
+        "result": "candidate 仍完成 3/3 任务、31/31 verifier、0 Tool failure、3/3 数据库清理；同一冻结费率下的确定性 API 成本估算从 $2.452731 降至 $1.731895（下降 29.4%），Provider 账单未提供。"
       },
       "dataset": {
         "id": "enterpriseops-csm-suite-v2-post-heldout-validation",
@@ -2944,7 +2945,7 @@
         ]
       },
       "optimizationContract": {
-        "objective": "保持最终任务与全部质量、安全门禁，同时降低同路由真实 Provider 用量。",
+        "objective": "保持最终任务与全部质量、安全门禁，同时降低同路由三类 Provider 用量及同一冻结费率下的确定性 API 成本估算。",
         "candidateSearchSpace": [
           {
             "axis": "tool_disclosure",
@@ -2963,8 +2964,8 @@
           "900-second timeout and Host verifier",
           "no new Held-out consumption"
         ],
-        "selectionRule": "Candidate 必须完成 3/3、31/31、0 Tool failure、3/3 cleanup；相对 immediate baseline 质量不退化，三类 usage 全不增且至少一类严格下降才 Keep。",
-        "stopRule": "首个满足全部质量硬门和三类 usage dominance 的单变量候选即冻结；不得改分母或用更老 run 拼接更好数字。",
+        "selectionRule": "Candidate 必须完成 3/3、31/31、0 Tool failure、3/3 cleanup；两侧 usage 与 pricing provenance 完整且一致、确定性 API 成本估算严格下降才 Keep。",
+        "stopRule": "首个满足全部质量硬门并通过严格 cost receipt 交叉绑定的单变量候选即冻结；不得改分母或用更老 run 拼接更好数字。",
         "heldOutRule": "旧的一次性 Held-out 已消费且曾拒绝旧 workflow；本成本候选只报告 Validation，不重跑或重解释旧 Held-out。"
       },
       "bestKnown": {
@@ -3007,9 +3008,10 @@
             "uncached input 120353→93131",
             "cached input 2309632→1242240",
             "output 23205→21504",
+            "API pricing estimate $2.452731→$1.731895（下降 29.4%）",
             "latency 624430.913ms→564545.941ms（信息项）"
           ],
-          "reason": "同一 openai-codex、Sol/max 的三类 Provider usage 全部严格下降；没有把 API 估价冒充 OAuth 账单，耗时不参与 Keep。"
+          "reason": "同一 openai-codex、Sol/max、pricing ID/date/rates 下由完整三类 usage 确定性重算；这是 API 定价估算，不是 OAuth Provider 账单，耗时不参与 Keep。"
         },
         {
           "family": "safety_recovery",
@@ -3046,7 +3048,17 @@
         {
           "kind": "evaluator",
           "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json",
-          "change": "绑定两条 raw run、身份控制、逐 Case 差异和三类 usage dominance；耗时仅作信息。"
+          "change": "绑定两条 raw run、严格 cost receipt、身份/质量控制和确定性 API 定价估算；耗时仅作信息。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json",
+          "change": "以 baseline 原始 usage 文件 SHA 和冻结 Sol 费率生成确定性 API 成本估算；账单状态为未提供。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json",
+          "change": "以 candidate 原始 usage 文件 SHA 和同一冻结 Sol 费率生成确定性 API 成本估算；账单状态为未提供。"
         }
       ],
       "baseline": {
@@ -3065,6 +3077,9 @@
           "usageReceiptAvailable": 1,
           "categoryReceiptComplete": 1,
           "providerBillAvailable": 0,
+          "costReceiptAvailable": 1,
+          "apiCostUsd": 2.452731,
+          "totalTokens": 2453190,
           "uncachedInputTokens": 120353,
           "cachedInputTokens": 2309632,
           "outputTokens": 23205,
@@ -3072,7 +3087,8 @@
         },
         "evidenceRefs": [
           "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
-          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json"
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json"
         ],
         "outputExamples": [
           {
@@ -3142,6 +3158,9 @@
           "usageReceiptAvailable": 1,
           "categoryReceiptComplete": 1,
           "providerBillAvailable": 0,
+          "costReceiptAvailable": 1,
+          "apiCostUsd": 1.731895,
+          "totalTokens": 1356875,
           "uncachedInputTokens": 93131,
           "cachedInputTokens": 1242240,
           "outputTokens": 21504,
@@ -3149,7 +3168,8 @@
         },
         "evidenceRefs": [
           "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
-          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json"
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-cost-optimization-20260904.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json"
         ],
         "outputExamples": [
           {
@@ -3161,7 +3181,7 @@
       },
       "comparison": {
         "decision": "keep",
-        "decisionReason": "同一冻结候选保持 3/3 任务、31/31 verifier、0 Tool failure 与 3/3 cleanup；同 openai-codex/Sol/max 的未缓存输入、缓存输入、输出三类 usage 全部严格下降，因此按预设规则 Keep。耗时下降只作信息，不参与决定。",
+        "decisionReason": "同一冻结候选保持 3/3 任务、31/31 verifier、0 Tool failure 与 3/3 cleanup；两侧完整三类 usage 绑定相同 pricing ID/date/rates，确定性 API 成本估算 $2.452731→$1.731895（下降 29.4%），因此 Keep。Provider 账单未提供；耗时只作信息。",
         "metricDeltas": [
           {
             "metric": "taskSuccessRate",
@@ -3200,6 +3220,12 @@
             "delta": -1701
           },
           {
+            "metric": "apiCostUsd",
+            "before": 2.452731,
+            "after": 1.731895,
+            "delta": -0.720836
+          },
+          {
             "metric": "latencyMs",
             "before": 624430.913,
             "after": 564545.941,
@@ -3209,21 +3235,23 @@
         "outputComparisons": [
           {
             "caseId": "aggregate",
-            "before": "compact-v2：3/3 task、31/31 verifier、0 Tool failure；120353 uncached input、2309632 cached input、23205 output。",
-            "after": "preloaded-v3：同样 3/3、31/31、0 Tool failure；93131 uncached input、1242240 cached input、21504 output。"
+            "before": "compact-v2：3/3 task、31/31 verifier、0 Tool failure；三类 usage 对应 API 定价估算 $2.452731。",
+            "after": "preloaded-v3：同样 3/3、31/31、0 Tool failure；同一冻结费率估算 $1.731895，下降 29.4%。"
           }
         ]
       },
       "claim": {
-        "resumeBullet": "在 EnterpriseOps CSM 的 3-task/31-verifier 冻结 Validation 上，仅预载已选 Tool schema，保持 3/3、31/31 与 0 Tool failure，同时把同 Sol/max OAuth 回执的未缓存输入、缓存输入、输出分别从 120353/2309632/23205 降至 93131/1242240/21504。",
-        "allowed": "A same-provider/model/thinking, same-prompt three-case Validation comparison where task quality and hard gates were unchanged and all three usage categories strictly decreased.",
-        "forbidden": "Provider-billed USD savings, production or installed PAWOS acceptance, a new Held-out success, multi-run statistical stability, or a cost claim against the older state-contract-v1 run whose uncached input was lower."
+        "resumeBullet": "在 EnterpriseOps CSM 的 3-task/31-verifier 冻结 Validation 上，仅预载已选 Tool schema，保持 3/3、31/31 与 0 Tool failure，并将同一冻结 Sol 费率下的 API 成本估算从 $2.452731 降至 $1.731895（下降 29.4%）。",
+        "allowed": "同一 3-task/31-verifier Validation、同 Sol/max、单 Tool 变量下质量不退化，以及由完整三类 usage、原始文件 SHA 和同一冻结费率确定性计算的 API 成本估算下降 29.4%。",
+        "forbidden": "80% 成本下降、Provider 实际账单节省、生产或安装态 PAWOS acceptance、新 Held-out 成功、多轮统计稳定性，或用更老 state-contract-v1 run 拼接更好数字。"
       },
       "openGaps": [
         "当前结果是一轮随机 Validation 对照，不是重复运行置信区间",
-        "OAuth Provider 没有返回账单单价，只能证明同价表下三类 usage dominance",
+        "Provider 没有返回 OAuth 账单；当前 29.4% 是冻结费率下的确定性 API 定价估算",
         "旧的一次性 Held-out 已消费且失败，本候选没有新的 Held-out 泛化证明",
-        "source-local candidate 未安装到当前 PAWOS"
+        "source-local candidate 未安装到当前 PAWOS",
+        "下一阶段 1/2：Luna/max model-only 诊断（未运行）；冻结当前 Prompt、Skill、Tool、Workflow、dataset 与 scorer，只替换模型，先判断 Runtime/协议和质量边界",
+        "下一阶段 2/2：Luna/max prompt-only 修复（未运行）；仅在 model-only 形成可评分终态后，冻结 Luna/max 与其他控制，只改 Prompt，不预写结果"
       ]
     },
     {
@@ -3233,7 +3261,8 @@
       "evaluationKind": "answer_evidence",
       "status": "rejected",
       "claimStatus": "diagnostic",
-      "projectionState": "current",
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.luna-prompt-v4-standard-r6.v1",
       "effectStatus": "improved",
       "candidateType": "compound_repair",
       "businessProblem": "企业知识问答不仅要给出正确结论，还必须把每个必要事实绑定到冻结证据；答案正确、引用可解析但引用 Gold 未覆盖时，不能把整题算成功，更不能进入成本选优。",
@@ -3611,7 +3640,8 @@
       "evaluationKind": "workflow",
       "status": "kept",
       "claimStatus": "headline",
-      "projectionState": "current",
+      "projectionState": "history",
+      "supersededBy": "cloudops.luna-owner-mechanism-prompt-r5.v1",
       "effectStatus": "improved",
       "candidateType": "single_factor",
       "businessProblem": "冻结的 12 个告警诊断全部能完成，但标准 Prompt 产生大量宽泛 list/read 往返；需要保持最终根因判断和质量分数，同时减少 Provider 上下文用量。",
@@ -3737,9 +3767,10 @@
           "metrics": [
             "uncached 450205→279774",
             "cached 12995072→4586112",
-            "output 40601→35356"
+            "output 40601→35356",
+            "API 定价估算 $9.966591→$4.752606（下降 52.31%）"
           ],
-          "reason": "同路由三类 usage 全部严格下降；没有虚构 OAuth 账单价格。"
+          "reason": "同路由三类 usage 全部严格下降；使用同一冻结费率计算确定性 API 价格估算，Provider 账单仍标记为未提供。"
         },
         {
           "family": "safety_recovery",
@@ -3776,7 +3807,17 @@
         {
           "kind": "evaluator",
           "ref": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json",
-          "change": "绑定 identity、quality、usage dominance 与 Keep。"
+          "change": "绑定 identity、quality、价格回执与 Keep。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-standard-baseline-20260904.r2.v1.json",
+          "change": "把 baseline 完整三类 usage 绑定到冻结 Sol 费率，确定性计算 $9.966591 API 价格估算。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json",
+          "change": "把 candidate 完整三类 usage 绑定到同一冻结 Sol 费率，确定性计算 $4.752606 API 价格估算。"
         },
         {
           "kind": "evaluator",
@@ -3799,6 +3840,8 @@
           "usageReceiptAvailable": 1,
           "categoryReceiptComplete": 1,
           "providerBillAvailable": 0,
+          "costReceiptAvailable": 1,
+          "apiCostUsd": 9.966591,
           "uncachedInputTokens": 450205,
           "cachedInputTokens": 12995072,
           "outputTokens": 40601,
@@ -3807,7 +3850,8 @@
         "evidenceRefs": [
           "eval/interview-metrics/runs/cloudops-sol-max-standard-baseline-20260904.r2.json",
           "eval/interview-metrics/runs/cloudops-sol-max-standard-baseline-case-projection-20260904.r2.json",
-          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json"
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-standard-baseline-20260904.r2.v1.json"
         ],
         "outputExamples": [
           {
@@ -3876,6 +3920,8 @@
           "usageReceiptAvailable": 1,
           "categoryReceiptComplete": 1,
           "providerBillAvailable": 0,
+          "costReceiptAvailable": 1,
+          "apiCostUsd": 4.752606,
           "uncachedInputTokens": 279774,
           "cachedInputTokens": 4586112,
           "outputTokens": 35356,
@@ -3884,7 +3930,8 @@
         "evidenceRefs": [
           "eval/interview-metrics/runs/cloudops-sol-max-alert-first-candidate-20260904.r7.json",
           "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
-          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json"
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-cost-optimization-20260904.r7.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json"
         ],
         "outputExamples": [
           {
@@ -3947,6 +3994,12 @@
             "delta": -5245
           },
           {
+            "metric": "apiCostUsd",
+            "before": 9.966591,
+            "after": 4.752606,
+            "delta": -5.213985
+          },
+          {
             "metric": "latencyMs",
             "before": 1175529,
             "after": 1036278,
@@ -3967,13 +4020,13 @@
         ]
       },
       "claim": {
-        "resumeBullet": "在 CloudOps 12-case 冻结 Validation 上，仅将 Prompt 改为 alert-first-v5，保持 12/12 与 CA 1.0、FA/JRA 不退化、Top3JRA 提至 1.0，并将同 Sol/max 三类 usage 从 450205/12995072/40601 降至 279774/4586112/35356。",
-        "allowed": "同一 12-case Validation、同 Sol/max、单 Prompt 变量下的最终成功、质量不退化和 usage dominance Keep。",
-        "forbidden": "零 Tool failure、Provider 账单金额、逐 Case token 归因、Held-out/生产/安装 acceptance 或多轮统计稳定性。"
+        "resumeBullet": "在 CloudOps 12-case 冻结 Validation 上，仅将 Prompt 改为 alert-first-v5，保持 12/12 与 CA 1.0、FA/JRA 不退化、Top3JRA 提至 1.0，并将同一冻结费率下的 API 成本估算从 $9.966591 降至 $4.752606（下降 52.3%）。",
+        "allowed": "同一 12-case Validation、同 Sol/max、单 Prompt 变量下的最终成功、质量不退化，以及由完整三类 usage 和同一冻结费率确定性计算的 API 成本估算下降 52.3%。",
+        "forbidden": "零 Tool failure、Provider 实际账单节省、逐 Case token 归因、Held-out/生产/安装 acceptance、多轮统计稳定性或 80% 成本下降。"
       },
       "openGaps": [
         "一次可恢复 Tool failure 只能定位到 batch-2，公开回执不能诚实归因到具体 case",
-        "Provider 未返回 OAuth 账单价格",
+        "Provider 未返回 OAuth 账单价格；当前 52.3% 是冻结费率下的 API 定价估算",
         "仅单轮 source-local Validation，未安装或做 foreground acceptance"
       ]
     },
@@ -3984,8 +4037,9 @@
       "evaluationKind": "memory",
       "status": "kept",
       "claimStatus": "headline",
-      "projectionState": "current",
-      "effectStatus": "neutral",
+      "projectionState": "history",
+      "supersededBy": "memory.maintenance-luna-model-only-r1.v1",
+      "effectStatus": "improved",
       "candidateType": "single_factor",
       "businessProblem": "Memory shadow lifecycle 已通过全部整理、检索、回滚和重放门禁，但标准 JSON Prompt 含重复包装说明与冗长 rationale；需要在不改变输入 packet 和治理语义的前提下降低用量。",
       "whyAgent": "模型先做五例 atom-first 整理，再由隔离 verifier 判断 evidence、lineage、book、检索、拒答、rollback/replay；只有完整生命周期才能证明精简输出合同没有破坏 Memory。",
@@ -4015,15 +4069,15 @@
         },
         {
           "name": "cost_authority",
-          "value": "complete uncached/cached/output Codex usage；无账单价格",
-          "reason": "三类全不增且至少一类下降才 Keep；耗时仅信息。"
+          "value": "完整三类 usage + openai-api-gpt-5.6-sol-2026-09-01 冻结费率的确定性 API 定价估算",
+          "reason": "原始 usage 文件哈希、费率来源/hash 和两侧 cost receipt 均绑定；Provider 账单仍未提供，耗时仅信息。"
         }
       ],
       "star": {
         "situation": "full-json baseline 已通过全部 5-case lifecycle gates，但两次真实 Sol/max request 输出 2207 token。",
         "task": "只精简 JSON Prompt 合同，保持五例、向量、lineage、book、rollback、replay 与合法 JSON 全通过，同时降低三类 usage。",
         "action": "保持 full-json-v1 semantic packet 不变，把 standard-v1 改为 concise-json-v1，删除重复说明并限制 rationale；重新运行 curation 与隔离 verifier。",
-        "result": "5/5 retrieval、4/4 durable、1/1 abstention，vector/curation/lineage/book/rollback/replay/JSON 全通过；uncached 39799→39638、cached 0→0、output 2207→1650。"
+        "result": "5/5 retrieval、4/4 durable、1/1 abstention，vector/curation/lineage/book/rollback/replay/JSON 全通过；同一冻结费率下的确定性 API 成本估算从 $0.265205 降至 $0.247690（下降 6.6%），Provider 账单未提供。"
       },
       "dataset": {
         "id": "memory-maintenance-public-safe-fixture-v1",
@@ -4048,7 +4102,7 @@
         ]
       },
       "optimizationContract": {
-        "objective": "保持完整 Memory lifecycle 质量与安全，同时降低同 Sol/max 的三类 usage。",
+        "objective": "保持完整 Memory lifecycle 质量与安全，同时降低同 Sol/max 的三类 usage 及同一冻结费率下的确定性 API 成本估算。",
         "candidateSearchSpace": [
           {
             "axis": "prompt_contract",
@@ -4066,8 +4120,8 @@
           "curation and isolated verifier phases",
           "private-shadow and recovery gates"
         ],
-        "selectionRule": "所有 lifecycle gate 不退化且三类 usage 全不增、至少一类下降才 Keep。",
-        "stopRule": "首个通过质量与 usage dominance 的单 Prompt 候选即冻结。",
+        "selectionRule": "所有 lifecycle gate 不退化；两侧 usage 与 pricing provenance 完整且一致、确定性 API 成本估算严格下降才 Keep。",
+        "stopRule": "首个通过质量与严格 cost receipt 交叉绑定的单 Prompt 候选即冻结。",
         "heldOutRule": "仅 private shadow Validation；不推断生产或安装态。"
       },
       "bestKnown": {
@@ -4112,9 +4166,10 @@
           "metrics": [
             "uncached 39799→39638",
             "cached 0→0",
-            "output 2207→1650"
+            "output 2207→1650",
+            "API pricing estimate $0.265205→$0.247690（下降 6.6%）"
           ],
-          "reason": "同路由三类 usage 全不增且两类严格下降。"
+          "reason": "同一 openai-codex、Sol/max、pricing ID/date/rates 下由完整三类 usage 确定性重算；这是 API 定价估算，不是 Provider 账单。"
         },
         {
           "family": "safety_recovery",
@@ -4152,7 +4207,17 @@
         {
           "kind": "evaluator",
           "ref": "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json",
-          "change": "绑定质量、恢复与 usage dominance Keep。"
+          "change": "绑定质量、恢复、严格 cost receipt 与确定性 API 定价估算 Keep。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json",
+          "change": "以 baseline 原始 usage 文件 SHA 和冻结 Sol 费率生成确定性 API 成本估算；账单状态为未提供。"
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json",
+          "change": "以 candidate 原始 usage 文件 SHA 和同一冻结 Sol 费率生成确定性 API 成本估算；账单状态为未提供。"
         }
       ],
       "baseline": {
@@ -4172,6 +4237,9 @@
           "usageReceiptAvailable": 1,
           "categoryReceiptComplete": 1,
           "providerBillAvailable": 0,
+          "costReceiptAvailable": 1,
+          "apiCostUsd": 0.265205,
+          "totalTokens": 42006,
           "uncachedInputTokens": 39799,
           "cachedInputTokens": 0,
           "outputTokens": 2207,
@@ -4179,7 +4247,8 @@
         },
         "evidenceRefs": [
           "eval/interview-metrics/runs/memory-maintenance-sol-max-full-json-baseline-20260904.r2.json",
-          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json"
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json",
+          "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json"
         ],
         "outputExamples": [
           {
@@ -4250,6 +4319,9 @@
           "usageReceiptAvailable": 1,
           "categoryReceiptComplete": 1,
           "providerBillAvailable": 0,
+          "costReceiptAvailable": 1,
+          "apiCostUsd": 0.24769,
+          "totalTokens": 41288,
           "uncachedInputTokens": 39638,
           "cachedInputTokens": 0,
           "outputTokens": 1650,
@@ -4257,7 +4329,8 @@
         },
         "evidenceRefs": [
           "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-candidate-20260904.r3.json",
-          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json"
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-cost-optimization-20260904.r3.json",
+          "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json"
         ],
         "outputExamples": [
           {
@@ -4269,7 +4342,7 @@
       },
       "comparison": {
         "decision": "keep",
-        "decisionReason": "同一 5-case private-shadow candidate 保持所有 lifecycle 与恢复门禁；同 Sol/max 三类 usage 全不增，uncached 与 output 严格下降。耗时只作信息。",
+        "decisionReason": "同一 5-case private-shadow candidate 保持所有 lifecycle 与恢复门禁；两侧完整三类 usage 绑定相同 pricing ID/date/rates，确定性 API 成本估算 $0.265205→$0.247690（下降 6.6%），因此 Keep。Provider 账单未提供；耗时只作信息。",
         "metricDeltas": [
           {
             "metric": "curationPassed",
@@ -4308,6 +4381,12 @@
             "delta": -557
           },
           {
+            "metric": "apiCostUsd",
+            "before": 0.265205,
+            "after": 0.24769,
+            "delta": -0.017515
+          },
+          {
             "metric": "latencyMs",
             "before": 56610,
             "after": 48010,
@@ -4317,20 +4396,1748 @@
         "outputComparisons": [
           {
             "caseId": "aggregate",
-            "before": "5/5 lifecycle gates；39799 uncached、0 cached、2207 output。",
-            "after": "同样 5/5；39638 uncached、0 cached、1650 output。"
+            "before": "5/5 lifecycle gates；三类 usage 对应 API 定价估算 $0.265205。",
+            "after": "同样 5/5；同一冻结费率估算 $0.247690，下降 6.6%。"
           }
         ]
       },
       "claim": {
-        "resumeBullet": "在 Memory Maintenance 的 5-case private-shadow Validation 上，仅精简 JSON Prompt，保持 curation/retrieval/lineage/book/vector/rollback/replay 全通过，并将同 Sol/max usage 从 39799/0/2207 降至 39638/0/1650。",
-        "allowed": "同一 fixture、同 Sol/max、单 Prompt 变量下的 private-shadow lifecycle quality non-regression and usage dominance Keep。",
-        "forbidden": "生产数据库、安装/前台 acceptance、Provider 账单金额、Held-out 泛化或逐 Case token 归因。"
+        "resumeBullet": "在 Memory Maintenance 的 5-case private-shadow Validation 上，仅精简 JSON Prompt，保持 curation/retrieval/lineage/book/vector/rollback/replay 全通过，并将同一冻结 Sol 费率下的 API 成本估算从 $0.265205 降至 $0.247690（下降 6.6%）。",
+        "allowed": "同一 fixture、同 Sol/max、单 Prompt 变量下的 lifecycle quality non-regression，以及由完整三类 usage、原始文件 SHA 和同一冻结费率确定性计算的 API 成本估算下降 6.6%。",
+        "forbidden": "80% 成本下降、Provider 实际账单节省、生产数据库、安装/前台 acceptance、Held-out 泛化、逐 Case token 归因或多轮统计稳定性。"
       },
       "openGaps": [
         "公开 run receipt 当前只给五个 case 的 aggregate/best-rank，不提供逐 Case Provider usage",
         "仅一轮 private-shadow Validation，不是生产或重复运行置信区间",
-        "Provider 没有返回 OAuth 账单价格"
+        "Provider 没有返回 OAuth 账单；当前 6.6% 是冻结费率下的确定性 API 定价估算",
+        "下一阶段 1/2：Luna/max model-only 诊断（未运行）；冻结当前 Prompt、Skill、Tool、Workflow、fixture 与 verifier，只替换模型，先判断 Runtime/协议和质量边界",
+        "下一阶段 2/2：Luna/max prompt-only 修复（未运行）；仅在 model-only 形成可评分终态后，冻结 Luna/max 与其他控制，只改 Prompt，不预写结果"
+      ]
+    },
+    {
+      "id": "enterpriseops-csm.luna-model-only-r5.v1",
+      "title": "EnterpriseOps CSM · Luna Max model-only 质量门禁",
+      "vertical": "enterprise-customer-support",
+      "evaluationKind": "model_cost",
+      "status": "rejected",
+      "claimStatus": "supporting",
+      "projectionState": "history",
+      "supersededBy": "enterpriseops-csm.luna-prompt-adaptation-r7.v1",
+      "effectStatus": "regressed",
+      "candidateType": "single_factor",
+      "businessProblem": "在已经通过 3 个客户支持任务与 31 条 Host-private verifier 的 Sol 基线上，验证只切换到更低价 Luna Max 是否仍能守住业务质量。",
+      "whyAgent": "这三题要求 Agent 跨实体发现、受约束写入、回读和终态核验；只有冻结同一 Prompt、Tool、Runtime 与数据库 scorer 的真实 Session 才能揭示模型替换造成的执行差异。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "gpt-5.6-sol / max",
+          "after": "gpt-5.6-luna / max",
+          "reason": "本阶段只改变模型身份；Prompt contract a16bb73f、任务、Tool catalog、runner 和 Runtime binary bytes 均冻结。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "prompt_task_tool_runner",
+          "value": "prompt a16bb73f；task manifest d5ef3eb6；Tool catalog 349a40e3；runner 51de12fd",
+          "reason": "将 2/3 与 30/31 的回退归因于 model-only 候选，而不是换题、换 Prompt 或换 Tool。"
+        },
+        {
+          "name": "runtime_binary_identity",
+          "value": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad；manifest/entrypoint/extension/node/tool-profile hashes 相同",
+          "reason": "Runtime identitySha 与 provenanceSha 包含模型字段，Sol→Luna 时预期变化；可执行二进制与 Tool profile 的组成 hash 未变。"
+        },
+        {
+          "name": "evaluation_and_cost",
+          "value": "Validation；3 tasks；31 verifiers；900s；runtime_cost_reconciled",
+          "reason": "质量先于成本；逐请求 Runtime DB 对账是 exact authority，Provider 账单未提供。"
+        }
+      ],
+      "star": {
+        "situation": "Sol r8 在 state-contract-preloaded-v3 上达到 3/3 task、31/31 verifier、0 Tool failure。",
+        "task": "只替换为 Luna Max，判断低价候选能否在相同冻结合同下保持全部硬门。",
+        "action": "复用完全相同的 Prompt、任务、Tool catalog、runner、Runtime binary 与 scorer，以 Luna/max 执行 model-only r5，并用 exact Runtime cost receipt 对账。",
+        "result": "成本从 $1.711214 降至 $0.09453296，但 task 退化为 2/3、verifier 为 30/31；按质量优先规则 Reject，并进入独立 Prompt 适配阶段。"
+      },
+      "dataset": {
+        "id": "enterpriseops-csm-suite-v2-post-heldout-validation",
+        "split": "validation",
+        "caseCount": 3,
+        "unit": "end-to-end customer-support tasks with 31 Host-private verifiers",
+        "manifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "taskSuccessRate and verifierPassRate before exact Runtime API cost",
+        "hardGates": [
+          "3/3 task success",
+          "31/31 Host-private verifier",
+          "zero failed Tool calls",
+          "all temporary databases cleaned"
+        ],
+        "evaluatorAuthority": "Host-private deterministic SQL verifier plus Runtime DB cost reconciliation",
+        "goldHiddenFromAgent": true
+      },
+      "optimizationContract": {
+        "objective": "Test the Luna model-only candidate without relaxing any quality or safety gate.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": [
+              "gpt-5.6-luna / max"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "Prompt bytes",
+          "task and verifier manifest",
+          "selected Tool catalog",
+          "runner",
+          "Runtime binary identity components",
+          "provider route and thinking"
+        ],
+        "selectionRule": "Keep only if Luna preserves 3/3, 31/31, 0 Tool failure and cleanup before comparing cost.",
+        "stopRule": "Reject immediately on any protected quality regression; retain the failed run as the Prompt-adaptation trigger.",
+        "heldOutRule": "Do not consume a new Held-out split during model selection."
+      },
+      "bestKnown": {
+        "configId": "enterpriseops-luna-model-only-r5",
+        "configSha256": "fb4d92617e1403f8189c67cfcd02b9975b258647170054f94ca0f99d0a31b318",
+        "decision": "reject"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "task 3/3→2/3",
+            "verifier 31/31→30/31"
+          ],
+          "reason": "One task and one deterministic verifier regressed."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "not_applicable",
+          "metrics": [],
+          "reason": "This vertical scores database terminal state, not a cited answer."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "failed Tool calls 0→0",
+            "cleanup 3/3→3/3"
+          ],
+          "reason": "Runtime transport remained operable despite the semantic task failure."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "Tool calls 51→59",
+            "exact Runtime cost $1.711214→$0.09453296",
+            "latency 583475.3ms→678614.268ms（信息项）"
+          ],
+          "reason": "Exact cost is reconciled per request; lower price cannot override the failed quality gate."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "all temporary databases cleaned"
+          ],
+          "reason": "Cleanup passed on both stages."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+          "change": "Frozen Sol r8 baseline raw receipt."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+          "change": "Luna model-only r5 raw receipt with the same Prompt/task/Tool/runner contract."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json",
+          "change": "Independent stage-chain receipt binds raw and exact Runtime cost hashes."
+        }
+      ],
+      "baseline": {
+        "runId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+        "metrics": {
+          "taskSuccessCount": 3,
+          "taskCount": 3,
+          "taskSuccessRate": 1.0,
+          "verifierPassCount": 31,
+          "verifierCount": 31,
+          "verifierPassRate": 1.0,
+          "toolCalls": 51,
+          "failedToolCalls": 0,
+          "databasesCleaned": 3,
+          "allDatabasesCleaned": 1,
+          "latencyMs": 583475.2999999999,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 1.711214,
+          "totalTokens": 1388540
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "冻结的 3-task/31-verifier Validation",
+            "output": "Sol r8：3/3 task、31/31 verifier、51 Tool calls、0 failure。"
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "enterpriseops-csm-luna-preloaded-model-only-validation-20260904-r5",
+        "metrics": {
+          "taskSuccessCount": 2,
+          "taskCount": 3,
+          "taskSuccessRate": 0.6666666666666666,
+          "verifierPassCount": 30,
+          "verifierCount": 31,
+          "verifierPassRate": 0.967741935483871,
+          "toolCalls": 59,
+          "failedToolCalls": 0,
+          "databasesCleaned": 3,
+          "allDatabasesCleaned": 1,
+          "latencyMs": 678614.268,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.09453296,
+          "totalTokens": 1949951
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-preloaded-model-only-20260904.r5.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "相同冻结合同，仅模型换为 Luna/max",
+            "output": "Luna r5：2/3 task、30/31 verifier、59 Tool calls、0 failure；Reject。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "enterpriseops-luna-general-prompt-adaptation",
+          "targetLayer": "system_prompt",
+          "observation": "model-only r5 在一个多约束对象选择与精确枚举写入上少过一条 verifier。",
+          "hypothesis": "Luna 需要更明确但仍通用的约束排序与 Tool authority 提示。",
+          "proposedChange": "保持 Luna 与其余控制不变，只补角色/地区/tenure、已选 Tool 目录权威和 exact enum 优先规则。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json"
+          ],
+          "attribution": {
+            "detectedBy": "Host-private deterministic verifier",
+            "proposedBy": "Sol/max evaluation Agent",
+            "authorizedBy": "User IM-026 contract",
+            "implementedBy": "EnterpriseOps prompt candidate v6",
+            "verifiedBy": "Luna/max r7 plus Host-private verifier"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "considered_no_change",
+          "reason": "Prompt bytes are frozen in the model-only stage."
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "Selected Tool catalog and schemas are frozen."
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "state-contract-preloaded-v3 and runner are frozen."
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "No Skill content changed."
+        }
+      ],
+      "comparison": {
+        "decision": "reject",
+        "decisionReason": "Exact Runtime cost is lower, but task 3/3→2/3 and verifier 31/31→30/31 violate the frozen quality gate; model-only Luna is rejected before Prompt adaptation.",
+        "metricDeltas": [
+          {
+            "metric": "taskSuccessRate",
+            "before": 1.0,
+            "after": 0.6666666666666666,
+            "delta": -0.33333333333333337
+          },
+          {
+            "metric": "verifierPassRate",
+            "before": 1.0,
+            "after": 0.967741935483871,
+            "delta": -0.032258064516129004
+          },
+          {
+            "metric": "apiCostUsd",
+            "before": 1.711214,
+            "after": 0.09453296,
+            "delta": -1.61668104
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "Sol r8 passed all 3 tasks and 31 verifiers.",
+            "after": "Luna model-only r5 passed 2 tasks and 30 verifiers, so the cheaper result was rejected."
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "用冻结 Prompt/Tool/Runtime 的 model-only 实验阻止低价 Luna 候选在 2/3 task、30/31 verifier 时被错误晋级，并保留 exact Runtime 成本 $0.09453296 作为后续 Prompt 修复基线。",
+        "allowed": "可说明单轮 source-local Validation 中 model-only Luna 的质量回退、exact Runtime 对账成本和 Reject 决策。",
+        "forbidden": "不得把 80% 目标值、低价本身或 Provider 实际账单节省写成模型替换成功；不得声称 Held-out、安装态、前台或多轮稳定性。"
+      },
+      "openGaps": [
+        "每个模型只运行一轮 Validation，没有重复运行置信区间",
+        "Provider 账单未提供；成本是 exact Runtime 对账值",
+        "未做新 Held-out、安装态或前台验收"
+      ]
+    },
+    {
+      "id": "enterpriseops-csm.luna-prompt-adaptation-r7.v1",
+      "title": "EnterpriseOps CSM · Sol→Luna→通用 Prompt 适配路径",
+      "vertical": "enterprise-customer-support",
+      "evaluationKind": "model_cost",
+      "status": "kept",
+      "claimStatus": "headline",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "compound_repair",
+      "businessProblem": "在不牺牲客户支持任务终态质量的前提下，把已验证的 Sol/max Agent 降到更低价 Luna/max，并明确区分模型切换与 Prompt 修复的因果阶段。",
+      "whyAgent": "目标任务依赖多步 Tool 调用、跨对象约束、精确枚举写入和数据库终态；必须用同一真实 Runtime 路径依次验证 Sol、Luna model-only 与 Luna Prompt-adapted。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "gpt-5.6-sol / max",
+          "after": "gpt-5.6-luna / max",
+          "reason": "第一阶段只换模型，真实结果 2/3、30/31，被质量门禁 Reject。"
+        },
+        {
+          "name": "prompt",
+          "before": "state-contract-preloaded-v3 prompt a16bb73f",
+          "after": "luna-explicit-enum-preloaded-v6 prompt d35237c1",
+          "reason": "第二阶段冻结 Luna 和其他控制，只加入通用角色/地区/tenure、已选 Tool authority 与 exact enum precedence；不含 case ID、答案或 Gold。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "task_tool_dataset_runner",
+          "value": "3 tasks；31 verifiers；manifest d5ef3eb6；Tool catalog 349a40e3；runner 51de12fd",
+          "reason": "三阶段不换题、不换 scorer、不换 Tool 或 runner。"
+        },
+        {
+          "name": "runtime_binary",
+          "value": "runtimeVersion pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad；manifest/entrypoint/extension/node/tool-profile hashes 相同",
+          "reason": "Runtime binary 与 Tool bytes 相同；Sol/Luna identitySha 因模型字段变化，两个 Luna 阶段 identitySha 相同。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "runtime_cost_reconciled；pricing source b8ed197e；Provider bill unavailable",
+          "reason": "成本由 Runtime DB 的逐请求 usage/reportedCost 与内容寻址价格身份交叉验证。"
+        }
+      ],
+      "star": {
+        "situation": "Sol r8 质量全绿但 exact Runtime 成本为 $1.711214；Luna model-only r5 降到 $0.09453296，却回退到 2/3 task、30/31 verifier。",
+        "task": "在不泄露 Host-private Gold、不修改任务/Tool/Runtime 的条件下，用一版通用 Prompt 恢复 Luna 的完整质量。",
+        "action": "只加入角色/地区/tenure 约束顺序、已选 Tool 目录权威与精确 enum 优先规则，并以相同 3-task/31-verifier Validation 运行 Luna r7。",
+        "result": "Luna r7 恢复 3/3 task、31/31 verifier、0 Tool failure，exact Runtime 成本 $0.07291692；相对 Sol 降低 95.738878%，相对 Luna model-only 再降低 22.866141%。"
+      },
+      "dataset": {
+        "id": "enterpriseops-csm-suite-v2-post-heldout-validation",
+        "split": "validation",
+        "caseCount": 3,
+        "unit": "end-to-end customer-support tasks with 31 Host-private verifiers",
+        "manifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "3/3 task and 31/31 verifier quality gate before exact Runtime API cost",
+        "hardGates": [
+          "3/3 task success",
+          "31/31 Host-private verifier",
+          "zero failed Tool calls",
+          "all temporary databases cleaned"
+        ],
+        "evaluatorAuthority": "Host-private deterministic SQL verifier plus Runtime DB cost reconciliation",
+        "goldHiddenFromAgent": true
+      },
+      "optimizationContract": {
+        "objective": "Recover full Sol quality on Luna with one general Prompt adaptation, then compare exact Runtime cost.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": [
+              "gpt-5.6-luna / max model-only"
+            ]
+          },
+          {
+            "axis": "prompt",
+            "candidatesEvaluated": 1,
+            "values": [
+              "general role-region-tenure + selected Tool authority + exact enum precedence"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "task and verifier manifest",
+          "selected Tool catalog",
+          "runner",
+          "Runtime binary identity components",
+          "provider route and max thinking",
+          "Luna identity across Prompt stage"
+        ],
+        "selectionRule": "Keep only after Luna returns to 3/3, 31/31, 0 failures and cleanup, with exact Runtime cost below Sol.",
+        "stopRule": "Freeze the first general Prompt candidate that restores every hard gate; do not add case labels or expected answers.",
+        "heldOutRule": "This is Validation-only; do not reopen or reinterpret prior Held-out evidence."
+      },
+      "bestKnown": {
+        "configId": "enterpriseops-luna-explicit-enum-prompt-r7",
+        "configSha256": "24edf80a8d760dda728d5bc9e99cccbce42c4d6033ce79cc9ddf5d2864bea764",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "Sol 3/3",
+            "Luna model-only 2/3",
+            "Luna Prompt 3/3",
+            "verifier 31/31→30/31→31/31"
+          ],
+          "reason": "The stage chain exposes the failure and the repaired terminal state."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "not_applicable",
+          "metrics": [],
+          "reason": "This vertical scores database terminal state, not cited prose."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "failed Tool calls 0→0→0",
+            "cleanup 3/3 at every stage"
+          ],
+          "reason": "All Runtime and cleanup gates stayed operable."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "Tool calls 51→59→55",
+            "cost $1.711214→$0.09453296→$0.07291692",
+            "Sol→final -95.738878%",
+            "model-only→Prompt -22.866141%"
+          ],
+          "reason": "Exact Runtime-reconciled request cost is authoritative; Provider bill remains unavailable."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "Host-private Gold stayed hidden",
+            "all databases cleaned"
+          ],
+          "reason": "The Prompt contains general constraints only and does not encode fixture labels."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "system_prompt",
+          "ref": "scripts/run_enterpriseops_csm_eval.py",
+          "change": "One general Luna Prompt contract for role/region/tenure, selected Tool authority and exact enum precedence."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json",
+          "change": "Independent three-stage factor/hash/cost comparison receipt."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-optimal-path-enterpriseops-luna-prompt-20260904.v1.json",
+          "change": "Eval Lab path projection from Sol baseline through rejected model-only to kept Luna Prompt."
+        }
+      ],
+      "baseline": {
+        "runId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+        "metrics": {
+          "taskSuccessCount": 3,
+          "taskCount": 3,
+          "taskSuccessRate": 1.0,
+          "verifierPassCount": 31,
+          "verifierCount": 31,
+          "verifierPassRate": 1.0,
+          "toolCalls": 51,
+          "failedToolCalls": 0,
+          "databasesCleaned": 3,
+          "allDatabasesCleaned": 1,
+          "latencyMs": 583475.2999999999,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 1.711214,
+          "totalTokens": 1388540
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "冻结 3-task/31-verifier EnterpriseOps Validation",
+            "output": "Sol r8：3/3、31/31、51 Tool calls、0 failure、$1.711214。"
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+        "metrics": {
+          "taskSuccessCount": 3,
+          "taskCount": 3,
+          "taskSuccessRate": 1.0,
+          "verifierPassCount": 31,
+          "verifierCount": 31,
+          "verifierPassRate": 1.0,
+          "toolCalls": 55,
+          "failedToolCalls": 0,
+          "databasesCleaned": 3,
+          "allDatabasesCleaned": 1,
+          "latencyMs": 574319.984,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.07291692,
+          "totalTokens": 1185986
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "同一 Validation，Luna/max 加一版通用 Prompt",
+            "output": "Luna r7：3/3、31/31、55 Tool calls、0 failure、$0.07291692；Keep。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "keep-enterpriseops-luna-general-prompt-r7",
+          "targetLayer": "system_prompt",
+          "observation": "Luna model-only 的约束选择与精确枚举终态少过一条 verifier；通用 Prompt r7 恢复全部硬门。",
+          "hypothesis": "较弱模型需要显式约束顺序、已选 Tool authority 和 exact enum precedence，而不是案例答案。",
+          "proposedChange": "冻结 Luna r7 Prompt 合同并保留 model-only Reject 作为因果证据；新 Held-out 前不继续调参。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+            "eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json"
+          ],
+          "attribution": {
+            "detectedBy": "Host-private deterministic verifier",
+            "proposedBy": "Sol/max evaluation Agent",
+            "authorizedBy": "User IM-026 contract",
+            "implementedBy": "EnterpriseOps prompt candidate v6",
+            "verifiedBy": "Luna/max r7, exact Runtime receipts and independent comparison receipt"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "changed",
+          "reason": "Only the second stage adds the general Luna Prompt contract."
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "Selected Tool catalog and schemas are identical across all stages."
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "Runner, tasks and terminal-state scoring are frozen; workflowProfile label changes only to name the Prompt contract."
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "No Skill content changed."
+        }
+      ],
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "Luna Prompt r7 restores 3/3 task and 31/31 verifier with 0 failed Tool calls and full cleanup; exact Runtime cost is $0.07291692 versus Sol r8 $1.711214, so the final staged candidate is kept.",
+        "stageChain": [
+          {
+            "stage": "sol_baseline",
+            "runId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+            "taskSuccessCount": 3,
+            "verifierPassCount": 31,
+            "toolCalls": 51,
+            "failedToolCalls": 0,
+            "costUsd": 1.711214,
+            "decision": "baseline"
+          },
+          {
+            "stage": "luna_model_only",
+            "runId": "enterpriseops-csm-luna-preloaded-model-only-validation-20260904-r5",
+            "taskSuccessCount": 2,
+            "verifierPassCount": 30,
+            "toolCalls": 59,
+            "failedToolCalls": 0,
+            "costUsd": 0.09453296,
+            "decision": "reject"
+          },
+          {
+            "stage": "luna_prompt_adapted",
+            "runId": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+            "taskSuccessCount": 3,
+            "verifierPassCount": 31,
+            "toolCalls": 55,
+            "failedToolCalls": 0,
+            "costUsd": 0.07291692,
+            "decision": "keep"
+          }
+        ],
+        "costComparisons": {
+          "solToPromptAdapted": {
+            "before": 1.711214,
+            "after": 0.07291692,
+            "decreasePercent": 95.738878
+          },
+          "modelOnlyToPromptAdapted": {
+            "before": 0.09453296,
+            "after": 0.07291692,
+            "decreasePercent": 22.866141
+          }
+        },
+        "promptAdaptation": {
+          "generalOnly": true,
+          "changes": [
+            "role_region_tenure",
+            "selected_tool_catalog_authority",
+            "exact_enum_precedence"
+          ],
+          "forbidden": [
+            "case_id",
+            "expected_answer",
+            "gold"
+          ]
+        },
+        "runtimeControls": {
+          "binaryToolDatasetRunnerFrozen": true,
+          "runtimeIdentityShaChangedWithModel": true,
+          "lunaIdentityShaStableAcrossPrompt": true
+        },
+        "costAuthority": "runtime_cost_reconciled",
+        "providerBillAvailable": false,
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json",
+          "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-preloaded-model-only-20260904.r5.v1.json",
+          "eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json",
+          "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json"
+        ],
+        "metricDeltas": [
+          {
+            "metric": "taskSuccessRate",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "verifierPassRate",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "apiCostUsd",
+            "before": 1.711214,
+            "after": 0.07291692,
+            "delta": -1.63829708
+          },
+          {
+            "metric": "latencyMs",
+            "before": 583475.2999999999,
+            "after": 574319.984,
+            "delta": -9155.315999999875
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "Sol r8 passed 3/3 tasks and 31/31 verifiers at exact Runtime cost $1.711214.",
+            "after": "Luna model-only failed quality; Luna Prompt r7 restored 3/3 and 31/31 at $0.07291692."
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 EnterpriseOps 3-task/31-verifier 单轮 Validation 中，用“Sol→Luna model-only Reject→Luna 通用 Prompt Keep”三段门禁恢复 3/3、31/31 和 0 Tool failure，并将 exact Runtime API 成本从 $1.711214 降至 $0.07291692（95.738878%）。",
+        "allowed": "可陈述三阶段单轮 Validation、通用 Prompt 适配恢复等价硬门、exact Runtime 对账成本及 95.738878% Sol→最终和 22.866141% Luna model-only→Prompt 降幅。",
+        "forbidden": "不得称 Provider 实际账单节省、生产/安装态/前台成功、新 Held-out 泛化或多轮稳定性；不得把 80% 目标值当作本结果，也不得暗示 Prompt 含 case ID、答案或 Gold。"
+      },
+      "openGaps": [
+        "每阶段仅单轮 source-local Validation，没有重复运行置信区间",
+        "Provider bill unavailable；exact Runtime 对账成本不等于真实扣款",
+        "未做新 Held-out、安装态或前台验收"
+      ]
+    },
+    {
+      "id": "memory.maintenance-luna-model-only-r1.v1",
+      "title": "Memory Maintenance · Luna Max model-only 成本优化",
+      "vertical": "memory-maintenance",
+      "evaluationKind": "model_cost",
+      "status": "kept",
+      "claimStatus": "headline",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "single_factor",
+      "businessProblem": "Memory 的整理、持久化、检索、拒答、回滚与重放已经在 Sol/max 通过；需要验证只换成低价 Luna/max 能否保持完整 lifecycle，而不先修改 Prompt。",
+      "whyAgent": "真实模型先整理 5 个 shadow case，再由独立 verifier 复核 evidence、lineage、Book、向量检索和恢复；只有完整生命周期都相同，模型成本比较才有意义。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "openai-codex / gpt-5.6-sol / max",
+          "after": "openai-codex / gpt-5.6-luna / max",
+          "reason": "context full-json-v1、Prompt concise-json-v1、fixture、schema、transport 与 lifecycle verifier 全部冻结。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "input_and_prompt",
+          "value": "fixture 58712216；frozen input b3c2eeaa；full-json-v1 context；concise-json-v1 Prompt",
+          "reason": "确保没有把此前 Prompt 精简 6.6% 的收益重复计入本次模型替换。"
+        },
+        {
+          "name": "lifecycle_and_recovery",
+          "value": "5 cases（4 durable + 1 non-memory）；curation/retrieval/vector/lineage/book/rollback/replay",
+          "reason": "价格下降前必须通过完整 Memory 语义、治理和恢复门禁。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "完整 reported usage + 内容寻址费率的 deterministic pricing_estimate",
+          "reason": "Memory 收据没有 exact Runtime DB reconciliation，也没有 Provider bill，不能冒充真实扣款。"
+        }
+      ],
+      "star": {
+        "situation": "Sol r4 在 5-case private-shadow Validation 上通过完整 Memory lifecycle，确定性 API 定价估算为 $0.269115。",
+        "task": "仅切换 Luna/max，要求质量、operability 与 recovery 门禁完全保持，再判断是否需要 Prompt 适配。",
+        "action": "冻结 full-json context、concise-json Prompt、fixture/hash、schema 与 verifier，运行 Luna r1 并以独立 comparison receipt 对照。",
+        "result": "Luna r1 保持 5/5 retrieval、4/4 durable、1/1 abstention、vector/lineage/book/rollback/replay 全通过，估算成本 $0.0107502（下降 96.0053508723%）；Prompt adaptation 不需要。"
+      },
+      "dataset": {
+        "id": "memory-maintenance-public-safe-fixture-v1",
+        "split": "shadow_validation",
+        "caseCount": 5,
+        "unit": "4 durable memory cases + 1 temporary non-memory control",
+        "manifestSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "complete Memory lifecycle equivalence before deterministic pricing estimate",
+        "hardGates": [
+          "5/5 curation and retrieval",
+          "4/4 durable recall and 1/1 abstention",
+          "vector coverage, lineage and Book projection",
+          "rollback and replay",
+          "private shadow only; production unchanged"
+        ],
+        "evaluatorAuthority": "private-shadow deterministic lifecycle verifier plus real Codex receipts",
+        "goldHiddenFromAgent": true
+      },
+      "optimizationContract": {
+        "objective": "Keep the cheaper model only if every semantic, operability and recovery gate remains equal.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": [
+              "gpt-5.6-luna / max model-only"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "five-case fixture",
+          "full-json-v1 context",
+          "concise-json-v1 Prompt",
+          "schemas and verifier",
+          "provider route, thinking and transport"
+        ],
+        "selectionRule": "Keep only if both models pass every lifecycle gate and the candidate deterministic price estimate decreases.",
+        "stopRule": "When model-only passes all gates, record Prompt adaptation as not needed and do not tune against Validation.",
+        "heldOutRule": "No Held-out split exists for this run; do not claim generalization."
+      },
+      "bestKnown": {
+        "configId": "memory-maintenance-luna-model-only-r1",
+        "configSha256": "bb1161f8b1c33d93b542c3a0c83f2dc993aaf7410304f11b8e718f7f51b722ca",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "retrieval 5/5→5/5",
+            "durable 4/4→4/4",
+            "abstention 1/1→1/1"
+          ],
+          "reason": "Both models passed all semantic cases."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "candidate evidence 5/5",
+            "legal lineage and Book projection passed"
+          ],
+          "reason": "Independent verifier checks grounded atoms and governed projections."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "2 real model requests per run",
+            "valid receipt and production DB closed"
+          ],
+          "reason": "Both private-shadow runs completed without touching production state."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "pricing estimate $0.269115→$0.0107502 (-96.0053508723%)",
+            "latency 67659ms→73327ms（slower, informational only）"
+          ],
+          "reason": "Cost uses complete reported usage and frozen content-addressed rates; latency is not a Keep gate."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "rollback passed",
+            "replay passed",
+            "source shadow unchanged"
+          ],
+          "reason": "Governance and recovery remained intact on both sides."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-model-baseline-20260904.r4.json",
+          "change": "Frozen Sol r4 model baseline with the previously selected concise Prompt."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/memory-maintenance-luna-max-model-only-20260904.r1.json",
+          "change": "Luna r1 model-only raw lifecycle receipt."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/memory-maintenance-sol-to-luna-model-only-optimization-20260904.r1.json",
+          "change": "Independent factor/hash/quality/cost comparison receipt."
+        }
+      ],
+      "baseline": {
+        "runId": "memory-maintenance-sol-max-concise-contract-model-baseline-20260904-r4",
+        "metrics": {
+          "curationPassed": 5,
+          "durableRecallPassed": 4,
+          "abstentionPassed": 1,
+          "vectorCoverage": 1.0,
+          "legalLineagePassed": 1,
+          "bookProjectionPassed": 1,
+          "rollbackPassed": 1,
+          "replayPassed": 1,
+          "receiptJsonValid": 1,
+          "latencyMs": 67659,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.269115,
+          "totalTokens": 42413
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-model-baseline-20260904.r4.json",
+          "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-model-baseline-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "5-case private-shadow Memory lifecycle",
+            "output": "Sol r4：5/5 retrieval、4/4 durable、1/1 abstention，rollback/replay passed。"
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "memory-maintenance-luna-max-model-only-20260904-r1",
+        "metrics": {
+          "curationPassed": 5,
+          "durableRecallPassed": 4,
+          "abstentionPassed": 1,
+          "vectorCoverage": 1.0,
+          "legalLineagePassed": 1,
+          "bookProjectionPassed": 1,
+          "rollbackPassed": 1,
+          "replayPassed": 1,
+          "receiptJsonValid": 1,
+          "latencyMs": 73327,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.0107502,
+          "totalTokens": 39731
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/memory-maintenance-luna-max-model-only-20260904.r1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-memory-luna-max-model-only-20260904.r1.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "相同 Memory fixture/context/Prompt，仅换 Luna/max",
+            "output": "Luna r1：完整 lifecycle 门禁与 Sol 相同；Prompt adaptation 不需要。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "keep-memory-luna-model-only-r1",
+          "targetLayer": "system_prompt",
+          "observation": "Luna model-only 已通过全部 semantic、operability 和 recovery gates。",
+          "hypothesis": "当前 concise-json-v1 对 Luna 已足够，不需要为 Validation 继续适配 Prompt。",
+          "proposedChange": "保留 Prompt 不变并冻结 Luna r1；将新 Prompt 尝试标记为不需要。",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/memory-maintenance-sol-to-luna-model-only-optimization-20260904.r1.json"
+          ],
+          "attribution": {
+            "detectedBy": "private-shadow deterministic lifecycle verifier",
+            "proposedBy": "Sol/max evaluation Agent",
+            "authorizedBy": "User IM-026 contract",
+            "implementedBy": "Memory Luna model-only lane",
+            "verifiedBy": "Luna r1 and independent model comparison receipt"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "considered_no_change",
+          "reason": "concise-json-v1 is byte-for-byte frozen; Prompt adaptation is not needed."
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "No Tool contract changed."
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "Private-shadow lifecycle and recovery sequence are frozen."
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "No Skill content changed."
+        }
+      ],
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "All Memory semantic, operability and recovery gates are equal; deterministic API pricing estimate falls from $0.269115 to $0.0107502. Latency is 5668ms slower but is informational, so model-only Luna is kept without Prompt adaptation.",
+        "promptAdaptationNeeded": false,
+        "costAuthority": "deterministic_pricing_estimate_from_reported_usage",
+        "costDecreasePercent": 96.0053508723,
+        "latencyIsKeepGate": false,
+        "metricDeltas": [
+          {
+            "metric": "apiCostUsd",
+            "before": 0.269115,
+            "after": 0.0107502,
+            "delta": -0.2583648
+          },
+          {
+            "metric": "totalTokens",
+            "before": 42413,
+            "after": 39731,
+            "delta": -2682
+          },
+          {
+            "metric": "latencyMs",
+            "before": 67659,
+            "after": 73327,
+            "delta": 5668
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "Sol r4 passed every five-case lifecycle and recovery gate.",
+            "after": "Luna r1 passed the same gates with no Prompt change; elapsed time was slightly slower."
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 5-case private-shadow Memory Validation 中，仅将 Sol/max 换为 Luna/max，保持 curation、4/4 durable recall、1/1 abstention、vector/lineage/book、rollback/replay 全部通过，并将确定性 API 定价估算从 $0.269115 降至 $0.0107502（96.0053508723%），无需 Prompt adaptation。",
+        "allowed": "可陈述单轮 private-shadow model-only 的 lifecycle 等价与 96.0053508723% deterministic pricing estimate 降幅，并说明耗时略慢且不参与 Keep。",
+        "forbidden": "不得把 80% 目标值或 pricing_estimate 冒充 Provider 实际账单节省，也不得声称生产、安装态、前台、Held-out 或多轮稳定性。"
+      },
+      "openGaps": [
+        "每个模型仅一轮 private-shadow Validation，没有重复运行置信区间",
+        "成本是 reported usage 的 deterministic pricing_estimate，不是 exact Runtime DB receipt 或 Provider bill",
+        "候选未做安装态、前台、生产数据库或 Held-out 验收"
+      ]
+    },
+    {
+      "id": "cloudops.alert-first-luna-model-only-r1.v1",
+      "title": "CloudOps · Luna Max model-only 质量门禁",
+      "vertical": "cloudops-incident-diagnosis",
+      "evaluationKind": "model_cost",
+      "status": "rejected",
+      "claimStatus": "supporting",
+      "projectionState": "history",
+      "supersededBy": "cloudops.luna-owner-mechanism-prompt-r5.v1",
+      "effectStatus": "regressed",
+      "candidateType": "single_factor",
+      "businessProblem": "在 Sol alert-first 已通过 12 个告警诊断后，验证只换成低价 Luna/max 是否仍保持最终根因、排序质量与 Tool 可靠性。",
+      "whyAgent": "每个 case 都需要 Agent 跨时序告警、资源归属和机制证据完成多步检索；只有冻结相同数据、Prompt、Tool、Runtime 与 Host scorer 的真实 Session 才能检验模型替换。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "openai-codex / gpt-5.6-sol / max",
+          "after": "openai-codex / gpt-5.6-luna / max",
+          "reason": "alert-first-v5 Prompt、12-case suite、scorer、batch plan、context、Tool profile 与 Runtime binary identity components 全部冻结。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "dataset_and_scorer",
+          "value": "cloudops-smoke-v1 Validation；12 cases；suite 31939ae6；contract 99126a25；Gold hidden",
+          "reason": "不换题、不改 Host-private Gold 或评分分母。"
+        },
+        {
+          "name": "prompt_context_batch",
+          "value": "alert-first-v5；standard-v1 context；3×4 sequential batch d7a7aba0",
+          "reason": "将质量变化隔离到 model-only 因子。"
+        },
+        {
+          "name": "runtime_and_cost",
+          "value": "同 Runtime binary/Tool profile/transport；runtime identitySha 随模型字段变化；runtime_cost_reconciled",
+          "reason": "逐请求 Runtime DB 对账是 exact cost authority；Provider bill 未提供。"
+        }
+      ],
+      "star": {
+        "situation": "Sol alert-first r7 达到 12/12、CA 1.0、FA/JRA 10/12、Top3JRA 12/12，exact Runtime 成本 $4.568166。",
+        "task": "仅切换 Luna/max，要求所有质量与可靠性门禁不退化后才能考虑低成本。",
+        "action": "冻结 alert-first-v5、suite/scorer、3×4 batch、context、Tool 与 Runtime binary，运行 Luna model-only r1，并绑定 public-safe case projection 与 exact Runtime cost receipt。",
+        "result": "成本降至 $0.33593112，但 CA 11/12、JRA 9/12、Top3JRA 11/12，且出现 6 次 Tool failure；质量优先，因此 Reject。"
+      },
+      "dataset": {
+        "id": "cloudops-smoke-v1",
+        "split": "validation",
+        "caseCount": 12,
+        "unit": "12 frozen incident-diagnosis cases in three sequential batches",
+        "manifestSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "AnswerCoverage/CA plus FA/JRA/Top3JRA and Tool reliability before exact Runtime cost",
+        "hardGates": [
+          "12/12 answer coverage",
+          "CA = 1",
+          "quality dimensions do not regress",
+          "zero failed Tool calls",
+          "exact Runtime cost receipt available"
+        ],
+        "evaluatorAuthority": "frozen Host-private CloudOps scorer plus Runtime DB reconciliation",
+        "goldHiddenFromAgent": true
+      },
+      "optimizationContract": {
+        "objective": "Test Luna model-only without relaxing diagnosis quality or Tool reliability.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": [
+              "gpt-5.6-luna / max model-only"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "alert-first-v5 Prompt",
+          "12-case suite and Host scorer",
+          "3x4 batch plan",
+          "standard-v1 context",
+          "Runtime binary and Tool profile",
+          "provider, thinking, timeout and transport"
+        ],
+        "selectionRule": "Keep only if Coverage/CA remain 1, other quality metrics do not regress, Tool failures are zero, and exact Runtime cost decreases.",
+        "stopRule": "Reject on the first protected quality or reliability regression; retain the failed stage as the Prompt-adaptation trigger.",
+        "heldOutRule": "Do not consume Held-out during model selection."
+      },
+      "bestKnown": {
+        "configId": "cloudops-luna-alert-first-model-only-r1",
+        "configSha256": "f0dfcbe60ac84b83271877e5cfed8f5145657cadfd3125f9458a3c60715371af",
+        "decision": "reject"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "CA 1.0→0.9166666667",
+            "JRA 0.8333333333→0.75",
+            "Top3JRA 1.0→0.9166666667"
+          ],
+          "reason": "The model-only candidate regressed three protected diagnosis dimensions."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "public-safe 12-case score projection",
+            "Host-private answers and Gold omitted"
+          ],
+          "reason": "Only case IDs and score dimensions enter the ledger."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "Tool calls 99→177",
+            "failed Tool calls 1→6",
+            "post-terminal TraceContractError disclosed"
+          ],
+          "reason": "The completed append-only trial score remains authoritative, while the later outer-report failure stays visible."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "exact Runtime cost $4.568166→$0.33593112",
+            "latency 1036278ms→1705856ms（diagnostic only）"
+          ],
+          "reason": "Lower exact reconciled cost cannot override failed quality and reliability gates."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "Gold hidden",
+            "private answer bodies omitted"
+          ],
+          "reason": "The public projection does not disclose answers, predicted roots or Host-private Gold."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+          "change": "Frozen Sol r7 public-safe score baseline."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+          "change": "Luna model-only r1 public-safe score and failure-boundary projection."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json",
+          "change": "Independent three-stage factor, hash, quality and cost receipt."
+        }
+      ],
+      "baseline": {
+        "runId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+        "metrics": {
+          "answerCoverage": 1.0,
+          "ca": 1.0,
+          "fa": 0.8333333333333334,
+          "jra": 0.8333333333333334,
+          "top3Jra": 1.0,
+          "toolCalls": 99,
+          "failedToolCalls": 1,
+          "latencyMs": 1036278,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 4.568166,
+          "totalTokens": 4662170
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "12-case CloudOps Validation with alert-first-v5",
+            "output": "Sol r7：12/12、CA 1、FA/JRA 10/12、Top3JRA 12/12、99 Tool、1 recovered failure。"
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "cloudops-luna-max-alert-first-model-only-20260904-r1",
+        "metrics": {
+          "answerCoverage": 1.0,
+          "ca": 0.9166666666666666,
+          "fa": 0.8333333333333334,
+          "jra": 0.75,
+          "top3Jra": 0.9166666666666666,
+          "toolCalls": 177,
+          "failedToolCalls": 6,
+          "latencyMs": 1705856,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.33593112,
+          "totalTokens": 7881450
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-alert-first-model-only-20260904.r1.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "Same CloudOps contract, only model changed to Luna/max",
+            "output": "Luna r1：CA 11/12、JRA 9/12、Top3JRA 11/12、177 Tool、6 failures；Reject。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "cloudops-luna-owner-mechanism-prompt",
+          "targetLayer": "system_prompt",
+          "observation": "Luna model-only over-read evidence yet confused affected owner and mechanism in protected cases. The completed score survived a later disclosed projection error.",
+          "hypothesis": "A general evidence-family and owner-before-mechanism gate can reduce unsupported attribution without encoding case answers.",
+          "proposedChange": "Freeze Luna and add exact-family lookup, owner-before-mechanism, and unresolved-discriminator stop rules only.",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json"
+          ],
+          "attribution": {
+            "detectedBy": "Host-private CloudOps scorer and Tool receipts",
+            "proposedBy": "Sol/max evaluation Agent",
+            "authorizedBy": "user staged Luna optimization contract",
+            "implementedBy": "CloudOps luna-owner-mechanism-gate-v8 candidate",
+            "verifiedBy": "Luna r5 plus independent comparison receipt"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "considered_no_change",
+          "reason": "alert-first-v5 is frozen in the model-only stage."
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "Tool profile and transport are frozen."
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "Suite, scorer, batch plan and context projection are frozen."
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "No Skill changed."
+        }
+      ],
+      "comparison": {
+        "decision": "reject",
+        "decisionReason": "Luna model-only is cheaper, but CA/JRA/Top3JRA regress and failed Tool calls rise to 6; quality and reliability gates force Reject.",
+        "metricDeltas": [
+          {
+            "metric": "ca",
+            "before": 1.0,
+            "after": 0.9166666666666666,
+            "delta": -0.08333333333333337
+          },
+          {
+            "metric": "jra",
+            "before": 0.8333333333333334,
+            "after": 0.75,
+            "delta": -0.08333333333333337
+          },
+          {
+            "metric": "failedToolCalls",
+            "before": 1,
+            "after": 6,
+            "delta": 5
+          },
+          {
+            "metric": "apiCostUsd",
+            "before": 4.568166,
+            "after": 0.33593112,
+            "delta": -4.23223488
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "Sol r7 retained full CA and Top3JRA with one recovered Tool failure.",
+            "after": "Luna model-only r1 regressed CA/JRA/Top3JRA and recorded six Tool failures."
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "以冻结 CloudOps 合同执行 Luna model-only 反证：虽将 exact Runtime 成本降至 $0.33593112，但因 CA 11/12、JRA 9/12、Top3JRA 11/12 和 6 次 Tool failure 拒绝候选。",
+        "allowed": "可陈述单轮 source-local Validation 的 model-only 回退、append-only completed score、后续外层 projection failure 和 exact Runtime 成本。",
+        "forbidden": "不得把低价、Provider 实际账单节省或外层错误抹除包装成模型替换成功；不得声称 Held-out、生产、安装态、前台或多轮稳定性。"
+      },
+      "openGaps": [
+        "每模型仅一轮 source-local Validation，没有重复运行置信区间",
+        "model-only trial 完成后 outer report 出现 TraceContractError，已单独披露",
+        "Provider bill、Held-out、安装态、前台和生产验收均不可用"
+      ]
+    },
+    {
+      "id": "cloudops.luna-owner-mechanism-prompt-r5.v1",
+      "title": "CloudOps · Sol→Luna→Owner/Mechanism Prompt 路径",
+      "vertical": "cloudops-incident-diagnosis",
+      "evaluationKind": "model_cost",
+      "status": "kept",
+      "claimStatus": "headline",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "compound_repair",
+      "businessProblem": "把 CloudOps 诊断从 Sol/max 降到低价 Luna/max，同时保持全部最终诊断正确、提高故障对象/根因排序，并消除 Tool failure。",
+      "whyAgent": "12 个 case 需要多步读取告警、工作负载、配置与性能证据；必须用同一 Agent Runtime 分阶段验证 model-only 失败与通用 Prompt 修复。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "openai-codex / gpt-5.6-sol / max",
+          "after": "openai-codex / gpt-5.6-luna / max",
+          "reason": "第一阶段只换模型，CA/JRA/Top3JRA 与 Tool reliability 回退，因此 Reject。"
+        },
+        {
+          "name": "prompt",
+          "before": "alert-first-v5",
+          "after": "luna-owner-mechanism-gate-v8",
+          "reason": "第二阶段冻结 Luna 与其他控制，只补 exact-family evidence、owner-before-mechanism 和 unresolved-discriminator 通用规则；不含 case ID、答案、预测根因或 Gold。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "dataset_scorer_batch_context",
+          "value": "12-case suite 31939ae6；scorer 99126a25；3×4 batch d7a7aba0；standard-v1 context",
+          "reason": "三阶段使用相同分母、Host scorer、batch 与上下文投影。"
+        },
+        {
+          "name": "runtime_binary_and_tools",
+          "value": "Runtime pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad；manifest/entrypoint/extension/node/tool-profile hashes 相同",
+          "reason": "Sol/Luna identitySha 因模型字段变化；两个 Luna 阶段的 identitySha 相同。"
+        },
+        {
+          "name": "cost_authority",
+          "value": "runtime_cost_reconciled；shared pricing source b8ed197e；Provider bill unavailable",
+          "reason": "逐请求 Runtime DB usage、reportedCost 与内容寻址费率交叉验证；trialAggregate 只作原始报告诊断。"
+        }
+      ],
+      "star": {
+        "situation": "Sol r7 为 12/12、CA 1、FA/JRA 10/12、Top3JRA 12/12，exact Runtime 成本 $4.568166；Luna model-only 虽便宜但质量与 Tool reliability 回退。",
+        "task": "不换数据、scorer、Tool、Runtime 或 context，只用一版通用 Prompt 让 Luna 恢复并提升受保护质量。",
+        "action": "增加 exact evidence-family lookup、owner-before-mechanism attribution 与 unresolved-discriminator stop rule，再运行 Luna r5 三个顺序 batch。",
+        "result": "12/12、CA/Top3JRA 1.0、FA/JRA 0.9166666667、130/130 Tool 成功；exact Runtime 成本 $0.27613024，相对 Sol 下降 93.9553369996%（16.5435×），相对 model-only 再降 17.8015302661%。"
+      },
+      "dataset": {
+        "id": "cloudops-smoke-v1",
+        "split": "validation",
+        "caseCount": 12,
+        "unit": "12 frozen incident-diagnosis cases in three sequential batches",
+        "manifestSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "AnswerCoverage/CA hard gates; FA/JRA/Top3JRA and Tool reliability protected; exact Runtime cost after quality",
+        "hardGates": [
+          "12/12 answer coverage",
+          "CA = 1",
+          "FA/JRA/Top3JRA non-regression",
+          "zero failed Tool calls",
+          "quality gate passed",
+          "exact Runtime cost receipt available"
+        ],
+        "evaluatorAuthority": "frozen Host-private CloudOps scorer plus Runtime DB reconciliation",
+        "goldHiddenFromAgent": true
+      },
+      "optimizationContract": {
+        "objective": "Restore and improve protected CloudOps quality on Luna, then minimize exact Runtime cost.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": [
+              "gpt-5.6-luna / max model-only"
+            ]
+          },
+          {
+            "axis": "prompt",
+            "candidatesEvaluated": 1,
+            "values": [
+              "exact-family evidence + owner-before-mechanism + unresolved-discriminator stop"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "12-case suite and Host scorer",
+          "3x4 batch plan",
+          "standard-v1 context projection",
+          "Runtime binary and Tool profile",
+          "provider, max thinking, timeout and transport",
+          "Luna identity across Prompt stage"
+        ],
+        "selectionRule": "Keep only after Coverage/CA/Top3JRA reach 1, FA/JRA do not regress, Tool failures are zero, and exact Runtime cost is below Sol.",
+        "stopRule": "Freeze the first general Prompt candidate that passes all gates; do not tune with case labels, predicted roots or Host-private Gold.",
+        "heldOutRule": "This comparison is Validation-only; no Held-out is consumed."
+      },
+      "bestKnown": {
+        "configId": "cloudops-luna-owner-mechanism-gate-v8-r5",
+        "configSha256": "672eda64615adbb625497f96d00edb93a827192d8adf6e4fe5ba4f64d7d9fdc4",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": [
+            "AnswerCoverage 1→1→1",
+            "CA 1→0.9166666667→1",
+            "FA 0.8333333333→0.8333333333→0.9166666667",
+            "JRA 0.8333333333→0.75→0.9166666667",
+            "Top3JRA 1→0.9166666667→1"
+          ],
+          "reason": "The three-stage chain retains the rejected model-only regression and the repaired final quality."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": [
+            "three public-safe case projections",
+            "Host-private answers and Gold omitted"
+          ],
+          "reason": "Scores remain independently produced by the frozen Host scorer."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": [
+            "Tool calls 99→177→130",
+            "failed Tool calls 1→6→0",
+            "final 3/3 batches turn_completed"
+          ],
+          "reason": "The final prompt stage clears all Tool failures and reaches one terminal result per batch."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": [
+            "cost $4.568166→$0.33593112→$0.27613024",
+            "Sol→final -93.9553369996% (16.5435x)",
+            "model-only→final -17.8015302661%",
+            "latency diagnostic only"
+          ],
+          "reason": "Exact Runtime per-request reconciliation is authoritative; no Provider bill is claimed."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": [
+            "Gold hidden",
+            "general Prompt only",
+            "post-terminal model-only projection failure disclosed"
+          ],
+          "reason": "No case answer enters the Prompt or public projection."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "system_prompt",
+          "ref": "scripts/run_cloudops_agent_eval.py",
+          "change": "Adds the general luna-owner-mechanism-gate-v8 Prompt profile."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json",
+          "change": "Independent three-stage factor/hash/quality/cost comparison receipt."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-optimal-path-cloudops-luna-prompt-20260904.v1.json",
+          "change": "Eval Lab path from Sol baseline through rejected model-only to kept Luna Prompt."
+        }
+      ],
+      "baseline": {
+        "runId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+        "metrics": {
+          "answerCoverage": 1.0,
+          "ca": 1.0,
+          "fa": 0.8333333333333334,
+          "jra": 0.8333333333333334,
+          "top3Jra": 1.0,
+          "toolCalls": 99,
+          "failedToolCalls": 1,
+          "latencyMs": 1036278,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 4.568166,
+          "totalTokens": 4662170
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "Frozen 12-case CloudOps Validation",
+            "output": "Sol r7：CA/Top3JRA 1、FA/JRA 0.8333333333、99 Tool、$4.568166。"
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "cloudops-luna-max-owner-mechanism-prompt-20260904-r5",
+        "metrics": {
+          "answerCoverage": 1.0,
+          "ca": 1.0,
+          "fa": 0.9166666666666666,
+          "jra": 0.9166666666666666,
+          "top3Jra": 1.0,
+          "toolCalls": 130,
+          "failedToolCalls": 0,
+          "latencyMs": 1492913,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.27613024,
+          "totalTokens": 5721003
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-owner-mechanism-prompt-20260904.r5.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "Same contract, Luna/max with one general owner/mechanism Prompt",
+            "output": "Luna r5：12/12、CA/Top3JRA 1、FA/JRA 0.9166666667、130/130 Tool、$0.27613024。"
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "keep-cloudops-luna-owner-mechanism-r5",
+          "targetLayer": "system_prompt",
+          "observation": "The general owner/mechanism gate restores all hard gates and improves FA/JRA over Sol.",
+          "hypothesis": "Explicit evidence-family selection and attribution ordering are sufficient for Luna without fixture-specific labels.",
+          "proposedChange": "Freeze luna-owner-mechanism-gate-v8 and preserve the model-only Reject as causal evidence.",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+            "eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json"
+          ],
+          "attribution": {
+            "detectedBy": "Host-private CloudOps scorer and Tool receipts",
+            "proposedBy": "Sol/max evaluation Agent",
+            "authorizedBy": "user staged Luna optimization contract",
+            "implementedBy": "CloudOps luna-owner-mechanism-gate-v8 candidate",
+            "verifiedBy": "Luna r5, exact Runtime receipts and independent comparison receipt"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {
+          "layer": "system_prompt",
+          "status": "changed",
+          "reason": "Only the second Luna stage changes the general diagnostic Prompt."
+        },
+        {
+          "layer": "tool",
+          "status": "considered_no_change",
+          "reason": "Tool profile and transport are frozen."
+        },
+        {
+          "layer": "workflow",
+          "status": "considered_no_change",
+          "reason": "Suite, scorer, batch plan and context projection are frozen."
+        },
+        {
+          "layer": "skill",
+          "status": "considered_no_change",
+          "reason": "No Skill changed."
+        }
+      ],
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "Luna Prompt r5 restores 12/12 and CA/Top3JRA 1, raises FA/JRA to 11/12, clears all Tool failures and lowers exact Runtime cost to $0.27613024; the final staged candidate is kept.",
+        "stageChain": [
+          {
+            "stage": "sol_baseline",
+            "runId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+            "ca": 1.0,
+            "fa": 0.8333333333333334,
+            "jra": 0.8333333333333334,
+            "top3Jra": 1.0,
+            "toolCalls": 99,
+            "failedToolCalls": 1,
+            "costUsd": 4.568166,
+            "decision": "baseline"
+          },
+          {
+            "stage": "luna_model_only",
+            "runId": "cloudops-luna-max-alert-first-model-only-20260904-r1",
+            "ca": 0.9166666666666666,
+            "fa": 0.8333333333333334,
+            "jra": 0.75,
+            "top3Jra": 0.9166666666666666,
+            "toolCalls": 177,
+            "failedToolCalls": 6,
+            "costUsd": 0.33593112,
+            "decision": "reject"
+          },
+          {
+            "stage": "luna_prompt_adapted",
+            "runId": "cloudops-luna-max-owner-mechanism-prompt-20260904-r5",
+            "ca": 1.0,
+            "fa": 0.9166666666666666,
+            "jra": 0.9166666666666666,
+            "top3Jra": 1.0,
+            "toolCalls": 130,
+            "failedToolCalls": 0,
+            "costUsd": 0.27613024,
+            "decision": "keep"
+          }
+        ],
+        "costComparisons": {
+          "solToPromptAdapted": {
+            "before": 4.568166,
+            "after": 0.27613024,
+            "decreasePercent": 93.9553369996,
+            "costRatio": 16.5435194639
+          },
+          "modelOnlyToPromptAdapted": {
+            "before": 0.33593112,
+            "after": 0.27613024,
+            "decreasePercent": 17.8015302661
+          }
+        },
+        "qualityComparisons": {
+          "solToPromptAdapted": {
+            "caDelta": 0.0,
+            "faDelta": 0.08333333333333326,
+            "jraDelta": 0.08333333333333326,
+            "top3JraDelta": 0.0
+          }
+        },
+        "promptAdaptation": {
+          "generalOnly": true,
+          "changes": [
+            "exact_family_evidence_lookup",
+            "owner_before_mechanism_gate",
+            "unresolved_discriminator_stop_rule"
+          ],
+          "forbidden": [
+            "case_id",
+            "expected_answer",
+            "predicted_root",
+            "host_private_gold"
+          ]
+        },
+        "runtimeControls": {
+          "binaryToolDatasetScoringFrozen": true,
+          "runtimeIdentityShaChangedWithModel": true,
+          "lunaIdentityShaStableAcrossPrompt": true
+        },
+        "costAuthority": "runtime_cost_reconciled",
+        "providerBillAvailable": false,
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json",
+          "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-alert-first-model-only-20260904.r1.v1.json",
+          "eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json",
+          "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-owner-mechanism-prompt-20260904.r5.v1.json",
+          "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json",
+          "eval/interview-metrics/runs/agent-lab-optimal-path-cloudops-luna-prompt-20260904.v1.json"
+        ],
+        "metricDeltas": [
+          {
+            "metric": "ca",
+            "before": 1.0,
+            "after": 1.0,
+            "delta": 0.0
+          },
+          {
+            "metric": "fa",
+            "before": 0.8333333333333334,
+            "after": 0.9166666666666666,
+            "delta": 0.08333333333333326
+          },
+          {
+            "metric": "jra",
+            "before": 0.8333333333333334,
+            "after": 0.9166666666666666,
+            "delta": 0.08333333333333326
+          },
+          {
+            "metric": "failedToolCalls",
+            "before": 1,
+            "after": 0,
+            "delta": -1
+          },
+          {
+            "metric": "apiCostUsd",
+            "before": 4.568166,
+            "after": 0.27613024,
+            "delta": -4.29203576
+          },
+          {
+            "metric": "latencyMs",
+            "before": 1036278,
+            "after": 1492913,
+            "delta": 456635
+          }
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "Sol r7 retained full CA and Top3JRA, with FA/JRA 10/12 and one recovered Tool failure.",
+            "after": "Luna Prompt r5 reached full CA/Top3JRA, FA/JRA 11/12 and 130/130 successful Tool calls."
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在冻结的 12-case CloudOps Validation 中，通过“Sol→Luna model-only Reject→Luna 通用 Prompt Keep”恢复 CA/Top3JRA 到 100%、将 FA/JRA 从 83.3% 提至 91.7%、实现 130/130 Tool 成功，并把 exact Runtime API 成本从 $4.568166 降至 $0.27613024（93.9553369996%，16.5435×）。",
+        "allowed": "可陈述单轮 source-local 三阶段 Validation、通用 Prompt 恢复/提升质量、130/130 Tool、exact Runtime 成本及 Sol→final 93.9553369996% 和 model-only→final 17.8015302661% 降幅。",
+        "forbidden": "不得称 Provider 实际账单节省、生产/安装态/前台成功、Held-out 泛化或多轮稳定性；不得隐去 model-only 的 outer projection failure，也不得暗示 Prompt 含 case ID、答案、预测根因或 Gold。"
+      },
+      "openGaps": [
+        "每阶段仅一轮 source-local Validation，没有重复运行置信区间",
+        "Provider bill unavailable；exact Runtime reconciliation 不等于真实扣款",
+        "Held-out、安装态、前台和生产泛化均未验证",
+        "耗时比 Sol 慢，只作 diagnostic，不写成改善"
       ]
     },
     {
@@ -8301,6 +10108,881 @@
       ],
       "projectionState": "history",
       "supersededBy": "memory.maintenance-luna-shadow-v5.v1"
+    },
+    {
+      "id": "enterprise-rag.sol-max-standard-r6.v1",
+      "title": "Enterprise RAG · Sol Max under candidate-aware Standard r6 (Reject)",
+      "vertical": "enterprise-knowledge-retrieval",
+      "evaluationKind": "answer_evidence",
+      "status": "rejected",
+      "claimStatus": "diagnostic",
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.luna-prompt-v4-standard-r6.v1",
+      "effectStatus": "neutral",
+      "candidateType": "baseline",
+      "businessProblem": "企业问答的成本优化必须先通过逐事实 exact-chunk citation gate；同一冻结输出因追加 Standard 证据绑定而改分时，必须把评分修正与模型能力分开。",
+      "whyAgent": "该任务同时依赖多轮检索、结构化引用、拒答、Tool 终态和独立评分，只有 hash-bound 冻结 Run 的离线精确重评分才能保留真实链路并避免重跑污染。",
+      "factors": [
+        {
+          "name": "guardrail",
+          "before": "candidate-aware private-support Standard r5",
+          "after": "append-only candidate-aware attention Standard r6",
+          "reason": "只追加一条经语义审计的 exact-chunk 等价绑定；这是评测 Standard 修正，不是候选模型或 Prompt 改动。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "frozen_candidate",
+          "value": "Sol/max frozen-v19 r4 source report and all candidate outputs remain byte-identical",
+          "reason": "r6 只离线重评分，不调用 Provider、Judge 或重新运行 Candidate。"
+        },
+        {
+          "name": "validation_scope",
+          "value": "4-case / 9-fact Validation; 5,101 documents and 29,846 chunks",
+          "reason": "不换题、不缩分母、不打开 Held-out。"
+        }
+      ],
+      "star": {
+        "situation": "旧 current RAG 条目在旧证据 Standard 下仍停留于 4/9，无法表达随后追加、逐项审计的精确引用绑定。",
+        "task": "在不重跑候选、不打开 Held-out 的前提下，用 r6 对冻结 Sol 控制重评分并保留失败门禁。",
+        "action": "将同一 Sol frozen-v19 r4 输出绑定到 append-only r6 Standard/qrels，并用 production exact citation-token→document→chunk-ordinal scorer 离线复算。",
+        "result": "Sol 在 r6 下覆盖 7/9 exact citation facts，仍未通过 citationResolution，结论保持 Reject；$2.170603 只是完整四 lane 加冻结 Judge 的 Runtime 对账成本。"
+      },
+      "dataset": {
+        "id": "enterprise-rag-answer-evidence-validation-attention-r6",
+        "split": "validation",
+        "caseCount": 4,
+        "unit": "2 answerable + 2 abstention cases; 9 required facts; public artifacts omit question, Gold, quote and answer bodies",
+        "manifestSha256": "6a4f6e35dbc0987a346649a19a48de5938f1b06e9c60e9be7dd2d4a2f6466c3e",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "exact citation facts covered out of 9 plus all answer/abstention/Tool/protocol hard gates",
+        "evaluatorAuthority": "candidate-aware Standard r6 and deterministic exact citation-token-to-document-and-chunk-ordinal offline scorer",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "9/9 exact citation facts",
+          "2/2 answerable citation cases supported",
+          "2/2 abstentions correct",
+          "100% output protocol and Tool success"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "Record the shared r6 Standard correction without attributing any changed score to model capability.",
+        "candidateSearchSpace": [
+          {
+            "axis": "guardrail_standard_revision",
+            "candidatesEvaluated": 1,
+            "values": [
+              "r5 immutable predecessor",
+              "r6 append-only attention binding"
+            ]
+          }
+        ],
+        "frozenVariables": [
+          "Sol/max frozen-v19 r4 candidate output",
+          "corpus and chunk manifest",
+          "exact scorer implementation",
+          "Validation split",
+          "no Provider/Judge/candidate rerun"
+        ],
+        "selectionRule": "Keep only a 9/9 candidate that also clears every hard gate; Standard-only score changes cannot be called model gains.",
+        "stopRule": "Retain Sol as a rejected historical control at 7/9.",
+        "heldOutRule": "Held-out remains sealed; r6 is post-Validation candidate-aware and cannot authorize unbiased Promotion."
+      },
+      "bestKnown": {
+        "configId": "enterprise-rag-sol-max-frozen-v19-r4-under-r6",
+        "configSha256": "d2d3d7e1e781b2546fb1cfe6e296454d6dec4ca20a17436fb879730cec97be35",
+        "decision": "reject"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": ["agent success 3/4", "answer Judge correctness 1/2", "abstention 2/2"],
+          "reason": "One answerable case still fails the final answer/evidence contract."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": ["exact citation facts 7/9", "answerable citation cases 1/2"],
+          "reason": "The exact citation hard gate remains false."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": ["output protocol 100%", "Tool success 100%", "offline rescore Provider/Judge calls 0"],
+          "reason": "The source run completed; r6 reused it without execution."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": ["full-run Runtime cost $2.170603", "Provider bill unavailable", "latency diagnostic only"],
+          "reason": "Cost is reconciled from Runtime requests and a hashed pricing source, not billing."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": ["candidate-aware", "not candidate-blind", "Held-out unopened", "unbiased=false"],
+          "reason": "The public projection omits questions, Gold, evidence quotes and candidate answers."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "dataset",
+          "ref": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-attention-r6.json",
+          "change": "Append-only public Standard r6 metadata; private qrels body remains Host-only."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "change": "Public-safe exact offline Sol control rescore."
+        }
+      ],
+      "baseline": {
+        "runId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "metrics": {
+          "exactCitationFactsCovered": 7,
+          "citationFactCount": 9,
+          "exactCitationFactCoverage": 0.7777777777777778,
+          "agentSuccessRate": 0.75,
+          "answerJudgeCorrectnessRate": 0.5,
+          "answerableCitationSupportRate": 0.5,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "citationHardGatePassed": 0,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 2.170603,
+          "totalTokens": 892697
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-private-support-r5-exact-offline-rescore-20260905.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "Same frozen Sol output under predecessor r5",
+            "output": "7/9 exact citation facts; Reject."
+          }
+        ]
+      },
+      "candidate": {
+        "runId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "metrics": {
+          "exactCitationFactsCovered": 7,
+          "citationFactCount": 9,
+          "exactCitationFactCoverage": 0.7777777777777778,
+          "agentSuccessRate": 0.75,
+          "answerJudgeCorrectnessRate": 0.5,
+          "answerableCitationSupportRate": 0.5,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "citationHardGatePassed": 0,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 2.170603,
+          "totalTokens": 892697
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {
+            "caseId": "aggregate",
+            "input": "Same frozen Sol output under r6",
+            "output": "7/9 exact citation facts; citation hard gate fails; Reject."
+          }
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "retain-sol-r6-as-rejected-control",
+          "targetLayer": "workflow",
+          "observation": "The r6 attention binding does not change the frozen Sol control, which remains 7/9.",
+          "hypothesis": "A weaker-model path must be assessed independently and cannot inherit a capability claim from a Standard correction.",
+          "proposedChange": "Keep Sol r6 as immutable history and compare later stages under the same r6 contract.",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json",
+            "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json"
+          ],
+          "attribution": {
+            "detectedBy": "deterministic exact citation scorer",
+            "proposedBy": "Enterprise RAG evaluation workflow",
+            "authorizedBy": "user-approved r6 append-only audit boundary",
+            "implementedBy": "offline r6 rescore",
+            "verifiedBy": "public r6 calibration receipt and verifier"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {"layer": "system_prompt", "status": "considered_no_change", "reason": "Prompt is byte-frozen."},
+        {"layer": "tool", "status": "considered_no_change", "reason": "Retrieval and Tool outputs are frozen."},
+        {"layer": "workflow", "status": "changed", "reason": "Only the scoring Standard/guardrail advances append-only to r6."},
+        {"layer": "skill", "status": "considered_no_change", "reason": "No Skill changes."}
+      ],
+      "comparison": {
+        "decision": "reject",
+        "decisionReason": "The frozen Sol control remains 7/9 under r6 and fails citationResolution; Standard-only correction is not model capability improvement.",
+        "validationBoundary": {
+          "candidateAware": true,
+          "candidateBlind": false,
+          "heldOutOpened": false,
+          "unbiasedPromotionClaimAllowed": false,
+          "standardRevisionIsModelCapabilityImprovement": false,
+          "latencyIsKeepGate": false,
+          "costAuthority": "runtime_cost_reconciled",
+          "providerBillAvailable": false
+        },
+        "metricDeltas": [
+          {"metric": "exactCitationFactsCovered", "before": 7, "after": 7, "delta": 0},
+          {"metric": "apiCostUsd", "before": 2.170603, "after": 2.170603, "delta": 0.0}
+        ],
+        "outputComparisons": [
+          {"caseId": "aggregate", "before": "r5: 7/9 Reject.", "after": "r6: 7/9 Reject; no candidate rerun."}
+        ]
+      },
+      "claim": {
+        "resumeBullet": "Enterprise RAG Sol/max frozen control scored 7/9 exact citation facts under candidate-aware Standard r6 and remained Reject.",
+        "allowed": "A post-Validation candidate-aware diagnostic control with 7/9 exact citation facts and a $2.170603 Runtime-reconciled full-run estimate.",
+        "forbidden": "Candidate-blind, unbiased, Held-out, production, Provider 实际账单节省, model capability improvement, or latency improvement."
+      },
+      "openGaps": [
+        "candidate-aware r6 cannot establish unbiased generalization",
+        "Provider bill, Held-out, installation and foreground evidence are absent",
+        "latency remains diagnostic only"
+      ]
+    },
+    {
+      "id": "enterprise-rag.luna-model-only-standard-r6.v1",
+      "title": "Enterprise RAG · Luna Max model-only under Standard r6 (Reject)",
+      "vertical": "enterprise-knowledge-retrieval",
+      "evaluationKind": "answer_evidence",
+      "status": "rejected",
+      "claimStatus": "diagnostic",
+      "projectionState": "history",
+      "supersededBy": "enterprise-rag.luna-prompt-v4-standard-r6.v1",
+      "effectStatus": "improved",
+      "candidateType": "single_factor",
+      "businessProblem": "降低模型价格不能以牺牲逐事实引用门禁为代价；需要先隔离只换模型的结果，再判断是否需要 Prompt 适配。",
+      "whyAgent": "企业问答的真实终态取决于检索、引用、拒答与 Tool 链，而非单次文本相似度；模型替换必须用同一冻结 Runtime/数据/Standard 的完整 Agent 输出验证。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "openai-codex/gpt-5.6-sol / max",
+          "after": "openai-codex/gpt-5.6-luna / max",
+          "reason": "第一阶段冻结 Prompt、Skill、Tool、Workflow、语料、scorer 与 r6 Standard，只替换模型。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "agent_contract",
+          "value": "frozen-v19 model-only Prompt/Skill/Tool/Workflow and exact scorer",
+          "reason": "把 7/9→8/9 与成本变化限定为 model-only 对照。"
+        },
+        {
+          "name": "standard_scope",
+          "value": "post-Validation candidate-aware r6; candidateBlind=false; Held-out unopened",
+          "reason": "该 Standard 不是无偏测评，不能用于模型能力或泛化结论。"
+        }
+      ],
+      "star": {
+        "situation": "Sol 控制在 r6 下只有 7/9 exact citation facts，完整 Runtime 成本为 $2.170603。",
+        "task": "仅替换为 Luna/max，验证更低成本是否仍能通过相同 9/9 引用硬门。",
+        "action": "复用冻结 Luna model-only v19 r4 输出，在同一 r6 上执行 exact chunk 离线重评分，并绑定 Runtime cost receipt。",
+        "result": "Luna model-only 达到 8/9 且成本为 $0.10594896，但 citationResolution 仍失败，因此明确 Reject 并进入一次通用 Prompt 修复。"
+      },
+      "dataset": {
+        "id": "enterprise-rag-answer-evidence-validation-attention-r6",
+        "split": "validation",
+        "caseCount": 4,
+        "unit": "2 answerable + 2 abstention cases; 9 required facts; public artifacts omit question, Gold, quote and answer bodies",
+        "manifestSha256": "6a4f6e35dbc0987a346649a19a48de5938f1b06e9c60e9be7dd2d4a2f6466c3e",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "exact citation facts covered out of 9 plus all answer/abstention/Tool/protocol hard gates",
+        "evaluatorAuthority": "candidate-aware Standard r6 and deterministic exact citation-token-to-document-and-chunk-ordinal offline scorer",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "9/9 exact citation facts",
+          "2/2 answerable citation cases supported",
+          "2/2 abstentions correct",
+          "100% output protocol and Tool success"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "Test whether Luna/max alone preserves the complete Sol answer/evidence contract while lowering Runtime-reconciled cost.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": ["gpt-5.6-sol/max", "gpt-5.6-luna/max"]
+          }
+        ],
+        "frozenVariables": [
+          "4-case / 9-fact Validation",
+          "frozen-v19 Prompt, Skill, Tool and Workflow",
+          "candidate-aware Standard r6 and exact scorer",
+          "corpus/chunk manifest",
+          "no Held-out consumption"
+        ],
+        "selectionRule": "A lower-cost model is Keep only at 9/9 with every hard gate passed.",
+        "stopRule": "At 8/9 retain model-only as Reject; permit only one separately recorded general Prompt candidate.",
+        "heldOutRule": "No Held-out is opened; candidate-aware Validation cannot authorize unbiased Promotion."
+      },
+      "bestKnown": {
+        "configId": "enterprise-rag-luna-model-only-v19-r4-under-r6",
+        "configSha256": "2cc20cef18804ee013bbef95607cdc946f797554182a959b7f5a52f4b7aae9fe",
+        "decision": "reject"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": ["agent success 3/4", "answer Judge correctness 2/2", "abstention 2/2"],
+          "reason": "One answerable case still fails final citation support."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": ["exact citation facts 7/9→8/9", "answerable citation cases remain 1/2"],
+          "reason": "The 9/9 citation hard gate is not met."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": ["output protocol 100%", "Tool success 100%", "offline rescore Provider/Judge calls 0"],
+          "reason": "Only frozen outputs and receipts are compared."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": ["full-run cost $2.170603→$0.10594896", "Provider bill unavailable", "latency diagnostic only"],
+          "reason": "Lower Runtime-reconciled cost cannot override the failed quality gate."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": ["Gold hidden", "candidate-aware", "Held-out unopened", "unbiased=false"],
+          "reason": "No private bodies enter this public ledger."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "change": "Public-safe Luna model-only exact offline rescore under r6."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-model-only-v19-20260904.r4.v1.json",
+          "change": "Runtime-reconciled whole-run pricing evidence; not a Provider bill."
+        }
+      ],
+      "baseline": {
+        "runId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "metrics": {
+          "exactCitationFactsCovered": 7,
+          "citationFactCount": 9,
+          "exactCitationFactCoverage": 0.7777777777777778,
+          "agentSuccessRate": 0.75,
+          "answerJudgeCorrectnessRate": 0.5,
+          "answerableCitationSupportRate": 0.5,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "citationHardGatePassed": 0,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 2.170603,
+          "totalTokens": 892697
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {"caseId": "aggregate", "input": "Sol/max frozen control under r6", "output": "7/9 exact citation facts; Reject."}
+        ]
+      },
+      "candidate": {
+        "runId": "enterprise-rag-luna-max-model-only-v19-20260904-r4",
+        "metrics": {
+          "exactCitationFactsCovered": 8,
+          "citationFactCount": 9,
+          "exactCitationFactCoverage": 0.8888888888888888,
+          "agentSuccessRate": 0.75,
+          "answerJudgeCorrectnessRate": 1.0,
+          "answerableCitationSupportRate": 0.5,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "citationHardGatePassed": 0,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.10594896,
+          "totalTokens": 926570
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-model-only-v19-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {"caseId": "aggregate", "input": "Only model changed to Luna/max", "output": "8/9 exact citation facts; citation hard gate fails; Reject."}
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "repair-luna-with-one-general-coverage-prompt",
+          "targetLayer": "system_prompt",
+          "observation": "Luna model-only is substantially cheaper and semantically complete but misses one exact citation fact.",
+          "hypothesis": "A general atomic-gap and claim-to-citation gate can improve evidence completeness without embedding target answers.",
+          "proposedChange": "Freeze Luna and all other controls; test exactly one coverage-balanced Prompt profile.",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json"
+          ],
+          "attribution": {
+            "detectedBy": "deterministic exact citation scorer",
+            "proposedBy": "Enterprise RAG evaluation workflow",
+            "authorizedBy": "user staged model-only then Prompt contract",
+            "implementedBy": "coverage-balanced-evidence-gate-v4 candidate",
+            "verifiedBy": "separate Luna Prompt-v4 r6 result"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {"layer": "system_prompt", "status": "considered_no_change", "reason": "Prompt remains frozen-v19."},
+        {"layer": "tool", "status": "considered_no_change", "reason": "Tool and retrieval configuration remain frozen."},
+        {"layer": "workflow", "status": "considered_no_change", "reason": "Runner, scorer, dataset and r6 Standard remain frozen."},
+        {"layer": "skill", "status": "considered_no_change", "reason": "No Skill changes."}
+      ],
+      "comparison": {
+        "decision": "reject",
+        "decisionReason": "Luna model-only lowers the Runtime-reconciled full-run cost to $0.10594896 but reaches only 8/9, so the citation hard gate rejects it.",
+        "validationBoundary": {
+          "candidateAware": true,
+          "candidateBlind": false,
+          "heldOutOpened": false,
+          "unbiasedPromotionClaimAllowed": false,
+          "standardRevisionIsModelCapabilityImprovement": false,
+          "latencyIsKeepGate": false,
+          "costAuthority": "runtime_cost_reconciled",
+          "providerBillAvailable": false
+        },
+        "metricDeltas": [
+          {"metric": "exactCitationFactsCovered", "before": 7, "after": 8, "delta": 1},
+          {"metric": "answerJudgeCorrectnessRate", "before": 0.5, "after": 1.0, "delta": 0.5},
+          {"metric": "apiCostUsd", "before": 2.170603, "after": 0.10594896, "delta": -2.06465404}
+        ],
+        "outputComparisons": [
+          {"caseId": "aggregate", "before": "Sol: 7/9 Reject.", "after": "Luna model-only: 8/9 Reject despite lower cost."}
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 candidate-aware r6 Validation 中，仅换 Luna/max 将全运行 Runtime 对账成本从 $2.170603 降到 $0.10594896，但 8/9 未过引用门禁，因此 Reject。",
+        "allowed": "A model-only, post-Validation candidate-aware diagnostic with 8/9 and a Runtime-reconciled cost estimate.",
+        "forbidden": "80%, Provider 实际账单节省, candidate-blind, unbiased, Held-out, production, model capability uplift, or latency improvement."
+      },
+      "openGaps": [
+        "one exact citation fact remains unsupported",
+        "candidate-aware r6 cannot establish unbiased generalization",
+        "Provider bill, Held-out, installation and foreground evidence are absent",
+        "latency remains diagnostic only"
+      ]
+    },
+    {
+      "id": "enterprise-rag.luna-prompt-v4-standard-r6.v1",
+      "title": "Enterprise RAG · Sol→Luna model-only→Luna Prompt-v4 under Standard r6",
+      "vertical": "enterprise-knowledge-retrieval",
+      "evaluationKind": "answer_evidence",
+      "status": "kept",
+      "claimStatus": "supporting",
+      "projectionState": "current",
+      "effectStatus": "improved",
+      "candidateType": "compound_repair",
+      "businessProblem": "在逐事实证据硬门不退化的前提下，把高成本 Sol 企业问答迁移到更低价 Luna，并保留模型替换失败与通用 Prompt 修复的独立因果阶段。",
+      "whyAgent": "四个 case 同时要求检索、证据引用、正确拒答、结构化协议和 Tool 成功；必须比较真实冻结 Agent Run，而不能用模型价格表或孤立文本样例替代。",
+      "factors": [
+        {
+          "name": "model",
+          "before": "openai-codex/gpt-5.6-sol / max",
+          "after": "openai-codex/gpt-5.6-luna / max",
+          "reason": "先单独运行 model-only 阶段并保留 8/9 Reject，证明低价模型本身尚未通过门禁。"
+        },
+        {
+          "name": "prompt",
+          "before": "frozen-v19 generic answer/evidence Prompt",
+          "after": "coverage-balanced-evidence-gate-v4",
+          "reason": "第二阶段冻结 Luna 与其余控制，只增加通用 atomic-gap、轮转补检索和 claim-to-citation 完整性规则；不含 case、问题、答案、Gold、qrels 或 quote。"
+        }
+      ],
+      "frozenControls": [
+        {
+          "name": "runtime_tool_dataset_scorer",
+          "value": "same corpus/chunk manifest, four-case Validation, Tool contracts, runner and exact citation scorer",
+          "reason": "三阶段的质量差异不来自换题、缩分母或修改 Runtime/Tool。"
+        },
+        {
+          "name": "r6_standard",
+          "value": "candidateAware=true; candidateBlind=false; Heldout=false; unbiased=false",
+          "reason": "r6 是运行后 Standard 校准，三阶段统一重评分但不能支持无偏 Promotion 或模型能力提升。"
+        },
+        {
+          "name": "cost_scope",
+          "value": "full four-lane run plus frozen Judge; authority=runtime_cost_reconciled; Provider bill unavailable",
+          "reason": "成本来自逐请求 Runtime 对账与 hash-bound 费率，不能冒充实际扣款；离线重评分本身调用为 0。"
+        }
+      ],
+      "star": {
+        "situation": "Sol/max 在 r6 下只有 7/9 exact citation facts，Luna model-only 虽把成本大幅降低却仍只有 8/9。",
+        "task": "用一次不含目标答案的通用 Luna Prompt 修复证据覆盖，并在同一 r6 硬门下恢复完整任务成功。",
+        "action": "冻结 Luna、语料、Tool、Skill、Workflow、Runner 与 scorer，只启用 coverage-balanced-evidence-gate-v4；把冻结输出离线重评分并分别绑定三份 Runtime cost receipt。",
+        "result": "路径为 Sol 7/9 Reject → Luna model-only 8/9 Reject → Luna+Prompt-v4 9/9 Keep；完整运行对账成本 $2.170603→$0.10594896→$0.1029376，Sol→final 下降 95.2576496024%，model-only→Prompt 再下降 2.84227424224%。"
+      },
+      "dataset": {
+        "id": "enterprise-rag-answer-evidence-validation-attention-r6",
+        "split": "validation",
+        "caseCount": 4,
+        "unit": "2 answerable + 2 abstention cases; 9 required facts; public artifacts omit question, Gold, quote and answer bodies",
+        "manifestSha256": "6a4f6e35dbc0987a346649a19a48de5938f1b06e9c60e9be7dd2d4a2f6466c3e",
+        "heldOutConsumed": false
+      },
+      "scoringContract": {
+        "primaryMetric": "9/9 exact citation facts and 4/4 final agent case success, subject to answer/abstention/Tool/protocol gates",
+        "evaluatorAuthority": "candidate-aware Standard r6 and deterministic exact citation-token-to-document-and-chunk-ordinal offline scorer",
+        "goldHiddenFromAgent": true,
+        "hardGates": [
+          "9/9 exact citation facts",
+          "2/2 answerable citation cases supported",
+          "2/2 answerable answers accepted by frozen Judge",
+          "2/2 abstentions correct",
+          "100% output protocol and Tool success"
+        ]
+      },
+      "optimizationContract": {
+        "objective": "Reach the r6 Validation answer/evidence hard gates with Luna/max while lowering the Runtime-reconciled full-run estimate relative to Sol.",
+        "candidateSearchSpace": [
+          {
+            "axis": "model",
+            "candidatesEvaluated": 1,
+            "values": ["gpt-5.6-sol/max", "gpt-5.6-luna/max"]
+          },
+          {
+            "axis": "prompt",
+            "candidatesEvaluated": 1,
+            "values": ["frozen-v19", "coverage-balanced-evidence-gate-v4"]
+          }
+        ],
+        "frozenVariables": [
+          "4-case / 9-fact Validation and corpus/chunk manifest",
+          "Luna model identity between model-only and Prompt-v4",
+          "Tool, Skill, Workflow, runner and exact scorer",
+          "candidate-aware Standard r6 across all final comparisons",
+          "no Provider/Judge/candidate rerun during rescore",
+          "no Held-out consumption"
+        ],
+        "selectionRule": "Quality gates run first; cost is compared only after the final stage reaches 9/9, 4/4 and all protocol/Tool gates.",
+        "stopRule": "Keep the first general Prompt candidate that passes; do not tune against case identifiers, question/reference text, Gold, qrels, evidence quotes or candidate answers.",
+        "heldOutRule": "This is post-Validation candidate-aware calibration, not candidate-blind or unbiased; Held-out remains sealed."
+      },
+      "bestKnown": {
+        "configId": "enterprise-rag-luna-coverage-balanced-evidence-gate-v4-r4-under-r6",
+        "configSha256": "dd08534c851fc65e465b4843c4433a59b1953469eca86a86b1c43c0738bb772d",
+        "decision": "keep"
+      },
+      "metricFamilies": [
+        {
+          "family": "outcome_quality",
+          "status": "measured",
+          "metrics": ["agent success 3/4→3/4→4/4", "answer Judge correctness 1/2→2/2→2/2", "abstention 2/2 throughout"],
+          "reason": "The final stage reaches all four case outcomes under the r6 Validation contract."
+        },
+        {
+          "family": "evidence_grounding",
+          "status": "measured",
+          "metrics": ["exact citation facts 7/9→8/9→9/9", "answerable citation cases 1/2→1/2→2/2"],
+          "reason": "Only Prompt-v4 clears the exact citation hard gate."
+        },
+        {
+          "family": "runtime_reliability",
+          "status": "measured",
+          "metrics": ["output protocol 100%", "Tool success 100%", "offline rescore Provider/Judge/Candidate calls 0"],
+          "reason": "Each stage is a hash-bound frozen run; r6 comparison is deterministic offline reuse."
+        },
+        {
+          "family": "efficiency_cost",
+          "status": "measured",
+          "metrics": ["$2.170603→$0.10594896→$0.1029376", "Sol→final -95.2576496024%", "model-only→Prompt -2.84227424224%", "latency diagnostic only"],
+          "reason": "Amounts are full-run Runtime-reconciled estimates under one pricing-source hash; no Provider bill is claimed."
+        },
+        {
+          "family": "safety_recovery",
+          "status": "measured",
+          "metrics": ["candidateAware=true", "candidateBlind=false", "Heldout=false", "unbiased=false", "Standard correction is not model capability improvement"],
+          "reason": "The public artifacts disclose scope and hashes without question, Gold, quote or answer bodies."
+        }
+      ],
+      "createdOrModifiedAssets": [
+        {
+          "kind": "system_prompt",
+          "ref": "scripts/run_rag_agent_ablation.py",
+          "change": "Defines coverage-balanced-evidence-gate-v4 as a general atomic-gap and claim-to-citation Prompt profile."
+        },
+        {
+          "kind": "dataset",
+          "ref": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-attention-r6.json",
+          "change": "Append-only public Standard r6 metadata; private qrels body remains Host-only."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json",
+          "change": "Public-safe candidate-aware calibration boundary and three-stage result receipt."
+        },
+        {
+          "kind": "evaluator",
+          "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "change": "Public-safe exact offline final rescore."
+        }
+      ],
+      "baseline": {
+        "runId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "metrics": {
+          "exactCitationFactsCovered": 7,
+          "citationFactCount": 9,
+          "exactCitationFactCoverage": 0.7777777777777778,
+          "agentSuccessRate": 0.75,
+          "answerJudgeCorrectnessRate": 0.5,
+          "answerableCitationSupportRate": 0.5,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "citationHardGatePassed": 0,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 2.170603,
+          "totalTokens": 892697
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {"caseId": "aggregate", "input": "Sol/max frozen control under r6", "output": "3/4 final case success and 7/9 exact citation facts; Reject."}
+        ]
+      },
+      "candidate": {
+        "runId": "enterprise-rag-luna-max-coverage-balanced-v4-20260904-r4",
+        "metrics": {
+          "exactCitationFactsCovered": 9,
+          "citationFactCount": 9,
+          "exactCitationFactCoverage": 1.0,
+          "agentSuccessRate": 1.0,
+          "answerJudgeCorrectnessRate": 1.0,
+          "answerableCitationSupportRate": 1.0,
+          "infoNotFoundAbstentionRecall": 1.0,
+          "outputProtocolRate": 1.0,
+          "toolSuccessRate": 1.0,
+          "citationHardGatePassed": 1,
+          "costReceiptAvailable": 1,
+          "providerBillAvailable": 0,
+          "apiCostUsd": 0.1029376,
+          "totalTokens": 763923
+        },
+        "evidenceRefs": [
+          "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+          "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r4.v1.json"
+        ],
+        "outputExamples": [
+          {"caseId": "aggregate", "input": "Same r6 contract with Luna/max and one general Prompt-v4", "output": "4/4 final case success, 9/9 exact citation facts and all hard gates passed; Keep."}
+        ]
+      },
+      "recommendations": [
+        {
+          "id": "keep-luna-coverage-balanced-prompt-v4-under-r6",
+          "targetLayer": "system_prompt",
+          "observation": "Model-only stops at 8/9 while the single general Prompt-v4 reaches 9/9 and lowers the same-scope estimate slightly further.",
+          "hypothesis": "Explicit atomic-gap allocation and claim-to-citation completeness help Luna use already retrieved evidence without target-specific leakage.",
+          "proposedChange": "Keep Prompt-v4 only as the current candidate-aware Validation winner and require a future candidate-blind or Held-out evaluation for unbiased Promotion.",
+          "evidenceRefs": [
+            "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+            "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+            "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json"
+          ],
+          "attribution": {
+            "detectedBy": "deterministic exact citation scorer and frozen Judge reuse",
+            "proposedBy": "Enterprise RAG evaluation workflow",
+            "authorizedBy": "user staged model-only then one general Prompt candidate",
+            "implementedBy": "coverage-balanced-evidence-gate-v4",
+            "verifiedBy": "r6 verifier, three public offline rescores and three Runtime cost receipts"
+          },
+          "status": "verified"
+        }
+      ],
+      "layerAssessments": [
+        {"layer": "system_prompt", "status": "changed", "reason": "Only the second Luna stage adds the general Prompt-v4 rules."},
+        {"layer": "tool", "status": "considered_no_change", "reason": "Tool and retrieval configuration remain frozen."},
+        {"layer": "workflow", "status": "considered_no_change", "reason": "Runner, scorer, dataset and r6 comparison contract remain frozen across model-only and Prompt-v4."},
+        {"layer": "skill", "status": "considered_no_change", "reason": "No Skill changes."}
+      ],
+      "comparison": {
+        "decision": "keep",
+        "decisionReason": "Within the explicitly candidate-aware r6 Validation, Prompt-v4 is the only stage at 9/9 and 4/4; its full-run Runtime estimate is $0.1029376, 95.2576496024% below Sol and 2.84227424224% below Luna model-only.",
+        "stageChain": [
+          {
+            "stage": "sol_baseline",
+            "runId": "enterprise-rag-sol-max-frozen-v19-20260904-r4",
+            "exactCitationFactsCovered": 7,
+            "citationFactCount": 9,
+            "agentSuccessRate": 0.75,
+            "answerJudgeCorrectnessRate": 0.5,
+            "costUsd": 2.170603,
+            "decision": "reject"
+          },
+          {
+            "stage": "luna_model_only",
+            "runId": "enterprise-rag-luna-max-model-only-v19-20260904-r4",
+            "exactCitationFactsCovered": 8,
+            "citationFactCount": 9,
+            "agentSuccessRate": 0.75,
+            "answerJudgeCorrectnessRate": 1.0,
+            "costUsd": 0.10594896,
+            "decision": "reject"
+          },
+          {
+            "stage": "luna_prompt_v4",
+            "runId": "enterprise-rag-luna-max-coverage-balanced-v4-20260904-r4",
+            "exactCitationFactsCovered": 9,
+            "citationFactCount": 9,
+            "agentSuccessRate": 1.0,
+            "answerJudgeCorrectnessRate": 1.0,
+            "costUsd": 0.1029376,
+            "decision": "keep"
+          }
+        ],
+        "costComparisons": {
+          "solToPromptV4": {
+            "before": 2.170603,
+            "after": 0.1029376,
+            "decreasePercent": 95.2576496024,
+            "costRatio": 21.0865903227,
+            "scope": "full-four-lane-run-plus-frozen-judge"
+          },
+          "modelOnlyToPromptV4": {
+            "before": 0.10594896,
+            "after": 0.1029376,
+            "decreasePercent": 2.84227424224,
+            "scope": "full-four-lane-run-plus-frozen-judge"
+          }
+        },
+        "promptAdaptation": {
+          "generalOnly": true,
+          "profile": "coverage-balanced-evidence-gate-v4",
+          "changes": [
+            "atomic_gap_classification",
+            "round_robin_supplemental_query_allocation",
+            "claim_to_citation_gate_and_full_abstention"
+          ],
+          "forbidden": [
+            "case_id",
+            "question_body",
+            "reference_answer",
+            "gold",
+            "qrels",
+            "evidence_quote",
+            "candidate_answer"
+          ]
+        },
+        "validationBoundary": {
+          "candidateAware": true,
+          "candidateBlind": false,
+          "heldOutOpened": false,
+          "unbiasedPromotionClaimAllowed": false,
+          "standardRevisionIsModelCapabilityImprovement": false,
+          "latencyIsKeepGate": false,
+          "costAuthority": "runtime_cost_reconciled",
+          "providerBillAvailable": false,
+          "offlineRescoreProviderCalls": 0,
+          "offlineRescoreJudgeCalls": 0,
+          "offlineRescoreCandidateRuns": 0
+        },
+        "standardEvidence": {
+          "standardRef": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-attention-r6.json",
+          "standardFileSha256": "f424ac5343c67880ede77cee241428f83d50aa562ba0905dceac5b3d5fdb01e8",
+          "standardManifestSha256": "6a4f6e35dbc0987a346649a19a48de5938f1b06e9c60e9be7dd2d4a2f6466c3e",
+          "calibrationReceiptRef": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json",
+          "calibrationReceiptFileSha256": "e3665f3ac3c59e8c25ace3a09f1515f4574c27f2d4096ac259e692c792c72df9",
+          "calibrationReceiptSha256": "f7d7a9e3002fb186401c4f11e2aaf6e1e70bcf67e91e00991c40459ef19084d0"
+        },
+        "costEvidence": {
+          "solBaseline": {
+            "ref": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+            "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+            "receiptSha256": "42a2c8244ff8bf8610f05103266b6d780b49b136820b87a55484f358dee5c186",
+            "totalCostUsd": 2.170603
+          },
+          "lunaModelOnly": {
+            "ref": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-model-only-v19-20260904.r4.v1.json",
+            "fileSha256": "950efa276b713af8219d7501f49720fcca2dfc3afb9b283e762eab084fd77f9a",
+            "receiptSha256": "cfe23362c3aa5bf2e8f7465e52499342df4ddba65746e8c73a3db26a3840deb4",
+            "totalCostUsd": 0.10594896
+          },
+          "lunaPromptV4": {
+            "ref": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r4.v1.json",
+            "fileSha256": "f1665186295a1958f335162997f986f027d56a9542708e49bd44e396438b472e",
+            "receiptSha256": "4082dfdfeefbf8dc5201d0fd2c290bc44d28009fbb1fcec8a8069cc751986ee5",
+            "totalCostUsd": 0.1029376
+          }
+        },
+        "rescoreEvidence": {
+          "solBaseline": {
+            "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+            "fileSha256": "1ef90fc42ffa05fc0f8550a49165965b2871169aadde951e12b22defd9191ae9",
+            "receiptSha256": "4f4fda6266dc84fd5145b7cb0e270c8d1fd5c7caf8c7855b48f206fb94a018e9"
+          },
+          "lunaModelOnly": {
+            "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+            "fileSha256": "7f358101d6231d631f6328e9dff48ca8c147c88255426b0a26e3004301c413f3",
+            "receiptSha256": "4b093ea26ec9e5c6a9ea99aabc5fe907d34e7f242d3a1d25f0a527901f6241d7"
+          },
+          "lunaPromptV4": {
+            "ref": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+            "fileSha256": "f1f9c643d0fc17a5c8738b6e68faad65c107b919c2b4a4f15f496e19481ce0a1",
+            "receiptSha256": "06b154fe144bf5572a93d5892aac5454767d74d9e5e9925826c31afa88c59247"
+          }
+        },
+        "metricDeltas": [
+          {"metric": "exactCitationFactsCovered", "before": 7, "after": 9, "delta": 2},
+          {"metric": "agentSuccessRate", "before": 0.75, "after": 1.0, "delta": 0.25},
+          {"metric": "answerJudgeCorrectnessRate", "before": 0.5, "after": 1.0, "delta": 0.5},
+          {"metric": "answerableCitationSupportRate", "before": 0.5, "after": 1.0, "delta": 0.5},
+          {"metric": "apiCostUsd", "before": 2.170603, "after": 0.1029376, "delta": -2.0676654}
+        ],
+        "outputComparisons": [
+          {
+            "caseId": "aggregate",
+            "before": "Sol r6: 3/4 final case success, 7/9 exact citation facts, Reject.",
+            "after": "Luna Prompt-v4 r6: 4/4, 9/9 and all hard gates, Keep; no private answer content projected."
+          }
+        ]
+      },
+      "claim": {
+        "resumeBullet": "在 4-case/9-fact Enterprise RAG Validation 中，建立 Sol 7/9 Reject→Luna model-only 8/9 Reject→Luna+通用 Prompt-v4 9/9 Keep 路径，并将完整运行 Runtime 对账成本从 $2.170603 降至 $0.1029376（95.2576496024%）。",
+        "allowed": "可陈述 post-Validation candidate-aware r6 内的三阶段事实覆盖、Keep/Reject 与 Runtime-reconciled cost estimate；同时必须附带非 candidate-blind、非 Held-out、unbiased=false 和 Provider bill unavailable。",
+        "forbidden": "Provider 实际账单节省, unbiased promotion, candidate-blind result, Held-out or production generalization, Standard correction as model capability improvement, latency improvement, or disclosure of question/Gold/quote/answer bodies."
+      },
+      "openGaps": [
+        "candidate-blind or untouched Held-out evaluation is still required for unbiased Promotion",
+        "Provider bill, installation, foreground and production generalization are unverified",
+        "latency is diagnostic only and was not remeasured by offline r6 rescoring",
+        "r6 Standard correction must not be attributed to model capability"
+      ]
     }
   ]
 }

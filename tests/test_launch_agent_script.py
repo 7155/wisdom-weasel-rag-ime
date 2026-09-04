@@ -248,8 +248,22 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 capture_output=True,
             )
             projection_payload = json.loads(projection.stdout)
-            self.assertEqual(projection_payload["experimentTotal"], 22)
-            self.assertEqual(projection_payload["pathSearchTotal"], 2)
+            packaged_ledger = json.loads(
+                (eval_lab_dir / "agent-experiments.v1.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                projection_payload["experimentTotal"],
+                len(packaged_ledger["experiments"]),
+            )
+            packaged_path_searches = list(
+                (eval_lab_dir / "runs").glob(
+                    "agent-lab-optimal-path-*.json"
+                )
+            )
+            self.assertEqual(
+                projection_payload["pathSearchTotal"],
+                len(packaged_path_searches),
+            )
             init_prompt = (
                 Path(tmp)
                 / "Library"

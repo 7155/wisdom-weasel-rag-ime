@@ -25,6 +25,10 @@
     "goalId": "",
     "goalRevision": 0,
     "turnId": "",
-    "roomBound": false
+    "roomBound": false,
+    "roomId": "",
+    "rootId": "",
+    "dispatchId": "",
+    "generation": 0
   }
 }

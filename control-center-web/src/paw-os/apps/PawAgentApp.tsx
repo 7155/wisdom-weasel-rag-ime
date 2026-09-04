@@ -33,6 +33,7 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { parsePiModelCatalogOptions, type PiModelOption } from '@/features/agent/model-catalog-options';
 import { roleItems, sessionItems, type SessionSummary } from '@/features/agent/types';
 import { useAgentLiveStore } from '@/features/agent/state/live-store';
+import { publicAgentErrorText } from '@/features/agent/public-error';
 import { evidenceEchoFocusFromRoute } from '@/features/evidence-echo/evidence-echo';
 import type { RoomSummary, RoomWorkItem } from '@/features/rooms/room-types';
 import type { PawOsWindowTarget } from '@/features/paw-os/model/desktop';
@@ -262,7 +263,7 @@ export function PawAgentApp({
   const projectRoots = useMemo(() => uniquePaths([
     ...sessions.flatMap((item) => item.workspaceRoots ?? []),
     ...rooms.flatMap((item) => item.workspaceRoots ?? []),
-  ]), [rooms, sessions]);
+  ]).filter((root) => root !== '/'), [rooms, sessions]);
   const selectedSession = selection.kind === 'session'
     ? sessions.find((item) => item.id === selection.id)
     : undefined;
@@ -786,7 +787,8 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : '工作没有成功开始，请重试。';
+  const raw = error instanceof Error && error.message ? error.message : '工作没有成功开始，请重试。';
+  return publicAgentErrorText(error, raw);
 }
 
 function agentDirectoryActionHandoff(

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-three-stage-validation.v2",
+  "runId": "enterprise-rag-answer-evidence-three-stage-validation-20260904-v2",
+  "status": "invalid-stopped-at-stage-1",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "unbiasedPromotionClaimAllowed": false,
+  "heldOutOpened": false,
+  "preflight": {
+    "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-preflight-20260904.v3.json",
+    "fileSha256": "cf3d39be51f72461c2fe718fdee8f55edb3cc059935c5ad1faec5e608b6f736e",
+    "receiptSha256": "2cde4b5ff072b5759d943945f20401a7b8aa81a855cf41afdb14c0314fbbe595",
+    "runtimeContractSha256AtExecution": "7dd7b20c2d7dbe05bbd14b208959e16a3e50aee1267432358c1ee287ed5b1f8a",
+    "executionMatchedFrozenContract": true
+  },
+  "executionPolicy": {
+    "provider": "openai-codex",
+    "forbiddenProvider": "x1top",
+    "sameDatasetStandardRuntimeToolRetrievalControls": true,
+    "freshFourLaneRunRequired": true,
+    "checkpointLaneStitchingAllowed": false,
+    "metricGuidedRetryAllowed": false,
+    "stopOnInfrastructureIdentityOrToolFailure": true
+  },
+  "stages": [
+    {
+      "stage": 1,
+      "label": "fresh-sol-incumbent-r3",
+      "status": "invalid-infrastructure",
+      "model": "openai-codex/gpt-5.6-sol",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "startedAt": "2026-09-04T15:21:31.350Z",
+      "completedAt": "2026-09-04T15:31:14.618Z",
+      "raw": {
+        "path": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r3-20260904.json",
+        "fileSha256": "d828a80b3641ccbd9f2973b950ace0ba5fe45e4c3878b6bc186023094998747f",
+        "reportSha256": "8d19c5c43c249ba8d75f86f433c8d2aea68facc082b9e6879fa531414bb9474d",
+        "failureSha256": "db2362912e889bb354a404d7dbf6aee51ce9d3ea772570eb58dcea00d4fcbed9"
+      },
+      "checkpoint": {
+        "path": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-sol-max-frozen-v19-r3-20260904.json",
+        "fileSha256": "af17744d49437e350fca91b8fa2a0e2b49675b308ad7cb172234fa3d9e7a39aa",
+        "checkpointSha256": "bc2aabd6ecdd2d6f627c4bd2e46865f9e3548a1c4f7fd2273ab3404efa77c718"
+      },
+      "failure": {
+        "classification": "openai-codex-oauth-refresh-token-reused",
+        "stage": "provider_auth_before_model_request",
+        "summary": "The frozen source Agent config was an expired historical snapshot whose rotating refresh token had already been consumed. Every lane failed before a model completion or Tool call.",
+        "terminalErrorSha256": "7e9b3ec26ae86cfde6c510bffebfc49faa40941335545c6f8a80add7b884f811",
+        "secondaryHarnessFailure": "The exact cost exporter treated a present Runtime DB with zero Provider usage as an exception; the primary report remained durable and the exporter boundary was repaired after this attempt stopped."
+      },
+      "observations": {
+        "preflightAccepted": true,
+        "corpusImportedDocumentCount": 5101,
+        "checkpointInitialized": true,
+        "completedLaneCount": 4,
+        "failedLaneCount": 4,
+        "providerRequestCount": 0,
+        "judgeRequestCount": 0,
+        "toolCallCount": 0,
+        "transportFailureCount": 0,
+        "exactCostReceiptGenerated": false,
+        "processExitCode": 1,
+        "reportElapsedMs": 583268
+      },
+      "quality": {
+        "comparisonUseAllowed": false,
+        "modelFailureClaimAllowed": false,
+        "factQuality": null,
+        "citationQuality": null,
+        "abstentionQuality": null,
+        "verdict": "Invalid"
+      },
+      "cost": {
+        "providerBillAvailable": false,
+        "runtimeCostReceiptAvailable": false,
+        "providerBillClaimAllowed": false,
+        "estimatedCostUsd": "0.000000",
+        "estimateAuthority": "zero-model-provider-request-boundary"
+      }
+    },
+    {
+      "stage": 2,
+      "label": "fresh-luna-model-only-r3",
+      "status": "not-started",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "reason": "Stopped after Stage 1 Provider authentication failure."
+    },
+    {
+      "stage": 3,
+      "label": "fresh-luna-prompt-adapted-r3",
+      "status": "not-started",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "coverage-balanced-evidence-gate-v4",
+      "reason": "Stopped after Stage 1 Provider authentication failure."
+    }
+  ],
+  "postFailureHarnessRepair": {
+    "behavior": "A Runtime failure after agent.sqlite exists but before any Provider usage now skips cost export, preserves the primary fail-closed report, emits a bounded reason, and exits nonzero without replacing the causal error.",
+    "runnerSha256": "f0fc775f71d207d12da97e173135a700b3d7bae79ee23cdfc7bc991f68247b65",
+    "runtimeContractSha256": "4b8a39caae141fa9712a97805bb0c1f5cf9df2f0763455febcba44fe6c93d438",
+    "executedRunContractSupersededAfterAbort": true,
+    "laterStageAuthorizationImplied": false
+  },
+  "providerConnectivityProbe": {
+    "sourceAgentConfig": "~/Library/Application Support/RagIme/Agent/config",
+    "model": "openai-codex/gpt-5.6-sol",
+    "thinking": "max",
+    "terminal": "turn_completed",
+    "assistantAnswerSha256": "b18a4a7c22461ccdfbc752baaa027afe5c911cf26dd5c776e4d58c8c7bea2b5f",
+    "providerRequestCount": 1,
+    "inputTokens": 2455,
+    "outputTokens": 10,
+    "totalTokens": 2465,
+    "accepted": true,
+    "notPartOfEvaluation": true
+  },
+  "comparison": {
+    "qualityComparisonAvailable": false,
+    "costComparisonAvailable": false,
+    "keepRejectDecision": "Invalid",
+    "reason": "No lane reached a model completion, Tool call, or score-eligible answer."
+  },
+  "claimBoundary": [
+    "The r3 Stage 1 failure is stale OAuth snapshot evidence, not evidence about Sol, Luna, the v4 Prompt, retrieval, Tool, or Judge quality.",
+    "The zero-dollar value is derived from zero model Provider requests; it is not a Provider bill or a Runtime-reconciled cost receipt.",
+    "The connectivity probe establishes only that the current installed PAW login can complete one Sol/max turn; it is not part of the RAG score.",
+    "Stage 2, Stage 3, and Held-out were not opened."
+  ],
+  "receiptSha256": "4b8e0ef4c473a63a9b7caaf3b4684e0feec06ca31f1f2c7f6cc4a99925d28230"
+}

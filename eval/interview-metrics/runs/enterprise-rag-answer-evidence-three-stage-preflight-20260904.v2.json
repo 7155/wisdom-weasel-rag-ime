@@ -1,0 +1,221 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-three-stage-preflight.v2",
+  "runId": "enterprise-rag-answer-evidence-three-stage-preflight-20260904-v2",
+  "status": "authorized-not-run",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "unbiasedPromotionClaimAllowed": false,
+  "heldOutOpened": false,
+  "supersedes": {
+    "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-r3-v4-preflight-20260904.v1.json",
+    "fileSha256": "52d719083d6bf7111d041d2fd170f03e8204993c9e45942e9a108fa3a9f52d8e",
+    "receiptSha256": "c744c825ad21f39b0a055b624503f6c78e8eda22f4dd9bff2ea8c866025f50f8",
+    "reason": "The v1 receipt copied the stale r3 aggregate Runtime contract instead of recomputing it from its own runner and seven dependent contract files."
+  },
+  "invalidAttempt": {
+    "stage": "sol-incumbent-r1",
+    "classification": "invalid-infrastructure-and-freeze-mismatch",
+    "rawPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r1-20260904.json",
+    "rawFileSha256": "ad34de7c1bd023f0300967a1bc4b7d3fba45006bde842fd51081230fdce84fb9",
+    "rawReportSha256": "ffc10c0d60b0a3c6e1dea40844ad434802d2533d820d311625278bd42ab57d8f",
+    "checkpointPath": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-sol-max-frozen-v19-r1-20260904.json",
+    "checkpointFileSha256": "a5b014bd9bd6597d843b5d4c4c5f4d0d9c7630db856e1f1a909f68b8fda5fd3f",
+    "costReceiptPath": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r1.v1.json",
+    "costReceiptFileSha256": "a3b3f0bc9a3d9c978a39692db50301ae7adc6ff180da58248ffa9c41aa4cc368",
+    "costReceiptSha256": "84db110e541dc94854df862d7b705889f22a36d5e8e1e5ddccaf8dac2d549373",
+    "estimatedCostUsd": "2.327978",
+    "providerRequestCount": 42,
+    "observedBenchmarkToolErrorCount": 2,
+    "observedServerBrokenPipeCount": 2,
+    "frozenRuntimeContractSha256": "5b8e8d63d5077a3cbef59e9ef7dfb608fabd5c0e2b690adc46b6a09f732415b3",
+    "actualRuntimeContractSha256": "9be1bf24fab767c38bf1175b568fc5f354349c1a6fe1603c3e980bf0b8794387",
+    "comparisonUseAllowed": false,
+    "modelFailureClaimAllowed": false,
+    "laterStagesStarted": false
+  },
+  "harnessRepair": {
+    "behavior": "A loopback response disconnect is caught without an unhandled server-thread traceback, retained in a hash-bound transport receipt, and fails the affected lane Tool contract. A completed turn containing a failed rag_benchmark Tool event is classified as harness_tool_transport_failure and cannot receive coverage or protocol repair turns.",
+    "runnerSha256": "434f23986ee7e60fbc03fb7c13b8a4dff53a240cbacb1223370a05e4b995570a",
+    "gatewaySha256": "aa749bb11e9adb9305598250059d71fceedccb11802359626fbc8a04d6ce9fae",
+    "openaiCodexOnlyConfig": true,
+    "modelOverrideAllowlist": ["gpt-5.6-sol", "gpt-5.6-luna"],
+    "requiredTransportFailureCount": 0
+  },
+  "candidate": {
+    "profile": "coverage-balanced-evidence-gate-v4",
+    "variableCount": 1,
+    "variable": "one generic coverage-balanced supplemental-retrieval and evidence-gate instruction block",
+    "ruleSha256": "f825c557c37d9c3b44baec7867d519241ed3790648874b4445fba55fa4d56e54",
+    "containsFixtureIdentifier": false,
+    "containsReferenceAnswer": false,
+    "containsPrivateEvidence": false,
+    "containsExpectedAnswerValue": false,
+    "successObserved": false
+  },
+  "frozenInputs": {
+    "preparedArtifactSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "answerCasesArtifactSha256": "b886a12ba4c28d19243fb1d53b3b881206d769bf36fcea512547ca8be55ce0ec",
+    "retrievalReportArtifactSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+    "datasetSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb",
+    "selectedValidationCaseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+    "answerCaseManifestSha256": "877c361348b7ff6eeb22c1d42d5d72baf5b05bf11f6372ea4b53cc5cf1791665",
+    "standardManifestSha256": "22ea18216475d963ee3de2353d8d82b6f5f61e36a93fbf073115a27149a5bc1d",
+    "hostPrivateEvidenceManifestSha256": "86385a1713f5807b12dff2571c595fcfb2e238773b5d5f73859a67f40ff7b333",
+    "defaultRetrievalConfigSha256": "002e907af0a70d9fd7098b23d6689e4196a8b5860101389e8eb48b285cd19a4e",
+    "tunedRetrievalConfigSha256": "11d259402bbf92d8961aeaa6fc77d846be7af9ef336af7bd380f21d9bf428c39",
+    "skillSha256": "2f5e7233c979da746bc447ec1254bb2dfb3257a5f2ab0a44e14d877285bf18c8",
+    "runtimeContractSha256": "2e2e4c0c3584ff9214a0ebb2add9f6914c660e22380aa1981ad9cbf778dc0d10",
+    "runtimeContractFiles": {
+      "scripts/run_rag_agent_ablation.py": "434f23986ee7e60fbc03fb7c13b8a4dff53a240cbacb1223370a05e4b995570a",
+      "scripts/canary_rag_benchmark_agent.py": "04cafa44c4fbc295a57395fa154bf13a4324bfb456c3f5cc866447b32907654e",
+      "scripts/rag_agent_spool_runtime_wrapper.mjs": "e4ef9fe88ae0126767b3a9a57b731fc8902bc0c61937c51d25db5e39120a6089",
+      "rag_ime/managed_pi_runtime.py": "d68224d20782f5de20ba6b1f4e7827f7c0099cf6f8347ea495ac7304c8fa93ab",
+      "rag_ime/pi_runtime.py": "a3588a8bd26dc5b7caa6bf8b9f97d50524fa9c14fa882e3588c9b68172d73a8b",
+      "rag_ime/rag_agent_ablation.py": "70e19f73ce2eac86e782f744a8019989f884e047eeca87921a2496c0946cb4b4",
+      "rag_ime/rag_benchmark_agent.py": "aa749bb11e9adb9305598250059d71fceedccb11802359626fbc8a04d6ce9fae",
+      "rag_ime/rag_benchmark_sandbox.py": "281af55eed1f2950a2577dafd14881ef7a12b221d936b3d8ee3a4ef066717916"
+    },
+    "piRuntimeIdentitySha256AtPreparation": "c53c79c79e82dcf441bc2dd0806ac34d0ddd45970f649d6c514ea0d717d99aac",
+    "toolSetSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120",
+    "runnerSha256": "434f23986ee7e60fbc03fb7c13b8a4dff53a240cbacb1223370a05e4b995570a",
+    "promptContractVersion": "rag-agent-evidence-state-budget-routing-v19",
+    "answerJudgeContractVersion": "crud-rag-cited-chunk-evidence-correctness-v5",
+    "laneAttempts": 1,
+    "laneTimeoutSeconds": 600,
+    "agenticSupplementalLimit": 6,
+    "pricing": {
+      "path": "eval/interview-metrics/openai-codex-runtime-pricing-20260904.v1.json",
+      "fileSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+      "providerBillAvailable": false,
+      "requiredAuthority": "runtime_cost_reconciled"
+    }
+  },
+  "factorTable": [
+    {
+      "stage": 1,
+      "label": "fresh-sol-incumbent-r2",
+      "model": "openai-codex/gpt-5.6-sol",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "promptConfigSha256": "7979e6bd6c079aa671f90a55a2d6f245f1f61431015d01ccc21db164c26d23c1",
+      "lanePromptSha256ByLane": {
+        "baseline": "96dcb02986fdd050eebe44143eac22511b85080bfa357a45c369fdd00b4c396c",
+        "skill": "ab070cf03a3db30fdfe79e4ad43c0d9d37e6d45f3b04a0a9f083f0ca3bed6225",
+        "tuned": "e583628909b1b416f8a1506bb724336ebb6866d55a6f1abcf59d50a46acc2ffd",
+        "agentic": "7a5d16f9dee3ea76bda0fad56fd3e6e26f6e79cb435106f340ed6a89312dc6ae"
+      },
+      "deltaFromPrevious": "fresh reference"
+    },
+    {
+      "stage": 2,
+      "label": "fresh-luna-model-only-r2",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "promptConfigSha256": "350ec8d22253a2d5cd2afdc2666d2c94205e1db9dab86573adf894592145dceb",
+      "lanePromptSha256ByLane": {
+        "baseline": "96dcb02986fdd050eebe44143eac22511b85080bfa357a45c369fdd00b4c396c",
+        "skill": "ab070cf03a3db30fdfe79e4ad43c0d9d37e6d45f3b04a0a9f083f0ca3bed6225",
+        "tuned": "e583628909b1b416f8a1506bb724336ebb6866d55a6f1abcf59d50a46acc2ffd",
+        "agentic": "7a5d16f9dee3ea76bda0fad56fd3e6e26f6e79cb435106f340ed6a89312dc6ae"
+      },
+      "deltaFromPrevious": "model identity and model-routing identity only"
+    },
+    {
+      "stage": 3,
+      "label": "fresh-luna-prompt-adapted-r2",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "coverage-balanced-evidence-gate-v4",
+      "promptConfigSha256": "202a97a475c4f5eac91bd2300074e61d4eda0f965ff7a7077c034e236dd80971",
+      "lanePromptSha256ByLane": {
+        "baseline": "af108ec148f214d45fd7a562237a834bc7bc78f9fb27a45190dd7fee402a75a2",
+        "skill": "efd691c518c271b4017fcf821004d313046f4a4f8bfd5ec6724bf74d971e37d3",
+        "tuned": "ba63b9dd75b3e7caca6cc1a636e9d8308a12af82cd2337c3df5ebdbc36b1643b",
+        "agentic": "d0ca33ab330d64dc384509f8e16e374144115809988fd92e955ace276a668f8d"
+      },
+      "deltaFromPrevious": "one generic Prompt rule block only"
+    }
+  ],
+  "executionPlan": {
+    "provider": "openai-codex",
+    "forbiddenProvider": "x1top",
+    "python": "../learnA/wisdom-weasel-rag-ime/.venv/bin/python",
+    "freshFullFourLaneRunPerStage": true,
+    "checkpointLaneStitchingAllowed": false,
+    "metricGuidedRetryAllowed": false,
+    "modelOverrideArgument": "--model-override",
+    "runAuthorized": true,
+    "providerCalls": 0,
+    "judgeCalls": 0,
+    "costReceiptsGenerated": 0,
+    "commonArguments": [
+      "--prepared", "../paw-vertical-research/enterprise-rag-eval-lab/artifacts/smoke-v1/host/prepared.json",
+      "--answer-cases", "../paw-vertical-research/enterprise-rag-eval-lab/artifacts/smoke-v1/host/task-cases.json",
+      "--answer-evidence-qrels", ".rag-ime-data/eval/host/validation-answer-evidence-qrels-v2.json",
+      "--retrieval-report", "../paw-vertical-research/enterprise-rag-eval-lab/results/validation-bge-qwen3-rerank-v1.json",
+      "--source-agent-config", ".rag-ime-data/runs/rag-agent-ablation-v10-resume/run-ak_nb8xv/agent/config",
+      "--evaluation-split", "validation",
+      "--answer-only",
+      "--development-only",
+      "--slice-cases-per-split", "16",
+      "--distractor-limit", "5000",
+      "--agent-case-limit", "4",
+      "--lane-attempts", "1",
+      "--timeout-seconds", "600",
+      "--agentic-supplemental-limit", "6",
+      "--reranker-model", "../paw-vertical-research/models/Qwen3-Reranker-0.6B-4bit-5f324548",
+      "--reranker-revision", "5f324548f1d20c2b5a450f126fc6ef2fb1126524",
+      "--reranker-cache", "../paw-vertical-research/enterprise-rag-eval-lab/runs/validation-answer-evidence-v18/reranker-cache",
+      "--pi-runtime-payload", "build/managed-pi-runtime/install-stack-current",
+      "--pricing-config", "eval/interview-metrics/openai-codex-runtime-pricing-20260904.v1.json",
+      "--pricing-published-date", "2026-09-04"
+    ],
+    "stages": [
+      {
+        "stage": 1,
+        "modelOverride": "gpt-5.6-sol",
+        "promptProfile": "incumbent",
+        "output": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r2-20260904.json",
+        "checkpoint": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-sol-max-frozen-v19-r2-20260904.json",
+        "privateRoot": ".rag-ime-data/runs/rag-agent-ablation-answer-evidence-sol-max-frozen-v19-r2-20260904",
+        "costReceiptOutput": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r2.v1.json",
+        "costRunId": "enterprise-rag-sol-max-frozen-v19-20260904-r2"
+      },
+      {
+        "stage": 2,
+        "modelOverride": "gpt-5.6-luna",
+        "promptProfile": "incumbent",
+        "output": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-model-only-v19-r2-20260904.json",
+        "checkpoint": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-luna-max-model-only-v19-r2-20260904.json",
+        "privateRoot": ".rag-ime-data/runs/rag-agent-ablation-answer-evidence-luna-max-model-only-v19-r2-20260904",
+        "costReceiptOutput": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-model-only-v19-20260904.r2.v1.json",
+        "costRunId": "enterprise-rag-luna-max-model-only-v19-20260904-r2"
+      },
+      {
+        "stage": 3,
+        "modelOverride": "gpt-5.6-luna",
+        "promptProfile": "coverage-balanced-evidence-gate-v4",
+        "output": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-coverage-balanced-v4-r2-20260904.json",
+        "checkpoint": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-luna-max-coverage-balanced-v4-r2-20260904.json",
+        "privateRoot": ".rag-ime-data/runs/rag-agent-ablation-answer-evidence-luna-max-coverage-balanced-v4-r2-20260904",
+        "costReceiptOutput": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r2.v1.json",
+        "costRunId": "enterprise-rag-luna-max-coverage-balanced-v4-20260904-r2"
+      }
+    ]
+  },
+  "postRunAcceptance": {
+    "qualityBeforeCost": true,
+    "requiredTransportFailureCount": 0,
+    "requiredRuntimeToolFailureCount": 0,
+    "requiredRuntimeContractSha256": "2e2e4c0c3584ff9214a0ebb2add9f6914c660e22380aa1981ad9cbf778dc0d10",
+    "providerBillAvailable": false
+  },
+  "claimBoundary": [
+    "The prior Sol r1 attempt is invalid and cannot be used in any model or Prompt comparison.",
+    "The v4 Prompt was designed after Validation evidence inspection and is post-Validation calibrated.",
+    "This receipt authorizes one fresh attempt per stage; it is not itself a model result or cost claim.",
+    "Held-out remains unopened. Any completed matched result is single-run Validation development evidence, not production or general model proof."
+  ],
+  "receiptSha256": "584c9fc5d13dd913c2f15e4eddba8532ca23d850f1640af9906687705d992782"
+}

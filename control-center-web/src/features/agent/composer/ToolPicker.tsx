@@ -15,7 +15,12 @@ import {
 } from '@/features/plugins/capability-policy';
 import { CapabilityMark } from '../marks/ConversationMarks';
 import type { SessionSummary, ToolManifest } from '../types';
-import { riskLabel, toolAvailableForCurrentSession } from './tool-policy';
+import {
+  countAvailableTools,
+  countRegisteredTools,
+  riskLabel,
+  toolAvailableForConversation,
+} from './tool-policy';
 
 export function ToolPicker({
   adjustmentDisabled,
@@ -45,19 +50,22 @@ export function ToolPicker({
     if (requestOpen > 0 && status === 'ready' && !disabled) setOpen(true);
   }, [disabled, requestOpen, status]);
 
-  const availableCount = tools.filter(
-    (tool) => toolAvailableForCurrentSession(tool, session),
-  ).length;
+  const availableCount = countAvailableTools(tools, session, capabilityCatalog);
+  const registeredCount = countRegisteredTools(tools);
+  const capabilityCount = capabilityCatalog?.items.length ?? registeredCount;
+  const auxiliaryCapabilityCount = capabilityCatalog
+    ? capabilityCatalog.items.filter((item) => item.kind !== 'tool').length
+    : 0;
   const label = status === 'loading'
     ? '能力列表正在读取'
     : status === 'failed'
       ? '能力列表暂不可用'
-      : `这段对话可用工具：${availableCount} 个`;
+      : `这段对话可执行工具：${availableCount} 个；已登记工具：${registeredCount} 个`;
   const detail = status === 'loading'
     ? ' · 加载中'
     : status === 'failed'
       ? ' · 未加载'
-      : ` · ${availableCount}`;
+      : ` · ${availableCount}/${registeredCount}`;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -65,6 +73,8 @@ export function ToolPicker({
         <Button
           aria-label={label}
           className="agent-composer__picker"
+          data-effective-tool-count={availableCount}
+          data-registered-tool-count={registeredCount}
           data-status={status}
           size="small"
           title={label}
@@ -72,7 +82,7 @@ export function ToolPicker({
           disabled={status !== 'ready' || !tools.length || disabled}
           leadingIcon={<CapabilityMark size={16} />}
         >
-          <span className="agent-composer__picker-text">能力</span>
+          <span className="agent-composer__picker-text">工具</span>
           <span className="agent-composer__picker-detail">{detail}</span>
         </Button>
       </PopoverTrigger>
@@ -83,11 +93,15 @@ export function ToolPicker({
       >
         <header>
           <span>
-            <strong id="agent-tool-picker-title">当前对话能力</strong>
-            <small>可用 {availableCount} 项，共发现 {capabilityCatalog?.items.length ?? tools.length} 项能力</small>
+            <strong id="agent-tool-picker-title">当前对话工具</strong>
+            <small>
+              可执行工具 {availableCount} 项 · 已登记工具 {registeredCount} 项
+              {auxiliaryCapabilityCount ? ` · 技能/扩展 ${auxiliaryCapabilityCount} 项` : ''}
+              {capabilityCount === registeredCount ? '' : ` · 能力目录 ${capabilityCount} 项`}
+            </small>
           </span>
           <button
-            aria-label="关闭当前对话能力"
+            aria-label="关闭当前对话工具"
             className="agent-tool-picker__close"
             onClick={() => setOpen(false)}
             type="button"
@@ -97,12 +111,12 @@ export function ToolPicker({
         </header>
         {adjustmentDisabled ? (
           <p className="agent-picker-popover__note" data-tone="warning">
-            当前任务正在运行；可以查看能力，但要等本轮结束后再调整。
+            当前任务正在运行；可以查看工具，但要等本轮结束后再调整。
           </p>
         ) : null}
         <div>
           {tools.map((tool) => {
-            const available = toolAvailableForCurrentSession(tool, session);
+            const available = toolAvailableForConversation(tool, session, capabilityCatalog);
             const presentation = toolPresentation(tool);
             const capability = capabilityCatalog?.items.find(
               (item) => item.kind === 'tool' && item.id === tool.id,
@@ -145,7 +159,7 @@ export function ToolPicker({
           })}
         </div>
         <p className="agent-picker-popover__note">
-          这里控制当前对话是否使用这些能力，不改变执行授权；更改从下一轮开始生效，也不会停止正在运行的后台任务。
+          这里显示当前对话真正会发给 Runtime 的工具。已登记但不可执行的工具仍保留在列表中，方便解释原因；更改从下一轮开始生效，也不会停止正在运行的后台任务。
         </p>
       </PopoverContent>
     </Popover>

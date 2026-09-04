@@ -24,12 +24,15 @@ APP_SUPPORT = Path.home() / "Library" / "Application Support" / "RagIme"
 
 AUTHORITY_FILES = (
     "AGENTS.md",
-    "docs/project/PROJECT.md",
-    "docs/project/OUTCOMES.md",
-    "docs/project/CONTEXT.md",
-    "docs/project/DECISIONS.md",
-    "docs/project/ARCHITECTURE.md",
-    "docs/pawos/PAWOS_REQUIREMENTS.md",
+    "PROJECT.md",
+    "OUTCOMES.md",
+    "CONTEXT.md",
+    "DECISIONS.md",
+    "ARCHITECTURE.md",
+    "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
+)
+AUTHORITY_GLOBS = (
+    "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_*.md",
 )
 
 PAW_EXACT_FILES = (
@@ -255,7 +258,7 @@ def collect_paths(root: Path, exact: tuple[str, ...], globs: tuple[str, ...]) ->
 
 def collect_sources(paw: GitSnapshot, pi: GitSnapshot) -> list[SourceFile]:
     sources: list[SourceFile] = []
-    authority_paths = collect_paths(PAW_ROOT, AUTHORITY_FILES, ())
+    authority_paths = collect_paths(PAW_ROOT, AUTHORITY_FILES, AUTHORITY_GLOBS)
     paw_paths = collect_paths(PAW_ROOT, PAW_EXACT_FILES, PAW_GLOBS)
     pi_paths = collect_paths(pi.root, PI_EXACT_FILES, PI_GLOBS)
     for path in authority_paths:
@@ -515,7 +518,7 @@ def render_bundle(paw: GitSnapshot, pi: GitSnapshot, sources: list[SourceFile]) 
         "",
         "- The PAW repository contains product adapters, contracts, packaging, Room composition and UI projections; it does not contain the complete Pi core.",
         f"- The default future managed build source resolves to the current local worktree `{pi.root}` at `{pi.head}` ({'dirty' if pi.dirty_count else 'clean'}).",
-        "- If the installed manifest records another commit or a `+dirty.<digest>` suffix, that exact historical dirty source is not reconstructed from the current clean worktree. Both evidence sets are included and intentionally remain distinct.",
+        "- If the installed manifest records another commit or a `+dirty.<digest>` suffix, that exact historical dirty source is not reconstructed from the current worktree. The snapshot records whether each source was dirty or clean; both evidence sets remain intentionally distinct.",
         "- `integrations/rag-ime-runtime-host` is the product adapter living in the Pi fork. `packages/agent`, `packages/ai`, and `packages/coding-agent` contain the Pi-owned runtime/session/provider implementation included below.",
         "- Room composition, PAW persistence and Web reducers remain PAW-owned consumers/projections; they must not become a second Agent Runtime.",
         "",

@@ -166,13 +166,13 @@ describe('AgentComposer macOS input methods', () => {
       </TooltipProvider>,
     );
 
-    const trigger = screen.getByRole('button', { name: '这段对话可用工具：1 个' });
+    const trigger = screen.getByRole('button', { name: '这段对话可执行工具：1 个；已登记工具：1 个' });
     fireEvent.click(trigger);
-    const dialog = screen.getByRole('dialog', { name: '当前对话能力' });
+    const dialog = screen.getByRole('dialog', { name: '当前对话工具' });
     expect(within(dialog).getByRole('combobox', { name: '规划与任务的当前对话使用' })).toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(within(dialog).getByRole('button', { name: '关闭当前对话能力' }));
-    expect(screen.queryByRole('dialog', { name: '当前对话能力' })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭当前对话工具' }));
+    expect(screen.queryByRole('dialog', { name: '当前对话工具' })).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 
@@ -212,7 +212,7 @@ describe('AgentComposer macOS input methods', () => {
     const send = view.getByRole('button', { name: '发送' });
     expect(controls).toContainElement(view.getByRole('button', { name: '添加附件' }));
     expect(controls).toContainElement(view.getByRole('button', { name: /对话权限/ }));
-    expect(controls).toContainElement(view.getByRole('button', { name: /这段对话可用工具/ }));
+    expect(controls).toContainElement(view.getByRole('button', { name: /这段对话可执行工具/ }));
     expect(controls).not.toContainElement(send);
     expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
     expect(view.queryByRole('button', { name: '打开命令面板' })).not.toBeInTheDocument();
@@ -257,7 +257,7 @@ describe('AgentComposer macOS input methods', () => {
     expect(view.getByRole('textbox', { name: '消息' })).toHaveAttribute('placeholder', '继续追问经营数据…');
     expect(view.getByRole('button', { name: '添加附件' })).toBeInTheDocument();
     expect(view.queryByRole('button', { name: /对话权限/ })).not.toBeInTheDocument();
-    expect(view.queryByRole('button', { name: /这段对话可用工具/ })).not.toBeInTheDocument();
+    expect(view.queryByRole('button', { name: /这段对话可执行工具/ })).not.toBeInTheDocument();
     expect(view.getByRole('button', { name: /发送/ })).toBeInTheDocument();
   });
 

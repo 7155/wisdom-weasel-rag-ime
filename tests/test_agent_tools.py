@@ -10,9 +10,11 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from rag_ime.agent_background_jobs import AgentBackgroundJobService
 from rag_ime.agent_context_runtime import AgentContextRuntime
+from rag_ime.agent_execution_policy import ROOM_UNRESTRICTED_EXECUTION_MODE
 from rag_ime.agent_media import AgentMediaStore
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
@@ -3193,7 +3195,27 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertEqual(receipt["auditId"], approval["approvalId"])
             self.assertEqual(
                 receipt["job"]["causalMetadata"],
-                decided["causalMetadata"],
+                {
+                    key: decided["causalMetadata"][key]
+                    for key in (
+                        "todoId",
+                        "todoRevision",
+                        "goalId",
+                        "goalRevision",
+                        "turnId",
+                        "roomBound",
+                    )
+                },
+            )
+            self.assertEqual(
+                receipt["job"]["roomLineage"],
+                {
+                    "roomId": decided["causalMetadata"]["roomId"],
+                    "rootId": decided["causalMetadata"]["rootId"],
+                    "dispatchId": decided["causalMetadata"]["dispatchId"],
+                    "generation": decided["causalMetadata"]["generation"],
+                    "taskId": "",
+                },
             )
             self.assertTrue(any(args[1] == "background_job_completed" for args, _ in events))
         finally:
@@ -3566,14 +3588,22 @@ class ControlToolGatewayTests(unittest.TestCase):
             str(self.session["id"]),
             mode="coordinator",
             tool_profile_version="control-center-v1",
-            execution_mode="workspace_managed",
+            execution_mode="full_trust",
             allowed_tools=None,
             workspace_roots=[str(workspace)],
         )
 
         class _ConfirmedRoom:
-            def _active_room_dispatch_authorizes_work(self, _session_id: str) -> bool:
-                return True
+            def _active_room_dispatch_context(
+                self,
+                _session_id: str,
+            ) -> dict[str, object]:
+                return {
+                    "roomId": "room:confirmed",
+                    "rootId": "root:confirmed",
+                    "dispatchId": "dispatch:confirmed",
+                    "generation": 1,
+                }
 
         gateway = ControlToolGateway(
             sessions=self.store,
@@ -3585,6 +3615,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
 
         def auto_approve(approval):
+            self.assertTrue(approval["causalMetadata"]["roomBound"])
+            self.assertNotIn("approvalArbitration", approval["preview"])
             decided = self.store.decide_approval(
                 str(approval["approvalId"]),
                 approved=True,
@@ -3616,6 +3648,194 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         self.assertTrue(response["result"]["autoApproved"])
         self.assertEqual(self.store.get(str(self.session["id"]))["roomExecutionMode"], "")
+
+    def test_room_approval_is_exactly_bound_in_the_creation_transaction(self) -> None:
+        """A crash after INSERT must not leave a fake human approval behind."""
+
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="full_trust",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[self.tmp.name],
+        )
+        room_context = {
+            "roomId": "room:atomic-create",
+            "rootId": "root:atomic-create",
+            "dispatchId": "dispatch:atomic-create",
+            "generation": 7,
+        }
+
+        class _LiveRoom:
+            def _active_room_dispatch_context(
+                self,
+                _session_id: str,
+            ) -> dict[str, object]:
+                return dict(room_context)
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_LiveRoom(),
+        )
+
+        # This is the old crash seam: create_approval committed, then the
+        # gateway performed two follow-up binding transactions. Interrupt the
+        # very first compatibility bind and inspect the already-durable row.
+        with patch.object(
+            self.store,
+            "bind_approval_tool_call",
+            side_effect=RuntimeError("crash after approval insert"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "crash after approval insert",
+            ):
+                gateway.execute(
+                    {
+                        **self._tool_call(
+                            "planning",
+                            "task_action",
+                            taskId="task:1",
+                            action="complete",
+                            date="2026-07-13",
+                        ),
+                        "toolCallId": "tool:atomic-create",
+                    }
+                )
+
+        approvals = self.store.list_approvals(
+            session_id=str(self.session["id"]),
+        )
+        self.assertEqual(len(approvals), 1)
+        approval = approvals[0]
+        self.assertEqual(approval["toolCallId"], "tool:atomic-create")
+        self.assertNotIn("approvalArbitration", approval["preview"])
+        self.assertEqual(
+            approval["causalMetadata"],
+            {
+                **approval["causalMetadata"],
+                "roomBound": True,
+                "roomId": room_context["roomId"],
+                "rootId": room_context["rootId"],
+                "dispatchId": room_context["dispatchId"],
+                "generation": room_context["generation"],
+            },
+        )
+
+    def test_incomplete_room_dispatch_fails_before_creating_an_approval(self) -> None:
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="per_action",
+            allowed_tools=None,
+        )
+
+        class _IncompleteRoom:
+            def __init__(self, context: dict[str, object]) -> None:
+                self.context = context
+
+            def _active_room_dispatch_context(
+                self,
+                _session_id: str,
+            ) -> dict[str, object]:
+                return dict(self.context)
+
+        malformed = (
+            {
+                "roomId": "room:incomplete",
+                "rootId": "root:incomplete",
+                "dispatchId": "",
+                "generation": 1,
+            },
+            {
+                "roomId": "room:incomplete",
+                "rootId": "root:incomplete",
+                "dispatchId": "dispatch:incomplete",
+                "generation": 0,
+            },
+        )
+        for index, context in enumerate(malformed):
+            with self.subTest(context=context):
+                gateway = ControlToolGateway(
+                    sessions=self.store,
+                    management=self.management,
+                    core=_Core(),
+                    project="wisdom-weasel-rag-ime",
+                    facade=self.facade,
+                    collaboration=_IncompleteRoom(context),
+                )
+                auto_calls: list[dict[str, object]] = []
+                gateway.bind_auto_approval_executor(
+                    lambda approval: auto_calls.append(dict(approval)) or {}
+                )
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Room dispatch context is incomplete",
+                ):
+                    gateway.execute(
+                        {
+                            **self._tool_call(
+                                "planning",
+                                "task_action",
+                                taskId="task:1",
+                                action="complete",
+                                date="2026-07-13",
+                            ),
+                            "toolCallId": f"tool:incomplete-room:{index}",
+                        }
+                    )
+
+                self.assertEqual(auto_calls, [])
+                self.assertEqual(
+                    self.store.list_approvals(
+                        session_id=str(self.session["id"]),
+                    ),
+                    [],
+                )
+
+    def test_stale_persisted_room_overlay_does_not_authorize_a_direct_session_tool(self) -> None:
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="per_action",
+            allowed_tools=None,
+        )
+        self.store.set_room_execution_mode(
+            str(self.session["id"]),
+            ROOM_UNRESTRICTED_EXECUTION_MODE,
+        )
+        self.gateway.bind_auto_approval_executor(
+            lambda _approval: (_ for _ in ()).throw(
+                AssertionError("a direct Session Tool inherited stale Room authority")
+            )
+        )
+
+        response = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "planning",
+                    "task_action",
+                    taskId="task:1",
+                    action="complete",
+                    date="2026-07-13",
+                ),
+                "toolCallId": "tool:direct-after-room",
+            }
+        )
+
+        self.assertTrue(response["result"]["approvalRequired"])
+        self.assertFalse(
+            response["result"]["approval"]["causalMetadata"]["roomBound"]
+        )
 
     def test_room_workspace_managed_auto_approval_uses_session_receipt(self) -> None:
         workspace = Path(self.tmp.name) / "room-managed"

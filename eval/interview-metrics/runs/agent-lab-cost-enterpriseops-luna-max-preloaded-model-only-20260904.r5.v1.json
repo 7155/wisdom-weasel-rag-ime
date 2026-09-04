@@ -1,0 +1,63 @@
+{
+  "authority": "runtime_cost_reconciled",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "0.03521536",
+    "outputCostUsd": "0.0257772",
+    "totalCostUsd": "0.09453296",
+    "uncachedInputCostUsd": "0.0335404"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-luna",
+    "pricingId": "pricing:sha256:06d4b1f1a1c0e72708f6a9985d9b14f11514d4dc468a84922aec4d25171dcf75",
+    "provider": "openai-codex",
+    "publishedDate": "2026-09-04",
+    "rates": {
+      "cachedInputUsd": "0.02",
+      "outputUsd": "1.2",
+      "uncachedInputUsd": "0.2"
+    },
+    "sourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+    "sourceUrl": "https://platform.openai.com/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "2770585355d69f5a6d18869e96339249079a288811980157bfcbb9dbc0065972",
+  "runtimeCostReceipt": {
+    "databaseUsage": {
+      "cachedInputTokens": 1760768,
+      "outputTokens": 21481,
+      "uncachedInputTokens": 167702
+    },
+    "reportedCostUsd": {
+      "cacheRead": "0.03521536",
+      "input": "0.0335404",
+      "output": "0.0257772",
+      "total": "0.09453296"
+    },
+    "requestCount": 79,
+    "runtimeDbSha256": "ef90cef8dd376d9ba91ed401f6c2edb89c582ccedfdad3bc0a620c7c9ad4e0ff",
+    "sourceSha256": "8bdb8bf5021eba5e9095ba09c39320759a1a1995b3a86713b42666eb00bf2333",
+    "transcriptSha256s": [
+      "92d037d27a4832ee8636e97566670cdffd3d21858711148f4d9786e2d264246e",
+      "bc393786e78973f578792d7915850cc7778170aaed9d6a70e6e6591e13f151f6",
+      "aa8dfc8ed4c65f215bfb57c8e1bcd38ff11da34027c45c3858574717fe1e64af"
+    ]
+  },
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 1760768,
+    "outputTokens": 21481,
+    "sourceRef": "runtime-cost:enterpriseops-csm-luna-preloaded-model-only-validation-20260904-r5",
+    "sourceSha256": "8bdb8bf5021eba5e9095ba09c39320759a1a1995b3a86713b42666eb00bf2333",
+    "uncachedInputTokens": 167702
+  }
+}

@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "rag-ime.agent-lab-path-search.v1",
+  "searchId": "cloudops-luna-prompt-20260904-v1",
+  "title": "CloudOps · Sol 到 Luna Prompt 适配路径",
+  "objective": {
+    "userNeed": "在冻结的 12-case CloudOps Validation、Host scorer、Runtime、Tool 与环境下，先判断 Luna model-only 是否保持诊断质量；若回退，只修改通用诊断 Prompt 恢复质量，质量通过后再比较精确 Runtime 成本。",
+    "metrics": [
+      {"name": "answerCoverage", "direction": "max", "weight": 0.15, "class": "quality", "scale": 1, "nonRegression": true},
+      {"name": "ca", "direction": "max", "weight": 0.25, "class": "quality", "scale": 1, "nonRegression": true},
+      {"name": "fa", "direction": "max", "weight": 0.12, "class": "quality", "scale": 1, "nonRegression": true},
+      {"name": "jra", "direction": "max", "weight": 0.18, "class": "quality", "scale": 1, "nonRegression": true},
+      {"name": "top3Jra", "direction": "max", "weight": 0.1, "class": "quality", "scale": 1, "nonRegression": true},
+      {"name": "failedToolCalls", "direction": "min", "weight": 0.05, "class": "reliability", "scale": 10, "nonRegression": true},
+      {"name": "toolCalls", "direction": "min", "weight": 0.02, "class": "efficiency", "scale": 200},
+      {"name": "apiCostUsd", "direction": "min", "weight": 0.13, "class": "cost", "scale": 5},
+      {"name": "latencyMs", "direction": "min", "weight": 0.0, "class": "efficiency", "scale": 2000000}
+    ],
+    "gates": [
+      {"name": "all cases answered", "metric": "answerCoverage", "operator": "gte", "value": 1},
+      {"name": "all final diagnoses correct", "metric": "ca", "operator": "gte", "value": 1},
+      {"name": "no Tool failures", "metric": "failedToolCalls", "operator": "lte", "value": 0},
+      {"name": "quality gate passed", "metric": "qualityGatePassed", "operator": "eq", "value": 1},
+      {"name": "exact Runtime cost receipt available", "metric": "costReceiptAvailable", "operator": "eq", "value": 1}
+    ],
+    "selectionPolicy": "lexicographic_pareto"
+  },
+  "frozenControls": [
+    {
+      "name": "dataset_and_scorer",
+      "value": "cloudops-smoke-v1 Validation; 12 cases; suite 31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec; contract 99126a25849537bf52558c3cdd18258a7393fe14c82399e9b5f834208b607b0d; Gold hidden from Agent"
+    },
+    {
+      "name": "batch_and_context",
+      "value": "3x4-sequential; batch d7a7aba05d02005407582892bd3f5f10672ff7e6c527cf73a20570b1ed165989; standard-v1 context projection"
+    },
+    {
+      "name": "runtime_binary_and_tools",
+      "value": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad; manifest 1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22; entrypoint 2426598570097198846d556692e816a89d8a1c9a77c48187a0fe031f2f7a76d9; extension f0a06ecd627e76e602417989d36c47a75f56744bfafdc0ae8641ec23db899b04; Node 27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1; Tool profile 6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120"
+    },
+    {
+      "name": "provider_thinking_transport",
+      "value": "openai-codex / max / loopback-http-v1 / 900 seconds"
+    },
+    {
+      "name": "causal_stages",
+      "value": "Sol alert-first-v5 baseline; Luna model-only retains alert-first-v5; Luna prompt stage retains Luna identity and changes only to luna-owner-mechanism-gate-v8"
+    },
+    {
+      "name": "cost_authority",
+      "value": "exact Runtime per-request reconciliation; shared pricing-source content hash b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225; no Provider bill"
+    }
+  ],
+  "baseline": {
+    "nodeId": "cloudops-sol-alert-first-r7",
+    "parentNodeId": null,
+    "changedFactor": "baseline",
+    "configRevision": "alert-first-v5:sol-r7",
+    "frozenControlHash": "0140e84deefaeebcb5b8003b79255d072d85ae237379dd8840b936c9fb104047",
+    "metrics": {
+      "answerCoverage": 1.0,
+      "ca": 1.0,
+      "fa": 0.8333333333333334,
+      "jra": 0.8333333333333334,
+      "top3Jra": 1.0,
+      "failedToolCalls": 1.0,
+      "toolCalls": 99.0,
+      "apiCostUsd": 4.568166,
+      "latencyMs": 1036278.0,
+      "qualityGatePassed": 1.0,
+      "costReceiptAvailable": 1.0
+    },
+    "evidenceRefs": [
+      "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+      "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json",
+      "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json"
+    ],
+    "status": "eligible"
+  },
+  "candidates": [
+    {
+      "nodeId": "cloudops-luna-model-only-r1",
+      "parentNodeId": "cloudops-sol-alert-first-r7",
+      "changedFactor": "model",
+      "configRevision": "alert-first-v5:luna-r1",
+      "frozenControlHash": "0140e84deefaeebcb5b8003b79255d072d85ae237379dd8840b936c9fb104047",
+      "metrics": {
+        "answerCoverage": 1.0,
+        "ca": 0.9166666666666666,
+        "fa": 0.8333333333333334,
+        "jra": 0.75,
+        "top3Jra": 0.9166666666666666,
+        "failedToolCalls": 6.0,
+        "toolCalls": 177.0,
+        "apiCostUsd": 0.33593112,
+        "latencyMs": 1705856.0,
+        "qualityGatePassed": 0.0,
+        "costReceiptAvailable": 1.0
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+        "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-alert-first-model-only-20260904.r1.v1.json",
+        "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json"
+      ],
+      "status": "rejected",
+      "reason": "只把 Sol 替换为 Luna 后，CA 11/12、JRA 9/12、Top3JRA 11/12，并出现 6 次 Tool failure；质量与可靠性硬门失败，因此不因成本低而保留。"
+    },
+    {
+      "nodeId": "cloudops-luna-owner-mechanism-r5",
+      "parentNodeId": "cloudops-luna-model-only-r1",
+      "changedFactor": "prompt",
+      "configRevision": "luna-owner-mechanism-gate-v8:r5",
+      "frozenControlHash": "0140e84deefaeebcb5b8003b79255d072d85ae237379dd8840b936c9fb104047",
+      "metrics": {
+        "answerCoverage": 1.0,
+        "ca": 1.0,
+        "fa": 0.9166666666666666,
+        "jra": 0.9166666666666666,
+        "top3Jra": 1.0,
+        "failedToolCalls": 0.0,
+        "toolCalls": 130.0,
+        "apiCostUsd": 0.27613024,
+        "latencyMs": 1492913.0,
+        "qualityGatePassed": 1.0,
+        "costReceiptAvailable": 1.0
+      },
+      "evidenceRefs": [
+        "eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json",
+        "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-owner-mechanism-prompt-20260904.r5.v1.json",
+        "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json"
+      ],
+      "status": "eligible",
+      "reason": "冻结 Luna/max 与其余控制，只增加不含 Case、答案或 Gold 的通用 owner-and-mechanism 证据门；恢复 CA 12/12、Top3JRA 12/12、0 Tool failure，FA/JRA 11/12 且高于 Sol 的 10/12，并把精确 Runtime 成本降至 $0.27613024。"
+    }
+  ],
+  "selectedPath": [
+    {
+      "nodeId": "cloudops-sol-alert-first-r7",
+      "decision": "baseline",
+      "reason": "当前 Sol/max 质量基线：CA 12/12、FA/JRA 10/12、Top3JRA 12/12，精确 Runtime 成本估算 $4.568166。"
+    },
+    {
+      "nodeId": "cloudops-luna-model-only-r1",
+      "decision": "reject",
+      "reason": "只换模型后 CA、JRA、Top3JRA 回退且有 6 次 Tool failure；保留为 Prompt 适配必要性的因果证据。"
+    },
+    {
+      "nodeId": "cloudops-luna-owner-mechanism-r5",
+      "decision": "keep",
+      "reason": "只做通用 Prompt 适配后恢复并提升质量门禁、清除 Tool failure，精确 Runtime 成本相对 Sol 降低 93.9553369996%（约 16.5435 倍）。"
+    }
+  ],
+  "hardGates": [
+    {"name": "all cases answered", "status": "pass", "reason": "selected answerCoverage=1。"},
+    {"name": "all final diagnoses correct", "status": "pass", "reason": "selected CA=1。"},
+    {"name": "no Tool failures", "status": "pass", "reason": "selected failedToolCalls=0。"},
+    {"name": "quality non-regression", "status": "pass", "reason": "FA/JRA 从 Sol 的 0.833333 提升至 0.916667；CA 与 Top3JRA 保持 1。"},
+    {"name": "quality gate passed", "status": "pass", "reason": "selected qualityGatePassed=1。"},
+    {"name": "exact Runtime cost receipt available", "status": "pass", "reason": "selected costReceiptAvailable=1，authority=runtime_cost_reconciled。"}
+  ],
+  "claim": {
+    "status": "best_known",
+    "summary": "在声明的三节点搜索中，Luna model-only 因质量与 Tool 可靠性回退被淘汰；Luna+通用 owner/mechanism Prompt 恢复 CA/Top3JRA 到 100%、把 FA/JRA 提升到 91.7%，并以 $0.27613024 成为当前选中路径，相对 Sol 估算成本下降 93.9553%（约 16.5435 倍）。",
+    "limitations": [
+      "每阶段仅一轮 source-local Validation，没有重复运行置信区间，也不是 Held-out、安装态、前台或生产验收。",
+      "成本来自内容寻址费率和逐请求 Runtime reconciliation；Provider 账单未提供，不能称真实扣款节省。",
+      "model-only 的 completed score 来自追加式 trial_completed artifact；随后 outer report 的 TraceContractError 已披露，不能抹去也不能包装成无异常运行。",
+      "Prompt 适配只包含通用 exact-family evidence、owner/mechanism attribution 和 unresolved-discriminator 规则，不含 Case ID、预期答案、预测根因或 Host-private Gold。",
+      "耗时权重为 0，只用于诊断；当前路径结论由质量、可靠性和成本证据决定。"
+    ]
+  },
+  "generatedAtMs": 1788517626507
+}

@@ -1,0 +1,63 @@
+{
+  "authority": "runtime_cost_reconciled",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "1.110912",
+    "outputCostUsd": "0.55446",
+    "totalCostUsd": "2.258372",
+    "uncachedInputCostUsd": "0.593"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-sol",
+    "pricingId": "pricing:sha256:80067d14fbe8bca408a20e095bb0b4323b390bb14031157fb83bc7eb6490a04e",
+    "provider": "openai-codex",
+    "publishedDate": "2026-07-30",
+    "rates": {
+      "cachedInputUsd": "0.5",
+      "outputUsd": "30",
+      "uncachedInputUsd": "5"
+    },
+    "sourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+    "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "6be30e56eef7c2979ff39150d532db95d35e6b82911634693360d067a6b6e3c8",
+  "runtimeCostReceipt": {
+    "databaseUsage": {
+      "cachedInputTokens": 2221824,
+      "outputTokens": 18482,
+      "uncachedInputTokens": 118600
+    },
+    "reportedCostUsd": {
+      "cacheRead": "1.110912",
+      "input": "0.593",
+      "output": "0.55446",
+      "total": "2.258372"
+    },
+    "requestCount": 96,
+    "runtimeDbSha256": "b7dd26b042fb877383b29db4bb68d9cb17cf888ea97e346fdcf28cc2ba508b21",
+    "sourceSha256": "cec745cae779a4e7516590c9651739dc74d777a4fc3b97c1d9212e85e6b038e1",
+    "transcriptSha256s": [
+      "af4763cf61fd4748ba3b4d8aecd0ad200b4fec698a6c600cd8a25ec1ba57c93e",
+      "d3ebc0473e5645d0f3d1ca996efd289248838b15c791af66457604a1ff19fd2c",
+      "3c7e32795fa40c1e384fcd31aaa5738d7216e7ad358f9a809a9f66bd130095a1"
+    ]
+  },
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 2221824,
+    "outputTokens": 18482,
+    "sourceRef": "runtime-cost:enterpriseops-csm-sol-max-compact-validation-20260904-v1",
+    "sourceSha256": "cec745cae779a4e7516590c9651739dc74d777a4fc3b97c1d9212e85e6b038e1",
+    "uncachedInputTokens": 118600
+  }
+}

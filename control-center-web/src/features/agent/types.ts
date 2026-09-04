@@ -46,7 +46,7 @@ export interface AgentPermissionSelection {
     | 'control-center-auto-approve-v1'
   );
   executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
-  /** The selected project may stay as context, but `/` is always granted. */
+  /** System-wide presets add `/`; scoped presets retain only selected roots. */
   workspaceRoots?: string[];
   workspaceScopeConfirmed?: boolean;
   dangerousModeConfirmed?: boolean;
@@ -132,7 +132,7 @@ export function sessionPermissionLabel(session: SessionSummary): string {
   return {
     read_only: '只读',
     per_action: '写入与命令确认（旧配置）',
-    workspace_managed: '工作区托管（旧配置）',
+    workspace_managed: '工作区托管',
     full_trust: '全自动（旧配置）',
   }[executionMode];
 }

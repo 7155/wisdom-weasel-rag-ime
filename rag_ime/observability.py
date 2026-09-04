@@ -217,6 +217,7 @@ _PUBLIC_ATTRIBUTE_IDENTIFIER_KEYS = frozenset(
         "deviceId",
         "evidenceStage",
         "failureKind",
+        "failureCode",
         "failureReason",
         "frontAppBundleId",
         "intent",
@@ -1855,6 +1856,7 @@ class ObservationHub:
         )
         phase = "recall_failed" if status == "failed" else "recall_completed"
         failure_reason = _safe_public_token(safe.get("failureReason"))
+        failure_code = _safe_public_token(safe.get("failureCode"))
         trace_evidence = _safe_trace_evidence(safe.get("traceEvidence"))
         refs = [
             {"kind": "memory_recall", "id": recall_id, "label": "Session 记忆召回"},
@@ -1901,6 +1903,11 @@ class ObservationHub:
                 **(
                     {"failureReason": failure_reason}
                     if status == "failed" and failure_reason
+                    else {}
+                ),
+                **(
+                    {"failureCode": failure_code}
+                    if status == "failed" and failure_code
                     else {}
                 ),
             },
@@ -2994,6 +3001,7 @@ def _memory_recall_projection_record(
         "generatedAtMs": _optional_integer(record.get("generatedAtMs")),
         "status": status,
         "failureReason": _safe_public_token(record.get("failureReason")),
+        "failureCode": _safe_public_token(record.get("failureCode")),
         "metrics": public_metrics,
         "attributes": {
             "embeddingFallback": attributes.get("embeddingFallback") is True,

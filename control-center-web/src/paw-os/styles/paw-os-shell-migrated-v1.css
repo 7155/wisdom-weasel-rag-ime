@@ -157,6 +157,16 @@
   line-height: 1;
 }
 
+.paw-brand-version {
+  color: color-mix(in srgb, var(--paw-chrome-ink) 62%, transparent);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1;
+  margin-left: 2px;
+  white-space: nowrap;
+}
+
 .paw-desktop-root .paw-system-mark:hover {
   color: #1e57e7;
   background: rgb(23 26 33 / .05);

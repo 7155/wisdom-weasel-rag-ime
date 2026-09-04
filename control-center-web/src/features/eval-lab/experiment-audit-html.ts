@@ -433,7 +433,7 @@ function metricLabel(value: string): string {
     taskSuccessRate: '任务完成率', taskSuccessCount: '完成任务数', taskCount: '任务总数', taskPassed: '完成任务数', taskTotal: '任务总数',
     verifierPassRate: '验收条件通过率', verifierPassCount: '通过的验收条件', verifierCount: '验收条件总数', verifierPassed: '通过的验收条件', verifierTotal: '验收条件总数',
     toolCalls: '工具调用', businessToolCalls: '业务工具调用', failedToolCalls: '工具失败', latencyMs: '总耗时', elapsedMs: '总耗时', actualModelCallElapsedMs: '模型调用耗时',
-    apiCostUsd: '估算 API 成本', estimatedApiCostUsd: '估算 API 成本', totalTokens: '总 Token', tokens: 'Token', providerCalls: '模型请求数',
+    apiCostUsd: '账面估算 API 成本（未核验）', estimatedApiCostUsd: '账面估算 API 成本（未核验）', totalTokens: '总 Token', tokens: 'Token', providerCalls: '模型请求数',
     costReceiptAvailable: '成本回执',
     recallAt10: '前 10 条覆盖率', recall_at_10: '前 10 条覆盖率', mrr: '首个正确结果排名', ndcgAt10: '前 10 条排序质量', ndcg_at_10: '前 10 条排序质量',
     agentCaseCount: 'Agent 任务数', agentSuccessRate: 'Agent 任务通过率', answerCaseCount: '可评分答案数', answerSuccessRate: '答案通过率',
@@ -470,7 +470,7 @@ function formatMetricChange(row: MetricRow): string {
   if (delta === 0) return '持平';
   if (isRateMetric(metric)) return `${delta > 0 ? '提高' : '下降'} ${Math.abs(delta * 100).toFixed(2)} 个百分点`;
   if (metric === 'latencyMs' || metric === 'elapsedMs' || metric === 'actualModelCallElapsedMs') return `${delta < 0 ? '缩短' : '增加'} ${Math.abs(delta / 1000).toFixed(2)} 秒`;
-  if (metric === 'apiCostUsd' || metric === 'estimatedApiCostUsd') return `${delta < 0 ? '降低' : '增加'} $${Math.abs(delta).toFixed(4)}`;
+  if (metric === 'apiCostUsd' || metric === 'estimatedApiCostUsd') return `账面${delta < 0 ? '减少' : '增加'} $${Math.abs(delta).toFixed(4)}（不构成成本下降结论）`;
   return `${delta < 0 ? '减少' : '增加'} ${formatMetric(Math.abs(delta))}`;
 }
 

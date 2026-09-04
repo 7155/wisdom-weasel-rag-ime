@@ -18,7 +18,7 @@ from rag_ime.db.migration_runner import (
     migration_status,
 )
 
-POST_0126_MIGRATIONS = tuple(range(127, 186))
+POST_0126_MIGRATIONS = tuple(range(127, 189))
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -41,7 +41,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 185)
+            self.assertEqual(status["currentVersion"], 188)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -97,6 +97,62 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("memory_supersessions", tables)
             self.assertIn("agent_sessions", tables)
             self.assertIn("agent_approvals", tables)
+            self.assertIn("agent_approval_terminal_projections", tables)
+            terminal_projection_columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(agent_approval_terminal_projections)"
+                )
+            }
+            self.assertTrue(
+                {
+                    "session_id",
+                    "approval_id",
+                    "projection_kind",
+                    "tool_call_id",
+                    "turn_id",
+                    "tool_name",
+                    "room_id",
+                    "room_root_id",
+                    "room_dispatch_id",
+                    "room_generation",
+                    "event_id",
+                    "event_sequence",
+                    "projected_at_ms",
+                }.issubset(terminal_projection_columns)
+            )
+            projection_unique_indexes = [
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA index_list(agent_approval_terminal_projections)"
+                )
+                if int(row[2]) == 1
+            ]
+            self.assertIn(
+                ["session_id", "approval_id", "projection_kind"],
+                [
+                    [
+                        str(column[2])
+                        for column in conn.execute(
+                            f"PRAGMA index_info({index_name})"
+                        )
+                    ]
+                    for index_name in projection_unique_indexes
+                ],
+            )
+            self.assertEqual(
+                {
+                    (str(row[2]), str(row[6]).upper())
+                    for row in conn.execute(
+                        "PRAGMA foreign_key_list("
+                        "agent_approval_terminal_projections)"
+                    )
+                },
+                {
+                    ("agent_sessions", "CASCADE"),
+                    ("agent_approvals", "CASCADE"),
+                },
+            )
             self.assertIn("agent_runtime_events", tables)
             self.assertIn("agent_plugin_usage_events", tables)
             self.assertIn("agent_memory_sources", tables)
@@ -1015,7 +1071,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 upgraded = apply_database_migrations(conn)
 
                 self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126) + POST_0126_MIGRATIONS)
-                self.assertEqual(upgraded.current_version, 185)
+                self.assertEqual(upgraded.current_version, 188)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -1190,7 +1246,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, tuple(range(153, 186)))
+                self.assertEqual(upgraded.applied_versions, tuple(range(153, 189)))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -1258,7 +1314,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 185)
+                self.assertEqual(status["currentVersion"], 188)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -1997,7 +2053,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    tuple(range(135, 186)),
+                    tuple(range(135, 189)),
                 )
                 todo = conn.execute(
                     """
@@ -2142,9 +2198,9 @@ class DatabaseMigrationTests(unittest.TestCase):
             upgraded = apply_database_migrations(conn, applied_at_ms=161)
             self.assertEqual(
                 upgraded.applied_versions,
-                tuple(range(160, 186)),
+                tuple(range(160, 189)),
             )
-            self.assertEqual(upgraded.current_version, 185)
+            self.assertEqual(upgraded.current_version, 188)
             review_columns = {
                 str(row[1])
                 for row in conn.execute(
@@ -2211,7 +2267,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             upgraded = apply_database_migrations(conn, applied_at_ms=185)
 
-            self.assertEqual(upgraded.applied_versions, (185,))
+            self.assertEqual(upgraded.applied_versions, (185, 186, 187, 188))
             self.assertEqual(
                 conn.execute(
                     "SELECT run_kind FROM memory_cleanup_runs "

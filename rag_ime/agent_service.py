@@ -34,9 +34,11 @@ from .agent_background_jobs import AgentBackgroundJobService
 from .agent_context_runtime import AgentContextRuntime
 from .agent_execution_policy import (
     FULL_TRUST_EXECUTION_MODE,
+    READ_ONLY_EXECUTION_MODE,
     ROOM_UNRESTRICTED_EXECUTION_MODE,
     auto_approve_policy_active,
     execution_policy_prompt,
+    read_only_policy_active,
     workspace_scope_sha256,
 )
 from .room_permission_policy import (
@@ -530,6 +532,9 @@ class AgentService:
                 room_public_recovery_context=(
                     self._room_public_recovery_context_for_session
                 ),
+                execution_policy_context=(
+                    self._execution_policy_prompt_for_session
+                ),
                 memory_enabled_provider=self.memory_enabled,
             )
         )
@@ -831,11 +836,38 @@ class AgentService:
                     "error": "",
                 }
             try:
-                for room in self.rooms.list(include_archived=False):
-                    self._activate_room_unrestricted_execution(
-                        str(room.get("id") or ""),
-                        room=room,
+                approval_execution_recovery = (
+                    self.approval_application
+                    .reconcile_abandoned_execution_claims()
+                )
+                retired_room_start_gate_count = (
+                    self.room_start_gates.retire_pending()
+                )
+                room_cursor: Mapping[str, object] | None = None
+                while True:
+                    page = self.rooms.list_page(
+                        include_archived=False,
+                        limit=200,
+                        before_updated_at_ms=(
+                            int(room_cursor["beforeUpdatedAtMs"])
+                            if room_cursor is not None
+                            else None
+                        ),
+                        before_id=(
+                            str(room_cursor["beforeId"])
+                            if room_cursor is not None
+                            else None
+                        ),
                     )
+                    for room in page["items"]:
+                        self._activate_room_unrestricted_execution(
+                            str(room.get("id") or ""),
+                            room=room,
+                        )
+                    next_cursor = page.get("nextCursor")
+                    if not isinstance(next_cursor, Mapping):
+                        break
+                    room_cursor = next_cursor
                 self.work_documents.reconcile(retry_failed_observers=True)
                 self.delegation.reconcile_startup()
                 self.room_work.reconcile_intercom_outcomes()
@@ -855,6 +887,12 @@ class AgentService:
                     "status": "complete",
                     "ok": True,
                     "error": "",
+                    "approvalExecutionRecovery": (
+                        approval_execution_recovery
+                    ),
+                    "retiredRoomStartGateCount": (
+                        retired_room_start_gate_count
+                    ),
                 }
 
     def _close_runtime_session(self, session_id: str) -> None:
@@ -1331,6 +1369,26 @@ class AgentService:
         )
 
 
+    def _execution_policy_prompt_for_session(
+        self,
+        session: Mapping[str, object],
+    ) -> str:
+        """Compile execution guidance from the live dispatch, never stale DB state."""
+
+        session_id = str(session.get("id") or "")
+        room_dispatch_context = self._exact_room_dispatch_context(
+            self._active_room_dispatch_context(session_id)
+        )
+        effective_session = {
+            **session,
+            "roomDispatchAuthorized": room_dispatch_context is not None,
+        }
+        if room_dispatch_context is not None and not read_only_policy_active(session):
+            effective_session["roomExecutionMode"] = (
+                ROOM_UNRESTRICTED_EXECUTION_MODE
+            )
+        return execution_policy_prompt(effective_session)
+
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
         delegation = getattr(self, "delegation", None)
         if delegation is not None:
@@ -1341,7 +1399,7 @@ class AgentService:
         session_context = "\n\n".join(
             value
             for value in (
-                execution_policy_prompt(session),
+                self._execution_policy_prompt_for_session(session),
                 self.memory_context_application.provider_context(session_id),
             )
             if value
@@ -1485,13 +1543,46 @@ class AgentService:
         root_id, dispatch_id = self.room_turns.active_turn(session_id)
         if participant is None or not root_id:
             return None
+        if self.room_turns.is_cancelled(session_id, root_id):
+            return None
         task = self.task_context.resolve(session_id)
+        try:
+            generation = self._room_runtime_generation(session_id)
+        except (KeyError, ValueError):
+            return None
+        return self._exact_room_dispatch_context(
+            {
+                "roomId": str(participant.get("roomId") or ""),
+                "rootId": root_id,
+                "taskId": str(task.get("workItemId") or ""),
+                "dispatchId": dispatch_id,
+                "generation": generation,
+            }
+        )
+
+    @staticmethod
+    def _exact_room_dispatch_context(
+        context: Mapping[str, object] | None,
+    ) -> dict[str, object] | None:
+        """Accept only a complete dispatch capability, never a partial overlay."""
+
+        if not isinstance(context, Mapping):
+            return None
+        room_id = str(context.get("roomId") or "").strip()
+        root_id = str(context.get("rootId") or "").strip()
+        dispatch_id = str(context.get("dispatchId") or "").strip()
+        try:
+            generation = int(context.get("generation") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not room_id or not root_id or not dispatch_id or generation <= 0:
+            return None
         return {
-            "roomId": str(participant.get("roomId") or ""),
+            **dict(context),
+            "roomId": room_id,
             "rootId": root_id,
-            "taskId": str(task.get("workItemId") or ""),
             "dispatchId": dispatch_id,
-            "generation": 0,
+            "generation": generation,
         }
 
     def _active_room_dispatch_authorizes_work(
@@ -1499,15 +1590,42 @@ class AgentService:
         session_id: str,
     ) -> bool:
         context = self._active_room_dispatch_context(session_id)
-        if context is None:
-            return False
-        room_id = str(context.get("roomId") or "")
-        gate = self.room_start_gates.get(room_id) if room_id else None
-        # A live dispatch proves ownership, but not user alignment. The
-        # Room-only no-per-Tool overlay becomes available only after the
-        # durable start gate was explicitly confirmed. Legacy active Rooms
-        # without that receipt continue under their ordinary Session policy.
-        return bool(gate and gate.get("status") == "confirmed")
+        # Posting work to a Room is the user's execution action.  A live,
+        # session-bound dispatch therefore authorizes the Room's default
+        # no-per-Tool policy even for legacy Rooms that predate the persisted
+        # roomExecutionMode overlay.  Ordinary Session turns never enter this
+        # path, and read-only/workspace fences are still checked by the Tool
+        # gateway immediately before application.
+        return context is not None
+
+    def _claim_approval_execution(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Linearize a Room authorization with turn rotation and Runtime binding."""
+
+        approval_id = str(approval.get("approvalId") or "")
+        causal = (
+            approval.get("causalMetadata")
+            if isinstance(approval.get("causalMetadata"), Mapping)
+            else {}
+        )
+        if not bool(causal.get("roomBound")):
+            return self.sessions.claim_approval_execution(approval_id)
+        session_id = str(approval.get("sessionId") or "")
+        # Room begin/finish/cancel use this same lock.  Keep it held while the
+        # approval store atomically compares the runtime generation and claims
+        # the effect, making the claim the one execution-start boundary.
+        with self.room_turns.lock:
+            live_context = self._active_room_dispatch_context(session_id)
+            return self.sessions.claim_approval_execution(
+                approval_id,
+                room_context=(
+                    live_context
+                    if isinstance(live_context, Mapping)
+                    else {}
+                ),
+            )
 
     def _room_delegation_context(
         self,
@@ -2443,6 +2561,11 @@ class AgentService:
                 room_id,
                 room=room,
             )
+            # `update_room` may restore an archived Room whose response was
+            # projected before the legacy pending start row was retired.  Give
+            # the caller the post-policy snapshot, never a confirmation card
+            # that no longer exists in durable state.
+            return {**dict(response), "room": self.rooms.get(room_id)}
         return response
 
     def add_room_participant(
@@ -2524,16 +2647,11 @@ class AgentService:
         # Room is an explicitly created collaboration surface. Its participant
         # Sessions receive the workspace-scoped unrestricted overlay at Room
         # creation, so normal work never pauses for a second start approval or
-        # for per-Tool approvals. Retire a legacy pending gate if an older Host
-        # left one behind, then continue through the ordinary idempotent command
-        # receipt and dispatch path.
+        # for per-Tool approvals. Activation also retires any legacy start gate.
         if work_item_id:
             room = self.rooms.get(room_id)
             if str(room.get("roomKind") or "collaboration") == "collaboration":
                 self._activate_room_unrestricted_execution(room_id, room=room)
-                legacy_gate = self.room_start_gates.get(room_id)
-                if legacy_gate is not None and legacy_gate.get("status") == "pending":
-                    self.room_start_gates.reject(room_id)
         if not client_message_id:
             return self._post_room_message_once(
                 room_id,
@@ -2546,22 +2664,50 @@ class AgentService:
                 answer_to_post_id=answer_to_post_id,
                 answer_to_root_id=answer_to_root_id,
             )
+        command_payload = {
+            "message": message,
+            "retryOfRootId": retry_of_root_id,
+            "participantIds": requested_participant_ids,
+            "workItemId": work_item_id,
+            "attachmentIds": attachment_ids,
+            "answerToPostId": answer_to_post_id,
+            "answerToRootId": answer_to_root_id,
+        }
         claim = self.command_receipts.begin(
             command_scope="room_message",
             scope_id=room_id,
             client_message_id=client_message_id,
-            payload={
-                "message": message,
-                "retryOfRootId": retry_of_root_id,
-                "participantIds": requested_participant_ids,
-                "workItemId": work_item_id,
-                "attachmentIds": attachment_ids,
-                "answerToPostId": answer_to_post_id,
-                "answerToRootId": answer_to_root_id,
-            },
+            payload=command_payload,
         )
         if claim.replay_response is not None:
-            return {**claim.replay_response, "idempotentReplay": True}
+            start_confirmation = claim.replay_response.get(
+                "startConfirmation"
+            )
+            if not (
+                claim.replay_response.get("accepted") is False
+                and claim.replay_response.get("status")
+                == "awaiting_confirmation"
+                and isinstance(start_confirmation, Mapping)
+                and start_confirmation.get("status") == "pending"
+            ):
+                return {**claim.replay_response, "idempotentReplay": True}
+            # Older Hosts durably accepted the UI pause itself.  Room dispatch
+            # is now the authorization boundary, so atomically reopen only
+            # that exact obsolete response and execute the original command.
+            # Concurrent callers either receive the repaired response or a
+            # pending receipt; they can never dispatch the Tool turn twice.
+            claim = (
+                self.command_receipts
+                .reopen_accepted_response_for_compatibility(
+                    command_scope="room_message",
+                    scope_id=room_id,
+                    client_message_id=client_message_id,
+                    payload=command_payload,
+                    expected_response=claim.replay_response,
+                )
+            )
+            if claim.replay_response is not None:
+                return {**claim.replay_response, "idempotentReplay": True}
         try:
             response = self._post_room_message_once(
                 room_id,
@@ -2869,6 +3015,16 @@ class AgentService:
         if str(current_room.get("status") or "") != "active":
             return 0
         room_kind = str(current_room.get("roomKind") or "collaboration")
+        if room_kind == "collaboration":
+            legacy_gate = self.room_start_gates.get(room_id)
+            if (
+                legacy_gate is not None
+                and legacy_gate.get("status") == "pending"
+            ):
+                # A Room dispatch is already the user's authority boundary.
+                # Pending start-gate rows only exist from older Hosts and must
+                # disappear before snapshots can revive an obsolete prompt.
+                self.room_start_gates.reject(room_id)
         try:
             permission_policy = normalize_room_permission_policy(
                 current_room.get("permissionPolicy"),
@@ -2881,10 +3037,13 @@ class AgentService:
         effective_partner_mode = resolve_room_permission_policy(
             permission_policy
         )["partner"]["executionMode"]
+        # A Room dispatch is the user's confirmation boundary. Every active
+        # non-read-only participant skips the separate human/Luna per-Tool
+        # layer, independent of the Room's legacy permission preset.
         target_overlay = (
-            ROOM_UNRESTRICTED_EXECUTION_MODE
-            if effective_partner_mode == FULL_TRUST_EXECUTION_MODE
-            else ""
+            ""
+            if effective_partner_mode == READ_ONLY_EXECUTION_MODE
+            else ROOM_UNRESTRICTED_EXECUTION_MODE
         )
         updated = 0
         for participant in current_room.get("participants", []):

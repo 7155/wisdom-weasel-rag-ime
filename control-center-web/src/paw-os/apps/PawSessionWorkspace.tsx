@@ -78,6 +78,7 @@ import { AgentTimeline } from '@/features/agent/timeline/AgentTimeline';
 import { QueueTray, useConversationQueue } from '@/features/conversation-ui';
 import { toolIntentPrompt } from '@/features/agent/tool-presentation';
 import { AgentFilesPanel } from '@/features/agent/workspace/AgentFilesPanel';
+import { pawBrowserHost } from './paw-browser-host';
 import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
 import { usePageVisibility } from '@/platform/use-page-visibility';
 import { PawContextTrace } from './PawContextTrace';
@@ -162,6 +163,7 @@ export function PawSessionWorkspace({
   composerPlaceholder?: string;
 }) {
   const transport = useControlTransport();
+  const electronHost = pawBrowserHost();
   const desktop = usePawOsDesktop();
   const windowChromeTarget = usePawWindowChromeTarget();
   const embedded = appearance === 'embedded';
@@ -973,18 +975,24 @@ export function PawSessionWorkspace({
   async function changePermission(selection: AgentPermissionSelection): Promise<void> {
     if (!record || busy) { setError('请先停止当前回合，再调整运行权限。'); return; }
     try {
-      const workspaceRoots = unrestrictedWorkspaceRoots(
-        ...(selection.workspaceRoots ?? record.workspaceRoots ?? []),
-      );
+      const scopedWorkspaceRoots = (selection.workspaceRoots ?? record.workspaceRoots ?? [])
+        .filter((root) => root !== '/');
+      const workspaceRoots = selection.executionMode === 'per_action'
+        || selection.executionMode === 'full_trust'
+        ? unrestrictedWorkspaceRoots(...scopedWorkspaceRoots)
+        : scopedWorkspaceRoots;
       const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.session.mode.update',
         params: { sessionId: recordId },
         body: {
-          mode: 'coordinator',
+          mode: selection.mode,
           executionMode: selection.executionMode,
           workspaceRoots,
           toolProfileVersion: selection.toolProfileVersion,
           toolAllowlistMode: 'profile',
+          ...(selection.workspaceScopeConfirmed
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+            : {}),
           ...(selection.executionMode === 'full_trust'
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
             : {}),
@@ -998,10 +1006,17 @@ export function PawSessionWorkspace({
   }
 
   async function manageWorkspaceRoots(): Promise<void> {
-    if (!record || !transport.pickFiles) { setError('当前环境不能选择起始项目。'); return; }
+    if (!record || (!transport.pickFiles && !electronHost?.pickWorkspaceDirectory)) {
+      setError('当前环境不能选择起始项目。');
+      return;
+    }
     try {
-      const picked = await transport.pickFiles({ purpose: 'workspace-root', selection: 'directory', multiple: true, maxFiles: 4 });
-      const selectedRoots = picked.map((item) => item.path).filter((path): path is string => Boolean(path));
+      const selectedRoots = transport.pickFiles
+        ? (await transport.pickFiles({ purpose: 'workspace-root', selection: 'directory', multiple: true, maxFiles: 4 }))
+          .map((item) => item.path?.trim())
+          .filter((path): path is string => Boolean(path))
+        : [(await electronHost?.pickWorkspaceDirectory?.())?.path?.trim()]
+          .filter((path): path is string => Boolean(path));
       if (!selectedRoots.length) return;
       const executionMode = record.executionMode ?? 'per_action';
       const unrestricted = executionMode === 'per_action' || executionMode === 'full_trust';

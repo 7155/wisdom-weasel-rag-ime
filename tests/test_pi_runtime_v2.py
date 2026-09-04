@@ -1072,6 +1072,15 @@ class PiRuntimeV2Tests(unittest.TestCase):
 
     def test_session_skill_allowlist_fails_closed_on_an_old_host(self) -> None:
         session_id = str(self.first["id"])
+        self.store.set_runtime_policy(
+            session_id,
+            mode="assistant",
+            tool_profile_version="control-center-v1",
+            allowed_tools=None,
+            project_context_enabled=False,
+            pi_skills_enabled=True,
+            codex_skills_enabled=False,
+        )
         self.runtime._skill_allowlist_provider = (
             lambda _session: ["systematic-debugging"]
         )
@@ -1083,6 +1092,26 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "does not support per-Session Skill allowlists",
         ):
             self.runtime.ensure(session_id)
+
+    def test_disabled_skill_systems_omit_the_allowlist_for_an_old_host(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime._skill_allowlist_provider = (
+            lambda _session: ["systematic-debugging"]
+        )
+        self.runtime._host()
+        self.runtime._host_capabilities.pop("sessionSkillAllowlist", None)
+
+        ensured = self.runtime.ensure(session_id)
+
+        self.assertFalse(ensured["reused"])
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = next(request for request in requests if request["method"] == "session.open")
+        self.assertNotIn("skillAllowlist", opened["params"])
 
     def test_ensure_retires_an_idle_turn_restored_after_host_failure(
         self,

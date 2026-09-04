@@ -1015,6 +1015,8 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
       const toolProfileVersion = input.toolProfileVersion
         ?? (input.executionMode === 'read_only'
           ? 'subagent-readonly-v1'
+          : input.executionMode === 'workspace_managed'
+            ? 'control-center-v1'
           : input.executionMode === 'full_trust'
             ? 'control-center-auto-approve-v1'
             : 'control-center-full-access-v1');
@@ -1031,6 +1033,9 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
           workspaceRoots,
           ...(input.executionMode === 'full_trust'
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
+            : {}),
+          ...(input.workspaceScopeConfirmed
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
             : {}),
         },
       });
@@ -2001,6 +2006,9 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
           ...(selection.dangerousModeConfirmed
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
             : {}),
+          ...(selection.workspaceScopeConfirmed
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+            : {}),
         },
       });
       if (!isRecord(response.session)) {
@@ -2087,6 +2095,9 @@ function AgentWorkspace({ pawOsWorkbench }: { pawOsWorkbench: boolean }) {
           toolAllowlistMode,
           ...(toolAllowlistMode === 'explicit'
             ? { allowedTools: session.allowedTools ?? [] }
+            : {}),
+          ...(executionMode === 'workspace_managed'
+            ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
             : {}),
           ...(executionMode === 'full_trust'
             ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }

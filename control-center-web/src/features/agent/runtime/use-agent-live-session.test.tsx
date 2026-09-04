@@ -2,6 +2,8 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agentEventFixture } from '@/test/fixtures/events';
 import { MockControlTransport } from '@/test/mock-transport';
+import { HttpControlTransport } from '@/platform/http-transport';
+import type { ControlRequest } from '@/platform/transport';
 import { useAgentLiveStore } from '../state/live-store';
 import { useAgentLiveSession } from './use-agent-live-session';
 
@@ -180,7 +182,7 @@ describe('useAgentLiveSession shared ownership', () => {
     expect(secondError).toHaveBeenCalledWith(SESSION_ID, interruption);
     expect(snapshotCalls).toBe(1);
 
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
     await act(async () => Promise.resolve());
     expect(snapshotCalls).toBe(2);
     expect(transport.subscriptionCalls).toHaveLength(2);
@@ -189,6 +191,191 @@ describe('useAgentLiveSession shared ownership', () => {
     expect(secondRestored).toHaveBeenLastCalledWith(SESSION_ID);
     firstWindow.unmount();
     secondWindow.unmount();
+  });
+
+  it('does not declare an HTTP stream restored from headers alone', async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/events')) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }), { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      return new Response(JSON.stringify({
+        lastSequence: 0,
+        resumeToken: `${SESSION_ID}:0`,
+        status: 'idle',
+        messages: [],
+        liveEvents: [],
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+    const restored = vi.fn();
+    const recoveryState = vi.fn();
+    const window = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+      onConnectionRestored: restored,
+      onRecoveryState: recoveryState,
+    }));
+
+    await waitFor(() => expect(streamController).toBeDefined());
+    expect(restored).not.toHaveBeenCalled();
+    expect(recoveryState).toHaveBeenLastCalledWith('recovering');
+    streamController?.enqueue(new TextEncoder().encode(': heartbeat\n'));
+    await Promise.resolve();
+    expect(restored).not.toHaveBeenCalled();
+    streamController?.enqueue(new TextEncoder().encode('\n'));
+    await waitFor(() => expect(restored).toHaveBeenCalledTimes(1));
+    expect(recoveryState).toHaveBeenLastCalledWith('synced');
+    window.unmount();
+  });
+
+  it('honors a transport Retry-After hint in the single shared recovery loop', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return {
+            lastSequence: 0,
+            resumeToken: `${SESSION_ID}:0`,
+            status: 'idle',
+            messages: [],
+            liveEvents: [],
+          };
+        },
+      },
+    });
+    const firstWindow = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+    }));
+    const secondWindow = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    vi.useFakeTimers();
+
+    act(() => transport.fail(
+      'agent.session.events',
+      Object.assign(new Error('event stream capacity'), { retryAfterMs: 2_000 }),
+    ));
+    await act(async () => vi.advanceTimersByTimeAsync(1_999));
+    expect(snapshotCalls).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(251));
+    await act(async () => Promise.resolve());
+    expect(snapshotCalls).toBe(2);
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    firstWindow.unmount();
+    secondWindow.unmount();
+  });
+
+  it('adds deterministic owner jitter instead of retrying all Sessions at one second', async () => {
+    const ownerIds = ['session-jitter-alpha', 'session-jitter-beta'] as const;
+    const callsByOwner = new Map<string, number>();
+    const recoveryTimes: number[] = [];
+    const transport = new MockControlTransport({
+      routes: {
+        'agent.session.snapshot': (request: ControlRequest) => {
+          const ownerId = request.params?.sessionId ?? '';
+          const call = (callsByOwner.get(ownerId) ?? 0) + 1;
+          callsByOwner.set(ownerId, call);
+          if (call > 1) recoveryTimes.push(Date.now());
+          return {
+            lastSequence: 0,
+            resumeToken: `${ownerId}:0`,
+            status: 'idle',
+            messages: [],
+            liveEvents: [],
+          };
+        },
+      },
+    });
+    const first = renderHook(() => useAgentLiveSession({
+      sessionId: ownerIds[0],
+      transport,
+    }));
+    const second = renderHook(() => useAgentLiveSession({
+      sessionId: ownerIds[1],
+      transport,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(2));
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+
+    act(() => transport.fail('agent.session.events', new Error('gateway restart')));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
+    await act(async () => Promise.resolve());
+
+    expect(recoveryTimes).toHaveLength(2);
+    expect(recoveryTimes.every((at) => at > 101_000 && at <= 101_250)).toBe(true);
+    expect(new Set(recoveryTimes).size).toBe(2);
+    first.unmount();
+    second.unmount();
+    for (const ownerId of ownerIds) useAgentLiveStore.getState().clear(ownerId);
+  });
+
+  it('does not reset recovery backoff until the recovered stream delivers an event', async () => {
+    let snapshotCalls = 0;
+    const transport = new MockControlTransport({
+      stableOnOpen: false,
+      routes: {
+        'agent.session.snapshot': () => {
+          snapshotCalls += 1;
+          return {
+            lastSequence: 0,
+            resumeToken: `${SESSION_ID}:0`,
+            status: 'idle',
+            messages: [],
+            liveEvents: [],
+          };
+        },
+      },
+    });
+    const window = renderHook(() => useAgentLiveSession({
+      sessionId: SESSION_ID,
+      transport,
+    }));
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    vi.useFakeTimers();
+
+    act(() => transport.fail('agent.session.events', new Error('first early failure')));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
+    await act(async () => Promise.resolve());
+    expect(snapshotCalls).toBe(2);
+
+    act(() => transport.fail('agent.session.events', new Error('second early failure')));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
+    await act(async () => Promise.resolve());
+    expect(snapshotCalls).toBe(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => Promise.resolve());
+    expect(snapshotCalls).toBe(3);
+
+    const event = Object.fromEntries(Object.entries({
+      ...agentEventFixture(1, 'turn_completed', { status: 'completed' }),
+      eventId: `${SESSION_ID}:1`,
+      sessionId: SESSION_ID,
+      resumeToken: `${SESSION_ID}:1`,
+    }).filter(([key]) => key !== 'streamKind'));
+    act(() => {
+      expect(transport.emit('agent.session.events', event)).toBe(1);
+      transport.fail('agent.session.events', new Error('failure after stable event'));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(snapshotCalls).toBe(3);
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    await act(async () => Promise.resolve());
+    expect(snapshotCalls).toBe(4);
+    window.unmount();
   });
 
   it('hydrates the durable high-water snapshot after a transient snapshot-required control', async () => {
@@ -461,7 +648,7 @@ describe('useAgentLiveSession shared ownership', () => {
     vi.useFakeTimers();
 
     act(() => transport.fail('agent.session.events', new Error('stream interrupted')));
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
     await act(async () => Promise.resolve());
 
     expect(snapshotCalls).toBe(2);
@@ -498,14 +685,14 @@ describe('useAgentLiveSession shared ownership', () => {
     vi.useFakeTimers();
 
     act(() => transport.fail('agent.session.events', new Error('stream interrupted')));
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
     expect(snapshotCalls).toBe(2);
     expect(snapshotError).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: SESSION_ID,
       error: expect.objectContaining({ message: 'gateway restarting' }),
     }));
 
-    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    await act(async () => vi.advanceTimersByTimeAsync(2_250));
     await act(async () => Promise.resolve());
     expect(snapshotCalls).toBe(3);
     expect(transport.activeSubscriptionCount()).toBe(1);

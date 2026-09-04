@@ -60,6 +60,8 @@ export interface MockControlTransportOptions {
   externalAction?: (
     request: ExternalActionRequest,
   ) => ExternalActionReceipt | Promise<ExternalActionReceipt>;
+  /** Keep ordinary fixture behavior synchronous; disable to model headers-only recovery. */
+  stableOnOpen?: boolean;
   now?: () => number;
 }
 
@@ -91,6 +93,7 @@ export class MockControlTransport implements ControlTransport {
   private readonly knowledgeDocumentSource?: MockControlTransportOptions['knowledgeDocumentSource'];
   private readonly snapshotImageUrl?: MockControlTransportOptions['browserSnapshotImageUrl'];
   private readonly externalAction?: MockControlTransportOptions['externalAction'];
+  private readonly stableOnOpen: boolean;
   private readonly now: () => number;
   private nextSubscriptionId = 1;
 
@@ -128,6 +131,7 @@ export class MockControlTransport implements ControlTransport {
     this.knowledgeDocumentSource = options.knowledgeDocumentSource;
     this.snapshotImageUrl = options.browserSnapshotImageUrl;
     this.externalAction = options.externalAction;
+    this.stableOnOpen = options.stableOnOpen ?? true;
     this.now = options.now ?? Date.now;
   }
 
@@ -171,6 +175,7 @@ export class MockControlTransport implements ControlTransport {
     });
     this.subscriptionCalls.push({ id, request, at: this.now() });
     observer.open?.(request.lastEventId);
+    if (this.stableOnOpen) observer.stable?.(request.lastEventId);
     return () => this.subscriptions.delete(id);
   }
 
@@ -195,6 +200,7 @@ export class MockControlTransport implements ControlTransport {
         subscription.observer.next(parsed);
         if (isSnapshotRequired(parsed)) subscription.observer.snapshotRequired?.(parsed);
         subscription.lastEventId = deliveredEventId;
+        if (!isSnapshotRequired(parsed)) subscription.observer.stable?.(subscription.lastEventId);
         delivered += 1;
       } catch (error) {
         subscription.deliveryBlocked = true;

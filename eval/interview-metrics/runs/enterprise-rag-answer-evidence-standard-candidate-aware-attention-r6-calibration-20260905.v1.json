@@ -1,0 +1,140 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-attention-calibration.v1",
+  "runId": "enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905",
+  "status": "passed",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "candidateBlind": false,
+  "candidateAware": true,
+  "auditAware": true,
+  "localOnly": true,
+  "uploaded": false,
+  "providerCalls": 0,
+  "judgeCalls": 0,
+  "candidateRuns": 0,
+  "heldOutOpened": false,
+  "formalAcceptanceEligible": false,
+  "formalAcceptancePassed": false,
+  "unbiasedPromotionClaimAllowed": false,
+  "auditBoundary": {
+    "auditId": "enterprise-rag-answer-evidence-luna-candidate-aware-attention-audit-r6-20260905",
+    "auditReceiptFileSha256": "deeb9d81341fc5651f5004c008735019c5bae73a9e9a03682be28d8aa7126e9f",
+    "auditReceiptManifestSha256": "53112bd0550ad35099c6a31dbf094fc5a56968a016a34ce77329c1eeef8bf0a3",
+    "candidateCitationsAccessed": true,
+    "questionReferenceFactsAccessed": true,
+    "heldOutAccessed": false
+  },
+  "predecessor": {
+    "standardR5FileSha256": "363926b1fe9797adc6b67019be03a6a147d6bdfa4d3dbfd6fc71a61a004f1e42",
+    "standardR5ManifestSha256": "9d76af0508ec4bcdada0fa49ce31061acec12b37b9d10d990efff094d5e2ee46",
+    "qrelsR5FileSha256": "26e37c922f9676758d3a0b29c4b2f743156f017fe68b3645afe089e3855dad8e",
+    "qrelsR5ManifestSha256": "9e2efd5eab0815eafbad0f4453f999896a8faf574ca20a25c3948b59c5b8faef"
+  },
+  "standard": {
+    "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-attention-r6.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+    "standardId": "enterprise-rag-answer-evidence-validation-candidate-aware-attention-r6-20260905",
+    "fileSha256": "f424ac5343c67880ede77cee241428f83d50aa562ba0905dceac5b3d5fdb01e8",
+    "manifestSha256": "6a4f6e35dbc0987a346649a19a48de5938f1b06e9c60e9be7dd2d4a2f6466c3e"
+  },
+  "qrels": {
+    "scope": "host-only",
+    "path": ".rag-ime-data/eval/host/validation-answer-evidence-qrels-candidate-aware-attention-r6.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "fileSha256": "157078e12dfa73f49a29a25667d512b0bf9a691e5dfb78c8019519b78466a117",
+    "manifestSha256": "0b66d014bf5557a2c9c3ce19f7763bfb8a4f39700e9bba9b649c661c692f6d4c",
+    "factCount": 9,
+    "supportGroupCount": 20,
+    "evidenceBindingCount": 20
+  },
+  "calibrationDelta": {
+    "operator": "append_exact_runtime_fused_attention_equivalent",
+    "changedFacts": [
+      "qst_0474/F1"
+    ],
+    "supportGroupModeBefore": "any",
+    "supportGroupModeAfter": "any",
+    "addedExactBindings": 1,
+    "otherFactBindingsAdded": 0,
+    "newlyCoveredFacts": [
+      "qst_0474/F1"
+    ]
+  },
+  "lunaPromptV4Rescore": {
+    "scorerContract": "exact-citation-token-to-document-chunk-ordinal",
+    "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-coverage-balanced-v4-r4-20260904.json",
+    "sourceReportFileSha256": "f7a4443c41b6738f9fdb8b5831d65d91a7ac7de71c54c3fd4c76e8b0d8edc252",
+    "sourceReportSha256": "dd08534c851fc65e465b4843c4433a59b1953469eca86a86b1c43c0738bb772d",
+    "model": "openai-codex/gpt-5.6-luna",
+    "lane": "agentic",
+    "beforeCoveredFactCount": 8,
+    "coveredFactCount": 9,
+    "factCount": 9,
+    "citationFactCoverage": 1.0,
+    "decision": "keep",
+    "failedHardGates": []
+  },
+  "lunaModelOnlyControl": {
+    "scorerContract": "exact-citation-token-to-document-chunk-ordinal",
+    "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-model-only-v19-r4-20260904.json",
+    "sourceReportFileSha256": "e46cf24687170bb768e8ae9cfe434a199f8b1c2be550b328f42b02b151192dd4",
+    "sourceReportSha256": "2cc20cef18804ee013bbef95607cdc946f797554182a959b7f5a52f4b7aae9fe",
+    "model": "openai-codex/gpt-5.6-luna",
+    "lane": "agentic",
+    "beforeCoveredFactCount": 8,
+    "coveredFactCount": 8,
+    "factCount": 9,
+    "citationFactCoverage": 0.8888888888888888,
+    "decision": "reject",
+    "failedHardGates": [
+      "agentic:citationResolution"
+    ]
+  },
+  "solControl": {
+    "scorerContract": "exact-citation-token-to-document-chunk-ordinal",
+    "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+    "sourceReportFileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+    "sourceReportSha256": "d2d3d7e1e781b2546fb1cfe6e296454d6dec4ca20a17436fb879730cec97be35",
+    "model": "openai-codex/gpt-5.6-sol",
+    "lane": "agentic",
+    "beforeCoveredFactCount": 7,
+    "coveredFactCount": 7,
+    "factCount": 9,
+    "citationFactCoverage": 0.7777777777777778,
+    "decision": "reject",
+    "failedHardGates": [
+      "agentic:citationResolution"
+    ]
+  },
+  "implementation": {
+    "runnerPath": "scripts/run_rag_agent_ablation.py",
+    "runnerFileSha256": "e90af777b337374d750c7a994f78d7cf28770faf33d15ea7f7672ab16ef781e4",
+    "rescorerPath": "scripts/rescore_enterprise_rag_answer_evidence.py",
+    "rescorerFileSha256": "8f098d410d8b443e91a40f7a9a96b69fb25c69b0c688b5b8245c81f0b297954b",
+    "predecessorVerifierPath": "scripts/verify_enterprise_rag_private_support_standard.py",
+    "predecessorVerifierFileSha256": "5319d94edb722b21bd52afcc78a489c6c239e620f3468abed8c800ad216f5c85",
+    "verifierPath": "scripts/verify_enterprise_rag_attention_standard.py",
+    "verifierFileSha256": "086492e50e5298c6516ba31e95a48dff01f9804912f298e20d681bc524d8af97"
+  },
+  "publicSafety": {
+    "containsQuestions": false,
+    "containsReferenceAnswers": false,
+    "containsFactBodies": false,
+    "containsEvidenceQuotes": false,
+    "containsQrelsBody": false,
+    "containsCandidateAnswers": false,
+    "containsPrivateTranscripts": false
+  },
+  "verification": {
+    "command": "python3 scripts/verify_enterprise_rag_attention_standard.py",
+    "result": "ENTERPRISE_RAG_ATTENTION_STANDARD_R6_OK"
+  },
+  "claimBoundary": [
+    "This receipt proves one append-only post-Validation candidate-aware Standard/qrels binding and deterministic offline comparison.",
+    "Only qst_0474/F1 receives one exact equivalent group; no other fact is newly credited.",
+    "The frozen Luna prompt-v4 candidate reaches 9/9 and Keep; both model controls remain below the citation gate and Reject.",
+    "This is not an unbiased promotion or model-quality improvement result.",
+    "No Provider or Judge was called, no candidate was rerun, and Held-out remains unopened."
+  ],
+  "receiptSha256": "f7d7a9e3002fb186401c4f11e2aaf6e1e70bcf67e91e00991c40459ef19084d0"
+}

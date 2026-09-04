@@ -20,13 +20,16 @@ OUTPUT_PATH = REPOSITORY_ROOT / "docs/handoffs/model-bundles/PAW_BACKEND_MODEL_B
 
 AUTHORITY_DOCUMENTS = (
     "AGENTS.md",
-    "docs/project/PROJECT.md",
-    "docs/project/OUTCOMES.md",
-    "docs/project/CONTEXT.md",
-    "docs/project/DECISIONS.md",
-    "docs/project/ARCHITECTURE.md",
-    "docs/pawos/PAWOS_REQUIREMENTS.md",
+    "PROJECT.md",
+    "OUTCOMES.md",
+    "CONTEXT.md",
+    "DECISIONS.md",
+    "ARCHITECTURE.md",
+    "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
 )
+
+PAWOS_REQUIREMENTS_PATH = "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md"
+PAWOS_REQUIREMENTS_GLOB = "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_*.md"
 
 ROOT_BACKEND_FILES = ("pyproject.toml",)
 
@@ -70,6 +73,9 @@ EXCLUDED_FILE_NAMES = {
     "pnpm-lock.yaml",
     "uv.lock",
     "yarn.lock",
+    # Transcript-import fixtures are not part of an external architecture
+    # review and may contain history-shaped examples.
+    "test_codex_history.py",
     "PAW_BACKEND_MODEL_BUNDLE.md",
     "PAWOS_FRONTEND_MODEL_BUNDLE.md",
     "build_paw_backend_model_bundle.py",
@@ -210,6 +216,8 @@ def collect_files() -> tuple[list[Path], dict[str, str]]:
 
     for relative in AUTHORITY_DOCUMENTS:
         add(REPOSITORY_ROOT / relative, "authority")
+    for path in sorted(REPOSITORY_ROOT.glob(PAWOS_REQUIREMENTS_GLOB)):
+        add(path, "authority")
     for relative in ROOT_BACKEND_FILES:
         add(REPOSITORY_ROOT / relative, "package")
 
@@ -358,7 +366,9 @@ def render_file(
 
 
 def validate_required_sources(selected_paths: set[str]) -> None:
-    requirements = original_text(REPOSITORY_ROOT / "docs/pawos/PAWOS_REQUIREMENTS.md")
+    requirement_sources = [REPOSITORY_ROOT / PAWOS_REQUIREMENTS_PATH]
+    requirement_sources.extend(sorted(REPOSITORY_ROOT.glob(PAWOS_REQUIREMENTS_GLOB)))
+    requirements = "\n".join(original_text(path) for path in requirement_sources)
     if "### UR-105" not in requirements or "不要Ghostty" not in requirements:
         raise ValueError("PAWOS_REQUIREMENTS.md must retain the controlling embedded-terminal correction")
     for relative, symbols in REQUIRED_SYMBOLS.items():

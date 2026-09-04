@@ -219,7 +219,7 @@ describe('RoomTurn public activity detail', () => {
     expect(progress).toHaveTextContent('2 / 3');
   });
 
-  it('does not keep a policy-owned automatic approval in the running count', () => {
+  it('hides Room policy authorization while preserving the actual Tool work', () => {
     const projection = roomProjection();
     projection.activitiesById['wait-a'] = {
       ...projection.activitiesById['wait-a']!,
@@ -238,6 +238,7 @@ describe('RoomTurn public activity detail', () => {
         dispatchId: 'dispatch-a',
         sourceEventType: 'approval_required',
         approvalId: 'approval:auto-a',
+        toolCallId: 'tool:auto-a',
         automatic: true,
         decisionMode: 'policy',
         state: 'pending',
@@ -253,9 +254,35 @@ describe('RoomTurn public activity detail', () => {
     const view = render(roomTurn(projection));
     const progress = view.container.querySelector<HTMLElement>('.room-agent-lane__meter')!;
 
-    expect(progress).toHaveAttribute('aria-label', '运行记录已返回 3 / 3');
-    expect(progress).toHaveTextContent('3 / 3');
-    expect(view.container).toHaveTextContent('安全策略已自动处理这次操作');
+    expect(progress).toHaveAttribute('aria-label', '运行记录已返回 2 / 2');
+    expect(progress).toHaveTextContent('2 / 2');
+    expect(view.container).not.toHaveTextContent('安全策略已自动处理这次操作');
+  });
+
+  it('keeps a Tool failure visible after its automatic policy event merged by toolCallId', () => {
+    const projection = roomProjection();
+    projection.activitiesById['tool-a'] = {
+      ...projection.activitiesById['tool-a']!,
+      status: 'failed',
+      summary: '运行项目命令失败',
+      payload: {
+        ...projection.activitiesById['tool-a']!.payload,
+        sourceEventType: 'tool_finished',
+        approvalId: 'approval:auto-a',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'failed',
+        error: 'exit code 1',
+      },
+    };
+
+    const view = render(roomTurn(projection));
+
+    const tool = view.container.querySelector('.room-agent-activity--tool');
+    expect(tool).toHaveAttribute('data-state', 'failed');
+    expect(tool).toHaveTextContent('执行失败');
+    expect(tool).toHaveTextContent('exit code 1');
+    expect(tool).not.toHaveTextContent('安全策略已自动处理这次操作');
   });
 
   it('renders a new card when the same partner starts a later Pi loop', () => {

@@ -1,0 +1,188 @@
+{
+  "schemaVersion": "paw.enterpriseops-model-prompt-optimization-receipt.v1",
+  "runId": "enterpriseops-csm-model-prompt-optimization:enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+  "status": "completed",
+  "decision": "keep",
+  "baselineRunId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+  "modelOnlyRunId": "enterpriseops-csm-luna-preloaded-model-only-validation-20260904-r5",
+  "candidateRunId": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+  "factorChain": [
+    {
+      "stage": "luna_model_only",
+      "changed": ["model"],
+      "frozen": [
+        "promptContractSha256",
+        "taskManifestSha256",
+        "toolCatalogSha256",
+        "runnerSha256",
+        "runtimeBinaryIdentity",
+        "provider",
+        "thinking",
+        "timeout",
+        "transport"
+      ],
+      "decision": "reject"
+    },
+    {
+      "stage": "luna_prompt_adapted",
+      "changed": ["prompt"],
+      "frozen": [
+        "model",
+        "taskManifestSha256",
+        "toolCatalogSha256",
+        "runnerSha256",
+        "runtimeIdentitySha256",
+        "runtimeProvenanceSha256",
+        "provider",
+        "thinking",
+        "timeout",
+        "transport"
+      ],
+      "decision": "keep"
+    }
+  ],
+  "frozenControls": {
+    "split": "validation",
+    "suiteRevision": "enterpriseops-csm-suite-v2",
+    "caseCount": 3,
+    "verifierCount": 31,
+    "liveToolCount": 89,
+    "taskManifestSha256": "d5ef3eb648678fd6abd92879b1a3c946ba335da32f2e26c775792fad8e038fec",
+    "overlaySha256": "40ac966afefb0a71bb1f3e04560bdbf4953fac2788ce2ba90e05b86cfe26677b",
+    "toolCatalogSha256": "349a40e3804bbe16ffa3d5dd80a2fe1298f34b5cd7e3395a27162d5a8db30077",
+    "runnerSha256": "51de12fde0becf219686219baf9011781b07d60943794998b43048898a9f6756",
+    "runtimeVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad",
+    "runtimeManifestSha256": "1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22",
+    "runtimeEntrypointSha256": "2426598570097198846d556692e816a89d8a1c9a77c48187a0fe031f2f7a76d9",
+    "runtimeExtensionSha256": "f0a06ecd627e76e602417989d36c47a75f56744bfafdc0ae8641ec23db899b04",
+    "runtimeNodeSha256": "27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1",
+    "runtimeToolProfileSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120",
+    "provider": "openai-codex",
+    "thinking": "max",
+    "timeoutSeconds": 900,
+    "transport": "loopback-http-v1"
+  },
+  "runtimeIdentityBoundary": {
+    "binaryToolDatasetRunnerFrozen": true,
+    "solIdentitySha256": "5019fda384df648cb28703f556efb2ce8367acdff32cb7bc432eaee3a5682c19",
+    "lunaIdentitySha256": "f0dfcbe60ac84b83271877e5cfed8f5145657cadfd3125f9458a3c60715371af",
+    "identityShaChangedWithModel": true,
+    "lunaIdentityStableAcrossPromptStage": true,
+    "explanation": "Runtime binary, manifest, extension, Node executable, Tool profile, dataset and runner hashes are identical. The Sol-to-Luna Runtime identity and model-config provenance hashes differ because model identity is part of those sealed payloads; the two Luna stages share the same Runtime identity and provenance hashes."
+  },
+  "promptAdaptation": {
+    "generalOnly": true,
+    "changes": [
+      "role_region_tenure",
+      "selected_tool_catalog_authority",
+      "exact_enum_precedence"
+    ],
+    "description": [
+      "Build one eligible candidate set across allowed roles, verify region from the authoritative linked location, then rank tenure deterministically.",
+      "Treat the selected Tool catalog as authoritative and report unsupported substeps without inventing results.",
+      "Use an exact user-specified allowed enum value instead of substituting a nearby description."
+    ],
+    "forbidden": ["case_id", "expected_answer", "gold"],
+    "baselinePromptContractSha256": "a16bb73f6b567643254ce14a103756f67cf0ce671d75fc0a73c31ef2c8607fc1",
+    "candidatePromptContractSha256": "d35237c1833227f5a087bc845fe37cec6ffb183474e66772ff5d0aefd5c00c52"
+  },
+  "evidence": {
+    "solBaseline": {
+      "rawRef": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+      "rawFileSha256": "5c52f9c3295a9504946ed6b5fbc499e26c709f4fdb1150c999040eb0f26b2f5c",
+      "reportSha256": "c8661ec98507df20e892c348d233948ea6a4dba7f7c62fae4b0e38e22b69a738",
+      "costRef": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json",
+      "costFileSha256": "e26e47541229ee4d0e64a6a829db899b6c21902eca840b3672ed469e62ef11d3",
+      "costReceiptSha256": "f85151355533f505fb3e599c495318139f194e3082941f23d026f4508628626e"
+    },
+    "lunaModelOnly": {
+      "rawRef": "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+      "rawFileSha256": "0a9ff609d9c0515d73ecf8d91aaf93ba69a7f65abe8422cd289b310d00601222",
+      "reportSha256": "f40e506f92fbce0d94e7058a8956431680d5625362acc7e3e733b3750a8e8091",
+      "costRef": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-preloaded-model-only-20260904.r5.v1.json",
+      "costFileSha256": "fa885c7367bf2c44dbc2914c498b95c7b83aa378be8644f50aeb50a8c0f52aef",
+      "costReceiptSha256": "2770585355d69f5a6d18869e96339249079a288811980157bfcbb9dbc0065972"
+    },
+    "lunaPromptAdapted": {
+      "rawRef": "eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json",
+      "rawFileSha256": "637aa4c7b63b78cd24572d91490f0e5832a27a3917ee42b76abea664e322c18e",
+      "reportSha256": "aa262263751101246405a766d9a2c2dfe36bc645fb0f04531ed496faa992a14b",
+      "costRef": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json",
+      "costFileSha256": "ec53f50d0a7a9a7f318c89952e37f6ce49bf4f4ebc34eb734fce490855d0524f",
+      "costReceiptSha256": "d0a2223ee262d98ee18a2b053022577b465c3869c61ea7b5c362e5047493d44c"
+    }
+  },
+  "comparison": {
+    "stageOrder": ["sol_baseline", "luna_model_only", "luna_prompt_adapted"],
+    "qualityGatePassed": true,
+    "providerBillAvailable": false,
+    "costAuthority": "runtime_cost_reconciled",
+    "pricingSourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+    "stages": [
+      {
+        "stage": "sol_baseline",
+        "runId": "enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904-r8",
+        "model": "gpt-5.6-sol",
+        "workflowProfile": "state-contract-preloaded-v3",
+        "taskSuccessCount": 3,
+        "taskCount": 3,
+        "verifierPassCount": 31,
+        "verifierCount": 31,
+        "toolCalls": 51,
+        "failedToolCalls": 0,
+        "latencyMs": 583475.2999999999,
+        "costUsd": "1.711214"
+      },
+      {
+        "stage": "luna_model_only",
+        "runId": "enterpriseops-csm-luna-preloaded-model-only-validation-20260904-r5",
+        "model": "gpt-5.6-luna",
+        "workflowProfile": "state-contract-preloaded-v3",
+        "taskSuccessCount": 2,
+        "taskCount": 3,
+        "verifierPassCount": 30,
+        "verifierCount": 31,
+        "toolCalls": 59,
+        "failedToolCalls": 0,
+        "latencyMs": 678614.268,
+        "costUsd": "0.09453296",
+        "decision": "reject"
+      },
+      {
+        "stage": "luna_prompt_adapted",
+        "runId": "enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904-r7",
+        "model": "gpt-5.6-luna",
+        "workflowProfile": "luna-explicit-enum-preloaded-v6",
+        "taskSuccessCount": 3,
+        "taskCount": 3,
+        "verifierPassCount": 31,
+        "verifierCount": 31,
+        "toolCalls": 55,
+        "failedToolCalls": 0,
+        "latencyMs": 574319.984,
+        "costUsd": "0.07291692",
+        "decision": "keep"
+      }
+    ],
+    "costComparisons": {
+      "solToPromptAdapted": {
+        "baselineTotalUsd": "1.711214",
+        "candidateTotalUsd": "0.07291692",
+        "decreasePercent": "95.7388777791673046153198840121691384011584757955463197472671"
+      },
+      "modelOnlyToPromptAdapted": {
+        "baselineTotalUsd": "0.09453296",
+        "candidateTotalUsd": "0.07291692",
+        "decreasePercent": "22.8661410792595513776359060374286386462457115486492753426953"
+      }
+    }
+  },
+  "claimBoundary": [
+    "One source-local Validation run per stage; no repeated-run confidence interval.",
+    "The 95.738878% Sol-to-final and 22.866141% Luna model-only-to-prompt reductions use exact Runtime-reconciled request costs and a hashed pricing source, not a Provider bill.",
+    "The Prompt change contains only general role, region, tenure, selected-Tool authority and exact-enum guidance; it contains no case ID, expected answer or Host-private Gold.",
+    "Runtime binary, Tool catalog, dataset and runner are frozen; model-bearing Runtime identity hashes are expected to change for Sol versus Luna.",
+    "Installed PAWOS, foreground behavior and Held-out generalization were not evaluated."
+  ],
+  "receiptSha256": "de9bff18642684e91b74febc545e5d02cd1dee3b4fc4a4634da4d2bcc4dbe625"
+}

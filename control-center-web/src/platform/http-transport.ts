@@ -13,6 +13,10 @@ import {
   type ControlPathId,
   type ControlStreamKind,
 } from './routes';
+import {
+  parseRetryAfterMs,
+  retryAfterMsFromError,
+} from './recovery-policy';
 import { SseParser, type ParsedSseEvent } from './sse';
 import {
   assertBrowserSnapshotId,
@@ -39,6 +43,7 @@ import {
 export interface HttpControlTransportOptions {
   baseUrl: string;
   fetch?: typeof fetch;
+  validationRuntimeLoader?: () => Promise<ContractValidationRuntime>;
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
   random?: () => number;
@@ -48,13 +53,21 @@ export class ControlTransportHttpError extends Error {
   readonly status: number;
   readonly pathId: ControlPathId;
   readonly payload: unknown;
+  readonly retryAfterMs?: number;
 
-  constructor(pathId: ControlPathId, status: number, message: string, payload?: unknown) {
+  constructor(
+    pathId: ControlPathId,
+    status: number,
+    message: string,
+    payload?: unknown,
+    retryAfterMs?: number,
+  ) {
     super(message);
     this.name = 'ControlTransportHttpError';
     this.pathId = pathId;
     this.status = status;
     this.payload = payload;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -63,6 +76,7 @@ export class HttpControlTransport implements ControlTransport {
 
   private readonly baseUrl: URL;
   private readonly fetchImpl: typeof fetch;
+  private readonly validationRuntimeLoader: () => Promise<ContractValidationRuntime>;
   private readonly reconnectBaseDelayMs: number;
   private readonly reconnectMaxDelayMs: number;
   private readonly random: () => number;
@@ -71,6 +85,7 @@ export class HttpControlTransport implements ControlTransport {
   constructor(options: HttpControlTransportOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.validationRuntimeLoader = options.validationRuntimeLoader ?? loadContractValidationRuntime;
     this.reconnectBaseDelayMs = clamp(options.reconnectBaseDelayMs ?? 250, 0, 30_000);
     this.reconnectMaxDelayMs = clamp(options.reconnectMaxDelayMs ?? 5_000, 0, 60_000);
     this.random = options.random ?? Math.random;
@@ -116,7 +131,15 @@ export class HttpControlTransport implements ControlTransport {
         isRecord(payload) && typeof payload.error === 'string'
           ? payload.error
           : `${request.pathId} returned HTTP ${response.status}`;
-      throw new ControlTransportHttpError(request.pathId, response.status, message, payload);
+      throw new ControlTransportHttpError(
+        request.pathId,
+        response.status,
+        message,
+        payload,
+        response.status === 503
+          ? parseRetryAfterMs(response.headers.get('Retry-After'))
+          : undefined,
+      );
     }
     const contract = request.responseContract ?? route.responseContract;
     if (!contract) return payload as Response;
@@ -368,12 +391,21 @@ export class HttpControlTransport implements ControlTransport {
     const route = controlRoute(request.pathId);
     const streamKind = route.subscription;
     if (!streamKind) return;
-    const validationRuntime = await loadContractValidationRuntime();
+    let validationRuntime: ContractValidationRuntime;
+    try {
+      validationRuntime = await this.validationRuntimeLoader();
+    } catch (error) {
+      if (!controller.signal.aborted && !isAbortError(error)) {
+        observer.error?.(asError(error));
+      }
+      return;
+    }
     if (controller.signal.aborted) return;
     let lastEventId = request.lastEventId;
     let attempt = 0;
 
     while (!controller.signal.aborted) {
+      let retryAfterMs: number | undefined;
       try {
         const headers = new Headers({
           Accept: 'text/event-stream',
@@ -396,22 +428,73 @@ export class HttpControlTransport implements ControlTransport {
             request.pathId,
             response.status,
             `${request.pathId} stream returned HTTP ${response.status}`,
+            undefined,
+            response.status === 503
+              ? parseRetryAfterMs(response.headers.get('Retry-After'))
+              : undefined,
+          );
+        }
+        const mimeType = response.headers.get('Content-Type')
+          ?.split(';', 1)[0]
+          ?.trim()
+          .toLowerCase();
+        if (mimeType !== 'text/event-stream') {
+          try {
+            await response.body?.cancel();
+          } catch {
+            // The peer may close while the invalid response is being rejected.
+          }
+          throw new TypeError(
+            `${request.pathId} stream must return Content-Type text/event-stream`,
           );
         }
         if (!response.body) throw new Error(`${request.pathId} stream has no response body`);
 
-        attempt = 0;
         observer.open?.(lastEventId);
         const decoder = new TextDecoder();
-        const parser = new SseParser((item) => {
-          const event = parseStreamEvent(validationRuntime, streamKind, item) as Event;
-          const deliveredEventId = streamResumeToken(event, item.id, lastEventId);
-          observer.next(event);
-          if (isSnapshotRequired(event)) observer.snapshotRequired?.(event);
-          lastEventId = deliveredEventId;
-        });
+        const parser = new SseParser(
+          (item) => {
+            const event = parseStreamEvent(validationRuntime, streamKind, item) as Event;
+            const deliveredEventId = streamResumeToken(event, item.id, lastEventId);
+            observer.next(event);
+            if (isSnapshotRequired(event)) observer.snapshotRequired?.(event);
+            lastEventId = deliveredEventId;
+            if (!isSnapshotRequired(event)) {
+              attempt = 0;
+              observer.stable?.(lastEventId);
+            }
+          },
+          (kind) => {
+            // HTTP 200 only proves that headers arrived. A complete SSE event or
+            // heartbeat frame proves that the stream progressed far enough to
+            // reset failures without turning repeated early EOFs into a storm.
+            if (kind === 'comment') {
+              attempt = 0;
+              observer.stable?.(lastEventId);
+            }
+          },
+        );
         const reader = response.body.getReader();
+        const cancelActiveBody = () => {
+          // AbortSignal propagation differs across browser/Electron network
+          // stacks once fetch() has already resolved with a streaming body.
+          // Cancelling the reader is the ownership boundary that reliably
+          // releases the local Gateway socket instead of leaving one Python
+          // request thread and file descriptor alive until process restart.
+          void reader.cancel(new DOMException('Subscription released', 'AbortError')).catch(() => {
+            // A simultaneous peer close may settle the reader first.
+          });
+        };
+        controller.signal.addEventListener('abort', cancelActiveBody, { once: true });
         try {
+          // `observer.open` is allowed to release the subscription.  That can
+          // happen before the abort listener above is registered, and adding
+          // a listener to an already-aborted signal does not replay the event.
+          // Close the newly acquired body explicitly at that exact race.
+          if (controller.signal.aborted) {
+            await reader.cancel(new DOMException('Subscription released', 'AbortError'));
+            return;
+          }
           while (!controller.signal.aborted) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -432,20 +515,26 @@ export class HttpControlTransport implements ControlTransport {
           }
           throw error;
         } finally {
+          controller.signal.removeEventListener('abort', cancelActiveBody);
           reader.releaseLock();
         }
       } catch (error) {
         if (controller.signal.aborted || isAbortError(error)) return;
-        observer.error?.(asError(error));
+        const connectionError = asError(error);
+        retryAfterMs = retryAfterMsFromError(connectionError);
+        observer.error?.(connectionError);
       }
 
       if (controller.signal.aborted) return;
       attempt += 1;
-      const delayMs = reconnectDelay(
-        attempt,
-        this.reconnectBaseDelayMs,
-        this.reconnectMaxDelayMs,
-        this.random,
+      const delayMs = Math.max(
+        retryAfterMs ?? 0,
+        reconnectDelay(
+          attempt,
+          this.reconnectBaseDelayMs,
+          this.reconnectMaxDelayMs,
+          this.random,
+        ),
       );
       observer.reconnect?.({ attempt, delayMs, lastEventId });
       try {

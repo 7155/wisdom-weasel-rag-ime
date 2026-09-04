@@ -642,6 +642,34 @@ def build_agent_experiment_ledger(
     )
     if refresh_derived:
         values = _apply_materialized_receipt_enrichments(values)
+        refreshed_by_id = {
+            str(value.get("id") or "").strip(): value
+            for value in values
+            if isinstance(value, Mapping) and str(value.get("id") or "").strip()
+        }
+        reordered: list[object] = []
+        seen_ids: set[str] = set()
+        for current in current_values:
+            current_id = (
+                str(current.get("id") or "").strip()
+                if isinstance(current, Mapping)
+                else ""
+            )
+            reordered.append(refreshed_by_id.get(current_id, current))
+            if current_id:
+                seen_ids.add(current_id)
+        for value in values:
+            value_id = (
+                str(value.get("id") or "").strip()
+                if isinstance(value, Mapping)
+                else ""
+            )
+            if value_id and value_id in seen_ids:
+                continue
+            reordered.append(value)
+            if value_id:
+                seen_ids.add(value_id)
+        values = reordered
     result = dict(ledger)
     result["experiments"] = values
     return result

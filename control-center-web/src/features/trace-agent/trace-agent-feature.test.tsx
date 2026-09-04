@@ -20,6 +20,7 @@ import traceAgentCss from './trace-agent.css?raw';
 
 afterEach(() => {
   vi.useRealTimers();
+  window.pawBrowserHost = undefined;
   cleanup();
 });
 
@@ -260,6 +261,48 @@ describe('TraceAgentFeature', () => {
       workspaceRoots: ['/workspace/selected-project'],
     });
     expect(diagnosticCreate?.request.body).not.toMatchObject({ workspaceRoots: ['/'] });
+  });
+
+  it('binds an unbound source through the installed Electron host directory picker', async () => {
+    const user = userEvent.setup();
+    const transport = traceAgentTransport({
+      sessions: [{
+        id: 'session-electron-source',
+        title: '安装态未绑定项目的对话',
+        mode: 'assistant',
+        status: 'idle',
+        updatedAtMs: 100,
+        workspaceRoots: [],
+        messageCount: 4,
+        lastMessagePreview: 'memory maintenance failed',
+        executionMode: 'per_action',
+        toolProfileVersion: 'control-center-v1',
+      }],
+    });
+    Object.defineProperty(transport, 'pickFiles', { configurable: true, value: undefined });
+    const pickWorkspaceDirectory = vi.fn(async () => ({
+      name: 'personal-agent-workbench',
+      path: '/workspace/personal-agent-workbench',
+    }));
+    window.pawBrowserHost = {
+      kind: 'electron-webview',
+      partition: 'persist:paw-browser',
+      pickWorkspaceDirectory,
+    } as unknown as NonNullable<typeof window.pawBrowserHost>;
+    renderFeature(transport, []);
+
+    const action = await screen.findByTestId('trace-agent-diagnostic-action');
+    await user.click(within(action).getByRole('button', { name: '选择项目' }));
+
+    await waitFor(() => expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1));
+    expect(transport.requests.find(({ request }) => (
+      request.pathId === 'agent.session.mode.update'
+      && request.params?.sessionId === 'session-electron-source'
+    ))?.request.body).toMatchObject({
+      mode: 'coordinator',
+      workspaceRoots: ['/workspace/personal-agent-workbench'],
+    });
+    await waitFor(() => expect(within(action).getByRole('button', { name: '开始诊断' })).toBeEnabled());
   });
 
   it('fails closed when a Run has no canonical Session workspace binding', async () => {

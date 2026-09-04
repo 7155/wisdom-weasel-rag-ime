@@ -60,6 +60,25 @@ class AgentRoomStartGateStoreTests(unittest.TestCase):
 
             self.assertEqual(store.confirmed_room_ids(), ["room:confirmed"])
 
+    def test_retire_pending_removes_every_legacy_gate_without_a_room_page_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = AgentRoomStartGateStore(Path(directory) / "agent.sqlite")
+            store.initialize()
+            for ordinal in range(125):
+                store.claim(
+                    room_id=f"room:{ordinal:03d}",
+                    objective_text=f"任务 {ordinal}",
+                    client_message_id=f"client:{ordinal}",
+                    target_participant_ids=["participant:one"],
+                    work_item_id=f"work:{ordinal}",
+                    now_ms=100 + ordinal,
+                )
+            store.confirm("room:124", now_ms=300)
+
+            self.assertEqual(store.retire_pending(), 124)
+            self.assertEqual(store.confirmed_room_ids(), ["room:124"])
+            self.assertEqual(store.retire_pending(), 0)
+
 
 class AgentRoomStartGateServiceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -93,6 +112,12 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             }
         )["room"]
         participant = room["participants"][0]
+        self.service.sessions.bind_runtime_session(
+            str(participant["sessionId"]),
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-default-dispatch",
+        )
         work = self.service.room_work.create(
             room_id=str(room["id"]),
             objective="修复 trace",
@@ -143,6 +168,159 @@ class AgentRoomStartGateServiceTests(unittest.TestCase):
             {"room_unrestricted"},
         )
         self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
+        self.assertTrue(
+            self.service._active_room_dispatch_authorizes_work(
+                str(participant["sessionId"])
+            )
+        )
+
+    def test_startup_retires_a_legacy_pending_gate_before_room_projection(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Legacy pending gate",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        work = self.service.room_work.create(
+            room_id=str(room["id"]),
+            objective="继续执行",
+            expected_output="结果",
+            acceptance_criteria=["结果"],
+            current_owner_participant_id=str(participant["id"]),
+            created_by_participant_id=str(participant["id"]),
+            client_message_id="work:legacy-gate",
+            topic_id=str(room["activeTopicId"]),
+            state="active",
+        )
+        pending = self.service.room_start_gates.claim(
+            room_id=str(room["id"]),
+            objective_text="旧版本遗留确认",
+            client_message_id="client:legacy-gate",
+            target_participant_ids=[str(participant["id"])],
+            work_item_id=str(work["id"]),
+        )
+        self.assertEqual(pending["status"], "pending")
+
+        self.service.close()
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config-restarted",
+                session_dir=self.root / "sessions-restarted",
+                logs_dir=self.root / "logs-restarted",
+            ),
+        )
+
+        projected = self.service.rooms.get(str(room["id"]))
+        self.assertIsNone(projected["startGate"])
+        self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
+        self.assertEqual(
+            {
+                self.service.sessions.get(str(value["sessionId"]))[
+                    "roomExecutionMode"
+                ]
+                for value in projected["participants"]
+            },
+            {"room_unrestricted"},
+        )
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:legacy-gate"},
+        ) as prompt:
+            response = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "继续执行",
+                    "workItemId": str(work["id"]),
+                    "clientMessageId": "client:after-restart",
+                },
+            )
+        self.assertTrue(response["accepted"])
+        self.assertEqual(response["phase"], "execution")
+        self.assertNotIn("startConfirmation", response)
+        prompt.assert_called_once()
+
+    def test_legacy_accepted_confirmation_receipt_is_upgraded_to_one_dispatch(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Legacy accepted confirmation receipt",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        work = self.service.room_work.create(
+            room_id=str(room["id"]),
+            objective="执行旧回执任务",
+            expected_output="结果",
+            acceptance_criteria=["结果"],
+            current_owner_participant_id=str(participant["id"]),
+            created_by_participant_id=str(participant["id"]),
+            client_message_id="work:legacy-receipt",
+            topic_id=str(room["activeTopicId"]),
+            state="active",
+        )
+        request = {
+            "message": "执行旧回执任务",
+            "workItemId": str(work["id"]),
+            "clientMessageId": "client:legacy-receipt",
+        }
+        command_payload = {
+            "message": request["message"],
+            "retryOfRootId": "",
+            "participantIds": [],
+            "workItemId": request["workItemId"],
+            "attachmentIds": [],
+            "answerToPostId": "",
+            "answerToRootId": "",
+        }
+        pending_gate = self.service.room_start_gates.claim(
+            room_id=str(room["id"]),
+            objective_text=str(request["message"]),
+            client_message_id=str(request["clientMessageId"]),
+            target_participant_ids=[str(participant["id"])],
+            work_item_id=str(work["id"]),
+        )
+        legacy_claim = self.service.command_receipts.begin(
+            command_scope="room_message",
+            scope_id=str(room["id"]),
+            client_message_id=str(request["clientMessageId"]),
+            payload=command_payload,
+        )
+        self.service.command_receipts.complete(
+            legacy_claim,
+            command_scope="room_message",
+            scope_id=str(room["id"]),
+            client_message_id=str(request["clientMessageId"]),
+            response=self.service._room_start_confirmation_response(pending_gate),
+        )
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:legacy-receipt"},
+        ) as prompt:
+            upgraded = self.service.post_room_message(str(room["id"]), request)
+            replay = self.service.post_room_message(str(room["id"]), request)
+
+        self.assertTrue(upgraded["accepted"])
+        self.assertEqual(upgraded["phase"], "execution")
+        self.assertNotIn("startConfirmation", upgraded)
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(replay["roomTurnId"], upgraded["roomTurnId"])
+        self.assertIsNone(self.service.room_start_gates.get(str(room["id"])))
+        prompt.assert_called_once()
 
     def test_confirmation_dispatches_original_task_and_is_idempotent(self) -> None:
         room = self.service.create_room(

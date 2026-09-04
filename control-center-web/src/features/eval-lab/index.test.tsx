@@ -167,6 +167,48 @@ const answerEvidenceResponse = {
   }],
 } as const;
 
+function runtimeReconciledCostEnvironment({
+  sourceRunId,
+  usage,
+  estimate,
+  pricingIdentity,
+  receiptHex = 'a',
+  requestCount = 1,
+}: {
+  sourceRunId: string;
+  usage: Record<string, number>;
+  estimate: Record<string, string>;
+  pricingIdentity: Record<string, unknown>;
+  receiptHex?: string;
+  requestCount?: number;
+}) {
+  const sourceSha256 = receiptHex.repeat(64);
+  return {
+    costAuthority: 'runtime_cost_reconciled',
+    usageReceipt: {
+      available: true,
+      ...usage,
+      sourceRef: `runtime-cost:${sourceRunId}`,
+      sourceSha256,
+    },
+    costEstimate: estimate,
+    pricingIdentity,
+    billing: { status: 'not_provided' },
+    runtimeCostReceipt: {
+      requestCount,
+      runtimeDbSha256: sourceSha256,
+      transcriptSha256s: [sourceSha256],
+      sourceSha256,
+      reportedCostUsd: {
+        input: estimate.uncachedInputCostUsd,
+        cacheRead: estimate.cachedInputCostUsd,
+        output: estimate.outputCostUsd,
+        total: estimate.totalCostUsd,
+      },
+    },
+  };
+}
+
 describe('Agent Lab', () => {
   it('opens an in-app evidence panel with every public turn and the run environment', async () => {
     const sessionId = 'agent:real-2';
@@ -372,7 +414,7 @@ describe('Agent Lab', () => {
     );
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Agent 工作流实验室' })).toBeInTheDocument();
-    expect(screen.getByText('把任何能重复验收的 Agent 工作带进来：代码、知识库、长期记忆或多人协作，都可以在同一标准下比较不同方案。')).toBeInTheDocument();
+    expect(screen.getByText('把任何能重复验收的 Agent 能力注册成测评：每个测评使用自己冻结的数据与评分标准，PAW 在统一证据框架下比较方案。')).toBeInTheDocument();
     expect(screen.getByText('1 · 选择真实任务')).toBeInTheDocument();
     expect(screen.getByText('2 · 一次只改一项')).toBeInTheDocument();
     expect(screen.getByText('模型、提示词、技能、工具、检索、记忆或协作流程')).toBeInTheDocument();
@@ -400,7 +442,10 @@ describe('Agent Lab', () => {
     expect(screen.getByText('泄漏边界')).toBeInTheDocument();
     expect(screen.getByText('负例 / 拒答')).toBeInTheDocument();
     expect(screen.getByText('Case 正文未公开')).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('tab', { name: '优化记录' }));
+    const recordTabs = within(screen.getByRole('tablist', { name: '选择实验档案' })).getAllByRole('tab');
+    expect(recordTabs.map((tab) => tab.textContent)).toEqual(['任务定义', '数据集 Cases', '原结果', '优化', '新结果']);
+    await userEvent.setup().click(screen.getByRole('tab', { name: '优化' }));
+    expect(screen.getByRole('region', { name: 'Optimization Workbench' })).toBeInTheDocument();
     expect(screen.getByText('实际改动')).toBeInTheDocument();
     const changeDiff = screen.getByLabelText('改动 diff');
     expect(changeDiff).toHaveTextContent('修改前');
@@ -409,8 +454,8 @@ describe('Agent Lab', () => {
     expect(changeDiff).toHaveTextContent('状态合同');
     expect(screen.getByText('受影响 Case')).toBeInTheDocument();
     expect(screen.getByText('Run 与证据链')).toBeInTheDocument();
-    expect(screen.getByText('enterpriseops-suite-v2-final-validation-20260901')).toBeInTheDocument();
-    expect(screen.getByText('Keep')).toBeInTheDocument();
+    expect(screen.getAllByText('enterpriseops-suite-v2-final-validation-20260901').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Keep').length).toBeGreaterThan(0);
     await userEvent.setup().click(screen.getByRole('tab', { name: '新结果' }));
     expect(screen.getByText('发布 / 可靠性门禁')).toBeInTheDocument();
     expect(screen.getByText('Run ID')).toBeInTheDocument();
@@ -511,6 +556,9 @@ describe('Agent Lab', () => {
     await userEvent.setup().click(historyButton);
     expect(await screen.findByRole('heading', { level: 2, name: 'EnterpriseOps CSM failed baseline' })).toBeInTheDocument();
     expect(screen.getByText('历史记录 · 不参与当前结论')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '和 Agent 一起继续优化' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '测试新方案' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '在 Room 中继续下一轮' })).not.toBeInTheDocument();
   });
 
   it('groups the public ledger into four business projects without synthesizing reviewer approval', async () => {
@@ -543,8 +591,9 @@ describe('Agent Lab', () => {
     expect(screen.getAllByText('打开实验详情查看真实 Room 回执；没有回执时不会合成通过结论。')).toHaveLength(4);
     expect(screen.queryByText('独立检查确认关键结果和证据一致。')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Agent Lab 实验结果')).not.toHaveTextContent(/Host-private|\bcase\b|verifier/i);
-    expect(screen.getByText('质量门禁未通过，候选已拒绝 · 用量和价格回执已绑定 · 最终盲测未使用')).toBeInTheDocument();
-    expect(screen.getByText('工具调用 87 → 66 · 延迟 18m 33s → 15m 30s · API 估算 $3.2434 → $0.7252（降低 77.6%）')).toBeInTheDocument();
+    expect(screen.getByText('质量门禁未通过，候选已拒绝 · 账面成本回执标记已记录，价格身份由项目验收另行校验 · 最终盲测未使用')).toBeInTheDocument();
+    expect(screen.getByText('工具调用 87 → 66 · 延迟 18m 33s → 15m 30s · 账面 API 估算 $3.2434 → $0.7252（未通过绑定价格回执门禁，不作为成本下降结论）')).toBeInTheDocument();
+    expect(screen.queryByText(/API 估算 \$3\.2434 → \$0\.7252（降低 77\.6%）/)).toBeNull();
     expect(screen.getAllByText('整理通过 5/5 · 长期信息召回 4/4 · 不该记的内容成功拦截 1/1').length).toBeGreaterThan(0);
     expect(screen.getByText('模型调用 1m 25s · 模型用量未记录 · 无法计算 API 成本')).toBeInTheDocument();
     const currentMatrix = screen.getByLabelText('Agent Lab 实验结果');
@@ -566,7 +615,7 @@ describe('Agent Lab', () => {
     expect(screen.getByRole('heading', { level: 2, name: '方案是怎样一步步筛出来的' })).toBeInTheDocument();
   });
 
-  it('qualifies OAuth cost only when the same model receipt has token-category dominance', async () => {
+  it('keeps OAuth token-category dominance visible without treating it as price proof', async () => {
     const oauthResponse = structuredClone(response) as any;
     const experiment = oauthResponse.experiments[0];
     experiment.effectStatus = 'improved';
@@ -604,18 +653,33 @@ describe('Agent Lab', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('项目验收：已达标')).toBeInTheDocument();
-    expect(screen.getByText('同模型 OAuth 用量回执：未缓存输入 100 → 90 · 缓存输入 200 → 200 · 输出 50 → 40')).toBeInTheDocument();
+    expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
+    expect(screen.getByText(/用量下降，但缺少绑定且可核验的价格回执，不能证明成本下降/)).toBeInTheDocument();
   });
 
-  it('qualifies a 100% to 100% candidate when quality is stable, token categories fall, and per-case receipts match', async () => {
+  it('qualifies a typed multi-stage final candidate only from bound deterministic price receipts', async () => {
     const stableResponse = structuredClone(response) as any;
     const experiment = stableResponse.experiments[0];
     experiment.effectStatus = 'neutral';
+    experiment.candidateType = 'compound_repair';
+    experiment.factors = [
+      {
+        name: 'model',
+        before: 'Sol Max',
+        after: 'Luna Max',
+        reason: 'Model-only stage is recorded separately.',
+      },
+      {
+        name: 'prompt',
+        before: 'Sol policy',
+        after: 'Luna-adapted policy',
+        reason: 'Prompt-only stage is recorded separately.',
+      },
+    ];
     experiment.baseline = {
       ...experiment.baseline,
       runId: 'stable-cost-baseline',
-      evidenceRefs: [],
+      evidenceRefs: ['stable-cost-baseline-price'],
       metrics: {
         taskSuccessRate: 1,
         verifierPassRate: 1,
@@ -630,7 +694,7 @@ describe('Agent Lab', () => {
     experiment.candidate = {
       ...experiment.candidate,
       runId: 'stable-cost-candidate',
-      evidenceRefs: [],
+      evidenceRefs: ['stable-cost-candidate-price'],
       metrics: {
         taskSuccessRate: 1,
         verifierPassRate: 1,
@@ -644,6 +708,17 @@ describe('Agent Lab', () => {
     };
     const catalog = structuredClone(previewEvalLabEvidence()) as any;
     const task = catalog.runs[0].tasks[0];
+    const pricingIdentity = {
+      pricingId: 'openai-api-gpt-5.6-sol-2026-09-01',
+      provider: 'openai',
+      model: 'gpt-5.6-sol',
+      currency: 'USD',
+      unit: 'per_million_tokens',
+      rates: { uncachedInputUsd: '4', cachedInputUsd: '1', outputUsd: '10' },
+      publishedDate: '2026-09-01',
+      sourceUrl: 'https://platform.openai.com/docs/pricing',
+      sourceSha256: '9'.repeat(64),
+    };
     catalog.runs = [
       {
         ...catalog.runs[0], runId: 'stable-cost-baseline', updatedAtMs: 10,
@@ -661,6 +736,34 @@ describe('Agent Lab', () => {
           toolFailures: 0, inputTokens: 90, cacheReadTokens: 180, outputTokens: 40,
         }],
       },
+      {
+        ...catalog.runs[0], runId: 'stable-cost-baseline-price', updatedAtMs: 12,
+        sourceId: 'checked-in-ledger', sourceLabel: '仓库公开评测回执（只读）', evidenceKind: 'report_only',
+        reportAvailable: true, databaseAvailable: false, tasks: [], sessionCount: 0, transcriptCount: 0,
+        environment: {
+          usageReceipt: {
+            available: true, uncachedInputTokens: 1_000_000, cachedInputTokens: 1_000_000, outputTokens: 100_000,
+            sourceRef: 'runtime-db:stable-cost-baseline', sourceSha256: 'a'.repeat(64),
+          },
+          costEstimate: { uncachedInputCostUsd: '4', cachedInputCostUsd: '1', outputCostUsd: '1', totalCostUsd: '6' },
+          pricingIdentity,
+          billing: { status: 'not_provided' },
+        },
+      },
+      {
+        ...catalog.runs[0], runId: 'stable-cost-candidate-price', updatedAtMs: 13,
+        sourceId: 'checked-in-ledger', sourceLabel: '仓库公开评测回执（只读）', evidenceKind: 'report_only',
+        reportAvailable: true, databaseAvailable: false, tasks: [], sessionCount: 0, transcriptCount: 0,
+        environment: {
+          usageReceipt: {
+            available: true, uncachedInputTokens: 500_000, cachedInputTokens: 500_000, outputTokens: 50_000,
+            sourceRef: 'runtime-db:stable-cost-candidate', sourceSha256: 'b'.repeat(64),
+          },
+          costEstimate: { uncachedInputCostUsd: '2', cachedInputCostUsd: '0.5', outputCostUsd: '0.5', totalCostUsd: '3' },
+          pricingIdentity,
+          billing: { status: 'not_provided' },
+        },
+      },
     ];
     const transport = new MockControlTransport({ routes: {
       'agent.eval-lab.runs': stableResponse,
@@ -677,15 +780,338 @@ describe('Agent Lab', () => {
       </QueryClientProvider>,
     );
 
+    expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
+    expect(screen.getByText(/缺少 Runtime 逐请求成本对账权限/)).toBeInTheDocument();
+
+    cleanup();
+    for (const [index, run] of catalog.runs.slice(2).entries()) {
+      const environment = run.environment as any;
+      const estimate = environment.costEstimate;
+      const runtimeSourceSha256 = index === 0 ? 'a'.repeat(64) : 'b'.repeat(64);
+      environment.costAuthority = 'runtime_cost_reconciled';
+      environment.usageReceipt.sourceRef = `runtime-cost:${index === 0 ? 'stable-cost-baseline' : 'stable-cost-candidate'}`;
+      environment.usageReceipt.sourceSha256 = runtimeSourceSha256;
+      environment.pricingIdentity.pricingId = `pricing:sha256:${'9'.repeat(64)}`;
+      environment.runtimeCostReceipt = {
+        requestCount: index === 0 ? 4 : 3,
+        runtimeDbSha256: (index === 0 ? 'c' : 'd').repeat(64),
+        transcriptSha256s: [(index === 0 ? 'e' : 'f').repeat(64)],
+        sourceSha256: runtimeSourceSha256,
+        reportedCostUsd: {
+          input: estimate.uncachedInputCostUsd,
+          cacheRead: estimate.cachedInputCostUsd,
+          output: estimate.outputCostUsd,
+          total: estimate.totalCostUsd,
+        },
+      };
+    }
+    const reconciledTransport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': stableResponse,
+      'agent.eval-lab.evidence': catalog,
+    } });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={reconciledTransport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
     expect(await screen.findByText('项目验收：已达标')).toBeInTheDocument();
-    expect(screen.getByText(/最终任务成功且质量不退化/)).toBeInTheDocument();
-    expect(screen.getByText('同一冻结候选已证明任务成功、质量不退化且成本下降。')).toBeInTheDocument();
+    expect(screen.getByText(/Runtime 对账 API 成本 \$6\.0000 USD → \$3\.0000 USD（降低 50\.0%）/)).toBeInTheDocument();
+    expect(screen.getByText(/逐请求回执 4 → 3 次/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`价格版本 pricing:sha256:${'9'.repeat(64)}`))).toBeInTheDocument();
+    expect(screen.getByText(/2026-09-01/)).toBeInTheDocument();
+    expect(screen.getByText(/未缓存输入 \$4 · 缓存输入 \$1 · 输出 \$10/)).toBeInTheDocument();
+    expect(screen.getByText(/Provider 账单：未提供/)).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('button', { name: '查看完整报告' }));
-    await userEvent.setup().click(screen.getByRole('tab', { name: '优化记录' }));
+    await userEvent.setup().click(screen.getByRole('tab', { name: '优化' }));
     expect(screen.getByText('case-csm-01')).toBeInTheDocument();
     expect(screen.getByText('成功 → 成功')).toBeInTheDocument();
     expect(screen.getByText(/验收 11\/11.*→.*验收 11\/11/)).toBeInTheDocument();
     expect(screen.getByText('未缓存输入 100 → 90 · 缓存输入 200 → 180 · 输出 50 → 40')).toBeInTheDocument();
+  });
+
+  it('fails closed when bound price receipts use different pricing provenance', async () => {
+    const mismatched = structuredClone(response) as any;
+    const experiment = mismatched.experiments[0];
+    experiment.effectStatus = 'neutral';
+    experiment.candidateType = 'single_factor';
+    experiment.baseline = {
+      ...experiment.baseline,
+      runId: 'price-provenance-baseline',
+      evidenceRefs: ['price-provenance-baseline-receipt'],
+      metrics: { taskSuccessRate: 1, verifierPassRate: 1, failedToolCalls: 0 },
+    };
+    experiment.candidate = {
+      ...experiment.candidate,
+      runId: 'price-provenance-candidate',
+      evidenceRefs: ['price-provenance-candidate-receipt'],
+      metrics: { taskSuccessRate: 1, verifierPassRate: 1, failedToolCalls: 0 },
+    };
+    const catalog = structuredClone(previewEvalLabEvidence()) as any;
+    const costRun = (runId: string, sourceRunId: string, sourceSha256: string, totalCostUsd: string) => ({
+      ...catalog.runs[0],
+      runId,
+      sourceId: 'checked-in-ledger',
+      sourceLabel: '仓库公开评测回执（只读）',
+      evidenceKind: 'report_only',
+      reportAvailable: true,
+      databaseAvailable: false,
+      tasks: [],
+      sessionCount: 0,
+      transcriptCount: 0,
+      environment: runtimeReconciledCostEnvironment({
+        sourceRunId,
+        usage: { uncachedInputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 0 },
+        estimate: { uncachedInputCostUsd: totalCostUsd, cachedInputCostUsd: '0', outputCostUsd: '0', totalCostUsd },
+        pricingIdentity: {
+          pricingId: `pricing:sha256:${sourceSha256}`, provider: 'openai', model: 'gpt-5.6-sol',
+          currency: 'USD', unit: 'per_million_tokens',
+          rates: { uncachedInputUsd: totalCostUsd, cachedInputUsd: '0', outputUsd: '0' },
+          publishedDate: '2026-09-01', sourceUrl: 'https://platform.openai.com/docs/pricing', sourceSha256,
+        },
+        receiptHex: sourceSha256[0],
+      }),
+    });
+    catalog.runs = [
+      costRun('price-provenance-baseline-receipt', 'price-provenance-baseline', '1'.repeat(64), '6'),
+      costRun('price-provenance-candidate-receipt', 'price-provenance-candidate', '2'.repeat(64), '3'),
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': mismatched,
+      'agent.eval-lab.evidence': catalog,
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}>
+            <EvalLabFeature />
+          </PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
+    expect(screen.getByText(/provenance 不一致/)).toBeInTheDocument();
+  });
+
+  it('qualifies the bound CloudOps Sol prompt run at a 53.0% Runtime-reconciled API cost reduction', async () => {
+    const cloudOpsResponse = structuredClone(response) as any;
+    const experiment = cloudOpsResponse.experiments[0];
+    experiment.experimentId = 'cloudops.alert-first-sol-max.v1';
+    experiment.title = 'CloudOps · Alert-first Prompt 成本优化';
+    experiment.vertical = 'cloudops-incident-diagnosis';
+    experiment.evaluationKind = 'workflow';
+    experiment.status = 'kept';
+    experiment.effectStatus = 'improved';
+    experiment.candidateType = 'single_factor';
+    experiment.factors = [{ name: 'prompt', before: 'baseline-v1', after: 'alert-first-v5', reason: '只改 Prompt' }];
+    experiment.scoring.hardGates = ['12/12 canonical answers', 'FA and JRA non-regression', 'complete usage categories'];
+    experiment.baseline = {
+      ...experiment.baseline,
+      runId: 'cloudops-sol-max-standard-baseline-20260904-r2',
+      evidenceRefs: ['eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-standard-baseline-20260904.r2.v1.json'],
+      metrics: {
+        answerCoverage: 1, ca: 1, fa: 5 / 6, jra: 5 / 6, top3Jra: 5 / 6, formalScoreProduced: 1,
+        failedToolCalls: 0, sameProviderModelThinking: 1, usageReceiptAvailable: 1, categoryReceiptComplete: 1,
+        uncachedInputTokens: 443_159, cachedInputTokens: 12_583_424, outputTokens: 40_257,
+      },
+    };
+    experiment.candidate = {
+      ...experiment.candidate,
+      runId: 'cloudops-sol-max-alert-first-candidate-20260904-r7',
+      evidenceRefs: ['eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json'],
+      metrics: {
+        answerCoverage: 1, ca: 1, fa: 5 / 6, jra: 5 / 6, top3Jra: 1, formalScoreProduced: 1,
+        failedToolCalls: 1, sameProviderModelThinking: 1, usageReceiptAvailable: 1, categoryReceiptComplete: 1,
+        uncachedInputTokens: 267_606, cachedInputTokens: 4_359_552, outputTokens: 35_012,
+      },
+    };
+    cloudOpsResponse.experiments = [experiment];
+    cloudOpsResponse.experimentTotal = 1;
+    const catalog = structuredClone(previewEvalLabEvidence()) as any;
+    const pricingIdentity = {
+      pricingId: `pricing:sha256:${'8'.repeat(64)}`, provider: 'openai', model: 'gpt-5.6-sol',
+      currency: 'USD', unit: 'per_million_tokens',
+      rates: { uncachedInputUsd: '5', cachedInputUsd: '0.5', outputUsd: '30' },
+      publishedDate: '2026-09-01', sourceUrl: 'https://platform.openai.com/docs/pricing', sourceSha256: '8'.repeat(64),
+    };
+    const costRun = (runId: string, sourceRunId: string, usage: Record<string, number>, estimate: Record<string, string>, receiptHex: string) => ({
+      ...catalog.runs[0], runId, sourceId: 'checked-in-ledger', sourceLabel: '仓库公开评测回执（只读）',
+      evidenceKind: 'report_only', reportAvailable: true, databaseAvailable: false, tasks: [], sessionCount: 0, transcriptCount: 0,
+      environment: runtimeReconciledCostEnvironment({ sourceRunId, usage, estimate, pricingIdentity, receiptHex, requestCount: 12 }),
+    });
+    catalog.runs = [
+      costRun(
+        'ledger--agent-lab-cost-cloudops-sol-max-standard-baseline-20260904.r2.v1',
+        'cloudops-sol-max-standard-baseline-20260904-r2',
+        { uncachedInputTokens: 443_159, cachedInputTokens: 12_583_424, outputTokens: 40_257 },
+        { uncachedInputCostUsd: '2.215795', cachedInputCostUsd: '6.291712', outputCostUsd: '1.20771', totalCostUsd: '9.715217' },
+        'a',
+      ),
+      costRun(
+        'ledger--agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1',
+        'cloudops-sol-max-alert-first-candidate-20260904-r7',
+        { uncachedInputTokens: 267_606, cachedInputTokens: 4_359_552, outputTokens: 35_012 },
+        { uncachedInputCostUsd: '1.33803', cachedInputCostUsd: '2.179776', outputCostUsd: '1.05036', totalCostUsd: '4.568166' },
+        'b',
+      ),
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': cloudOpsResponse,
+      'agent.eval-lab.evidence': catalog,
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    const cloudOps = (await screen.findByRole('heading', { level: 3, name: '云上事故诊断' })).closest('.eval-lab__project-matrix');
+    expect(cloudOps).not.toBeNull();
+    expect(within(cloudOps as HTMLElement).getByText('项目验收：已达标')).toBeInTheDocument();
+    expect(within(cloudOps as HTMLElement).getByText(/Runtime 对账 API 成本 \$9\.7152 USD → \$4\.5682 USD（降低 53\.0%）/)).toBeInTheDocument();
+    expect(within(cloudOps as HTMLElement).getByText(/Provider 账单：未提供/)).toBeInTheDocument();
+    expect(cloudOps).not.toHaveTextContent('80%');
+  });
+
+  it('qualifies the bound EnterpriseOps and Memory Sol runs with their exact API estimates', async () => {
+    const retainedResponse = structuredClone(response) as any;
+    const enterprise = structuredClone(retainedResponse.experiments[0]);
+    enterprise.experimentId = 'enterpriseops-csm.preloaded-tool-cost.v1';
+    enterprise.title = 'EnterpriseOps CSM · 已选 Tool Schema 预载成本优化';
+    enterprise.vertical = 'enterprise-customer-support';
+    enterprise.evaluationKind = 'workflow';
+    enterprise.status = 'kept';
+    enterprise.effectStatus = 'improved';
+    enterprise.candidateType = 'single_factor';
+    enterprise.factors = [{ name: 'tool', before: 'compact-v2', after: 'preloaded-v3', reason: '只改 Tool schema disclosure' }];
+    enterprise.scoring.hardGates = ['3/3 task success', '31/31 verifier pass', 'zero Tool failure'];
+    enterprise.baseline = {
+      ...enterprise.baseline,
+      runId: 'enterpriseops-csm-sol-max-compact-validation-20260904-v1',
+      evidenceRefs: ['eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json'],
+      metrics: {
+        taskSuccessRate: 1, verifierPassRate: 1, failedToolCalls: 0, databasesCleaned: 3,
+        sameProviderModelThinking: 1, usageReceiptAvailable: 1, categoryReceiptComplete: 1,
+        uncachedInputTokens: 118_600, cachedInputTokens: 2_221_824, outputTokens: 18_482,
+      },
+    };
+    enterprise.candidate = {
+      ...enterprise.candidate,
+      runId: 'enterpriseops-csm-sol-max-preloaded-validation-20260904-v1',
+      evidenceRefs: ['eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json'],
+      metrics: {
+        taskSuccessRate: 1, verifierPassRate: 1, failedToolCalls: 0, databasesCleaned: 3,
+        sameProviderModelThinking: 1, usageReceiptAvailable: 1, categoryReceiptComplete: 1,
+        uncachedInputTokens: 91_845, cachedInputTokens: 1_179_648, outputTokens: 17_222,
+      },
+    };
+
+    const memory = structuredClone(enterprise);
+    memory.experimentId = 'memory.maintenance-concise-contract-sol-max.v1';
+    memory.title = 'Memory Maintenance · 精简 JSON Prompt 成本优化';
+    memory.vertical = 'memory-maintenance';
+    memory.evaluationKind = 'memory';
+    memory.factors = [{ name: 'prompt', before: 'standard-v1', after: 'concise-json-v1', reason: '只改 Prompt' }];
+    memory.dataset = { ...memory.dataset, caseCount: 5 };
+    memory.scoring.hardGates = ['5/5 curation and retrieval', 'rollback and replay pass', 'legal JSON receipt'];
+    memory.baseline = {
+      ...memory.baseline,
+      runId: 'memory-maintenance-sol-max-full-json-baseline-20260904-r2',
+      evidenceRefs: ['eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json'],
+      metrics: {
+        curationCases: 5, curationPassed: 5, durableRecallPassed: 4, durableRecallTotal: 4,
+        abstentionPassed: 1, abstentionTotal: 1, vectorCoverage: 1, rollbackPassed: 1,
+        replayPassed: 1, receiptJsonValid: 1, sameProviderModelThinking: 1,
+        usageReceiptAvailable: 1, categoryReceiptComplete: 1,
+        uncachedInputTokens: 39_799, cachedInputTokens: 0, outputTokens: 2_207,
+      },
+    };
+    memory.candidate = {
+      ...memory.candidate,
+      runId: 'memory-maintenance-sol-max-concise-contract-candidate-20260904-r3',
+      evidenceRefs: ['eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json'],
+      metrics: {
+        curationCases: 5, curationPassed: 5, durableRecallPassed: 4, durableRecallTotal: 4,
+        abstentionPassed: 1, abstentionTotal: 1, vectorCoverage: 1, rollbackPassed: 1,
+        replayPassed: 1, receiptJsonValid: 1, sameProviderModelThinking: 1,
+        usageReceiptAvailable: 1, categoryReceiptComplete: 1,
+        uncachedInputTokens: 39_638, cachedInputTokens: 0, outputTokens: 1_650,
+      },
+    };
+    retainedResponse.experiments = [enterprise, memory];
+    retainedResponse.experimentTotal = 2;
+
+    const catalog = structuredClone(previewEvalLabEvidence()) as any;
+    const pricingIdentity = {
+      pricingId: `pricing:sha256:${'8'.repeat(64)}`, provider: 'openai', model: 'gpt-5.6-sol',
+      currency: 'USD', unit: 'per_million_tokens',
+      rates: { uncachedInputUsd: '5', cachedInputUsd: '0.5', outputUsd: '30' },
+      publishedDate: '2026-09-01', sourceUrl: 'https://platform.openai.com/docs/pricing', sourceSha256: '8'.repeat(64),
+    };
+    const costRun = (runId: string, sourceRunId: string, usage: Record<string, number>, estimate: Record<string, string>, receiptHex: string) => ({
+      ...catalog.runs[0], runId, sourceId: 'checked-in-ledger', sourceLabel: '仓库公开评测回执（只读）',
+      evidenceKind: 'report_only', reportAvailable: true, databaseAvailable: false, tasks: [], sessionCount: 0, transcriptCount: 0,
+      environment: runtimeReconciledCostEnvironment({ sourceRunId, usage, estimate, pricingIdentity, receiptHex, requestCount: 5 }),
+    });
+    catalog.runs = [
+      costRun(
+        'ledger--agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1',
+        'enterpriseops-csm-sol-max-compact-validation-20260904-v1',
+        { uncachedInputTokens: 118_600, cachedInputTokens: 2_221_824, outputTokens: 18_482 },
+        { uncachedInputCostUsd: '0.593', cachedInputCostUsd: '1.110912', outputCostUsd: '0.55446', totalCostUsd: '2.258372' },
+        'a',
+      ),
+      costRun(
+        'ledger--agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1',
+        'enterpriseops-csm-sol-max-preloaded-validation-20260904-v1',
+        { uncachedInputTokens: 91_845, cachedInputTokens: 1_179_648, outputTokens: 17_222 },
+        { uncachedInputCostUsd: '0.459225', cachedInputCostUsd: '0.589824', outputCostUsd: '0.51666', totalCostUsd: '1.565709' },
+        'b',
+      ),
+      costRun(
+        'ledger--agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1',
+        'memory-maintenance-sol-max-full-json-baseline-20260904-r2',
+        { uncachedInputTokens: 39_799, cachedInputTokens: 0, outputTokens: 2_207 },
+        { uncachedInputCostUsd: '0.198995', cachedInputCostUsd: '0', outputCostUsd: '0.06621', totalCostUsd: '0.265205' },
+        'c',
+      ),
+      costRun(
+        'ledger--agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1',
+        'memory-maintenance-sol-max-concise-contract-candidate-20260904-r3',
+        { uncachedInputTokens: 39_638, cachedInputTokens: 0, outputTokens: 1_650 },
+        { uncachedInputCostUsd: '0.19819', cachedInputCostUsd: '0', outputCostUsd: '0.0495', totalCostUsd: '0.24769' },
+        'd',
+      ),
+    ];
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.runs': retainedResponse,
+      'agent.eval-lab.evidence': catalog,
+    } });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ControlTransportProvider transport={transport}>
+          <PawOsDesktopProvider openWindow={vi.fn()}><EvalLabFeature /></PawOsDesktopProvider>
+        </ControlTransportProvider>
+      </QueryClientProvider>,
+    );
+
+    const enterpriseProject = (await screen.findByRole('heading', { level: 3, name: '企业客户支持' })).closest('.eval-lab__project-matrix');
+    const memoryProject = screen.getByRole('heading', { level: 3, name: '长期记忆整理' }).closest('.eval-lab__project-matrix');
+    expect(within(enterpriseProject as HTMLElement).getByText('项目验收：已达标')).toBeInTheDocument();
+    expect(within(enterpriseProject as HTMLElement).getByText(/Runtime 对账 API 成本 \$2\.2584 USD → \$1\.5657 USD（降低 30\.7%）/)).toBeInTheDocument();
+    expect(within(memoryProject as HTMLElement).getByText('项目验收：已达标')).toBeInTheDocument();
+    expect(within(memoryProject as HTMLElement).getByText(/Runtime 对账 API 成本 \$0\.2652 USD → \$0\.2477 USD（降低 6\.6%）/)).toBeInTheDocument();
+    expect(`${enterpriseProject?.textContent ?? ''}${memoryProject?.textContent ?? ''}`).not.toContain('80%');
   });
 
   it('uses final CloudOps task success when a recovered Tool error is not an explicit hard gate', async () => {
@@ -735,7 +1161,9 @@ describe('Agent Lab', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText('项目验收：已达标')).toBeInTheDocument();
+    expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
+    expect(screen.getByText(/最终任务成功且质量不退化/)).toBeInTheDocument();
+    expect(screen.getByText(/用量下降，但缺少绑定且可核验的价格回执/)).toBeInTheDocument();
   });
 
   it('still rejects a recovered Tool error when zero failures are an explicit product hard gate', async () => {
@@ -843,7 +1271,7 @@ describe('Agent Lab', () => {
     );
 
     expect(await screen.findByText('项目验收：未完成')).toBeInTheDocument();
-    expect(screen.getByText('同模型 OAuth 用量回执：未缓存输入 100 → 110 · 缓存输入 200 → 200 · 输出 50 → 40；三类未共同不增，不能证明成本下降')).toBeInTheDocument();
+    expect(screen.getByText('同模型 OAuth 用量回执：未缓存输入 100 → 110 · 缓存输入 200 → 200 · 输出 50 → 40；用量未全面下降，且缺少绑定且可核验的价格回执')).toBeInTheDocument();
   });
 
   it('marks an older path receipt as historical when a newer project path exists', async () => {

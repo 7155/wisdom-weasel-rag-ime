@@ -2,6 +2,7 @@ import { BrainCircuit, LoaderCircle, Send, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
+import { publicAgentErrorText } from '@/features/agent/public-error';
 import { PawSessionWorkspace } from '@/paw-os/apps/PawSessionWorkspace';
 import './memory-steward.css';
 
@@ -174,9 +175,10 @@ function record(value: unknown): Record<string, unknown> {
 function publicError(reason: unknown, fallback: string): string {
   if (!(reason instanceof Error) || !reason.message) return fallback;
   const normalized = reason.message.trim().toLowerCase();
-  return normalized === 'failed to fetch'
+  if (
+    normalized === 'failed to fetch'
     || normalized.includes('networkerror')
     || normalized.includes('network request failed')
-    ? fallback
-    : reason.message;
+  ) return fallback;
+  return publicAgentErrorText(reason, fallback);
 }

@@ -51,6 +51,10 @@ node "$ROOT/scripts/generate_control_center_contracts.mjs" --check
   VITE_CONTROL_TRANSPORT="$CONTROL_TRANSPORT" \
   VITE_BUILD_CHANNEL="$BUILD_CHANNEL" \
   VITE_PAW_FRONTEND="$FRONTEND_PRODUCT" \
+  VITE_PAW_PRODUCT_VERSION="${RAG_IME_PRODUCT_VERSION:-$(node -p "require('./package.json').version")}" \
+  VITE_PAW_BUILD_COMMIT="${RAG_IME_BUILD_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}" \
+  VITE_PAW_BUILD_NUMBER="${RAG_IME_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)}" \
+  VITE_PAW_SOURCE_DIRTY="${RAG_IME_SOURCE_DIRTY:-false}" \
     pnpm --config.manage-package-manager-versions=true build
 )
 

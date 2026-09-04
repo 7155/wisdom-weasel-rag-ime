@@ -1,0 +1,66 @@
+{
+  "authority": "runtime_cost_reconciled",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "0.289728",
+    "outputCostUsd": "0.74397",
+    "totalCostUsd": "2.327978",
+    "uncachedInputCostUsd": "1.29428"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-sol",
+    "pricingId": "pricing:sha256:16d4598375dcddf8248d07563f7fd7ed1e3acda260773cab8fcf5ea7765b2dbb",
+    "provider": "openai-codex",
+    "publishedDate": "2026-09-04",
+    "rates": {
+      "cachedInputUsd": "0.5",
+      "outputUsd": "30",
+      "uncachedInputUsd": "5"
+    },
+    "sourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+    "sourceUrl": "https://platform.openai.com/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "84db110e541dc94854df862d7b705889f22a36d5e8e1e5ddccaf8dac2d549373",
+  "runtimeCostReceipt": {
+    "databaseUsage": {
+      "cachedInputTokens": 579456,
+      "outputTokens": 24799,
+      "uncachedInputTokens": 258856
+    },
+    "reportedCostUsd": {
+      "cacheRead": "0.289728",
+      "input": "1.29428",
+      "output": "0.74397",
+      "total": "2.327978"
+    },
+    "requestCount": 42,
+    "runtimeDbSha256": "f9afeb6c1adef32cf0bb7956972b2c7adb98251f84ce920be4127e69d7b277d4",
+    "sourceSha256": "21ef1d2fe17c654250789c985232e1a88842efcc28c24cf106cc44327692ca23",
+    "transcriptSha256s": [
+      "f86c87bbff5e23ff8908df7a3ba6138d9fef829b7bdbd6220a47ea5b9b1bd204",
+      "1361541297b167f0190d15a171cc09a476828cda7595ba8eceda86e0ea230964",
+      "0fb65fdeac41e7d9be4eaa87e5d14970c31da5071ca9b0be8532e02fd52bd9d1",
+      "fa4f92de08f5a1312c4dafa5699e2fb08d7e582512326d2bd4227bc863d0d2dc",
+      "908de38d905abcd5387c08d384a16ab3d3869b92e5a3fdde32b8b5770d4bd681",
+      "e85d2372a7ad490be4ed89b5e93b31f2d9791d2f8e45d2966d68001b33ef1b54"
+    ]
+  },
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 579456,
+    "outputTokens": 24799,
+    "sourceRef": "runtime-cost:enterprise-rag-sol-max-frozen-v19-20260904-r1",
+    "sourceSha256": "21ef1d2fe17c654250789c985232e1a88842efcc28c24cf106cc44327692ca23",
+    "uncachedInputTokens": 258856
+  }
+}

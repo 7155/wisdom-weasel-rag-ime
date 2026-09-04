@@ -3,8 +3,9 @@
   "candidateRunId": "memory-maintenance-sol-max-concise-contract-candidate-20260904-r3",
   "claimBoundary": [
     "private-shadow validation only",
-    "cost verdict uses comparable Codex usage categories, not a Provider bill",
+    "cost verdict is a deterministic estimate from bound usage and one frozen pricing identity, not a Provider bill",
     "elapsed time is recorded but is not a Keep gate",
+    "6.6% is the qualified estimate reduction; 80% is forbidden",
     "installed Gateway and foreground acceptance remain separate"
   ],
   "comparison": {
@@ -76,7 +77,16 @@
       },
       "passed": true
     },
-    "costAuthority": "same-provider-model-usage-categories",
+    "costAuthority": "deterministic-pricing-estimate",
+    "costComparison": {
+      "baselineCostReceipt": "agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json",
+      "baselineTotalUsd": "0.265205",
+      "candidateCostReceipt": "agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json",
+      "candidateTotalUsd": "0.24769",
+      "decreasePercent": "6.604324956165984804208065459",
+      "pricingId": "openai-api-gpt-5.6-sol-2026-09-01",
+      "providerBillAvailable": false
+    },
     "costGatePassed": true,
     "decision": "keep",
     "elapsedIsKeepGate": false,
@@ -119,7 +129,9 @@
   "decision": "keep",
   "evidence": {
     "baselineReportSha256": "486341e5c156b58b7b5fb6b78b80982a3a62f451f5717312e887224ffc8906ab",
+    "baselineCostReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json",
     "candidateReportSha256": "65fa088565443348a7cfaa94836610339c62db15ea9f8668184f70291484910d",
+    "candidateCostReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json",
     "priorCandidateReceiptsConsumed": false,
     "selectionPolicy": "compare only the named fresh candidate with the named full-json baseline"
   },
@@ -145,5 +157,19 @@
       "modelElapsedMs": 46264
     },
     "keepGate": false
-  }
+  },
+  "nextExperiments": [
+    {
+      "stage": "luna_model_only_diagnostic",
+      "status": "not_run",
+      "change": "Freeze the current prompt, skills, tools, workflow, fixture, verifier and pricing procedure; change only gpt-5.6-sol/max to gpt-5.6-luna/max.",
+      "acceptance": "First require a complete scorable runtime terminal state and non-regressed lifecycle quality; do not infer a result before execution."
+    },
+    {
+      "stage": "luna_prompt_only_repair",
+      "status": "not_run",
+      "change": "Only after the model-only diagnostic is scorable, freeze Luna/max and every other control and change only the prompt.",
+      "acceptance": "Compare against the Luna model-only run with the same lifecycle and cost receipt gates; do not manufacture an unrun result."
+    }
+  ]
 }

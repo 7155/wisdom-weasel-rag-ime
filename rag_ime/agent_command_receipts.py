@@ -267,6 +267,93 @@ class AgentCommandReceiptStore:
                 )
         return accepted
 
+    def reopen_accepted_response_for_compatibility(
+        self,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+        payload: Mapping[str, object],
+        expected_response: Mapping[str, object],
+    ) -> AgentCommandClaim:
+        """Atomically replace one exact obsolete accepted response.
+
+        This is intentionally narrower than a retry API.  A caller must first
+        read an accepted response through ``begin`` and then supply that exact
+        response here.  Only an unchanged row is reopened; a concurrent repair
+        returns its newer response or reports the in-flight claim instead of
+        executing the command twice.
+        """
+
+        digest = _sha256_json(payload)
+        expected = dict(expected_response)
+        claim_token = str(uuid.uuid4())
+        timestamp = _now_ms()
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    "Agent command receipt disappeared before compatibility repair"
+                )
+            if str(row["payload_sha256"]) != digest:
+                raise _new_command_required_conflict(
+                    "clientMessageId belongs to a different command",
+                    client_message_id=client_message_id,
+                )
+            state = str(row["state"])
+            if state == "failed":
+                raise _failed_receipt(
+                    client_message_id=client_message_id,
+                    stored_error=str(row["error"] or ""),
+                )
+            if state == "pending":
+                raise AgentCommandReceiptPending(
+                    "the Agent command compatibility repair is already pending; "
+                    "refresh before retrying",
+                    client_message_id=client_message_id,
+                    recovery_state="in_flight",
+                )
+            current = _accepted_response(row)
+            if current != expected:
+                return AgentCommandClaim(
+                    claim_token=str(row["claim_token"]),
+                    replay_response=current,
+                )
+            cursor = conn.execute(
+                """
+                UPDATE agent_command_receipts
+                SET claim_token = ?, state = 'pending', response_json = NULL,
+                    error = '', updated_at_ms = ?
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ? AND claim_token = ?
+                  AND state = 'accepted' AND response_json = ?
+                """,
+                (
+                    claim_token,
+                    timestamp,
+                    command_scope,
+                    scope_id,
+                    client_message_id,
+                    str(row["claim_token"]),
+                    str(row["response_json"] or ""),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentCommandReceiptPending(
+                    "the Agent command compatibility repair changed concurrently; "
+                    "refresh before retrying",
+                    client_message_id=client_message_id,
+                    recovery_state="in_flight",
+                )
+        return AgentCommandClaim(claim_token=claim_token)
+
     def record_acceptance_evidence(
         self,
         claim: AgentCommandClaim,

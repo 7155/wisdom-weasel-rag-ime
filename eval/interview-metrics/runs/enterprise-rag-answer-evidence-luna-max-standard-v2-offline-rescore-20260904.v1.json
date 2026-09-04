@@ -1,0 +1,400 @@
+{
+  "calibrationLabel": "post-validation-calibrated",
+  "candidateRuns": 0,
+  "claimBoundary": [
+    "This is a deterministic offline rescore of frozen Validation output; no candidate or Judge was rerun.",
+    "Standard v2 and qrels-v2 are post-Validation calibrated, so this receipt cannot authorize an unbiased promotion claim or formal acceptance.",
+    "For this Luna output, qrels-v2 changes no quality metric and the original Reject decision remains Reject; this is not model improvement.",
+    "Exact document/chunk/quote/hash checks validate the host qrel bindings, while the current candidate scorer awards support by cited document membership.",
+    "Held-out remains unopened, and no Provider call was made."
+  ],
+  "costComparability": {
+    "agenticCrossModelTokenBoundary": "The historical Sol Agentic zero-token value is an incomplete failure placeholder and is not a valid cost baseline.",
+    "latencyRole": "diagnostic-only",
+    "offlineRescoreProviderBilledUsd": 0,
+    "offlineRescoreProviderCalls": 0,
+    "offlineRescoreProviderTokens": 0,
+    "qrelsRevisionChangesSourceUsage": false,
+    "sourceProviderBilledUsd": null,
+    "sourceProviderBilledUsdUnavailableReason": "No frozen Provider price snapshot or Provider bill is bound.",
+    "sourceUsageCopiedFromHashBoundRun": true,
+    "sourceUsageRemeasured": false
+  },
+  "evaluationScope": "validation-development-only",
+  "formalAcceptanceEligible": false,
+  "formalAcceptancePassed": false,
+  "heldOutOpened": false,
+  "judgeCalls": 0,
+  "providerCalls": 0,
+  "publicSafety": {
+    "containsCandidateAnswers": false,
+    "containsCandidateSourceIds": false,
+    "containsEvidenceQuotes": false,
+    "containsPrivateTranscripts": false,
+    "containsQrelsBody": false,
+    "containsQuestions": false,
+    "containsReferenceAnswers": false
+  },
+  "qrels": {
+    "evidenceBindingCount": 14,
+    "factCount": 9,
+    "fileSha256": "b0b081c4a0ecbced1c589b69126de555a0f1b8815c508e1f4eb269adce608428",
+    "manifestSha256": "86385a1713f5807b12dff2571c595fcfb2e238773b5d5f73859a67f40ff7b333",
+    "path": ".rag-ime-data/eval/host/validation-answer-evidence-qrels-v2.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "scope": "host-only",
+    "standardManifestSha256": "22ea18216475d963ee3de2353d8d82b6f5f61e36a93fbf073115a27149a5bc1d",
+    "supportGroupCount": 14,
+    "unavailableFactCount": 0,
+    "verifiedFactCount": 9
+  },
+  "qualityComparability": {
+    "crossModelBoundary": "This receipt rescores only the Luna candidate. A Standard-v2 Luna-versus-Sol quality claim requires the frozen Sol report to be rescored under the same script and qrels-v2.",
+    "crossModelStandardV2ComparisonProduced": false,
+    "modelQualityImprovementClaimAllowed": false,
+    "qrelsDependentMetricsDeterministicallyComparable": true,
+    "sameFrozenCandidateBeforeAfter": true,
+    "semanticJudgeReusedNotRerun": true
+  },
+  "receiptSha256": "5a8d45f2a1e0002d3813ee3427fbb8119d684b3624114468d309f7390571f6f8",
+  "reproduction": {
+    "command": "python3 scripts/rescore_enterprise_rag_answer_evidence.py",
+    "existingDifferentOutputFailsClosed": true,
+    "writesOriginalRunArtifacts": false
+  },
+  "rescoreDecision": {
+    "decisionUnchanged": true,
+    "failedHardGates": [
+      "agentic:terminalCompletion",
+      "agentic:toolContract",
+      "agentic:agenticPolicy",
+      "agentic:citationResolution",
+      "agentic:abstention"
+    ],
+    "metricsUnchanged": true,
+    "qrelsRevisionIsModelImprovement": false,
+    "rescoredCandidateDecision": "reject",
+    "sourceCandidateDecision": "reject",
+    "status": "rejected"
+  },
+  "resultsByLane": {
+    "agentic": {
+      "changedMetrics": [],
+      "observedSourceUsage": {
+        "latencyMs": 420642.371,
+        "searchCalls": 7,
+        "tokens": 7713,
+        "tokensComplete": false,
+        "toolCalls": 12
+      },
+      "qualityAfter": {
+        "abstentionAccuracy": 0.5,
+        "abstentionF1": 0.0,
+        "agentSuccessRate": 0.0,
+        "answerJudgeCorrectnessRate": 0.0,
+        "answerSuccessRate": 0.0,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.0,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 0,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 0,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 0
+        },
+        "highLevelFactCoverage": 0.0,
+        "infoNotFoundAbstentionRecall": 0.0,
+        "outputProtocolRate": 0.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 0.5,
+        "abstentionF1": 0.0,
+        "agentSuccessRate": 0.0,
+        "answerJudgeCorrectnessRate": 0.0,
+        "answerSuccessRate": 0.0,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.0,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 0,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 0,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 0
+        },
+        "highLevelFactCoverage": 0.0,
+        "infoNotFoundAbstentionRecall": 0.0,
+        "outputProtocolRate": 0.0,
+        "toolSuccessRate": 1.0
+      },
+      "terminalEvent": ""
+    },
+    "baseline": {
+      "changedMetrics": [],
+      "observedSourceUsage": {
+        "latencyMs": 51577.706,
+        "searchCalls": 5,
+        "tokens": 25778,
+        "toolCalls": 6
+      },
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "terminalEvent": "turn_completed"
+    },
+    "skill": {
+      "changedMetrics": [],
+      "observedSourceUsage": {
+        "latencyMs": 208063.982,
+        "searchCalls": 5,
+        "tokens": 74769,
+        "toolCalls": 7
+      },
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "terminalEvent": "turn_completed"
+    },
+    "tuned": {
+      "changedMetrics": [],
+      "observedSourceUsage": {
+        "latencyMs": 182436.769,
+        "searchCalls": 5,
+        "tokens": 88941,
+        "toolCalls": 7
+      },
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "terminalEvent": "turn_completed"
+    }
+  },
+  "runId": "enterprise-rag-answer-evidence-luna-max-standard-v2-offline-rescore-20260904",
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-offline-rescore.v1",
+  "scorerContract": {
+    "candidateChunkOrdinalOrQuoteEqualityRequired": false,
+    "candidateSupportMatchGranularity": "document-id-membership",
+    "method": "reuse-frozen-judge-and-deterministic-qrels-score-v1",
+    "qrelBindingValidationGranularity": "document-chunk-quote-and-hash",
+    "qrelsOwnedMetrics": [
+      "agentSuccessRate",
+      "answerableCitationSupportRate",
+      "citationFactCoverage",
+      "citationSuccessRate"
+    ],
+    "rescoreScriptFileSha256": "adcc327ea7ae92840e388dcba8a6419e0703696537750d00a895b8c00876e5a3",
+    "rescoreScriptPath": "scripts/rescore_enterprise_rag_answer_evidence.py",
+    "runnerFileSha256": "fc558e279ec4ccf1ad4db9c04f3bc7f0c0bec077944462a87318144e64e333c2",
+    "runnerPath": "scripts/run_rag_agent_ablation.py",
+    "supportGroupModes": [
+      "all",
+      "any"
+    ]
+  },
+  "sourceEvidence": {
+    "blindCorpus": {
+      "containsQueryLabels": false,
+      "documentCount": 5101,
+      "fileSha256": "dcd9409a8f08b312c6acf95ff58ec097a85eb20bb04952374c467efe456cc7a9",
+      "path": "../paw-vertical-research/enterprise-rag-eval-lab/artifacts/smoke-v1/blind/corpus/documents.jsonl"
+    },
+    "candidateBlindAuditInput": {
+      "candidateBlind": true,
+      "fileSha256": "4f0cbae5798ff0849fb1d5109ab459a4398ef1e5a929c457df5b591cb92d3117",
+      "path": ".rag-ime-data/eval/host/enterprise-rag-qrels-independent-v2-candidate-blind-input-20260904.v1.json"
+    },
+    "evidenceSufficiency": {
+      "candidateCitationLedgerBindingCount": 8,
+      "candidateCitationLedgerBindingSha256": "452a518b7d55d3d63125fa9d63153a222c2cf87469a536fb4c0b7f1d5ec14fed",
+      "candidateCitationTokenCount": 8,
+      "candidateOutputBindingCount": 16,
+      "candidateOutputSetSha256": "7dc2e080ce0931597a6579bc0d151f3d213d5d99e07616f2d7271e924cb3ddb6",
+      "judgeJudgmentCount": 8,
+      "judgeJudgmentSetSha256": "d9de32a8df0549e865f51e5c46ce6bc6ad874d974530169e79d519f7a2591683",
+      "laneCaseRecordCount": 16,
+      "publicBodyMismatchBoundary": "Public path redaction can transform retained answer text after the authoritative answer hash is computed; qrels rescore uses the matching lane-score and frozen-Judge answer hashes, not that text.",
+      "retainedPublicHighLevelAnswerBodyHashMatches": 7,
+      "retainedPublicHighLevelAnswerBodyHashMismatches": 1
+    },
+    "frozenCandidateReport": {
+      "fileSha256": "d87cafef857701d8e4a5ad8756aeffa81541fac26404a3f7fc80d7c287832644",
+      "path": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-v20.json",
+      "reportSha256": "f294596ea73c88eeceb258148bf6a9dede2ded41f36895df9315ea8a7fa22c22"
+    },
+    "preparedArtifact": {
+      "fileSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+      "parsedForThisRescore": false,
+      "path": "../paw-vertical-research/enterprise-rag-eval-lab/artifacts/smoke-v1/host/prepared.json"
+    },
+    "receipt": {
+      "fileSha256": "60563b8d3d27649783190fe6b34f0f8aa716134a3b36bee49c364107015efb9a",
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-validation-20260902.v1.json",
+      "runId": "enterprise-rag-answer-evidence-luna-max-v20-20260902"
+    },
+    "retrievalReport": {
+      "fileSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+      "path": "../paw-vertical-research/enterprise-rag-eval-lab/results/validation-bge-qwen3-rerank-v1.json"
+    }
+  },
+  "standard": {
+    "chunkCount": 29846,
+    "chunkManifestSha256": "6d5239b3b684c037d38eab4150bfb35d9d6393350cb9cff31bdc2c0b19d550cf",
+    "fileSha256": "ba8c135e3d1ef845f3a333a2259003703769adeca6fa517cb7decc9098d417f7",
+    "manifestSha256": "22ea18216475d963ee3de2353d8d82b6f5f61e36a93fbf073115a27149a5bc1d",
+    "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.v2.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2"
+  },
+  "status": "passed",
+  "unbiasedPromotionClaimAllowed": false
+}

@@ -286,14 +286,14 @@ describe('room gravity projection over the minecraft harness', () => {
     expect(toolNames).not.toContain('工具');
   });
 
-  it('resolves all 112 machine-id tool summaries in the 3261-event history into evidence lines', () => {
-    // The Runtime echoes only the tool id as the summary for 112 of the 290
+  it('resolves all 116 machine-id tool summaries in the 3261-event history into evidence lines', () => {
+    // The Runtime echoes only the tool id as the summary for 116 of the 290
     // real tool activities (`room_partner`, `agents`, `tool_search`…). Every
     // reader row must resolve to the evidence headline with the honest state.
     const toolActivities = harnessToolActivities();
     expect(toolActivities).toHaveLength(290);
     const machine = toolActivities.filter((activity) => roomToolSummaryIsMachine(activity.summary, activity.payload));
-    expect(machine).toHaveLength(112);
+    expect(machine).toHaveLength(116);
     for (const activity of toolActivities) {
       const line = roomToolActivityLine(activity.summary, activity.payload, activity.status);
       expect(line).not.toBe('');

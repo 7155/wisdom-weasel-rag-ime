@@ -1025,6 +1025,78 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         self.assertEqual(request["state"], "completed")
         self.assertEqual(request["attemptCount"], 1)
 
+    def test_timeout_reconciles_completion_that_settles_during_cancellation(
+        self,
+    ) -> None:
+        runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        executor = self._executor(runtime, timeout_seconds=10.0)
+        run = executor.begin_run("memory_book_settles_during_cancel")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+        original_abort = runtime.abort
+
+        def settle_during_abort(session_id: str) -> dict[str, object]:
+            prompt = runtime.prompts[0]
+            runtime.settlements["turn-1"] = {
+                "schemaVersion": "rag-ime.pi-turn-settlement.v1",
+                "sessionId": session_id,
+                "runtimeSessionId": f"pi-{session_id}",
+                "turnId": "turn-1",
+                "clientMessageId": prompt["clientMessageId"],
+                "receipt": {
+                    "schemaVersion": "pi.agent-settled.v2",
+                    "receiptId": "pi-settled:turn-1",
+                    "sessionId": f"pi-{session_id}",
+                    "runId": "turn-1",
+                    "scopeId": f"pi-{session_id}:turn-1",
+                    "generation": 1,
+                    "disposition": "completed",
+                    "stopReason": "stop",
+                    "settledAtMs": 200,
+                    "aborted": False,
+                    "pendingOperations": 0,
+                    "operations": {
+                        "pending": 0,
+                        "pendingByKind": {},
+                        "registeredByKind": {},
+                    },
+                    "operationCounts": {},
+                    "finalMessage": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": '{"decisions":[]}'}
+                        ],
+                        "usage": {"input": 12, "output": 4},
+                    },
+                },
+            }
+            runtime.settle = True
+            original_abort(session_id)
+            raise RuntimeError(
+                "Pi Runtime Host command timed out: session.abort"
+            )
+
+        runtime.abort = settle_during_abort  # type: ignore[method-assign]
+
+        completed = executor.complete(messages=messages)
+
+        self.assertEqual(completed["turnId"], "turn-1")
+        self.assertTrue(completed["receipt"]["recoveredSettlement"])
+        self.assertEqual(
+            completed["receipt"]["cancellation"]["error"],
+            "Pi Runtime Host command timed out: session.abort",
+        )
+        self.assertEqual(runtime.aborted, [run["sessionId"]])
+        self.assertEqual(len(runtime.prompts), 1)
+        self.assertEqual(
+            [call["timeoutSeconds"] for call in runtime.settlement_calls],
+            [10.0, 5.0],
+        )
+        request = executor.run_status(
+            "memory_book_settles_during_cancel"
+        )["requests"][0]
+        self.assertEqual(request["state"], "completed")
+        self.assertEqual(request["attemptCount"], 1)
+
     def test_unresolved_accepted_turn_is_not_reprompted(self) -> None:
         runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
         executor = self._executor(runtime, timeout_seconds=0.01)
@@ -1047,7 +1119,7 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
         self.assertEqual(request["turnId"], "turn-1")
         self.assertEqual(request["attemptCount"], 1)
 
-    def test_restart_does_not_replay_a_persisted_accepted_turn(self) -> None:
+    def test_restart_replays_frozen_request_after_old_session_is_archived(self) -> None:
         first_runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
         first = self._executor(first_runtime, timeout_seconds=0.01)
         first.begin_run("memory_book_restart_after_admission")
@@ -1065,22 +1137,84 @@ class GovernedMemoryModelExecutorTests(unittest.TestCase):
             db_path=self.db_path,
         )
 
-        second_runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
         second = self._executor(second_runtime, timeout_seconds=0.01)
         resumed = second.begin_run("memory_book_restart_after_admission")
         self.assertNotEqual(resumed["sessionId"], original_session_id)
 
-        with self.assertRaisesRegex(MemoryModelTimeout, "not replayed"):
-            second.complete(messages=messages)
+        completed = second.complete(messages=messages)
 
-        self.assertEqual(second_runtime.prompts, [])
+        self.assertEqual(len(second_runtime.prompts), 1)
+        self.assertNotEqual(
+            second_runtime.prompts[0]["sessionId"],
+            original_session_id,
+        )
+        self.assertEqual(
+            second_runtime.prompts[0]["clientMessageId"],
+            persisted["requestId"],
+        )
+        self.assertEqual(
+            completed["receipt"]["replayRecovery"],
+            {
+                "schemaVersion": "rag-ime.memory-request-replay-recovery.v1",
+                "reasonCode": "runtime_session_archived",
+                "previousSessionId": original_session_id,
+                "previousTurnId": "turn-1",
+                "previousAdmission": persisted["receipt"]["admission"],
+            },
+        )
         after_restart = second.run_status(
             "memory_book_restart_after_admission"
         )["requests"][0]
-        self.assertEqual(after_restart["state"], "resumable")
-        self.assertEqual(after_restart["sessionId"], original_session_id)
+        self.assertEqual(after_restart["state"], "completed")
+        self.assertNotEqual(after_restart["sessionId"], original_session_id)
         self.assertEqual(after_restart["turnId"], "turn-1")
-        self.assertEqual(after_restart["attemptCount"], 1)
+        self.assertEqual(after_restart["attemptCount"], 2)
+
+    def test_restart_replays_when_idle_accepted_session_lost_its_transcript(
+        self,
+    ) -> None:
+        first_runtime = FakeMemoryRuntime(self.sessions, self.events, settle=False)
+        first = self._executor(first_runtime, timeout_seconds=0.01)
+        first.begin_run("memory_book_restart_without_transcript")
+        messages = [{"role": "user", "content": '{"v":2,"e":[]}'}]
+
+        with self.assertRaises(MemoryModelTimeout):
+            first.complete(messages=messages)
+        persisted = first.run_status(
+            "memory_book_restart_without_transcript"
+        )["requests"][0]
+        original_session_id = str(persisted["sessionId"])
+        missing_transcript = self.temporary.name + "/missing-memory-session.jsonl"
+        self.sessions.bind_runtime_session(
+            original_session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-memory-missing-transcript",
+            transcript_ref=missing_transcript,
+        )
+        self.sessions.set_status(original_session_id, "idle")
+
+        second_runtime = FakeMemoryRuntime(self.sessions, self.events)
+        second = self._executor(second_runtime, timeout_seconds=0.01)
+        second.begin_run("memory_book_restart_without_transcript")
+
+        completed = second.complete(messages=messages)
+
+        self.assertEqual(len(second_runtime.prompts), 1)
+        self.assertNotEqual(
+            second_runtime.prompts[0]["sessionId"],
+            original_session_id,
+        )
+        self.assertEqual(
+            completed["receipt"]["replayRecovery"]["reasonCode"],
+            "runtime_transcript_missing",
+        )
+        replayed = second.run_status(
+            "memory_book_restart_without_transcript"
+        )["requests"][0]
+        self.assertEqual(replayed["state"], "completed")
+        self.assertEqual(replayed["attemptCount"], 2)
 
     def test_explicit_admission_without_turn_id_is_never_blindly_replayed(
         self,

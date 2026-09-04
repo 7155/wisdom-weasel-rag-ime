@@ -3,6 +3,7 @@ import type {
   SessionSummary,
   ToolManifest,
 } from '../types';
+import type { CapabilityCatalog } from '@/features/plugins/capability-policy';
 
 export function toolAvailableForPolicy(
   tool: ToolManifest,
@@ -27,7 +28,57 @@ export function toolAvailableForCurrentSession(
       : session.toolProfileVersion === 'control-center-full-access-v1'
         ? 'control-center-full-access-v1'
         : 'control-center-v1';
-  return toolAvailableForPolicy(tool, session.mode, profile) && tool.enabled !== false;
+  if (!toolAvailableForPolicy(tool, session.mode, profile) || tool.enabled === false) return false;
+  // The session-scoped manifest is allowed to carry the effective operation
+  // list as an additive field. An empty list means that the tool is present in
+  // the catalogue for explanation, but cannot be sent to the Runtime.
+  const effectiveOperations = record(tool).effectiveOperations;
+  return !Array.isArray(effectiveOperations) || effectiveOperations.length > 0;
+}
+
+/**
+ * The capability catalogue is the disclosure authority for a live Session.
+ * Keep the raw manifest visible in the picker so a disabled capability can be
+ * explained, but never count or offer it as an executable tool.
+ */
+export function toolAvailableForConversation(
+  tool: ToolManifest,
+  session: SessionSummary | undefined,
+  capabilityCatalog?: CapabilityCatalog,
+): boolean {
+  if (!toolAvailableForCurrentSession(tool, session)) return false;
+  const item = capabilityCatalog?.items.find(
+    (candidate) => candidate.kind === 'tool' && candidate.id === tool.id,
+  );
+  if (!item) return true;
+  return item.authorization.state !== 'denied'
+    && item.disclosure.effective === 'enabled';
+}
+
+/** Count distinct executable tools, keeping the UI and Runtime vocabulary aligned. */
+export function countAvailableTools(
+  tools: readonly ToolManifest[],
+  session: SessionSummary | undefined,
+  capabilityCatalog?: CapabilityCatalog,
+): number {
+  const ids = new Set<string>();
+  for (const tool of tools) {
+    const id = tool.id.trim();
+    if (!id || ids.has(id)) continue;
+    if (!toolAvailableForConversation(tool, session, capabilityCatalog)) continue;
+    ids.add(id);
+  }
+  return ids.size;
+}
+
+/** Count distinct tool ids returned by the Runtime, including disabled rows. */
+export function countRegisteredTools(tools: readonly ToolManifest[]): number {
+  const ids = new Set<string>();
+  for (const tool of tools) {
+    const id = tool.id.trim();
+    if (id) ids.add(id);
+  }
+  return ids.size;
 }
 
 export function riskLabel(value: string): string {

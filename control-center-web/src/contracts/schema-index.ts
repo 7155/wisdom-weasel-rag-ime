@@ -1043,7 +1043,11 @@ export const contractSchemas = {
           "goalId",
           "goalRevision",
           "turnId",
-          "roomBound"
+          "roomBound",
+          "roomId",
+          "rootId",
+          "dispatchId",
+          "generation"
         ],
         "properties": {
           "todoId": {
@@ -1068,6 +1072,22 @@ export const contractSchemas = {
           },
           "roomBound": {
             "type": "boolean"
+          },
+          "roomId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "rootId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "dispatchId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -2855,13 +2875,23 @@ export const contractSchemas = {
         "const": "rag-ime.agent-lab-cost-receipt.v1"
       },
       "authority": {
-        "const": "pricing_estimate"
+        "enum": [
+          "pricing_estimate",
+          "pricing_lower_bound",
+          "runtime_cost_reconciled"
+        ]
       },
       "pricingIdentity": {
         "$ref": "#/$defs/pricingIdentity"
       },
       "usage": {
         "$ref": "#/$defs/usage"
+      },
+      "runtimeCostReceipt": {
+        "$ref": "#/$defs/runtimeCostReceipt"
+      },
+      "pricingLowerBound": {
+        "$ref": "#/$defs/pricingLowerBound"
       },
       "estimate": {
         "$ref": "#/$defs/estimate"
@@ -2883,6 +2913,64 @@ export const contractSchemas = {
         "$ref": "#/$defs/sha256"
       }
     },
+    "allOf": [
+      {
+        "if": {
+          "required": [
+            "runtimeCostReceipt"
+          ]
+        },
+        "then": {
+          "properties": {
+            "authority": {
+              "const": "runtime_cost_reconciled"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "authority": {
+              "const": "runtime_cost_reconciled"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "runtimeCostReceipt"
+          ]
+        }
+      },
+      {
+        "if": {
+          "required": [
+            "pricingLowerBound"
+          ]
+        },
+        "then": {
+          "properties": {
+            "authority": {
+              "const": "pricing_lower_bound"
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "authority": {
+              "const": "pricing_lower_bound"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "pricingLowerBound"
+          ]
+        }
+      }
+    ],
     "$defs": {
       "sha256": {
         "type": "string",
@@ -3042,6 +3130,162 @@ export const contractSchemas = {
           }
         }
       },
+      "runtimeCostReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestCount",
+          "runtimeDbSha256",
+          "transcriptSha256s",
+          "databaseUsage",
+          "reportedCostUsd",
+          "sourceSha256"
+        ],
+        "properties": {
+          "requestCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "runtimeDbSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "transcriptSha256s": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10000,
+            "items": {
+              "$ref": "#/$defs/sha256"
+            }
+          },
+          "databaseUsage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "uncachedInputTokens",
+              "cachedInputTokens",
+              "outputTokens"
+            ],
+            "properties": {
+              "uncachedInputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000000000
+              },
+              "cachedInputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000000000
+              },
+              "outputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000000000
+              }
+            }
+          },
+          "trialAggregate": {
+            "$ref": "#/$defs/trialAggregate"
+          },
+          "reportedCostUsd": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "input",
+              "cacheRead",
+              "output",
+              "total"
+            ],
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/amountDecimalUsd"
+              },
+              "cacheRead": {
+                "$ref": "#/$defs/amountDecimalUsd"
+              },
+              "output": {
+                "$ref": "#/$defs/amountDecimalUsd"
+              },
+              "total": {
+                "$ref": "#/$defs/amountDecimalUsd"
+              }
+            }
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "trialAggregate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceRef",
+          "sourceSha256",
+          "uncachedInputTokens",
+          "cachedInputTokens",
+          "outputTokens"
+        ],
+        "properties": {
+          "sourceRef": {
+            "$ref": "#/$defs/identity"
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "uncachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "outputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          }
+        }
+      },
+      "pricingLowerBound": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceSha256",
+          "tiers"
+        ],
+        "properties": {
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "tiers": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "inputTokensAbove",
+                "rates"
+              ],
+              "properties": {
+                "inputTokensAbove": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000000000000000
+                },
+                "rates": {
+                  "$ref": "#/$defs/rates"
+                }
+              }
+            }
+          }
+        }
+      },
       "billingNotProvided": {
         "type": "object",
         "additionalProperties": false,
@@ -3113,6 +3357,12 @@ export const contractSchemas = {
       },
       "usage": {
         "$ref": "#/$defs/usage"
+      },
+      "runtimeCostReceipt": {
+        "$ref": "#/$defs/runtimeCostReceipt"
+      },
+      "pricingLowerBound": {
+        "$ref": "#/$defs/pricingLowerBound"
       },
       "billedReceipt": {
         "$ref": "#/$defs/billedReceipt"
@@ -3269,6 +3519,162 @@ export const contractSchemas = {
             }
           }
         ]
+      },
+      "runtimeCostReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestCount",
+          "runtimeDbSha256",
+          "transcriptSha256s",
+          "databaseUsage",
+          "reportedCostUsd",
+          "sourceSha256"
+        ],
+        "properties": {
+          "requestCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "runtimeDbSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "transcriptSha256s": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10000,
+            "items": {
+              "$ref": "#/$defs/sha256"
+            }
+          },
+          "databaseUsage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "uncachedInputTokens",
+              "cachedInputTokens",
+              "outputTokens"
+            ],
+            "properties": {
+              "uncachedInputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000000000
+              },
+              "cachedInputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000000000
+              },
+              "outputTokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000000000
+              }
+            }
+          },
+          "trialAggregate": {
+            "$ref": "#/$defs/trialAggregate"
+          },
+          "reportedCostUsd": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "input",
+              "cacheRead",
+              "output",
+              "total"
+            ],
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/decimalUsd"
+              },
+              "cacheRead": {
+                "$ref": "#/$defs/decimalUsd"
+              },
+              "output": {
+                "$ref": "#/$defs/decimalUsd"
+              },
+              "total": {
+                "$ref": "#/$defs/decimalUsd"
+              }
+            }
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "trialAggregate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceRef",
+          "sourceSha256",
+          "uncachedInputTokens",
+          "cachedInputTokens",
+          "outputTokens"
+        ],
+        "properties": {
+          "sourceRef": {
+            "$ref": "#/$defs/identity"
+          },
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "uncachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "cachedInputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          },
+          "outputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000000000
+          }
+        }
+      },
+      "pricingLowerBound": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceSha256",
+          "tiers"
+        ],
+        "properties": {
+          "sourceSha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "tiers": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "inputTokensAbove",
+                "rates"
+              ],
+              "properties": {
+                "inputTokensAbove": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000000000000000
+                },
+                "rates": {
+                  "$ref": "#/$defs/rates"
+                }
+              }
+            }
+          }
+        }
       },
       "billedReceipt": {
         "type": "object",

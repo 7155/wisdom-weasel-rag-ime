@@ -1,0 +1,208 @@
+{
+  "schemaVersion": "paw.cloudops-model-prompt-optimization-receipt.v1",
+  "runId": "cloudops-model-prompt-optimization:cloudops-luna-max-owner-mechanism-prompt-20260904-r5",
+  "status": "completed",
+  "decision": "keep",
+  "baselineRunId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+  "modelOnlyRunId": "cloudops-luna-max-alert-first-model-only-20260904-r1",
+  "candidateRunId": "cloudops-luna-max-owner-mechanism-prompt-20260904-r5",
+  "factorChain": [
+    {
+      "stage": "luna_model_only",
+      "changed": ["model"],
+      "frozen": [
+        "workflowProfile=alert-first-v5",
+        "suiteSha256",
+        "contractSha256",
+        "batchPlanSha256",
+        "contextProjection",
+        "runtimeBinaryIdentity",
+        "provider",
+        "thinking",
+        "timeout",
+        "transport"
+      ],
+      "decision": "reject"
+    },
+    {
+      "stage": "luna_prompt_adapted",
+      "changed": ["prompt"],
+      "frozen": [
+        "model=gpt-5.6-luna",
+        "suiteSha256",
+        "contractSha256",
+        "batchPlanSha256",
+        "contextProjection",
+        "runtimeIdentitySha256",
+        "runtimeBinaryIdentity",
+        "provider",
+        "thinking",
+        "timeout",
+        "transport"
+      ],
+      "decision": "keep"
+    }
+  ],
+  "frozenControls": {
+    "split": "validation",
+    "suiteId": "cloudops-smoke-v1",
+    "caseCount": 12,
+    "batchPlan": "3x4-sequential",
+    "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+    "contractSha256": "99126a25849537bf52558c3cdd18258a7393fe14c82399e9b5f834208b607b0d",
+    "batchPlanSha256": "d7a7aba05d02005407582892bd3f5f10672ff7e6c527cf73a20570b1ed165989",
+    "runtimeVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad",
+    "runtimeManifestSha256": "1ce2a21074dd8e002294dad35affad59842242f58689590f4199d3b60d4b4a22",
+    "runtimeEntrypointSha256": "2426598570097198846d556692e816a89d8a1c9a77c48187a0fe031f2f7a76d9",
+    "runtimeExtensionSha256": "f0a06ecd627e76e602417989d36c47a75f56744bfafdc0ae8641ec23db899b04",
+    "runtimeNodeSha256": "27db838bb204ef7c21df2931f5656e4c8fb32e6e947f363a402b49714d32b5b1",
+    "runtimeToolProfileSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120",
+    "provider": "openai-codex",
+    "thinking": "max",
+    "contextProjection": "standard-v1",
+    "timeoutSeconds": 900,
+    "transport": "loopback-http-v1",
+    "goldVisibleToAgent": false
+  },
+  "runtimeIdentityBoundary": {
+    "binaryToolDatasetScoringFrozen": true,
+    "solIdentitySha256": "5019fda384df648cb28703f556efb2ce8367acdff32cb7bc432eaee3a5682c19",
+    "lunaIdentitySha256": "f0dfcbe60ac84b83271877e5cfed8f5145657cadfd3125f9458a3c60715371af",
+    "identityShaChangedWithModel": true,
+    "lunaIdentityStableAcrossPromptStage": true,
+    "explanation": "Runtime entrypoint, manifest, extension, Node executable, Tool profile, dataset, scorer contract, batch plan and context projection are identical. The Sol-to-Luna identity hash changes because model identity is sealed into it; both Luna stages retain the same identity hash."
+  },
+  "promptAdaptation": {
+    "generalOnly": true,
+    "before": "alert-first-v5",
+    "after": "luna-owner-mechanism-gate-v8",
+    "changes": [
+      "exact_family_evidence_lookup",
+      "owner_before_mechanism_gate",
+      "unresolved_discriminator_stop_rule"
+    ],
+    "description": [
+      "Require an exact evidence-family lookup appropriate to runtime, routing, or performance failures before locking Top-1.",
+      "Attribute the failure to the affected workload, the component owning bad configuration, or the earliest alerting application unless direct node evidence proves a node-wide fault.",
+      "When the owner or mechanism discriminator remains unresolved, spend only the remaining bounded reads and do not replace missing evidence with a guess."
+    ],
+    "forbidden": ["case_id", "expected_answer", "predicted_root", "host_private_gold"]
+  },
+  "evidence": {
+    "solBaseline": {
+      "runRef": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-case-projection-20260904.r7.json",
+      "runFileSha256": "c151530a340c860240336f2d354175c2d727fa7feeb0a64f1932de6093563ce0",
+      "costRef": "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json",
+      "costFileSha256": "10bc77f3607ba0c45e963f026267e6d63662b0c9b1b7970d96a791b30d5f9d90",
+      "costReceiptSha256": "2b0a3a3a0ffd3c7fd52c70132633dcdf713104cbdfcfcaf7b9e1e2582783ec1b"
+    },
+    "lunaModelOnly": {
+      "runRef": "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+      "runFileSha256": "d04cb7aa7cdf72311b25293a338258744fb29e0e71419233ab5fc1524b962c33",
+      "costRef": "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-alert-first-model-only-20260904.r1.v1.json",
+      "costFileSha256": "d1ae9fa179142d428e6f046184f2867cc2e081e8eabc38edce13b9a6c4032db6",
+      "costReceiptSha256": "cf19e4848f01c0a1186ed10abdff624689d70ed1d1e55783f182eaf6cddcd2f7"
+    },
+    "lunaPromptAdapted": {
+      "runRef": "eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json",
+      "runFileSha256": "78e2cb19e4e2ddd6c120c868ddaf175768baab7a269df2465742617f75e2dc6e",
+      "costRef": "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-owner-mechanism-prompt-20260904.r5.v1.json",
+      "costFileSha256": "80d9184d12fc1ac8d637d2bdd64d786564277f18233e0ff0db52ce0861953825",
+      "costReceiptSha256": "d8b5fb7580588d07206bc80f4bd1b39de9a022671556952b1a5dcad31f27a5e9"
+    }
+  },
+  "comparison": {
+    "stageOrder": ["sol_baseline", "luna_model_only", "luna_prompt_adapted"],
+    "qualityGatePassed": true,
+    "providerBillAvailable": false,
+    "costAuthority": "runtime_cost_reconciled",
+    "pricingSourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+    "stages": [
+      {
+        "stage": "sol_baseline",
+        "runId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
+        "model": "gpt-5.6-sol",
+        "workflowProfile": "alert-first-v5",
+        "AnswerCoverage": 1.0,
+        "CA": 1.0,
+        "FA": 0.8333333333333334,
+        "JRA": 0.8333333333333334,
+        "Top3JRA": 1.0,
+        "toolCalls": 99,
+        "failedToolCalls": 1,
+        "latencyMs": 1036278,
+        "costUsd": "4.568166",
+        "decision": "baseline"
+      },
+      {
+        "stage": "luna_model_only",
+        "runId": "cloudops-luna-max-alert-first-model-only-20260904-r1",
+        "model": "gpt-5.6-luna",
+        "workflowProfile": "alert-first-v5",
+        "AnswerCoverage": 1.0,
+        "CA": 0.9166666666666666,
+        "FA": 0.8333333333333334,
+        "JRA": 0.75,
+        "Top3JRA": 0.9166666666666666,
+        "toolCalls": 177,
+        "failedToolCalls": 6,
+        "latencyMs": 1705856,
+        "costUsd": "0.33593112",
+        "decision": "reject"
+      },
+      {
+        "stage": "luna_prompt_adapted",
+        "runId": "cloudops-luna-max-owner-mechanism-prompt-20260904-r5",
+        "model": "gpt-5.6-luna",
+        "workflowProfile": "luna-owner-mechanism-gate-v8",
+        "AnswerCoverage": 1.0,
+        "CA": 1.0,
+        "FA": 0.9166666666666666,
+        "JRA": 0.9166666666666666,
+        "Top3JRA": 1.0,
+        "toolCalls": 130,
+        "failedToolCalls": 0,
+        "latencyMs": 1492913,
+        "costUsd": "0.27613024",
+        "decision": "keep"
+      }
+    ],
+    "qualityComparisons": {
+      "solToPromptAdapted": {
+        "CA": {"before": 1.0, "after": 1.0, "delta": 0.0},
+        "FA": {"before": 0.8333333333333334, "after": 0.9166666666666666, "delta": 0.08333333333333326},
+        "JRA": {"before": 0.8333333333333334, "after": 0.9166666666666666, "delta": 0.08333333333333326},
+        "Top3JRA": {"before": 1.0, "after": 1.0, "delta": 0.0}
+      },
+      "modelOnlyToPromptAdapted": {
+        "CA": {"before": 0.9166666666666666, "after": 1.0, "delta": 0.08333333333333337},
+        "FA": {"before": 0.8333333333333334, "after": 0.9166666666666666, "delta": 0.08333333333333326},
+        "JRA": {"before": 0.75, "after": 0.9166666666666666, "delta": 0.16666666666666663},
+        "Top3JRA": {"before": 0.9166666666666666, "after": 1.0, "delta": 0.08333333333333337}
+      }
+    },
+    "costComparisons": {
+      "solToPromptAdapted": {
+        "baselineTotalUsd": "4.568166",
+        "candidateTotalUsd": "0.27613024",
+        "decreasePercent": "93.9553369995748841000961873977434270120656736204419891921616",
+        "costRatio": "16.5435194638587935895757016688936351194277019423877660049113"
+      },
+      "modelOnlyToPromptAdapted": {
+        "baselineTotalUsd": "0.33593112",
+        "candidateTotalUsd": "0.27613024",
+        "decreasePercent": "17.8015302660854999084336098423986441029934946187778018303276",
+        "costRatio": "1.21656766024612154032821613453129943319500247419478576486226"
+      }
+    }
+  },
+  "claimBoundary": [
+    "One source-local Validation run per stage; there is no repeated-run confidence interval and no Held-out or production claim.",
+    "The 93.9553369996% Sol-to-final and 17.8015302661% model-only-to-final reductions use exact Runtime per-request reconciled estimates with a shared pricing-source content hash; they are not a Provider bill.",
+    "The model-only terminal score is retained from its completed append-only trial artifact; a later outer-report TraceContractError is disclosed and does not rewrite that score as an unobserved result.",
+    "The Prompt change contains only general exact-family evidence, owner/mechanism attribution and unresolved-discriminator rules; it contains no case ID, predicted root, expected answer or Host-private Gold.",
+    "Runtime binary, Tool profile, dataset, scorer contract, batch plan, context projection and transport are frozen; model-bearing Runtime identity hashes are expected to change for Sol versus Luna and remain stable across the two Luna stages.",
+    "Installed PAWOS and foreground behavior were not evaluated by these receipts; elapsed time is diagnostic and is not a Keep gate."
+  ],
+  "receiptSha256": "672eda64615adbb625497f96d00edb93a827192d8adf6e4fe5ba4f64d7d9fdc4"
+}

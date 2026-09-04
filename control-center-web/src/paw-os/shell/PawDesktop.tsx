@@ -19,6 +19,10 @@ import { PawWorkDirectoryProvider } from './PawWorkDirectory';
 import { isPawExtensionAppId, pawExtensionApp, pawExtensionApps } from '../extensions/registry';
 import { PawExtensionInstallationProvider, usePawExtensionInstallation } from '../extensions/installation';
 import { warmPawAppProcess } from '../apps/PawApps';
+import {
+  PAW_BUILD_COMMIT,
+  PAW_PRODUCT_BUILD_LABEL,
+} from '@/product-identity';
 
 type PawMenuTarget =
   | { kind: 'desktop' }
@@ -692,7 +696,15 @@ function PawDesktopSurface() {
       ref={desktopRef}
     >
       <header className="paw-menu-bar">
-        <button aria-label="打开全部 App" className="paw-system-mark" onClick={toggleLaunchpad} type="button"><PawBrandMark size={15} /><span className="paw-brand-wordmark">PAW</span></button>
+        <button aria-label="打开全部 App" className="paw-system-mark" onClick={toggleLaunchpad} type="button">
+          <PawBrandMark size={15} />
+          <span className="paw-brand-wordmark">PAW</span>
+          <span
+            className="paw-brand-version"
+            data-paw-product-version
+            title={`PAW ${PAW_PRODUCT_BUILD_LABEL} · 构建 ${PAW_BUILD_COMMIT}`}
+          >{PAW_PRODUCT_BUILD_LABEL}</span>
+        </button>
         <div className="paw-menu-menus">
           <button
             aria-expanded={contextMenu?.kind === 'menubar' && contextMenu.menu === 'app'}

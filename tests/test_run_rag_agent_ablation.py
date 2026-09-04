@@ -15,6 +15,7 @@ from scripts.run_rag_agent_ablation import (
     _agentic_parent_query_policy_passes,
     _agents_tool_receipts,
     _answer_judge_failure_is_retryable,
+    _answer_judge_case_payloads,
     _answer_judge_format_repair_prompt,
     _answer_judge_prompt,
     _build_candidate_decision,
@@ -23,6 +24,7 @@ from scripts.run_rag_agent_ablation import (
     _claim_held_out_gate,
     _child_token_usage,
     _combine_token_usage,
+    _copy_openai_codex_agent_config,
     _apply_answer_only_judgments,
     _apply_answer_judgments,
     _knowledge_base_retrieval_config,
@@ -52,6 +54,7 @@ from scripts.run_rag_agent_ablation import (
     _parse_answer_judgments,
     _pin_evaluation_agent_config,
     _runtime_failure_category,
+    _runtime_tool_failure_count,
     _run_coverage_audit,
     _run_output_protocol_repair,
     _run_lane,
@@ -65,7 +68,276 @@ from scripts.run_rag_agent_ablation import (
 )
 
 
+_TEST_CHUNKER_DEPENDENCY_SURFACE = [
+    {
+        "qualifiedName": "rag_ime.knowledge_library.parsers._normalize_text",
+        "sourceSha256": "08d29fb737c7a79b679af8679a883d9bd9a5e87aa0e4e68431a7d2bf9aae0b2f",
+    },
+    {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_block_heading",
+        "sourceSha256": "a708c44c68974d4e70bd127c821b6a6daddc942184a61e3c0832bab5fbb53c6c",
+    },
+    {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_document",
+        "sourceSha256": "b4d254d72c3e99bbc7bf7d5ba4776db440b191ab5e15621661a5899c25867655",
+    },
+    {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_record",
+        "sourceSha256": "2f3463f11fb29c73d70b4c6c15717fc9696cf9a571fa214f83290cad13776ed9",
+    },
+    {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_strategy_blocks",
+        "sourceSha256": "ebed9f30e0bd7c125a230a949dfcc56951ff074080c47662b959fa9e69dc7e79",
+    },
+]
+_TEST_CHUNK_MANIFEST_SERIALIZATION = {
+    "schemaVersion": "rag-ime.rag-chunk-manifest-serialization.v1",
+    "canonicalJson": {
+        "encoding": "utf-8",
+        "ensureAscii": False,
+        "sortKeys": True,
+        "separators": [",", ":"],
+    },
+    "recordOrder": [
+        "documentId:unicode-code-point-ascending",
+        "chunkOrdinal:integer-ascending",
+    ],
+    "recordFields": [
+        "documentId",
+        "chunkOrdinal",
+        "contentSha256",
+        "headingSha256",
+        "page",
+    ],
+}
+
+
+def _test_answer_evidence_standard_v2(
+    *,
+    documents: dict[str, str],
+    chunking: dict[str, object],
+    prepared_source_sha256: str,
+    prepared_artifact_sha256: str,
+) -> dict[str, object]:
+    chunk_records = [
+        {
+            "documentId": document_id,
+            "chunkOrdinal": 0,
+            "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "headingSha256": hashlib.sha256(b"").hexdigest(),
+            "page": None,
+        }
+        for document_id, text in sorted(documents.items())
+    ]
+    standard: dict[str, object] = {
+        "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+        "standardId": "test-answer-evidence-standard-v2",
+        "evaluationScope": "validation-development-only",
+        "calibrationLabel": "post-validation-calibrated",
+        "candidateBlind": True,
+        "unbiasedPromotionClaimAllowed": False,
+        "heldOutOpened": False,
+        "corpus": {
+            "preparedArtifactSha256": prepared_artifact_sha256,
+            "preparedSourceSha256": prepared_source_sha256,
+            "documentCount": len(documents),
+        },
+        "chunking": {
+            "config": chunking,
+            "configSha256": _sha256_json(chunking),
+            "dependencySurface": _TEST_CHUNKER_DEPENDENCY_SURFACE,
+            "dependencySurfaceSha256": _sha256_json(
+                _TEST_CHUNKER_DEPENDENCY_SURFACE
+            ),
+        },
+        "chunkManifest": {
+            "serialization": _TEST_CHUNK_MANIFEST_SERIALIZATION,
+            "serializationSha256": _sha256_json(
+                _TEST_CHUNK_MANIFEST_SERIALIZATION
+            ),
+            "chunkCount": len(chunk_records),
+            "manifestSha256": _sha256_json(chunk_records),
+        },
+        "calibrationSource": {
+            "auditId": "candidate-blind-test-audit",
+            "auditReceiptSha256": "a" * 64,
+            "proposalSha256": "b" * 64,
+        },
+    }
+    standard["manifestSha256"] = _sha256_json(standard)
+    return standard
+
+
+def _resign_test_qrels_v2(value: dict[str, object]) -> None:
+    standard = value["answerEvidenceStandard"]
+    assert isinstance(standard, dict)
+    standard.pop("manifestSha256", None)
+    standard["manifestSha256"] = _sha256_json(standard)
+    value["standardManifestSha256"] = standard["manifestSha256"]
+    value.pop("manifestSha256", None)
+    value["manifestSha256"] = _sha256_json(value)
+
+
 class RunRagAgentAblationTests(unittest.TestCase):
+    def test_public_answer_evidence_standard_v2_is_hash_only_and_fail_closed(self) -> None:
+        standard_path = (
+            Path(__file__).resolve().parents[1]
+            / "eval"
+            / "interview-metrics"
+            / "enterprise-rag-answer-evidence-standard.v2.json"
+        )
+        standard = json.loads(standard_path.read_text(encoding="utf-8"))
+        claimed_manifest_sha256 = standard.pop("manifestSha256")
+
+        self.assertEqual(_sha256_json(standard), claimed_manifest_sha256)
+        self.assertEqual(
+            "post-validation-calibrated",
+            standard["calibrationLabel"],
+        )
+        self.assertFalse(standard["unbiasedPromotionClaimAllowed"])
+        self.assertFalse(standard["heldOutOpened"])
+        self.assertEqual(29846, standard["chunkManifest"]["chunkCount"])
+        self.assertEqual(
+            "6d5239b3b684c037d38eab4150bfb35d9d6393350cb9cff31bdc2c0b19d550cf",
+            standard["chunkManifest"]["manifestSha256"],
+        )
+        self.assertEqual(
+            _TEST_CHUNKER_DEPENDENCY_SURFACE,
+            standard["chunking"]["dependencySurface"],
+        )
+        serialized = json.dumps(standard, ensure_ascii=False, sort_keys=True)
+        for private_token in ('"cases"', '"facts"', '"quote"', "dsid_"):
+            self.assertNotIn(private_token, serialized)
+
+        receipt_path = (
+            Path(__file__).resolve().parents[1]
+            / "eval"
+            / "interview-metrics"
+            / "runs"
+            / "enterprise-rag-answer-evidence-standard-v2-validation-calibration-20260904.v1.json"
+        )
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        self.assertFalse(receipt["unbiasedPromotionClaimAllowed"])
+        self.assertFalse(receipt["heldOutOpened"])
+        self.assertEqual(0, receipt["providerCalls"])
+        self.assertTrue(all(not value for value in receipt["publicSafety"].values()))
+        serialized_receipt = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+        for private_token in ('"cases"', '"facts"', '"quote"', "dsid_"):
+            self.assertNotIn(private_token, serialized_receipt)
+
+    def test_answer_judge_evidence_is_limited_to_cited_retrieved_chunks(self) -> None:
+        visible_chunk = "VISIBLE-CITED-CHUNK " + ("a" * 170)
+        hidden_document_tail = "HIDDEN-UNCITED-DOCUMENT-TAIL " + ("b" * 170)
+        documents = [
+            {
+                "documentId": "doc-a",
+                "text": visible_chunk + "\n\n" + hidden_document_tail,
+            }
+        ]
+        lane_records = [
+            {
+                "lane": "baseline",
+                "_assistantText": (
+                    '{"cases":[{"caseId":"case-01","answer":"visible",'
+                    '"citations":["K1"],"abstained":false}]}'
+                ),
+                "score": {
+                    "answerCases": [
+                        {
+                            "evaluationCaseId": "case-01",
+                            "citationTokens": ["K1"],
+                            "citations": ["doc-a"],
+                        }
+                    ]
+                },
+                "gatewayLedger": {
+                    "items": [
+                        {
+                            "operation": "search",
+                            "ok": True,
+                            "args": {"evaluationCaseId": "case-01"},
+                            "resultSummary": {
+                                "hits": [
+                                    {
+                                        "citationRef": "K1",
+                                        "externalDocumentId": "doc-a",
+                                        "chunkId": "runtime-chunk-1",
+                                        "ordinal": 0,
+                                    },
+                                    {
+                                        "citationRef": "K2",
+                                        "externalDocumentId": "doc-a",
+                                        "chunkId": "runtime-chunk-2",
+                                        "ordinal": 1,
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            }
+        ]
+
+        _case_ids, _candidate_ids, _assistant_cases, judge_cases = (
+            _answer_judge_case_payloads(
+                cases=[
+                    {
+                        "evaluationCaseId": "case-01",
+                        "query": "What is visible?",
+                        "answer": "visible",
+                    }
+                ],
+                documents=documents,
+                lane_records=lane_records,
+                chunking_config={
+                    "strategy": "general",
+                    "size": 200,
+                    "overlap": 0,
+                },
+            )
+        )
+
+        evidence = judge_cases[0]["evidenceDocuments"]
+        self.assertEqual(1, len(evidence))
+        self.assertEqual(visible_chunk, evidence[0]["text"])
+        self.assertNotIn("HIDDEN-UNCITED-DOCUMENT-TAIL", json.dumps(judge_cases))
+        self.assertEqual(
+            [evidence[0]["evidenceId"]],
+            judge_cases[0]["candidates"][0]["evidenceIds"],
+        )
+
+        checkpoint_record, _session_id, _turn_id = (
+            _checkpoint_lane_record_projection(lane_records[0])
+        )
+        _case_ids, _candidate_ids, _assistant_cases, resumed_cases = (
+            _answer_judge_case_payloads(
+                cases=[
+                    {
+                        "evaluationCaseId": "case-01",
+                        "query": "What is visible?",
+                        "answer": "visible",
+                    }
+                ],
+                documents=documents,
+                lane_records=[checkpoint_record],
+                chunking_config={
+                    "strategy": "general",
+                    "size": 200,
+                    "overlap": 0,
+                },
+            )
+        )
+        self.assertEqual(visible_chunk, resumed_cases[0]["evidenceDocuments"][0]["text"])
+        self.assertNotIn(
+            "doc-a", json.dumps(checkpoint_record["_privateCitedChunkRefs"])
+        )
+        self.assertEqual(
+            "K1",
+            checkpoint_record["_privateCitedChunkRefs"][0]["hits"][0][
+                "citationRef"
+            ],
+        )
+
     def test_token_usage_counts_each_provider_request_without_double_counting_final_message(self) -> None:
         events = [
             {
@@ -1229,6 +1501,81 @@ class RunRagAgentAblationTests(unittest.TestCase):
             lifecycle_order,
         )
 
+    def test_completed_turn_with_failed_benchmark_tool_is_harness_failure(self) -> None:
+        events = [
+            {
+                "eventType": "tool_finished",
+                "payload": {
+                    "toolName": "rag_benchmark",
+                    "toolCallId": "failed-call",
+                    "isError": True,
+                    "result": {
+                        "content": [{"type": "text", "text": "fetch failed"}],
+                        "details": {},
+                    },
+                },
+            }
+        ]
+
+        self.assertEqual(1, _runtime_tool_failure_count(events))
+        self.assertEqual(
+            "harness_tool_transport_failure",
+            _runtime_failure_category(
+                terminal="turn_completed",
+                error="",
+                events=events,
+                ledger={"itemCount": 1},
+            ),
+        )
+
+    def test_transport_receipt_fails_lane_closed_without_retry(self) -> None:
+        from unittest.mock import patch
+
+        class FailedTransport:
+            transport = "loopback-http-v1"
+
+            def transport_cursor(self) -> int:
+                return 7
+
+            def transport_receipt(self, *, since_sequence: int) -> dict[str, object]:
+                self.since_sequence = since_sequence
+                return {
+                    "schemaVersion": "rag-ime.rag-benchmark-tool-transport.v1",
+                    "transport": self.transport,
+                    "accepted": False,
+                    "failureCount": 1,
+                    "failureTypes": ["BrokenPipeError"],
+                    "failures": [{"sequence": 8}],
+                    "receiptSha256": "f" * 64,
+                }
+
+        transport = FailedTransport()
+        completed = self._checkpoint_lane_record("baseline")
+        with patch(
+            "scripts.run_rag_agent_ablation._run_lane_once",
+            return_value=completed,
+        ) as run_once:
+            result = _run_lane(
+                object(),
+                gateway=object(),
+                tool_transport=transport,
+                owner="owner",
+                run_id="a" * 32,
+                lane="baseline",
+                cases=[],
+                retrieval_config={},
+                retrieval_config_sha256="config-v1",
+                timeout_seconds=60,
+                lane_attempts=2,
+            )
+
+        self.assertEqual(1, run_once.call_count)
+        self.assertEqual(7, transport.since_sequence)
+        self.assertFalse(result["toolContract"])
+        self.assertEqual("harness_transport_failure", result["runtimeFailureCategory"])
+        self.assertFalse(result["toolTransport"]["accepted"])
+        self.assertEqual(0, result["runtimeRetryCount"])
+
     def test_checkpoint_fingerprint_drift_is_rejected(self) -> None:
         from pathlib import Path
         from tempfile import TemporaryDirectory
@@ -1543,6 +1890,10 @@ class RunRagAgentAblationTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (agent_config / "auth.json").write_text(
+                json.dumps({"openai-codex": {"type": "oauth"}}),
+                encoding="utf-8",
+            )
             receipt = _pin_evaluation_agent_config(agent_config)
             settings = json.loads(
                 (agent_config / "settings.json").read_text(encoding="utf-8")
@@ -1552,7 +1903,56 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertEqual("max", settings["defaultThinkingLevel"])
         self.assertEqual("sse", settings["transport"])
         self.assertEqual("openai-codex/gpt-5.6-sol", receipt["model"])
+        self.assertTrue(receipt["openaiCodexOnly"])
         self.assertTrue(receipt["settingsSha256"])
+
+    def test_evaluation_config_omits_every_non_codex_provider_definition(self) -> None:
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            target = root / "target"
+            source.mkdir()
+            (source / "auth.json").write_text(
+                json.dumps(
+                    {
+                        "openai-codex": {"type": "oauth", "secret": "private"},
+                        "other-provider": {"type": "api_key", "secret": "forbidden"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (source / "settings.json").write_text(
+                json.dumps({"packages": ["rag-retrieval-optimization"]}),
+                encoding="utf-8",
+            )
+            (source / "models.json").write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "gpt": {"baseUrl": "https://forbidden.invalid"},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (source / "models-store.json").write_text(
+                json.dumps({"gpt": {"models": []}}),
+                encoding="utf-8",
+            )
+
+            copied = _copy_openai_codex_agent_config(source, target)
+
+            self.assertEqual(["auth.json", "settings.json"], copied)
+            self.assertEqual(
+                {"openai-codex"},
+                set(json.loads((target / "auth.json").read_text())),
+            )
+            self.assertFalse((target / "models.json").exists())
+            self.assertFalse((target / "models-store.json").exists())
 
     def test_evaluation_configuration_pins_parent_and_judge_max_but_bounds_reviewer_low(self) -> None:
         configuration = _evaluation_configuration_defaults()
@@ -1712,6 +2112,8 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertEqual(2, manifest["highLevelFactCount"])
         self.assertEqual(evidence_qrels["manifestSha256"], manifest["evidenceManifestSha256"])
         self.assertNotIn("highLevelEvidenceAvailability", manifest)
+        self.assertNotIn("answerEvidenceStandardManifestSha256", manifest)
+        self.assertNotIn("unbiasedPromotionClaimAllowed", manifest)
         self.assertTrue(manifest["manifestSha256"])
 
         answer_cases[0]["query"] = "drifted"
@@ -1746,11 +2148,28 @@ class RunRagAgentAblationTests(unittest.TestCase):
         }
 
         def qrels(mode: object = "any") -> dict[str, object]:
+            standard = _test_answer_evidence_standard_v2(
+                documents=documents,
+                chunking=chunking,
+                prepared_source_sha256="d" * 64,
+                prepared_artifact_sha256="c" * 64,
+            )
             value: dict[str, object] = {
                 "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+                "calibrationLabel": "post-validation-calibrated",
+                "unbiasedPromotionClaimAllowed": False,
+                "candidateBlindProposalSha256": "b" * 64,
+                "standardManifestSha256": standard["manifestSha256"],
+                "answerEvidenceStandard": standard,
                 "evaluationSplit": "validation",
-                "preparedSourceSha256": "dataset-v2",
+                "preparedSourceSha256": "d" * 64,
                 "chunkingConfigSha256": _sha256_json(chunking),
+                "counts": {
+                    "caseCount": 1,
+                    "factCount": 1,
+                    "supportGroupCount": 2,
+                    "evidenceBindingCount": 2,
+                },
                 "cases": [
                     {
                         "queryId": "q-high",
@@ -1802,7 +2221,8 @@ class RunRagAgentAblationTests(unittest.TestCase):
             qrels(),
             selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
             document_text_by_id=documents,
-            prepared_source_sha256="dataset-v2",
+            prepared_source_sha256="d" * 64,
+            prepared_artifact_sha256="c" * 64,
             evaluation_split="validation",
             chunking_config=chunking,
         )
@@ -1811,13 +2231,51 @@ class RunRagAgentAblationTests(unittest.TestCase):
             "any",
             private_qrels["q-high"]["facts"][0]["supportGroupMode"],
         )
+        self.assertEqual(
+            [{"documentId": "doc-a", "chunkOrdinal": 0}],
+            private_qrels["q-high"]["facts"][0]["supportGroups"][0][
+                "evidence"
+            ],
+        )
         self.assertEqual(2, stats["supportGroupCount"])
+        answer_case = {
+            "queryId": "q-high",
+            "query": "What is the required fact?",
+            "split": "validation",
+            "slice": "high_level",
+            "retrievalEvaluable": False,
+            "abstentionExpected": False,
+            "goldAnswer": "Either verified alternative.",
+            "answerFacts": [fact_text],
+        }
+        answer_manifest = _answer_case_manifest(
+            prepared_cases=[],
+            answer_cases=[answer_case],
+            selected_cases=[answer_case],
+            documents=[
+                {"documentId": document_id, "text": text}
+                for document_id, text in documents.items()
+            ],
+            benchmark_id="benchmark-v2",
+            prepared_source_sha256="d" * 64,
+            prepared_artifact_sha256="c" * 64,
+            evaluation_split="validation",
+            chunking_config=chunking,
+            answer_evidence_qrels=qrels(),
+        )
+        self.assertEqual(
+            "host-private-fact-qrels-exact-source-chunk-standard-v2",
+            answer_manifest["evidenceContract"],
+        )
+        self.assertFalse(answer_manifest["unbiasedPromotionClaimAllowed"])
+        self.assertNotIn("answerEvidenceStandard", answer_manifest)
         with self.assertRaisesRegex(ValueError, "support group mode"):
             _validate_answer_evidence_qrels(
                 qrels("sometimes"),
                 selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
                 document_text_by_id=documents,
-                prepared_source_sha256="dataset-v2",
+                prepared_source_sha256="d" * 64,
+                prepared_artifact_sha256="c" * 64,
                 evaluation_split="validation",
                 chunking_config=chunking,
             )
@@ -1826,6 +2284,128 @@ class RunRagAgentAblationTests(unittest.TestCase):
                 qrels(None),
                 selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
                 document_text_by_id=documents,
+                prepared_source_sha256="d" * 64,
+                prepared_artifact_sha256="c" * 64,
+                evaluation_split="validation",
+                chunking_config=chunking,
+            )
+
+        dependency_drift = json.loads(json.dumps(qrels()))
+        dependency_standard = dependency_drift["answerEvidenceStandard"]
+        assert isinstance(dependency_standard, dict)
+        dependency_chunking = dependency_standard["chunking"]
+        assert isinstance(dependency_chunking, dict)
+        dependency_surface = dependency_chunking["dependencySurface"]
+        assert isinstance(dependency_surface, list)
+        dependency_surface[0]["sourceSha256"] = "0" * 64
+        dependency_chunking["dependencySurfaceSha256"] = _sha256_json(
+            dependency_surface
+        )
+        _resign_test_qrels_v2(dependency_drift)
+        with self.assertRaisesRegex(ValueError, "dependency fixed point"):
+            _validate_answer_evidence_qrels(
+                dependency_drift,
+                selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+                document_text_by_id=documents,
+                prepared_source_sha256="d" * 64,
+                prepared_artifact_sha256="c" * 64,
+                evaluation_split="validation",
+                chunking_config=chunking,
+            )
+
+        manifest_drift = json.loads(json.dumps(qrels()))
+        manifest_standard = manifest_drift["answerEvidenceStandard"]
+        assert isinstance(manifest_standard, dict)
+        chunk_manifest = manifest_standard["chunkManifest"]
+        assert isinstance(chunk_manifest, dict)
+        chunk_manifest["chunkCount"] = 3
+        _resign_test_qrels_v2(manifest_drift)
+        with self.assertRaisesRegex(ValueError, "chunk manifest fixed point"):
+            _validate_answer_evidence_qrels(
+                manifest_drift,
+                selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+                document_text_by_id=documents,
+                prepared_source_sha256="d" * 64,
+                prepared_artifact_sha256="c" * 64,
+                evaluation_split="validation",
+                chunking_config=chunking,
+            )
+
+        promotion_drift = qrels()
+        promotion_drift["unbiasedPromotionClaimAllowed"] = True
+        promotion_drift.pop("manifestSha256")
+        promotion_drift["manifestSha256"] = _sha256_json(promotion_drift)
+        with self.assertRaisesRegex(ValueError, "calibration boundary"):
+            _validate_answer_evidence_qrels(
+                promotion_drift,
+                selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+                document_text_by_id=documents,
+                prepared_source_sha256="d" * 64,
+                prepared_artifact_sha256="c" * 64,
+                evaluation_split="validation",
+                chunking_config=chunking,
+            )
+
+    def test_answer_evidence_qrels_v2_fails_closed_without_standard_fixed_point(self) -> None:
+        document_text = "A frozen source directly supports the required fact."
+        fact_text = "The required fact has frozen source support."
+        chunking = {
+            "strategy": "general",
+            "size": 1200,
+            "overlap": 160,
+            "separator": "",
+            "respectHeadings": True,
+            "respectPageBoundaries": True,
+        }
+        qrels: dict[str, object] = {
+            "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+            "evaluationSplit": "validation",
+            "preparedSourceSha256": "dataset-v2",
+            "chunkingConfigSha256": _sha256_json(chunking),
+            "cases": [
+                {
+                    "queryId": "q-high",
+                    "facts": [
+                        {
+                            "factId": "F1",
+                            "factSha256": hashlib.sha256(
+                                fact_text.encode("utf-8")
+                            ).hexdigest(),
+                            "availability": "verified",
+                            "supportGroupMode": "any",
+                            "supportGroups": [
+                                {
+                                    "groupId": "G1",
+                                    "evidence": [
+                                        {
+                                            "documentId": "doc-source",
+                                            "documentSha256": hashlib.sha256(
+                                                document_text.encode("utf-8")
+                                            ).hexdigest(),
+                                            "chunkOrdinal": 0,
+                                            "chunkSha256": hashlib.sha256(
+                                                document_text.encode("utf-8")
+                                            ).hexdigest(),
+                                            "quote": document_text,
+                                            "quoteSha256": hashlib.sha256(
+                                                document_text.encode("utf-8")
+                                            ).hexdigest(),
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        qrels["manifestSha256"] = _sha256_json(qrels)
+
+        with self.assertRaisesRegex(ValueError, "standard"):
+            _validate_answer_evidence_qrels(
+                qrels,
+                selected_cases=[{"queryId": "q-high", "answerFacts": [fact_text]}],
+                document_text_by_id={"doc-source": document_text},
                 prepared_source_sha256="dataset-v2",
                 evaluation_split="validation",
                 chunking_config=chunking,
@@ -2353,6 +2933,147 @@ class RunRagAgentAblationTests(unittest.TestCase):
         self.assertFalse(answer_case["citationSupport"])
         self.assertAlmostEqual(2 / 3, metrics["citationFactCoverage"])
         self.assertFalse(
+            lane_records[0]["score"]["hardEvidence"]["factCitationCoverage"]
+        )
+
+    def test_answer_only_v2_qrels_do_not_credit_the_wrong_chunk_in_the_same_document(self) -> None:
+        lane_records = [
+            {
+                "lane": "baseline",
+                "score": {
+                    "answerCases": [
+                        {
+                            "evaluationCaseId": "case-high",
+                            "toolSuccess": True,
+                            "citationResolution": True,
+                            "citationTokens": ["K1"],
+                            "citations": ["doc-a"],
+                            "citationSuccess": True,
+                            "abstentionCorrect": True,
+                        },
+                        {
+                            "evaluationCaseId": "case-missing",
+                            "toolSuccess": True,
+                            "citationResolution": True,
+                            "citationTokens": [],
+                            "citations": [],
+                            "citationSuccess": None,
+                            "abstentionCorrect": True,
+                        },
+                    ],
+                    "agentMetrics": {},
+                    "metricDenominators": {
+                        "answerableCitationCases": 1,
+                        "highLevelCases": 1,
+                        "infoNotFoundCases": 1,
+                        "protocolCases": 2,
+                    },
+                    "hardEvidence": {"citationResolution": True},
+                },
+                "gatewayLedger": {
+                    "items": [
+                        {
+                            "operation": "search",
+                            "ok": True,
+                            "args": {"evaluationCaseId": "case-high"},
+                            "resultSummary": {
+                                "hits": [
+                                    {
+                                        "citationRef": "K1",
+                                        "externalDocumentId": "doc-a",
+                                        "ordinal": 0,
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            }
+        ]
+        cases = [
+            {
+                "queryId": "q-high",
+                "evaluationCaseId": "case-high",
+                "abstentionExpected": False,
+            },
+            {
+                "queryId": "q-missing",
+                "evaluationCaseId": "case-missing",
+                "abstentionExpected": True,
+            },
+        ]
+        judge = {
+            "caseRubrics": [
+                {
+                    "caseId": "case-high",
+                    "requiredFacts": [
+                        {"factId": "J1", "description": "complete answer"}
+                    ],
+                }
+            ],
+            "judgments": [
+                {
+                    "lane": "baseline",
+                    "evaluationCaseId": "case-high",
+                    "correct": True,
+                    "reasonCode": "correct",
+                    "coveredFactIds": ["J1"],
+                    "hasUnsupportedMaterial": False,
+                }
+            ],
+        }
+        answer_case_manifest = {
+            "_privateEvidenceQrels": {
+                "q-high": {
+                    "facts": [
+                        {
+                            "factId": "F1",
+                            "supportGroupMode": "all",
+                            "supportGroups": [
+                                {
+                                    "documentIds": ["doc-a"],
+                                    "evidence": [
+                                        {
+                                            "documentId": "doc-a",
+                                            "chunkOrdinal": 1,
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+
+        _apply_answer_only_judgments(
+            lane_records,
+            cases=cases,
+            answer_judge=judge,
+            answer_case_manifest=answer_case_manifest,
+        )
+
+        answer_case = lane_records[0]["score"]["answerCases"][0]
+        self.assertEqual(0.0, answer_case["citationFactCoverage"])
+        self.assertFalse(answer_case["citationSupport"])
+        self.assertFalse(
+            lane_records[0]["score"]["hardEvidence"]["factCitationCoverage"]
+        )
+
+        lane_records[0]["gatewayLedger"]["items"][0]["resultSummary"]["hits"][0][
+            "ordinal"
+        ] = 1
+        _apply_answer_only_judgments(
+            lane_records,
+            cases=cases,
+            answer_judge=judge,
+            answer_case_manifest=answer_case_manifest,
+        )
+        self.assertEqual(
+            1.0,
+            lane_records[0]["score"]["answerCases"][0]["citationFactCoverage"],
+        )
+        self.assertTrue(
             lane_records[0]["score"]["hardEvidence"]["factCitationCoverage"]
         )
 

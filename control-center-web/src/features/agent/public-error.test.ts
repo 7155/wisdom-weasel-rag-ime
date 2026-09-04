@@ -2,10 +2,29 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agentCommandReceiptFailure,
+  MODEL_QUOTA_EXHAUSTED_TEXT,
   publicAgentErrorText,
 } from './public-error';
 
 describe('Agent command receipt public recovery', () => {
+  it('turns an optional memory budget failure into a non-blocking message', () => {
+    expect(publicAgentErrorText({
+      payload: {
+        errorCode: 'memory_bootstrap_budget_exceeded',
+        error: 'memory bootstrap exceeded its strict character budget',
+      },
+    })).toBe('记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。');
+    expect(publicAgentErrorText(new Error('memory bootstrap exceeded its strict character budget')))
+      .toBe('记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。');
+  });
+
+  it('does not present a provider quota exhaustion as a local memory overflow', () => {
+    expect(publicAgentErrorText(new Error('Codex error: The usage limit has been reached')))
+      .toBe(MODEL_QUOTA_EXHAUSTED_TEXT);
+    expect(publicAgentErrorText(new Error('memory curation packet exceeds the managed Session input limit')))
+      .toBe('记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。');
+  });
+
   it('keeps the typed new-command recovery state and gives a direct resend action', () => {
     const error = {
       payload: {

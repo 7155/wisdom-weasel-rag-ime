@@ -171,6 +171,8 @@ export type EvalLabEvidenceEnvironment = {
   tokenUsage?: Readonly<Record<string, number>>;
   usageReceipt?: Readonly<Record<string, unknown>>;
   costEstimate?: Readonly<Record<string, unknown>>;
+  costAuthority?: string;
+  runtimeCostReceipt?: Readonly<Record<string, unknown>>;
   billing?: Readonly<Record<string, unknown>>;
   pricingIdentity?: Readonly<Record<string, unknown>>;
   machine?: Readonly<Record<string, unknown>>;

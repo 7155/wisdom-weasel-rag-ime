@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts import run_enterpriseops_csm_eval as enterpriseops_eval
 from scripts.run_enterpriseops_csm_eval import (
     ENTERPRISEOPS_SUITE_V2_BUSINESS_AS_OF_DATE,
     ENTERPRISEOPS_SUITE_V2_OVERLAY_PATH,
@@ -182,6 +183,117 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
         self.assertEqual(compact_contract, preloaded_contract)
         self.assertNotIn("2025-12-31", prompt)
 
+    def test_luna_role_tenure_profile_inherits_preloaded_contract_and_only_adds_generic_selection_rules(
+        self,
+    ) -> None:
+        profile = "luna-role-tenure-preloaded-v4"
+        task = self._task()
+        task["businessAsOfDate"] = "2025-12-31"
+        inherited = build_agent_prompt(
+            task, workflow_profile="state-contract-preloaded-v3"
+        )
+        adapted = build_agent_prompt(task, workflow_profile=profile)
+
+        self.assertTrue(adapted.startswith(inherited))
+        addition = adapted[len(inherited) :]
+        self.assertIn("one candidate set across every allowed role", addition)
+        self.assertIn("authoritative linked location record", addition)
+        self.assertIn("phone numbers", addition)
+        self.assertIn("sys_created_on", addition)
+        self.assertIn("lowest stable record identifier", addition)
+        self.assertTrue(enterpriseops_eval.workflow_preloads_selected_schemas(profile))
+        self.assertTrue(
+            enterpriseops_eval.workflow_preloads_selected_schemas(
+                "state-contract-preloaded-v3"
+            )
+        )
+        self.assertFalse(
+            enterpriseops_eval.workflow_preloads_selected_schemas(
+                "state-contract-compact-v2"
+            )
+        )
+        for forbidden in (
+            "ashley",
+            "diana",
+            "larson",
+            "152",
+            "662",
+            "gold",
+            "task_",
+            "ad5a67e3",
+        ):
+            self.assertNotIn(forbidden, addition.lower())
+
+    def test_luna_selected_catalog_profile_keeps_safe_partial_progress_without_searching_for_missing_tools(
+        self,
+    ) -> None:
+        task = self._task()
+        task["businessAsOfDate"] = "2025-12-31"
+        inherited = build_agent_prompt(
+            task,
+            workflow_profile="luna-role-tenure-preloaded-v4",
+        )
+        adapted = build_agent_prompt(
+            task,
+            workflow_profile="luna-selected-catalog-preloaded-v5",
+        )
+
+        self.assertTrue(adapted.startswith(inherited))
+        addition = adapted[len(inherited) :]
+        self.assertIn("selected Tool catalog is authoritative", addition)
+        self.assertIn("Do not search for an unavailable Tool", addition)
+        self.assertIn("independently executable requested mutations", addition)
+        self.assertIn("report that unsupported substep", addition)
+        self.assertTrue(
+            enterpriseops_eval.workflow_preloads_selected_schemas(
+                "luna-selected-catalog-preloaded-v5"
+            )
+        )
+        for forbidden in (
+            "entitlement 73",
+            "case 1233",
+            "curtis",
+            "gold",
+            "verifier",
+            "task_",
+        ):
+            self.assertNotIn(forbidden, addition.lower())
+
+    def test_luna_explicit_enum_profile_does_not_replace_an_exact_enum_with_a_nearby_description(
+        self,
+    ) -> None:
+        task = self._task()
+        task["businessAsOfDate"] = "2025-12-31"
+        inherited = build_agent_prompt(
+            task,
+            workflow_profile="luna-selected-catalog-preloaded-v5",
+        )
+        adapted = build_agent_prompt(
+            task,
+            workflow_profile="luna-explicit-enum-preloaded-v6",
+        )
+
+        self.assertTrue(adapted.startswith(inherited))
+        addition = adapted[len(inherited) :]
+        self.assertIn("exact allowed enum value", addition)
+        self.assertIn("nearby adjectives or superlatives", addition)
+        self.assertIn("explicitly corrects it", addition)
+        self.assertTrue(
+            enterpriseops_eval.workflow_preloads_selected_schemas(
+                "luna-explicit-enum-preloaded-v6"
+            )
+        )
+        for forbidden in (
+            "premium",
+            "enterprise",
+            "entitlement",
+            "larson",
+            "gold",
+            "verifier",
+            "task_",
+        ):
+            self.assertNotIn(forbidden, addition.lower())
+
     def test_business_as_of_date_comes_from_latest_seed_timestamp(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             seed = Path(directory) / "seed.sql"
@@ -208,6 +320,9 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
             "state-contract-v1",
             "state-contract-compact-v2",
             "state-contract-preloaded-v3",
+            "luna-role-tenure-preloaded-v4",
+            "luna-selected-catalog-preloaded-v5",
+            "luna-explicit-enum-preloaded-v6",
         ):
             prompt = build_agent_prompt(
                 patched,
@@ -485,6 +600,7 @@ class RunEnterpriseOpsCsmEvalTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn("--tasks-root", completed.stdout)
         self.assertIn("held-out", completed.stdout)
+        self.assertIn("luna-role-tenure-preloaded-v4", completed.stdout)
 
 
 if __name__ == "__main__":

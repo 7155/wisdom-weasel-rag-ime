@@ -32,18 +32,21 @@ case "$ACTION" in
     ;;
 esac
 
-if [[ ! -d "$ELECTRON_APP" ]]; then
+hydrate_electron_runtime() {
+  [[ -d "$ELECTRON_APP" ]] && return 0
   [[ -f "$ELECTRON_INSTALLER" ]] || {
     echo "Electron package is unavailable; run pnpm install in control-center-web" >&2
     exit 1
   }
   echo "Hydrating the pinned Electron runtime..." >&2
   node "$ELECTRON_INSTALLER"
-fi
-[[ -d "$ELECTRON_APP" ]] || {
-  echo "Electron runtime hydration did not produce Electron.app" >&2
-  exit 1
+  [[ -d "$ELECTRON_APP" ]] || {
+    echo "Electron runtime hydration did not produce Electron.app" >&2
+    exit 1
+  }
 }
+
+hydrate_electron_runtime
 
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 SOURCE_BRANCH="$(git -C "$ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
@@ -51,6 +54,9 @@ SOURCE_DIRTY="false"
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
   SOURCE_DIRTY="true"
 fi
+PACKAGE_VERSION="$(cd "$ROOT" && node -p "require('./control-center-web/package.json').version")"
+PRODUCT_VERSION="${RAG_IME_PRODUCT_VERSION:-$PACKAGE_VERSION}"
+BUILD_NUMBER="${RAG_IME_BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count "$SOURCE_COMMIT" 2>/dev/null || echo 0)}"
 if [[ "$CHANNEL" == "release" \
   && "$SOURCE_DIRTY" == "true" \
   && ! ( "$ACTION" == "install-release" \
@@ -80,7 +86,16 @@ fi
 
 RAG_IME_CONTROL_TRANSPORT=http \
 RAG_IME_CONTROL_BUILD_CHANNEL="$FRONTEND_CHANNEL" \
+RAG_IME_PRODUCT_VERSION="$PRODUCT_VERSION" \
+RAG_IME_BUILD_COMMIT="$SOURCE_COMMIT" \
+RAG_IME_BUILD_NUMBER="$BUILD_NUMBER" \
+RAG_IME_SOURCE_DIRTY="$SOURCE_DIRTY" \
   "$ROOT/scripts/build_control_center_web.sh" >/dev/null
+# `pnpm install --frozen-lockfile` may replace the Electron package link and
+# remove its downloaded `dist/` after the preflight above. Reconcile that
+# mutable package payload again at the exact copy boundary so an update cannot
+# pass preflight and then fail midway through installation.
+hydrate_electron_runtime
 DIST_TREE_DIGEST="$(python3 - "$ROOT" "$WEB/dist" <<'PY'
 import sys
 from pathlib import Path
@@ -108,6 +123,20 @@ mv "$MACOS/Electron" "$MACOS/$EXECUTABLE"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $DISPLAY_NAME" "$CONTENTS/Info.plist"
 
+# Electron's stock atom icon/version must never leak into the PAW product.
+# Rebuild the branded resource for every host build and expose the same
+# semantic version in Finder, the native host and the PAWOS shell.
+"$ROOT/scripts/support/build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"
+# Electron's atom.icns is an implementation detail, not a PAW identity. Keep
+# only the resource named by CFBundleIconFile so Finder cannot cache or expose
+# the stock Electron artwork after a reinstall.
+rm -f "$RESOURCES/electron.icns"
+/usr/libexec/PlistBuddy -c 'Delete :CFBundleIconFile' "$CONTENTS/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string RagImeIcon' "$CONTENTS/Info.plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c 'Set :CFBundleIconFile RagImeIcon' "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $PRODUCT_VERSION" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"
+
 mkdir -p "$RESOURCES/app/electron" "$RESOURCES/app/dist"
 ditto "$WEB/electron" "$RESOURCES/app/electron"
 ditto "$WEB/dist" "$RESOURCES/app/dist"
@@ -124,13 +153,13 @@ Path(sys.argv[1]).write_text(json.dumps({
 }, indent=2) + "\n", encoding="utf-8")
 PY
 
-python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$DIST_TREE_DIGEST" <<'PY'
+python3 - "$RESOURCES/rag-ime-control-web-build-marker.json" "$BUNDLE_ID" "$CHANNEL" "$FRONTEND_CHANNEL" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$DIST_TREE_DIGEST" "$PRODUCT_VERSION" "$BUILD_NUMBER" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-target, bundle_id, channel, frontend_channel, commit, dirty, dist_digest = sys.argv[1:]
+target, bundle_id, channel, frontend_channel, commit, dirty, dist_digest, product_version, build_number = sys.argv[1:]
 provenance = {
     "sourceCommit": commit,
     "sourceDirty": dirty == "true",
@@ -163,6 +192,9 @@ Path(target).write_text(json.dumps({
     "browserPartition": "persist:paw-browser",
     "sameOriginControlProxy": True,
     "frontendProduct": "paw-os",
+    "productVersion": product_version,
+    "buildNumber": build_number,
+    "buildCommit": commit,
     "distTreeDigest": dist_digest,
     "provenance": provenance,
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-standard-candidate-citation-calibration.v1",
+  "runId": "enterprise-rag-answer-evidence-standard-candidate-citation-revision-r3-calibration-20260905",
+  "status": "passed",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "candidateBlind": false,
+  "localOnly": true,
+  "uploaded": false,
+  "providerCalls": 0,
+  "heldOutOpened": false,
+  "unbiasedPromotionClaimAllowed": false,
+  "auditBoundary": {
+    "auditId": "enterprise-rag-answer-evidence-candidate-citation-exact-audit-r3-20260905",
+    "auditReceiptFileSha256": "63c788210ce2d8a556e2cb46a79e60da72061592fe6327e14aa810b991118705",
+    "auditReceiptManifestSha256": "583eb65606bab340df9412594a848ff44a631f81da55a26d5155510a75413af5",
+    "candidateCitationsAccessed": true,
+    "heldOutAccessed": false
+  },
+  "standard": {
+    "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-citation-revision-r3.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+    "standardId": "enterprise-rag-answer-evidence-validation-candidate-citation-revision-r3-20260905",
+    "fileSha256": "a8dcd8a37d2e599e07b4882d4e1df354835658a546f1c08ff71d109ebedf5e50",
+    "manifestSha256": "06702a02f86351dd15ed164d399a23f7e7262cc8c1832f3acdd80ce647d7a79f",
+    "baseStandardV2FileSha256": "ba8c135e3d1ef845f3a333a2259003703769adeca6fa517cb7decc9098d417f7"
+  },
+  "qrels": {
+    "scope": "host-only",
+    "path": ".rag-ime-data/eval/host/validation-answer-evidence-qrels-candidate-citation-revision-r3.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "fileSha256": "4a02e4948a593d87d845739e5dcb60d61c33b6216da217ed79b3b9c4dc55d46d",
+    "manifestSha256": "b22c75cd7ee64c334de863b591515a8e62817c8b526d2d98ab965ec9c92b80d2",
+    "baseQrelsV2FileSha256": "b0b081c4a0ecbced1c589b69126de555a0f1b8815c508e1f4eb269adce608428",
+    "factCount": 9,
+    "supportGroupCount": 17,
+    "evidenceBindingCount": 17
+  },
+  "calibrationDelta": {
+    "operator": "append_equivalent_exact_candidate_cited_binding",
+    "addedExactBindings": 3,
+    "changedFacts": [
+      "qst_0474/F2",
+      "qst_0474/F3",
+      "qst_0474/F5"
+    ],
+    "unchangedFailedFacts": [
+      "qst_0474/F1",
+      "qst_0477/F3",
+      "qst_0477/F4"
+    ]
+  },
+  "frozenCandidateRescore": {
+    "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-coverage-balanced-v4-r4-20260904.json",
+    "sourceReportFileSha256": "f7a4443c41b6738f9fdb8b5831d65d91a7ac7de71c54c3fd4c76e8b0d8edc252",
+    "sourceReportSha256": "dd08534c851fc65e465b4843c4433a59b1953469eca86a86b1c43c0738bb772d",
+    "scorerContract": "exact-citation-token-to-document-chunk-ordinal",
+    "measurementStatus": "calibrated-upper-bound",
+    "coveredFactCount": 6,
+    "factCount": 9,
+    "citationFactCoverage": 0.6666666666666666,
+    "decision": "reject"
+  },
+  "publicSafety": {
+    "containsQuestions": false,
+    "containsReferenceAnswers": false,
+    "containsFactBodies": false,
+    "containsEvidenceQuotes": false,
+    "containsQrelsBody": false,
+    "containsCandidateAnswers": false,
+    "containsPrivateTranscripts": false
+  },
+  "verification": {
+    "command": "python3 scripts/verify_enterprise_rag_answer_evidence_candidate_citation_revision.py",
+    "result": "ENTERPRISE_RAG_CANDIDATE_CITATION_REVISION_R3_OK"
+  },
+  "claimBoundary": [
+    "This receipt proves an append-only Validation qrels/Standard fixed point, not a model-quality improvement or production result.",
+    "The audit accessed the frozen candidate's citations; this revision is post-Validation calibration and cannot support unbiased promotion.",
+    "The three new exact bindings raise the frozen candidate's calibrated upper bound only to 6/9, so the candidate remains Reject.",
+    "qst_0474/F1 and qst_0477/F3-F4 were not added; no Provider was called and Held-out remains unopened."
+  ],
+  "receiptSha256": "201071d4962c7ae03ac9bab64e606e2d3334f8d32aacdfb1fe8c903323f64f4f"
+}

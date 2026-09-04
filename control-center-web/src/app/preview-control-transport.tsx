@@ -3779,6 +3779,10 @@ function previewApprovalItems(now = Date.now()): AgentApprovalV1[] {
     goalRevision: 4,
     turnId: 'turn:preview-approval',
     roomBound: false,
+    roomId: '',
+    rootId: '',
+    dispatchId: '',
+    generation: 0,
   };
   return [
     {

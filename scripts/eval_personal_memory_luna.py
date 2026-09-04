@@ -350,6 +350,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-report", type=Path)
     parser.add_argument("--optimization-output", type=Path)
     parser.add_argument(
+        "--model-only-baseline-report",
+        type=Path,
+        help=(
+            "Freeze a passed Sol/max Memory report as the Prompt/context baseline, "
+            "then require Luna/max to be the only changed experimental factor."
+        ),
+    )
+    parser.add_argument(
         "--embedding-from-env",
         action="store_true",
         help=(
@@ -392,6 +400,34 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.optimization_output is not None and args.baseline_report is None:
         raise SystemExit("--optimization-output requires --baseline-report")
+    if args.model_only_baseline_report is not None and args.baseline_report is not None:
+        raise SystemExit(
+            "--model-only-baseline-report cannot be combined with --baseline-report"
+        )
+    model_only_baseline: dict[str, object] | None = None
+    model_only_baseline_sha256 = ""
+    if args.model_only_baseline_report is not None:
+        baseline_path = args.model_only_baseline_report.expanduser().resolve(strict=True)
+        value = json.loads(baseline_path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise SystemExit("Memory model-only baseline report must be a JSON object")
+        model_only_baseline = dict(value)
+        preflight = _memory_model_only_preflight(
+            model_only_baseline,
+            model=str(args.model),
+            context_profile=str(args.context_profile),
+            prompt_contract=str(args.prompt_contract),
+        )
+        if not bool(preflight.get("passed")):
+            failed = ", ".join(
+                str(name)
+                for name, passed in dict(preflight.get("checks") or {}).items()
+                if passed is not True
+            )
+            raise SystemExit(
+                "invalid Memory model-only baseline or candidate controls: " + failed
+            )
+        model_only_baseline_sha256 = _file_sha256(baseline_path)
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", str(args.run_id)) is None:
         raise SystemExit("--run-id must be a bounded public identifier")
     private_root = args.private_dir.expanduser().resolve(strict=False)
@@ -750,6 +786,16 @@ def main(argv: list[str] | None = None) -> int:
         },
         "privateArtifactDirectorySha256": _sha256(str(private_root)),
     }
+    if model_only_baseline is not None:
+        model_only_comparison = _memory_model_only_comparison(
+            model_only_baseline,
+            _public_report_payload(summary),
+            baseline_report_sha256=model_only_baseline_sha256,
+        )
+        summary["modelOnlyComparison"] = model_only_comparison
+        passed = bool(passed and model_only_comparison.get("singleFactorGatePassed"))
+        summary["passed"] = passed
+        summary["status"] = "pass" if passed else "iterate"
     baseline_report: dict[str, object] | None = None
     if args.baseline_report is not None:
         value = json.loads(
@@ -799,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
                 "replay": replay,
                 "replayRag": replay_rag,
                 "modelRequests": requests,
+                "modelOnlyComparison": summary.get("modelOnlyComparison"),
                 "sourceShadowUnchanged": source_unchanged,
                 "productionMutationPerformed": False,
             },
@@ -1081,6 +1128,386 @@ def _memory_quality_gate(report: Mapping[str, object]) -> dict[str, object]:
         "productionUnchanged": hard.get("productionMutationPerformed") is False,
     }
     return {"passed": all(checks.values()), "checks": checks}
+
+
+def _fresh_memory_model_requests(
+    report: Mapping[str, object],
+) -> list[dict[str, object]]:
+    return [
+        dict(item)
+        for item in report.get("modelRequests") or []
+        if isinstance(item, Mapping) and item.get("resumed") is not True
+    ]
+
+
+def _memory_model_contract_snapshot(report: Mapping[str, object]) -> dict[str, object]:
+    requests = _fresh_memory_model_requests(report)
+    curation = next(
+        (item for item in requests if item.get("phase") == "atom-first-curation"),
+        {},
+    )
+    verifier = next(
+        (
+            item
+            for item in reversed(requests)
+            if item.get("phase") == "atom-first-verifier"
+        ),
+        {},
+    )
+    evidence = report.get("evidence")
+    evidence = evidence if isinstance(evidence, Mapping) else {}
+    frozen_input = str(curation.get("frozenInputSha256") or "")
+    snapshot: dict[str, object] = {
+        "provider": str(report.get("provider") or ""),
+        "thinking": str(report.get("thinking") or ""),
+        "transport": str(report.get("transport") or ""),
+        "evaluationScope": str(report.get("evaluationScope") or ""),
+        "contextProfile": str(report.get("contextProfile") or ""),
+        "promptContract": str(report.get("promptContract") or ""),
+        "syntheticFixtureSha256": str(evidence.get("syntheticFixtureSha256") or ""),
+        "frozenInputSha256": frozen_input,
+        # The verifier packet contains the model's curation output, so it is an
+        # observed consequence rather than a frozen experimental input.
+        "curationSemanticPacketSha256": str(
+            curation.get("semanticPacketSha256") or ""
+        ),
+        "curationSourcePacketChars": curation.get("sourcePacketChars"),
+        "curationProjectedPacketChars": curation.get("projectedPacketChars"),
+        "curationSchemaSha256": str(curation.get("schemaSha256") or ""),
+        "verifierSchemaSha256": str(verifier.get("schemaSha256") or ""),
+        "allRequestsUseFrozenInput": bool(requests)
+        and all(item.get("frozenInputSha256") == frozen_input for item in requests),
+        "allRequestsUseContextProfile": bool(requests)
+        and all(
+            item.get("contextProfile") == str(report.get("contextProfile") or "")
+            for item in requests
+        ),
+    }
+    hash_values = (
+        snapshot["syntheticFixtureSha256"],
+        snapshot["frozenInputSha256"],
+        snapshot["curationSemanticPacketSha256"],
+        snapshot["curationSchemaSha256"],
+        snapshot["verifierSchemaSha256"],
+    )
+    packet_sizes = (
+        snapshot["curationSourcePacketChars"],
+        snapshot["curationProjectedPacketChars"],
+    )
+    snapshot["complete"] = bool(
+        all(re.fullmatch(r"[0-9a-f]{64}", str(value or "")) for value in hash_values)
+        and all(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in packet_sizes
+        )
+        and snapshot["allRequestsUseFrozenInput"]
+        and snapshot["allRequestsUseContextProfile"]
+        and curation
+        and verifier
+    )
+    fingerprint_payload = {
+        key: value
+        for key, value in snapshot.items()
+        if key not in {"complete"}
+    }
+    snapshot["contractFingerprintSha256"] = _sha256(
+        json.dumps(
+            fingerprint_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return snapshot
+
+
+def _memory_semantic_quality_gate(report: Mapping[str, object]) -> dict[str, object]:
+    quality = _memory_quality_gate(report)
+    checks = dict(quality["checks"])
+    semantic_names = (
+        "caseCount",
+        "durableCaseCount",
+        "nonMemoryCaseCount",
+        "curation",
+        "sourceCount",
+        "modelDecisionCount",
+        "currentAtoms",
+        "governedAtoms",
+        "legalLineage",
+        "bookProjection",
+        "retrievalCases",
+        "durableRetrievalCases",
+        "allRetrievalCases",
+    )
+    selected = {name: checks[name] for name in semantic_names}
+    return {"passed": all(selected.values()), "checks": selected}
+
+
+def _memory_recovery_gate(report: Mapping[str, object]) -> dict[str, object]:
+    quality = _memory_quality_gate(report)
+    checks = dict(quality["checks"])
+    recovery_names = (
+        "allStored",
+        "allCandidateEvidence",
+        "vectorCoverage",
+        "rollback",
+        "replay",
+        "replayRag",
+        "replayAtomSet",
+        "privateShadow",
+        "sourceShadowUnchanged",
+        "rollbackVerified",
+        "replayVerified",
+        "productionDatabaseClosed",
+        "productionUnchanged",
+    )
+    selected = {name: checks[name] for name in recovery_names}
+    return {"passed": all(selected.values()), "checks": selected}
+
+
+def _memory_model_operability_gate(report: Mapping[str, object]) -> dict[str, object]:
+    requests = _fresh_memory_model_requests(report)
+    phases = [str(item.get("phase") or "") for item in requests]
+    model = str(report.get("model") or "")
+    hard = report.get("hardGates")
+    hard = hard if isinstance(hard, Mapping) else {}
+    checks = {
+        "requestSequence": bool(phases)
+        and phases[0] == "atom-first-curation"
+        and phases[-1] == "atom-first-verifier"
+        and all(
+            phase
+            in {
+                "atom-first-curation",
+                "atom-first-repair",
+                "atom-first-verifier",
+            }
+            for phase in phases
+        ),
+        "requestExit": bool(requests)
+        and all(item.get("exitCode") == 0 for item in requests),
+        "requestModel": bool(requests)
+        and all(item.get("model") == model for item in requests),
+        "requestThinking": bool(requests)
+        and all(item.get("thinking") == "max" for item in requests),
+        "verifierIsolation": bool(requests)
+        and requests[-1].get("isolated") is True,
+        "sourceShadowUnchanged": hard.get("sourceShadowUnchanged") is True,
+        "productionDatabaseClosed": hard.get("productionDatabaseOpened") is False,
+        "productionUnchanged": hard.get("productionMutationPerformed") is False,
+    }
+    return {"passed": all(checks.values()), "checks": checks}
+
+
+def _memory_model_only_preflight(
+    baseline: Mapping[str, object],
+    *,
+    model: str,
+    context_profile: str,
+    prompt_contract: str,
+) -> dict[str, object]:
+    baseline_contract = _memory_model_contract_snapshot(baseline)
+    baseline_quality = _memory_quality_gate(baseline)
+    baseline_operability = _memory_model_operability_gate(baseline)
+    checks = {
+        "baselineModel": baseline.get("model") == "gpt-5.6-sol",
+        "candidateModel": model == "gpt-5.6-luna",
+        "provider": baseline.get("provider") == "openai-codex",
+        "thinking": baseline.get("thinking") == "max",
+        "transport": baseline.get("transport") == "codex_cli_ephemeral",
+        "evaluationScope": baseline.get("evaluationScope") == "validation-only",
+        "contextProfile": baseline_contract.get("contextProfile") == context_profile,
+        "promptContract": baseline_contract.get("promptContract") == prompt_contract,
+        "baselineQuality": baseline_quality["passed"] is True,
+        "baselineOperability": baseline_operability["passed"] is True,
+        "contractHashes": baseline_contract.get("complete") is True,
+    }
+    return {
+        "passed": all(checks.values()),
+        "checks": checks,
+        "baselineContractFingerprintSha256": baseline_contract.get(
+            "contractFingerprintSha256"
+        ),
+    }
+
+
+def _memory_model_only_comparison(
+    baseline: Mapping[str, object],
+    candidate: Mapping[str, object],
+    *,
+    baseline_report_sha256: str = "",
+) -> dict[str, object]:
+    baseline_contract = _memory_model_contract_snapshot(baseline)
+    candidate_contract = _memory_model_contract_snapshot(candidate)
+
+    def factor(
+        name: str,
+        mode: str,
+        before: object,
+        after: object,
+        passed: bool,
+    ) -> dict[str, object]:
+        return {
+            "name": name,
+            "mode": mode,
+            "baseline": before,
+            "candidate": after,
+            "passed": bool(passed),
+        }
+
+    factor_table = [
+        factor(
+            "model",
+            "changed",
+            baseline.get("model"),
+            candidate.get("model"),
+            baseline.get("model") == "gpt-5.6-sol"
+            and candidate.get("model") == "gpt-5.6-luna",
+        )
+    ]
+    expected_values: dict[str, object] = {
+        "provider": "openai-codex",
+        "thinking": "max",
+        "transport": "codex_cli_ephemeral",
+        "evaluationScope": "validation-only",
+        "contextProfile": _MEMORY_CONTEXT_PROFILES,
+        "promptContract": _MEMORY_PROMPT_CONTRACTS,
+    }
+    for name in (
+        "provider",
+        "thinking",
+        "transport",
+        "evaluationScope",
+        "contextProfile",
+        "promptContract",
+    ):
+        before = baseline_contract.get(name)
+        after = candidate_contract.get(name)
+        expected = expected_values[name]
+        valid = before in expected if isinstance(expected, tuple) else before == expected
+        factor_table.append(
+            factor(
+                name,
+                "frozen",
+                before,
+                after,
+                bool(valid and before == after),
+            )
+        )
+
+    def hash_row(name: str, key: str) -> dict[str, object]:
+        before = str(baseline_contract.get(key) or "")
+        after = str(candidate_contract.get(key) or "")
+        valid = bool(re.fullmatch(r"[0-9a-f]{64}", before)) and bool(
+            re.fullmatch(r"[0-9a-f]{64}", after)
+        )
+        return {
+            "name": name,
+            "baselineSha256": before,
+            "candidateSha256": after,
+            "matched": bool(valid and before == after),
+        }
+
+    hash_table = [
+        hash_row("syntheticFixture", "syntheticFixtureSha256"),
+        hash_row("frozenInput", "frozenInputSha256"),
+        hash_row("curationSemanticPacket", "curationSemanticPacketSha256"),
+        hash_row("curationSchema", "curationSchemaSha256"),
+        hash_row("verifierSchema", "verifierSchemaSha256"),
+        hash_row("contractFingerprint", "contractFingerprintSha256"),
+    ]
+    packet_shape_matches = (
+        baseline_contract.get("curationSourcePacketChars")
+        == candidate_contract.get("curationSourcePacketChars")
+        and baseline_contract.get("curationProjectedPacketChars")
+        == candidate_contract.get("curationProjectedPacketChars")
+    )
+    factor_table.append(
+        factor(
+            "curationPacketShape",
+            "frozen",
+            {
+                "sourceChars": baseline_contract.get("curationSourcePacketChars"),
+                "projectedChars": baseline_contract.get(
+                    "curationProjectedPacketChars"
+                ),
+            },
+            {
+                "sourceChars": candidate_contract.get("curationSourcePacketChars"),
+                "projectedChars": candidate_contract.get(
+                    "curationProjectedPacketChars"
+                ),
+            },
+            packet_shape_matches,
+        )
+    )
+    baseline_quality = _memory_quality_gate(baseline)
+    candidate_quality = _memory_quality_gate(candidate)
+    semantic_quality = _memory_semantic_quality_gate(candidate)
+    recovery = _memory_recovery_gate(candidate)
+    operability = _memory_model_operability_gate(candidate)
+    single_factor = bool(
+        baseline_quality["passed"]
+        and baseline_contract.get("complete") is True
+        and candidate_contract.get("complete") is True
+        and all(item["passed"] is True for item in factor_table)
+        and all(item["matched"] is True for item in hash_table)
+    )
+    if not single_factor:
+        decision = "invalid_model_only_lane"
+        failure_owner = "experiment_contract"
+        allowed_next_stage = "correct_factor_freeze"
+    elif not operability["passed"]:
+        decision = "diagnose_runtime_or_provider"
+        failure_owner = "runtime_or_provider"
+        allowed_next_stage = "runtime_provider_diagnosis"
+    elif not semantic_quality["passed"]:
+        decision = "adapt_prompt"
+        failure_owner = "model_prompt_interaction"
+        allowed_next_stage = "one_general_prompt_contract"
+    elif not recovery["passed"] or not candidate_quality["passed"]:
+        decision = "repair_evaluation_harness"
+        failure_owner = "evaluation_harness"
+        allowed_next_stage = "evaluation_harness_repair"
+    else:
+        decision = "no_prompt_adaptation"
+        failure_owner = "none"
+        allowed_next_stage = "none"
+    prompt_adaptation_needed = decision == "adapt_prompt"
+    return {
+        "schemaVersion": "paw.memory-maintenance-model-only-comparison.v1",
+        "decision": decision,
+        "singleVariable": "model" if single_factor else "invalid",
+        "singleFactorGatePassed": single_factor,
+        "operabilityGatePassed": operability["passed"],
+        "semanticQualityGatePassed": semantic_quality["passed"],
+        "recoveryGatePassed": recovery["passed"],
+        "qualityGatePassed": candidate_quality["passed"],
+        "promptAdaptationNeeded": prompt_adaptation_needed,
+        "allowedNextStage": allowed_next_stage,
+        "failureOwner": failure_owner,
+        "baselineRunId": baseline.get("runId"),
+        "candidateRunId": candidate.get("runId"),
+        "factorTable": factor_table,
+        "hashTable": hash_table,
+        "baselineQuality": baseline_quality,
+        "candidateQuality": candidate_quality,
+        "semanticQuality": semantic_quality,
+        "recovery": recovery,
+        "operability": operability,
+        "evidence": {
+            "baselineReportSha256": baseline_report_sha256,
+            "verifierSemanticPacketFrozen": False,
+            "verifierSemanticPacketReason": (
+                "the verifier packet contains the candidate model output"
+            ),
+        },
+        "claimBoundary": [
+            "one private-shadow validation run only",
+            "quality and recovery determine prompt adaptation; usage and elapsed time do not",
+            "no Provider bill, installed Gateway, foreground, or held-out claim",
+        ],
+    }
 
 
 def _memory_cost_optimization_comparison(
@@ -1441,6 +1868,7 @@ def _public_report_payload(summary: Mapping[str, object]) -> dict[str, object]:
         "usage": summary.get("usage"),
         "timing": summary.get("timing"),
         "optimizationComparison": summary.get("optimizationComparison"),
+        "modelOnlyComparison": summary.get("modelOnlyComparison"),
         "hardGates": {
             "productionDatabaseOpened": False,
             "productionMutationPerformed": False,

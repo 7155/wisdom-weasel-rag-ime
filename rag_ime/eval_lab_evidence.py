@@ -1266,7 +1266,8 @@ class EvalLabEvidenceProjection:
             "metrics", "comparison", "failedHardGates", "provenanceGaps", "boundaries",
             "executiveVerdict", "decision", "claim", "runtime", "runtimeIdentity",
             "environment", "configuration", "dataset", "sample", "result", "usage",
-            "estimate", "billing", "pricingIdentity", "observabilityLimit", "verification",
+            "estimate", "billing", "pricingIdentity", "authority", "runtimeCostReceipt",
+            "observabilityLimit", "verification",
             "evidence", "frozenIdentity", "baseline", "winner", "oneShot",
             "evaluationScope", "evaluationMode", "heldOutEvaluated", "formalAcceptanceEligible",
             "formalAcceptancePassed", "heldOutGateProduced", "cleanupPassed", "localOnly",
@@ -1795,6 +1796,19 @@ class EvalLabEvidenceProjection:
         pricing = report.get("pricingIdentity")
         if isinstance(pricing, Mapping):
             environment["pricingIdentity"] = self._safe_report_mapping(pricing, depth=0)
+        cost_authority = report.get("authority")
+        if isinstance(cost_authority, str):
+            environment["costAuthority"] = _public_text(
+                cost_authority,
+                fallback="",
+                limit=80,
+            )
+        runtime_cost_receipt = report.get("runtimeCostReceipt")
+        if isinstance(runtime_cost_receipt, Mapping):
+            environment["runtimeCostReceipt"] = self._safe_report_mapping(
+                runtime_cost_receipt,
+                depth=0,
+            )
         trace_ids: list[str] = []
         raw_trace_ids = report.get("traceIds")
         if isinstance(raw_trace_ids, list):

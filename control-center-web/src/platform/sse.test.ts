@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { SseParser } from './sse';
 
@@ -35,5 +35,14 @@ describe('SseParser', () => {
     parser.finish();
 
     expect(events).toEqual([]);
+  });
+
+  it('reports a complete heartbeat comment as a stable SSE frame', () => {
+    const onFrame = vi.fn();
+    const parser = new SseParser(vi.fn(), onFrame);
+
+    parser.push(': heartbeat\n\n');
+
+    expect(onFrame).toHaveBeenCalledTimes(1);
   });
 });

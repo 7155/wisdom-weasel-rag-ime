@@ -41,6 +41,9 @@ class AgentPromptDeliveryService:
             list[Mapping[str, object]],
         ],
         room_public_recovery_context: Callable[[str], str],
+        execution_policy_context: (
+            Callable[[Mapping[str, object]], str] | None
+        ) = None,
         memory_enabled_provider: Callable[[], bool] | None = None,
     ) -> None:
         self.sessions = sessions
@@ -49,6 +52,9 @@ class AgentPromptDeliveryService:
         self.runtime_tool_manifest = runtime_tool_manifest
         self.room_public_recovery_context = (
             room_public_recovery_context
+        )
+        self.execution_policy_context = (
+            execution_policy_context or execution_policy_prompt
         )
         sessions_db_path = getattr(sessions, "db_path", "")
         self._memory_enabled_provider = memory_enabled_provider or (
@@ -162,7 +168,7 @@ class AgentPromptDeliveryService:
             session_context_prompt="\n\n".join(
                 value
                 for value in (
-                    execution_policy_prompt(session),
+                    self.execution_policy_context(session),
                     memory_context,
                     (
                         self.room_public_recovery_context(session_id)

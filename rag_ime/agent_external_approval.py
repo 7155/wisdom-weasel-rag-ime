@@ -129,6 +129,7 @@ class ExternalApprovalFinalizer:
                 "summary": str(
                     final_receipt.get("summary") or ""
                 ),
+                **_room_policy_event_identity(final),
                 **_approval_event_identity(final),
             },
             turn_id=_approval_turn_id(final),
@@ -370,6 +371,31 @@ def _approval_event_identity(
 ) -> dict[str, object]:
     tool_call_id = str(approval.get("toolCallId") or "").strip()
     return {"toolCallId": tool_call_id} if tool_call_id else {}
+
+
+def _room_policy_event_identity(
+    approval: Mapping[str, object],
+) -> dict[str, object]:
+    """Mark only an exact Room authorization as an internal policy receipt."""
+
+    causal = (
+        approval.get("causalMetadata")
+        if isinstance(approval.get("causalMetadata"), Mapping)
+        else {}
+    )
+    try:
+        generation = int(causal.get("generation") or 0)
+    except (TypeError, ValueError):
+        return {}
+    if (
+        causal.get("roomBound") is True
+        and str(causal.get("roomId") or "").strip()
+        and str(causal.get("rootId") or "").strip()
+        and str(causal.get("dispatchId") or "").strip()
+        and generation > 0
+    ):
+        return {"automatic": True, "decisionMode": "policy"}
+    return {}
 
 
 def _approval_turn_id(approval: Mapping[str, object]) -> str:

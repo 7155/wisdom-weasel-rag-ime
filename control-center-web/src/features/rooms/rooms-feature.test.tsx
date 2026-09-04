@@ -4874,6 +4874,88 @@ describe('Rooms experience', () => {
     expect(container.querySelector('.room-status-activity')).toHaveTextContent('合并 3 次更新');
   });
 
+  it('does not present automatic Room policy authorization as a user-facing step', () => {
+    const room = roomSummary('room-a', '默认执行 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a',
+      status: 'completed',
+      messageIds: [],
+      activityIds: ['policy-approval'],
+      participantIds: ['room-a:p1'],
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['policy-approval'] = {
+      id: 'policy-approval',
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '安全策略已自动处理这次操作',
+      payload: {
+        sourceEventType: 'approval_resolved',
+        approvalId: 'approval:auto',
+        toolCallId: 'tool:auto',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'applied',
+      },
+      createdAtMs: 1,
+    };
+
+    const { container } = render(
+      <TooltipProvider><RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} /></TooltipProvider>,
+    );
+
+    expect(container.querySelectorAll('.room-status-activity')).toHaveLength(0);
+    expect(container).not.toHaveTextContent('安全审批');
+    expect(container).not.toHaveTextContent('安全策略已自动处理这次操作');
+  });
+
+  it('keeps a merged automatic-policy Tool failure in the Room status panel', () => {
+    const room = roomSummary('room-a', '默认执行 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a',
+      status: 'failed',
+      messageIds: [],
+      activityIds: ['tool-failed'],
+      participantIds: ['room-a:p1'],
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['tool-failed'] = {
+      id: 'tool-failed',
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'failed',
+      summary: '运行项目命令失败',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolCallId: 'tool:failed',
+        toolName: 'workspace_shell',
+        approvalId: 'approval:auto',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'failed',
+        error: 'exit code 1',
+      },
+      createdAtMs: 1,
+    };
+
+    const { container } = render(
+      <TooltipProvider><RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} /></TooltipProvider>,
+    );
+
+    expect(container).toHaveTextContent('运行项目命令失败');
+  });
+
   it('keeps the 765x1568 status panel in normal top-to-bottom flow while a review waits', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 765 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1_568 });

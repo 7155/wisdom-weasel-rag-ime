@@ -143,6 +143,20 @@ export default defineConfig({
   base: './',
   define: {
     __CONTROL_PREVIEW__: JSON.stringify(buildChannel !== 'production'),
+    // Local Vitest/dev renders deliberately identify themselves as `dev`.
+    // Host builds pass the exact package version and source commit.
+    __PAW_PRODUCT_VERSION__: JSON.stringify(
+      process.env.VITE_PAW_PRODUCT_VERSION?.trim() || '0.1.0',
+    ),
+    __PAW_BUILD_COMMIT__: JSON.stringify(
+      process.env.VITE_PAW_BUILD_COMMIT?.trim() || 'dev',
+    ),
+    __PAW_BUILD_NUMBER__: JSON.stringify(
+      process.env.VITE_PAW_BUILD_NUMBER?.trim() || 'dev',
+    ),
+    __PAW_SOURCE_DIRTY__: JSON.stringify(
+      process.env.VITE_PAW_SOURCE_DIRTY?.trim().toLowerCase() === 'true',
+    ),
   },
   plugins: [react(), browserDependencyBoundary(), controlTransportBoundary()],
   resolve: {

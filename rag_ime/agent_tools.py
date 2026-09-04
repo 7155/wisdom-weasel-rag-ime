@@ -3392,12 +3392,23 @@ class ControlToolGateway:
         # A live Room dispatch is the runtime confirmation boundary for the
         # Room-only unrestricted overlay. Keep it in-memory for this Tool
         # call as well, so a legacy/old row created before migration 0164 does
-        # not silently fall back to per-action approval after confirmation.
+        # not silently fall back to per-action approval during a live dispatch.
         # The overlay never changes the persisted Session mode or workspace
         # lease; ``approval_strategy`` still enforces both and hard fences.
-        if (
+        room_dispatch_context = self._room_dispatch_context(session_id)
+        room_dispatch_authorized = (
             not read_only_policy_active(session)
-            and self._room_dispatch_authorized(session_id)
+            and room_dispatch_context is not None
+        )
+        session = {
+            **session,
+            # This capability is deliberately ephemeral. A persisted Room
+            # overlay may describe membership/defaults, but only this exact
+            # live dispatch can authorize the current Tool call.
+            "roomDispatchAuthorized": room_dispatch_authorized,
+        }
+        if (
+            room_dispatch_authorized
             and str(session.get("roomExecutionMode") or "").strip().lower()
             != ROOM_UNRESTRICTED_EXECUTION_MODE
         ):
@@ -3528,13 +3539,22 @@ class ControlToolGateway:
                 raise ValueError(
                     "workspace operations require a previously authorized scope"
                 )
-            result = self._prepare_approval(
+            with self.sessions.approval_creation_scope(
                 session_id=session_id,
-                tool=tool,
-                operation=operation,
-                args=args,
-                risk_level=risk_level,
-            )
+                tool_call_id=str(request["toolCallId"]),
+                room_context=(
+                    room_dispatch_context
+                    if room_dispatch_authorized
+                    else None
+                ),
+            ):
+                result = self._prepare_approval(
+                    session_id=session_id,
+                    tool=tool,
+                    operation=operation,
+                    args=args,
+                    risk_level=risk_level,
+                )
             approval = (
                 result.get("approval")
                 if isinstance(result.get("approval"), Mapping)
@@ -3547,6 +3567,11 @@ class ControlToolGateway:
                 str(approval.get("approvalId") or ""),
                 tool_call_id=str(request["toolCallId"]),
             )
+            if room_dispatch_authorized:
+                result["approval"] = self.sessions.bind_approval_room_dispatch(
+                    str(approval.get("approvalId") or ""),
+                    room_context=room_dispatch_context,
+                )
             approval = result["approval"]
             if strategy in {APPROVAL_AUTO, APPROVAL_MODEL}:
                 if self._auto_approval_executor is None:
@@ -3570,12 +3595,35 @@ class ControlToolGateway:
         authoritative for every actual Tool call.
         """
 
-        check = getattr(
+        return self._room_dispatch_context(session_id) is not None
+
+    def _room_dispatch_context(
+        self,
+        session_id: str,
+    ) -> Mapping[str, object] | None:
+        inspect = getattr(
             self.collaboration,
-            "_active_room_dispatch_authorizes_work",
+            "_active_room_dispatch_context",
             None,
         )
-        return bool(callable(check) and check(session_id))
+        if not callable(inspect):
+            return None
+        context = inspect(session_id)
+        if not isinstance(context, Mapping):
+            return None
+        room_id = str(context.get("roomId") or "").strip()
+        root_id = str(context.get("rootId") or "").strip()
+        dispatch_id = str(context.get("dispatchId") or "").strip()
+        try:
+            generation = int(context.get("generation") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Room dispatch context is incomplete") from exc
+        if not room_id or not root_id or not dispatch_id or generation <= 0:
+            # A malformed Mapping is not an ordinary Session. Failing before
+            # approval preparation prevents an orphan pending approval from
+            # surfacing as a false human/model decision in the Room.
+            raise ValueError("Room dispatch context is incomplete")
+        return dict(context)
 
     def _read_internal_resource(
         self,

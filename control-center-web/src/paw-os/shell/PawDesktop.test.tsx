@@ -98,6 +98,11 @@ describe('PAWOS desktop', () => {
     renderDesktop('agent');
 
     expect(screen.getByRole('button', { name: '打开全部 App' })).toHaveTextContent('PAW');
+    expect(document.querySelector('[data-paw-product-version]')).toHaveTextContent('v0.1.0');
+    expect(document.querySelector('[data-paw-product-version]')).toHaveAttribute(
+      'title',
+      expect.stringContaining('构建 dev'),
+    );
     expect(document.querySelector('.paw-menu-bar > strong')).toBeNull();
     const current = document.querySelector('.paw-menu-app') as HTMLElement;
     expect(current).toHaveTextContent('Agent');

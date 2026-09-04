@@ -1695,6 +1695,7 @@ function upsertActivity(
   const participantId = text(payload.participantId) || event.participantId;
   const sourceSessionId = text(payload.sourceSessionId) || event.sourceSessionId;
   const id = roomActivityId(event, payload);
+  const existing = state.activitiesById[id];
   const approvalId = text(payload.approvalId);
   const unresolved = !['approved', 'rejected', 'applied', 'resolved', 'cancelled'].includes(
     resolutionState,
@@ -1708,8 +1709,29 @@ function upsertActivity(
     || sourceEventType === 'user_input_required'
     || (text(payload.method) === 'select' && Array.isArray(payload.options))
   ) && unresolved;
+  const automaticPolicyAuthorizationEvent = Boolean(
+    approvalId
+    && payload.automatic === true
+    && text(payload.decisionMode || payload.mode) === 'policy'
+    && ['approval_required', 'approval_resolved'].includes(sourceEventType)
+  );
+  const automaticPolicyAuthorizationReceipt = Boolean(
+    automaticPolicyAuthorizationEvent
+    && existing
+    && text(existing.payload.sourceEventType).startsWith('tool_')
+  );
+  const automaticPolicyAuthorizationFailed = automaticPolicyAuthorizationEvent && (
+    payload.isError === true
+    || ['deny', 'denied', 'rejected', 'expired', 'stale', 'failed'].includes(
+      text(payload.resolutionState || payload.state || payload.decision),
+    )
+  );
   const candidateStatus = forcedStatus ?? (
-    payload.isError === true || participantStatus === 'failed'
+    automaticPolicyAuthorizationFailed
+      ? 'failed'
+      : automaticPolicyAuthorizationReceipt
+      ? automaticPolicyAuthorizationFailed ? 'failed' : existing!.status
+      : payload.isError === true || participantStatus === 'failed'
       ? 'failed'
       : participantStatus === 'retry_wait' || pendingInteraction
         ? 'waiting'
@@ -1726,15 +1748,30 @@ function upsertActivity(
             ? 'running'
             : 'completed'
   );
-  const existing = state.activitiesById[id];
   const staleToolStreamingUpdate = Boolean(
     existing
     && ['completed', 'failed', 'aborted'].includes(existing.status)
-    && ['tool_started', 'tool_progress'].includes(sourceEventType),
+    && (
+      ['tool_started', 'tool_progress'].includes(sourceEventType)
+      || (
+        sourceEventType === 'tool_finished'
+        && existing.status === 'failed'
+        && ['deny', 'denied', 'rejected', 'expired', 'stale', 'failed'].includes(
+          text(existing.payload.approvalResolutionState),
+        )
+        && payload.isError !== true
+      )
+    ),
   );
   const status = staleToolStreamingUpdate ? existing!.status : candidateStatus;
   const activityPayload = staleToolStreamingUpdate
     ? existing!.payload
+    : automaticPolicyAuthorizationReceipt || automaticPolicyAuthorizationFailed
+      ? mergeAutomaticPolicyAuthorizationReceipt(
+          existing,
+          payload,
+          automaticPolicyAuthorizationFailed,
+        )
     : mergeRoomActivityPayload(
         existing,
         event,
@@ -1750,7 +1787,11 @@ function upsertActivity(
     kind: event.eventType,
     status,
     summary: staleToolStreamingUpdate
-      ? existing!.summary
+      || automaticPolicyAuthorizationReceipt
+      || automaticPolicyAuthorizationFailed
+      ? automaticPolicyAuthorizationFailed
+        ? text(payload.summary ?? payload.error) || existing?.summary || text(payload.toolName)
+        : existing?.summary || text(payload.toolName)
       : text(payload.summary ?? payload.message ?? payload.label ?? payload.toolName)
         || sourceEventType
         || event.eventType,
@@ -1799,6 +1840,34 @@ function upsertActivity(
   if (isCompletedRoomLifecycle) {
     completeTurn(state, event.turnId, 'completed', event.createdAtMs);
   }
+}
+
+function mergeAutomaticPolicyAuthorizationReceipt(
+  previous: RoomActivityProjection | undefined,
+  payload: Record<string, unknown>,
+  failed: boolean,
+): Record<string, unknown> {
+  const previousPayload = previous?.payload ?? {};
+  const merged: Record<string, unknown> = {
+    ...previousPayload,
+    ...payload,
+    approvalSourceEventType: text(payload.sourceEventType),
+    approvalResolutionState: text(payload.resolutionState || payload.state),
+    sourceEventType: failed ? 'tool_finished' : previousPayload.sourceEventType,
+  };
+  // Authorization is an audit receipt inside an already-running Tool
+  // lifecycle. It must not replace the Tool's public identity, progress, or
+  // terminal state while both events intentionally share one toolCallId.
+  for (const field of ['toolName', 'arguments', 'args'] as const) {
+    if (previousPayload[field] !== undefined) merged[field] = previousPayload[field];
+  }
+  for (const field of ['summary', 'message', 'label', 'status', 'state'] as const) {
+    if (failed) continue;
+    if (previousPayload[field] !== undefined) merged[field] = previousPayload[field];
+    else delete merged[field];
+  }
+  if (failed) merged.state = 'failed';
+  return merged;
 }
 
 function roomActivityId(

@@ -195,6 +195,7 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         session = {
             "executionMode": PER_ACTION_EXECUTION_MODE,
             "roomExecutionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
+            "roomDispatchAuthorized": True,
             "toolProfileVersion": "control-center-v1",
             "workspaceRoots": roots,
             "workspaceScopeSha256": workspace_scope_sha256(roots),
@@ -223,7 +224,19 @@ class AgentExecutionPolicyTests(unittest.TestCase):
                 tool="runtime",
                 operation="restart_sidecar",
             ),
-            APPROVAL_ASK,
+            APPROVAL_AUTO,
+        )
+        self.assertEqual(
+            approval_strategy(
+                {
+                    **session,
+                    "executionMode": FULL_TRUST_EXECUTION_MODE,
+                    "toolProfileVersion": "control-center-full-access-v1",
+                },
+                tool="runtime",
+                operation="restart_sidecar",
+            ),
+            APPROVAL_AUTO,
         )
         self.assertEqual(
             approval_strategy(
@@ -237,6 +250,57 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             "room_unrestricted",
             execution_policy_prompt(session),
         )
+
+    def test_room_unrestricted_prompt_has_one_non_conflicting_policy(self) -> None:
+        prompt = execution_policy_prompt(
+            {
+                "executionMode": PER_ACTION_EXECUTION_MODE,
+                "toolProfileVersion": "control-center-v1",
+                "roomExecutionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
+                "roomDispatchAuthorized": True,
+                "workspaceRoots": ["/tmp/project"],
+                "workspaceScopeSha256": workspace_scope_sha256(["/tmp/project"]),
+                "workspaceScopeGrantedAtMs": 1,
+            }
+        )
+
+        self.assertIn('room-mode="room_unrestricted"', prompt)
+        self.assertIn("所有有效 Tool 操作直接执行", prompt)
+        self.assertIn("不创建任何二次裁决或确认流程", prompt)
+        self.assertNotIn("每次文件写入", prompt)
+        self.assertNotIn("Luna", prompt)
+        self.assertNotIn("人工", prompt)
+        self.assertNotIn("审批 Agent", prompt)
+
+    def test_persisted_room_overlay_without_live_dispatch_uses_the_session_mode(self) -> None:
+        stale = {
+            "executionMode": PER_ACTION_EXECUTION_MODE,
+            "roomExecutionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
+            "toolProfileVersion": "control-center-v1",
+            "workspaceRoots": ["/workspace/project"],
+            "workspaceScopeSha256": workspace_scope_sha256(
+                ["/workspace/project"]
+            ),
+            "workspaceScopeGrantedAtMs": 100,
+        }
+
+        self.assertEqual(
+            approval_strategy(
+                stale,
+                tool="planning",
+                operation="task_action",
+            ),
+            APPROVAL_ASK,
+        )
+        self.assertEqual(
+            approval_strategy(
+                {**stale, "executionMode": FULL_TRUST_EXECUTION_MODE},
+                tool="runtime",
+                operation="restart_sidecar",
+            ),
+            APPROVAL_MODEL,
+        )
+        self.assertNotIn("room-mode=\"room_unrestricted\"", execution_policy_prompt(stale))
 
     def test_full_auto_only_skips_review_for_scoped_ordinary_commands(self) -> None:
         roots = ["/workspace/project"]

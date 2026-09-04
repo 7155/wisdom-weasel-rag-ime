@@ -483,7 +483,7 @@ def room_event_projection(
             "decisionMode",
         ),
     )
-    for flag in ("ok", "isError", "due"):
+    for flag in ("ok", "isError", "due", "recoveredExecutionTerminal"):
         if isinstance(payload.get(flag), bool):
             data[flag] = bool(payload[flag])
     if event.event_type == "reasoning_summary":
@@ -651,8 +651,21 @@ def runtime_event_metrics(
         )
     if any(normalized_usage.values()):
         metrics["usage"] = normalized_usage
-    if event.event_type == "tool_started":
-        metrics["toolCalls"] = 1
+    if event.event_type in {"tool_started", "tool_progress", "tool_finished"}:
+        if event.event_type == "tool_started":
+            metrics["toolCalls"] = 1
+        # Persist only opaque Tool identity. Restart reconciliation needs to
+        # distinguish a completed effect from another Tool in the same turn;
+        # arguments and results remain outside this bounded metrics index.
+        tool_call_id = str(payload.get("toolCallId") or "").strip()[:512]
+        tool_name = str(payload.get("toolName") or "").strip()[:120]
+        if tool_call_id:
+            tool_identity: dict[str, object] = {
+                "toolCallId": tool_call_id,
+            }
+            if tool_name:
+                tool_identity["toolName"] = tool_name
+            metrics["toolIdentity"] = tool_identity
     if event.event_type == "user_input_required":
         # Keep only opaque request identity so a later process can reconcile
         # a review whose in-memory pending map was lost. The event payload is
@@ -664,6 +677,20 @@ def runtime_event_metrics(
                 ui_request[key] = value
         if ui_request:
             metrics["uiRequest"] = ui_request
+    if event.event_type in {"approval_required", "approval_resolved"}:
+        # The full approval payload remains live-only, but restart recovery
+        # needs one durable opaque identity to prove that an exact terminal
+        # was already published.  Without it a process can either duplicate a
+        # terminal event or leave a recovered Tool card running forever.
+        approval_id = str(payload.get("approvalId") or "").strip()[:240]
+        if approval_id:
+            approval_identity: dict[str, object] = {
+                "approvalId": approval_id,
+            }
+            state = str(payload.get("state") or "").strip()[:80]
+            if state:
+                approval_identity["state"] = state
+            metrics["approvalIdentity"] = approval_identity
     duration = payload.get("durationMs")
     if (
         isinstance(duration, (int, float))

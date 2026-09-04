@@ -1,0 +1,116 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-three-stage-validation.v1",
+  "runId": "enterprise-rag-answer-evidence-three-stage-validation-20260904-v1",
+  "status": "invalid-stopped-at-stage-1",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "unbiasedPromotionClaimAllowed": false,
+  "heldOutOpened": false,
+  "preflight": {
+    "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-preflight-20260904.v2.json",
+    "fileSha256": "d98f6b71147ecbd7447c4e1ed1b29129c3d3265ac8f87d8baf4113e55c388133",
+    "receiptSha256": "584c9fc5d13dd913c2f15e4eddba8532ca23d850f1640af9906687705d992782",
+    "runtimeContractSha256AtExecution": "2e2e4c0c3584ff9214a0ebb2add9f6914c660e22380aa1981ad9cbf778dc0d10",
+    "executionMatchedFrozenContract": true
+  },
+  "executionPolicy": {
+    "provider": "openai-codex",
+    "forbiddenProvider": "x1top",
+    "sameDatasetStandardRuntimeToolRetrievalControls": true,
+    "freshFourLaneRunRequired": true,
+    "checkpointLaneStitchingAllowed": false,
+    "metricGuidedRetryAllowed": false,
+    "stopOnInfrastructureIdentityOrToolFailure": true
+  },
+  "stages": [
+    {
+      "stage": 1,
+      "label": "fresh-sol-incumbent-r2",
+      "status": "invalid-infrastructure",
+      "model": "openai-codex/gpt-5.6-sol",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "startedAt": "2026-09-04T13:52:11.163Z",
+      "completedAt": "2026-09-04T13:52:12.042Z",
+      "raw": {
+        "path": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r2-20260904.json",
+        "fileSha256": "9ad8089ff5ec7ffb446ad605861cfea143fabf5a004dc1c6b78c4c1dc4b413eb",
+        "reportSha256": "c73f78bde48d2e3c0bf3937270f04669636aa78f924cca58b131b9272c1a9a28",
+        "failureSha256": "19ab6f393b45c8523c0e0f6a923385371ef3b97964672fe8eec01cbb0f29aafd"
+      },
+      "failure": {
+        "classification": "mlx-metal-infrastructure-unavailable",
+        "stage": "embedding_or_reranker_setup",
+        "summary": "The isolated execution environment exposed no Metal device, so semantic embedding and reranker setup failed before any lane or Provider Session was allocated.",
+        "secondaryHarnessFailure": "The requested cost exporter then attempted to open an absent ephemeral Runtime DB and raised FileNotFoundError; this did not create Provider usage and was repaired only after the three-stage run had stopped."
+      },
+      "observations": {
+        "preflightAccepted": false,
+        "checkpointInitialized": false,
+        "runtimeDbCreated": false,
+        "completedLaneCount": 0,
+        "providerRequestCount": 0,
+        "judgeRequestCount": 0,
+        "toolCallCount": 0,
+        "transportFailureCount": 0,
+        "exactCostReceiptGenerated": false,
+        "processExitCode": 1,
+        "reportElapsedMs": 879
+      },
+      "quality": {
+        "comparisonUseAllowed": false,
+        "modelFailureClaimAllowed": false,
+        "factQuality": null,
+        "citationQuality": null,
+        "abstentionQuality": null,
+        "verdict": "Invalid"
+      },
+      "cost": {
+        "providerBillAvailable": false,
+        "runtimeCostReceiptAvailable": false,
+        "providerBillClaimAllowed": false,
+        "estimatedCostUsd": "0.000000",
+        "estimateAuthority": "zero-provider-request-preflight-boundary"
+      }
+    },
+    {
+      "stage": 2,
+      "label": "fresh-luna-model-only-r2",
+      "status": "not-started",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "reason": "Stopped after Stage 1 infrastructure failure."
+    },
+    {
+      "stage": 3,
+      "label": "fresh-luna-prompt-adapted-r2",
+      "status": "not-started",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "coverage-balanced-evidence-gate-v4",
+      "reason": "Stopped after Stage 1 infrastructure failure."
+    }
+  ],
+  "postFailureHarnessRepair": {
+    "behavior": "A preflight failure that occurs before agent.sqlite exists now skips exact cost export, preserves the fail-closed report, emits a bounded diagnostic event, and exits nonzero without a secondary traceback.",
+    "runnerSha256": "77a277f6f159a037a9b8ea6ad3695f6c9847fa353745810dcba99527b0af947e",
+    "gatewaySha256": "aa749bb11e9adb9305598250059d71fceedccb11802359626fbc8a04d6ce9fae",
+    "runtimeContractSha256": "7dd7b20c2d7dbe05bbd14b208959e16a3e50aee1267432358c1ee287ed5b1f8a",
+    "executedRunContractSupersededAfterAbort": true,
+    "laterStageAuthorizationImplied": false
+  },
+  "comparison": {
+    "qualityComparisonAvailable": false,
+    "costComparisonAvailable": false,
+    "keepRejectDecision": "Invalid",
+    "reason": "No stage produced a score-eligible lane or Provider usage receipt."
+  },
+  "claimBoundary": [
+    "The Stage 1 failure is infrastructure evidence, not evidence about Sol answer quality, Luna answer quality, the v4 Prompt, retrieval quality, or Judge quality.",
+    "The zero-dollar value is an explicit estimate derived from zero Provider requests; it is not a Provider bill or a Runtime-reconciled cost receipt.",
+    "Stage 2, Stage 3, and Held-out were not opened.",
+    "The post-failure harness repair was tested locally but was not used to resume or replace this stopped three-stage attempt."
+  ],
+  "receiptSha256": "8f5052c48dcfbaf4a8ac79dfb2bd2bc5d2ca89bb7e8d7e00c808bc2ed82b073c"
+}

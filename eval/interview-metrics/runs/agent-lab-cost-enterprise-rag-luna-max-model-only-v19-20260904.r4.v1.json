@@ -1,0 +1,66 @@
+{
+  "authority": "runtime_cost_reconciled",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "The estimate was recomputed from the hashed pricing source and reconciled to retained per-request Runtime cost receipts; it is not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "0.01248256",
+    "outputCostUsd": "0.0395736",
+    "totalCostUsd": "0.10594896",
+    "uncachedInputCostUsd": "0.0538928"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-luna",
+    "pricingId": "pricing:sha256:959f0527821a874bffbfd36859a123a0216d25b98c13a51d11c48db7bd324868",
+    "provider": "openai-codex",
+    "publishedDate": "2026-09-04",
+    "rates": {
+      "cachedInputUsd": "0.02",
+      "outputUsd": "1.2",
+      "uncachedInputUsd": "0.2"
+    },
+    "sourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+    "sourceUrl": "https://platform.openai.com/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "cfe23362c3aa5bf2e8f7465e52499342df4ddba65746e8c73a3db26a3840deb4",
+  "runtimeCostReceipt": {
+    "databaseUsage": {
+      "cachedInputTokens": 624128,
+      "outputTokens": 32978,
+      "uncachedInputTokens": 269464
+    },
+    "reportedCostUsd": {
+      "cacheRead": "0.01248256",
+      "input": "0.0538928",
+      "output": "0.0395736",
+      "total": "0.10594896"
+    },
+    "requestCount": 41,
+    "runtimeDbSha256": "28f4fcbc0920d6042f03315998e6738bdfb8ee54034d8f3155e0fea5307ee6f1",
+    "sourceSha256": "bc476082b24477ffec7b1f911abf53b2fba03da5fe2472a1a9cac66019d4faff",
+    "transcriptSha256s": [
+      "ae43955f13be0769e160e396679911c2d127694540f80f04713fb57a8d07d01e",
+      "bbbb72718f4b407ffdabf428adebf517b1b88122f9ea0aa27e07bb6b799588df",
+      "f2ed2d125318c14502bf078839391163264a4fe9405149cefa32738889297222",
+      "730fd8cebb7d7dea09ee467113b055a34d2975e71d4219bd830b7f0dcec43f57",
+      "5b0d1942d16b960ff44185d96bc1781e5e9fbd509b6b5b1ed05b4811d18c4590",
+      "d209c5d57791c68e5e376eb73388125b49f94c39fce400e60e867d60c18ba92d"
+    ]
+  },
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 624128,
+    "outputTokens": 32978,
+    "sourceRef": "runtime-cost:enterprise-rag-luna-max-model-only-v19-20260904-r4",
+    "sourceSha256": "bc476082b24477ffec7b1f911abf53b2fba03da5fe2472a1a9cac66019d4faff",
+    "uncachedInputTokens": 269464
+  }
+}

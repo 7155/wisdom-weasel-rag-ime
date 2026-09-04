@@ -9,9 +9,13 @@
   ],
   "properties": {
     "schemaVersion": {"const": "rag-ime.agent-lab-cost-receipt.v1"},
-    "authority": {"const": "pricing_estimate"},
+    "authority": {
+      "enum": ["pricing_estimate", "pricing_lower_bound", "runtime_cost_reconciled"]
+    },
     "pricingIdentity": {"$ref": "#/$defs/pricingIdentity"},
     "usage": {"$ref": "#/$defs/usage"},
+    "runtimeCostReceipt": {"$ref": "#/$defs/runtimeCostReceipt"},
+    "pricingLowerBound": {"$ref": "#/$defs/pricingLowerBound"},
     "estimate": {"$ref": "#/$defs/estimate"},
     "billing": {"$ref": "#/$defs/billing"},
     "boundaries": {
@@ -22,6 +26,24 @@
     },
     "receiptSha256": {"$ref": "#/$defs/sha256"}
   },
+  "allOf": [
+    {
+      "if": {"required": ["runtimeCostReceipt"]},
+      "then": {"properties": {"authority": {"const": "runtime_cost_reconciled"}}}
+    },
+    {
+      "if": {"properties": {"authority": {"const": "runtime_cost_reconciled"}}},
+      "then": {"required": ["runtimeCostReceipt"]}
+    },
+    {
+      "if": {"required": ["pricingLowerBound"]},
+      "then": {"properties": {"authority": {"const": "pricing_lower_bound"}}}
+    },
+    {
+      "if": {"properties": {"authority": {"const": "pricing_lower_bound"}}},
+      "then": {"required": ["pricingLowerBound"]}
+    }
+  ],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "identity": {
@@ -113,6 +135,84 @@
         "cachedInputCostUsd": {"$ref": "#/$defs/amountDecimalUsd"},
         "outputCostUsd": {"$ref": "#/$defs/amountDecimalUsd"},
         "totalCostUsd": {"$ref": "#/$defs/amountDecimalUsd"}
+      }
+    },
+    "runtimeCostReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestCount", "runtimeDbSha256", "transcriptSha256s",
+        "databaseUsage", "reportedCostUsd", "sourceSha256"
+      ],
+      "properties": {
+        "requestCount": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "runtimeDbSha256": {"$ref": "#/$defs/sha256"},
+        "transcriptSha256s": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": {"$ref": "#/$defs/sha256"}
+        },
+        "databaseUsage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uncachedInputTokens", "cachedInputTokens", "outputTokens"],
+          "properties": {
+            "uncachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+            "cachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+            "outputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000}
+          }
+        },
+        "trialAggregate": {"$ref": "#/$defs/trialAggregate"},
+        "reportedCostUsd": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "cacheRead", "output", "total"],
+          "properties": {
+            "input": {"$ref": "#/$defs/amountDecimalUsd"},
+            "cacheRead": {"$ref": "#/$defs/amountDecimalUsd"},
+            "output": {"$ref": "#/$defs/amountDecimalUsd"},
+            "total": {"$ref": "#/$defs/amountDecimalUsd"}
+          }
+        },
+        "sourceSha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "trialAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceRef", "sourceSha256", "uncachedInputTokens",
+        "cachedInputTokens", "outputTokens"
+      ],
+      "properties": {
+        "sourceRef": {"$ref": "#/$defs/identity"},
+        "sourceSha256": {"$ref": "#/$defs/sha256"},
+        "uncachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "cachedInputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+        "outputTokens": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000}
+      }
+    },
+    "pricingLowerBound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceSha256", "tiers"],
+      "properties": {
+        "sourceSha256": {"$ref": "#/$defs/sha256"},
+        "tiers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["inputTokensAbove", "rates"],
+            "properties": {
+              "inputTokensAbove": {"type": "integer", "minimum": 0, "maximum": 1000000000000000000},
+              "rates": {"$ref": "#/$defs/rates"}
+            }
+          }
+        }
       }
     },
     "billingNotProvided": {

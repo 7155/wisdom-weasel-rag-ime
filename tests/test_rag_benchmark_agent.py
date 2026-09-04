@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from http import HTTPStatus
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
@@ -17,6 +18,7 @@ from rag_ime.rag_benchmark_agent import (
     RagBenchmarkAgentGateway,
     RagBenchmarkAgentGatewayServer,
     RagBenchmarkAgentSpoolGateway,
+    _sha256_json,
 )
 from rag_ime.rag_benchmark_sandbox import (
     RagBenchmarkSandbox,
@@ -521,6 +523,67 @@ class RagBenchmarkAgentGatewayTests(unittest.TestCase):
         self.assertEqual(403, caught.exception.code)
         self.assertTrue(result["ok"])
         self.assertEqual("create_run", result["operation"])
+
+    def test_loopback_server_records_client_disconnect_without_thread_error(self) -> None:
+        class BrokenResponseHandler:
+            close_connection = False
+
+            def send_response(self, _status: int) -> None:
+                return None
+
+            def send_header(self, _name: str, _value: str) -> None:
+                return None
+
+            def end_headers(self) -> None:
+                raise BrokenPipeError(32, "client disconnected")
+
+        server = RagBenchmarkAgentGatewayServer(
+            self.gateway,
+            token="benchmark-token",
+        )
+
+        written = server._write_response(
+            BrokenResponseHandler(),
+            HTTPStatus.OK,
+            {"ok": True},
+        )
+
+        receipt = server.transport_receipt()
+        self.assertFalse(written)
+        self.assertFalse(receipt["accepted"])
+        self.assertEqual(1, receipt["failureCount"])
+        self.assertEqual(["BrokenPipeError"], receipt["failureTypes"])
+        self.assertTrue(receipt["receiptSha256"])
+
+    def test_loopback_server_records_other_socket_write_failures(self) -> None:
+        class FailedResponseHandler:
+            close_connection = False
+
+            def send_response(self, _status: int) -> None:
+                return None
+
+            def send_header(self, _name: str, _value: str) -> None:
+                return None
+
+            def end_headers(self) -> None:
+                raise OSError(5, "socket write failed")
+
+        handler = FailedResponseHandler()
+        server = RagBenchmarkAgentGatewayServer(
+            self.gateway,
+            token="benchmark-token",
+        )
+
+        written = server._write_response(handler, HTTPStatus.OK, {"ok": True})
+
+        receipt = server.transport_receipt()
+        self.assertFalse(written)
+        self.assertTrue(handler.close_connection)
+        self.assertFalse(receipt["accepted"])
+        self.assertEqual(1, receipt["failureCount"])
+        self.assertEqual(["OSError"], receipt["failureTypes"])
+        claimed = receipt.pop("receiptSha256")
+        self.assertEqual(_sha256_json(receipt), claimed)
 
     def test_private_spool_gateway_requires_token_without_binding_socket(self) -> None:
         self.gateway.bind_session("session-a")

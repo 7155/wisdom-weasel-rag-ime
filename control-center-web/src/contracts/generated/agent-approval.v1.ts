@@ -39,6 +39,10 @@ export interface AgentApprovalV1 {
     goalRevision: number;
     turnId: string;
     roomBound: boolean;
+    roomId: string;
+    rootId: string;
+    dispatchId: string;
+    generation: number;
   };
   [k: string]: unknown;
 }

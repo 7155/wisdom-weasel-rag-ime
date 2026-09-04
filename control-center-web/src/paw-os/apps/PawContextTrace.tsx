@@ -67,6 +67,8 @@ import { AgentBlocks } from '@/features/agent/timeline/BlockRenderer';
 import { CopyTextButton } from '@/features/agent/file-preview/CopyTextButton';
 import { SmoothDisclosureReveal } from '@/features/agent/timeline/SmoothDisclosureReveal';
 import { TraceAgentHandoffButton } from '@/features/trace-agent/handoff';
+import { uniqueToolActivities } from '@/features/agent/tool-count';
+import { publicAgentErrorText } from '@/features/agent/public-error';
 import {
   toggleDisclosureOnKeyPreservingAnchor,
   toggleDisclosurePreservingAnchor,
@@ -1145,9 +1147,10 @@ export function projectionTraceTurns(projection: AgentProjectionState | undefine
 
 function projectionDebugTurnSummaries(turns: ProjectedTraceTurn[]): DebugTurnSummary[] {
   return turns.map((turn) => {
-    const toolActivities = turn.events.filter((event) => (
-      event.category === 'tool' && event.evidence.kind === 'activity'
-    ));
+    const toolActivities = uniqueToolActivities(turn.events
+      .filter((event) => event.category === 'tool' && event.evidence.kind === 'activity')
+      .map((event) => event.evidence.kind === 'activity' ? event.evidence.activity : undefined)
+      .filter((activity): activity is AgentActivityProjection => Boolean(activity)));
     return {
       turnId: turn.id,
       clientMessageId: '',
@@ -1158,7 +1161,7 @@ function projectionDebugTurnSummaries(turns: ProjectedTraceTurn[]): DebugTurnSum
       modelCallCount: 0,
       providerRequestCount: 0,
       toolCallCount: toolActivities.length,
-      runningToolCount: toolActivities.filter((event) => event.status === 'running').length,
+      runningToolCount: toolActivities.filter((activity) => activity.status === 'running').length,
       turnOrdinal: turn.ordinal,
       summary: turn.title,
     };
@@ -1366,9 +1369,12 @@ function shortHash(value: string): string {
   return `sha256:${clean.slice(0, 4)}…${clean.slice(-4)}`;
 }
 function errorText(reason: unknown): string {
-  if (reason instanceof Error && reason.message) return reason.message;
-  if (typeof reason === 'string' && reason) return reason;
-  return '读取失败，请重试。';
+  const raw = reason instanceof Error && reason.message
+    ? reason.message
+    : typeof reason === 'string' && reason
+      ? reason
+      : '读取失败，请重试。';
+  return publicAgentErrorText(reason, raw);
 }
 
 function traceUnavailableState(reason: string): TraceUnavailable {

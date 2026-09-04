@@ -438,7 +438,7 @@ describe('Agent experience', () => {
     renderAgent(transport, '/agent?session=session-preview');
 
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeEnabled();
-    expect(screen.getByText('最近上下文')).toBeInTheDocument();
+    expect(await screen.findByText('最近上下文')).toBeInTheDocument();
     expect(transport.requests.filter((request) => (
       request.pathId === 'agent.session.snapshot'
       && request.query?.view === undefined
@@ -3750,8 +3750,10 @@ describe('Agent experience', () => {
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
     const availablePermissions = within(permissionPicker as HTMLElement).getAllByRole('radio');
-    expect(availablePermissions).toHaveLength(2);
+    expect(availablePermissions).toHaveLength(4);
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^工作区托管/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全自动/ })).toBeInTheDocument();
     const fullAccessPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /全权限/ });
     expect(fullAccessPermission).not.toBeDisabled();
@@ -3775,7 +3777,7 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
     const toolPicker = document.querySelector('.agent-tool-picker');
     expect(toolPicker).not.toBeNull();
-    expect(within(toolPicker as HTMLElement).getByText('当前对话能力')).toBeInTheDocument();
+    expect(within(toolPicker as HTMLElement).getByText('当前对话工具')).toBeInTheDocument();
     await user.keyboard('{Escape}');
 
     await openCommandPalette();
@@ -3992,6 +3994,50 @@ describe('Agent experience', () => {
           toolProfileVersion: 'subagent-readonly-v1',
           toolAllowlistMode: 'explicit',
           allowedTools: ['memory'],
+        },
+      }),
+    })));
+  });
+
+  it('confirms a replacement workspace for an existing managed Session', async () => {
+    const managedSession = {
+      ...previewSessions[0]!,
+      mode: 'coordinator' as const,
+      executionMode: 'workspace_managed' as const,
+      toolProfileVersion: 'control-center-v1' as const,
+      toolAllowlistMode: 'profile' as const,
+      workspaceRoots: ['/Users/example/Projects/old'],
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, activeSessionId: 'session-preview', items: [managedSession] },
+    );
+    vi.spyOn(transport, 'pickFiles').mockResolvedValue([{
+      id: 'workspace-root',
+      name: 'new',
+      mimeType: 'inode/directory',
+      byteSize: 0,
+      path: '/Users/example/Projects/new',
+    }]);
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开文件目录' }));
+    const panel = screen.getByRole('complementary', { name: '当前对话文件目录' });
+    await user.click(within(panel).getByRole('button', { name: '管理工作区目录' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.session.mode.update',
+        params: { sessionId: 'session-preview' },
+        body: {
+          mode: 'coordinator',
+          executionMode: 'workspace_managed',
+          workspaceRoots: ['/Users/example/Projects/new'],
+          toolProfileVersion: 'control-center-v1',
+          toolAllowlistMode: 'profile',
+          workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
         },
       }),
     })));
@@ -4286,7 +4332,7 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const trigger = await screen.findByRole(
       'button',
-      { name: '这段对话可用工具：14 个' },
+      { name: '这段对话可执行工具：14 个；已登记工具：14 个' },
       { timeout: 5_000 },
     );
 
@@ -4325,7 +4371,7 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
     const unavailableTools = await screen.findByRole('button', { name: '能力列表暂不可用' });
     expect(unavailableTools).toBeDisabled();
-    expect(unavailableTools).toHaveTextContent('能力 · 未加载');
+    expect(unavailableTools).toHaveTextContent('工具 · 未加载');
   });
 
   it('opens the backend active conversation instead of a newer empty Session', async () => {
@@ -4547,7 +4593,7 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole(
       'button',
-      { name: /这段对话可用工具：14 个/ },
+      { name: /这段对话可执行工具：14 个；已登记工具：14 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
 
@@ -4571,7 +4617,7 @@ describe('Agent experience', () => {
     )).toBeEnabled();
     expect(await screen.findByRole(
       'button',
-      { name: /这段对话可用工具：14 个/ },
+      { name: /这段对话可执行工具：14 个；已登记工具：14 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
     expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder ?? []).toEqual([]);

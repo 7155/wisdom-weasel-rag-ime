@@ -77,6 +77,106 @@ def _request(candidates: list[dict[str, object]]) -> dict[str, object]:
 
 
 class AgentLabOptimalPathTests(unittest.TestCase):
+    def test_non_eligible_baseline_fails_closed(self) -> None:
+        for status in ("rejected", "not_evaluated", "unknown"):
+            with self.subTest(status=status):
+                request = _request([_node("candidate", "sol-baseline", {
+                    "taskSuccessRate": 1,
+                    "verifierPassRate": 1,
+                    "failedToolCalls": 0,
+                    "allDatabasesCleaned": 1,
+                    "toolCalls": 1,
+                    "latencyMs": 1,
+                })])
+                baseline = request["baseline"]
+                assert isinstance(baseline, dict)
+                baseline["status"] = status
+
+                with self.assertRaisesRegex(ValueError, "baseline must be eligible"):
+                    evaluate_path_search(request, generated_at_ms=123)
+
+    def test_baseline_frozen_hash_mismatch_fails_closed(self) -> None:
+        request = _request([_node("candidate", "sol-baseline", {
+            "taskSuccessRate": 1,
+            "verifierPassRate": 1,
+            "failedToolCalls": 0,
+            "allDatabasesCleaned": 1,
+            "toolCalls": 1,
+            "latencyMs": 1,
+        })])
+        baseline = request["baseline"]
+        assert isinstance(baseline, dict)
+        baseline["frozenControlHash"] = "0" * 64
+
+        with self.assertRaisesRegex(ValueError, "baseline frozen control hash"):
+            evaluate_path_search(request, generated_at_ms=123)
+
+    def test_baseline_without_evidence_fails_closed(self) -> None:
+        request = _request([_node("candidate", "sol-baseline", {
+            "taskSuccessRate": 1,
+            "verifierPassRate": 1,
+            "failedToolCalls": 0,
+            "allDatabasesCleaned": 1,
+            "toolCalls": 1,
+            "latencyMs": 1,
+        })])
+        baseline = request["baseline"]
+        assert isinstance(baseline, dict)
+        baseline["evidenceRefs"] = []
+
+        with self.assertRaisesRegex(ValueError, "baseline evidenceRefs"):
+            evaluate_path_search(request, generated_at_ms=123)
+
+    def test_candidate_without_evidence_is_rejected(self) -> None:
+        candidate = _node("unproven", "sol-baseline", {
+            "taskSuccessRate": 1,
+            "verifierPassRate": 1,
+            "failedToolCalls": 0,
+            "allDatabasesCleaned": 1,
+            "toolCalls": 1,
+            "latencyMs": 1,
+            "apiCostUsd": 0.01,
+        })
+        candidate["evidenceRefs"] = []
+
+        receipt = evaluate_path_search(_request([candidate]), generated_at_ms=123)
+
+        self.assertEqual(receipt["candidates"][0]["status"], "rejected")
+        self.assertIn("evidenceRefs", receipt["candidates"][0]["reason"])
+        self.assertEqual(receipt["claim"]["status"], "insufficient_evidence")
+        self.assertEqual(receipt["selectedPath"][-1]["nodeId"], "sol-baseline")
+
+    def test_selection_policy_changes_pareto_tie_break(self) -> None:
+        few_calls = _node("few-calls", "sol-baseline", {
+            "taskSuccessRate": 1,
+            "verifierPassRate": 1,
+            "failedToolCalls": 0,
+            "allDatabasesCleaned": 1,
+            "toolCalls": 1,
+            "latencyMs": 1_000_000,
+            "apiCostUsd": 0.01,
+        })
+        low_latency = _node("low-latency", "sol-baseline", {
+            "taskSuccessRate": 1,
+            "verifierPassRate": 1,
+            "failedToolCalls": 0,
+            "allDatabasesCleaned": 1,
+            "toolCalls": 100,
+            "latencyMs": 1,
+            "apiCostUsd": 0.01,
+        })
+        lexicographic = _request([few_calls, low_latency])
+        weighted = _request([few_calls, low_latency])
+        weighted_objective = weighted["objective"]
+        assert isinstance(weighted_objective, dict)
+        weighted_objective["selectionPolicy"] = "weighted_pareto"
+
+        lexicographic_receipt = evaluate_path_search(lexicographic, generated_at_ms=123)
+        weighted_receipt = evaluate_path_search(weighted, generated_at_ms=123)
+
+        self.assertEqual(lexicographic_receipt["selectedPath"][-1]["nodeId"], "few-calls")
+        self.assertEqual(weighted_receipt["selectedPath"][-1]["nodeId"], "low-latency")
+
     def test_selects_quality_safe_pareto_candidate_and_reports_cost_gap(self) -> None:
         receipt = evaluate_path_search(
             _request([

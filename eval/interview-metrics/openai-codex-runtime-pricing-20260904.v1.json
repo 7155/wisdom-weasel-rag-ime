@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "paw.openai-codex-runtime-pricing.v1",
+  "publishedDate": "2026-09-04",
+  "sourceUrl": "https://platform.openai.com/docs/pricing",
+  "claimBoundary": "Hash-bound Runtime cost reconciliation input; not a Provider bill.",
+  "gpt": {
+    "models": [
+      {
+        "id": "gpt-5.6-luna",
+        "provider": "openai-codex",
+        "cost": {
+          "input": 0.2,
+          "cacheRead": 0.02,
+          "cacheWrite": 0.25,
+          "output": 1.2,
+          "tiers": [
+            {
+              "inputTokensAbove": 272000,
+              "input": 0.4,
+              "cacheRead": 0.04,
+              "cacheWrite": 0.5,
+              "output": 1.8
+            }
+          ]
+        }
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "provider": "openai-codex",
+        "cost": {
+          "input": 5,
+          "cacheRead": 0.5,
+          "cacheWrite": 6.25,
+          "output": 30,
+          "tiers": [
+            {
+              "inputTokensAbove": 272000,
+              "input": 10,
+              "cacheRead": 1,
+              "cacheWrite": 12.5,
+              "output": 45
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

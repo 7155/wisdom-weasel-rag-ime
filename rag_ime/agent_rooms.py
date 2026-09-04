@@ -1860,6 +1860,68 @@ class AgentRoomStore:
             ).fetchone()
         return row is not None
 
+    def has_tool_terminal(
+        self,
+        room_id: str,
+        tool_call_id: str,
+        *,
+        root_id: str = "",
+        dispatch_id: str = "",
+    ) -> bool:
+        """Return whether Room already contains one exact Tool terminal."""
+
+        normalized_room_id = str(room_id or "").strip()
+        normalized_tool_call_id = str(tool_call_id or "").strip()
+        normalized_root_id = str(root_id or "").strip()
+        normalized_dispatch_id = str(dispatch_id or "").strip()
+        if not normalized_room_id or not normalized_tool_call_id:
+            return False
+        # The LIKE predicates are only a bounded prefilter. Parse every match
+        # before accepting it so a substring collision cannot become identity
+        # evidence.
+        quoted_identity = json.dumps(
+            normalized_tool_call_id,
+            ensure_ascii=False,
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload_json
+                FROM agent_room_events
+                WHERE room_id = ?
+                  AND payload_json LIKE ?
+                ORDER BY sequence DESC
+                LIMIT 100
+                """,
+                (normalized_room_id, f'%"toolCallId":{quoted_identity}%'),
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            data = payload.get("data")
+            if (
+                isinstance(data, dict)
+                and str(payload.get("sourceEventType") or "")
+                == "tool_finished"
+                and str(data.get("toolCallId") or "")
+                == normalized_tool_call_id
+                and (
+                    not normalized_root_id
+                    or str(data.get("rootId") or "") == normalized_root_id
+                )
+                and (
+                    not normalized_dispatch_id
+                    or str(data.get("dispatchId") or "")
+                    == normalized_dispatch_id
+                )
+            ):
+                return True
+        return False
+
     def _append_event(
         self,
         *,
@@ -2507,6 +2569,21 @@ class AgentRoomEventHub:
 
     def has_projection(self, projection_key: str) -> bool:
         return self.store.has_projection(projection_key)
+
+    def has_tool_terminal(
+        self,
+        room_id: str,
+        tool_call_id: str,
+        *,
+        root_id: str = "",
+        dispatch_id: str = "",
+    ) -> bool:
+        return self.store.has_tool_terminal(
+            room_id,
+            tool_call_id,
+            root_id=root_id,
+            dispatch_id=dispatch_id,
+        )
 
     def _fanout(self, event: dict[str, object]) -> None:
         with self._lock:

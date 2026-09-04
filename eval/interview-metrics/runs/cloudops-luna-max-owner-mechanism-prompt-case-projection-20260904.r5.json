@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "paw.cloudops-case-score-projection.v1",
+  "runId": "cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904-r5",
+  "sourceRunId": "cloudops-luna-max-owner-mechanism-prompt-20260904-r5",
+  "status": "completed",
+  "evaluationScope": "validation-only",
+  "runtime": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-luna",
+    "thinking": "max",
+    "piVersion": "0.84.2",
+    "protocolVersion": "2",
+    "runtimeVersion": "pi-0.84.2-9c3f93c8b1c4-raghost-252438cdad",
+    "identitySha256": "f0dfcbe60ac84b83271877e5cfed8f5145657cadfd3125f9458a3c60715371af"
+  },
+  "dataset": {
+    "suiteId": "cloudops-smoke-v1",
+    "suiteSha256": "31939ae6ba38924fd63195fb28c289401674da89e81423fe7dd8217b753fdaec",
+    "contractSha256": "99126a25849537bf52558c3cdd18258a7393fe14c82399e9b5f834208b607b0d",
+    "batchPlanSha256": "d7a7aba05d02005407582892bd3f5f10672ff7e6c527cf73a20570b1ed165989",
+    "caseCount": 12,
+    "batchPlan": "3x4-sequential",
+    "goldVisibleToAgent": false
+  },
+  "configuration": {
+    "workflowProfile": "luna-owner-mechanism-gate-v8",
+    "contextProjection": "standard-v1",
+    "transport": "loopback-http-v1",
+    "timeoutSeconds": 900
+  },
+  "metrics": {
+    "AnswerCoverage": 1.0,
+    "CA": 1.0,
+    "FA": 0.9166666666666666,
+    "JRA": 0.9166666666666666,
+    "Top3JRA": 1.0
+  },
+  "usage": {
+    "available": true,
+    "input": 477369,
+    "cacheRead": 5579264,
+    "cacheWrite": 0,
+    "output": 67198,
+    "totalTokens": 6123831,
+    "categoryReceiptComplete": true
+  },
+  "signals": {
+    "batchCount": 3,
+    "elapsedMs": 1492913,
+    "failedToolCalls": 0,
+    "successfulToolCalls": 130,
+    "toolCalls": 130
+  },
+  "tasks": [
+    {"taskId": "boutique/runtime/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "boutique/scheduling/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "boutique/admission/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "boutique/infrastructure/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "boutique/codedefect/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "boutique/performance/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "trainticket/runtime/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "trainticket/startup/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "trainticket/service/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "trainticket/service/2", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "trainticket/performance/1", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 4, "total": 4, "failedVerifierNames": []}},
+    {"taskId": "trainticket/performance/2", "taskSucceeded": true, "terminalEvent": "scored", "verifier": {"passed": 2, "total": 4, "failedVerifierNames": ["FA", "JRA"]}}
+  ],
+  "evidence": {
+    "sourceArtifactRef": "agent-artifact:cloudops-luna-max-owner-mechanism-prompt-20260904-r5:trial_completed",
+    "sourceArtifactSha256": "085a0765422cd591ead22a085aad323830f8352861fb936a95ffe1a897ba8ba7",
+    "terminalRecordId": "cloudops-luna-max-owner-mechanism-prompt-20260904-r5:0011",
+    "terminalRecordSha256": "2ef67c43121228a8bcf9a187325dce6bb255b6fda9845555cb5281b724856a7c",
+    "terminalCreatedAtMs": 1788517626507,
+    "sourceReportSha256": "343a8c0aa3de4c67ff201c87f125ef19412e2f9768aca910e4f59acb278adac0",
+    "costReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-owner-mechanism-prompt-20260904.r5.v1.json",
+    "costReceiptSha256": "d8b5fb7580588d07206bc80f4bd1b39de9a022671556952b1a5dcad31f27a5e9"
+  },
+  "claimBoundary": [
+    "This projection contains only public case IDs and Host score dimensions; answers, predicted roots, evidence summaries, Gold, paths, and credentials are omitted.",
+    "Usage and Tool signals are authoritative only at run level and are not allocated across individual cases.",
+    "CA defines final task correctness here; FA, JRA, and Top3JRA remain visible quality dimensions.",
+    "This is one source-local Validation run. Held-out, installed PAWOS, foreground behavior, and production generalization were not evaluated.",
+    "The separate $0.27613024 cost receipt is a Runtime per-request reconciled estimate, not a Provider bill."
+  ]
+}

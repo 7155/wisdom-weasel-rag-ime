@@ -170,7 +170,7 @@ describe('PAWOS Room collaboration tools', () => {
     });
   });
 
-  it('restores the draft and attachments when the first Room start is declined', async () => {
+  it('auto-confirms a legacy pending Room response without rendering approval UI', async () => {
     const user = userEvent.setup();
     const source = previewRoomSnapshot('room-gate');
     const gateWork = source.room.workItems[0];
@@ -183,18 +183,43 @@ describe('PAWOS Room collaboration tools', () => {
       resumeToken: '',
     };
     const room = gateSnapshot.room as unknown as RoomSummary;
-    const { transport } = renderRoom(900, vi.fn(), room, gateSnapshot, undefined, undefined, vi.fn(), {
-      ok: true,
-      startConfirmation: {
-        status: 'pending',
-        gateId: 'room-gate:preview',
-        objective: '先确认 Room 执行范围',
-        workItemId: 'room-work:preview',
-        clientMessageId: 'room-client:preview',
-        rootId: 'room-gate:turn-start',
-        confirmedAtMs: 0,
+    const { transport } = renderRoom(
+      900,
+      vi.fn(),
+      room,
+      gateSnapshot,
+      undefined,
+      undefined,
+      vi.fn(),
+      (request) => {
+        if (request.pathId === 'agent.room.message') {
+          return {
+            ok: true,
+            startConfirmation: {
+              status: 'pending',
+              gateId: 'room-gate:preview',
+              objective: '先确认 Room 执行范围',
+              workItemId: 'room-work:preview',
+              clientMessageId: 'room-client:preview',
+              rootId: 'room-gate:turn-start',
+              confirmedAtMs: 0,
+            },
+          };
+        }
+        if (request.pathId === 'agent.room.startGate.confirm') {
+          return {
+            ok: true,
+            accepted: true,
+            phase: 'execution',
+            roomId: room.id,
+            roomTurnId: 'room-gate:turn-start',
+            clientMessageId: 'room-client:preview',
+            timelineEvents: [],
+          };
+        }
+        return undefined;
       },
-    });
+    );
     const composer = await screen.findByRole('textbox', { name: '协作消息' });
     const image = new File(['png'], 'start-scope.png', { type: 'image/png' });
     fireEvent.paste(composer, {
@@ -204,21 +229,16 @@ describe('PAWOS Room collaboration tools', () => {
 
     await user.type(composer, '先确认 Room 执行范围');
     await user.click(screen.getByRole('button', { name: '立即干预当前回合' }));
-    await screen.findByRole('button', { name: '暂不开始' });
+    await waitFor(() => expect(transport.requests.find(({ request }) => (
+      request.pathId === 'agent.room.startGate.confirm'
+    ))?.request).toMatchObject({
+      params: { roomId: room.id },
+      body: { gateId: 'room-gate:preview', decision: 'confirm' },
+    }));
+    expect(screen.queryByRole('alert', { name: 'Room 开始执行确认' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '暂不开始' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认并开始' })).not.toBeInTheDocument();
     expect(composer).toHaveValue('');
-    expect(useRoomLiveStore.getState().projections[room.id]?.optimisticByClientMessageId)
-      .not.toEqual({});
-
-    await user.click(screen.getByRole('button', { name: '暂不开始' }));
-
-    await waitFor(() => expect(composer).toHaveValue('先确认 Room 执行范围'));
-    expect(screen.getByLabelText('待发送附件')).toHaveTextContent('start-scope.png');
-    expect(useRoomLiveStore.getState().projections[room.id]?.optimisticByClientMessageId)
-      .toEqual({});
-    expect(transport.requests.find(({ request }) => request.pathId === 'agent.room.startGate.confirm')?.request).toMatchObject({
-      pathId: 'agent.room.startGate.confirm',
-      body: { gateId: 'room-gate:preview', decision: 'reject' },
-    });
   });
 
   it('uses one round sheet by default and enters collaboration mode only on explicit request', async () => {
@@ -940,7 +960,7 @@ function renderRoom(
   initialDraft?: string,
   resumeResponse?: Record<string, unknown>,
   setCollaborationFocusGroup = vi.fn(),
-  messageResponse?: Record<string, unknown>,
+  messageResponse?: Record<string, unknown> | ((request: ControlRequest) => Record<string, unknown> | undefined),
   initialError?: string,
   active = true,
   snapshotFailure = false,
@@ -965,6 +985,10 @@ function renderRoom(
     }
     if (resumeResponse && request.pathId === 'agent.room.workItem.resume') {
       return { ok: true, workItem: resumeResponse } as Response;
+    }
+    if (typeof messageResponse === 'function') {
+      const response = messageResponse(request);
+      if (response !== undefined) return response as Response;
     }
     if (messageResponse && request.pathId === 'agent.room.message') {
       return messageResponse as Response;

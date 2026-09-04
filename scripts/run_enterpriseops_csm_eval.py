@@ -58,12 +58,26 @@ FROZEN_HELD_OUT_TASK_IDS = (
     "task_20260102_172945_725_ad5a67e3_5480e26f",
     "task_20260104_202644_765_00364ece_a86667c0",
 )
+LUNA_ROLE_TENURE_PROFILE = "luna-role-tenure-preloaded-v4"
+LUNA_SELECTED_CATALOG_PROFILE = "luna-selected-catalog-preloaded-v5"
+LUNA_EXPLICIT_ENUM_PROFILE = "luna-explicit-enum-preloaded-v6"
 WORKFLOW_PROFILES = (
     "baseline-v1",
     "dependency-plan-v1",
     "state-contract-v1",
     "state-contract-compact-v2",
     "state-contract-preloaded-v3",
+    LUNA_ROLE_TENURE_PROFILE,
+    LUNA_SELECTED_CATALOG_PROFILE,
+    LUNA_EXPLICIT_ENUM_PROFILE,
+)
+_PRELOADED_WORKFLOW_PROFILES = frozenset(
+    {
+        "state-contract-preloaded-v3",
+        LUNA_ROLE_TENURE_PROFILE,
+        LUNA_SELECTED_CATALOG_PROFILE,
+        LUNA_EXPLICIT_ENUM_PROFILE,
+    }
 )
 ENTERPRISEOPS_SUITE_V2_REVISION = "enterpriseops-csm-suite-v2"
 ENTERPRISEOPS_SUITE_V2_BUSINESS_AS_OF_DATE = "2025-11-04"
@@ -90,6 +104,12 @@ def _file_sha256(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def workflow_preloads_selected_schemas(workflow_profile: str) -> bool:
+    if workflow_profile not in WORKFLOW_PROFILES:
+        raise ValueError("EnterpriseOps workflow profile is unsupported")
+    return workflow_profile in _PRELOADED_WORKFLOW_PROFILES
 
 
 def _git_head(path: Path) -> str:
@@ -532,6 +552,9 @@ def build_agent_prompt(
         "state-contract-v1",
         "state-contract-compact-v2",
         "state-contract-preloaded-v3",
+        LUNA_ROLE_TENURE_PROFILE,
+        LUNA_SELECTED_CATALOG_PROFILE,
+        LUNA_EXPLICIT_ENUM_PROFILE,
     }:
         business_as_of = str(task.get("businessAsOfDate") or "").strip()
         if not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", business_as_of):
@@ -553,8 +576,11 @@ def build_agent_prompt(
         if workflow_profile in {
             "state-contract-compact-v2",
             "state-contract-preloaded-v3",
+            LUNA_ROLE_TENURE_PROFILE,
+            LUNA_SELECTED_CATALOG_PROFILE,
+            LUNA_EXPLICIT_ENUM_PROFILE,
         }:
-            return (
+            compact_contract = (
                 base
                 + f"\n\nKeep a compact internal state contract.{date_contract}{temporal_contract} "
                 "Do not call the built-in session_workflow Tool or any planning Tool. Preserve exact strings, dates, "
@@ -562,6 +588,36 @@ def build_agent_prompt(
                 "once in dependency order. Do not reread unchanged records: trust successful mutation results, make "
                 "one final verification pass with CSM reads, and repair at most once. End with one short summary."
             )
+            if workflow_profile in {
+                LUNA_ROLE_TENURE_PROFILE,
+                LUNA_SELECTED_CATALOG_PROFILE,
+                LUNA_EXPLICIT_ENUM_PROFILE,
+            }:
+                role_tenure_contract = compact_contract + (
+                    " When selecting a person under role, geography and tenure constraints, form one candidate set "
+                    "across every allowed role. Confirm active status and geographic eligibility from the authoritative "
+                    "linked location record; never infer geography from names, phone numbers or other proxies. Rank only "
+                    "eligible candidates by sys_created_on ascending, and use the lowest stable record identifier only "
+                    "to break an exact timestamp tie."
+                )
+                if workflow_profile in {
+                    LUNA_SELECTED_CATALOG_PROFILE,
+                    LUNA_EXPLICIT_ENUM_PROFILE,
+                }:
+                    selected_catalog_contract = role_tenure_contract + (
+                        " The selected Tool catalog is authoritative for this disposable run. Do not search for an "
+                        "unavailable Tool. If a policy mentions an operation absent from that catalog, complete "
+                        "independently executable requested mutations with the available Tools, then report that "
+                        "unsupported substep without inventing its result."
+                    )
+                    if workflow_profile == LUNA_EXPLICIT_ENUM_PROFILE:
+                        return selected_catalog_contract + (
+                            " When the request states an exact allowed enum value, use that exact value. Do not replace "
+                            "it by interpreting nearby adjectives or superlatives unless the user explicitly corrects it."
+                        )
+                    return selected_catalog_contract
+                return role_tenure_contract
+            return compact_contract
         return (
             base
             + f"\n\nCompile a state contract before the first mutation.{date_contract}{temporal_contract} Preserve user-provided exact strings, quoted titles, "
@@ -1025,7 +1081,7 @@ def _run_profile(
                 database_id=database_id,
                 context=context,
                 allowed_tools=[str(name) for name in task["selected_tools"]],
-                preload_tools=workflow_profile == "state-contract-preloaded-v3",
+                preload_tools=workflow_preloads_selected_schemas(workflow_profile),
             )
             runtime_stage = "runtime_ensure"
             ensured = service.ensure_runtime({"sessionId": session_id})
@@ -1299,7 +1355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "workflowProfile": args.workflow_profile,
             "toolDisclosureMode": (
                 "preloaded_selected_schemas"
-                if args.workflow_profile == "state-contract-preloaded-v3"
+                if workflow_preloads_selected_schemas(args.workflow_profile)
                 else "progressive"
             ),
             "suiteRevision": args.suite_revision,

@@ -128,6 +128,30 @@ describe('PAWOS Agent App', () => {
     expect(within(rail).getByText('paw')).toBeInTheDocument();
   });
 
+  it('does not offer the system root as a project-scoped workspace', async () => {
+    const user = userEvent.setup();
+    renderAgent(createTransport({
+      sessions: [
+        {
+          id: 'session-system-wide', title: '全系统会话', mode: 'coordinator', status: 'idle',
+          updatedAtMs: 4, workspaceRoots: ['/'], messageCount: 1, lastMessagePreview: '',
+        },
+        {
+          id: 'session-project', title: '项目会话', mode: 'coordinator', status: 'idle',
+          updatedAtMs: 3, workspaceRoots: ['/work/paw'], messageCount: 1, lastMessagePreview: '',
+        },
+      ],
+      rooms: [],
+    }));
+
+    expect(await screen.findByRole('button', { name: '起始项目 · work/paw' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '起始项目 · /' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /起始项目/ }));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitemradio', { name: /paw/ })).toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitemradio', { name: /^\/$/ })).not.toBeInTheDocument();
+  });
+
   it('opens a directly targeted Room planet as a full Session without listing it as an ordinary conversation file', async () => {
     renderAgent(createTransport({
       sessions: [{
@@ -330,7 +354,7 @@ describe('PAWOS Agent App', () => {
     }));
 
     expect(await screen.findByRole('button', { name: '模型与推理 · GPT-5.6 Sol · Max' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /全权限/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument();
   });
 
   it('does not let late authority hydration overwrite a composer choice already made by the user', async () => {
@@ -346,7 +370,7 @@ describe('PAWOS Agent App', () => {
       executionMode: 'read_only',
     }));
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /全权限/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /只读/ })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /GPT-5\.6 Sol/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /GPT-5\.6 Terra · High/ })).not.toBeInTheDocument();
   });

@@ -1,5 +1,6 @@
 import {
   Check,
+  FolderOpen,
   LockKeyhole,
   ShieldCheck,
   TriangleAlert,
@@ -40,6 +41,7 @@ export function PermissionPicker({
   disabled,
   requestOpen,
   onChange,
+  onWorkspaceRootsChange,
 }: {
   session?: SessionSummary;
   persona?: AgentPersonaV1;
@@ -57,6 +59,7 @@ export function PermissionPicker({
   // coordinator profiles. Persona is optional metadata and never grants or
   // withholds execution permissions.
   const canCoordinate = Boolean(session && !session.roomParticipant);
+  const scopedWorkspaceRoots = (session?.workspaceRoots ?? []).filter((root) => root !== '/');
 
   useEffect(() => {
     if (requestOpen > 0 && session && !disabled) setOpen(true);
@@ -104,18 +107,28 @@ export function PermissionPicker({
                 setDangerousOpen(true);
                 return;
               }
+              if (preset.executionMode === 'workspace_managed' && !scopedWorkspaceRoots.length) {
+                setOpen(false);
+                onWorkspaceRootsChange();
+                return;
+              }
               onChange({
-                mode: 'coordinator',
+                mode: preset.mode,
                 toolProfileVersion: preset.toolProfileVersion,
                 executionMode: preset.executionMode,
-                workspaceRoots: unrestrictedWorkspaceRoots(...(session?.workspaceRoots ?? [])),
+                workspaceRoots: preset.executionMode === 'per_action'
+                  ? unrestrictedWorkspaceRoots(...scopedWorkspaceRoots)
+                  : scopedWorkspaceRoots,
+                workspaceScopeConfirmed: preset.executionMode === 'workspace_managed',
               });
               setOpen(false);
             }}
           >
             {PERMISSION_PRESETS.map((preset) => {
               const selected = current.id === preset.id;
-              const available = canCoordinate;
+              const available = canCoordinate && (
+                preset.executionMode !== 'workspace_managed' || scopedWorkspaceRoots.length > 0
+              );
               const toolCount = tools.filter(
                 (tool) => toolAvailableForPolicy(
                   tool,
@@ -137,7 +150,9 @@ export function PermissionPicker({
                     <small>
                       {available
                         ? `${preset.description} · ${toolCount} 个工具`
-                        : '当前会话未开放协调权限'}
+                        : preset.executionMode === 'workspace_managed' && canCoordinate
+                          ? '先选择授权目录后可用'
+                          : '当前会话未开放协调权限'}
                     </small>
                   </span>
                   {selected ? <Check size={15} /> : null}
@@ -145,9 +160,25 @@ export function PermissionPicker({
               );
             })}
           </RadioGroup.Root>
+          {canCoordinate ? (
+            <section className="agent-picker-popover__workspace" aria-label="授权工作区">
+              <FolderOpen size={16} />
+              <span>
+                <strong>授权工作区</strong>
+                <small title={scopedWorkspaceRoots.join('\n')}>
+                  {scopedWorkspaceRoots.length
+                    ? `${scopedWorkspaceRoots.length} 个目录 · ${scopedWorkspaceRoots.map(shortPath).join('、')}`
+                    : '尚未授权目录，工作区托管不可用'}
+                </small>
+              </span>
+              <Button size="small" variant="quiet" disabled={disabled} onClick={onWorkspaceRootsChange}>
+                {scopedWorkspaceRoots.length ? '更改目录' : '选择目录'}
+              </Button>
+            </section>
+          ) : null}
           {!PERMISSION_PRESETS.some((preset) => preset.id === current.id) ? (
             <p className="agent-picker-popover__note">
-              当前 Session 使用旧版权限策略；上方选项仅提供新的全权限或全自动策略。
+              当前 Session 使用旧版权限策略；选择上方任一模式后会切换到对应的新合同。
             </p>
           ) : null}
           {session?.toolAllowlistMode === 'explicit' ? (
@@ -210,4 +241,9 @@ export function PermissionPicker({
       </Dialog>
     </>
   );
+}
+
+function shortPath(path: string): string {
+  const parts = path.split('/').filter(Boolean);
+  return parts.at(-1) ?? path;
 }

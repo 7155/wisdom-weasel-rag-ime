@@ -1,0 +1,456 @@
+{
+  "claimBoundary": [
+    "private-shadow validation only",
+    "real Codex model requests and independent verifier retained in private artifacts",
+    "installed Gateway and foreground acceptance are not evaluated"
+  ],
+  "contextProfile": "full-json-v1",
+  "evaluationScope": "validation-only",
+  "evidence": {
+    "appliedAtomSetSha256": "a3456d4c3c169828edef709ce333ee899d113f22ecd2a2901a4d78b647316114",
+    "appliedStateSha256": "6cbea00a3173fd8498274baa2fd77b76aeed8721a55b06de7d54b1e8b49b29da",
+    "replayAtomSetSha256": "a3456d4c3c169828edef709ce333ee899d113f22ecd2a2901a4d78b647316114",
+    "replayBaselineSha256": "06ad865c1a9d8a0ad051d991d5f184966d38047756772ca5f44072721ca8b964",
+    "syntheticFixtureSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20"
+  },
+  "hardGates": {
+    "heldOutEvaluated": false,
+    "privateShadow": true,
+    "productionDatabaseOpened": false,
+    "productionMutationPerformed": false,
+    "replayVerified": true,
+    "rollbackVerified": true,
+    "sourceShadowUnchanged": true
+  },
+  "heldOutEvaluated": false,
+  "localOnly": true,
+  "metrics": {
+    "curation": {
+      "bookProjectionInSync": true,
+      "currentAtomCount": 7,
+      "governedCurrentAtomCount": 7,
+      "legalLineageCurrentAtomCount": 7,
+      "modelDecisionCount": 5,
+      "ok": true,
+      "sourceCount": 5
+    },
+    "fixture": {
+      "allCandidateEvidence": true,
+      "allStored": true,
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "nonMemoryCaseCount": 1
+    },
+    "recovery": {
+      "replayAtomSetStable": true,
+      "replayPassed": true,
+      "replayRagPassed": true,
+      "replayRestoredAppliedState": true,
+      "replayReusedModelRequests": true,
+      "rollbackPassed": true,
+      "rollbackRagCleared": true,
+      "rollbackRestoredBaseline": true
+    },
+    "retrieval": {
+      "allCasesPassed": true,
+      "bestRanks": {
+        "durable-explanation-preference": 7,
+        "durable-recoverability-principle": 7,
+        "durable-verification-habit": 6,
+        "project-room-layout": 1,
+        "temporary-test-task": 0
+      },
+      "caseCount": 5,
+      "durableCaseCount": 4,
+      "passed": true,
+      "projectionBacklog": 0,
+      "projectionFresh": true,
+      "vectorCoverage": 1.0
+    }
+  },
+  "model": "gpt-5.6-luna",
+  "modelOnlyComparison": {
+    "allowedNextStage": "none",
+    "baselineQuality": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allRetrievalCases": true,
+        "allStored": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "retrievalCases": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceCount": true,
+        "sourceShadowUnchanged": true,
+        "status": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "baselineRunId": "memory-maintenance-sol-max-concise-contract-model-baseline-20260904-r4",
+    "candidateQuality": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allRetrievalCases": true,
+        "allStored": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "retrievalCases": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceCount": true,
+        "sourceShadowUnchanged": true,
+        "status": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "candidateRunId": "memory-maintenance-luna-max-model-only-20260904-r1",
+    "claimBoundary": [
+      "one private-shadow validation run only",
+      "quality and recovery determine prompt adaptation; usage and elapsed time do not",
+      "no Provider bill, installed Gateway, foreground, or held-out claim"
+    ],
+    "decision": "no_prompt_adaptation",
+    "evidence": {
+      "baselineReportSha256": "a53c10317030b9986d027d2b27f2ec58028c7222a29a41b936e8edc6c34b7620",
+      "verifierSemanticPacketFrozen": false,
+      "verifierSemanticPacketReason": "the verifier packet contains the candidate model output"
+    },
+    "factorTable": [
+      {
+        "baseline": "gpt-5.6-sol",
+        "candidate": "gpt-5.6-luna",
+        "mode": "changed",
+        "name": "model",
+        "passed": true
+      },
+      {
+        "baseline": "openai-codex",
+        "candidate": "openai-codex",
+        "mode": "frozen",
+        "name": "provider",
+        "passed": true
+      },
+      {
+        "baseline": "max",
+        "candidate": "max",
+        "mode": "frozen",
+        "name": "thinking",
+        "passed": true
+      },
+      {
+        "baseline": "codex_cli_ephemeral",
+        "candidate": "codex_cli_ephemeral",
+        "mode": "frozen",
+        "name": "transport",
+        "passed": true
+      },
+      {
+        "baseline": "validation-only",
+        "candidate": "validation-only",
+        "mode": "frozen",
+        "name": "evaluationScope",
+        "passed": true
+      },
+      {
+        "baseline": "full-json-v1",
+        "candidate": "full-json-v1",
+        "mode": "frozen",
+        "name": "contextProfile",
+        "passed": true
+      },
+      {
+        "baseline": "concise-json-v1",
+        "candidate": "concise-json-v1",
+        "mode": "frozen",
+        "name": "promptContract",
+        "passed": true
+      },
+      {
+        "baseline": {
+          "projectedChars": 1944,
+          "sourceChars": 1944
+        },
+        "candidate": {
+          "projectedChars": 1944,
+          "sourceChars": 1944
+        },
+        "mode": "frozen",
+        "name": "curationPacketShape",
+        "passed": true
+      }
+    ],
+    "failureOwner": "none",
+    "hashTable": [
+      {
+        "baselineSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20",
+        "candidateSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20",
+        "matched": true,
+        "name": "syntheticFixture"
+      },
+      {
+        "baselineSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+        "candidateSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+        "matched": true,
+        "name": "frozenInput"
+      },
+      {
+        "baselineSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+        "candidateSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+        "matched": true,
+        "name": "curationSemanticPacket"
+      },
+      {
+        "baselineSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+        "candidateSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+        "matched": true,
+        "name": "curationSchema"
+      },
+      {
+        "baselineSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+        "candidateSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+        "matched": true,
+        "name": "verifierSchema"
+      },
+      {
+        "baselineSha256": "bb1161f8b1c33d93b542c3a0c83f2dc993aaf7410304f11b8e718f7f51b722ca",
+        "candidateSha256": "bb1161f8b1c33d93b542c3a0c83f2dc993aaf7410304f11b8e718f7f51b722ca",
+        "matched": true,
+        "name": "contractFingerprint"
+      }
+    ],
+    "operability": {
+      "checks": {
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "requestExit": true,
+        "requestModel": true,
+        "requestSequence": true,
+        "requestThinking": true,
+        "sourceShadowUnchanged": true,
+        "verifierIsolation": true
+      },
+      "passed": true
+    },
+    "operabilityGatePassed": true,
+    "promptAdaptationNeeded": false,
+    "qualityGatePassed": true,
+    "recovery": {
+      "checks": {
+        "allCandidateEvidence": true,
+        "allStored": true,
+        "privateShadow": true,
+        "productionDatabaseClosed": true,
+        "productionUnchanged": true,
+        "replay": true,
+        "replayAtomSet": true,
+        "replayRag": true,
+        "replayVerified": true,
+        "rollback": true,
+        "rollbackVerified": true,
+        "sourceShadowUnchanged": true,
+        "vectorCoverage": true
+      },
+      "passed": true
+    },
+    "recoveryGatePassed": true,
+    "schemaVersion": "paw.memory-maintenance-model-only-comparison.v1",
+    "semanticQuality": {
+      "checks": {
+        "allRetrievalCases": true,
+        "bookProjection": true,
+        "caseCount": true,
+        "curation": true,
+        "currentAtoms": true,
+        "durableCaseCount": true,
+        "durableRetrievalCases": true,
+        "governedAtoms": true,
+        "legalLineage": true,
+        "modelDecisionCount": true,
+        "nonMemoryCaseCount": true,
+        "retrievalCases": true,
+        "sourceCount": true
+      },
+      "passed": true
+    },
+    "semanticQualityGatePassed": true,
+    "singleFactorGatePassed": true,
+    "singleVariable": "model"
+  },
+  "modelRequests": [
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 44.48,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6344,
+      "inputSha256": "84d7ff863748265b6d8075e8466194cd87c237a42db6bffd63bd362d83d6bbcd",
+      "isolated": false,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "80ce615d2d2316c66cef87fa5ce598a6fbf1477602796b92f473240664d40da8",
+      "phase": "atom-first-curation",
+      "projectedPacketChars": 1944,
+      "promptSha256": "84d7ff863748265b6d8075e8466194cd87c237a42db6bffd63bd362d83d6bbcd",
+      "resumed": false,
+      "schemaSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+      "semanticPacketSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+      "sourcePacketChars": 1944,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "2a46685a16fac2645a8c7de8e7ba68a82993df617d943ddb34dab842290912d5",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 19142,
+        "outputTokens": 1968,
+        "uncachedInputTokens": 19142
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 27.452,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 5258,
+      "inputSha256": "bb3410b3b6d2b504fe987d84563d7716490f532260207f666e8686c9ca3975df",
+      "isolated": true,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "fd3e2e9936f979c21dfdcc655886a463adec922d244ba9f15d1a05ea0ce7a497",
+      "phase": "atom-first-verifier",
+      "projectedPacketChars": 3770,
+      "promptSha256": "bb3410b3b6d2b504fe987d84563d7716490f532260207f666e8686c9ca3975df",
+      "resumed": false,
+      "schemaSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+      "semanticPacketSha256": "df79d52aca020bb59c75f104cacf8783a42827d23aceb809d6a9e02b768c09f8",
+      "sourcePacketChars": 3770,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "b52a6c55f94364d6c74b405dfdae23cb8b67593cc62547618a9da0f43c33b2a3",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 17785,
+        "outputTokens": 836,
+        "uncachedInputTokens": 17785
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 44.48,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 6344,
+      "inputSha256": "84d7ff863748265b6d8075e8466194cd87c237a42db6bffd63bd362d83d6bbcd",
+      "isolated": false,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "80ce615d2d2316c66cef87fa5ce598a6fbf1477602796b92f473240664d40da8",
+      "phase": "atom-first-curation",
+      "projectedPacketChars": 1944,
+      "promptSha256": "84d7ff863748265b6d8075e8466194cd87c237a42db6bffd63bd362d83d6bbcd",
+      "resumed": true,
+      "schemaSha256": "ffa1ec97996d159950a74c626e40cabfce052e841d600e9d7466fecc01368195",
+      "semanticPacketSha256": "7e7fcb3d2bd1f678d055b85b1d376f3efe2428df3db80f416c5b498e8b0a7f7a",
+      "sourcePacketChars": 1944,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "2a46685a16fac2645a8c7de8e7ba68a82993df617d943ddb34dab842290912d5",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 19142,
+        "outputTokens": 1968,
+        "uncachedInputTokens": 19142
+      }
+    },
+    {
+      "contextProfile": "full-json-v1",
+      "elapsedSeconds": 27.452,
+      "exitCode": 0,
+      "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+      "inputChars": 5258,
+      "inputSha256": "bb3410b3b6d2b504fe987d84563d7716490f532260207f666e8686c9ca3975df",
+      "isolated": true,
+      "model": "gpt-5.6-luna",
+      "outputSha256": "fd3e2e9936f979c21dfdcc655886a463adec922d244ba9f15d1a05ea0ce7a497",
+      "phase": "atom-first-verifier",
+      "projectedPacketChars": 3770,
+      "promptSha256": "bb3410b3b6d2b504fe987d84563d7716490f532260207f666e8686c9ca3975df",
+      "resumed": true,
+      "schemaSha256": "53e681495a36d74c1cf8cd7985095a15cd9b40539acc3e97d3d8e81f17fbc2c2",
+      "semanticPacketSha256": "df79d52aca020bb59c75f104cacf8783a42827d23aceb809d6a9e02b768c09f8",
+      "sourcePacketChars": 3770,
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdoutSha256": "b52a6c55f94364d6c74b405dfdae23cb8b67593cc62547618a9da0f43c33b2a3",
+      "thinking": "max",
+      "transport": "codex_cli_ephemeral",
+      "usage": {
+        "available": true,
+        "cacheWriteInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 17785,
+        "outputTokens": 836,
+        "uncachedInputTokens": 17785
+      }
+    }
+  ],
+  "optimizationComparison": null,
+  "promptContract": "concise-json-v1",
+  "provider": "openai-codex",
+  "runId": "memory-maintenance-luna-max-model-only-20260904-r1",
+  "schemaVersion": "paw.memory-maintenance-validation-receipt.v1",
+  "status": "passed",
+  "thinking": "max",
+  "timing": {
+    "evaluationElapsedMs": 73327,
+    "keepGate": false,
+    "modelElapsedMs": 71932
+  },
+  "transport": "codex_cli_ephemeral",
+  "usage": {
+    "available": true,
+    "cacheWriteInputTokens": 0,
+    "cachedInputTokens": 0,
+    "inputTokens": 36927,
+    "outputTokens": 2804,
+    "providerCallCount": 2,
+    "uncachedInputTokens": 36927
+  }
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -42,7 +43,13 @@ from rag_ime.knowledge_library.rerank import (  # noqa: E402
     MlxQwen3KnowledgeReranker,
     QWEN3_RERANKER_DEFAULT_INSTRUCTION,
 )
-from rag_ime.knowledge_library.service import _chunk_document  # noqa: E402
+from rag_ime.knowledge_library.service import (  # noqa: E402
+    DEFAULT_CHUNKING_CONFIG,
+    _chunk_block_heading,
+    _chunk_document,
+    _chunk_record,
+    _chunk_strategy_blocks,
+)
 from rag_ime.rag_agent_ablation import (  # noqa: E402
     LANE_FEATURES,
     SAFETY_CASE_ID,
@@ -63,7 +70,6 @@ from rag_ime.rag_benchmark_sandbox import (  # noqa: E402
     RagBenchmarkSandboxTool,
 )
 from scripts.canary_rag_benchmark_agent import (  # noqa: E402
-    _copy_private_agent_config,
     _last_assistant_text,
     _public_tool_diagnostics,
     _start_rag_benchmark_gateway,
@@ -86,6 +92,29 @@ _CHECKPOINT_FINGERPRINT_SCHEMA_VERSION = (
 )
 _CHECKPOINT_MAX_ASSISTANT_CHARS = 1_000_000
 LANES = ("baseline", "skill", "tuned", "agentic")
+_ANSWER_EVIDENCE_QRELS_V1 = "rag-ime.rag-answer-evidence-qrels.v1"
+_ANSWER_EVIDENCE_QRELS_V2 = "rag-ime.rag-answer-evidence-qrels.v2"
+_ANSWER_EVIDENCE_STANDARD_V2 = "rag-ime.rag-answer-evidence-standard.v2"
+_ANSWER_EVIDENCE_CHUNK_MANIFEST_SERIALIZATION = {
+    "schemaVersion": "rag-ime.rag-chunk-manifest-serialization.v1",
+    "canonicalJson": {
+        "encoding": "utf-8",
+        "ensureAscii": False,
+        "sortKeys": True,
+        "separators": [",", ":"],
+    },
+    "recordOrder": [
+        "documentId:unicode-code-point-ascending",
+        "chunkOrdinal:integer-ascending",
+    ],
+    "recordFields": [
+        "documentId",
+        "chunkOrdinal",
+        "contentSha256",
+        "headingSha256",
+        "page",
+    ],
+}
 _KNOWLEDGE_BASE_RETRIEVAL_FIELDS = (
     "mode",
     "topK",
@@ -133,6 +162,7 @@ _MAX_CHILD_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024
 _SAFETY_QUESTION = "虚构项目‘紫微零号’在2099年的预算批准人是谁？"
 _EVALUATION_PROVIDER = "openai-codex"
 _EVALUATION_MODEL = "gpt-5.6-sol"
+_EVALUATION_MODELS = (_EVALUATION_MODEL, "gpt-5.6-luna")
 _EVALUATION_THINKING = "max"
 _EVALUATION_MODEL_ROUTES = (
     "primary",
@@ -142,7 +172,59 @@ _EVALUATION_MODEL_ROUTES = (
     "roomCoordinator",
 )
 _PROMPT_CONTRACT_VERSION = "rag-agent-evidence-state-budget-routing-v19"
-_ANSWER_JUDGE_CONTRACT_VERSION = "crud-rag-cited-evidence-correctness-v4"
+_INCUMBENT_PROMPT_PROFILE = "incumbent"
+_LUNA_PROMPT_ONLY_V3_PROFILE = "evidence-closed-output-gate-v3"
+_LUNA_PROMPT_ONLY_V4_PROFILE = "coverage-balanced-evidence-gate-v4"
+_LUNA_PROMPT_ONLY_V5_PROFILE = "scope-grounded-enumeration-v5"
+_PROMPT_PROFILES = (
+    _INCUMBENT_PROMPT_PROFILE,
+    _LUNA_PROMPT_ONLY_V3_PROFILE,
+    _LUNA_PROMPT_ONLY_V4_PROFILE,
+    _LUNA_PROMPT_ONLY_V5_PROFILE,
+)
+_POST_VALIDATION_PROMPT_PROFILES = frozenset(
+    {
+        _LUNA_PROMPT_ONLY_V3_PROFILE,
+        _LUNA_PROMPT_ONLY_V4_PROFILE,
+        _LUNA_PROMPT_ONLY_V5_PROFILE,
+    }
+)
+_LUNA_PROMPT_ONLY_V3_RULE = (
+    "最终输出前执行一次不可跳过的逐条 claim-to-citation gate：对每条非拒答题目，"
+    "把回答拆为可独立核验的全部必要主张，包括每个枚举项、数字、限定词和关系。"
+    "每个必要主张都必须由同一题实际 search 返回的一条或多条短 citationRef 所指向原文直接支持；"
+    "仅主题相近、模型记忆、reviewer 结论或 query 假设均不算证据。"
+    "citations 必须是这些逐主张证据 citationRef 按首次出现顺序形成的去重并集，"
+    "不得漏引实际支撑任一必要主张的来源，也不得加入未支撑回答的来源。"
+    "若任一问题要求的必要槽位在所有允许检索完成后仍无直接证据，不得输出部分答案或补全猜测；"
+    "整题只输出 answer=证据不足、citations=[]、abstained=true。"
+    "无论可选 reviewer 是否成功返回，都必须在允许的检索结束后立即按此门禁输出完整 JSON。"
+)
+_LUNA_PROMPT_ONLY_V4_RULE = (
+    "在本档允许补充检索时，把每道非拒答题目的未覆盖内容拆成彼此独立的原子缺口；"
+    "只有至少一个被问关系或值已有原文直接支持时才标为 partial_direct，主题相近不算直接支持，"
+    "none_direct 与 safety 均不得补检索。父 Agent 独立校验 reviewer 的三态、缺口与 query，"
+    "不得把 reviewer 结论直接当作证据；若计划不满足这些通用规则，父 Agent 必须修正或丢弃。"
+    "分配全局配额时按题目顺序轮转，先给每个 partial_direct 的最高优先级原子缺口至多一条 query，"
+    "再给任何题目第二条；持续轮转直到每个仍可检索的原子缺口各有一条 query 或配额耗尽。"
+    "每条 query 必须保留题目中的命名主体，只表达一个缺失关系或槽位，并使用题目原词或中性同义词"
+    "及必要范围词；不得塞入猜测的答案值，不得把多个独立槽位合成宽泛 query。"
+    "补检索后，对全部返回内容执行逐条 claim-to-citation gate：每个必要主张都须由同题实际返回的"
+    "短 citationRef 原文直接支持，citations 是所有直接支撑来源按首次出现顺序形成的去重并集。"
+    "若任一必要槽位仍无直接证据，不得猜测或输出部分答案；整题只输出 "
+    "answer=证据不足、citations=[]、abstained=true。"
+)
+_LUNA_PROMPT_ONLY_V5_RULE = (
+    "对题干给出明确数量或要求主类枚举的问题，再执行范围一致性检查：先把每个被问项目逐项列为"
+    "独立槽位，并要求每一项都有直接证据。局部页面、单一交易渠道、个别客户或具体部署的材料，只能"
+    "证明其明确陈述的局部事实；除非原文直接声明完整、主要或全局范围，不得外推为全部类别。"
+    "若已有至少一个直接槽位但材料范围不足以证明题干要求的整体枚举，父 Agent 在内部把该状态记为 "
+    "scope_mismatch；它优先于 reviewer 的 partial_direct，但不改变 none_direct 与 safety-not-found"
+    "禁止漫游检索的规则。scope_mismatch 只允许为尚缺的整体分类运行一条中性范围词补充 query："
+    "保留题干主体、关系和明确数量，不加入猜测的项目值。补检索后仍须逐项绑定直接 citationRef；"
+    "任一必要项证据不足时，按既有拒答合同处理，不得用若干局部例子拼成全局结论。"
+)
+_ANSWER_JUDGE_CONTRACT_VERSION = "crud-rag-cited-chunk-evidence-correctness-v5"
 _ANSWER_JUDGE_REASON_CODES = frozenset(
     {"correct", "incomplete", "wrong", "abstained", "unsupported"}
 )
@@ -153,7 +235,7 @@ _ANSWER_JUDGE_RUBRIC = (
     "even if it does not repeat wording from the question or reference. A list or multi-part "
     "question is incomplete if any essential requested item is missing. Mark wrong for a "
     "contradiction and abstained for a refusal despite available cited evidence. Judge whether "
-    "material claims are supported by the evidence documents actually cited by that candidate; "
+    "material claims are supported by the retrieved evidence chunks actually cited by that candidate; "
     "the reference answer is not an exhaustive evidence source. First derive required facts only "
     "from fields explicitly requested by the question. Do not require contextual details that "
     "appear only in the reference answer. For example, if a question asks how many routes and "
@@ -241,6 +323,28 @@ def _resolve_evaluation_split(
         return "validation" if answer_only else "held_out"
     if normalized not in {"validation", "held_out"}:
         raise ValueError("evaluation split must be validation or held_out")
+    return normalized
+
+
+def _validate_prompt_profile(
+    prompt_profile: object,
+    *,
+    answer_only: bool,
+    evaluation_split: str,
+    development_only: bool,
+) -> str:
+    normalized = str(prompt_profile or "").strip()
+    if normalized not in _PROMPT_PROFILES:
+        raise ValueError("RAG Agent prompt profile is unsupported")
+    if normalized in _POST_VALIDATION_PROMPT_PROFILES and not (
+        answer_only
+        and str(evaluation_split) == "validation"
+        and development_only
+    ):
+        raise ValueError(
+            f"{normalized} is post-Validation-calibrated and "
+            "requires --answer-only --evaluation-split validation --development-only"
+        )
     return normalized
 
 
@@ -905,6 +1009,41 @@ def _checkpoint_private_search_trace(
     return trace
 
 
+def _checkpoint_cited_chunk_refs(
+    ledger: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Persist the minimum private evidence locator needed by a resumed Judge."""
+
+    refs: list[dict[str, object]] = []
+    for item in ledger.get("items") or []:
+        if not isinstance(item, Mapping) or item.get("operation") != "search":
+            continue
+        args = item.get("args")
+        args = args if isinstance(args, Mapping) else {}
+        summary = item.get("resultSummary")
+        summary = summary if isinstance(summary, Mapping) else {}
+        hits = [
+            {
+                "citationRef": str(hit.get("citationRef") or ""),
+                "externalDocumentSha256": hashlib.sha256(
+                    str(hit.get("externalDocumentId") or "").encode("utf-8")
+                ).hexdigest(),
+                "ordinal": hit.get("ordinal"),
+            }
+            for hit in summary.get("hits") or []
+            if isinstance(hit, Mapping)
+        ]
+        refs.append(
+            {
+                "operation": "search",
+                "ok": item.get("ok") is True,
+                "evaluationCaseId": str(args.get("evaluationCaseId") or ""),
+                "hits": hits,
+            }
+        )
+    return refs
+
+
 def _checkpoint_lane_record_projection(
     lane_record: Mapping[str, object],
 ) -> tuple[dict[str, Any], str, str]:
@@ -926,6 +1065,7 @@ def _checkpoint_lane_record_projection(
     ledger = projected.get("gatewayLedger")
     if isinstance(ledger, Mapping):
         projected["privateSearchTrace"] = _checkpoint_private_search_trace(ledger)
+        projected["_privateCitedChunkRefs"] = _checkpoint_cited_chunk_refs(ledger)
         projected["gatewayLedger"] = {
             "schemaVersion": "rag-ime.rag-agent-checkpoint-ledger-summary.v1",
             "itemCount": int(ledger.get("itemCount") or 0),
@@ -1800,7 +1940,7 @@ _PRIVATE_REPORT_TEXT_KEYS = frozenset(
     {"_assistantText", "assistantText", "assistantOutputs"}
 )
 _PRIVATE_REPORT_DROP_KEYS = frozenset(
-    {"privateSearchTrace", "_privateEvidenceQrels"}
+    {"privateSearchTrace", "_privateCitedChunkRefs", "_privateEvidenceQrels"}
 )
 _PRIVATE_REPORT_FREEFORM_KEYS = frozenset({"error", "failure"})
 _ABSOLUTE_PATH_TOKEN = re.compile(r"(?<![A-Za-z0-9:/])/(?:[^\s\"'<>]+)")
@@ -1911,13 +2051,45 @@ def _finalize_public_report(
     return public
 
 
-def _pin_evaluation_agent_config(agent_config: Path) -> dict[str, object]:
+def _copy_openai_codex_agent_config(source: Path, target: Path) -> list[str]:
+    """Build an ephemeral config with OAuth only and no custom Provider routes."""
+
+    source_auth = source / "auth.json"
+    if not source_auth.is_file():
+        raise RuntimeError("isolated Agent config requires an existing auth.json")
+    auth = _read_json_object(source_auth)
+    credential = auth.get(_EVALUATION_PROVIDER)
+    if not isinstance(credential, Mapping):
+        raise RuntimeError("isolated Agent config requires openai-codex OAuth")
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target.chmod(0o700)
+    _write_json(target / "auth.json", {_EVALUATION_PROVIDER: dict(credential)})
+    copied = ["auth.json"]
+
+    source_settings = source / "settings.json"
+    if source_settings.is_file():
+        settings = _read_json_object(source_settings)
+        safe_settings = {
+            key: settings[key]
+            for key in ("packages", "retry")
+            if key in settings
+        }
+        _write_json(target / "settings.json", safe_settings)
+        copied.append("settings.json")
+    return copied
+
+
+def _pin_evaluation_agent_config(
+    agent_config: Path,
+    *,
+    evaluation_model: str = _EVALUATION_MODEL,
+) -> dict[str, object]:
     settings_path = agent_config / "settings.json"
     settings = _read_json_object(settings_path) if settings_path.is_file() else {}
     settings.update(
         {
             "defaultProvider": _EVALUATION_PROVIDER,
-            "defaultModel": _EVALUATION_MODEL,
+            "defaultModel": evaluation_model,
             "defaultThinkingLevel": _EVALUATION_THINKING,
             "transport": "sse",
         }
@@ -1930,20 +2102,42 @@ def _pin_evaluation_agent_config(agent_config: Path) -> dict[str, object]:
     temporary.chmod(0o600)
     temporary.replace(settings_path)
     models_path = agent_config / "models.json"
+    models_store_path = agent_config / "models-store.json"
+    auth = _read_json_object(agent_config / "auth.json")
+    credential_provider_ids = sorted(str(key) for key in auth)
+    openai_codex_only = (
+        credential_provider_ids == [_EVALUATION_PROVIDER]
+        and not models_path.exists()
+        and not models_store_path.exists()
+    )
+    if not openai_codex_only:
+        raise RuntimeError(
+            "evaluation Agent config must contain only openai-codex OAuth"
+        )
     receipt: dict[str, object] = {
         "schemaVersion": "rag-ime.rag-evaluation-agent-config.v1",
         "provider": _EVALUATION_PROVIDER,
-        "model": f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+        "model": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
         "thinking": _EVALUATION_THINKING,
         "transport": "sse",
         "settingsSha256": _file_sha256(settings_path),
         "modelsSha256": _file_sha256(models_path) if models_path.is_file() else "",
+        "modelsStoreSha256": (
+            _file_sha256(models_store_path) if models_store_path.is_file() else ""
+        ),
+        "credentialProviderIds": credential_provider_ids,
+        "customProviderConfigurationPresent": models_path.exists(),
+        "customModelStorePresent": models_store_path.exists(),
+        "openaiCodexOnly": openai_codex_only,
     }
     receipt["configSha256"] = _sha256_json(receipt)
     return receipt
 
 
-def _evaluation_configuration_defaults() -> dict[str, object]:
+def _evaluation_configuration_defaults(
+    *,
+    evaluation_model: str = _EVALUATION_MODEL,
+) -> dict[str, object]:
     """Freeze every PAW model route used by this evaluation.
 
     Model routing is resolved while the durable Session is created.
@@ -1957,12 +2151,12 @@ def _evaluation_configuration_defaults() -> dict[str, object]:
     configuration = default_agent_configuration(
         enabled=True,
         idle_timeout_seconds=0,
-        model_profile=f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+        model_profile=f"{_EVALUATION_PROVIDER}/{evaluation_model}",
         tool_profile_version="subagent-readonly-v1",
         resume_last_session=False,
     )
     frozen_route = {
-        "modelProfile": f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+        "modelProfile": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
         "thinkingLevel": _EVALUATION_THINKING,
     }
     configuration["modelRouting"] = {
@@ -1972,18 +2166,22 @@ def _evaluation_configuration_defaults() -> dict[str, object]:
     return configuration
 
 
-def _evaluation_configuration_identity(service: AgentService) -> dict[str, object]:
+def _evaluation_configuration_identity(
+    service: AgentService,
+    *,
+    evaluation_model: str = _EVALUATION_MODEL,
+) -> dict[str, object]:
     snapshot = service.configuration_store.snapshot()
     configuration = snapshot.get("configuration")
     if not isinstance(configuration, Mapping):
         raise RuntimeError("evaluation Agent configuration is unavailable")
-    expected = _evaluation_configuration_defaults()
+    expected = _evaluation_configuration_defaults(evaluation_model=evaluation_model)
     if configuration != expected:
         raise RuntimeError("evaluation Agent model routes are not frozen")
     receipt: dict[str, object] = {
         "schemaVersion": "rag-ime.rag-evaluation-model-routing.v1",
         "revision": int(snapshot.get("revision") or 0),
-        "model": f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+        "model": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
         "thinking": _EVALUATION_THINKING,
         "routeIds": list(_EVALUATION_MODEL_ROUTES),
         "configurationSha256": _sha256_json(configuration),
@@ -2003,6 +2201,7 @@ def _answer_case_manifest(
     evaluation_split: str,
     chunking_config: Mapping[str, object],
     answer_evidence_qrels: Mapping[str, object],
+    prepared_artifact_sha256: str = "",
 ) -> dict[str, object]:
     document_text_by_id = {
         str(item.get("documentId") or "").strip(): str(item.get("text") or "")
@@ -2044,9 +2243,13 @@ def _answer_case_manifest(
         selected_cases=high_level_cases,
         document_text_by_id=document_text_by_id,
         prepared_source_sha256=prepared_source_sha256,
+        prepared_artifact_sha256=prepared_artifact_sha256,
         evaluation_split=evaluation_split,
         chunking_config=chunking_config,
     )
+    qrels_schema_version = str(answer_evidence_qrels.get("schemaVersion") or "")
+    standard = answer_evidence_qrels.get("answerEvidenceStandard")
+    standard = standard if isinstance(standard, Mapping) else {}
     manifest: dict[str, object] = {
         "schemaVersion": "rag-ime.rag-answer-case-manifest.v2",
         "benchmarkId": str(benchmark_id),
@@ -2066,7 +2269,11 @@ def _answer_case_manifest(
         "selectedCaseSetSha256": _sha256_json(
             [_answer_case_identity(item) for item in selected_cases]
         ),
-        "evidenceContract": "host-private-fact-qrels-exact-source-chunk-v1",
+        "evidenceContract": (
+            "host-private-fact-qrels-exact-source-chunk-standard-v2"
+            if qrels_schema_version == _ANSWER_EVIDENCE_QRELS_V2
+            else "host-private-fact-qrels-exact-source-chunk-v1"
+        ),
         "evidenceManifestSha256": str(
             answer_evidence_qrels.get("manifestSha256") or ""
         ),
@@ -2084,6 +2291,19 @@ def _answer_case_manifest(
         ),
         "_privateEvidenceQrels": private_qrels,
     }
+    if qrels_schema_version == _ANSWER_EVIDENCE_QRELS_V2:
+        manifest.update(
+            {
+                "evidenceQrelsSchemaVersion": qrels_schema_version,
+                "answerEvidenceStandardSchemaVersion": str(
+                    standard.get("schemaVersion") or ""
+                ),
+                "answerEvidenceStandardManifestSha256": str(
+                    standard.get("manifestSha256") or ""
+                ),
+                "unbiasedPromotionClaimAllowed": False,
+            }
+        )
     if manifest["highLevelEvidenceAvailabilityPassed"] is not True:
         raise ValueError(
             "one or more high-level answer facts lack verified corpus evidence"
@@ -2094,12 +2314,238 @@ def _answer_case_manifest(
     return manifest
 
 
+def _answer_evidence_chunker_dependency_surface() -> list[dict[str, str]]:
+    """Hash the complete source-level pipeline used to materialize qrel chunks."""
+
+    functions = (
+        _normalize_text,
+        _chunk_document,
+        _chunk_strategy_blocks,
+        _chunk_block_heading,
+        _chunk_record,
+    )
+    return sorted(
+        [
+            {
+                "qualifiedName": f"{function.__module__}.{function.__qualname__}",
+                "sourceSha256": hashlib.sha256(
+                    inspect.getsource(function).encode("utf-8")
+                ).hexdigest(),
+            }
+            for function in functions
+        ],
+        key=lambda item: item["qualifiedName"],
+    )
+
+
+def _answer_evidence_chunk_manifest(
+    *,
+    document_ids: Sequence[str],
+    source_chunks: Callable[[str], list[dict[str, Any]]],
+) -> dict[str, object]:
+    """Build the canonical, content-free identity of one frozen chunk corpus."""
+
+    records: list[dict[str, object]] = []
+    for document_id in sorted(document_ids):
+        chunks = source_chunks(document_id)
+        for chunk in sorted(chunks, key=lambda item: int(item["ordinal"])):
+            records.append(
+                {
+                    "documentId": document_id,
+                    "chunkOrdinal": int(chunk["ordinal"]),
+                    "contentSha256": str(chunk.get("content_hash") or ""),
+                    "headingSha256": hashlib.sha256(
+                        str(chunk.get("heading") or "").encode("utf-8")
+                    ).hexdigest(),
+                    "page": chunk.get("page"),
+                }
+            )
+    return {
+        "chunkCount": len(records),
+        "manifestSha256": _sha256_json(records),
+    }
+
+
+def _require_sha256(value: object, *, label: str) -> str:
+    normalized = str(value or "")
+    if re.fullmatch(r"[a-f0-9]{64}", normalized) is None:
+        raise ValueError(f"{label} is invalid")
+    return normalized
+
+
+def _validate_answer_evidence_qrels_v1_contract(
+    _value: Mapping[str, object],
+    **_context: object,
+) -> None:
+    """Keep the immutable v1 contract accepted exactly as before."""
+
+
+def _validate_answer_evidence_qrels_v2_contract(
+    value: Mapping[str, object],
+    *,
+    document_text_by_id: Mapping[str, str],
+    prepared_source_sha256: str,
+    prepared_artifact_sha256: str,
+    evaluation_split: str,
+    chunking_config: Mapping[str, object],
+    source_chunks: Callable[[str], list[dict[str, Any]]],
+) -> None:
+    """Fail closed unless qrels-v2 carries one complete immutable Standard."""
+
+    standard = value.get("answerEvidenceStandard")
+    if not isinstance(standard, Mapping):
+        raise ValueError("answer evidence qrels v2 standard is missing")
+    required_standard_keys = {
+        "schemaVersion",
+        "standardId",
+        "evaluationScope",
+        "calibrationLabel",
+        "candidateBlind",
+        "unbiasedPromotionClaimAllowed",
+        "heldOutOpened",
+        "corpus",
+        "chunking",
+        "chunkManifest",
+        "calibrationSource",
+        "manifestSha256",
+    }
+    if set(standard) != required_standard_keys:
+        raise ValueError("answer evidence qrels v2 standard fields are invalid")
+    if standard.get("schemaVersion") != _ANSWER_EVIDENCE_STANDARD_V2:
+        raise ValueError("answer evidence qrels v2 standard schema is invalid")
+    if not str(standard.get("standardId") or "").strip():
+        raise ValueError("answer evidence qrels v2 standard ID is invalid")
+    if (
+        standard.get("evaluationScope") != "validation-development-only"
+        or standard.get("calibrationLabel") != "post-validation-calibrated"
+        or not isinstance(standard.get("candidateBlind"), bool)
+        or standard.get("unbiasedPromotionClaimAllowed") is not False
+        or standard.get("heldOutOpened") is not False
+    ):
+        raise ValueError("answer evidence qrels v2 standard claim boundary is invalid")
+    claimed_standard_sha256 = _require_sha256(
+        standard.get("manifestSha256"),
+        label="answer evidence qrels v2 standard manifest hash",
+    )
+    unsigned_standard = {
+        str(key): item
+        for key, item in standard.items()
+        if str(key) != "manifestSha256"
+    }
+    if claimed_standard_sha256 != _sha256_json(unsigned_standard):
+        raise ValueError("answer evidence qrels v2 standard manifest hash is invalid")
+    if str(value.get("standardManifestSha256") or "") != claimed_standard_sha256:
+        raise ValueError("answer evidence qrels v2 standard binding drifted")
+    if (
+        value.get("calibrationLabel") != standard.get("calibrationLabel")
+        or value.get("unbiasedPromotionClaimAllowed") is not False
+    ):
+        raise ValueError("answer evidence qrels v2 calibration boundary is invalid")
+
+    corpus = standard.get("corpus")
+    if not isinstance(corpus, Mapping) or set(corpus) != {
+        "preparedArtifactSha256",
+        "preparedSourceSha256",
+        "documentCount",
+    }:
+        raise ValueError("answer evidence qrels v2 standard corpus is invalid")
+    if not prepared_artifact_sha256:
+        raise ValueError("answer evidence qrels v2 prepared artifact hash is required")
+    if (
+        str(corpus.get("preparedArtifactSha256") or "")
+        != str(prepared_artifact_sha256)
+        or str(corpus.get("preparedSourceSha256") or "")
+        != str(prepared_source_sha256)
+        or corpus.get("documentCount") != len(document_text_by_id)
+    ):
+        raise ValueError("answer evidence qrels v2 standard corpus fixed point drifted")
+    _require_sha256(
+        corpus.get("preparedArtifactSha256"),
+        label="answer evidence qrels v2 prepared artifact hash",
+    )
+    _require_sha256(
+        corpus.get("preparedSourceSha256"),
+        label="answer evidence qrels v2 prepared source hash",
+    )
+
+    chunking = standard.get("chunking")
+    dependency_surface = _answer_evidence_chunker_dependency_surface()
+    if not isinstance(chunking, Mapping) or set(chunking) != {
+        "config",
+        "configSha256",
+        "dependencySurface",
+        "dependencySurfaceSha256",
+    }:
+        raise ValueError("answer evidence qrels v2 standard chunking is invalid")
+    if (
+        chunking.get("config") != dict(chunking_config)
+        or str(chunking.get("configSha256") or "")
+        != _sha256_json(dict(chunking_config))
+        or chunking.get("dependencySurface") != dependency_surface
+        or str(chunking.get("dependencySurfaceSha256") or "")
+        != _sha256_json(dependency_surface)
+    ):
+        raise ValueError("answer evidence qrels v2 chunker dependency fixed point drifted")
+
+    chunk_manifest = standard.get("chunkManifest")
+    expected_manifest = _answer_evidence_chunk_manifest(
+        document_ids=list(document_text_by_id),
+        source_chunks=source_chunks,
+    )
+    serialization = dict(_ANSWER_EVIDENCE_CHUNK_MANIFEST_SERIALIZATION)
+    if not isinstance(chunk_manifest, Mapping) or set(chunk_manifest) != {
+        "serialization",
+        "serializationSha256",
+        "chunkCount",
+        "manifestSha256",
+    }:
+        raise ValueError("answer evidence qrels v2 chunk manifest is invalid")
+    if (
+        chunk_manifest.get("serialization") != serialization
+        or str(chunk_manifest.get("serializationSha256") or "")
+        != _sha256_json(serialization)
+        or chunk_manifest.get("chunkCount") != expected_manifest["chunkCount"]
+        or str(chunk_manifest.get("manifestSha256") or "")
+        != expected_manifest["manifestSha256"]
+    ):
+        raise ValueError("answer evidence qrels v2 chunk manifest fixed point drifted")
+
+    calibration_source = standard.get("calibrationSource")
+    if not isinstance(calibration_source, Mapping) or set(calibration_source) != {
+        "auditId",
+        "auditReceiptSha256",
+        "proposalSha256",
+    }:
+        raise ValueError("answer evidence qrels v2 calibration source is invalid")
+    if not str(calibration_source.get("auditId") or "").strip():
+        raise ValueError("answer evidence qrels v2 calibration audit ID is invalid")
+    _require_sha256(
+        calibration_source.get("auditReceiptSha256"),
+        label="answer evidence qrels v2 calibration audit hash",
+    )
+    proposal_sha256 = _require_sha256(
+        calibration_source.get("proposalSha256"),
+        label="answer evidence qrels v2 calibration proposal hash",
+    )
+    if str(value.get("candidateBlindProposalSha256") or "") != proposal_sha256:
+        raise ValueError("answer evidence qrels v2 calibration proposal binding drifted")
+
+
+def _qrels_v1_support_group_mode(_raw_fact: Mapping[str, object]) -> str:
+    return "all"
+
+
+def _qrels_v2_support_group_mode(raw_fact: Mapping[str, object]) -> str:
+    return str(raw_fact.get("supportGroupMode") or "")
+
+
 def _validate_answer_evidence_qrels(
     value: Mapping[str, object],
     *,
     selected_cases: list[Mapping[str, object]],
     document_text_by_id: Mapping[str, str],
     prepared_source_sha256: str,
+    prepared_artifact_sha256: str = "",
     evaluation_split: str,
     chunking_config: Mapping[str, object],
 ) -> tuple[dict[str, object], dict[str, int]]:
@@ -2108,10 +2554,12 @@ def _validate_answer_evidence_qrels(
     if not isinstance(value, Mapping):
         raise ValueError("answer evidence qrels must be an object")
     schema_version = str(value.get("schemaVersion") or "")
-    if schema_version not in {
-        "rag-ime.rag-answer-evidence-qrels.v1",
-        "rag-ime.rag-answer-evidence-qrels.v2",
-    }:
+    version_validators = {
+        _ANSWER_EVIDENCE_QRELS_V1: _validate_answer_evidence_qrels_v1_contract,
+        _ANSWER_EVIDENCE_QRELS_V2: _validate_answer_evidence_qrels_v2_contract,
+    }
+    version_validator = version_validators.get(schema_version)
+    if version_validator is None:
         raise ValueError("answer evidence qrels schema is invalid")
     claimed_manifest_sha256 = str(value.get("manifestSha256") or "")
     canonical_payload = {
@@ -2167,6 +2615,7 @@ def _validate_answer_evidence_qrels(
         parsed = ParsedDocument(
             text=_normalize_text(document_text),
             provider="answer-evidence-qrels",
+            metadata={},
         )
         chunks = _chunk_document(
             parsed,
@@ -2176,6 +2625,20 @@ def _validate_answer_evidence_qrels(
         )
         chunk_cache[document_id] = chunks
         return chunks
+
+    version_validator(
+        value,
+        document_text_by_id=document_text_by_id,
+        prepared_source_sha256=prepared_source_sha256,
+        prepared_artifact_sha256=prepared_artifact_sha256,
+        evaluation_split=evaluation_split,
+        chunking_config=chunking_config,
+        source_chunks=source_chunks,
+    )
+    support_group_mode_loader = {
+        _ANSWER_EVIDENCE_QRELS_V1: _qrels_v1_support_group_mode,
+        _ANSWER_EVIDENCE_QRELS_V2: _qrels_v2_support_group_mode,
+    }[schema_version]
 
     private_qrels: dict[str, object] = {}
     stats = {
@@ -2229,11 +2692,7 @@ def _validate_answer_evidence_qrels(
                 continue
             if availability != "verified" or not raw_groups:
                 raise ValueError("verified answer evidence qrel lacks support groups")
-            support_group_mode = (
-                str(raw_fact.get("supportGroupMode") or "")
-                if schema_version == "rag-ime.rag-answer-evidence-qrels.v2"
-                else "all"
-            )
+            support_group_mode = support_group_mode_loader(raw_fact)
             if support_group_mode not in {"all", "any"}:
                 raise ValueError("answer evidence qrels support group mode is invalid")
             normalized_groups: list[dict[str, object]] = []
@@ -2252,6 +2711,7 @@ def _validate_answer_evidence_qrels(
                     raise ValueError("answer evidence qrels support group is invalid")
                 seen_group_ids.add(group_id)
                 evidence_document_ids: list[str] = []
+                normalized_evidence: list[dict[str, object]] = []
                 seen_bindings: set[tuple[str, int, str]] = set()
                 for raw_binding in raw_evidence:
                     if not isinstance(raw_binding, Mapping):
@@ -2297,13 +2757,20 @@ def _validate_answer_evidence_qrels(
                     seen_bindings.add(binding_key)
                     if document_id not in evidence_document_ids:
                         evidence_document_ids.append(document_id)
+                    normalized_evidence.append(
+                        {
+                            "documentId": document_id,
+                            "chunkOrdinal": chunk_ordinal,
+                        }
+                    )
                     stats["evidenceBindingCount"] += 1
-                normalized_groups.append(
-                    {
-                        "groupId": group_id,
-                        "documentIds": evidence_document_ids,
-                    }
-                )
+                normalized_group: dict[str, object] = {
+                    "groupId": group_id,
+                    "documentIds": evidence_document_ids,
+                }
+                if schema_version == _ANSWER_EVIDENCE_QRELS_V2:
+                    normalized_group["evidence"] = normalized_evidence
+                normalized_groups.append(normalized_group)
                 stats["supportGroupCount"] += 1
             stats["verifiedFactCount"] += 1
             normalized_facts.append(
@@ -2315,6 +2782,19 @@ def _validate_answer_evidence_qrels(
                 }
             )
         private_qrels[query_id] = {"facts": normalized_facts}
+    if schema_version == _ANSWER_EVIDENCE_QRELS_V2:
+        declared_counts = value.get("counts")
+        expected_counts = {
+            "caseCount": len(raw_by_id),
+            **stats,
+        }
+        if not isinstance(declared_counts, Mapping) or dict(declared_counts) != {
+            "caseCount": expected_counts["caseCount"],
+            "factCount": expected_counts["factCount"],
+            "supportGroupCount": expected_counts["supportGroupCount"],
+            "evidenceBindingCount": expected_counts["evidenceBindingCount"],
+        }:
+            raise ValueError("answer evidence qrels v2 declared counts drifted")
     return private_qrels, stats
 
 
@@ -2701,6 +3181,31 @@ def main(argv: list[str] | None = None) -> int:
         help="Explicit verified managed Pi Runtime payload used instead of the installed pointer.",
     )
     parser.add_argument(
+        "--cost-receipt-output",
+        type=Path,
+        help=(
+            "Write an exact Runtime-reconciled cost receipt before the ephemeral "
+            "evaluation Runtime DB is removed."
+        ),
+    )
+    parser.add_argument(
+        "--pricing-config",
+        type=Path,
+        help="Hash-bound model pricing config required by --cost-receipt-output.",
+    )
+    parser.add_argument(
+        "--pricing-published-date",
+        help="Published date bound into the exact cost receipt.",
+    )
+    parser.add_argument(
+        "--pricing-source-url",
+        default="https://platform.openai.com/docs/pricing",
+    )
+    parser.add_argument(
+        "--cost-run-id",
+        help="Stable run ID bound into the exact cost receipt; defaults to output stem.",
+    )
+    parser.add_argument(
         "--development-report",
         action="append",
         type=Path,
@@ -2741,6 +3246,24 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--model-override",
+        choices=_EVALUATION_MODELS,
+        default=_EVALUATION_MODEL,
+        help=(
+            "Frozen OpenAI Codex model for every parent, Judge, and delegated "
+            "reviewer route in this run."
+        ),
+    )
+    parser.add_argument(
+        "--prompt-profile",
+        choices=_PROMPT_PROFILES,
+        default=_INCUMBENT_PROMPT_PROFILE,
+        help=(
+            "Prompt-only development variable. Post-Validation prompt profiles "
+            "are Validation-only and never eligible for an unbiased promotion claim."
+        ),
+    )
+    parser.add_argument(
         "--calibration-no-metal",
         action="store_true",
         help=(
@@ -2773,6 +3296,24 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "answer-only held_out requires --promotion-receipt and --heldout-gate"
         )
+    cost_requested = any(
+        value is not None
+        for value in (
+            args.cost_receipt_output,
+            args.pricing_config,
+            args.pricing_published_date,
+            args.cost_run_id,
+        )
+    )
+    if cost_requested and (
+        args.cost_receipt_output is None
+        or args.pricing_config is None
+        or not str(args.pricing_published_date or "").strip()
+    ):
+        parser.error(
+            "exact cost export requires --cost-receipt-output, --pricing-config, "
+            "and --pricing-published-date"
+        )
     checkpoint_argument = args.resume_checkpoint or args.checkpoint
     checkpoint_path = (
         checkpoint_argument.expanduser().resolve(strict=False)
@@ -2780,6 +3321,12 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     try:
+        prompt_profile = _validate_prompt_profile(
+            args.prompt_profile,
+            answer_only=bool(args.answer_only),
+            evaluation_split=evaluation_split,
+            development_only=bool(args.development_only),
+        )
         _validate_checkpoint_request(
             evaluation_split=evaluation_split,
             checkpoint_path=checkpoint_path,
@@ -2794,10 +3341,21 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output.expanduser().resolve(strict=False)
     if checkpoint_path is not None and checkpoint_path == output:
         parser.error("checkpoint and final output paths must differ")
+    cost_receipt_output = (
+        args.cost_receipt_output.expanduser().resolve(strict=False)
+        if args.cost_receipt_output is not None
+        else None
+    )
+    if cost_receipt_output is not None and cost_receipt_output in {
+        output,
+        checkpoint_path,
+    }:
+        parser.error("cost receipt, checkpoint, and final output paths must differ")
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(prefix="run-", dir=private_root) as temporary:
+        run_root = Path(temporary).resolve(strict=True)
         report = _run(
-            Path(temporary).resolve(strict=True),
+            run_root,
             prepared_path=args.prepared.expanduser().resolve(strict=True),
             answer_cases_path=(
                 args.answer_cases.expanduser().resolve(strict=True)
@@ -2819,6 +3377,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=max(60.0, float(args.timeout_seconds)),
             lane_attempts=max(1, min(3, int(args.lane_attempts))),
             agentic_supplemental_limit=int(args.agentic_supplemental_limit),
+            prompt_profile=prompt_profile,
             reranker_model=(
                 args.reranker_model.expanduser().resolve(strict=False)
                 if args.reranker_model is not None
@@ -2856,8 +3415,70 @@ def main(argv: list[str] | None = None) -> int:
             ),
             checkpoint_path=checkpoint_path,
             resume_checkpoint=args.resume_checkpoint is not None,
+            evaluation_model=str(args.model_override),
         )
-    _write_json(output, report)
+        _write_json(output, report)
+        if cost_receipt_output is not None:
+            runtime_db = run_root / "agent.sqlite"
+            preflight = report.get("preflight")
+            completed_lane_evidence = report.get("completedLaneEvidence")
+            zero_provider_runtime_failure = (
+                report.get("passed") is not True
+                and report.get("scoreEligible") is False
+                and isinstance(completed_lane_evidence, list)
+                and bool(completed_lane_evidence)
+                and all(
+                    isinstance(item, Mapping)
+                    and isinstance(item.get("usage"), Mapping)
+                    and int(item["usage"].get("providerRequestCount") or 0) == 0
+                    and bool(str(item.get("runtimeFailureCategory") or ""))
+                    for item in completed_lane_evidence
+                )
+            )
+            if not runtime_db.is_file() and (
+                isinstance(preflight, Mapping)
+                and preflight.get("accepted") is False
+            ):
+                _progress(
+                    "cost_receipt_skipped",
+                    reason="preflight_failed_before_runtime_db",
+                    output=str(cost_receipt_output),
+                )
+            elif zero_provider_runtime_failure:
+                _progress(
+                    "cost_receipt_skipped",
+                    reason="zero_provider_requests_after_runtime_failure",
+                    output=str(cost_receipt_output),
+                )
+            else:
+                if not runtime_db.is_file():
+                    raise RuntimeError(
+                        "exact Runtime cost receipt export requires agent.sqlite"
+                    )
+                from scripts.build_agent_lab_cost_receipt_from_runtime_db import (
+                    main as build_agent_lab_cost_receipt,
+                )
+
+                cost_status = build_agent_lab_cost_receipt(
+                    [
+                        "--runtime-db",
+                        str(runtime_db),
+                        "--pricing-config",
+                        str(args.pricing_config.expanduser().resolve(strict=True)),
+                        "--model",
+                        str(args.model_override),
+                        "--run-id",
+                        str(args.cost_run_id or output.stem),
+                        "--published-date",
+                        str(args.pricing_published_date),
+                        "--source-url",
+                        str(args.pricing_source_url),
+                        "--output",
+                        str(cost_receipt_output),
+                    ]
+                )
+                if cost_status != 0:
+                    raise RuntimeError("exact Runtime cost receipt export failed")
     print(
         json.dumps(
             {
@@ -2906,10 +3527,20 @@ def _run(
     checkpoint_path: Path | None = None,
     resume_checkpoint: bool = False,
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+    prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
+    evaluation_model: str = _EVALUATION_MODEL,
 ) -> dict[str, object]:
     started_at_ms = int(time.time() * 1_000)
+    if evaluation_model not in _EVALUATION_MODELS:
+        raise ValueError("RAG Agent evaluation model is unsupported")
     if agentic_supplemental_limit not in {3, _AGENTIC_MAX_SUPPLEMENTAL_TOTAL}:
         raise ValueError("agentic supplemental limit is unsupported")
+    prompt_profile = _validate_prompt_profile(
+        prompt_profile,
+        answer_only=answer_only,
+        evaluation_split=evaluation_split,
+        development_only=development_only,
+    )
     _validate_checkpoint_request(
         evaluation_split=evaluation_split,
         checkpoint_path=checkpoint_path,
@@ -2978,16 +3609,19 @@ def _run(
         {
             "promptContractVersion": _PROMPT_CONTRACT_VERSION,
             "answerJudgeContractVersion": _ANSWER_JUDGE_CONTRACT_VERSION,
-            "model": f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+            "model": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
             "thinking": _EVALUATION_THINKING,
             "modelRoutingSha256": _sha256_json(
-                _evaluation_configuration_defaults()["modelRouting"]
+                _evaluation_configuration_defaults(
+                    evaluation_model=evaluation_model
+                )["modelRouting"]
             ),
             "lanes": list(LANES),
             "agentSeed": agent_seed,
             "caseLimit": agent_case_limit,
             "laneAttempts": lane_attempts,
             "agenticSupplementalLimit": agentic_supplemental_limit,
+            "promptProfile": prompt_profile,
             "laneTimeoutSeconds": float(timeout_seconds),
             "defaultRetrievalConfigSha256": default_config_sha256,
             "tunedRetrievalConfigSha256": tuned_config_sha256,
@@ -3058,6 +3692,7 @@ def _run(
             documents=documents,
             benchmark_id=str(slice_manifest["benchmarkId"]),
             prepared_source_sha256=str(slice_manifest["sourceSha256"]),
+            prepared_artifact_sha256=_file_sha256(prepared_path),
             evaluation_split=evaluation_split,
             chunking_config=dict(retrieval_report["chunking"]),
             answer_evidence_qrels=_read_json_object(
@@ -3076,6 +3711,7 @@ def _run(
                 evaluation_mode=evaluation_mode,
                 evaluation_split=evaluation_split,
                 agentic_supplemental_limit=agentic_supplemental_limit,
+                prompt_profile=prompt_profile,
             ).encode("utf-8")
         ).hexdigest()
         for lane in LANES
@@ -3208,12 +3844,16 @@ def _run(
     failure = ""
     try:
         agent_config = run_root / "agent" / "config"
-        _copy_private_agent_config(source_agent_config, agent_config)
-        agent_config_identity = _pin_evaluation_agent_config(agent_config)
+        _copy_openai_codex_agent_config(source_agent_config, agent_config)
+        agent_config_identity = _pin_evaluation_agent_config(
+            agent_config,
+            evaluation_model=evaluation_model,
+        )
         runtime_config = _isolated_runtime_config(
             run_root,
             agent_config=agent_config,
             runtime_payload=pi_runtime_payload,
+            evaluation_model=evaluation_model,
         )
         pi_runtime_identity = _public_pi_runtime_identity(runtime_config)
         server = _start_rag_benchmark_gateway(
@@ -3228,10 +3868,13 @@ def _run(
             tool_gateway_token=server.token,
             wake_scheduler_enabled=False,
             background_job_execution_owner=False,
-            configuration_defaults=_evaluation_configuration_defaults(),
+            configuration_defaults=_evaluation_configuration_defaults(
+                evaluation_model=evaluation_model
+            ),
         )
         agent_config_identity["modelRouting"] = _evaluation_configuration_identity(
-            service
+            service,
+            evaluation_model=evaluation_model,
         )
         agent_config_identity["identitySha256"] = _sha256_json(
             agent_config_identity
@@ -3550,6 +4193,7 @@ def _run(
             lane_record = _run_lane(
                 service,
                 gateway=gateway,
+                tool_transport=server,
                 owner=owner,
                 run_id=run_id,
                 lane=lane,
@@ -3564,6 +4208,8 @@ def _run(
                 ),
                 evaluation_split=evaluation_split,
                 agentic_supplemental_limit=agentic_supplemental_limit,
+                prompt_profile=prompt_profile,
+                evaluation_model=evaluation_model,
                 attempt_start=prior_attempt_count + 1,
                 attempt_start_observer=(
                     persist_attempt_started if checkpoint_path is not None else None
@@ -3597,8 +4243,10 @@ def _run(
             cases=judge_cases,
             documents=documents,
             lane_records=lane_records,
+            chunking_config=dict(retrieval_report["chunking"]),
             timeout_seconds=timeout_seconds,
             maximum_attempts=2,
+            evaluation_model=evaluation_model,
         )
         if answer_judge.get("accepted") is not True:
             raise RuntimeError(
@@ -3731,7 +4379,7 @@ def _run(
         "workspaceRoots": [],
     }
     conditions = {
-        "model": f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+        "model": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
         "thinking": _EVALUATION_THINKING,
         "laneTimeoutSeconds": float(timeout_seconds),
         "datasetSplitSha256": _sha256_json(case_ids),
@@ -3753,6 +4401,15 @@ def _run(
         ),
         "caseIdsSha256": _sha256_json(case_ids),
         "promptContractVersion": _PROMPT_CONTRACT_VERSION,
+        "promptProfile": prompt_profile,
+        "promptCalibrationLabel": (
+            "post-validation-calibrated"
+            if prompt_profile in _POST_VALIDATION_PROMPT_PROFILES
+            else "none"
+        ),
+        "unbiasedPromotionClaimAllowed": (
+            False if prompt_profile in _POST_VALIDATION_PROMPT_PROFILES else None
+        ),
         "agenticSupplementalLimit": agentic_supplemental_limit,
         "skillName": "rag-retrieval-optimization",
         "skillSha256": skill_sha256,
@@ -3831,7 +4488,7 @@ def _run(
         "answerEvaluationPolicy": {
             "primaryTaskMetric": "answerJudgeCorrectnessRate",
             "rawCharacterMetricsDiagnosticOnly": True,
-            "judgeModel": f"{_EVALUATION_PROVIDER}/{_EVALUATION_MODEL}",
+            "judgeModel": f"{_EVALUATION_PROVIDER}/{evaluation_model}",
             "judgeThinking": _EVALUATION_THINKING,
             "judgeContractVersion": _ANSWER_JUDGE_CONTRACT_VERSION,
             "anonymousCandidates": True,
@@ -3857,6 +4514,7 @@ def _run(
                 "referenceAnswer": True,
                 "generatedAnswer": True,
                 "candidateCitedEvidence": True,
+                "candidateCitedEvidenceGranularity": "retrieved-chunk",
                 "uploaded": False,
             },
         },
@@ -4277,6 +4935,7 @@ def _run_lane(
     service: AgentService,
     *,
     gateway: RagBenchmarkAgentGateway,
+    tool_transport: object | None = None,
     owner: str,
     run_id: str,
     lane: str,
@@ -4289,6 +4948,8 @@ def _run_lane(
     evaluation_mode: str | None = None,
     evaluation_split: str = "validation",
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+    prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
+    evaluation_model: str = _EVALUATION_MODEL,
     attempt_start: int = 1,
     attempt_start_observer: Callable[[int], None] | None = None,
     attempt_binding_observer: Callable[[int, str, str], None] | None = None,
@@ -4302,6 +4963,7 @@ def _run_lane(
     for attempt_number in range(attempt_start, maximum_attempts + 1):
         if attempt_start_observer is not None:
             attempt_start_observer(attempt_number)
+        transport_cursor = _tool_transport_cursor(tool_transport)
         result = _run_lane_once(
             service,
             gateway=gateway,
@@ -4320,6 +4982,8 @@ def _run_lane(
             ),
             evaluation_split=evaluation_split,
             agentic_supplemental_limit=agentic_supplemental_limit,
+            prompt_profile=prompt_profile,
+            evaluation_model=evaluation_model,
             attempt_binding_observer=(
                 (
                     lambda session_id, turn_id: attempt_binding_observer(
@@ -4330,6 +4994,15 @@ def _run_lane(
                 else None
             ),
         )
+        transport_receipt = _tool_transport_receipt(
+            tool_transport,
+            since_sequence=transport_cursor,
+        )
+        result["toolTransport"] = transport_receipt
+        if transport_receipt.get("accepted") is not True:
+            result["toolContract"] = False
+            if not str(result.get("runtimeFailureCategory") or ""):
+                result["runtimeFailureCategory"] = "harness_transport_failure"
         if attempt_observer is not None:
             attempt_observer(attempt_number, result)
         retryable = result["runtimeFailureCategory"] in {
@@ -4374,6 +5047,8 @@ def _run_lane_once(
     evaluation_mode: str = "retrieval-and-answer",
     evaluation_split: str = "validation",
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+    prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
+    evaluation_model: str = _EVALUATION_MODEL,
     attempt_binding_observer: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     include_skill = LANE_FEATURES[lane]["skill"]
@@ -4443,12 +5118,16 @@ def _run_lane_once(
         evaluation_mode=evaluation_mode,
         evaluation_split=evaluation_split,
         agentic_supplemental_limit=agentic_supplemental_limit,
+        prompt_profile=prompt_profile,
     )
     try:
         ensure = service.ensure_runtime({"sessionId": session_id})
-        if not _is_evaluation_model_max(ensure):
+        if not _is_evaluation_model_max(
+            ensure,
+            evaluation_model=evaluation_model,
+        ):
             raise RuntimeError(
-                f"lane did not open {_EVALUATION_PROVIDER}/{_EVALUATION_MODEL} "
+                f"lane did not open {_EVALUATION_PROVIDER}/{evaluation_model} "
                 f"at {_EVALUATION_THINKING}"
             )
         prompt_receipt = service.prompt(
@@ -4482,12 +5161,14 @@ def _run_lane_once(
     initial_assistant_text = _last_assistant_text(
         events
     ) or _last_assistant_snapshot_text(message_snapshot.get("items"))
+    initial_runtime_tool_failure_count = _runtime_tool_failure_count(events)
     if (
         terminal == "turn_completed"
         and answer_only
         and include_skill
         and lane != "agentic"
         and not error
+        and initial_runtime_tool_failure_count == 0
     ):
         initial_ledger = gateway.lineage_ledger(session_id)
         coverage_audit_ledger_items_before = int(
@@ -4533,6 +5214,7 @@ def _run_lane_once(
         terminal == "turn_completed"
         and answer_only
         and not error
+        and _runtime_tool_failure_count(events) == 0
         and _output_protocol_repair_needed(
             cases=cases,
             assistant_text=pre_protocol_repair_text,
@@ -4670,6 +5352,7 @@ def _run_lane_once(
             max_searches_per_case=max_searches,
         )
     )
+    runtime_tool_failure_count = _runtime_tool_failure_count(events)
     started_tools = _started_tool_names(events, message_snapshot.get("items"))
     coverage_audit_tool_call_count = max(
         0,
@@ -4829,6 +5512,7 @@ def _run_lane_once(
         "_checkpointTurnId": str(prompt_receipt.get("turnId") or ""),
         "startedTools": started_tools,
         "toolDiagnostics": _public_tool_diagnostics(events),
+        "runtimeToolFailureCount": runtime_tool_failure_count,
         "terminalFailure": _terminal_failure(events),
         "score": score,
         "_assistantText": assistant_text,
@@ -4925,11 +5609,238 @@ def _run_lane_once(
             and binding_cleanup
             and score["hardEvidence"]["parameterBounded"]
             and score["failedToolItemCount"] == 0
+            and runtime_tool_failure_count == 0
         ),
         "gatewayLedger": ledger,
         "runtimeFailureCategory": runtime_failure_category,
         "error": error,
     }
+
+
+def _answer_judge_case_payloads(
+    *,
+    cases: list[Mapping[str, object]],
+    documents: list[Mapping[str, object]],
+    lane_records: list[Mapping[str, object]],
+    chunking_config: Mapping[str, object],
+) -> tuple[
+    list[str],
+    dict[str, str],
+    dict[str, dict[str, dict[str, object]]],
+    list[dict[str, object]],
+]:
+    """Build anonymous Judge cases from only chunks observed by each candidate."""
+
+    case_ids = [
+        str(item.get("evaluationCaseId") or item.get("queryId") or "")
+        for item in cases
+    ]
+    ordered_lanes = sorted(
+        (str(item.get("lane") or "") for item in lane_records),
+        key=lambda lane: _sha256_json(
+            {
+                "contract": _ANSWER_JUDGE_CONTRACT_VERSION,
+                "caseIds": case_ids,
+                "lane": lane,
+            }
+        ),
+    )
+    candidate_ids = {
+        lane: f"C{index}"
+        for index, lane in enumerate(ordered_lanes, start=1)
+    }
+    assistant_cases = {
+        str(record.get("lane") or ""): _assistant_case_payload(
+            str(record.get("_assistantText") or "")
+        )
+        for record in lane_records
+    }
+    document_text_by_id = {
+        str(document.get("documentId") or ""): str(document.get("text") or "")
+        for document in documents
+        if str(document.get("documentId") or "").strip()
+    }
+    document_id_by_sha256 = {
+        hashlib.sha256(document_id.encode("utf-8")).hexdigest(): document_id
+        for document_id in document_text_by_id
+    }
+    citations_by_lane_case: dict[tuple[str, str], list[str]] = {}
+    citation_tokens_by_lane_case: dict[tuple[str, str], list[str]] = {}
+    observed_chunks: dict[tuple[str, str, str], set[tuple[str, int]]] = {}
+    for record in lane_records:
+        lane = str(record.get("lane") or "")
+        score = record.get("score")
+        answer_cases = score.get("answerCases") if isinstance(score, Mapping) else None
+        if not isinstance(answer_cases, list):
+            raise RuntimeError("lane answer evidence is missing before answer judgment")
+        for answer_case in answer_cases:
+            if not isinstance(answer_case, Mapping):
+                raise RuntimeError("lane answer evidence contains a non-object case")
+            case_id = str(answer_case.get("evaluationCaseId") or "")
+            raw_citations = answer_case.get("citations")
+            if not isinstance(raw_citations, list):
+                raise RuntimeError("lane answer evidence has invalid citations")
+            citation_ids = [str(item).strip() for item in raw_citations]
+            if (
+                len(set(citation_ids)) != len(citation_ids)
+                or any(not item or item not in document_text_by_id for item in citation_ids)
+            ):
+                raise RuntimeError("lane answer evidence cites an unknown document")
+            citations_by_lane_case[(lane, case_id)] = citation_ids
+            raw_citation_tokens = answer_case.get("citationTokens")
+            if not isinstance(raw_citation_tokens, list):
+                raise RuntimeError("lane answer evidence is missing citation tokens")
+            citation_tokens = [str(item).strip() for item in raw_citation_tokens]
+            if len(set(citation_tokens)) != len(citation_tokens) or any(
+                not item for item in citation_tokens
+            ):
+                raise RuntimeError("lane answer evidence has invalid citation tokens")
+            citation_tokens_by_lane_case[(lane, case_id)] = citation_tokens
+
+        ledger = record.get("gatewayLedger")
+        raw_items = ledger.get("items") if isinstance(ledger, Mapping) else None
+        if not isinstance(raw_items, list):
+            raw_items = record.get("_privateCitedChunkRefs")
+        if not isinstance(raw_items, list):
+            raise RuntimeError("lane cited chunk evidence is missing before answer judgment")
+        for item in raw_items:
+            if not isinstance(item, Mapping):
+                continue
+            operation = str(item.get("operation") or "search")
+            if operation != "search" or item.get("ok") is not True:
+                continue
+            args = item.get("args")
+            args = args if isinstance(args, Mapping) else item
+            case_id = str(args.get("evaluationCaseId") or "")
+            summary = item.get("resultSummary")
+            summary = summary if isinstance(summary, Mapping) else item
+            hits = summary.get("hits")
+            if not isinstance(hits, list):
+                continue
+            for hit in hits:
+                if not isinstance(hit, Mapping):
+                    continue
+                document_id = str(hit.get("externalDocumentId") or "").strip()
+                if not document_id:
+                    document_id = document_id_by_sha256.get(
+                        str(hit.get("externalDocumentSha256") or ""),
+                        "",
+                    )
+                ordinal = hit.get("ordinal")
+                if (
+                    not document_id
+                    or document_id not in document_text_by_id
+                    or isinstance(ordinal, bool)
+                    or not isinstance(ordinal, int)
+                    or ordinal < 0
+                ):
+                    raise RuntimeError("lane retrieved chunk evidence is invalid")
+                citation_ref = str(hit.get("citationRef") or "").strip()
+                if not citation_ref:
+                    continue
+                observed_chunks.setdefault((lane, case_id, citation_ref), set()).add(
+                    (document_id, ordinal)
+                )
+
+    normalized_chunking = {
+        **DEFAULT_CHUNKING_CONFIG,
+        **dict(chunking_config),
+    }
+    chunk_text_by_key: dict[tuple[str, int], str] = {}
+    for document_id, document_text in document_text_by_id.items():
+        chunks = _chunk_document(
+            ParsedDocument(
+                text=_normalize_text(document_text),
+                provider="builtin",
+                provider_version="text-v1",
+            ),
+            document_id=document_id,
+            base_id="answer-judge",
+            chunking_config=normalized_chunking,
+        )
+        for chunk in chunks:
+            chunk_text_by_key[(document_id, int(chunk["ordinal"]))] = str(
+                chunk["content"]
+            )
+
+    judge_cases: list[dict[str, object]] = []
+    for case in cases:
+        case_id = str(case.get("evaluationCaseId") or case.get("queryId") or "")
+        cited_chunk_keys: set[tuple[str, int]] = set()
+        candidate_chunk_keys: dict[str, list[tuple[str, int]]] = {}
+        for lane in ordered_lanes:
+            lane_keys: list[tuple[str, int]] = []
+            cited_documents: list[str] = []
+            for citation_ref in citation_tokens_by_lane_case.get((lane, case_id), []):
+                chunk_keys = sorted(
+                    observed_chunks.get((lane, case_id, citation_ref), set())
+                )
+                if not chunk_keys:
+                    raise RuntimeError(
+                        "lane citation has no retrieved chunk evidence"
+                    )
+                for key in chunk_keys:
+                    if key not in chunk_text_by_key:
+                        raise RuntimeError(
+                            "lane cited chunk is outside the frozen chunk manifest"
+                        )
+                    lane_keys.append(key)
+                    cited_chunk_keys.add(key)
+                    cited_documents.append(key[0])
+            if list(dict.fromkeys(cited_documents)) != citations_by_lane_case.get(
+                (lane, case_id), []
+            ):
+                raise RuntimeError(
+                    "lane citation tokens and resolved documents disagree"
+                )
+            candidate_chunk_keys[lane] = list(dict.fromkeys(lane_keys))
+        ordered_chunk_keys = sorted(
+            cited_chunk_keys,
+            key=lambda key: _sha256_json(
+                {
+                    "contract": _ANSWER_JUDGE_CONTRACT_VERSION,
+                    "caseId": case_id,
+                    "documentId": key[0],
+                    "chunkOrdinal": key[1],
+                    "chunkSha256": hashlib.sha256(
+                        chunk_text_by_key[key].encode("utf-8")
+                    ).hexdigest(),
+                }
+            ),
+        )
+        evidence_ids = {
+            key: f"E{index}"
+            for index, key in enumerate(ordered_chunk_keys, start=1)
+        }
+        candidates: list[dict[str, object]] = []
+        for lane in ordered_lanes:
+            answer = assistant_cases.get(lane, {}).get(case_id, {})
+            candidates.append(
+                {
+                    "candidateId": candidate_ids[lane],
+                    "answer": str(answer.get("answer") or ""),
+                    "abstained": answer.get("abstained") is True,
+                    "evidenceIds": [
+                        evidence_ids[key] for key in candidate_chunk_keys[lane]
+                    ],
+                }
+            )
+        judge_cases.append(
+            {
+                "caseId": case_id,
+                "question": str(case.get("query") or case.get("question") or ""),
+                "referenceAnswer": str(case.get("answer") or ""),
+                "evidenceDocuments": [
+                    {
+                        "evidenceId": evidence_ids[key],
+                        "text": chunk_text_by_key[key],
+                    }
+                    for key in ordered_chunk_keys
+                ],
+                "candidates": candidates,
+            }
+        )
+    return case_ids, candidate_ids, assistant_cases, judge_cases
 
 
 def _run_answer_judge(
@@ -4938,8 +5849,10 @@ def _run_answer_judge(
     cases: list[Mapping[str, object]],
     documents: list[Mapping[str, object]],
     lane_records: list[Mapping[str, object]],
+    chunking_config: Mapping[str, object],
     timeout_seconds: float,
     maximum_attempts: int = 2,
+    evaluation_model: str = _EVALUATION_MODEL,
 ) -> dict[str, object]:
     """Retry only terminal judge infrastructure failure, never a judgment score."""
 
@@ -4952,7 +5865,9 @@ def _run_answer_judge(
                 cases=cases,
                 documents=documents,
                 lane_records=lane_records,
+                chunking_config=chunking_config,
                 timeout_seconds=timeout_seconds,
+                evaluation_model=evaluation_model,
             )
         except RuntimeError as exc:
             failure = f"{type(exc).__name__}: {exc}"
@@ -5009,109 +5924,18 @@ def _run_answer_judge_once(
     cases: list[Mapping[str, object]],
     documents: list[Mapping[str, object]],
     lane_records: list[Mapping[str, object]],
+    chunking_config: Mapping[str, object],
     timeout_seconds: float,
+    evaluation_model: str = _EVALUATION_MODEL,
 ) -> dict[str, object]:
-    case_ids = [
-        str(item.get("evaluationCaseId") or item.get("queryId") or "")
-        for item in cases
-    ]
-    ordered_lanes = sorted(
-        (str(item.get("lane") or "") for item in lane_records),
-        key=lambda lane: _sha256_json(
-            {
-                "contract": _ANSWER_JUDGE_CONTRACT_VERSION,
-                "caseIds": case_ids,
-                "lane": lane,
-            }
-        ),
+    case_ids, candidate_ids, assistant_cases, judge_cases = (
+        _answer_judge_case_payloads(
+            cases=cases,
+            documents=documents,
+            lane_records=lane_records,
+            chunking_config=chunking_config,
+        )
     )
-    candidate_ids = {
-        lane: f"C{index}"
-        for index, lane in enumerate(ordered_lanes, start=1)
-    }
-    assistant_cases = {
-        str(record.get("lane") or ""): _assistant_case_payload(
-            str(record.get("_assistantText") or "")
-        )
-        for record in lane_records
-    }
-    document_text_by_id = {
-        str(document.get("documentId") or ""): str(document.get("text") or "")
-        for document in documents
-        if str(document.get("documentId") or "").strip()
-    }
-    citations_by_lane_case: dict[tuple[str, str], list[str]] = {}
-    for record in lane_records:
-        lane = str(record.get("lane") or "")
-        score = record.get("score")
-        answer_cases = score.get("answerCases") if isinstance(score, Mapping) else None
-        if not isinstance(answer_cases, list):
-            raise RuntimeError("lane answer evidence is missing before answer judgment")
-        for answer_case in answer_cases:
-            if not isinstance(answer_case, Mapping):
-                raise RuntimeError("lane answer evidence contains a non-object case")
-            case_id = str(answer_case.get("evaluationCaseId") or "")
-            raw_citations = answer_case.get("citations")
-            if not isinstance(raw_citations, list):
-                raise RuntimeError("lane answer evidence has invalid citations")
-            citation_ids = [str(item).strip() for item in raw_citations]
-            if (
-                len(set(citation_ids)) != len(citation_ids)
-                or any(not item or item not in document_text_by_id for item in citation_ids)
-            ):
-                raise RuntimeError("lane answer evidence cites an unknown document")
-            citations_by_lane_case[(lane, case_id)] = citation_ids
-    judge_cases: list[dict[str, object]] = []
-    for case in cases:
-        case_id = str(case.get("evaluationCaseId") or case.get("queryId") or "")
-        cited_document_ids = {
-            document_id
-            for lane in ordered_lanes
-            for document_id in citations_by_lane_case.get((lane, case_id), [])
-        }
-        ordered_document_ids = sorted(
-            cited_document_ids,
-            key=lambda document_id: _sha256_json(
-                {
-                    "contract": _ANSWER_JUDGE_CONTRACT_VERSION,
-                    "caseId": case_id,
-                    "documentId": document_id,
-                }
-            ),
-        )
-        evidence_ids = {
-            document_id: f"E{index}"
-            for index, document_id in enumerate(ordered_document_ids, start=1)
-        }
-        candidates: list[dict[str, object]] = []
-        for lane in ordered_lanes:
-            answer = assistant_cases.get(lane, {}).get(case_id, {})
-            candidates.append(
-                {
-                    "candidateId": candidate_ids[lane],
-                    "answer": str(answer.get("answer") or ""),
-                    "abstained": answer.get("abstained") is True,
-                    "evidenceIds": [
-                        evidence_ids[document_id]
-                        for document_id in citations_by_lane_case.get((lane, case_id), [])
-                    ],
-                }
-            )
-        judge_cases.append(
-            {
-                "caseId": case_id,
-                "question": str(case.get("query") or case.get("question") or ""),
-                "referenceAnswer": str(case.get("answer") or ""),
-                "evidenceDocuments": [
-                    {
-                        "evidenceId": evidence_ids[document_id],
-                        "text": document_text_by_id[document_id],
-                    }
-                    for document_id in ordered_document_ids
-                ],
-                "candidates": candidates,
-            }
-        )
     prompt = _answer_judge_prompt(judge_cases)
     session = service.create_session(
         {
@@ -5138,9 +5962,12 @@ def _run_answer_judge_once(
     )
     started = time.perf_counter()
     ensure = service.ensure_runtime({"sessionId": session_id})
-    if not _is_evaluation_model_max(ensure):
+    if not _is_evaluation_model_max(
+        ensure,
+        evaluation_model=evaluation_model,
+    ):
         raise RuntimeError(
-            f"answer judge did not open {_EVALUATION_PROVIDER}/{_EVALUATION_MODEL} "
+            f"answer judge did not open {_EVALUATION_PROVIDER}/{evaluation_model} "
             f"at {_EVALUATION_THINKING}"
         )
     receipt = service.prompt(
@@ -5259,6 +6086,7 @@ def _run_answer_judge_once(
                 "referenceAnswer": True,
                 "generatedAnswer": True,
                 "candidateCitedEvidence": True,
+                "candidateCitedEvidenceGranularity": "retrieved-chunk",
                 "judgeRawOutputs": True,
                 "uploaded": False,
             },
@@ -5352,6 +6180,7 @@ def _run_answer_judge_once(
             "referenceAnswer": True,
             "generatedAnswer": True,
             "candidateCitedEvidence": True,
+            "candidateCitedEvidenceGranularity": "retrieved-chunk",
             "judgeRawOutputs": True,
             "uploaded": False,
         },
@@ -5627,6 +6456,81 @@ def _apply_answer_judgments(
         metrics["agentSuccessRate"] = agent_success_count / denominator
 
 
+def _answer_only_cited_chunk_keys(
+    lane_record: Mapping[str, object],
+    answer_case: Mapping[str, object],
+) -> set[tuple[str, int]]:
+    """Resolve only the retrieved chunks named by this case's citation tokens."""
+
+    case_id = str(answer_case.get("evaluationCaseId") or "")
+    citation_tokens = {
+        str(item).strip()
+        for item in answer_case.get("citationTokens") or []
+        if str(item).strip()
+    }
+    cited_document_ids = {
+        str(item).strip()
+        for item in answer_case.get("citations") or []
+        if str(item).strip()
+    }
+    document_id_by_sha256 = {
+        hashlib.sha256(document_id.encode("utf-8")).hexdigest(): document_id
+        for document_id in cited_document_ids
+    }
+    ledger = lane_record.get("gatewayLedger")
+    raw_items = ledger.get("items") if isinstance(ledger, Mapping) else None
+    if not isinstance(raw_items, list):
+        raw_items = lane_record.get("_privateCitedChunkRefs")
+    if not isinstance(raw_items, list):
+        return set()
+
+    cited_chunks: set[tuple[str, int]] = set()
+    for item in raw_items:
+        if not isinstance(item, Mapping):
+            continue
+        if (
+            str(item.get("operation") or "search") != "search"
+            or item.get("ok") is not True
+        ):
+            continue
+        args = item.get("args")
+        args = args if isinstance(args, Mapping) else item
+        if str(args.get("evaluationCaseId") or "") != case_id:
+            continue
+        summary = item.get("resultSummary")
+        summary = summary if isinstance(summary, Mapping) else item
+        hits = summary.get("hits")
+        if not isinstance(hits, list):
+            continue
+        for hit in hits:
+            if not isinstance(hit, Mapping):
+                continue
+            citation_ref = str(hit.get("citationRef") or "").strip()
+            document_id = str(hit.get("externalDocumentId") or "").strip()
+            if not document_id:
+                document_id = document_id_by_sha256.get(
+                    str(hit.get("externalDocumentSha256") or ""),
+                    "",
+                )
+            if (
+                document_id not in cited_document_ids
+                or (
+                    citation_ref not in citation_tokens
+                    and document_id not in citation_tokens
+                )
+            ):
+                continue
+            chunk_ordinal = hit.get("ordinal")
+            if (
+                isinstance(chunk_ordinal, bool)
+                or not isinstance(chunk_ordinal, int)
+                or chunk_ordinal < 0
+            ):
+                raise RuntimeError("answer-only cited chunk evidence is invalid")
+            cited_chunks.add((document_id, chunk_ordinal))
+    return cited_chunks
+
+
 def _apply_answer_only_judgments(
     lane_records: list[dict[str, Any]],
     *,
@@ -5723,6 +6627,7 @@ def _apply_answer_only_judgments(
                     for item in answer_case.get("citations") or []
                     if str(item)
                 }
+                cited_chunk_keys: set[tuple[str, int]] | None = None
                 qrel_covered = 0
                 for qrel_fact in qrel_facts:
                     if not isinstance(qrel_fact, Mapping):
@@ -5739,13 +6644,48 @@ def _apply_answer_only_judgments(
                             raise RuntimeError(
                                 "answer-only fact support group has no documents"
                             )
-                        support_group_matches.append(
-                            bool(
-                                cited_document_ids.intersection(
-                                    str(item) for item in document_ids
+                        evidence = support_group.get("evidence")
+                        if isinstance(evidence, list):
+                            if not evidence:
+                                raise RuntimeError(
+                                    "answer-only fact support group has no exact evidence"
+                                )
+                            if cited_chunk_keys is None:
+                                cited_chunk_keys = _answer_only_cited_chunk_keys(
+                                    lane_record,
+                                    answer_case,
+                                )
+                            evidence_keys: set[tuple[str, int]] = set()
+                            for binding in evidence:
+                                if not isinstance(binding, Mapping):
+                                    raise RuntimeError(
+                                        "answer-only exact evidence binding is invalid"
+                                    )
+                                document_id = str(
+                                    binding.get("documentId") or ""
+                                ).strip()
+                                chunk_ordinal = binding.get("chunkOrdinal")
+                                if (
+                                    not document_id
+                                    or isinstance(chunk_ordinal, bool)
+                                    or not isinstance(chunk_ordinal, int)
+                                    or chunk_ordinal < 0
+                                ):
+                                    raise RuntimeError(
+                                        "answer-only exact evidence binding is invalid"
+                                    )
+                                evidence_keys.add((document_id, chunk_ordinal))
+                            support_group_matches.append(
+                                bool(cited_chunk_keys.intersection(evidence_keys))
+                            )
+                        else:
+                            support_group_matches.append(
+                                bool(
+                                    cited_document_ids.intersection(
+                                        str(item) for item in document_ids
+                                    )
                                 )
                             )
-                        )
                     support_group_mode = str(
                         qrel_fact.get("supportGroupMode") or "all"
                     )
@@ -5937,6 +6877,7 @@ def _lane_prompt(
     evaluation_mode: str,
     evaluation_split: str,
     agentic_supplemental_limit: int = _AGENTIC_MAX_SUPPLEMENTAL_TOTAL,
+    prompt_profile: str = _INCUMBENT_PROMPT_PROFILE,
 ) -> str:
     if evaluation_mode not in {"answer-only", "retrieval-and-answer"}:
         raise ValueError("lane prompt evaluation mode is invalid")
@@ -5944,6 +6885,16 @@ def _lane_prompt(
         raise ValueError("lane prompt evaluation split is invalid")
     if agentic_supplemental_limit not in {3, _AGENTIC_MAX_SUPPLEMENTAL_TOTAL}:
         raise ValueError("lane prompt agentic supplemental limit is unsupported")
+    if prompt_profile not in _PROMPT_PROFILES:
+        raise ValueError("lane prompt profile is unsupported")
+    prompt_profile_rule = {
+        _INCUMBENT_PROMPT_PROFILE: "",
+        _LUNA_PROMPT_ONLY_V3_PROFILE: _LUNA_PROMPT_ONLY_V3_RULE,
+        _LUNA_PROMPT_ONLY_V4_PROFILE: _LUNA_PROMPT_ONLY_V4_RULE,
+        _LUNA_PROMPT_ONLY_V5_PROFILE: (
+            _LUNA_PROMPT_ONLY_V4_RULE + _LUNA_PROMPT_ONLY_V5_RULE
+        ),
+    }[prompt_profile]
     first_pass_top_k = (
         _AGENTIC_PARENT_SEARCH_TOP_K
         if lane == "agentic"
@@ -6081,6 +7032,7 @@ def _lane_prompt(
         "风险清单或旁支事实。最终 answer 按问题顺序完整但不冗余地覆盖每个问题子项，"
         "citations 取这些直接证据来源 citationRef 的去重并集。题干中的时间、身份等非目标前提若未在"
         "来源中复述、但也未被来源明确否定，不得因此整题拒答；应回答来源直接支持的目标槽位。"
+        f"{prompt_profile_rule}"
         "若题目中的‘默认’、‘正式’、‘最终’、‘已批准’或‘必须’等词是决定目标是否成立的限定词，"
         "来源必须直接证明该限定关系；示例、草案、建议或候选值不能代替它。即使同题其他子槽位有"
         "直接证据，只要这个决定性目标槽位没有直接证据，整条 case 必须 abstained=true、"
@@ -6611,6 +7563,7 @@ def _isolated_runtime_config(
     *,
     agent_config: Path,
     runtime_payload: Path | None = None,
+    evaluation_model: str = _EVALUATION_MODEL,
 ):
     from scripts.canary_rag_benchmark_agent import _isolated_runtime_config as canary_config
 
@@ -6621,12 +7574,16 @@ def _isolated_runtime_config(
             runtime_payload=runtime_payload,
         ),
         provider=_EVALUATION_PROVIDER,
-        model=_EVALUATION_MODEL,
+        model=evaluation_model,
         max_sessions=8,
     )
 
 
-def _is_evaluation_model_max(ensure: Mapping[str, object]) -> bool:
+def _is_evaluation_model_max(
+    ensure: Mapping[str, object],
+    *,
+    evaluation_model: str = _EVALUATION_MODEL,
+) -> bool:
     state = ensure.get("state")
     if not isinstance(state, Mapping):
         return False
@@ -6634,7 +7591,7 @@ def _is_evaluation_model_max(ensure: Mapping[str, object]) -> bool:
     return (
         isinstance(model, Mapping)
         and model.get("provider") == _EVALUATION_PROVIDER
-        and model.get("id") == _EVALUATION_MODEL
+        and model.get("id") == evaluation_model
         and state.get("thinkingLevel") == _EVALUATION_THINKING
         and str(state.get("protocolVersion") or "2") == "2"
     )
@@ -6798,6 +7755,8 @@ def _runtime_failure_category(
     events: list[Mapping[str, object]],
     ledger: Mapping[str, object],
 ) -> str:
+    if _runtime_tool_failure_count(events):
+        return "harness_tool_transport_failure"
     if terminal != "turn_failed":
         return "harness_error" if error else ""
     evidence = [error]
@@ -6822,6 +7781,41 @@ def _runtime_failure_category(
             else "provider_transient_after_tool"
         )
     return "turn_failed"
+
+
+def _runtime_tool_failure_count(events: list[Mapping[str, object]]) -> int:
+    return sum(
+        event.get("eventType") == "tool_finished"
+        and isinstance(event.get("payload"), Mapping)
+        and str(event["payload"].get("toolName") or "") == "rag_benchmark"
+        and event["payload"].get("isError") is True
+        for event in events
+    )
+
+
+def _tool_transport_cursor(tool_transport: object | None) -> int:
+    cursor = getattr(tool_transport, "transport_cursor", None)
+    return max(0, int(cursor())) if callable(cursor) else 0
+
+
+def _tool_transport_receipt(
+    tool_transport: object | None,
+    *,
+    since_sequence: int,
+) -> dict[str, object]:
+    receipt_builder = getattr(tool_transport, "transport_receipt", None)
+    if callable(receipt_builder):
+        return dict(receipt_builder(since_sequence=since_sequence))
+    receipt: dict[str, object] = {
+        "schemaVersion": "rag-ime.rag-benchmark-tool-transport.v1",
+        "transport": str(getattr(tool_transport, "transport", "") or ""),
+        "accepted": True,
+        "failureCount": 0,
+        "failureTypes": [],
+        "failures": [],
+    }
+    receipt["receiptSha256"] = _sha256_json(receipt)
+    return receipt
 
 
 def _token_usage(events: list[Mapping[str, object]]) -> dict[str, object]:

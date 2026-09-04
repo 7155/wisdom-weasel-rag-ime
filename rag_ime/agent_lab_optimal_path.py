@@ -35,6 +35,7 @@ def evaluate_path_search(
     controls = _controls(request_value["frozenControls"])
     frozen_hash = _sha256_json(controls)
     baseline = _node(request_value["baseline"], "baseline")
+    _validate_baseline(baseline, frozen_hash)
     candidates = [_node(value, f"candidates[{index}]") for index, value in enumerate(request_value["candidates"])]
     all_nodes = {str(baseline["nodeId"]): baseline}
     for candidate in candidates:
@@ -53,6 +54,9 @@ def evaluate_path_search(
         elif not _valid_parent(candidate, all_nodes):
             result["status"] = "rejected"
             reasons.append("parent node is missing, self-referential, or cyclic")
+        elif not candidate["evidenceRefs"]:
+            result["status"] = "rejected"
+            reasons.append("candidate evidenceRefs are required for selection")
         elif candidate["status"] != "eligible":
             result["status"] = str(candidate["status"])
             reasons.append("candidate was not marked eligible by its producing run")
@@ -83,7 +87,13 @@ def evaluate_path_search(
 
     eligible = [node for node in evaluated if node["status"] == "eligible"]
     pareto = _pareto_front(eligible, metric_specs, baseline["metrics"])
-    selected = _select_candidate(pareto, metric_specs, baseline["metrics"], all_nodes)
+    selected = _select_candidate(
+        pareto,
+        metric_specs,
+        baseline["metrics"],
+        all_nodes,
+        selection_policy=str(objective["selectionPolicy"]),
+    )
     selected_node = selected or baseline
     selected_gates = [
         *_gate_results(selected_node["metrics"], gate_specs),
@@ -182,6 +192,15 @@ def _node(value: object, label: str) -> dict[str, object]:
         "status": str(node["status"]),
         **({"reason": str(node["reason"])} if node.get("reason") else {}),
     }
+
+
+def _validate_baseline(baseline: Mapping[str, object], frozen_hash: str) -> None:
+    if baseline["status"] != "eligible":
+        raise ValueError("baseline must be eligible")
+    if baseline["frozenControlHash"] != frozen_hash:
+        raise ValueError("baseline frozen control hash does not match this search request")
+    if not baseline["evidenceRefs"]:
+        raise ValueError("baseline evidenceRefs are required for selection")
 
 
 def _metric_specs(value: object) -> list[dict[str, object]]:
@@ -308,6 +327,20 @@ def _utility(
     return weighted / weight_sum if weight_sum else float("-inf")
 
 
+def _lexicographic_scores(
+    node: Mapping[str, object],
+    specs: list[Mapping[str, object]],
+    baseline: Mapping[str, object],
+) -> tuple[float, ...]:
+    """Rank declared metrics in order, with missing evidence always worst."""
+
+    return tuple(
+        score if score is not None else float("-inf")
+        for spec in specs
+        for score in (_normalized_improvement(baseline, node["metrics"], spec),)
+    )
+
+
 def _pareto_front(
     nodes: list[dict[str, object]],
     specs: list[Mapping[str, object]],
@@ -344,9 +377,22 @@ def _select_candidate(
     specs: list[Mapping[str, object]],
     baseline: Mapping[str, object],
     all_nodes: Mapping[str, Mapping[str, object]],
+    *,
+    selection_policy: str,
 ) -> dict[str, object] | None:
     if not nodes:
         return None
+    if selection_policy == "lexicographic_pareto":
+        return max(
+            nodes,
+            key=lambda node: (
+                _lexicographic_scores(node, specs, baseline),
+                -len(_path_ids(node, all_nodes)),
+                str(node["nodeId"]),
+            ),
+        )
+    if selection_policy != "weighted_pareto":
+        raise ValueError(f"unsupported selection policy: {selection_policy}")
     return max(
         nodes,
         key=lambda node: (

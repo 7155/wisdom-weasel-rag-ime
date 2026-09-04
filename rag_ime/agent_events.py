@@ -3,7 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 
@@ -18,6 +18,24 @@ class _ProjectionBarrier:
 _PROJECTION_STOP = object()
 
 
+class AgentTerminalProjectionDuplicate(RuntimeError):
+    """A durable authority already owns this terminal projection."""
+
+    def __init__(
+        self,
+        *,
+        event_id: str,
+        sequence: int,
+        turn_id: str,
+        created_at_ms: int,
+    ) -> None:
+        super().__init__("agent terminal projection is already recorded")
+        self.event_id = str(event_id)
+        self.sequence = int(sequence)
+        self.turn_id = str(turn_id)
+        self.created_at_ms = int(created_at_ms)
+
+
 class AgentEventHub:
     """Per-session durable-before-live event fan-out with bounded replay."""
 
@@ -29,6 +47,7 @@ class AgentEventHub:
         event_recorder: Callable[[AgentEventEnvelope], None] | None = None,
         event_observer: Callable[[AgentEventEnvelope], None] | None = None,
         background_projection: bool = False,
+        terminal_cache_limit: int = 2048,
     ) -> None:
         self._lock = threading.RLock()
         self._replay_limit = max(32, int(replay_limit))
@@ -41,10 +60,15 @@ class AgentEventHub:
         self._events: dict[str, deque[AgentEventEnvelope]] = defaultdict(
             lambda: deque(maxlen=self._replay_limit)
         )
-        self._approval_event_cache: dict[
+        self._terminal_cache_limit = max(1, int(terminal_cache_limit))
+        self._approval_event_cache: OrderedDict[
             tuple[str, str, str, str],
             AgentEventEnvelope,
-        ] = {}
+        ] = OrderedDict()
+        self._tool_terminal_event_cache: OrderedDict[
+            tuple[str, str, str],
+            AgentEventEnvelope,
+        ] = OrderedDict()
         self._subscribers: dict[str, set[queue.Queue[AgentEventEnvelope]]] = defaultdict(set)
         self._projection_queue: queue.Queue[object] | None = None
         self._projection_thread: threading.Thread | None = None
@@ -75,16 +99,78 @@ class AgentEventHub:
             if approval_key is not None:
                 existing = self._approval_event_cache.get(approval_key)
                 if existing is not None:
+                    self._approval_event_cache.move_to_end(approval_key)
                     return existing
-            envelope = self._build_event_locked(
+            tool_terminal_key = _tool_terminal_event_key(
                 session_id,
                 event_type,
                 payload,
                 turn_id=turn_id,
-                created_at_ms=created_at_ms,
             )
+            if tool_terminal_key is not None:
+                existing = self._tool_terminal_event_cache.get(
+                    tool_terminal_key
+                )
+                if existing is not None:
+                    self._tool_terminal_event_cache.move_to_end(
+                        tool_terminal_key
+                    )
+                    return existing
+            try:
+                envelope = self._build_event_locked(
+                    session_id,
+                    event_type,
+                    payload,
+                    turn_id=turn_id,
+                    created_at_ms=created_at_ms,
+                )
+            except AgentTerminalProjectionDuplicate as duplicate:
+                envelope = next(
+                    (
+                        event
+                        for event in self._events.get(session_id, ())
+                        if event.event_id == duplicate.event_id
+                    ),
+                    AgentEventEnvelope(
+                        event_id=duplicate.event_id,
+                        session_id=session_id,
+                        turn_id=duplicate.turn_id,
+                        sequence=duplicate.sequence,
+                        created_at_ms=duplicate.created_at_ms,
+                        event_type=event_type,
+                        payload=dict(payload or {}),
+                        resume_token=duplicate.event_id,
+                    ),
+                )
+                envelope.to_payload()
+                if approval_key is not None:
+                    self._remember_terminal_event_locked(
+                        self._approval_event_cache,
+                        approval_key,
+                        envelope,
+                    )
+                if tool_terminal_key is not None:
+                    self._remember_terminal_event_locked(
+                        self._tool_terminal_event_cache,
+                        tool_terminal_key,
+                        envelope,
+                    )
+                # The original event was already delivered by its owning
+                # process. Returning its durable identity is an idempotent
+                # acknowledgement, not a second replay/live publication.
+                return envelope
             if approval_key is not None:
-                self._approval_event_cache[approval_key] = envelope
+                self._remember_terminal_event_locked(
+                    self._approval_event_cache,
+                    approval_key,
+                    envelope,
+                )
+            if tool_terminal_key is not None:
+                self._remember_terminal_event_locked(
+                    self._tool_terminal_event_cache,
+                    tool_terminal_key,
+                    envelope,
+                )
             subscribers = tuple(self._subscribers.get(session_id, ()))
             observers = tuple(self._observers)
         for subscriber in subscribers:
@@ -133,9 +219,7 @@ class AgentEventHub:
             # replay would let a reconnect apply the old projection before the
             # authoritative snapshot has replaced it.
             self._events[session_id].clear()
-            for key in tuple(self._approval_event_cache):
-                if key[0] == session_id:
-                    self._approval_event_cache.pop(key, None)
+            self._drop_terminal_cache_for_session_locked(session_id)
             subscribers = tuple(self._subscribers.get(session_id, ()))
             for subscriber in subscribers:
                 while True:
@@ -150,6 +234,41 @@ class AgentEventHub:
             observers = tuple(self._observers)
         self._project(envelope, observers)
         return envelope
+
+    def drop_session(self, session_id: str) -> None:
+        """Forget bounded live/replay state after a durable Session delete."""
+
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return
+        with self._lock:
+            self._events.pop(normalized_session_id, None)
+            self._sequences.pop(normalized_session_id, None)
+            self._drop_terminal_cache_for_session_locked(
+                normalized_session_id
+            )
+
+    def _drop_terminal_cache_for_session_locked(
+        self,
+        session_id: str,
+    ) -> None:
+        for key in tuple(self._approval_event_cache):
+            if key[0] == session_id:
+                self._approval_event_cache.pop(key, None)
+        for key in tuple(self._tool_terminal_event_cache):
+            if key[0] == session_id:
+                self._tool_terminal_event_cache.pop(key, None)
+
+    def _remember_terminal_event_locked(
+        self,
+        cache: OrderedDict[tuple[str, ...], AgentEventEnvelope],
+        key: tuple[str, ...],
+        envelope: AgentEventEnvelope,
+    ) -> None:
+        cache[key] = envelope
+        cache.move_to_end(key)
+        while len(cache) > self._terminal_cache_limit:
+            cache.popitem(last=False)
 
     def flush(self, *, timeout: float = 5.0) -> bool:
         """Wait until every previously published secondary projection finishes."""
@@ -379,6 +498,23 @@ def _approval_event_key(
         return None
     state = "pending" if event_type == "approval_required" else "resolved"
     return (str(session_id), event_type, approval_id, state)
+
+
+def _tool_terminal_event_key(
+    session_id: str,
+    event_type: str,
+    payload: Mapping[str, object] | None,
+    *,
+    turn_id: str,
+) -> tuple[str, str, str] | None:
+    if event_type != "tool_finished":
+        return None
+    source = payload if isinstance(payload, Mapping) else {}
+    tool_call_id = str(source.get("toolCallId") or "").strip()
+    normalized_turn_id = str(turn_id or "").strip()
+    if not tool_call_id:
+        return None
+    return (str(session_id), normalized_turn_id, tool_call_id)
 
 
 def _event_sequence(session_id: str, event_id: str) -> int | None:

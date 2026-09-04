@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import patch
@@ -155,6 +156,91 @@ class AgentServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.service.close()
         self.tmp.cleanup()
+
+    def _prepare_room_bound_approval(
+        self,
+        *,
+        suffix: str,
+        tool_name: str = "workspace_shell",
+        operation: str = "run",
+    ) -> dict[str, str]:
+        room = self.service.create_room(
+            {
+                "title": f"Room approval recovery {suffix}",
+                "workspaceRoots": [self.root.as_posix()],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        room_id = str(room["id"])
+        session_id = str(participant["sessionId"])
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id=f"pi-room-recovery-{suffix}",
+        )
+        root_id = f"root:recovery:{suffix}"
+        dispatch_id = f"dispatch:recovery:{suffix}"
+        session_turn_id = f"turn:recovery:{suffix}"
+        tool_call_id = f"tool:recovery:{suffix}"
+        self.service.room_turns.begin(
+            session_id,
+            root_id,
+            dispatch_id=dispatch_id,
+        )
+        self.service.room_turns.accept(
+            session_id,
+            session_turn_id,
+            root_id,
+        )
+        room_context = self.service._active_room_dispatch_context(session_id)
+        self.assertIsNotNone(room_context)
+        self.service.events.publish(
+            session_id,
+            "tool_started",
+            {
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "summary": "执行 Room 自动授权命令",
+            },
+            turn_id=session_turn_id,
+        )
+        self.assertTrue(self.service.events.flush())
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name=tool_name,
+            operation=operation,
+            payload_sha256=hashlib.sha256(suffix.encode("utf-8")).hexdigest(),
+            preview={"title": "执行命令", "summary": "Room 自动授权"},
+            risk_level="R2",
+            causal_metadata={
+                "turnId": session_turn_id,
+                "roomBound": True,
+            },
+        )
+        approval_id = str(approval["approvalId"])
+        self.service.sessions.bind_approval_tool_call(
+            approval_id,
+            tool_call_id=tool_call_id,
+        )
+        self.service.sessions.bind_approval_room_dispatch(
+            approval_id,
+            room_context=room_context or {},
+        )
+        return {
+            "approvalId": approval_id,
+            "payloadSha256": str(approval["payloadSha256"]),
+            "roomId": room_id,
+            "sessionId": session_id,
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "sessionTurnId": session_turn_id,
+            "toolCallId": tool_call_id,
+        }
 
     def test_evaluation_snapshot_rejects_all_conversation_mutations(self) -> None:
         snapshot = self.service.sessions.create(
@@ -1542,6 +1628,1707 @@ class AgentServiceTests(unittest.TestCase):
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
         )
 
+    def test_room_bound_automatic_approval_does_not_reenter_model_arbiter(self) -> None:
+        session = self.service.create_session({"title": "Room 自动执行"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "full_trust",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-auto",
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        room_context = {
+            "roomId": "room:auto",
+            "rootId": "root:auto",
+            "dispatchId": "dispatch:auto",
+            "generation": 1,
+        }
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=room_context,
+        )
+        self.assertNotIn("approvalArbitration", approval["preview"])
+        self.service.bind_approval_executor(
+            lambda decided: {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "approvalId": decided["approvalId"],
+                "toolId": decided["toolId"],
+                "operation": decided["operation"],
+                "summary": "Room 操作已执行",
+            }
+        )
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value=room_context,
+            ),
+            patch.object(
+                self.service.approval_model,
+                "decide",
+                side_effect=AssertionError("Room approval reached the model arbiter"),
+            ) as decide,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        decide.assert_not_called()
+        self.assertTrue(result["autoApproved"])
+        self.assertEqual(result["decisionMode"], "policy")
+        self.assertEqual(result["approval"]["state"], "applied")
+
+    def test_partial_legacy_room_binding_never_authorizes_tool_execution(self) -> None:
+        session = self.service.create_session({"title": "Legacy Room binding"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "full_trust",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="c" * 64,
+            preview={"title": "旧 Room 操作", "summary": "绑定字段不完整"},
+            risk_level="R2",
+        )
+        approval_id = str(approval["approvalId"])
+        with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+            conn.execute(
+                """
+                UPDATE agent_approvals
+                SET room_bound = 1, room_id = ?, room_root_id = ?,
+                    room_dispatch_id = '', room_generation = 0
+                WHERE approval_id = ?
+                """,
+                ("room:legacy", "root:legacy", approval_id),
+            )
+            conn.commit()
+        partial = self.service.sessions.get_approval(approval_id)
+        incomplete_live = {
+            "roomId": "room:legacy",
+            "rootId": "root:legacy",
+            "dispatchId": "",
+            "generation": 0,
+        }
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "summary": "不应执行",
+            }
+        )
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value=incomplete_live,
+            ),
+            patch.object(
+                self.service.approval_model,
+                "decide",
+                side_effect=AssertionError(
+                    "partial Room binding reached model arbitration"
+                ),
+            ) as decide,
+        ):
+            result = self.service.auto_approve_pending(partial)
+
+        decide.assert_not_called()
+        self.assertEqual(executed, [])
+        self.assertTrue(result["terminal"])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "rejected")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:room_dispatch_stale",
+        )
+
+    def test_room_bound_approval_rechecks_read_only_before_execution(self) -> None:
+        session = self.service.create_session({"title": "Room policy race"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "full_trust",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        self.service.sessions.set_room_execution_mode(
+            session_id,
+            "room_unrestricted",
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        self.assertIn("approvalArbitration", approval["preview"])
+        room_context = {
+            "roomId": "room:race",
+            "rootId": "root:race",
+            "dispatchId": "dispatch:race",
+            "generation": 1,
+        }
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=room_context,
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "approvalId": decided["approvalId"],
+                "toolId": decided["toolId"],
+                "operation": decided["operation"],
+                "summary": "不应执行",
+            }
+        )
+        self.service.update_session(
+            session_id,
+            {
+                "executionMode": "read_only",
+                "toolProfileVersion": "subagent-readonly-v1",
+            },
+        )
+
+        with patch.object(
+            self.service,
+            "_active_room_dispatch_context",
+            return_value=room_context,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertTrue(result["terminal"])
+        self.assertEqual(result["approval"]["state"], "rejected")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:read_only",
+        )
+
+    def test_room_execution_prompt_is_derived_only_from_a_live_dispatch(self) -> None:
+        session = self.service.create_session({"title": "Room prompt lease"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "executionMode": "per_action",
+                "toolProfileVersion": "control-center-v1",
+            },
+        )
+        self.service.sessions.set_room_execution_mode(
+            session_id,
+            "room_unrestricted",
+        )
+        persisted = self.service.sessions.get(session_id)
+        live_context = {
+            "roomId": "room:prompt",
+            "rootId": "root:prompt",
+            "dispatchId": "dispatch:prompt",
+            "generation": 3,
+        }
+
+        with patch.object(
+            self.service,
+            "_active_room_dispatch_context",
+            return_value=None,
+        ):
+            direct = str(
+                self.service._runtime_session_context(persisted).get(
+                    "sessionContext"
+                )
+                or ""
+            )
+        with patch.object(
+            self.service,
+            "_active_room_dispatch_context",
+            return_value=live_context,
+        ):
+            room = str(
+                self.service._runtime_session_context(persisted).get(
+                    "sessionContext"
+                )
+                or ""
+            )
+
+        self.assertNotIn('room-mode="room_unrestricted"', direct)
+        self.assertIn('room-mode="room_unrestricted"', room)
+
+        delivered_messages: list[str] = []
+
+        def deliver_with(room_context, client_message_id: str) -> str:
+            with (
+                patch.object(
+                    self.service,
+                    "_active_room_dispatch_context",
+                    return_value=room_context,
+                ),
+                patch.object(
+                    self.service.runtime,
+                    "prompt",
+                    return_value={
+                        "accepted": True,
+                        "turnId": f"turn:{client_message_id}",
+                        "piEntryId": f"entry:{client_message_id}",
+                        "response": {"success": True},
+                    },
+                ) as runtime_prompt,
+            ):
+                self.service.prompt_delivery_application.deliver(
+                    session_id,
+                    "执行 Room 当前任务",
+                    client_message_id=client_message_id,
+                    source_kind="room",
+                )
+            sent = str(runtime_prompt.call_args.args[1])
+            self.assertTrue(sent.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+            delivered_messages.append(sent)
+            return str(
+                json.loads(sent[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]).get(
+                    "sessionContext"
+                )
+                or ""
+            )
+
+        direct_delivery = deliver_with(None, "direct-policy")
+        room_delivery = deliver_with(live_context, "room-policy")
+
+        self.assertNotIn('room-mode="room_unrestricted"', direct_delivery)
+        self.assertIn('room-mode="room_unrestricted"', room_delivery)
+        self.assertNotIn("Luna", room_delivery)
+        self.assertNotIn("人工", room_delivery)
+        self.assertEqual(len(delivered_messages), 2)
+
+    def test_room_execution_prompt_rejects_an_incomplete_live_binding(self) -> None:
+        session = self.service.create_session(
+            {"title": "Room prompt exact binding"}
+        )["session"]
+        session_id = str(session["id"])
+        self.service.sessions.set_room_execution_mode(
+            session_id,
+            "room_unrestricted",
+        )
+
+        malformed = (
+            {
+                "roomId": "room:prompt",
+                "rootId": "root:prompt",
+                "dispatchId": "",
+                "generation": 1,
+            },
+            {
+                "roomId": "room:prompt",
+                "rootId": "root:prompt",
+                "dispatchId": "dispatch:prompt",
+                "generation": 0,
+            },
+        )
+        for context in malformed:
+            with self.subTest(context=context):
+                with patch.object(
+                    self.service,
+                    "_active_room_dispatch_context",
+                    return_value=context,
+                ):
+                    prompt = str(
+                        self.service._runtime_session_context(session).get(
+                            "sessionContext"
+                        )
+                        or ""
+                    )
+                self.assertNotIn('room-mode="room_unrestricted"', prompt)
+                self.assertNotIn("不创建任何二次裁决或确认流程", prompt)
+
+    def test_unbound_direct_approval_does_not_inherit_a_stale_room_overlay(self) -> None:
+        session = self.service.create_session({"title": "Direct after Room"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "executionMode": "per_action",
+                "toolProfileVersion": "control-center-v1",
+            },
+        )
+        self.service.sessions.set_room_execution_mode(
+            session_id,
+            "room_unrestricted",
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="d" * 64,
+            preview={"title": "重启 Runtime", "summary": "普通 Session 操作"},
+            risk_level="R3",
+        )
+        self.service.bind_approval_executor(
+            lambda _approval: (_ for _ in ()).throw(
+                AssertionError("unbound direct approval executed automatically")
+            )
+        )
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value=None,
+            ),
+            patch.object(
+                self.service.approval_model,
+                "decide",
+                side_effect=AssertionError("direct per-action approval reached Luna"),
+            ) as decide,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        decide.assert_not_called()
+        self.assertTrue(result["approvalRequired"])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["decisionMode"], "manual")
+        self.assertEqual(result["approval"]["state"], "pending")
+
+    def test_stale_room_dispatch_neither_executes_nor_falls_back_to_luna(self) -> None:
+        session = self.service.create_session({"title": "Stale Room dispatch"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "full_trust",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "过期 Room 操作"},
+            risk_level="R3",
+        )
+        room_context = {
+            "roomId": "room:stale",
+            "rootId": "root:old",
+            "dispatchId": "dispatch:old",
+            "generation": 1,
+        }
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=room_context,
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {}
+        )
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value={**room_context, "rootId": "root:new"},
+            ),
+            patch.object(
+                self.service.approval_model,
+                "decide",
+                side_effect=AssertionError("stale Room approval reached Luna"),
+            ) as decide,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        decide.assert_not_called()
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "rejected")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:room_dispatch_stale",
+        )
+
+    def test_room_stop_wins_between_policy_decision_and_tool_execution(self) -> None:
+        session = self.service.create_session({"title": "Room Stop race"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "per_action",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        room_context = {
+            "roomId": "room:stop-race",
+            "rootId": "root:stop-race",
+            "dispatchId": "dispatch:stop-race",
+            "generation": 3,
+        }
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=room_context,
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "approvalId": decided["approvalId"],
+                "toolId": decided["toolId"],
+                "operation": decided["operation"],
+                "summary": "不应执行",
+            }
+        )
+        decide = self.service.sessions.decide_approval
+
+        def decide_then_stop(*args, **kwargs):
+            decided = decide(*args, **kwargs)
+            self.service.sessions.cancel_pending_approvals(
+                session_id,
+                reason="user_abort",
+                turn_id="root:stop-race",
+            )
+            return decided
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value=room_context,
+            ),
+            patch.object(
+                self.service.sessions,
+                "decide_approval",
+                side_effect=decide_then_stop,
+            ),
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "stale")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "runtime-cancellation",
+        )
+
+    def test_room_cancelled_root_wins_before_approval_execution_claim(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room cancellation claim race",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        session_id = str(participant["sessionId"])
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-cancel-race",
+        )
+        root_id = "root:cancel-race"
+        dispatch_id = "dispatch:cancel-race"
+        self.service.room_turns.begin(
+            session_id,
+            root_id,
+            dispatch_id=dispatch_id,
+        )
+        room_context = self.service._active_room_dispatch_context(session_id)
+        self.assertIsNotNone(room_context)
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=room_context or {},
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {}
+        )
+        decide = self.service.sessions.decide_approval
+
+        def decide_then_cancel_root(*args, **kwargs):
+            decided = decide(*args, **kwargs)
+            self.service.room_turns.record_cancellation(
+                root_id,
+                "room-cancellation:claim-race",
+            )
+            return decided
+
+        with patch.object(
+            self.service.sessions,
+            "decide_approval",
+            side_effect=decide_then_cancel_root,
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "stale")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:room_dispatch_stale",
+        )
+
+    def test_room_read_only_change_wins_before_approval_execution_claim(self) -> None:
+        session = self.service.create_session({"title": "Room read-only race"})["session"]
+        session_id = str(session["id"])
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-read-only-race",
+        )
+        room_context = {
+            "roomId": "room:read-only-race",
+            "rootId": "root:read-only-race",
+            "dispatchId": "dispatch:read-only-race",
+            "generation": 1,
+        }
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=room_context,
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {}
+        )
+        decide = self.service.sessions.decide_approval
+
+        def decide_then_read_only(*args, **kwargs):
+            decided = decide(*args, **kwargs)
+            self.service.update_session(
+                session_id,
+                {
+                    "executionMode": "read_only",
+                    "toolProfileVersion": "subagent-readonly-v1",
+                },
+            )
+            return decided
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value=room_context,
+            ),
+            patch.object(
+                self.service.sessions,
+                "decide_approval",
+                side_effect=decide_then_read_only,
+            ),
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "rejected")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:read_only",
+        )
+
+    def test_room_dispatch_rotation_wins_between_policy_decision_and_tool_execution(self) -> None:
+        session = self.service.create_session({"title": "Room dispatch race"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "per_action",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+            },
+        )
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-dispatch-race",
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        original_context = {
+            "roomId": "room:dispatch-race",
+            "rootId": "root:old",
+            "dispatchId": "dispatch:old",
+            "generation": 1,
+        }
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=original_context,
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "mutationApplied": True,
+                "approvalId": decided["approvalId"],
+                "toolId": decided["toolId"],
+                "operation": decided["operation"],
+                "summary": "不应执行",
+            }
+        )
+        rotated_context = {
+            **original_context,
+            "rootId": "root:new",
+            "dispatchId": "dispatch:new",
+        }
+
+        with patch.object(
+            self.service,
+            "_active_room_dispatch_context",
+            side_effect=(original_context, rotated_context),
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "stale")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:room_dispatch_stale",
+        )
+
+    def test_room_runtime_generation_rotation_wins_before_tool_execution(self) -> None:
+        session = self.service.create_session({"title": "Room generation race"})["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "executionMode": "per_action",
+                "toolProfileVersion": "control-center-v1",
+                "grantWorkspaceScope": True,
+            },
+        )
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-generation-1",
+        )
+        original_context = {
+            "roomId": "room:generation-race",
+            "rootId": "root:generation-race",
+            "dispatchId": "dispatch:generation-race",
+            "generation": 1,
+        }
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="runtime",
+            operation="restart_sidecar",
+            payload_sha256="a" * 64,
+            preview={"title": "重启 Runtime", "summary": "Room 自动执行"},
+            risk_level="R3",
+        )
+        approval = self.service.sessions.bind_approval_room_dispatch(
+            str(approval["approvalId"]),
+            room_context=original_context,
+        )
+        executed: list[dict[str, object]] = []
+        self.service.bind_approval_executor(
+            lambda decided: executed.append(dict(decided)) or {}
+        )
+        decide = self.service.sessions.decide_approval
+
+        def decide_then_rebind(*args, **kwargs):
+            decided = decide(*args, **kwargs)
+            self.service.sessions.bind_runtime_session(
+                session_id,
+                driver_id="managed-pi",
+                runtime_kind="pi_rpc",
+                external_session_id="pi-room-generation-2",
+            )
+            return decided
+
+        with (
+            patch.object(
+                self.service,
+                "_active_room_dispatch_context",
+                return_value=original_context,
+            ),
+            patch.object(
+                self.service.sessions,
+                "decide_approval",
+                side_effect=decide_then_rebind,
+            ),
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertEqual(executed, [])
+        self.assertFalse(result["autoApproved"])
+        self.assertEqual(result["approval"]["state"], "stale")
+        self.assertEqual(
+            result["approval"]["decidedBy"],
+            "execution-policy:room_dispatch_stale",
+        )
+
+    def test_startup_recovery_closes_claimed_room_execution_without_replay(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room crash recovery",
+                "workspaceRoots": [self.root.as_posix()],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        room_id = str(room["id"])
+        session_id = str(participant["sessionId"])
+        self.service.sessions.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-room-crash-recovery",
+        )
+        root_id = "root:crash-recovery"
+        dispatch_id = "dispatch:crash-recovery"
+        session_turn_id = "turn:crash-recovery"
+        tool_call_id = "tool:crash-recovery"
+        self.service.room_turns.begin(
+            session_id,
+            root_id,
+            dispatch_id=dispatch_id,
+        )
+        self.service.room_turns.accept(
+            session_id,
+            session_turn_id,
+            root_id,
+        )
+        room_context = self.service._active_room_dispatch_context(session_id)
+        self.assertIsNotNone(room_context)
+        self.service.events.publish(
+            session_id,
+            "tool_started",
+            {
+                "toolCallId": tool_call_id,
+                "toolName": "workspace_shell",
+                "summary": "执行可能产生外部效果的命令",
+            },
+            turn_id=session_turn_id,
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="e" * 64,
+            preview={"title": "执行命令", "summary": "可能已产生外部效果"},
+            risk_level="R2",
+            causal_metadata={
+                "turnId": session_turn_id,
+                "roomBound": True,
+            },
+        )
+        approval_id = str(approval["approvalId"])
+        self.service.sessions.bind_approval_tool_call(
+            approval_id,
+            tool_call_id=tool_call_id,
+        )
+        self.service.sessions.bind_approval_room_dispatch(
+            approval_id,
+            room_context=room_context or {},
+        )
+        self.service.sessions.decide_approval(
+            approval_id,
+            approved=True,
+            payload_sha256=str(approval["payloadSha256"]),
+            decided_by="execution-policy:room_dispatch",
+        )
+        claimed = self.service.sessions.claim_approval_execution(
+            approval_id,
+            room_context=room_context or {},
+        )
+        self.assertEqual(claimed["state"], "approved")
+        self.assertTrue(
+            any(
+                event.get("payload", {}).get("sourceEventType") == "tool_started"
+                for event in self.service.rooms.list_events(room_id)
+            )
+        )
+
+        # Simulate a process crash after the irreversible execution boundary
+        # but before complete_approval persisted a terminal receipt.
+        self.service.close()
+        self.process_id += 1
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config-restarted",
+                session_dir=self.root / "sessions-restarted",
+                logs_dir=self.root / "logs-restarted",
+            ),
+            process_id_provider=lambda: self.process_id,
+            defer_startup_recovery=True,
+        )
+
+        # The approval row, durable Session terminal, and public Room terminal
+        # are three separate commit boundaries.  Interrupt each projection in
+        # turn and prove later startup attempts repair, rather than replay, the
+        # claimed Tool execution.
+        with patch.object(
+            self.service.approval_application,
+            "_project_recovered_session_execution",
+            side_effect=RuntimeError("session terminal interrupted"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "session terminal interrupted",
+            ):
+                self.service.run_startup_recovery()
+        self.assertEqual(self.service.startup_recovery_status()["status"], "failed")
+        with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+            self.assertEqual(
+                int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) FROM agent_runtime_events
+                        WHERE session_id = ? AND event_type = 'approval_resolved'
+                        """,
+                        (session_id,),
+                    ).fetchone()[0]
+                ),
+                0,
+            )
+
+        with patch.object(
+            self.service.approval_application,
+            "_project_abandoned_room_execution",
+            side_effect=RuntimeError("projection interrupted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "projection interrupted"):
+                self.service.run_startup_recovery()
+        self.assertEqual(self.service.startup_recovery_status()["status"], "failed")
+        self.service.run_startup_recovery()
+
+        with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+            self.assertEqual(
+                int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) FROM agent_runtime_events
+                        WHERE session_id = ? AND event_type = 'approval_resolved'
+                        """,
+                        (session_id,),
+                    ).fetchone()[0]
+                ),
+                1,
+            )
+
+        recovered = self.service.sessions.get_approval(approval_id)
+        self.assertEqual(recovered["state"], "failed")
+        self.assertEqual(recovered["receipt"]["executionOutcome"], "unknown")
+        self.assertTrue(recovered["receipt"]["effectMayHaveOccurred"])
+        self.assertFalse(recovered["receipt"]["replayAllowed"])
+        self.assertIsNone(recovered["receipt"]["mutationApplied"])
+        self.assertEqual(
+            self.service.startup_recovery_status()["approvalExecutionRecovery"],
+            {
+                "recoveredCount": 0,
+                "approvalIds": [],
+                "sessionReconciledCount": 0,
+                "sessionApprovalIds": [],
+                "projectionReconciledCount": 1,
+                "projectionApprovalIds": [approval_id],
+            },
+        )
+        terminal = self.service.auto_approve_pending(recovered)
+        self.assertTrue(terminal["terminal"])
+        self.assertFalse(terminal["autoApproved"])
+        self.assertEqual(terminal["approval"]["state"], "failed")
+        recovered_room_events = [
+            event
+            for event in self.service.rooms.list_events(room_id)
+            if event.get("payload", {}).get("sourceEventType")
+            == "approval_resolved"
+            and event.get("payload", {}).get("data", {}).get("approvalId")
+            == approval_id
+        ]
+        self.assertEqual(len(recovered_room_events), 1)
+        recovered_data = recovered_room_events[0]["payload"]["data"]
+        self.assertEqual(recovered_data["state"], "failed")
+        self.assertEqual(recovered_data["executionOutcome"], "unknown")
+        self.assertTrue(recovered_data["effectMayHaveOccurred"])
+        self.assertFalse(recovered_data["replayAllowed"])
+        first_session_events, _ = self.service.events.replay(session_id)
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in first_session_events
+                    if event.event_type == "approval_resolved"
+                    and event.payload.get("approvalId") == approval_id
+                ]
+            ),
+            1,
+        )
+
+        # A later real Host process sees the durable failed row again, but
+        # neither Session nor Room may gain a duplicate terminal receipt.
+        self.service.close()
+        self.process_id += 1
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config-restarted-again",
+                session_dir=self.root / "sessions-restarted-again",
+                logs_dir=self.root / "logs-restarted-again",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+        # A fresh Host owns a fresh in-memory event hub, so restart idempotency
+        # must be asserted against the durable Runtime event ledger rather than
+        # the new process's empty replay buffer.
+        with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+            durable_terminal_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM agent_runtime_events
+                    WHERE session_id = ? AND event_type = 'approval_resolved'
+                    """,
+                    (session_id,),
+                ).fetchone()[0]
+            )
+        self.assertEqual(durable_terminal_count, 1)
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in self.service.rooms.list_events(room_id)
+                    if event.get("payload", {}).get("sourceEventType")
+                    == "approval_resolved"
+                    and event.get("payload", {}).get("data", {}).get(
+                        "approvalId"
+                    )
+                    == approval_id
+                ]
+            ),
+            1,
+        )
+
+    def test_startup_recovery_closes_room_approval_before_effect_without_approval(self) -> None:
+        for state in ("pending", "approved"):
+            with self.subTest(state=state):
+                binding = self._prepare_room_bound_approval(
+                    suffix=f"{state}-{self.process_id}",
+                )
+                approval_id = binding["approvalId"]
+                if state == "approved":
+                    self.service.sessions.decide_approval(
+                        approval_id,
+                        approved=True,
+                        payload_sha256=binding["payloadSha256"],
+                        decided_by="execution-policy:room_dispatch",
+                    )
+
+                # The old Host disappears before an irreversible execution
+                # claim.  Recovery must close the Tool without asking a human
+                # or Luna and without entering the executor.
+                self.service.close()
+                self.process_id += 1
+                self.service = AgentService(
+                    db_path=self.root / "rag-ime.sqlite",
+                    runtime_config=PiRuntimeConfig(
+                        enabled=False,
+                        executable=None,
+                        agent_dir=self.root / f"agent-config-{state}",
+                        session_dir=self.root / f"sessions-{state}",
+                        logs_dir=self.root / f"logs-{state}",
+                    ),
+                    process_id_provider=lambda: self.process_id,
+                    defer_startup_recovery=True,
+                )
+                self.service.bind_approval_executor(
+                    lambda _approval: self.fail("recovery replayed the Tool")
+                )
+                with patch.object(
+                    self.service.approval_model,
+                    "decide",
+                    side_effect=AssertionError("Room recovery requested Luna approval"),
+                ) as decide:
+                    self.service.run_startup_recovery()
+                decide.assert_not_called()
+
+                recovered = self.service.sessions.get_approval(approval_id)
+                self.assertEqual(recovered["state"], "failed")
+                self.assertFalse(recovered["receipt"]["mutationApplied"])
+                self.assertFalse(recovered["receipt"]["effectMayHaveOccurred"])
+                self.assertTrue(recovered["receipt"]["replayAllowed"])
+                self.assertEqual(
+                    recovered["receipt"]["executionOutcome"],
+                    "not_started",
+                )
+                session_events, _ = self.service.events.replay(binding["sessionId"])
+                self.assertEqual(
+                    len(
+                        [
+                            event
+                            for event in session_events
+                            if event.event_type == "approval_resolved"
+                            and event.payload.get("approvalId") == approval_id
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    len(
+                        [
+                            event
+                            for event in session_events
+                            if event.event_type == "tool_finished"
+                            and event.payload.get("toolCallId")
+                            == binding["toolCallId"]
+                            and event.payload.get("recoveredExecutionTerminal") is True
+                        ]
+                    ),
+                    1,
+                )
+                self.assertTrue(self.service.events.flush())
+                recovered_room_terminals = [
+                    event
+                    for event in self.service.rooms.list_events(binding["roomId"])
+                    if event.get("payload", {}).get("sourceEventType")
+                    == "tool_finished"
+                    and event.get("payload", {}).get("data", {}).get("approvalId")
+                    == approval_id
+                    and event.get("payload", {}).get("data", {}).get(
+                        "recoveredExecutionTerminal"
+                    )
+                    is True
+                ]
+                self.assertEqual(len(recovered_room_terminals), 1)
+                self.assertEqual(
+                    recovered_room_terminals[0]["payload"]["data"]["status"],
+                    "failed",
+                )
+
+                # Startup recovery is idempotent, including its durable
+                # Session and Room projections.
+                self.service.close()
+                self.process_id += 1
+                self.service = AgentService(
+                    db_path=self.root / "rag-ime.sqlite",
+                    runtime_config=PiRuntimeConfig(
+                        enabled=False,
+                        executable=None,
+                        agent_dir=self.root / f"agent-config-{state}-again",
+                        session_dir=self.root / f"sessions-{state}-again",
+                        logs_dir=self.root / f"logs-{state}-again",
+                    ),
+                    process_id_provider=lambda: self.process_id,
+                )
+                with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+                    terminal_counts = dict(
+                        conn.execute(
+                            """
+                            SELECT event_type, COUNT(*)
+                            FROM agent_runtime_events
+                            WHERE session_id = ?
+                              AND event_type IN ('approval_resolved', 'tool_finished')
+                            GROUP BY event_type
+                            """,
+                            (binding["sessionId"],),
+                        ).fetchall()
+                    )
+                self.assertEqual(terminal_counts.get("approval_resolved"), 1)
+                self.assertEqual(terminal_counts.get("tool_finished"), 1)
+                self.assertEqual(
+                    len(
+                        [
+                            event
+                            for event in self.service.rooms.list_events(
+                                binding["roomId"]
+                            )
+                            if event.get("payload", {}).get("sourceEventType")
+                            == "tool_finished"
+                            and event.get("payload", {}).get("data", {}).get(
+                                "approvalId"
+                            )
+                            == approval_id
+                        ]
+                    ),
+                    1,
+                )
+
+    def test_startup_recovery_projects_completed_room_tool_without_replay(self) -> None:
+        binding = self._prepare_room_bound_approval(suffix="applied")
+        approval_id = binding["approvalId"]
+        self.service.sessions.decide_approval(
+            approval_id,
+            approved=True,
+            payload_sha256=binding["payloadSha256"],
+            decided_by="execution-policy:room_dispatch",
+        )
+        self.service.sessions.claim_approval_execution(
+            approval_id,
+            room_context=self.service._active_room_dispatch_context(
+                binding["sessionId"]
+            )
+            or {},
+        )
+        completed = self.service.sessions.complete_approval(
+            approval_id,
+            state="applied",
+            receipt={
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "approvalId": approval_id,
+                "toolId": "workspace_shell",
+                "operation": "run",
+                "summary": "命令已执行完成",
+                "mutationApplied": True,
+                "executionOutcome": "completed",
+                "replayAllowed": False,
+                "exitCode": 0,
+            },
+        )
+        self.assertEqual(completed["state"], "applied")
+
+        # Crash after the effect and receipt commit, before the bridge can
+        # return a Tool result or publish its terminal events.
+        self.service.close()
+        self.process_id += 1
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config-applied-recovery",
+                session_dir=self.root / "sessions-applied-recovery",
+                logs_dir=self.root / "logs-applied-recovery",
+            ),
+            process_id_provider=lambda: self.process_id,
+            defer_startup_recovery=True,
+        )
+        self.service.bind_approval_executor(
+            lambda _approval: self.fail("recovery replayed an applied Tool")
+        )
+        with patch.object(
+            self.service.approval_model,
+            "decide",
+            side_effect=AssertionError("Room recovery requested Luna approval"),
+        ) as decide:
+            self.service.run_startup_recovery()
+        decide.assert_not_called()
+
+        recovered = self.service.sessions.get_approval(approval_id)
+        self.assertEqual(recovered["state"], "applied")
+        self.assertEqual(recovered["receipt"], completed["receipt"])
+        session_events, _ = self.service.events.replay(binding["sessionId"])
+        recovered_tool_events = [
+            event
+            for event in session_events
+            if event.event_type == "tool_finished"
+            and event.payload.get("toolCallId") == binding["toolCallId"]
+            and event.payload.get("recoveredExecutionTerminal") is True
+        ]
+        self.assertEqual(len(recovered_tool_events), 1)
+        self.assertFalse(recovered_tool_events[0].payload["isError"])
+        self.assertEqual(
+            recovered_tool_events[0].payload["result"]["summary"],
+            "命令已执行完成",
+        )
+        self.assertTrue(self.service.events.flush())
+        room_terminals = [
+            event
+            for event in self.service.rooms.list_events(binding["roomId"])
+            if event.get("payload", {}).get("sourceEventType") == "tool_finished"
+            and event.get("payload", {}).get("data", {}).get("approvalId")
+            == approval_id
+            and event.get("payload", {}).get("data", {}).get(
+                "recoveredExecutionTerminal"
+            )
+            is True
+        ]
+        self.assertEqual(len(room_terminals), 1)
+        self.assertEqual(room_terminals[0]["payload"]["data"]["status"], "completed")
+        self.assertTrue(
+            room_terminals[0]["payload"]["data"]["effectMayHaveOccurred"]
+        )
+        applied_approval_events = [
+            event
+            for event in self.service.rooms.list_events(binding["roomId"])
+            if event.get("payload", {}).get("sourceEventType")
+            == "approval_resolved"
+            and event.get("payload", {}).get("data", {}).get("approvalId")
+            == approval_id
+        ]
+        self.assertEqual(len(applied_approval_events), 1)
+        self.assertNotIn("error", applied_approval_events[0]["payload"]["data"])
+
+        self.service.close()
+        self.process_id += 1
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config-applied-recovery-again",
+                session_dir=self.root / "sessions-applied-recovery-again",
+                logs_dir=self.root / "logs-applied-recovery-again",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+        with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+            terminal_counts = dict(
+                conn.execute(
+                    """
+                    SELECT event_type, COUNT(*)
+                    FROM agent_runtime_events
+                    WHERE session_id = ?
+                      AND event_type IN ('approval_resolved', 'tool_finished')
+                    GROUP BY event_type
+                    """,
+                    (binding["sessionId"],),
+                ).fetchall()
+            )
+        self.assertEqual(terminal_counts.get("approval_resolved"), 1)
+        self.assertEqual(terminal_counts.get("tool_finished"), 1)
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in self.service.rooms.list_events(binding["roomId"])
+                    if event.get("payload", {}).get("sourceEventType")
+                    == "tool_finished"
+                    and event.get("payload", {}).get("data", {}).get("approvalId")
+                    == approval_id
+                ]
+            ),
+            1,
+        )
+
+    def test_external_room_finalization_projects_tool_terminal_without_another_restart(self) -> None:
+        for succeeded in (True, False):
+            with self.subTest(succeeded=succeeded):
+                suffix = "external-success" if succeeded else "external-failure"
+                binding = self._prepare_room_bound_approval(
+                    suffix=suffix,
+                    tool_name="runtime",
+                    operation="restart_sidecar",
+                )
+                approval_id = binding["approvalId"]
+                self.service.sessions.decide_approval(
+                    approval_id,
+                    approved=True,
+                    payload_sha256=binding["payloadSha256"],
+                    decided_by="execution-policy:room_dispatch",
+                )
+                self.service.sessions.claim_approval_execution(
+                    approval_id,
+                    room_context=self.service._active_room_dispatch_context(
+                        binding["sessionId"]
+                    )
+                    or {},
+                )
+                command = [
+                    "launchctl",
+                    "kickstart",
+                    "-k",
+                    "gui/501/com.rag-ime.sidecar",
+                ]
+                command_sha256 = hashlib.sha256(
+                    json.dumps(
+                        command,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                self.service.sessions.complete_approval(
+                    approval_id,
+                    state="external_pending",
+                    receipt={
+                        "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                        "approvalId": approval_id,
+                        "toolId": "runtime",
+                        "operation": "restart_sidecar",
+                        "summary": "等待外部监督器完成",
+                        "mutationApplied": False,
+                        "externalActionPending": True,
+                        "externalAction": "restart_sidecar",
+                        "externalCommand": command,
+                        "externalCommandSha256": command_sha256,
+                        "originProcessId": self.process_id,
+                    },
+                )
+                self.service.events.publish(
+                    binding["sessionId"],
+                    "approval_resolved",
+                    {
+                        "approvalId": approval_id,
+                        "toolCallId": binding["toolCallId"],
+                        "state": "external_pending",
+                        "automatic": True,
+                        "decisionMode": "policy",
+                        "causalMetadata": {
+                            "roomBound": True,
+                            "roomId": binding["roomId"],
+                            "rootId": binding["rootId"],
+                            "dispatchId": binding["dispatchId"],
+                            "generation": 1,
+                        },
+                    },
+                    turn_id=binding["sessionTurnId"],
+                )
+                self.assertTrue(self.service.events.flush())
+
+                # The external supervisor reaches a fresh Host. Its volatile
+                # Room turn registry is empty, so ordinary event mirroring
+                # cannot close the original Room Tool card.
+                self.service.close()
+                self.process_id += 1
+                self.service = AgentService(
+                    db_path=self.root / "rag-ime.sqlite",
+                    runtime_config=PiRuntimeConfig(
+                        enabled=False,
+                        executable=None,
+                        agent_dir=self.root / f"agent-config-{suffix}",
+                        session_dir=self.root / f"sessions-{suffix}",
+                        logs_dir=self.root / f"logs-{suffix}",
+                    ),
+                    process_id_provider=lambda: self.process_id,
+                )
+
+                with patch.object(
+                    self.service.approval_model,
+                    "decide",
+                    side_effect=AssertionError(
+                        "external Room finalization requested Luna approval"
+                    ),
+                ) as decide:
+                    result = self.service.finalize_external_approval(
+                        approval_id,
+                        {
+                            "payloadSha256": binding["payloadSha256"],
+                            "externalAction": "restart_sidecar",
+                            "externalCommandSha256": command_sha256,
+                            "succeeded": succeeded,
+                            "exitCode": 0 if succeeded else 7,
+                            "timedOut": False,
+                            "error": "" if succeeded else "launchctl failed",
+                        },
+                    )
+                decide.assert_not_called()
+                expected_state = "applied" if succeeded else "failed"
+                self.assertEqual(result["approval"]["state"], expected_state)
+                self.assertTrue(self.service.events.flush())
+
+                session_events, _ = self.service.events.replay(
+                    binding["sessionId"]
+                )
+                session_terminals = [
+                    event
+                    for event in session_events
+                    if event.event_type == "tool_finished"
+                    and event.payload.get("toolCallId")
+                    == binding["toolCallId"]
+                    and event.payload.get("recoveredExecutionTerminal") is True
+                ]
+                self.assertEqual(len(session_terminals), 1)
+                self.assertEqual(
+                    session_terminals[0].payload["isError"],
+                    not succeeded,
+                )
+                room_terminals = [
+                    event
+                    for event in self.service.rooms.list_events(
+                        binding["roomId"]
+                    )
+                    if event.get("payload", {}).get("sourceEventType")
+                    == "tool_finished"
+                    and event.get("payload", {}).get("data", {}).get(
+                        "approvalId"
+                    )
+                    == approval_id
+                ]
+                self.assertEqual(len(room_terminals), 1)
+                self.assertEqual(
+                    room_terminals[0]["payload"]["data"]["status"],
+                    "completed" if succeeded else "failed",
+                )
+
+                # Re-running the generic startup projector is safe and does
+                # not create another Tool terminal or invoke an arbiter.
+                self.service.approval_application.reconcile_abandoned_execution_claims()
+                self.assertTrue(self.service.events.flush())
+                session_events, _ = self.service.events.replay(
+                    binding["sessionId"]
+                )
+                self.assertEqual(
+                    len(
+                        [
+                            event
+                            for event in session_events
+                            if event.event_type == "tool_finished"
+                            and event.payload.get("toolCallId")
+                            == binding["toolCallId"]
+                        ]
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    len(
+                        [
+                            event
+                            for event in self.service.rooms.list_events(
+                                binding["roomId"]
+                            )
+                            if event.get("payload", {}).get("sourceEventType")
+                            == "tool_finished"
+                            and event.get("payload", {}).get("data", {}).get(
+                                "approvalId"
+                            )
+                            == approval_id
+                        ]
+                    ),
+                    1,
+                )
+
+    def test_room_startup_recovery_does_not_close_ordinary_unclaimed_approvals(self) -> None:
+        session = self.service.create_session(
+            {"title": "ordinary approvals remain user owned"}
+        )["session"]
+        session_id = str(session["id"])
+        pending = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="a" * 64,
+            preview={"title": "pending ordinary approval"},
+            risk_level="R2",
+        )
+        approved = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="b" * 64,
+            preview={"title": "approved ordinary approval"},
+            risk_level="R2",
+        )
+        self.service.sessions.decide_approval(
+            str(approved["approvalId"]),
+            approved=True,
+            payload_sha256=str(approved["payloadSha256"]),
+            decided_by="native-control-center",
+        )
+
+        recovered, candidates = (
+            self.service.sessions.fail_abandoned_approval_executions()
+        )
+
+        self.assertEqual(recovered, [])
+        self.assertEqual(candidates, [])
+        self.assertEqual(
+            self.service.sessions.get_approval(str(pending["approvalId"]))[
+                "state"
+            ],
+            "pending",
+        )
+        self.assertEqual(
+            self.service.sessions.get_approval(str(approved["approvalId"]))[
+                "state"
+            ],
+            "approved",
+        )
+
+    def test_recovered_pending_runtime_emits_one_exact_tool_terminal(self) -> None:
+        binding = self._prepare_room_bound_approval(suffix="pending-runtime")
+        approval_id = binding["approvalId"]
+        self.service.sessions.decide_approval(
+            approval_id,
+            approved=True,
+            payload_sha256=binding["payloadSha256"],
+            decided_by="execution-policy:room_dispatch",
+        )
+        self.service.sessions.claim_approval_execution(
+            approval_id,
+            room_context=self.service._active_room_dispatch_context(
+                binding["sessionId"]
+            )
+            or {},
+        )
+        approval = self.service.sessions.complete_approval(
+            approval_id,
+            state="applied",
+            receipt={
+                "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+                "approvalId": approval_id,
+                "summary": "persisted result",
+                "mutationApplied": True,
+            },
+        )
+
+        def resolve_runtime(*_args, **_kwargs) -> None:
+            self.service.events.publish(
+                binding["sessionId"],
+                "approval_resolved",
+                {
+                    "approvalId": approval_id,
+                    "state": "applied",
+                    "toolCallId": binding["toolCallId"],
+                },
+                turn_id=binding["sessionTurnId"],
+            )
+            self.service.events.publish(
+                binding["sessionId"],
+                "tool_finished",
+                {
+                    "toolCallId": binding["toolCallId"],
+                    "toolName": "workspace_shell",
+                    "isError": False,
+                    "result": {"summary": "runtime result"},
+                },
+                turn_id=binding["sessionTurnId"],
+            )
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "has_pending_approval",
+                return_value=True,
+            ),
+            patch.object(
+                self.service.runtime,
+                "resolve_approval",
+                side_effect=resolve_runtime,
+            ),
+        ):
+            self.service.approval_application._project_recovered_session_execution(
+                approval,
+                include_approval=True,
+                include_tool=True,
+            )
+
+        events, _ = self.service.events.replay(binding["sessionId"])
+        approval_terminals = [
+            event
+            for event in events
+            if event.event_type == "approval_resolved"
+            and event.payload.get("approvalId") == approval_id
+        ]
+        tool_terminals = [
+            event
+            for event in events
+            if event.event_type == "tool_finished"
+            and event.payload.get("toolCallId") == binding["toolCallId"]
+        ]
+        self.assertEqual(len(approval_terminals), 1)
+        self.assertEqual(len(tool_terminals), 1)
+
+        # A late Pi terminal for the same exact turn/Tool is the same event,
+        # not a second durable or visible terminal.
+        duplicate = self.service.events.publish(
+            binding["sessionId"],
+            "tool_finished",
+            {
+                "toolCallId": binding["toolCallId"],
+                "toolName": "workspace_shell",
+                "isError": False,
+                "result": {"summary": "late runtime result"},
+            },
+            turn_id=binding["sessionTurnId"],
+        )
+        self.assertEqual(duplicate.event_id, tool_terminals[0].event_id)
+        with closing(sqlite3.connect(self.root / "rag-ime.sqlite")) as conn:
+            self.assertEqual(
+                int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) FROM agent_runtime_events
+                        WHERE session_id = ? AND turn_id = ?
+                          AND event_type = 'tool_finished'
+                        """,
+                        (binding["sessionId"], binding["sessionTurnId"]),
+                    ).fetchone()[0]
+                ),
+                1,
+            )
+
     def test_full_trust_scoped_git_commit_does_not_wait_for_the_model_arbiter(self) -> None:
         workspace = self.root / "room-commit"
         workspace.mkdir()
@@ -1752,6 +3539,13 @@ class AgentServiceTests(unittest.TestCase):
                 "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         )
+        # A persisted Room overlay is historical metadata. Without a live Room
+        # dispatch this remains an ordinary full-trust Session and must keep
+        # the model-arbitration preview used by its policy owner.
+        self.service.sessions.set_room_execution_mode(
+            session_id,
+            "room_unrestricted",
+        )
         approval = self.service.sessions.create_approval(
             session_id=session_id,
             tool_name="workspace_shell",
@@ -1760,6 +3554,7 @@ class AgentServiceTests(unittest.TestCase):
             preview={"title": "危险操作", "summary": "删除数据库"},
             risk_level="R3",
         )
+        self.assertIn("approvalArbitration", approval["preview"])
         approval = self.service.sessions.bind_approval_tool_call(
             str(approval["approvalId"]),
             tool_call_id="tool:approval-rejection",

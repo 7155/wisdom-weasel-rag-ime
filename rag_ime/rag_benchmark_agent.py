@@ -524,6 +524,8 @@ class RagBenchmarkAgentGatewayServer:
         self.max_request_bytes = max(1_024, int(max_request_bytes))
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self._transport_lock = threading.Lock()
+        self._transport_failures: list[dict[str, object]] = []
 
     @property
     def tool_gateway_url(self) -> str:
@@ -537,6 +539,7 @@ class RagBenchmarkAgentGatewayServer:
         gateway = self.gateway
         expected_token = self.token
         maximum = self.max_request_bytes
+        bridge = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:  # noqa: N802
@@ -578,12 +581,7 @@ class RagBenchmarkAgentGatewayServer:
                 self._write(HTTPStatus.OK, response)
 
             def _write(self, status: HTTPStatus, payload: Mapping[str, object]) -> None:
-                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(int(status))
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                bridge._write_response(self, status, payload)
 
             def log_message(self, _format: str, *_args: object) -> None:
                 return None
@@ -596,6 +594,75 @@ class RagBenchmarkAgentGatewayServer:
         )
         self._thread.start()
         return self
+
+    def _write_response(
+        self,
+        handler: BaseHTTPRequestHandler,
+        status: HTTPStatus,
+        payload: Mapping[str, object],
+    ) -> bool:
+        """Write one response and retain a bounded receipt if its client left."""
+
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        try:
+            handler.send_response(int(status))
+            handler.send_header("Content-Type", "application/json; charset=utf-8")
+            handler.send_header("Content-Length", str(len(body)))
+            handler.end_headers()
+            handler.wfile.write(body)
+        except OSError as exc:
+            handler.close_connection = True
+            self._record_transport_failure(
+                status=status,
+                response_bytes=len(body),
+                error=exc,
+            )
+            return False
+        return True
+
+    def _record_transport_failure(
+        self,
+        *,
+        status: HTTPStatus,
+        response_bytes: int,
+        error: OSError,
+    ) -> None:
+        item: dict[str, object] = {
+            "sequence": 0,
+            "errorType": type(error).__name__,
+            "errno": int(error.errno or 0),
+            "responseStatus": int(status),
+            "responseBytes": max(0, int(response_bytes)),
+        }
+        with self._transport_lock:
+            item["sequence"] = len(self._transport_failures) + 1
+            item["failureSha256"] = _sha256_json(item)
+            self._transport_failures.append(item)
+
+    def transport_cursor(self) -> int:
+        with self._transport_lock:
+            return len(self._transport_failures)
+
+    def transport_receipt(self, *, since_sequence: int = 0) -> dict[str, object]:
+        since = max(0, int(since_sequence))
+        with self._transport_lock:
+            failures = [
+                deepcopy(item)
+                for item in self._transport_failures
+                if int(item.get("sequence") or 0) > since
+            ]
+        receipt: dict[str, object] = {
+            "schemaVersion": "rag-ime.rag-benchmark-tool-transport.v1",
+            "transport": self.transport,
+            "accepted": not failures,
+            "failureCount": len(failures),
+            "failureTypes": sorted(
+                {str(item.get("errorType") or "") for item in failures}
+            ),
+            "failures": failures,
+        }
+        receipt["receiptSha256"] = _sha256_json(receipt)
+        return receipt
 
     def close(self) -> None:
         server = self._server

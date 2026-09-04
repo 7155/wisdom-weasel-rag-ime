@@ -22,14 +22,18 @@
     "causalMetadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["todoId", "todoRevision", "goalId", "goalRevision", "turnId", "roomBound"],
+      "required": ["todoId", "todoRevision", "goalId", "goalRevision", "turnId", "roomBound", "roomId", "rootId", "dispatchId", "generation"],
       "properties": {
         "todoId": {"type": "string", "maxLength": 240},
         "todoRevision": {"type": "integer", "minimum": 0},
         "goalId": {"type": "string", "maxLength": 240},
         "goalRevision": {"type": "integer", "minimum": 0},
         "turnId": {"type": "string", "maxLength": 240},
-        "roomBound": {"type": "boolean"}
+        "roomBound": {"type": "boolean"},
+        "roomId": {"type": "string", "maxLength": 240},
+        "rootId": {"type": "string", "maxLength": 240},
+        "dispatchId": {"type": "string", "maxLength": 240},
+        "generation": {"type": "integer", "minimum": 0}
       }
     }
   }

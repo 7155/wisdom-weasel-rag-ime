@@ -1,4 +1,4 @@
-import { FolderOpen, LoaderCircle, MessageSquare, Plus, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { Eye, FolderOpen, LoaderCircle, MessageSquare, Plus, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import {
@@ -17,7 +17,8 @@ export interface NewSessionInput {
   title: string;
   workspaceRoots: string[];
   executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
-  toolProfileVersion?: 'control-center-full-access-v1' | 'control-center-auto-approve-v1';
+  toolProfileVersion?: 'control-center-v1' | 'control-center-full-access-v1' | 'subagent-readonly-v1' | 'control-center-auto-approve-v1';
+  workspaceScopeConfirmed?: boolean;
   dangerousModeConfirmed?: boolean;
 }
 
@@ -70,9 +71,14 @@ export function NewSessionDialog({
         title: title.trim() || '新对话',
         workspaceRoots,
         executionMode,
-        toolProfileVersion: executionMode === 'full_trust'
-          ? 'control-center-auto-approve-v1'
-          : 'control-center-full-access-v1',
+        toolProfileVersion: executionMode === 'read_only'
+          ? 'subagent-readonly-v1'
+          : executionMode === 'workspace_managed'
+            ? 'control-center-v1'
+            : executionMode === 'full_trust'
+              ? 'control-center-auto-approve-v1'
+              : 'control-center-full-access-v1',
+        ...(executionMode === 'workspace_managed' ? { workspaceScopeConfirmed: true } : {}),
         ...(executionMode === 'full_trust' ? { dangerousModeConfirmed: true } : {}),
       });
       if (created) onOpenChange(false);
@@ -106,6 +112,7 @@ export function NewSessionDialog({
             onValueChange={(value) => {
               const roots = value === NO_WORKSPACE ? [] : [value];
               setWorkspaceRoots(roots);
+              if (!roots.length && executionMode === 'workspace_managed') setExecutionMode('per_action');
             }}
           >
             <RadioGroup.Item value={NO_WORKSPACE}>
@@ -130,7 +137,7 @@ export function NewSessionDialog({
           </Button>
         </section>
         <section className="agent-new-task-dialog__permissions" aria-label="新对话权限">
-          <header><strong>执行权限</strong><small>两种模式都授予整个系统与所有 Tool</small></header>
+          <header><strong>执行权限</strong><small>从只读、逐项确认、项目托管或全自动中选择</small></header>
           <RadioGroup.Root
             aria-label="新对话的执行权限"
             value={executionMode}
@@ -139,9 +146,17 @@ export function NewSessionDialog({
               setExecutionMode(nextMode);
             }}
           >
+            <RadioGroup.Item value="read_only">
+              <Eye size={16} />
+              <span><strong>只读</strong><small>只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止</small></span>
+            </RadioGroup.Item>
             <RadioGroup.Item value="per_action">
               <ShieldCheck size={16} />
               <span><strong>全权限</strong><small>整个系统与所有 Tool 可用；有影响的操作逐项请求确认</small></span>
+            </RadioGroup.Item>
+            <RadioGroup.Item value="workspace_managed" disabled={!primaryRoot}>
+              <FolderOpen size={16} />
+              <span><strong>工作区托管</strong><small>{primaryRoot ? '批准所选项目范围；范围内自动执行，越界继续请求确认' : '先选择起始项目后可用'}</small></span>
             </RadioGroup.Item>
             <RadioGroup.Item value="full_trust">
               <TriangleAlert size={16} />
@@ -164,7 +179,7 @@ const NO_WORKSPACE = '__no_workspace__';
 
 function uniquePaths(values: string[]): string[] {
   return values.map((value) => value.trim()).filter((value, index, all) => (
-    value.startsWith('/') && all.indexOf(value) === index
+    value.startsWith('/') && value !== '/' && all.indexOf(value) === index
   )).slice(0, 4);
 }
 

@@ -1376,6 +1376,146 @@ describe('RoomEventReducer', () => {
     expect(staleProgress.activitiesById[activityId]).toEqual(finished.activitiesById[activityId]);
   });
 
+  it('keeps a running Tool visible when its automatic Room authorization receipt arrives', () => {
+    const started = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'root-tool-policy',
+        dispatchId: 'dispatch-tool-policy',
+        sourceEventType: 'tool_started',
+        toolCallId: 'tool-call-policy',
+        toolName: 'workspace_shell',
+        arguments: { command: 'git status --short' },
+      }),
+    ).state;
+    const authorized = reduceRoomEvent(
+      started,
+      roomEvent(2, 'participant_activity', {
+        rootId: 'root-tool-policy',
+        dispatchId: 'dispatch-tool-policy',
+        sourceEventType: 'approval_resolved',
+        toolCallId: 'tool-call-policy',
+        approvalId: 'approval-tool-policy',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'applied',
+        summary: 'Room policy authorized this operation',
+      }),
+    ).state;
+
+    const activity = authorized.activitiesById[
+      'root-tool-policy:participant-1:dispatch-tool-policy:tool-call-policy'
+    ];
+    expect(authorized.activityOrder).toHaveLength(1);
+    expect(activity).toMatchObject({
+      status: 'running',
+      summary: 'workspace_shell',
+      payload: {
+        sourceEventType: 'tool_started',
+        toolName: 'workspace_shell',
+        arguments: { command: 'git status --short' },
+        approvalId: 'approval-tool-policy',
+        automatic: true,
+        decisionMode: 'policy',
+        approvalSourceEventType: 'approval_resolved',
+      },
+    });
+  });
+
+  it('projects an automatic Room authorization failure as the owning Tool failure', () => {
+    const started = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'root-tool-policy-failed',
+        dispatchId: 'dispatch-tool-policy-failed',
+        sourceEventType: 'tool_started',
+        toolCallId: 'tool-call-policy-failed',
+        toolName: 'workspace_shell',
+        arguments: { command: 'git status --short' },
+      }),
+    ).state;
+    const rejected = reduceRoomEvent(
+      started,
+      roomEvent(2, 'participant_activity', {
+        rootId: 'root-tool-policy-failed',
+        dispatchId: 'dispatch-tool-policy-failed',
+        sourceEventType: 'approval_resolved',
+        toolCallId: 'tool-call-policy-failed',
+        approvalId: 'approval-tool-policy-failed',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'failed',
+        error: 'Room dispatch no longer matches the active generation',
+      }),
+    ).state;
+
+    const activity = rejected.activitiesById[
+      'root-tool-policy-failed:participant-1:dispatch-tool-policy-failed:tool-call-policy-failed'
+    ];
+    expect(rejected.activityOrder).toHaveLength(1);
+    expect(activity).toMatchObject({
+      status: 'failed',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolName: 'workspace_shell',
+        arguments: { command: 'git status --short' },
+        approvalId: 'approval-tool-policy-failed',
+        approvalSourceEventType: 'approval_resolved',
+        approvalResolutionState: 'failed',
+        error: 'Room dispatch no longer matches the active generation',
+      },
+    });
+
+    const lateFinished = reduceRoomEvent(
+      rejected,
+      roomEvent(3, 'participant_activity', {
+        rootId: 'root-tool-policy-failed',
+        dispatchId: 'dispatch-tool-policy-failed',
+        sourceEventType: 'tool_finished',
+        toolCallId: 'tool-call-policy-failed',
+        toolName: 'workspace_shell',
+        result: { summary: 'bridge returned after the authorization failed' },
+      }),
+    ).state;
+
+    expect(lateFinished.activitiesById[
+      'root-tool-policy-failed:participant-1:dispatch-tool-policy-failed:tool-call-policy-failed'
+    ]).toEqual(activity);
+  });
+
+  it('projects a recovered standalone automatic Room policy failure as a Tool failure', () => {
+    const recovered = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'root-tool-policy-recovered',
+        dispatchId: 'dispatch-tool-policy-recovered',
+        sourceEventType: 'approval_resolved',
+        toolCallId: 'tool-call-policy-recovered',
+        toolName: 'runtime',
+        approvalId: 'approval-tool-policy-recovered',
+        automatic: true,
+        decisionMode: 'policy',
+        state: 'stale',
+        error: 'Room dispatch changed before execution',
+      }),
+    ).state;
+
+    expect(recovered.activitiesById[
+      'root-tool-policy-recovered:participant-1:dispatch-tool-policy-recovered:tool-call-policy-recovered'
+    ]).toMatchObject({
+      status: 'failed',
+      summary: 'Room dispatch changed before execution',
+      payload: {
+        sourceEventType: 'tool_finished',
+        toolName: 'runtime',
+        approvalId: 'approval-tool-policy-recovered',
+        approvalSourceEventType: 'approval_resolved',
+        approvalResolutionState: 'stale',
+        state: 'failed',
+      },
+    });
+  });
+
   it('drops a stale preparatory summary when tool_finished has no terminal summary', () => {
     const started = reduceRoomEvent(
       createRoomProjection('room-1'),

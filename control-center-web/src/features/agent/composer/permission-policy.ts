@@ -11,8 +11,18 @@ export type PermissionPreset = AgentPermissionSelection & {
   description: string;
 };
 
-/** These are the only policies exposed by new user-facing controls. */
+/** User-facing Session policies. Every entry maps to a backend-enforced
+ *  profile/execution pair; the UI must not collapse saved modes into another
+ *  preset merely because two presets grant system-wide access. */
 export const PERMISSION_PRESETS: PermissionPreset[] = [
+  {
+    id: 'readonly',
+    label: '只读',
+    description: '只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止',
+    mode: 'coordinator',
+    toolProfileVersion: 'subagent-readonly-v1',
+    executionMode: 'read_only',
+  },
   {
     id: 'full-access',
     label: '全权限',
@@ -20,6 +30,14 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
     mode: 'coordinator',
     toolProfileVersion: 'control-center-full-access-v1',
     executionMode: 'per_action',
+  },
+  {
+    id: 'managed',
+    label: '工作区托管',
+    description: '批准所选项目范围；范围内自动执行，越界继续请求确认',
+    mode: 'coordinator',
+    toolProfileVersion: 'control-center-v1',
+    executionMode: 'workspace_managed',
   },
   {
     id: 'full-auto',
@@ -44,7 +62,7 @@ const LEGACY_PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'readonly',
     label: '只读',
-    description: '只读自动，写入与 Shell 全部阻止',
+    description: '只读自动；隔离无网络的只读验证命令可运行，写入与应用动作阻止',
     mode: 'assistant',
     toolProfileVersion: 'subagent-readonly-v1',
     executionMode: 'read_only',
@@ -71,8 +89,18 @@ export function permissionPreset(
   executionMode: SessionSummary['executionMode'] | undefined,
   profile: string,
 ): PermissionPreset {
-  if (profile === 'control-center-full-access-v1') return PERMISSION_PRESETS[0]!;
-  if (profile === 'control-center-auto-approve-v1') return PERMISSION_PRESETS[1]!;
+  if (profile === 'subagent-readonly-v1' || executionMode === 'read_only') {
+    return PERMISSION_PRESETS.find((item) => item.id === 'readonly')!;
+  }
+  if (profile === 'control-center-full-access-v1') {
+    return PERMISSION_PRESETS.find((item) => item.id === 'full-access')!;
+  }
+  if (executionMode === 'workspace_managed') {
+    return PERMISSION_PRESETS.find((item) => item.id === 'managed')!;
+  }
+  if (profile === 'control-center-auto-approve-v1') {
+    return PERMISSION_PRESETS.find((item) => item.id === 'full-auto')!;
+  }
   const legacyMode = executionMode
     ?? (profile === 'subagent-readonly-v1'
       ? 'read_only'

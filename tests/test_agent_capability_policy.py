@@ -22,6 +22,7 @@ from rag_ime.agent_tools import (
     _approval_payload_digest,
 )
 from rag_ime.agent_workspace import WorkspaceHarness
+from rag_ime.contracts.json_schema import validate_contract
 from rag_ime.pi_runtime import _tools_for_session
 
 
@@ -537,6 +538,12 @@ class AgentCapabilityPolicyTests(unittest.TestCase):
         self.assertEqual(ask["disclosure"]["effective"], "enabled")
         self.assertEqual(ask["disclosure"]["reason"], "required_session_tool")
         self.assertTrue(ask["alwaysAvailable"])
+        # `ask` is owned by Pi Host rather than the PAW gateway, but it is a
+        # real model-facing tool. The public catalogue must therefore project
+        # the same manifest contract as the gateway tools so the composer can
+        # count and explain it instead of silently dropping it.
+        validate_contract(ask, "control-tool-manifest.v1.json")
+        self.assertEqual(ask["runtimeOwner"], "pi_host")
         runtime_names = {
             str(item["name"])
             for item in self._gateway().runtime_manifests(

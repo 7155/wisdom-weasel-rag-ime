@@ -3,6 +3,7 @@ import type {
   AgentMessageProjection,
   AgentTurnStatus,
 } from '@/contracts/agent-reducer';
+import { countUniqueToolActivities } from '../tool-count';
 
 export type AgentTurnSequenceEntry =
   | { kind: 'message'; message: AgentMessageProjection }
@@ -95,7 +96,7 @@ export function buildAgentTurnWorkModel(
     hiddenMessageCount,
     items,
     resultCount,
-    toolCount: hiddenActivities.filter(isToolActivity).length,
+    toolCount: countUniqueToolActivities(hiddenActivities),
   };
 }
 
@@ -120,10 +121,6 @@ function hasNarrativeText(message: AgentMessageProjection): boolean {
 
 function hasResponseTailResult(message: AgentMessageProjection): boolean {
   return message.blocks.some((block) => responseTailBlockTypes.has(block.type));
-}
-
-function isToolActivity(activity: AgentActivityProjection): boolean {
-  return activity.kind.startsWith('tool_') || Boolean(stringValue(activity.payload.toolCallId));
 }
 
 function stringValue(value: unknown): string {

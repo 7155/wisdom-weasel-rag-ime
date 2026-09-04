@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +92,82 @@ class EvalLabEvidenceProjectionTests(unittest.TestCase):
             "totalTokens": 14,
         })
 
+    def test_report_projects_runtime_reconciled_cost_authority(self) -> None:
+        run_root = self.root / "runs" / "runtime-reconciled-cost"
+        run_root.mkdir(parents=True)
+        runtime_source_sha256 = "a" * 64
+        (run_root / "report.json").write_text(json.dumps({
+            "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+            "status": "completed",
+            "authority": "runtime_cost_reconciled",
+            "usage": {
+                "available": True,
+                "uncachedInputTokens": 100,
+                "cachedInputTokens": 200,
+                "outputTokens": 50,
+                "sourceRef": "runtime-cost:runtime-reconciled-cost",
+                "sourceSha256": runtime_source_sha256,
+            },
+            "estimate": {
+                "uncachedInputCostUsd": "0.0005",
+                "cachedInputCostUsd": "0.0001",
+                "outputCostUsd": "0.0015",
+                "totalCostUsd": "0.0021",
+            },
+            "pricingIdentity": {
+                "pricingId": f"pricing:sha256:{'b' * 64}",
+                "provider": "openai-codex",
+                "model": "gpt-5.6-sol",
+                "currency": "USD",
+                "unit": "per_million_tokens",
+                "rates": {
+                    "uncachedInputUsd": "5",
+                    "cachedInputUsd": "0.5",
+                    "outputUsd": "30",
+                },
+                "publishedDate": "2026-09-01",
+                "sourceUrl": "https://example.invalid/pricing.json",
+                "sourceSha256": "c" * 64,
+            },
+            "runtimeCostReceipt": {
+                "requestCount": 2,
+                "runtimeDbSha256": "d" * 64,
+                "transcriptSha256s": ["e" * 64],
+                "databaseUsage": {
+                    "uncachedInputTokens": 100,
+                    "cachedInputTokens": 200,
+                    "outputTokens": 50,
+                },
+                "reportedCostUsd": {
+                    "input": "0.0005",
+                    "cacheRead": "0.0001",
+                    "output": "0.0015",
+                    "total": "0.0021",
+                },
+                "sourceSha256": runtime_source_sha256,
+            },
+            "billing": {"status": "not_provided"},
+        }), encoding="utf-8")
+
+        projected = next(
+            item
+            for item in EvalLabEvidenceProjection(self.root).read()["runs"]
+            if item["runId"] == "runtime-reconciled-cost"
+        )
+
+        self.assertEqual(
+            projected["environment"]["costAuthority"],
+            "runtime_cost_reconciled",
+        )
+        self.assertEqual(
+            projected["environment"]["runtimeCostReceipt"]["sourceSha256"],
+            runtime_source_sha256,
+        )
+        self.assertEqual(
+            projected["environment"]["runtimeCostReceipt"]["requestCount"],
+            2,
+        )
+
     def test_missing_archive_is_a_truthful_empty_projection(self) -> None:
         projection = EvalLabEvidenceProjection(Path(self.tmp.name) / "missing")
         payload = projection.read()
@@ -119,6 +196,51 @@ class EvalLabEvidenceProjectionTests(unittest.TestCase):
         self.assertEqual(detail["report"]["decision"], "reject")
         explicit_report = projection.read({"runId": "ledger-receipt", "taskIndex": "0"})["detail"]
         self.assertEqual(explicit_report["status"], "report_only")
+
+    def test_checked_in_retained_cost_receipts_project_exact_price_evidence(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        product_root = Path(self.tmp.name) / "product"
+        runs_root = product_root / "eval" / "interview-metrics" / "runs"
+        runs_root.mkdir(parents=True)
+        expected = {
+            "agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json": "2.258372",
+            "agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json": "1.565709",
+            "agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json": "0.265205",
+            "agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json": "0.24769",
+        }
+        for filename in expected:
+            shutil.copy2(
+                repo_root / "eval" / "interview-metrics" / "runs" / filename,
+                runs_root / filename,
+            )
+
+        with (
+            patch("rag_ime.eval_lab_evidence._project_root", return_value=product_root),
+            patch("rag_ime.eval_lab_evidence._safe_source_root", return_value=None),
+        ):
+            catalog = EvalLabEvidenceProjection().read()
+
+        by_id = {item["runId"]: item for item in catalog["runs"]}
+        for filename, total_usd in expected.items():
+            with self.subTest(filename=filename):
+                run = by_id[f"ledger--{Path(filename).stem}"]
+                self.assertTrue(run["reportAvailable"])
+                self.assertEqual(run["environment"]["costEstimate"]["totalCostUsd"], total_usd)
+                if filename.startswith("agent-lab-cost-enterpriseops"):
+                    self.assertEqual(
+                        run["environment"]["pricingIdentity"]["pricingId"],
+                        "pricing:sha256:80067d14fbe8bca408a20e095bb0b4323b390bb14031157fb83bc7eb6490a04e",
+                    )
+                    self.assertEqual(
+                        run["environment"]["costAuthority"],
+                        "runtime_cost_reconciled",
+                    )
+                else:
+                    self.assertEqual(
+                        run["environment"]["pricingIdentity"]["pricingId"],
+                        "openai-api-gpt-5.6-sol-2026-09-01",
+                    )
+                self.assertEqual(run["environment"]["billing"], {"status": "not_provided"})
 
     def test_default_catalog_discovers_source_local_enterpriseops_sessions(self) -> None:
         repo_root = Path(self.tmp.name) / "product"

@@ -391,6 +391,23 @@ describe('PawSystemAppsMigrated', () => {
     expect(settingsReads).toBeGreaterThanOrEqual(2);
   });
 
+  it.each([
+    ['read_only', '只读'],
+    ['workspace_managed', '工作区托管'],
+  ] as const)('shows the saved %s Agent default without relabeling it as Full Access', async (executionMode, label) => {
+    const transport = baseTransport({
+      'configuration.settings': agentPreferenceSettings(executionMode),
+    });
+    renderSystemApp('system-settings', '/configuration?view=agent', transport);
+
+    const permissions = await screen.findByRole('radiogroup', {
+      name: 'Agent 执行权限',
+    });
+    expect(within(permissions).getAllByRole('radio')).toHaveLength(4);
+    expect(within(permissions).getByRole('radio', { name: label })).toBeChecked();
+    expect(within(permissions).getByRole('radio', { name: '全权限' })).not.toBeChecked();
+  });
+
   it('keeps Package installation on validate, preview, explicit confirmation, and apply', async () => {
     const user = userEvent.setup();
     const transport = baseTransport({

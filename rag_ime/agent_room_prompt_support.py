@@ -79,13 +79,26 @@ def _document_rows(
     rows: list[str] = []
     for work in work_items:
         work_id = _text(work.get("id"), 240)
-        document = by_authority.get(f"room_work_item:{work_id}")
-        if not work_id or document is None:
+        if not work_id:
             continue
         owner = _text(work.get("currentOwnerParticipantId"), 240) or _text(
             work.get("accountableParticipantId"), 240
-        )
+        ) or _text(work.get("offeredToParticipantId"), 240)
         authority = authorities.get(f"room_work_item:{work_id}", {})
+        document = by_authority.get(f"room_work_item:{work_id}")
+        if document is None:
+            if work_id in related_ids and authority:
+                rows.append(
+                    f"- [你负责] WorkItem {work_id} 尚未登记活动文档；可选留痕时，"
+                    "workspace_write.workDocument 使用 "
+                    f"authorityKind=room_work_item、authorityId={work_id}、"
+                    f"authorityRevision={_integer(authority.get('authorityRevision'))}；"
+                    "成功后以 workDocumentRegistration.document.path 作为后续 "
+                    "workspace_read/write 路径。登记失败不阻断非文档交付。"
+                )
+                if len(rows) >= 6:
+                    break
+            continue
         revision = authority.get("authorityRevision")
         if not isinstance(revision, int):
             revision = _integer(document.get("authorityRevision"))

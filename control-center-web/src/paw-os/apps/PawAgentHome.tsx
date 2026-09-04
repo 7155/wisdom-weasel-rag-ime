@@ -14,7 +14,8 @@
  *   「Agent 轨迹 / 上下文装配」，不描述任何这里没有的界面。「记有来源的装配
  *   节点能直接打开那条证据」对应 PawContextTrace 已落地的双向证据链：只有
  *   metadata 里带具体实体标识的节点才可点击，这句因此不构成过度承诺。
- * - UR-046：两档全系统权限（全权限逐项确认 / 全自动），全自动明确提示自动批准与 OS 边界。
+ * - UR-046：四档 Session 权限（只读 / 全权限逐项确认 / 工作区托管 /
+ *   全自动），全自动明确提示自动批准与 OS 边界。
  * - UR-011/025 与 PF-CM-018/021：页脚只投影真实目录状态（读取中 / 失败可重试 /
  *   模型数量），不虚构“Runtime 已连接”这类前端无法证明的声明。
  *
@@ -37,7 +38,10 @@ import {
   useAgentPreferencesRead,
   type AgentExecutionMode,
 } from '@/features/agent/composer/agent-preferences-store';
-import { unrestrictedWorkspaceRoots } from '@/features/agent/composer/permission-policy';
+import {
+  PERMISSION_PRESETS as SESSION_PERMISSION_PRESETS,
+  unrestrictedWorkspaceRoots,
+} from '@/features/agent/composer/permission-policy';
 import {
   supportedPiThinkingLevels,
   type PiModelOption,
@@ -94,25 +98,6 @@ type HomePendingAttachment = {
   file: File;
 };
 
-const PERMISSION_PRESETS: ReadonlyArray<{
-  executionMode: AgentExecutionMode;
-  toolProfileVersion: 'control-center-full-access-v1' | 'control-center-auto-approve-v1';
-  label: string;
-  description: string;
-}> = [
-  {
-    executionMode: 'per_action',
-    toolProfileVersion: 'control-center-full-access-v1',
-    label: '全权限',
-    description: '整个系统与所有 Tool 可用；有影响的操作逐项请求确认',
-  },
-  {
-    executionMode: 'full_trust',
-    toolProfileVersion: 'control-center-auto-approve-v1',
-    label: '全自动',
-    description: '整个系统与所有 Tool 可用；每个动作自动批准，仍受操作系统边界约束',
-  },
-];
 const PROMPT_STARTERS: ReadonlyArray<{ label: string; prompt: string }> = [
   { label: '梳理现状', prompt: '梳理这个项目的当前状态：正在进行什么、被什么卡住、下一步最值得做什么。' },
   { label: '审查改动', prompt: '审查最近的改动，指出风险、遗漏和需要跟进的问题。' },
@@ -155,7 +140,7 @@ export function PawAgentHome({
   const [mode, setMode] = useState<WorkMode>('session');
   const [prompt, setPrompt] = useState(initialDraft ?? '');
   const [workspaceRoot, setWorkspaceRoot] = useState('');
-  const [executionMode, setExecutionMode] = useState<AgentExecutionMode>(selectableExecutionMode(preferences.executionMode));
+  const [executionMode, setExecutionMode] = useState<AgentExecutionMode>(preferences.executionMode);
   const [modelReference, setModelReference] = useState(preferences.modelReference || defaultModel);
   const [thinking, setThinking] = useState(preferences.thinking);
   const [roomParticipantOverride, setRoomParticipantOverride] = useState<number | null>(null);
@@ -186,7 +171,7 @@ export function PawAgentHome({
   useEffect(() => {
     if (preferenceRead.isPending || preferenceRead.readError || preferenceHydratedRef.current) return;
     preferenceHydratedRef.current = true;
-    if (!preferenceEditedRef.current.executionMode) setExecutionMode(selectableExecutionMode(preferences.executionMode));
+    if (!preferenceEditedRef.current.executionMode) setExecutionMode(preferences.executionMode);
     if (!preferenceEditedRef.current.modelReference) setModelReference(preferences.modelReference || defaultModel);
     if (!preferenceEditedRef.current.thinking) setThinking(preferences.thinking);
   }, [defaultModel, preferenceRead.isPending, preferenceRead.readError, preferences.executionMode, preferences.modelReference, preferences.thinking]);
@@ -211,7 +196,9 @@ export function PawAgentHome({
     for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model]);
     return [...groups.entries()];
   }, [models]);
-  const sessionPermission = PERMISSION_PRESETS.find((item) => item.executionMode === executionMode) ?? PERMISSION_PRESETS[0]!;
+  const sessionPermission = SESSION_PERMISSION_PRESETS.find(
+    (item) => item.executionMode === executionMode,
+  ) ?? SESSION_PERMISSION_PRESETS.find((item) => item.id === 'full-access')!;
   const roomPermission = roomPermissionLayerPresentation(
     roomPermissionPolicy,
     'room',
@@ -343,17 +330,22 @@ export function PawAgentHome({
       setError('当前没有足够的 Room 伙伴。');
       return;
     }
+    if (mode === 'session' && executionMode === 'workspace_managed' && !workspaceRoot) {
+      setError('工作区托管需要先选择一个项目。');
+      return;
+    }
     setSubmitting(true);
     setError('');
-    const toolProfileVersion = executionMode === 'full_trust'
-      ? 'control-center-auto-approve-v1'
-      : 'control-center-full-access-v1';
-    const workspaceRoots = unrestrictedWorkspaceRoots(workspaceRoot);
+    const toolProfileVersion = sessionPermission.toolProfileVersion;
+    const systemWorkspaceRoots = unrestrictedWorkspaceRoots(workspaceRoot);
+    const sessionWorkspaceRoots = executionMode === 'per_action' || executionMode === 'full_trust'
+      ? systemWorkspaceRoots
+      : workspaceRoot ? [workspaceRoot] : [];
     const roomWorkspaceRoots = (
       roomPermissionPolicy.room.executionMode === 'per_action'
       || roomPermissionPolicy.room.executionMode === 'full_trust'
     )
-      ? workspaceRoots
+      ? systemWorkspaceRoots
       : workspaceRoot ? [workspaceRoot] : [];
     try {
       if (mode === 'session') {
@@ -361,10 +353,13 @@ export function PawAgentHome({
           pathId: 'agent.sessions.create',
           body: {
             title: workTitle(message),
-            mode: 'coordinator',
+            mode: sessionPermission.mode,
             executionMode,
             toolProfileVersion,
-            workspaceRoots,
+            workspaceRoots: sessionWorkspaceRoots,
+            ...(executionMode === 'workspace_managed'
+              ? { workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE' }
+              : {}),
             ...(executionMode === 'full_trust'
               ? { dangerousModeConfirmation: 'ENABLE_FULL_TRUST' }
               : {}),
@@ -374,7 +369,13 @@ export function PawAgentHome({
         const sessionId = text(rawSession.id);
         if (!sessionId) throw new Error('服务端没有返回可验证的 Session。');
         const clientMessageId = clientId('session');
-        const createdSession = createdSessionSummary(rawSession, message, workspaceRoot, executionMode);
+        const createdSession = createdSessionSummary(
+          rawSession,
+          message,
+          sessionWorkspaceRoots,
+          executionMode,
+          toolProfileVersion,
+        );
         const attachmentImport = importPendingAttachments({ sessionId });
         const pendingAttachmentIds = [
           ...pendingAttachments.map((attachment) => attachment.id),
@@ -628,7 +629,7 @@ export function PawAgentHome({
                         policy={roomPermissionPolicy}
                         roomKind="collaboration"
                       />
-                    ) : PERMISSION_PRESETS.map((item) => (
+                    ) : SESSION_PERMISSION_PRESETS.map((item) => (
                       <button
                         aria-checked={item.executionMode === executionMode}
                         className="an-menu-item"
@@ -907,16 +908,12 @@ function workTitle(message: string): string {
 function clientId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
-function selectableExecutionMode(mode: AgentExecutionMode): AgentExecutionMode {
-  return mode === 'full_trust' ? 'full_trust' : 'per_action';
-}
-
-
 function createdSessionSummary(
   raw: Record<string, unknown>,
   firstMessage: string,
-  workspaceRoot: string,
+  fallbackWorkspaceRoots: string[],
   executionMode: AgentExecutionMode,
+  toolProfileVersion: string,
 ): SessionSummary {
   return {
     id: text(raw.id),
@@ -928,10 +925,11 @@ function createdSessionSummary(
     roleBookRevisionId: text(raw.roleBookRevisionId),
     updatedAtMs: typeof raw.updatedAtMs === 'number' ? raw.updatedAtMs : Date.now(),
     workspaceRoots: Array.isArray(raw.workspaceRoots)
-      ? unrestrictedWorkspaceRoots(...(raw.workspaceRoots as string[]))
-      : unrestrictedWorkspaceRoots(workspaceRoot),
+      ? raw.workspaceRoots.filter((value): value is string => typeof value === 'string')
+      : fallbackWorkspaceRoots,
     lastMessagePreview: firstMessage,
     executionMode,
+    toolProfileVersion: text(raw.toolProfileVersion) || toolProfileVersion,
   } as SessionSummary;
 }
 function createdRoomSummary(
@@ -1111,7 +1109,10 @@ function isCancelledPromptAdmission(value: unknown): boolean {
 }
 
 function errorText(reason: unknown): string {
-  if (reason instanceof Error && reason.message) return reason.message;
-  if (typeof reason === 'string' && reason) return reason;
-  return '操作没有完成，请重试。';
+  const raw = reason instanceof Error && reason.message
+    ? reason.message
+    : typeof reason === 'string' && reason
+      ? reason
+      : '操作没有完成，请重试。';
+  return publicAgentErrorText(reason, raw);
 }

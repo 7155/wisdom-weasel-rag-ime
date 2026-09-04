@@ -1,8 +1,9 @@
-"""Deterministic, evidence-bound API cost estimates for Agent Lab.
+"""Deterministic, evidence-bound API cost receipts for Agent Lab.
 
 Pricing is caller data, not a model catalog.  The helper performs no Provider
-call, persistence, comparison, or savings calculation.  A provider bill, when
-available, remains a separate receipt from the computed estimate.
+call, persistence, comparison, or savings calculation.  A retained Runtime
+cost receipt may be reconciled to the pricing inputs, while a provider bill,
+when available, remains a separate receipt from the computed estimate.
 """
 
 from __future__ import annotations
@@ -26,8 +27,54 @@ class AgentLabCostError(ValueError):
     """The caller did not provide a complete, valid cost evidence request."""
 
 
+def content_addressed_pricing_id(pricing: Mapping[str, object]) -> str:
+    """Bind one pricing id to the exact provider, rates, date, and source hash."""
+
+    value = _mapping(pricing, label="pricingIdentity")
+    rates = _mapping(value.get("rates"), label="pricingIdentity.rates")
+    published_date = str(value.get("publishedDate") or "")
+    source_url = str(value.get("sourceUrl") or "")
+    source_sha256 = str(value.get("sourceSha256") or "")
+    _validate_published_date(published_date)
+    _validate_source_url(source_url)
+    if len(source_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in source_sha256
+    ):
+        raise AgentLabCostError("pricing sourceSha256 must be a lowercase SHA-256")
+    provider = str(value.get("provider") or "")
+    model = str(value.get("model") or "")
+    if not provider or not model:
+        raise AgentLabCostError("pricing provider and model are required")
+    if value.get("currency") != "USD" or value.get("unit") != "per_million_tokens":
+        raise AgentLabCostError(
+            "pricing currency/unit must be USD per_million_tokens"
+        )
+    identity = {
+        "provider": provider,
+        "model": model,
+        "currency": "USD",
+        "unit": "per_million_tokens",
+        "rates": {
+            "uncachedInputUsd": _decimal_text(
+                _decimal(rates.get("uncachedInputUsd"), label="uncached input rate")
+            ),
+            "cachedInputUsd": _decimal_text(
+                _decimal(rates.get("cachedInputUsd"), label="cached input rate")
+            ),
+            "outputUsd": _decimal_text(
+                _decimal(rates.get("outputUsd"), label="output rate")
+            ),
+        },
+        "publishedDate": published_date,
+        "sourceUrl": source_url,
+        "sourceSha256": source_sha256,
+    }
+    digest = hashlib.sha256(_canonical_json(identity).encode("utf-8")).hexdigest()
+    return f"pricing:sha256:{digest}"
+
+
 def build_agent_lab_cost_receipt(request: Mapping[str, object]) -> dict[str, object]:
-    """Return a deterministic USD estimate without treating it as a bill."""
+    """Return a deterministic USD cost receipt without treating it as a bill."""
 
     payload = dict(request)
     try:
@@ -91,9 +138,128 @@ def build_agent_lab_cost_receipt(request: Mapping[str, object]) -> dict[str, obj
             "replaced by the estimate."
         )
 
+    runtime_cost = payload.get("runtimeCostReceipt")
+    pricing_lower_bound = payload.get("pricingLowerBound")
+    if runtime_cost is not None and pricing_lower_bound is not None:
+        raise AgentLabCostError(
+            "runtimeCostReceipt and pricingLowerBound are mutually exclusive"
+        )
+    runtime_cost_receipt: dict[str, object] | None = None
+    pricing_lower_bound_receipt: dict[str, object] | None = None
+    authority = "pricing_estimate"
+    cost_boundary = (
+        "This is a deterministic estimate from caller-supplied pricing and "
+        "reported usage, not a provider bill."
+    )
+    if pricing_lower_bound is not None:
+        pricing_lower_bound_receipt = _mapping(
+            pricing_lower_bound,
+            label="pricingLowerBound",
+        )
+        if str(pricing["pricingId"]) != content_addressed_pricing_id(pricing):
+            raise AgentLabCostError(
+                "lower-bound pricingId must be content-addressed"
+            )
+        if pricing_lower_bound_receipt["sourceSha256"] != pricing["sourceSha256"]:
+            raise AgentLabCostError(
+                "pricing lower-bound proof must bind the pricing source hash"
+            )
+        tiers = pricing_lower_bound_receipt.get("tiers")
+        if not isinstance(tiers, list) or not tiers:
+            raise AgentLabCostError("pricing lower-bound proof requires tiers")
+        previous_threshold = -1
+        previous_rates = {
+            key: _decimal(rates[key], label=f"base {key}")
+            for key in ("uncachedInputUsd", "cachedInputUsd", "outputUsd")
+        }
+        for index, raw_tier in enumerate(tiers):
+            tier = _mapping(raw_tier, label=f"pricingLowerBound.tiers[{index}]")
+            threshold = tier["inputTokensAbove"]
+            if (
+                isinstance(threshold, bool)
+                or not isinstance(threshold, int)
+                or threshold <= previous_threshold
+            ):
+                raise AgentLabCostError(
+                    "pricing lower-bound tier thresholds must strictly increase"
+                )
+            tier_rates = _mapping(
+                tier["rates"],
+                label=f"pricingLowerBound.tiers[{index}].rates",
+            )
+            current_rates = {
+                key: _decimal(tier_rates[key], label=f"tier {index} {key}")
+                for key in previous_rates
+            }
+            if any(
+                current_rates[key] < previous_rates[key]
+                for key in previous_rates
+            ):
+                raise AgentLabCostError(
+                    "pricing lower-bound tier rates must not decrease"
+                )
+            previous_threshold = threshold
+            previous_rates = current_rates
+        authority = "pricing_lower_bound"
+        cost_boundary = (
+            "This is a conservative lower bound from aggregate usage and the "
+            "hashed pricing schedule; every retained tier rate is non-decreasing. "
+            "It is not an exact Runtime cost or a provider bill."
+        )
+    if runtime_cost is not None:
+        runtime_cost_receipt = _mapping(runtime_cost, label="runtimeCostReceipt")
+        if str(pricing["pricingId"]) != content_addressed_pricing_id(pricing):
+            raise AgentLabCostError(
+                "runtime-reconciled pricingId must be content-addressed"
+            )
+        reported = _mapping(
+            runtime_cost_receipt["reportedCostUsd"],
+            label="runtimeCostReceipt.reportedCostUsd",
+        )
+        expected_reported = {
+            "input": uncached_cost,
+            "cacheRead": cached_cost,
+            "output": output_cost,
+            "total": total_cost,
+        }
+        if any(
+            _decimal(reported[key], label=f"runtime reported {key}") != value
+            for key, value in expected_reported.items()
+        ):
+            raise AgentLabCostError(
+                "runtime reported cost must exactly match the pricing recomputation"
+            )
+        runtime_body = dict(runtime_cost_receipt)
+        runtime_sha256 = str(runtime_body.pop("sourceSha256"))
+        transcript_sha256s = runtime_body.get("transcriptSha256s")
+        if (
+            not isinstance(transcript_sha256s, list)
+            or len(transcript_sha256s) != len(set(transcript_sha256s))
+        ):
+            raise AgentLabCostError(
+                "runtime cost receipt transcript hashes must be unique"
+            )
+        if runtime_sha256 != hashlib.sha256(
+            _canonical_json(runtime_body).encode("utf-8")
+        ).hexdigest():
+            raise AgentLabCostError("runtime cost receipt sourceSha256 is invalid")
+        if (
+            not str(usage["sourceRef"]).startswith("runtime-cost:")
+            or str(usage["sourceSha256"]) != runtime_sha256
+        ):
+            raise AgentLabCostError(
+                "usage must bind the exact runtime cost receipt"
+            )
+        authority = "runtime_cost_reconciled"
+        cost_boundary = (
+            "The estimate was recomputed from the hashed pricing source and "
+            "reconciled to retained per-request Runtime cost receipts; it is "
+            "not a provider bill."
+        )
+
     receipt: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
-        "authority": "pricing_estimate",
+        "authority": authority,
         "pricingIdentity": {
             "pricingId": str(pricing["pricingId"]),
             "provider": str(pricing["provider"]),
@@ -125,12 +291,15 @@ def build_agent_lab_cost_receipt(request: Mapping[str, object]) -> dict[str, obj
         },
         "billing": billing,
         "boundaries": [
-            "This is a deterministic estimate from caller-supplied pricing and "
-            "reported usage, not a provider bill.",
+            cost_boundary,
             billing_boundary,
             "No savings amount is inferred by this receipt.",
         ],
     }
+    if runtime_cost_receipt is not None:
+        receipt["runtimeCostReceipt"] = runtime_cost_receipt
+    if pricing_lower_bound_receipt is not None:
+        receipt["pricingLowerBound"] = pricing_lower_bound_receipt
     receipt["receiptSha256"] = hashlib.sha256(
         _canonical_json(receipt).encode("utf-8")
     ).hexdigest()

@@ -435,6 +435,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                                 "outputSchema",
                                 "modelProfile",
                                 "thinkingLevel",
+                                "budget",
                                 "access",
                                 "allowedTools",
                                 "piSkillsEnabled",

@@ -5,10 +5,129 @@ import threading
 import time
 import unittest
 
-from rag_ime.agent_events import AgentEventHub
+from rag_ime.agent_events import (
+    AgentEventHub,
+    AgentTerminalProjectionDuplicate,
+)
 
 
 class AgentEventHubTests(unittest.TestCase):
+    def test_terminal_dedupe_caches_are_strictly_bounded_without_losing_hot_exact_dedupe(
+        self,
+    ) -> None:
+        hub = AgentEventHub(terminal_cache_limit=40)
+        hot_approval = hub.publish(
+            "session-hot",
+            "approval_resolved",
+            {"approvalId": "approval-hot", "state": "failed"},
+            turn_id="turn-hot",
+        )
+        hot_tool = hub.publish(
+            "session-hot",
+            "tool_finished",
+            {"toolCallId": "tool-hot", "toolName": "workspace_shell"},
+            turn_id="turn-hot",
+        )
+
+        for index in range(200):
+            hub.publish(
+                f"session-{index}",
+                "approval_resolved",
+                {"approvalId": f"approval-{index}", "state": "failed"},
+                turn_id=f"turn-{index}",
+            )
+            hub.publish(
+                f"session-{index}",
+                "tool_finished",
+                {
+                    "toolCallId": f"tool-{index}",
+                    "toolName": "workspace_shell",
+                },
+                turn_id=f"turn-{index}",
+            )
+            # An actively repeated terminal remains exactly deduplicated while
+            # unrelated sessions churn through the bounded cache.
+            self.assertIs(
+                hub.publish(
+                    "session-hot",
+                    "approval_resolved",
+                    {"approvalId": "approval-hot", "state": "stale"},
+                    turn_id="turn-hot",
+                ),
+                hot_approval,
+            )
+            self.assertIs(
+                hub.publish(
+                    "session-hot",
+                    "tool_finished",
+                    {
+                        "toolCallId": "tool-hot",
+                        "toolName": "workspace_shell",
+                    },
+                    turn_id="turn-hot",
+                ),
+                hot_tool,
+            )
+
+        self.assertLessEqual(len(hub._approval_event_cache), 40)
+        self.assertLessEqual(len(hub._tool_terminal_event_cache), 40)
+
+    def test_evicted_terminal_uses_durable_identity_without_second_live_delivery(
+        self,
+    ) -> None:
+        authority: dict[str, object] = {}
+        projected: list[str] = []
+
+        def record(event: object) -> None:
+            tool_call_id = str(event.payload.get("toolCallId") or "")
+            existing = authority.get(tool_call_id)
+            if existing is not None:
+                raise AgentTerminalProjectionDuplicate(
+                    event_id=existing.event_id,
+                    sequence=existing.sequence,
+                    turn_id=existing.turn_id,
+                    created_at_ms=existing.created_at_ms,
+                )
+            authority[tool_call_id] = event
+
+        hub = AgentEventHub(
+            replay_limit=32,
+            terminal_cache_limit=4,
+            event_recorder=record,
+            event_observer=lambda event: projected.append(event.event_id),
+        )
+        original = hub.publish(
+            "session-a",
+            "tool_finished",
+            {"toolCallId": "tool-original"},
+            turn_id="turn-original",
+        )
+        for index in range(64):
+            hub.publish(
+                "session-a",
+                "tool_finished",
+                {"toolCallId": f"tool-{index}"},
+                turn_id=f"turn-{index}",
+            )
+        self.assertNotIn(
+            ("session-a", "turn-original", "tool-original"),
+            hub._tool_terminal_event_cache,
+        )
+        projected_before_retry = list(projected)
+
+        duplicate = hub.publish(
+            "session-a",
+            "tool_finished",
+            {"toolCallId": "tool-original"},
+            turn_id="turn-original",
+        )
+
+        self.assertEqual(duplicate.event_id, original.event_id)
+        self.assertEqual(duplicate.sequence, original.sequence)
+        self.assertEqual(projected, projected_before_retry)
+        self.assertEqual(len(authority), 65)
+        self.assertLessEqual(len(hub._tool_terminal_event_cache), 4)
+
     def test_sequences_are_per_session_and_replay_is_idempotent(self) -> None:
         recorded = []
         hub = AgentEventHub(event_recorder=recorded.append)
@@ -217,6 +336,45 @@ class AgentEventHubTests(unittest.TestCase):
         self.assertEqual([event.event_id for event in replay], [current.event_id])
         self.assertEqual(recorded, [old, invalidation, current])
         stream.close()
+
+    def test_projection_invalidation_and_session_drop_clear_only_the_target_session_caches(
+        self,
+    ) -> None:
+        hub = AgentEventHub()
+        for session_id in ("session-a", "session-b"):
+            hub.publish(
+                session_id,
+                "approval_resolved",
+                {"approvalId": f"approval-{session_id}", "state": "failed"},
+                turn_id=f"turn-{session_id}",
+            )
+            hub.publish(
+                session_id,
+                "tool_finished",
+                {"toolCallId": f"tool-{session_id}"},
+                turn_id=f"turn-{session_id}",
+            )
+
+        hub.invalidate_projection("session-a")
+        self.assertFalse(
+            any(key[0] == "session-a" for key in hub._approval_event_cache)
+        )
+        self.assertFalse(
+            any(key[0] == "session-a" for key in hub._tool_terminal_event_cache)
+        )
+        self.assertTrue(
+            any(key[0] == "session-b" for key in hub._approval_event_cache)
+        )
+
+        hub.drop_session("session-b")
+        self.assertFalse(
+            any(key[0] == "session-b" for key in hub._approval_event_cache)
+        )
+        self.assertFalse(
+            any(key[0] == "session-b" for key in hub._tool_terminal_event_cache)
+        )
+        self.assertNotIn("session-b", hub._events)
+        self.assertNotIn("session-b", hub._sequences)
 
 
 def _sse_payload(chunk: bytes) -> dict[str, object]:

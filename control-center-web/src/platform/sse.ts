@@ -5,14 +5,20 @@ export interface ParsedSseEvent {
   retry?: number;
 }
 
+export type ParsedSseFrameKind = 'comment' | 'event';
+
 export class SseParser {
   private buffer = '';
   private eventId = '';
   private eventName = '';
   private dataLines: string[] = [];
   private retry: number | undefined;
+  private commentSeen = false;
 
-  constructor(private readonly onEvent: (event: ParsedSseEvent) => void) {}
+  constructor(
+    private readonly onEvent: (event: ParsedSseEvent) => void,
+    private readonly onFrame?: (kind: ParsedSseFrameKind) => void,
+  ) {}
 
   push(chunk: string): void {
     this.buffer += chunk;
@@ -36,6 +42,7 @@ export class SseParser {
     this.eventName = '';
     this.dataLines = [];
     this.retry = undefined;
+    this.commentSeen = false;
   }
 
   private consumeLine(line: string): void {
@@ -43,7 +50,10 @@ export class SseParser {
       this.dispatch();
       return;
     }
-    if (line.startsWith(':')) return;
+    if (line.startsWith(':')) {
+      this.commentSeen = true;
+      return;
+    }
 
     const separator = line.indexOf(':');
     const field = separator < 0 ? line : line.slice(0, separator);
@@ -62,7 +72,9 @@ export class SseParser {
         break;
       case 'retry': {
         const parsed = Number(value);
-        if (Number.isInteger(parsed) && parsed >= 0) this.retry = parsed;
+        if (Number.isInteger(parsed) && parsed >= 0) {
+          this.retry = parsed;
+        }
         break;
       }
       default:
@@ -71,9 +83,12 @@ export class SseParser {
   }
 
   private dispatch(): void {
+    const completedComment = this.commentSeen;
     if (this.dataLines.length === 0) {
       this.eventName = '';
       this.retry = undefined;
+      this.commentSeen = false;
+      if (completedComment) this.onFrame?.('comment');
       return;
     }
     this.onEvent({
@@ -85,5 +100,7 @@ export class SseParser {
     this.eventName = '';
     this.dataLines = [];
     this.retry = undefined;
+    this.commentSeen = false;
+    this.onFrame?.('event');
   }
 }

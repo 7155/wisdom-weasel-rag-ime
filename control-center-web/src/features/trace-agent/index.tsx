@@ -46,6 +46,7 @@ import {
 } from '@/features/overview/management-ui';
 import { parseRoomEventPage, type RoomEventPage } from '@/contracts/room-reducer';
 import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { pawBrowserHost } from '@/paw-os/apps/paw-browser-host';
 import type { LucideIcon } from 'lucide-react';
 import {
   parseTraceAgentHandoff,
@@ -234,6 +235,7 @@ function TraceDiagnosticReportPage({ reportId }: { reportId: string }) {
 function TraceAgentWorkbench() {
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
+  const electronHost = pawBrowserHost();
   const [searchParams] = useSearchParams();
   const incomingHandoff = useMemo(
     () => parseTraceAgentHandoff(searchParams),
@@ -469,15 +471,17 @@ function TraceAgentWorkbench() {
     ?? null;
   const bindProject = useMutation({
     mutationFn: async (target: TraceTarget) => {
-      if (!transport.pickFiles) {
+      if (!transport.pickFiles && !electronHost?.pickWorkspaceDirectory) {
         throw new Error('binding_required: 当前环境不能选择项目，请回到来源 Session 或 Room 完成绑定。');
       }
-      const picked = await transport.pickFiles({
-        purpose: 'workspace-root',
-        selection: 'directory',
-        multiple: true,
-        maxFiles: 4,
-      });
+      const picked = transport.pickFiles
+        ? await transport.pickFiles({
+          purpose: 'workspace-root',
+          selection: 'directory',
+          multiple: true,
+          maxFiles: 4,
+        })
+        : [await electronHost!.pickWorkspaceDirectory!()].filter((item) => item !== null);
       const workspaceRoots = [...new Set(picked
         .map((item) => item.path?.trim() ?? '')
         .filter((root) => root && root !== '/'))];

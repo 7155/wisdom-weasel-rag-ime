@@ -25,7 +25,12 @@ from rag_ime.agent_command_receipts import (
     AgentCommandReceiptFailed,
     AgentCommandReceiptPending,
 )
-from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
+from rag_ime.debug_server import (
+    DebugImeService,
+    DebugRequestHandler,
+    DebugServerConfig,
+    QuietThreadingHTTPServer,
+)
 from rag_ime.agent_workspace import WorkspaceSnapshotError
 from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -208,6 +213,118 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             apply_memory_book_plan(conn, plan)
+
+    def test_room_sse_does_not_send_200_before_the_stream_is_readable(self) -> None:
+        closed = threading.Event()
+
+        def broken_stream():
+            try:
+                raise sqlite3.OperationalError("unable to open database file")
+                yield b""  # pragma: no cover - keeps this a generator
+            finally:
+                closed.set()
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.object(
+                self.service.agent,
+                "subscribe_room_events",
+                return_value=broken_stream(),
+            ):
+                with self.assertRaises(HTTPError) as captured:
+                    urlopen(
+                        f"http://127.0.0.1:{server.server_port}"
+                        "/api/agent/rooms/room%3Asse-failure/events",
+                        timeout=5,
+                    )
+                try:
+                    body = json.loads(captured.exception.read().decode("utf-8"))
+                finally:
+                    captured.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(captured.exception.code, 503)
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["errorCode"], "event_stream_unavailable")
+        self.assertNotIn("unable to open database file", body["error"])
+        self.assertTrue(closed.wait(1))
+
+    def test_room_sse_prefetch_preserves_the_first_frame_and_closes_stream(self) -> None:
+        closed = threading.Event()
+
+        def finite_stream():
+            try:
+                yield b": connected\n\n"
+                yield b"event: status\ndata: {\"ok\":true}\n\n"
+            finally:
+                closed.set()
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = QuietThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        expected_body = (
+            b": connected\n\nevent: status\ndata: {\"ok\":true}\n\n"
+        )
+        try:
+            with patch.object(
+                self.service.agent,
+                "subscribe_room_events",
+                return_value=finite_stream(),
+            ):
+                with urlopen(
+                    f"http://127.0.0.1:{server.server_port}"
+                    "/api/agent/rooms/room%3Asse-success/events",
+                    timeout=5,
+                ) as response:
+                    status = response.status
+                    content_type = response.headers.get("Content-Type")
+                    body = response.read(len(expected_body))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(content_type, "text/event-stream; charset=utf-8")
+        self.assertEqual(body, expected_body)
+        self.assertTrue(closed.wait(1))
+        self.assertEqual(server.active_event_streams, 0)
+
+    def test_gateway_event_stream_capacity_is_bounded_and_recoverable(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        class OneStreamServer(QuietThreadingHTTPServer):
+            max_event_streams = 1
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = OneStreamServer(("127.0.0.1", 0), Handler)
+        try:
+            self.assertTrue(server.acquire_event_stream())
+            self.assertEqual(server.active_event_streams, 1)
+            self.assertFalse(server.acquire_event_stream())
+            server.release_event_stream()
+            self.assertEqual(server.active_event_streams, 0)
+            self.assertTrue(server.acquire_event_stream())
+            server.release_event_stream()
+        finally:
+            server.server_close()
 
     def test_plugin_inbox_defaults_to_the_managed_pi_runtime_boundary(self) -> None:
         self.assertEqual(

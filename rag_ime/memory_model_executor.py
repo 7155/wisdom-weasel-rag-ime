@@ -24,6 +24,7 @@ REQUIRED_MEMORY_THINKING_LEVEL = "max"
 MINIMUM_MEMORY_CONTEXT_TOKENS = 272_000
 MAXIMUM_MEMORY_PROMPT_CHARS = 1_000_000
 DEFAULT_MEMORY_CURATION_TIMEOUT_SECONDS = 1_200.0
+LATE_MEMORY_SETTLEMENT_GRACE_SECONDS = 5.0
 MINIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS = 16_384
 DEFAULT_MEMORY_PROVIDER_OUTPUT_TOKENS = 24_000
 MAXIMUM_MEMORY_PROVIDER_OUTPUT_TOKENS = 262_144
@@ -319,6 +320,11 @@ class GovernedMemoryModelExecutor:
             if str(request["state"]) == "completed":
                 return self._response_from_request(request)
             request_id = str(request["request_id"])
+            replay_recovery = _json_object(request["receipt_json"]).get(
+                "replayRecovery"
+            )
+            if not isinstance(replay_recovery, Mapping):
+                replay_recovery = {}
             session_id = str(request["session_id"] or session_id)
             if not session_id:
                 raise MemoryModelUnavailable(
@@ -353,6 +359,8 @@ class GovernedMemoryModelExecutor:
                 cancellation: Mapping[str, object],
             ) -> dict[str, object]:
                 receipt: dict[str, object] = {"cancellation": dict(cancellation)}
+                if replay_recovery:
+                    receipt["replayRecovery"] = dict(replay_recovery)
                 if admission_confirmed:
                     receipt["admission"] = _memory_admission_payload(
                         session_id=session_id,
@@ -489,6 +497,8 @@ class GovernedMemoryModelExecutor:
                     "modelSelection": model_receipt,
                     "thinkingSelection": thinking_receipt,
                 }
+                if replay_recovery:
+                    receipt["replayRecovery"] = dict(replay_recovery)
                 completed = self._complete_request(
                     request_id=request_id,
                     turn_id=accepted_turn_id,
@@ -505,6 +515,30 @@ class GovernedMemoryModelExecutor:
                     error="memory_curation_timeout",
                     receipt=resumable_receipt(cancellation),
                 )
+                # Cancellation itself can take long enough for the exact turn
+                # to publish a durable successful settlement. Reconcile once
+                # after that boundary before surfacing a timeout; otherwise a
+                # completed model response is stranded as ``resumable`` until
+                # another maintenance run happens to revisit the same input.
+                with self._connect() as conn:
+                    late_request = conn.execute(
+                        "SELECT * FROM memory_curation_model_requests "
+                        "WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                if late_request is not None and accepted_turn_id:
+                    try:
+                        recovered = self._recover_resumable_request(
+                            late_request,
+                            max_tokens=max_tokens,
+                            recovery_timeout_seconds=(
+                                LATE_MEMORY_SETTLEMENT_GRACE_SECONDS
+                            ),
+                        )
+                    except MemoryModelUnavailable:
+                        pass
+                    else:
+                        return self._response_from_request(recovered)
                 raise MemoryModelTimeout(
                     "Memory Session timed out; the frozen request remains resumable"
                 ) from exc
@@ -724,6 +758,7 @@ class GovernedMemoryModelExecutor:
         row: sqlite3.Row,
         *,
         max_tokens: int | None,
+        recovery_timeout_seconds: float = 1.0,
     ) -> sqlite3.Row:
         session_id = str(row["session_id"] or "")
         turn_id = str(row["turn_id"] or "")
@@ -745,7 +780,10 @@ class GovernedMemoryModelExecutor:
                 session_id,
                 turn_id,
                 client_message_id=request_id,
-                timeout_seconds=min(1.0, self.timeout_seconds),
+                timeout_seconds=min(
+                    max(1.0, float(recovery_timeout_seconds)),
+                    self.timeout_seconds,
+                ),
             )
             terminal = _memory_terminal_from_settlement(
                 settlement,
@@ -814,6 +852,11 @@ class GovernedMemoryModelExecutor:
             "thinkingSelection": {},
             "recoveredSettlement": True,
         }
+        previous_receipt = _json_object(row["receipt_json"])
+        for key in ("admission", "cancellation", "replayRecovery"):
+            previous_value = previous_receipt.get(key)
+            if isinstance(previous_value, Mapping):
+                receipt[key] = dict(previous_value)
         completed = self._complete_request(
             request_id=request_id,
             turn_id=turn_id,
@@ -823,6 +866,124 @@ class GovernedMemoryModelExecutor:
         self._accepted_requests.pop(request_id, None)
         self._set_run_error(self._active_run_id, state="running", error="")
         return completed
+
+    def _unrecoverable_request_session_reason(
+        self,
+        row: sqlite3.Row,
+    ) -> str:
+        """Return a replay-safe reason only when the old Runtime is gone.
+
+        A live or merely idle Session with its durable transcript can still
+        publish a late terminal result, so its admitted request remains
+        recovery-only. An archived/missing internal Session, or an idle/faulted
+        Session whose transcript disappeared, cannot do that: the frozen model
+        request has no side effects of its own and may be replayed in a fresh
+        hidden Session while the previous admission remains attached to the
+        durable receipt.
+        """
+
+        session_id = str(row["session_id"] or "")
+        if not session_id:
+            return "runtime_session_missing"
+        try:
+            session = self.sessions.get(session_id)
+        except AgentSessionNotFound:
+            return "runtime_session_missing"
+        status = str(session["status"] or "")
+        if status == "archived":
+            return "runtime_session_archived"
+        transcript = str(session["sessionFile"] or "").strip()
+        if (
+            status in {"idle", "faulted"}
+            and transcript
+            and not Path(transcript).is_file()
+        ):
+            return "runtime_transcript_missing"
+        return ""
+
+    def _reprepare_unrecoverable_accepted_request(
+        self,
+        row: sqlite3.Row,
+        *,
+        isolated: bool,
+        reason_code: str,
+    ) -> sqlite3.Row:
+        previous_session_id = str(row["session_id"] or "")
+        previous_turn_id = str(row["turn_id"] or "")
+        previous_receipt = _json_object(row["receipt_json"])
+        previous_admission = previous_receipt.get("admission")
+        replay_recovery: dict[str, object] = {
+            "schemaVersion": "rag-ime.memory-request-replay-recovery.v1",
+            "reasonCode": reason_code,
+            "previousSessionId": previous_session_id,
+            "previousTurnId": previous_turn_id,
+        }
+        if isinstance(previous_admission, Mapping):
+            replay_recovery["previousAdmission"] = dict(previous_admission)
+
+        replacement_session_id = "" if isolated else self._active_session_id
+        if replacement_session_id:
+            try:
+                replacement_session = self.sessions.get(replacement_session_id)
+            except AgentSessionNotFound:
+                replacement_session = None
+            if (
+                replacement_session is None
+                or str(replacement_session["status"] or "") == "archived"
+                or replacement_session_id == previous_session_id
+            ):
+                replacement_session_id = ""
+        if not replacement_session_id:
+            replacement = self._create_internal_session(
+                title=(
+                    "Memory verification recovery · "
+                    if isolated
+                    else "Memory curation recovery · "
+                )
+                + f"{_short_run_label(str(row['run_id']))} · {str(row['phase'])[:32]}",
+            )
+            replacement_session_id = str(replacement["id"])
+
+        timestamp = _now_ms()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE memory_curation_model_requests
+                SET session_id = ?, state = 'prepared', turn_id = '',
+                    receipt_json = ?, last_error = '', updated_at_ms = ?,
+                    completed_at_ms = NULL
+                WHERE request_id = ? AND state = 'resumable'
+                """,
+                (
+                    replacement_session_id,
+                    json.dumps(
+                        {"replayRecovery": replay_recovery},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    timestamp,
+                    str(row["request_id"]),
+                ),
+            )
+            if not isolated:
+                conn.execute(
+                    """
+                    UPDATE memory_curation_model_runs
+                    SET session_id = ?, updated_at_ms = ?
+                    WHERE run_id = ?
+                    """,
+                    (replacement_session_id, timestamp, str(row["run_id"])),
+                )
+                self._active_session_id = replacement_session_id
+            recovered = conn.execute(
+                "SELECT * FROM memory_curation_model_requests WHERE request_id = ?",
+                (str(row["request_id"]),),
+            ).fetchone()
+        if recovered is None:
+            raise MemoryModelUnavailable(
+                "accepted Memory request disappeared before replay recovery"
+            )
+        return recovered
 
     def _recover_ambiguous_admission_from_snapshot(
         self,
@@ -962,10 +1123,18 @@ class GovernedMemoryModelExecutor:
                 str(row["state"]) in {"running", "resumable"}
                 and _request_has_admission_evidence(row)
             ):
-                return self._recover_resumable_request(
-                    row,
-                    max_tokens=max_tokens,
-                )
+                reason_code = self._unrecoverable_request_session_reason(row)
+                if reason_code:
+                    row = self._reprepare_unrecoverable_accepted_request(
+                        row,
+                        isolated=isolated,
+                        reason_code=reason_code,
+                    )
+                else:
+                    return self._recover_resumable_request(
+                        row,
+                        max_tokens=max_tokens,
+                    )
             if str(row["state"]) == "resumable":
                 previous_session_id = str(row["session_id"] or "")
                 self._retire_existing_internal_session(previous_session_id)

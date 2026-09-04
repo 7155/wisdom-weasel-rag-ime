@@ -4,7 +4,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { GlobalFeedbackProvider } from '@/components/feedback';
 import { MockControlTransport } from '@/test/mock-transport';
 import { PawDesktopProvider, usePawDesktopStore } from '../runtime/desktop-context';
-import { PawBackgroundActivity } from './PawBackgroundActivity';
+import { maintenanceFailureDetail, PawBackgroundActivity } from './PawBackgroundActivity';
 import { PawNotificationCenter } from './PawNotificationCenter';
 import { pawMemoryMaintenanceActivity, PawWorkDirectoryProvider, usePawWorkDirectory } from './PawWorkDirectory';
 import statusCss from './paw-shell-status.css?raw';
@@ -12,6 +12,14 @@ import statusCss from './paw-shell-status.css?raw';
 afterEach(() => cleanup());
 
 describe('PawBackgroundActivity', () => {
+  it('does not surface the raw memory bootstrap budget exception', () => {
+    expect(maintenanceFailureDetail('memory bootstrap exceeded its strict character budget'))
+      .toBe('记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。');
+    expect(maintenanceFailureDetail('Codex error: The usage limit has been reached'))
+      .toContain('模型服务额度暂时用尽');
+    expect(maintenanceFailureDetail('provider down')).toBe('provider down');
+  });
+
   it('renders its portal above the fixed PAWOS desktop stacking context', () => {
     expect(statusCss).toMatch(/\.ui-popover\.paw-background-activity__popover\s*\{[\s\S]*?z-index:\s*1200/);
   });

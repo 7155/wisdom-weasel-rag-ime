@@ -1,0 +1,525 @@
+{
+  "agenticResult": {
+    "answerJudgeCorrectnessRate": 0.5,
+    "citationFactCount": 9,
+    "costSourceReference": {
+      "companionCostReceipt": {
+        "authority": "runtime_cost_reconciled",
+        "estimatedTotalCostUsd": "2.170603",
+        "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+        "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+        "pricingSourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+        "pricingSourceUrl": "https://platform.openai.com/docs/pricing",
+        "providerBillStatus": "not_provided",
+        "receiptSha256": "42a2c8244ff8bf8610f05103266b6d780b49b136820b87a55484f358dee5c186",
+        "scope": "full-four-lane-run-plus-frozen-judge"
+      },
+      "companionCostReceiptAvailable": true,
+      "laneProviderRequestCount": 15,
+      "laneSelector": "lane=agentic",
+      "laneTotalTokens": 377657,
+      "laneUsageSha256": "594f1e4e7a947dd7001e037b5c7ecc051fb73b3b63f57c68c247df8965d73620",
+      "laneUsageSource": "parent_and_subagent_provider_request_receipts",
+      "scope": "lane-source-usage-plus-full-run-cost-receipt",
+      "sourceReportFileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+      "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+      "sourceUsageRef": "runtime-cost:enterprise-rag-sol-max-frozen-v19-20260904-r4",
+      "sourceUsageSha256": "95b063c3f73ac3a46a84734a92d68246183e3173d644973e1869cc3f1c41f957"
+    },
+    "decision": "reject",
+    "exactCitationFactCoverage": 0.7777777777777778,
+    "exactCitationFactsCovered": 7,
+    "failedHardGates": [
+      "agentic:citationResolution"
+    ],
+    "highLevelFactCount": 9,
+    "highLevelFactsCovered": 8,
+    "infoNotFoundAbstentionRecall": 1.0,
+    "lane": "agentic",
+    "outputProtocolRate": 1.0,
+    "toolSuccessRate": 1.0
+  },
+  "calibrationLabel": "post-validation-calibrated",
+  "candidateRuns": 0,
+  "claimBoundary": [
+    "This is a deterministic offline rescore of frozen Validation output; no candidate, Provider, or Judge was rerun.",
+    "Candidate support is resolved from each cited token to the exact retrieved document and chunk ordinal before matching exact qrel evidence.",
+    "The Standard/qrels revision is post-Validation calibrated and candidate-aware, so this receipt cannot authorize an unbiased promotion or formal acceptance claim.",
+    "The older document-ID-membership receipt remains immutable history but its scorer methodology is obsolete and superseded for current comparisons.",
+    "Held-out remains unopened; cost and latency are copied references to frozen source evidence and are not remeasured."
+  ],
+  "costComparability": {
+    "latencyRole": "diagnostic-only",
+    "offlineRescoreProviderBilledUsd": 0,
+    "offlineRescoreProviderCalls": 0,
+    "offlineRescoreProviderTokens": 0,
+    "qrelsRevisionChangesSourceUsage": false,
+    "sourceUsageCopiedFromHashBoundRun": true,
+    "sourceUsageRemeasured": false
+  },
+  "evaluationScope": "validation-development-only",
+  "formalAcceptanceEligible": false,
+  "formalAcceptancePassed": false,
+  "heldOutOpened": false,
+  "historicalScorerCorrection": {
+    "documentIdMembershipScorerObsolete": true,
+    "obsoleteReceipt": {
+      "fileSha256": "d2c29d985a6a47a83ffb569e8853e5ab27d7fd40bac5c6ad5e4a5426e85539a2",
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-standard-v2-offline-rescore-20260904.v1.json",
+      "receiptSha256": "5a8d45f2a1e0002d3813ee3427fbb8119d684b3624114468d309f7390571f6f8"
+    },
+    "preservedAsHistory": true,
+    "replacementScorer": "exact-citation-token-to-document-id-and-chunk-ordinal",
+    "supersededByRunId": "enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-private-support-r5-exact-offline-rescore-20260905",
+    "supersededScope": "candidate-citation scoring methodology"
+  },
+  "judgeCalls": 0,
+  "providerCalls": 0,
+  "publicSafety": {
+    "containsCandidateAnswers": false,
+    "containsCandidateSourceIds": false,
+    "containsEvidenceQuotes": false,
+    "containsFactBodies": false,
+    "containsPrivateTranscripts": false,
+    "containsQrelsBody": false,
+    "containsQuestions": false,
+    "containsReferenceAnswers": false
+  },
+  "qrels": {
+    "evidenceBindingCount": 19,
+    "factCount": 9,
+    "fileSha256": "26e37c922f9676758d3a0b29c4b2f743156f017fe68b3645afe089e3855dad8e",
+    "manifestSha256": "9e2efd5eab0815eafbad0f4453f999896a8faf574ca20a25c3948b59c5b8faef",
+    "path": ".rag-ime-data/eval/host/validation-answer-evidence-qrels-candidate-aware-private-support-r5.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "scope": "host-only",
+    "standardManifestSha256": "9d76af0508ec4bcdada0fa49ce31061acec12b37b9d10d990efff094d5e2ee46",
+    "supportGroupCount": 19,
+    "unavailableFactCount": 0,
+    "verifiedFactCount": 9
+  },
+  "qualityComparability": {
+    "modelQualityImprovementClaimAllowed": false,
+    "qrelBindingAuthority": "hash-bound post-validation Standard/qrels artifact accepted by its dedicated corpus verifier",
+    "qrelBindingsRevalidatedAgainstCorpusInThisCommand": false,
+    "qrelsDependentMetricsDeterministicallyComparable": true,
+    "sameFrozenCandidateBeforeAfter": true,
+    "semanticJudgeReusedNotRerun": true
+  },
+  "receiptSha256": "b1b111b3192b99ff939b5b9ba92b973bdf12977172e98c3e734005e6a9917a81",
+  "reproduction": {
+    "command": "python3 scripts/rescore_enterprise_rag_answer_evidence.py --source-report .rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json --answer-evidence-qrels .rag-ime-data/eval/host/validation-answer-evidence-qrels-candidate-aware-private-support-r5.json --standard eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-private-support-r5.json --output <new-append-only-receipt.json> --run-id enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-private-support-r5-exact-offline-rescore-20260905",
+    "existingDifferentOutputFailsClosed": true,
+    "explicitInputs": [
+      "source-report",
+      "answer-evidence-qrels",
+      "standard",
+      "output",
+      "run-id"
+    ],
+    "writesOriginalRunArtifacts": false
+  },
+  "rescoreDecision": {
+    "decisionUnchanged": true,
+    "failedHardGates": [
+      "agentic:citationResolution"
+    ],
+    "metricsUnchanged": false,
+    "qrelsRevisionIsModelImprovement": false,
+    "rescoredCandidateDecision": "reject",
+    "sourceCandidateDecision": "reject",
+    "status": "rejected"
+  },
+  "resultsByLane": {
+    "agentic": {
+      "changedMetrics": [
+        "agentSuccessRate",
+        "answerableCitationSupportRate",
+        "citationFactCoverage",
+        "citationSuccessRate"
+      ],
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.75,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.5,
+        "citationFactCoverage": 0.7777777777777778,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 1,
+          "citationFactCount": 9,
+          "citationFactsCovered": 7,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 8,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.8888888888888888,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.3333333333333333,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 3,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 8,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.8888888888888888,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "sourceUsageReference": {
+        "companionCostReceipt": {
+          "authority": "runtime_cost_reconciled",
+          "estimatedTotalCostUsd": "2.170603",
+          "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+          "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+          "pricingSourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+          "pricingSourceUrl": "https://platform.openai.com/docs/pricing",
+          "providerBillStatus": "not_provided",
+          "receiptSha256": "42a2c8244ff8bf8610f05103266b6d780b49b136820b87a55484f358dee5c186",
+          "scope": "full-four-lane-run-plus-frozen-judge"
+        },
+        "companionCostReceiptAvailable": true,
+        "laneProviderRequestCount": 15,
+        "laneSelector": "lane=agentic",
+        "laneTotalTokens": 377657,
+        "laneUsageSha256": "594f1e4e7a947dd7001e037b5c7ecc051fb73b3b63f57c68c247df8965d73620",
+        "laneUsageSource": "parent_and_subagent_provider_request_receipts",
+        "scope": "lane-source-usage-plus-full-run-cost-receipt",
+        "sourceReportFileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+        "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+        "sourceUsageRef": "runtime-cost:enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "sourceUsageSha256": "95b063c3f73ac3a46a84734a92d68246183e3173d644973e1869cc3f1c41f957"
+      },
+      "terminalEvent": "turn_completed"
+    },
+    "baseline": {
+      "changedMetrics": [
+        "agentSuccessRate",
+        "answerableCitationSupportRate",
+        "citationFactCoverage",
+        "citationSuccessRate"
+      ],
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.75,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.5,
+        "citationFactCoverage": 0.6666666666666666,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 1,
+          "citationFactCount": 9,
+          "citationFactsCovered": 6,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "sourceUsageReference": {
+        "companionCostReceipt": {
+          "authority": "runtime_cost_reconciled",
+          "estimatedTotalCostUsd": "2.170603",
+          "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+          "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+          "pricingSourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+          "pricingSourceUrl": "https://platform.openai.com/docs/pricing",
+          "providerBillStatus": "not_provided",
+          "receiptSha256": "42a2c8244ff8bf8610f05103266b6d780b49b136820b87a55484f358dee5c186",
+          "scope": "full-four-lane-run-plus-frozen-judge"
+        },
+        "companionCostReceiptAvailable": true,
+        "laneProviderRequestCount": 7,
+        "laneSelector": "lane=baseline",
+        "laneTotalTokens": 108679,
+        "laneUsageSha256": "07345b3d67de712cb2746278464e24391f0769e3a6029f8d80682b0034414b60",
+        "laneUsageSource": "provider_request_receipts",
+        "scope": "lane-source-usage-plus-full-run-cost-receipt",
+        "sourceReportFileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+        "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+        "sourceUsageRef": "runtime-cost:enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "sourceUsageSha256": "95b063c3f73ac3a46a84734a92d68246183e3173d644973e1869cc3f1c41f957"
+      },
+      "terminalEvent": "turn_completed"
+    },
+    "skill": {
+      "changedMetrics": [
+        "agentSuccessRate",
+        "answerableCitationSupportRate",
+        "citationFactCoverage",
+        "citationSuccessRate"
+      ],
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.75,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.5,
+        "citationFactCoverage": 0.6666666666666666,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 1,
+          "citationFactCount": 9,
+          "citationFactsCovered": 6,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "sourceUsageReference": {
+        "companionCostReceipt": {
+          "authority": "runtime_cost_reconciled",
+          "estimatedTotalCostUsd": "2.170603",
+          "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+          "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+          "pricingSourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+          "pricingSourceUrl": "https://platform.openai.com/docs/pricing",
+          "providerBillStatus": "not_provided",
+          "receiptSha256": "42a2c8244ff8bf8610f05103266b6d780b49b136820b87a55484f358dee5c186",
+          "scope": "full-four-lane-run-plus-frozen-judge"
+        },
+        "companionCostReceiptAvailable": true,
+        "laneProviderRequestCount": 9,
+        "laneSelector": "lane=skill",
+        "laneTotalTokens": 192910,
+        "laneUsageSha256": "a7e474e8fe6e6be8228de4422c9d878ed7f60a840067f57bdd2981540e4fad6a",
+        "laneUsageSource": "provider_request_receipts",
+        "scope": "lane-source-usage-plus-full-run-cost-receipt",
+        "sourceReportFileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+        "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+        "sourceUsageRef": "runtime-cost:enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "sourceUsageSha256": "95b063c3f73ac3a46a84734a92d68246183e3173d644973e1869cc3f1c41f957"
+      },
+      "terminalEvent": "turn_completed"
+    },
+    "tuned": {
+      "changedMetrics": [
+        "agentSuccessRate",
+        "answerableCitationSupportRate",
+        "citationFactCoverage",
+        "citationSuccessRate"
+      ],
+      "qualityAfter": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.75,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.5,
+        "citationFactCoverage": 0.6666666666666666,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 1,
+          "citationFactCount": 9,
+          "citationFactsCovered": 6,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "qualityBefore": {
+        "abstentionAccuracy": 1.0,
+        "abstentionF1": 1.0,
+        "agentSuccessRate": 0.5,
+        "answerJudgeCorrectnessRate": 0.5,
+        "answerSuccessRate": 0.5,
+        "answerableCitationSupportRate": 0.0,
+        "citationFactCoverage": 0.2222222222222222,
+        "citationHardGate": false,
+        "citationResolutionRate": 1.0,
+        "counts": {
+          "answerableCaseCount": 2,
+          "answerableCitationCasesSupported": 0,
+          "citationFactCount": 9,
+          "citationFactsCovered": 2,
+          "highLevelFactCount": 9,
+          "highLevelFactsCovered": 6,
+          "infoNotFoundCaseCount": 2,
+          "infoNotFoundCasesCorrect": 2
+        },
+        "highLevelFactCoverage": 0.6666666666666666,
+        "infoNotFoundAbstentionRecall": 1.0,
+        "outputProtocolRate": 1.0,
+        "toolSuccessRate": 1.0
+      },
+      "sourceUsageReference": {
+        "companionCostReceipt": {
+          "authority": "runtime_cost_reconciled",
+          "estimatedTotalCostUsd": "2.170603",
+          "fileSha256": "efb49554a3d5840ea824f9bbbb70edeffce0a8f9a55205fdc0c78e8b2dc2b0ae",
+          "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+          "pricingSourceSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+          "pricingSourceUrl": "https://platform.openai.com/docs/pricing",
+          "providerBillStatus": "not_provided",
+          "receiptSha256": "42a2c8244ff8bf8610f05103266b6d780b49b136820b87a55484f358dee5c186",
+          "scope": "full-four-lane-run-plus-frozen-judge"
+        },
+        "companionCostReceiptAvailable": true,
+        "laneProviderRequestCount": 9,
+        "laneSelector": "lane=tuned",
+        "laneTotalTokens": 205674,
+        "laneUsageSha256": "7f80b3e89fb9f187cd1da1214e7069cec51ba49a3be46e4ce4289c3f83309361",
+        "laneUsageSource": "provider_request_receipts",
+        "scope": "lane-source-usage-plus-full-run-cost-receipt",
+        "sourceReportFileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+        "sourceReportPath": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+        "sourceUsageRef": "runtime-cost:enterprise-rag-sol-max-frozen-v19-20260904-r4",
+        "sourceUsageSha256": "95b063c3f73ac3a46a84734a92d68246183e3173d644973e1869cc3f1c41f957"
+      },
+      "terminalEvent": "turn_completed"
+    }
+  },
+  "runId": "enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-private-support-r5-exact-offline-rescore-20260905",
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-exact-offline-rescore.v2",
+  "scorerContract": {
+    "candidateChunkOrdinalRequired": true,
+    "candidateCitationTokenRequired": true,
+    "candidateSupportMatchGranularity": "exact-citation-token-to-document-id-and-chunk-ordinal",
+    "legacyV1DocumentIdFixtureCompatible": true,
+    "method": "reuse-frozen-judge-and-production-exact-chunk-scorer-v2",
+    "qrelBindingInputGranularity": "document-id-and-chunk-ordinal",
+    "qrelsOwnedMetrics": [
+      "agentSuccessRate",
+      "answerableCitationSupportRate",
+      "citationFactCoverage",
+      "citationSuccessRate"
+    ],
+    "rescoreScriptFileSha256": "8f098d410d8b443e91a40f7a9a96b69fb25c69b0c688b5b8245c81f0b297954b",
+    "rescoreScriptPath": "scripts/rescore_enterprise_rag_answer_evidence.py",
+    "runnerFileSha256": "e90af777b337374d750c7a994f78d7cf28770faf33d15ea7f7672ab16ef781e4",
+    "runnerFunctions": [
+      "_answer_only_cited_chunk_keys",
+      "_apply_answer_only_judgments",
+      "_build_candidate_decision"
+    ],
+    "runnerPath": "scripts/run_rag_agent_ablation.py",
+    "supportGroupModes": [
+      "all",
+      "any"
+    ]
+  },
+  "sourceEvidence": {
+    "evidenceSufficiency": {
+      "candidateCitationTokenCount": 14,
+      "candidateOutputBindingCount": 16,
+      "candidateOutputSetSha256": "e8d2e5861a524ff78254559efb2ce74e11746b1cc71dd1fe618adde50413d62e",
+      "exactCitedChunkBindingCount": 14,
+      "exactCitedChunkBindingSetSha256": "8db094891da3600b4a62d1ce0ee5a981a0b72e3fc4d6f4557ff9e880f997c636",
+      "judgeJudgmentCount": 8,
+      "judgeJudgmentSetSha256": "7af2181d115789971abb4e94663001f5e0288d328fabb20b981ca2dbcbf6dfee",
+      "laneCaseRecordCount": 16
+    },
+    "frozenCandidateReport": {
+      "fileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+      "model": "openai-codex/gpt-5.6-sol",
+      "path": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+      "reportSha256": "d2d3d7e1e781b2546fb1cfe6e296454d6dec4ca20a17436fb879730cec97be35"
+    }
+  },
+  "standard": {
+    "chunkCount": 29846,
+    "chunkManifestSha256": "6d5239b3b684c037d38eab4150bfb35d9d6393350cb9cff31bdc2c0b19d550cf",
+    "fileSha256": "363926b1fe9797adc6b67019be03a6a147d6bdfa4d3dbfd6fc71a61a004f1e42",
+    "manifestSha256": "9d76af0508ec4bcdada0fa49ce31061acec12b37b9d10d990efff094d5e2ee46",
+    "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-private-support-r5.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+    "standardId": "enterprise-rag-answer-evidence-validation-candidate-aware-private-support-r5-20260905"
+  },
+  "status": "passed",
+  "unbiasedPromotionClaimAllowed": false
+}

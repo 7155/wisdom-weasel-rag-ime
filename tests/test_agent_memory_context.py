@@ -4,6 +4,7 @@ import unittest
 
 from rag_ime.agent_memory_context import (
     AgentMemoryContextService,
+    _bootstrap_failure,
     _session_todo_projection,
 )
 
@@ -98,6 +99,21 @@ class _ContextRuntimeProvider:
 
 
 class AgentMemoryContextTests(unittest.TestCase):
+    def test_bootstrap_budget_failure_is_structured_and_non_blocking(self) -> None:
+        failure = _bootstrap_failure(
+            "session:budget",
+            RuntimeError("memory bootstrap exceeded its strict character budget"),
+        )
+
+        self.assertEqual(failure["status"], "recall_failed")
+        self.assertEqual(failure["errorCode"], "memory_bootstrap_budget_exceeded")
+        self.assertTrue(failure["nonBlocking"])
+        self.assertEqual(
+            failure["error"],
+            "记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。",
+        )
+        self.assertNotIn("strict character budget", str(failure))
+
     def test_todo_owner_projects_only_unfinished_work_into_recall(self) -> None:
         projection = _session_todo_projection(
             _TodoSessions(),

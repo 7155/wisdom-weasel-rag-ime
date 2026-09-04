@@ -708,6 +708,79 @@ describe('AgentEventReducer', () => {
     });
   });
 
+  it('keeps an authorized Room Tool running across its internal approval bridge', () => {
+    const roomBinding = {
+      todoId: '',
+      todoRevision: 0,
+      goalId: '',
+      goalRevision: 0,
+      turnId: 'turn-room-tool',
+      roomBound: true,
+      roomId: 'room-1',
+      rootId: 'root-room-1',
+      dispatchId: 'dispatch-room-1',
+      generation: 7,
+    };
+    const started = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      {
+        ...agentEvent(1, 'tool_started', {
+          toolCallId: 'tool-room-1',
+          toolName: 'workspace_shell',
+          args: { command: 'git status --short' },
+        }),
+        turnId: 'turn-room-tool',
+      },
+    ).state;
+    const bridged = reduceAgentEvent(
+      started,
+      {
+        ...agentEvent(2, 'approval_required', {
+          approvalId: 'approval-room-1',
+          toolCallId: 'tool-room-1',
+          payloadSha256: 'b'.repeat(64),
+          state: 'pending',
+          causalMetadata: roomBinding,
+        }),
+        turnId: 'turn-room-tool',
+      },
+    ).state;
+    const authorized = reduceAgentEvent(
+      bridged,
+      {
+        ...agentEvent(3, 'approval_resolved', {
+          approvalId: 'approval-room-1',
+          toolCallId: 'tool-room-1',
+          state: 'applied',
+          automatic: true,
+          decisionMode: 'policy',
+        }),
+        turnId: 'turn-room-tool',
+      },
+    ).state;
+
+    expect(bridged.status).toBe('working');
+    expect(bridged.turnsById['turn-room-tool']).toMatchObject({ status: 'running' });
+    expect(bridged.activitiesById['tool-room-1']).toMatchObject({
+      kind: 'tool_started',
+      status: 'running',
+      payload: {
+        toolName: 'workspace_shell',
+        causalMetadata: { roomBound: true, dispatchId: 'dispatch-room-1' },
+      },
+    });
+    expect(authorized.status).toBe('working');
+    expect(authorized.activitiesById['tool-room-1']).toMatchObject({
+      kind: 'tool_started',
+      status: 'running',
+      payload: {
+        approvalId: 'approval-room-1',
+        automatic: true,
+        decisionMode: 'policy',
+      },
+    });
+  });
+
   it('reconciles a completed legacy approval row into the matching tool result', () => {
     const started = reduceAgentEvent(
       createAgentProjection('session-1'),
@@ -1878,6 +1951,67 @@ describe('AgentEventReducer', () => {
     expect(restored.optimisticByClientMessageId).toEqual({});
     expect(restored.turnsById['history:server-user']?.status).toBe('completed');
     expect(restored.status).toBe('idle');
+  });
+
+  it('does not reconcile a repeated prompt when two legacy transcript messages are equally eligible', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-repeated-prompt',
+      text: '继续',
+      nowMs: 20,
+    });
+
+    const restored = applyAgentSnapshot(optimistic, {
+      messages: [
+        serverMessage('server-user-old', 'user', 'history:server-user-old', '继续'),
+        serverMessage('server-user-newer', 'user', 'history:server-user-newer', '继续'),
+      ],
+      liveEvents: [],
+      lastSequence: 8,
+      resumeToken: 'session-1:8',
+      status: 'idle',
+    });
+
+    expect(restored.messagesById['local:client-repeated-prompt']).toMatchObject({
+      clientMessageId: 'client-repeated-prompt',
+      status: 'queued',
+    });
+    expect(restored.messagesById['server-user-old']?.clientMessageId).toBeUndefined();
+    expect(restored.messagesById['server-user-newer']?.clientMessageId).toBeUndefined();
+    expect(restored.status).toBe('busy');
+  });
+
+  it('does not reconcile a new repeated prompt to one older legacy transcript turn', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-new-repeat',
+      text: '继续',
+      nowMs: 40,
+    });
+    const oldUser = {
+      ...serverMessage('server-user-old', 'user', 'history:server-user-old', '继续'),
+      createdAtMs: 20,
+      completedAtMs: 21,
+    };
+    const oldAssistant = {
+      ...serverMessage('server-assistant-old', 'assistant', 'history:server-user-old', '已完成。'),
+      createdAtMs: 25,
+      completedAtMs: 26,
+    };
+
+    const restored = applyAgentSnapshot(optimistic, {
+      messages: [oldUser, oldAssistant],
+      liveEvents: [],
+      lastSequence: 8,
+      resumeToken: 'session-1:8',
+      status: 'idle',
+    });
+
+    expect(restored.messagesById['local:client-new-repeat']).toMatchObject({
+      clientMessageId: 'client-new-repeat',
+      status: 'queued',
+    });
+    expect(restored.messagesById['server-user-old']?.clientMessageId).toBeUndefined();
+    expect(restored.turnsById['history:server-user-old']?.status).toBe('completed');
+    expect(restored.status).toBe('busy');
   });
 
   it('keeps an admitted first prompt pending across an earlier idle snapshot', () => {

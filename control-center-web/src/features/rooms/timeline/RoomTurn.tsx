@@ -1004,14 +1004,6 @@ function ActivityLog({
           pinned={activity.id === latestReasoning?.id}
         />;
       }
-      if (textValue(activity.payload.approvalId)) {
-        return <RoomInlineApprovalActivity
-          activity={activity}
-          arriving={arriving}
-          key={activity.id}
-          onApprovalDecision={onApprovalDecision}
-        />;
-      }
       if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
         const toolName = textValue(activity.payload.toolName);
         const recovered = displayStatus === 'failed' && publicActivities
@@ -1027,6 +1019,14 @@ function ActivityLog({
           key={activity.id}
           recovered={recovered}
           roomId={roomId}
+        />;
+      }
+      if (textValue(activity.payload.approvalId)) {
+        return <RoomInlineApprovalActivity
+          activity={activity}
+          arriving={arriving}
+          key={activity.id}
+          onApprovalDecision={onApprovalDecision}
         />;
       }
       const description = describeRoomActivity(activity, participantName, participantNames);
@@ -1177,7 +1177,15 @@ function roomVisibleIncrementalActivities(
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
     if (!activity || !roomActivityHasPublicInformation(activity)) continue;
+    const approvalDecision = approvalDecisionView(activity.payload);
     const sourceEventType = textValue(activity.payload.sourceEventType);
+    if (
+      textValue(activity.payload.approvalId)
+      && approvalDecision.automatic
+      && approvalDecision.mode === 'policy'
+      && ['approval_required', 'approval_resolved'].includes(sourceEventType)
+      && activity.status !== 'failed'
+    ) continue;
     if (sourceEventType === 'reasoning_summary') {
       if (textValue(activity.payload.source) !== 'provider_reasoning_summary') continue;
       const rawItems = Array.isArray(activity.payload.items)
@@ -1791,7 +1799,11 @@ function RoomToolActivity({
       )),
     ],
   });
-  const approvalDescription = approvalId ? describeRoomActivity(activity) : null;
+  const approvalDecision = approvalDecisionView(payload);
+  const approvalDescription = approvalId
+    && !(approvalDecision.automatic && approvalDecision.mode === 'policy')
+    ? describeRoomActivity(activity)
+    : null;
   return (
     <details
       className="room-agent-activity room-agent-activity--tool"
@@ -2153,11 +2165,16 @@ function roomActivityDisplayStatus(
     return activity.status;
   }
   const status = textValue(activity.payload.status);
+  const sourceEventType = textValue(activity.payload.sourceEventType);
   const approvalDecision = approvalDecisionView(activity.payload);
   const approvalState = textValue(
     activity.payload.resolutionState || activity.payload.state,
   );
-  if (approvalDecision.automatic && approvalDecision.mode === 'policy') {
+  if (
+    approvalDecision.automatic
+    && approvalDecision.mode === 'policy'
+    && ['approval_required', 'approval_resolved'].includes(sourceEventType)
+  ) {
     return 'completed';
   }
   if (

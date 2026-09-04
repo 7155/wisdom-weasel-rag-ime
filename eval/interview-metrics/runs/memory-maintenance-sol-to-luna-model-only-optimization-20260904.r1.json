@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "paw.memory-model-optimization-receipt.v1",
+  "runId": "memory-maintenance-model-optimization:memory-maintenance-luna-max-model-only-20260904-r1",
+  "status": "completed",
+  "decision": "keep",
+  "singleVariable": "model",
+  "baselineRunId": "memory-maintenance-sol-max-concise-contract-model-baseline-20260904-r4",
+  "candidateRunId": "memory-maintenance-luna-max-model-only-20260904-r1",
+  "factor": {
+    "name": "model",
+    "before": "openai-codex / gpt-5.6-sol / max",
+    "after": "openai-codex / gpt-5.6-luna / max",
+    "why": "test whether a cheaper model can preserve the complete deterministic Memory lifecycle before changing Prompt"
+  },
+  "frozenControls": {
+    "evaluationScope": "validation-only",
+    "caseCount": 5,
+    "durableCaseCount": 4,
+    "nonMemoryCaseCount": 1,
+    "syntheticFixtureSha256": "58712216e1dd71df953efcba6663b3a437589012a84954ce681d0b936c08dc20",
+    "frozenInputSha256": "b3c2eeaaa1836d7f69c8a0f5758108f349136880b22ccc5b551bae7810171494",
+    "contractFingerprintSha256": "bb1161f8b1c33d93b542c3a0c83f2dc993aaf7410304f11b8e718f7f51b722ca",
+    "provider": "openai-codex",
+    "thinking": "max",
+    "transport": "codex_cli_ephemeral",
+    "contextProfile": "full-json-v1",
+    "promptContract": "concise-json-v1"
+  },
+  "evidence": {
+    "baselineRef": "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-model-baseline-20260904.r4.json",
+    "baselineFileSha256": "a53c10317030b9986d027d2b27f2ec58028c7222a29a41b936e8edc6c34b7620",
+    "baselineCostReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-model-baseline-20260904.r4.v1.json",
+    "baselineCostReceiptFileSha256": "6f54504a35c484266ed1671ff25124312746261f299ed4ac6841c2e2c622ff08",
+    "candidateRef": "eval/interview-metrics/runs/memory-maintenance-luna-max-model-only-20260904.r1.json",
+    "candidateFileSha256": "fb1f91ac44a5d31436224f4382f64055daa5bda9596a610f9365d09b2f6bced6",
+    "candidateCostReceiptRef": "eval/interview-metrics/runs/agent-lab-cost-memory-luna-max-model-only-20260904.r1.v1.json",
+    "candidateCostReceiptFileSha256": "d4b5d9dbd412aa16e3897b4191285bd48aff04ce58ae3e4cde02d4ade61cdcb3"
+  },
+  "comparison": {
+    "singleFactorGatePassed": true,
+    "qualityGatePassed": true,
+    "operabilityGatePassed": true,
+    "recoveryGatePassed": true,
+    "semanticQualityGatePassed": true,
+    "promptAdaptationNeeded": false,
+    "quality": {
+      "curationCases": {"before": 5, "after": 5},
+      "durableRecall": {"before": 4, "after": 4},
+      "abstention": {"before": 1, "after": 1},
+      "vectorCoverage": {"before": 1.0, "after": 1.0},
+      "rollback": {"before": true, "after": true},
+      "replay": {"before": true, "after": true},
+      "legalLineage": {"before": true, "after": true},
+      "bookProjection": {"before": true, "after": true}
+    },
+    "usage": {
+      "uncachedInputTokens": {"before": 40131, "after": 36927, "delta": -3204},
+      "cachedInputTokens": {"before": 0, "after": 0, "delta": 0},
+      "outputTokens": {"before": 2282, "after": 2804, "delta": 522}
+    },
+    "costAuthority": "deterministic_pricing_estimate_from_reported_usage",
+    "cost": {
+      "baselineTotalUsd": "0.269115",
+      "candidateTotalUsd": "0.0107502",
+      "decreasePercent": "96.00535087230366200323281868",
+      "pricingSourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+      "providerBillAvailable": false
+    },
+    "latencyMs": {
+      "before": 67659,
+      "after": 73327,
+      "delta": 5668,
+      "keepGate": false
+    }
+  },
+  "claimBoundary": [
+    "one private-shadow five-case Validation run per model",
+    "cost is a deterministic pricing estimate from complete reported usage and a hashed pricing source, not a Provider bill",
+    "quality and recovery pass without Prompt adaptation; elapsed time is informational",
+    "no production database, installed Gateway, foreground, Held-out, or repeated-run confidence claim"
+  ]
+}

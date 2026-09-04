@@ -89,6 +89,37 @@ describe('PAWOS Agent Home 首屏合同', () => {
     expect(updated).toHaveFocus();
   });
 
+  it('restores all four Session permission modes and submits the managed project scope', async () => {
+    const user = userEvent.setup();
+    const { transport } = renderHome();
+
+    await user.click(await screen.findByRole('button', { name: /权限 · 全权限/ }));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(4);
+    expect(within(menu).getByRole('menuitemradio', { name: /^只读/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitemradio', { name: /^全权限/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitemradio', { name: /^工作区托管/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitemradio', { name: /^全自动/ })).toBeInTheDocument();
+
+    await user.click(within(menu).getByRole('menuitemradio', { name: /^工作区托管/ }));
+    await user.type(screen.getByRole('textbox', { name: '描述你想完成的工作' }), '在选定项目中完成任务');
+    await user.click(screen.getByRole('button', { name: '开始 Session' }));
+
+    await waitFor(() => expect(
+      transport.requests.some(({ request }) => request.pathId === 'agent.sessions.create'),
+    ).toBe(true));
+    const create = transport.requests.find(
+      ({ request }) => request.pathId === 'agent.sessions.create',
+    )?.request;
+    expect(create?.body).toMatchObject({
+      mode: 'coordinator',
+      executionMode: 'workspace_managed',
+      toolProfileVersion: 'control-center-v1',
+      workspaceRoots: ['/work/paw'],
+      workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
+    });
+  });
+
   it('keeps a pasted image visible, removable, and sends its managed receipt with a new Session', async () => {
     const user = userEvent.setup();
     const file = new File(['preview'], 'screen.png', { type: 'image/png' });

@@ -632,6 +632,7 @@ def _memory_recall_failure_observation(
     safe_trigger = _recall_text(trigger) or "unknown"
     generated_at_ms = max(0, int(time.time() * 1_000))
     failure_reason = _recall_text(type(error).__name__) or "unknown"
+    failure_code = memory_bootstrap_error_code(error)
     identity_material = "\0".join(
         (safe_session_id, safe_trigger, str(generated_at_ms), failure_reason)
     )
@@ -646,6 +647,7 @@ def _memory_recall_failure_observation(
         "generatedAtMs": generated_at_ms,
         "status": "failed",
         "failureReason": failure_reason,
+        "failureCode": failure_code,
         "metrics": {},
         "attributes": {
             "failureRecorded": True,
@@ -882,6 +884,7 @@ def _bootstrap_failure(
     session_id: str,
     error: BaseException,
 ) -> dict[str, object]:
+    failure_code = memory_bootstrap_error_code(error)
     return {
         "schemaVersion": (
             "rag-ime.memory-bootstrap-enqueue-result.v1"
@@ -892,8 +895,38 @@ def _bootstrap_failure(
         "queryAware": True,
         "priority": "developer",
         "lifecycle": "session",
-        "error": _error_text(error),
+        # Memory is an optional context source. Keep its failure structured and
+        # explicitly non-blocking so the prompt/turn can continue and the UI
+        # never renders an implementation-specific budget exception.
+        "errorCode": failure_code,
+        "nonBlocking": True,
+        "retryable": True,
+        "error": "记忆召回本轮已跳过，消息仍可继续；下次会重新尝试。",
     }
+
+
+def memory_bootstrap_error_code(error: BaseException) -> str:
+    """Return a stable, privacy-safe code for an optional memory failure.
+
+    The exception text is deliberately not returned to the client. Classifying
+    the known budget family still lets Trace and the foreground UI explain why
+    recall was skipped without leaking paths, SQL, or provider details.
+    """
+
+    message = " ".join(str(error).split()).lower()
+    if any(
+        marker in message
+        for marker in (
+            "strict character budget",
+            "max_chars",
+            "context window",
+            "token limit",
+            "memory budget",
+            "bootstrap budget",
+        )
+    ):
+        return "memory_bootstrap_budget_exceeded"
+    return "memory_bootstrap_failed"
 
 
 def _error_text(error: BaseException) -> str:

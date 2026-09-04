@@ -1438,7 +1438,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertLessEqual(len(rendered), 24_000)
         self.assertIn("历史编号-29", rendered)
         self.assertNotIn("历史编号-00", rendered)
-        self.assertIn("较早未读消息已越过本次上下文窗口", rendered)
+        self.assertIn("另有 22 条较早消息未注入", rendered)
+        self.assertIn("按需读取公开摘要、产物或状态", rendered)
 
     def test_room_image_is_delivered_to_the_authorized_participant_prompt(self) -> None:
         room = self.service.create_room(
@@ -1941,10 +1942,14 @@ class AgentRoomServiceTests(unittest.TestCase):
         )
         self.assertIn("skill_load 加载 facilitate-room", facilitator_context)
         self.assertIn("room_partner", facilitator_context)
-        self.assertIn("这不代表当前请求是普通闲聊", facilitator_context)
-        self.assertIn("输出实现结果前必须先加载 facilitate-room", facilitator_context)
-        self.assertIn("不要把仍在进行的 Room Goal 暂停", facilitator_context)
-        self.assertIn("不得写成 passed/satisfied", facilitator_context)
+        self.assertIn("当前职责：Room Facilitator", facilitator_context)
+        self.assertIn("普通对话或一个连贯动作直接处理", facilitator_context)
+        self.assertIn("不要为了展示多 Agent 机械委派", facilitator_context)
+        self.assertIn(
+            "Partner 交付只是 submission，不是 acceptance",
+            facilitator_context,
+        )
+        self.assertIn("当前没有结构化 WorkItem", facilitator_context)
         self.assertNotIn("当前阶段：普通对话", facilitator_context)
         evidence = self.service.memory_evidence.list(
             role_id=str(facilitator["roleId"]),
@@ -2152,7 +2157,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(prompt_payload["message"], "@Agent 2 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
         self.assertIn("<room-context>", room_context)
-        self.assertIn("你本轮从“实施者”的角度参与", room_context)
+        self.assertIn("当前角色：实施者", room_context)
+        self.assertIn("当前职责：Room Partner", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
         self.assertNotIn("@Agent 2 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
@@ -3649,7 +3655,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt_payload = prompt.call_args.args[1]
         self.assertEqual(prompt_payload["message"], "请协调大家检查当前项目")
         moderator_context = prompt_payload["_transientContext"]
-        self.assertIn("你本轮从“主持整合者”的角度参与", moderator_context)
+        self.assertIn("当前角色：主持整合者", moderator_context)
+        self.assertIn("当前职责：Room Facilitator", moderator_context)
         self.assertNotIn("agents.room_ask", moderator_context)
         self.assertNotIn("role=researcher", moderator_context)
         self.assertNotIn("role=implementer", moderator_context)

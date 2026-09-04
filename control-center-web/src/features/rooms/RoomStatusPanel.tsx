@@ -60,7 +60,10 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
   const projection = providedProjection ?? roomProjection(effectiveRoomId);
   const participantProgress = selectRoomParticipantPublicProgress(projection);
   const turn = latestRoomTurn(projection);
-  const activities = turn?.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean) ?? [];
+  const activities = turn?.activityIds
+    .map((id) => projection.activitiesById[id])
+    .filter(Boolean)
+    .filter((activity) => !roomActivityIsAutomaticPolicyAuthorization(activity)) ?? [];
   const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];
   const attachments = new Set(messages.flatMap((message) => message.message?.attachments ?? []));
   const files = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'file');
@@ -547,6 +550,17 @@ function collapseRoomStatusActivities(
     });
   }
   return groups;
+}
+
+function roomActivityIsAutomaticPolicyAuthorization(
+  activity: RoomActivityProjection,
+): boolean {
+  const sourceEventType = text(activity.payload.sourceEventType);
+  return Boolean(text(activity.payload.approvalId))
+    && activity.payload.automatic === true
+    && text(activity.payload.decisionMode || activity.payload.mode) === 'policy'
+    && ['approval_required', 'approval_resolved'].includes(sourceEventType)
+    && activity.status !== 'failed';
 }
 
 function roomStatusActivityPresentation(

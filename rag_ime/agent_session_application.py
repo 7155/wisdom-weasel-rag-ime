@@ -376,6 +376,9 @@ class AgentSessionApplicationService:
         media_files_deleted = self.media.delete_session_files(session_id)
         runtime_binding = self.sessions.runtime_binding(session_id)
         session = self.sessions.delete(session_id)
+        drop_live_state = getattr(self.events, "drop_session", None)
+        if callable(drop_live_state):
+            drop_live_state(session_id)
         session_file = ""
         if (
             isinstance(runtime_binding, Mapping)

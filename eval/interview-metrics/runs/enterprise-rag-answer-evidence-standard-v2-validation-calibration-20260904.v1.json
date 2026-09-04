@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-standard-calibration.v1",
+  "runId": "enterprise-rag-answer-evidence-standard-v2-validation-calibration-20260904",
+  "status": "passed",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "localOnly": true,
+  "uploaded": false,
+  "providerCalls": 0,
+  "heldOutOpened": false,
+  "unbiasedPromotionClaimAllowed": false,
+  "candidateBlindAudit": {
+    "auditId": "enterprise-rag-qrels-independent-v2-candidate-blind-20260904",
+    "auditReceiptSha256": "2a02435517c63c6287ae7dd18b286fb96a7ecc9501e71ed246afedf1ba43ec61",
+    "proposalSha256": "997d86d25dd32173b167624ff4309d1f61e729fd6db367465128eeae711c11e4",
+    "proposalFactCount": 9,
+    "proposalEvidenceBindingCount": 14,
+    "candidateAnswersAccessedByAudit": false,
+    "heldOutAccessedByAudit": false
+  },
+  "fixedPointReconciliation": {
+    "auditAllowlistPipeline": [
+      "rag_ime.knowledge_library.service._chunk_document"
+    ],
+    "auditRawDocumentTextChunkCount": 29847,
+    "missingProductionIngressDependency": "rag_ime.knowledge_library.parsers._normalize_text",
+    "standardProductionPipelineDependencyCount": 5,
+    "standardProductionPipelineDependencySurfaceSha256": "45c5e2ec57ee16b2aa60b170a3f142cbcdc839e4f8a40082a23a3431b46f60a0",
+    "normalizedProductionPipelineChunkCount": 29846,
+    "previouslyDeclaredChunkCount": 29846,
+    "countMatch": true,
+    "previousChunkManifestHashReused": false,
+    "previousChunkManifestHashReuseReason": "The earlier serialization recipe was not frozen, so Standard v2 defines and hashes a new canonical serialization instead of asserting equivalence.",
+    "canonicalSerializationSchemaVersion": "rag-ime.rag-chunk-manifest-serialization.v1",
+    "canonicalSerializationSha256": "71e0628a4052019064929397feb17e532d2ce9d9f115d5d01a22a5f7e950cedd",
+    "canonicalChunkManifestSha256": "6d5239b3b684c037d38eab4150bfb35d9d6393350cb9cff31bdc2c0b19d550cf"
+  },
+  "standard": {
+    "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.v2.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+    "fileSha256": "ba8c135e3d1ef845f3a333a2259003703769adeca6fa517cb7decc9098d417f7",
+    "manifestSha256": "22ea18216475d963ee3de2353d8d82b6f5f61e36a93fbf073115a27149a5bc1d",
+    "preparedArtifactSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "preparedSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb",
+    "documentCount": 5101,
+    "chunkCount": 29846
+  },
+  "qrels": {
+    "scope": "host-only",
+    "path": ".rag-ime-data/eval/host/validation-answer-evidence-qrels-v2.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "fileSha256": "b0b081c4a0ecbced1c589b69126de555a0f1b8815c508e1f4eb269adce608428",
+    "manifestSha256": "86385a1713f5807b12dff2571c595fcfb2e238773b5d5f73859a67f40ff7b333",
+    "standardManifestSha256": "22ea18216475d963ee3de2353d8d82b6f5f61e36a93fbf073115a27149a5bc1d",
+    "baseQrelsV1FileSha256": "95ca80c5cf33eb30f905825d0c65e33ae164322bc6bec0f245663159641ac8d1",
+    "baseQrelsV1ManifestSha256": "9ce7930d9ad93324725654742ff73e4ba6f4dbc015c0be187288451426e0ebff",
+    "factCount": 9,
+    "verifiedFactCount": 9,
+    "unavailableFactCount": 0,
+    "supportGroupCount": 14,
+    "evidenceBindingCount": 14,
+    "documentShaMatches": 14,
+    "chunkShaMatches": 14,
+    "quotesVerbatimInChunks": 14,
+    "quoteShaMatches": 14,
+    "qrelsV1Immutable": true
+  },
+  "runner": {
+    "path": "scripts/run_rag_agent_ablation.py",
+    "versionDispatch": [
+      "rag-ime.rag-answer-evidence-qrels.v1",
+      "rag-ime.rag-answer-evidence-qrels.v2"
+    ],
+    "v1CompatibilityPreserved": true,
+    "v2FailsClosedOnStandardDrift": true,
+    "hiddenGoldUploaded": false,
+    "judgeReceivesCandidateCitedChunksOnly": true
+  },
+  "publicSafety": {
+    "containsQuestions": false,
+    "containsReferenceAnswers": false,
+    "containsFactBodies": false,
+    "containsEvidenceQuotes": false,
+    "containsQrelsBody": false,
+    "containsCandidateAnswers": false,
+    "containsPrivateTranscripts": false
+  },
+  "verification": {
+    "standardVerifier": "python3 scripts/verify_enterprise_rag_answer_evidence_standard_v2.py",
+    "standardVerifierResult": "ENTERPRISE_RAG_ANSWER_EVIDENCE_STANDARD_V2_OK",
+    "auditVerifier": "python3 .rag-ime-data/eval/host/enterprise-rag-qrels-independent-review-20260904/verify_review.py",
+    "auditVerifierResult": "REVIEW_REPRODUCTION_OK",
+    "focusedTests": "python3 -m unittest tests.test_run_rag_agent_ablation",
+    "diffCheck": "git diff --check -- scripts/run_rag_agent_ablation.py tests/test_run_rag_agent_ablation.py",
+    "newPythonArtifactCheck": "python3 -m py_compile scripts/verify_enterprise_rag_answer_evidence_standard_v2.py",
+    "newJsonArtifactChecks": [
+      "python3 -m json.tool eval/interview-metrics/enterprise-rag-answer-evidence-standard.v2.json",
+      "python3 -m json.tool eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-v2-validation-calibration-20260904.v1.json"
+    ]
+  },
+  "claimBoundary": [
+    "This receipt proves a Validation-only Standard and qrels fixed point; it is not a model-quality or production result.",
+    "The qrels revision was calibrated after Validation evidence and cannot support an unbiased promotion claim on that same split.",
+    "No Provider or candidate run was executed, and Held-out remains unopened.",
+    "The original candidate-blind audit remains immutable and still truthfully reproduces its narrower raw-text allowlist result."
+  ]
+}

@@ -26,13 +26,28 @@
 | IM-016 | “我们是不是trace的各个矩阵都出来结果了”“我怎么才能检查结果，和查看具体具体记录。四个场景分别是什么场景” | 四个项目必须各有可检查的运行矩阵、Case、Trace、结果和证据入口；不能只给聚合口播。 | 当前验收入口 |
 | IM-017 | “为什么没没能改正呢？真实失败 → Trace 定位 → 冻结任务与环境 → 一次只改一项 → 重复运行 → 确定性验收 + 语义评分 → 质量硬门禁 → 再比较成本 → Keep/Reject → 同 Case 重放 → 安装态 Canary” | Trace Agent 不能止于指出 Skill、Tool、Prompt 或 Runtime 问题；在授权边界内必须形成候选修复、同 Case 重放和独立复验，不能把模型档位高当作成功证据。 | 当前修复闭环 |
 | IM-018 | “结果成功就算成功” | 默认以任务终态和产品结果成功为主成功口径；轨迹只在 Tool/副作用/安全/协议属于硬合同时卡门，不要求与理想轨迹逐步相同。 | 当前成功语义 |
-| IM-019 | “跑完调优，我要一个，成功率，成本，时间，都变好的结果。四个项目都是”→“耗时不重要” | EnterpriseOps、Enterprise RAG、CloudOps、Memory Maintenance 四个项目都要分别在冻结同 Case、同环境和等价质量门禁下证明成功率/质量与成本改善；耗时保留展示和解释，但不再阻止 Keep。 | 当前最终目标，未完成；后句修正前句的耗时硬门槛 |
+| IM-019 | “跑完调优，我要一个，成功率，成本，时间，都变好的结果。四个项目都是”→“耗时不重要” | EnterpriseOps、Enterprise RAG、CloudOps、Memory Maintenance 四个项目都要分别在冻结同 Case、同环境和等价质量门禁下证明成功率/质量与成本改善；耗时保留展示和解释，但不再阻止 Keep。 | 四项目本轮 Validation/current-ledger 路径已齐全；安装态、前台、Provider bill 与泛化仍单列，后句修正前句的耗时硬门槛 |
 | IM-020 | “还得在os的app类看得到我们的每次运行，改了什么，怎么改的，优化的效果” | PAWOS Agent Lab 必须投影每次运行、真实改动、改法、原因、前后指标、证据和 Keep/Reject。 | 当前产品要求 |
 | IM-021 | “app看看如何展现，任务，数据集，结果，优化，新结果。任务和数据集怎么展示点击如何查看，是弹出文件夹还是怎么的” | 详情页按任务、数据集 Cases、原结果、优化记录、新结果组织；Task/Dataset 点击后在 App 内查看 Case、Gold、证据和冻结信息，Finder 仅作次级专家动作。 | 当前交互要求 |
 | IM-022 | “用实际例子” | Judge 与 Golden Data 的面试答案必须绑定本项目真实 Case、requiredFacts、host-private qrels、严格 JSON、确定性 parser、失败回执和诚实边界，不能只写通用方法论。 | 当前文档要求 |
 | IM-023 | “得告诉我，这些问题怎么处理的”“这些记录文档” | 每个问题要记录真实失败、Trace 归因、具体修复、为何这样改、验证命令、结果和未验证边界。 | 当前证据要求 |
 | IM-024 | “旧的错误的彻底删除，避免干扰” | 被替代的错误配置、错误结论和失效 active projection 必须退出当前选择/比较/默认 UI；原始失败收据只在隔离历史审计区保留，不能物理抹除审计证据或继续参与现行指标。 | 当前隔离要求 |
 | IM-025 | “最后结果也都要，怎么改，为什么，还有改的diff和效果……就像这个矩阵”“需求都记录” | 四项目各有最终优化矩阵；每项展示怎么改、为什么、真实 diff、影响 Case、成功/质量/时间/token/成本 old→new、门禁与结论，且全部需求写入正式账本而非只留在聊天。 | 当前交付合同 |
+| IM-026 | “Luna Max 只换模型说不定得优化提示词，优化提示词是一个亮点” | 降模必须拆成两段单变量实验：先冻结 Prompt/Skill/Tool/Runtime，只把 Sol Max 换成 Luna Max；若质量回退，再冻结 Luna 与其他控制，仅修改一版 Luna 专用 Prompt。分别保留 model-only 和 prompt-only 的 Run、失败 Case、Prompt Diff、质量门禁与价格结果；最终 Sol→Luna+Prompt 只作为串联结论，不能冒充单变量因果。 | 当前 Luna 调优与简历证据合同 |
+| IM-027 | “不能用x1top，都用我aed的这个20xpro” | 本轮 Provider 运行只使用用户指定的 openai-codex 路由，不读取或使用 x1top 配置；“Aed 20xpro”是用户提供的账户标签，除非 Runtime 有独立账户回执，否则不能包装成机器已证明身份。 | 当前 Provider 边界 |
+| IM-028 | “app的图标和版本没有，我都不知道是不是最新的” | 安装态 PAW 必须同时显示可辨认图标、语义版本、build、源码 commit 与 dirty 状态；源码构建结果不能替代 Dock/菜单栏真实前台核验。 | 源码已实现，待重新安装与前台验收 |
+| IM-029 | “为什么最下面一直有这个记忆超上限”“工具数量不对”“trace 还是不行”“记忆还是无法整理，你改好” | 分别修复 Memory 自动整理/重试、容量状态文案、Tool 已登记与可执行计数、Trace 绑定/诊断/修复链；每条都需要源码测试与安装态真实回执，不能用一张截图或同一个绿灯合并验收。 | 源码与离线前端回归已通过；本机 HTTP、安装态与真实整理回执待验收 |
+| IM-030 | “PAW Agent Lab 不是‘一个测评报告页’，而是一个通用 Eval OS”“改好了就看看在这个有无价值” | 当前四项目闭环完成后，以 Project→Evaluation→Revision→Dataset/Standard/Harness/SkillBinding→Run→Experiment→Evidence 对现有 Experiment-first App 做价值与迁移评审；这段外部设计稿是参考方案，不在未确认迁移边界时冒充已经实现。 | 待当前闭环完成后评审，不自动宣称已重构 |
+| IM-031 | “我记得本项目还有几个权限模式怎么没有呢”“权限模式恢复” | 新建 Session、命令入口、Settings、持久化与后端必须精确保留四档：只读、全权限、工作区托管、全自动；只读文案必须诚实说明隔离无网络验证命令，不能把保存值折叠成另一档。 | 源码与聚焦测试已恢复，待安装态前台验收 |
+| IM-032 | “重新安装，提交” | 全部相关源码与回执通过比例性检查后重新构建并安装当前候选，完成安装态前台验收，再做路径限定 commit；不把安装或 commit 自动扩展成公开发行。 | 待最终集成 |
+| IM-033 | “然后把我们trace测试的结果给我，以及工具提示词skill等等，我给网页模型评估一下” | 交付一份隐私安全、确定性生成的模型评审包，包含 Trace 测试结果、公开 Prompt/Tool/Skill/Workflow 合同、真实 Diff、运行回执与不能证明的边界；排除凭据、私有 Gold、私有 Trace、数据库和本机路径。 | 当前 builder 与确定性测试已更新到 RAG r6、四项目矩阵和 Optimization Workbench；磁盘上的旧 ZIP 仍是 9 月 4 日版本，必须在最终 clean commit 后重建、字节级复验并记录新哈希，旧包不能作为本轮证据 |
+| IM-034 | “对话记录证据都要可追踪” | 每条 Run、Case、Prompt Diff、Trace、Tool、Judge/Verifier、成本和安装态证据都绑定稳定 ID/hash/sourceRef；App 内先看脱敏证据，原始私有材料只在授权审计边界可达。 | 当前合同，待安装态验收 |
+| IM-035 | “是不是sse不够稳健啊”“前后端同步呢”“加强前后端稳定性” | 不预设 SSE 是唯一原因；分别验证 prompt admission、durable clientMessageId、snapshot/SSE 顺序、冲突恢复、重复发送、刷新重连和终态收敛。旧快照不得把新消息标失败或合并到旧同文本轮次。 | 竞态、Retry-After、稳定帧与 exactly-once 源码回归已通过；待安装态 503/刷新长窗口验收 |
+| IM-036 | “你的subagent都用sol”“你干活都用好的，测试的时候才测试luan max”“他们可以写，sol没问题” | 实施与审阅 Agent 使用 Sol/max；只有明确的候选模型评测使用 Luna/max。子 Agent 可按边界写入，主 Agent 仍负责冲突检查、集成与最终验收。 | 当前执行约束 |
+| IM-037 | “价格务必计算啊，我要写简历的，就是效果不变价格我们能够降低80%什么的”“luna价格超级便宜所以我们可以写的效果很好” | 只有质量等价并通过硬门禁后，才用 Runtime 逐请求 cost receipt 或完整 reported usage 与内容寻址费率计算 API 成本；80% 是目标示例而非预写结果，Provider 账单未提供时必须明确是对账值/定价估算而非真实扣款。 | 四项目 current ledger 已齐全；Enterprise RAG 为 post-Validation candidate-aware r6 的受限 Keep，三阶段成本均是 Runtime 对账估算而非 Provider bill |
+| IM-038 | “room不需要批准，都通过，默认，务必” | 只对有效 Room dispatch：工具执行默认由 Room policy 自动放行，不启动独立审批 Agent、不等待人工确认；仍保留 workspace/dispatch 绑定、执行结果和审计回执，实际 Tool failure 必须如实显示。此要求不扩展到普通 Session。 | 源码与 330 项 Session/Room/Tool/Service 组合回归通过；安装态待验收 |
+| IM-039 | “agent.md强调，以体验为主，安全和权限控制次要，哈希这些次要” | 仓库级产品取舍以任务完成、前后端一致和失败恢复为先；权限、审批、哈希与审计退居后台支撑，不得用形式性门禁制造重复确认或阻断普通操作。仍不得伪造成功，也不得自动重放可能已产生不可逆副作用的操作。 | 已写入根 `AGENTS.md` |
+| IM-040 | “PAW 的‘优化’不该是一键重写，而应是类型化修复引擎”“看看这个可否有可取之处……主要是体验” | 吸收有效 Baseline → 失败切片/门禁 → 第一处分歧 → 反事实探针 → 责任层 → 受限 Repair Operator → 单变量 Candidate → 同合同复验 → 保护性回归 → Keep/Reject/Rollback 的方向；先补 fail-closed 选择器和连续可用的优化工作台，不先复制第二套 Runtime 或膨胀万能 Skill。语义判断归 Prompt/Skill，不变量归 Workflow/代码，能力边界归 Tool，召回归 RAG，评测合同错误单独升 Revision。 | RAG 已形成“Standard 修正单列→model-only Reject→Prompt-v4 Keep”的 typed 结果；fail-closed optimal-path selector 与五阶段只读 Optimization Workbench 已集成。可执行反事实探针、受限 Operator、保护性回归和 file-backed Diff 仍是后续能力，当前不得包装成完整自动修复引擎 |
 
 ### IM-016–IM-025 验收与来源边界
 
@@ -49,6 +64,10 @@
 - **成功与最终优化的区别：** 一次任务得出正确终态即为该次成功；但本轮四项目最终交付
   还要求在等价质量下成功率/质量与成本改善。若 Provider 价格、usage 或样本量无法证明，
   必须显示未完成/Reject 和阻断原因，不得制造结果。
+- **Luna 分阶段归因：** `Sol 优化基线 → Luna model-only → Luna prompt-adapted` 必须是
+  三个可独立核验的 Run；第二段只允许 Prompt 变化。model-only 回退不是要删除的噪音，
+  而是 Prompt 适配为何必要的证据。只有 Luna 质量门禁恢复且价格 receipt 有唯一来源后，
+  才能陈述“弱模型 Prompt 适配后以等价质量降低成本”；API 估算不得写成 Provider 实际账单。
 - **逐字来源：** 当前任务 2026-09-03，user-message ordinals `721`、`798`、`1181`、
   `1526`、`1713`、`1727`、`1831`、`2339`、`2547`、`2996`、`3239`、`6433`、
   `6465`，以及紧随其后的“耗时不重要……是 luna max 吗”修正。ordinal `1086` 的长篇
@@ -175,11 +194,43 @@ Validation 上由 2/3 task、28/31 verifier 推进到 3/3、31/31，并把 Tool 
 
 ## 可直接使用的面试表述
 
+本轮四项目的成本优化账本中，**EnterpriseOps、Enterprise RAG、CloudOps 与 Memory 的本轮结果已齐全**。
+“齐全”只表示每个项目已有 current Validation 路径、成本证据和 Keep/Reject；不替代
+安装态、前台、泛化或真实扣款证明。
+
+Enterprise RAG 的 current 路径是 **Sol 7/9 Reject → Luna model-only 8/9 Reject → Luna+Prompt-v4 9/9 Keep**；
+完整四 lane 加冻结 Judge 的 Runtime 对账成本为
+`$2.170603 → $0.10594896 → $0.1029376`，因此 Sol→final 估算下降
+`95.2576496024%`，model-only→Prompt 再下降 `2.84227424224%`。这三笔数来自
+同一 hash-bound 定价源和逐请求 Runtime 对账，**不是 Provider bill**。
+
+这里必须把结果边界和数字一起说：r6 是 **post-Validation candidate-aware**，
+**不是 candidate-blind**、**不是 Held-out**，且 `unbiased=false`；**Standard 修正不算模型能力提升**。
+r6 只对已冻结 Run 离线重评分，没有调用 Provider/Judge、没有重跑 Candidate；**延迟只作诊断**，
+既不是 Keep 门禁，也没有在离线重评分中重新测量。公开边界见
+[`enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json`](runs/enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json)，
+当前机器账本行保留三阶段各自的公开 rescore 与 cost receipt hash。
+
+历史上，2026-09-04 曾按冻结三阶段合同启动一次 Enterprise RAG Sol/max incumbent，
+但 Stage 1 在任何 Provider、Judge 或 Tool 调用前因当前环境没有可用 Metal device
+而停止：三类调用均为 `0`，Held-out 未打开，结论是 `Invalid`，不是 Keep/Reject。
+现有 reranker cache 虽有 `1,843` 个 entry，但没有在 preflight 中冻结内容 hash，且
+不能覆盖 Sol/Luna 可能生成的动态 tuned query；因此没有删除 Metal gate 或伪造
+cache-only 重放，也没有启动当时的 Stage 2/3。该失败尝试已经降为 history，公开回执见
+[`enterprise-rag-answer-evidence-three-stage-validation-20260904.v1.json`](runs/enterprise-rag-answer-evidence-three-stage-validation-20260904.v1.json)，
+文件 SHA-256 为 `08f636c6ba824ad3b56cdc0c91b82aa839fb3f862b4be240aa1d43580bac5658`。
+
 ### 中文简历版
 
 - 设计并落地中文 Knowledge 混合检索与重排，在冻结的 60 题 held-out
   诊断集上将 MRR 从 0.250 提升到 0.922、Recall@10 从 0.244 提升到 0.989；
   同时固定语料、split、配置和报告 hash，防止调参污染 held-out。
+- 在 Enterprise RAG 的 4-case/9-fact Validation 中，保留
+  `Sol 7/9 Reject → Luna model-only 8/9 Reject → Luna+通用 Prompt-v4 9/9 Keep`
+  三阶段，并把完整运行 Runtime 对账成本从 `$2.170603` 降至 `$0.1029376`
+  （下降 `95.2576496024%`；相对 model-only 再降 `2.84227424224%`）。该条必须同时
+  标明 r6 为 post-Validation candidate-aware、非 candidate-blind/非 Held-out，且
+  Standard 修正不代表模型能力提升、Provider bill 未提供、延迟只作诊断。
 - 将 Agent 工作区字面搜索从 Python 文件扫描迁移到受治理的 `rg` 后端；两次
   checksum 等价复跑中，1k/5k 合成语料的 p95 加速范围分别为
   2.20–3.01x / 4.10–7.19x，并用收据重算校验阻止手抄指标漂移。
@@ -209,17 +260,73 @@ Validation 上由 2/3 task、28/31 verifier 推进到 3/3、31/31，并把 Tool 
 - 对同一 CloudOps Validation 保留四轮 falsification：修复搜索 Schema、usage
   投影与长 Tool ID 三个合同缺陷，将 observationId 路径做到 `94/94` Tool 成功；
   因 CA/JRA 退化到 `0.50/0.4167` 主动 Reject，保留 baseline 并停止继续调参。
+- 为 CloudOps 建立“Sol 基线 → Luna model-only → Luna+Prompt”三节点选择路径：冻结
+  Runtime binary、Tool、dataset、scorer、runner 与 context，model-only 虽把 exact
+  Runtime API 成本降到 `$0.33593112`，却因 CA `11/12`、JRA `9/12`、Top3JRA
+  `11/12` 和 `6` 次 Tool failure 被 Reject；随后只增加不含 case ID、答案、预测根因
+  或 Gold 的通用 evidence-family、owner-before-mechanism 与 unresolved-discriminator
+  Prompt，最终恢复 CA/Top3JRA `100%`、将 FA/JRA 从 `83.3%` 提至 `91.7%`，完成
+  `130/130` Tool 成功，并把 exact Runtime 成本从 Sol 的 `$4.568166` 降至
+  `$0.27613024`（下降 `93.9553369996%`，约 `16.5435×`；相对 Luna model-only
+  再降 `17.8015302661%`）。Provider 账单未提供，耗时更慢且只作信息项。
 - 为 EnterpriseOps CSM 构建 source-local Pi、89-Tool MCP Gateway、临时数据库与
   31 条 Host-private SQL verifier；Trace 驱动修复 11 个 Runner/Tool/评测合同问题，
   将可执行 verifier 从 3/31 恢复到 26/31、业务 Tool 从 0 恢复到 47 次并完成
   3/3 数据库清理；suite-v2 state-contract 在 Validation 达到 3/3、31/31，但
   一次性 Held-out 仅 1/8、54/65，系统拒绝 Promotion 并保留完整失败回执。
-- 为 EnterpriseOps 建立受质量约束的单变量模型成本门禁：receipt checker 锁定相同
-  task manifest、Prompt、Skill、Tool catalog、Workflow、runner、Runtime provenance、
-  `thinking=max` 与价格来源后，Luna Max 将 API 成本估算从 `$3.243385` 降到
-  `$0.725239`（`-77.64%`）、耗时降低 `16.45%`，但 task `3/3→2/3`、Verifier
-  `31/31→30/31`；系统因此 Reject 低价候选并保留 Sol，旧的 `-96.43%` 结论因
-  thinking/source provenance 不匹配撤回。
+- 为 EnterpriseOps 建立“Sol 基线 → Luna model-only → Luna+Prompt”三段质量/成本门禁：
+  在同一 Runtime binary、Tool、dataset、runner 与 3-task/31-verifier Validation 上，
+  Luna model-only 虽只需 `$0.09453296`，却因 `2/3` task、`30/31` verifier 被 Reject；
+  随后只补通用角色/地区/tenure、已选 Tool 目录权威与 exact enum 优先规则，恢复
+  `3/3`、`31/31`、`0` Tool failure，并将 exact Runtime API 成本从 Sol 的
+  `$1.711214` 降至 `$0.07291692`（下降 `95.738878%`；相对 model-only 再降
+  `22.866141%`）。Prompt 不含 case ID、预期答案或 Gold。
+- 在 Memory 的 5-case private-shadow Validation 中，仅把 Sol/max 换为 Luna/max，
+  保持 curation、`4/4` durable recall、`1/1` abstention、vector/lineage/book、
+  rollback/replay 全部通过，并把完整 reported usage 下的确定性 API 定价估算从
+  `$0.269115` 降至 `$0.0107502`（下降 `96.0053508723%`）；**Prompt adaptation 不需要**。
+  耗时 `67,659ms→73,327ms` 略慢，只是信息项，不包装成改善。
+
+### 用实际例子回答 Judge 与 Golden Data
+
+以 **Enterprise RAG answer-evidence Standard v2** 为例，面试时可以这样讲，但不披露
+具体题目或 Host-private Gold：
+
+- **Judge 看什么：** 每个 case 只给问题、公开 reference answer、匿名 `C1/C2…`
+  候选的 answer/abstained、候选实际引用的 evidence IDs，以及这些 ID 对应的检索
+  chunk 文本；不给 lane/模型身份，也不给 Host-private qrels。Judge 只从问题明确要求
+  的字段派生 `1–12` 个 `requiredFacts`，再逐候选输出 coverage、contradiction、
+  unsupported 与 correctness。
+- **怎样 fail closed：** 输出合同要求一个严格 JSON 对象，包含完整 `caseRubrics` 和
+  `judgments`；`reasonCode` 只允许 `correct / incomplete / wrong / abstained /
+  unsupported`。确定性 parser 会核对 case/candidate 是否一一齐全、fact ID 是否属于
+  对应 case、布尔值和 reason code 是否自洽；缺项、重复、越界或逻辑矛盾都拒绝，不把
+  自由文本或部分结果当分数。
+- **Golden Data 怎样独立：** 固定语料为 **5,101** documents、**29,846** chunks；
+  Validation 切片为 **4 个 case（2 个 answer、2 个 abstain）**。Host-private qrels v2
+  固定 **9 个 required facts** 与 **14 个 verified evidence bindings**，逐项绑定 source
+  document、chunk、quote 的 hash；它独立执行 citation gate，既不进入 Agent Prompt，
+  也不进入 Judge Prompt。公开 Standard 只留 corpus/chunking/manifest hash、visibility
+  与 `heldOutOpened=false`，私有 qrels body 留在 Host。
+- **必须主动说的限制：** v2 是 **post-validation calibration**；虽保留 candidate-blind
+  audit receipt，却不能把同一 Validation split 当成无偏 Promotion 或 Held-out。
+  当前也**没有多标注者一致率**，所以**不能声称 85%** 人审一致率、Judge 准确率或
+  生产泛化。
+
+上述固定点与边界由公开的
+[`enterprise-rag-answer-evidence-standard.v2.json`](enterprise-rag-answer-evidence-standard.v2.json)
+和
+[`enterprise-rag-answer-evidence-standard-v2-validation-calibration-20260904.v1.json`](runs/enterprise-rag-answer-evidence-standard-v2-validation-calibration-20260904.v1.json)
+绑定；4-case 的 answer/abstain 构成可在同一冻结 v20 public-safe run/ledger projection
+中核对。这里不杜撰具体问题内容，也不杜撰任何人工标注数据。
+
+当前选择器使用 append-only **attention r6**：公开 Standard 仍只发布 corpus/chunking、
+manifest、可见性和边界，Host-private qrels 计数为 9 facts / 20 exact bindings；r6
+公开 receipt 只说明新增一条等价 binding 及三条冻结候选的 7/9、8/9、9/9 结果，
+不公开问题、Gold、quote 或 candidate answer。与上面的 v2 历史说明不同，r6 明确
+`candidateAware=true`、`candidateBlind=false`、`heldOutOpened=false`、
+`unbiasedPromotionClaimAllowed=false`；因此 9/9 是当前 Validation Keep，而不是无偏
+Promotion，Standard 修正也不能计入模型能力提升。
 
 ### 面试展开时应主动补充
 
@@ -238,8 +345,9 @@ Validation 上由 2/3 task、28/31 verifier 推进到 3/3、31/31，并把 Tool 
 - Trace Provider bootstrap 的 4-case A/B 与 `0 → 2` Tool 调用来自隔离候选 Runtime；
   在正式安装并用新 Trace/Eval 复检前，不能说当前安装态已修好。
 - Enterprise RAG v16 的 `2/9` 是逐事实引用覆盖，不是检索 Recall；它说明检索
-  winner 仍未被可靠地转化成最终带证据答案。v16 与旧 token-overlap 合同不能直接
-  计算前后提升，Agentic 失败后的 `0 token` 也只是缺失 usage，不是零成本。
+  winner 当时仍未被可靠地转化成最终带证据答案。该条现为 history；v16 与旧
+  token-overlap 合同不能直接计算前后提升，Agentic 失败后的 `0 token` 也只是缺失
+  usage，不是零成本。current r6 结果必须附带 candidate-aware/unbiased=false 边界。
 
 ## 禁止当正向 headline 的数字
 
@@ -249,9 +357,10 @@ Validation 上由 2/3 task、28/31 verifier 推进到 3/3、31/31，并把 Tool 
 | MiniMind 语义基线 | 后端 p50/p95 `117/251 ms`，但人工 Top-1/Top-3 都是 `0` | 返回三个候选和低延迟不等于候选有效 |
 | Memory cache 临时探针 | 热缓存约 `0.02 ms`，但 projection backlog `941`、retrieval docs `0` | 走的是不新鲜的合成/legacy 路径，不能声称生产 Memory 亚毫秒召回 |
 | Agent 四档消融 | `pending_formal_run` | 没有正式 Luna 四档报告，不能拿旧回放或失败报告补分 |
-| Enterprise RAG validation | nDCG@10 `0.6128 → 0.8872`、MRR `0.6042 → 0.8672`、Recall@10 `0.6719 → 0.9554` | 仅 16 个 validation query；held-out 未运行，不能称泛化、正式 Keep 或生产提升 |
-| Enterprise RAG Agent Validation | baseline → agentic：延迟 `71.1s → 242.6s`、Tool `6 → 11`、Judge 正确率 `0.5 → 0`；恢复复用 `1/4` lane | 4 个 answer case，结论是 `Reject`；25% 仅指 lane 复用，索引仍重建，held-out 未运行 |
-| Enterprise RAG exact citation v16 | 9/9 事实有 host 证据；baseline/Skill/tuned 仅覆盖 2/9 引用事实，四 lane citation support 均为 0 | 新证据合同下的 4 题 Validation Reject；不能与旧 token-overlap 分数算提升，held-out 未运行 |
+| Enterprise RAG validation（history） | nDCG@10 `0.6128 → 0.8872`、MRR `0.6042 → 0.8672`、Recall@10 `0.6719 → 0.9554` | 仅 16 个 validation query；held-out 未运行，不能称泛化、正式 Keep 或生产提升 |
+| Enterprise RAG Agent Validation（history） | baseline → agentic：延迟 `71.1s → 242.6s`、Tool `6 → 11`、Judge 正确率 `0.5 → 0`；恢复复用 `1/4` lane | 4 个 answer case，结论是 `Reject`；25% 仅指 lane 复用，索引仍重建，held-out 未运行 |
+| Enterprise RAG exact citation v16（history） | 9/9 事实有 host 证据；baseline/Skill/tuned 仅覆盖 2/9 引用事实，四 lane citation support 均为 0 | 新证据合同下的 4 题 Validation Reject；不能与旧 token-overlap 分数算提升，held-out 未运行 |
+| Enterprise RAG r6 无限定 Promotion | 7/9 Reject → 8/9 Reject → 9/9 Keep；Runtime 对账成本 Sol→final `-95.2576496024%` | r6 是 post-Validation candidate-aware，不是 candidate-blind/Held-out；只能作受限 Validation Keep，不能包装成无偏模型能力提升或 Provider bill |
 | Graph+Tag reranker readiness | 企业投影为 `0` node、`0` edge、`0` extraction，Memory Tag 身份不能直接对应 Knowledge chunk | 这是正确阻断伪 A/B 的 readiness 审计，不是 Graph+Tag 与 Qwen3 的性能比较 |
 | CloudOps Agent Validation | 12/12 作答、CA `1.00`、FA/JRA/Top3JRA `0.8333`、98/98 Tool 调用成功 | 隔离实验版的 Validation，未应用到当前系统；Provider token 与 process signals 不可用，不能称生产验收、Held-out 或零成本 |
 | 掌柜问数 App candidate | 1 个离线 fixture，precision/recall/F1 `1.0`，Provider `0`，Trace/Eval/Sandbox 已关联 | 仅源码绑定与确定性沙盒合同；不能称真实 Text-to-SQL 100%、真实数据、安装或前台验收 |

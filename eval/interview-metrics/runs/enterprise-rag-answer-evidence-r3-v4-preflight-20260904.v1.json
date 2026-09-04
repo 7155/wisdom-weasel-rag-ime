@@ -1,0 +1,321 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-prompt-adaptation-preflight.v1",
+  "runId": "enterprise-rag-answer-evidence-r3-v4-preflight-20260904",
+  "status": "prepared-not-run",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "unbiasedPromotionClaimAllowed": false,
+  "heldOutOpened": false,
+  "diagnosis": {
+    "r3": {
+      "path": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-prompt-only-v3-r3-20260904.json",
+      "fileSha256": "129d8ddbc004a86721a9e7ed604f2c19398cc55812851d191396fd5d46922f6d",
+      "reportSha256": "6cf9ea40fa8e6e3dca41dd6ea352f32e918be7c609b011d86f054ccf3c4a04b2",
+      "candidateDecision": "reject",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max"
+    },
+    "checkpoint": {
+      "path": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-luna-max-prompt-only-v3-r3-20260904.json",
+      "fileSha256": "205a818eb82ff48f5588de7a03d571a8f59f3669715bfd65cb13f969ab3acbc5",
+      "checkpointSha256": "a59c937b2c793940bb4ec01e2c39104e343e87ac751f6f99a29d6d42d01d4642",
+      "fingerprintSha256": "a82d111079b1ef5e5f512b76fdf6791f6276d19320243b290abe5aac276f10f9"
+    },
+    "offlineRescore": {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-standard-v2-offline-rescore-20260904.v1.json",
+      "fileSha256": "d2c29d985a6a47a83ffb569e8853e5ab27d7fd40bac5c6ad5e4a5426e85539a2",
+      "receiptSha256": "5a8d45f2a1e0002d3813ee3427fbb8119d684b3624114468d309f7390571f6f8",
+      "providerCalls": 0,
+      "judgeCalls": 0,
+      "sourceOutputRerun": false
+    },
+    "r3VersusOfflineRescore": {
+      "verdict": "not-causally-comparable",
+      "sameBindings": {
+        "preparedArtifactSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+        "answerCasesArtifactSha256": "b886a12ba4c28d19243fb1d53b3b881206d769bf36fcea512547ca8be55ce0ec",
+        "retrievalReportArtifactSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+        "datasetSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb",
+        "selectedValidationCaseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+        "skillSha256": "2f5e7233c979da746bc447ec1254bb2dfb3257a5f2ab0a44e14d877285bf18c8"
+      },
+      "differentBindings": {
+        "runtimeIdentitySha256": {
+          "offlineSource": "0e67e50dc4816410c82f51528748856fda902720223552d7bec24cf2e6c2d2e1",
+          "r3": "c53c79c79e82dcf441bc2dd0806ac34d0ddd45970f649d6c514ea0d717d99aac"
+        },
+        "runtimeContractSha256": {
+          "offlineSource": "4b06e83192477d1e3240794702ae798a7fa9da3f40199db0ae232ee377dea0e9",
+          "r3": "5b8e8d63d5077a3cbef59e9ef7dfb608fabd5c0e2b690adc46b6a09f732415b3"
+        },
+        "promptContractVersion": {
+          "offlineSource": "rag-agent-label-blind-coverage-audit-v12",
+          "r3": "rag-agent-evidence-state-budget-routing-v19"
+        },
+        "promptConfigSha256": {
+          "offlineSource": "e9016d65752d0ce036c81559d523c92049fe16731aa715e1b30ea937b5ad31c0",
+          "r3": "d0c21dfc550061b6fd239fc01dd4fbd0f7b7663461f5ce60ac96b2be45aabb44"
+        },
+        "answerJudgeContractVersion": {
+          "offlineSource": "crud-rag-cited-evidence-correctness-v4",
+          "r3": "crud-rag-cited-chunk-evidence-correctness-v5"
+        },
+        "evidenceManifestSha256": {
+          "offlineSource": "9ce7930d9ad93324725654742ff73e4ba6f4dbc015c0be187288451426e0ebff",
+          "r3": "86385a1713f5807b12dff2571c595fcfb2e238773b5d5f73859a67f40ff7b333"
+        }
+      },
+      "boundary": "The offline receipt calibrates the frozen older Luna output under Standard v2; it is not a current-runner control and does not establish model or Prompt lift."
+    },
+    "failureDecomposition": {
+      "tuned": {
+        "terminalEvent": "turn_failed",
+        "successfulSearchCalls": 1,
+        "failedToolItemCount": 3,
+        "observedError": "fetch failed",
+        "classification": "Runtime/Gateway connectivity failure before a complete lane result; do not score as a model or Prompt failure."
+      },
+      "agentic": {
+        "terminalEvent": "turn_completed",
+        "answerJudgeCorrectnessRate": 1.0,
+        "highLevelFactCoverage": 1.0,
+        "citationFactCoverage": 0.4444444444444444,
+        "citationFacts": 9,
+        "citationFactsPassed": 4,
+        "citationFactsMissing": 5,
+        "searchCalls": 9,
+        "supplementalSearchLimit": 6,
+        "supplementalSearchCount": 4,
+        "unusedSupplementalBudget": 2,
+        "supplementalSearchesByRealCaseOrdinal": [3, 0, 0, 1],
+        "answerableItemSummaries": [
+          {
+            "ordinal": 1,
+            "factCount": 5,
+            "factsWithAcceptedSourceRetrieved": 2,
+            "retrievedUniqueDocumentCount": 14,
+            "citedUniqueDocumentCount": 10,
+            "acceptedRetrievedDocumentCount": 2,
+            "allAcceptedRetrievedDocumentsCited": true
+          },
+          {
+            "ordinal": 2,
+            "factCount": 4,
+            "factsWithAcceptedSourceRetrieved": 2,
+            "retrievedUniqueDocumentCount": 5,
+            "citedUniqueDocumentCount": 3,
+            "acceptedRetrievedDocumentCount": 1,
+            "allAcceptedRetrievedDocumentsCited": true
+          }
+        ],
+        "classification": "All accepted documents that were actually retrieved were cited. The five missing fact credits lacked an accepted source in the retrieved set, so the remaining gap is retrieval coverage/allocation rather than final citation selection."
+      },
+      "reranker": {
+        "r3IndependentRerankerPassed": false,
+        "observedErrorCount": 3,
+        "r3InterpreterMissingMlx": true,
+        "classification": "The r3 interpreter lacked mlx and mlx_lm; cached pairs succeeded while three cache-miss calls failed before scoring. This is an environment failure, not a model or Prompt result."
+      }
+    }
+  },
+  "candidate": {
+    "profile": "coverage-balanced-evidence-gate-v4",
+    "variableCount": 1,
+    "variable": "one generic coverage-balanced supplemental-retrieval and evidence-gate instruction block",
+    "ruleSha256": "f825c557c37d9c3b44baec7867d519241ed3790648874b4445fba55fa4d56e54",
+    "containsFixtureIdentifier": false,
+    "containsReferenceAnswer": false,
+    "containsPrivateEvidence": false,
+    "containsExpectedAnswerValue": false,
+    "expectedEffect": "validate reviewer gaps at the parent, allocate one atomic supplemental query per partial item before a second query, and fail closed when direct support remains missing",
+    "successObserved": false
+  },
+  "frozenInputs": {
+    "preparedArtifactSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "answerCasesArtifactSha256": "b886a12ba4c28d19243fb1d53b3b881206d769bf36fcea512547ca8be55ce0ec",
+    "retrievalReportArtifactSha256": "3d4ebe22ff765ef403aec723e6d76b5cfddf3ce55dbc8f8b08e9932573a5bc0a",
+    "datasetSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb",
+    "selectedValidationCaseSetSha256": "1976efdd6b97c3cf347809e78e1268ab000d56d047a0d3eac9d2a1164fd876b3",
+    "answerCaseManifestSha256": "877c361348b7ff6eeb22c1d42d5d72baf5b05bf11f6372ea4b53cc5cf1791665",
+    "standardManifestSha256": "22ea18216475d963ee3de2353d8d82b6f5f61e36a93fbf073115a27149a5bc1d",
+    "hostPrivateEvidenceManifestSha256": "86385a1713f5807b12dff2571c595fcfb2e238773b5d5f73859a67f40ff7b333",
+    "defaultRetrievalConfigSha256": "002e907af0a70d9fd7098b23d6689e4196a8b5860101389e8eb48b285cd19a4e",
+    "tunedRetrievalConfigSha256": "11d259402bbf92d8961aeaa6fc77d846be7af9ef336af7bd380f21d9bf428c39",
+    "skillSha256": "2f5e7233c979da746bc447ec1254bb2dfb3257a5f2ab0a44e14d877285bf18c8",
+    "runtimeContractSha256": "5b8e8d63d5077a3cbef59e9ef7dfb608fabd5c0e2b690adc46b6a09f732415b3",
+    "piRuntimeIdentitySha256AtPreparation": "c53c79c79e82dcf441bc2dd0806ac34d0ddd45970f649d6c514ea0d717d99aac",
+    "toolSetSha256": "6931670199c1f0b74deb568e8a7eec634275e42dc020f66232da2b9f3ae9f120",
+    "runnerSha256": "94c05eef5c2c9975fa788adb8070147cb3c044606212a1116b630067eaf1dea3",
+    "promptContractVersion": "rag-agent-evidence-state-budget-routing-v19",
+    "answerJudgeContractVersion": "crud-rag-cited-chunk-evidence-correctness-v5",
+    "laneAttempts": 1,
+    "laneTimeoutSeconds": 600,
+    "agenticSupplementalLimit": 6,
+    "pricing": {
+      "path": "eval/interview-metrics/openai-codex-runtime-pricing-20260904.v1.json",
+      "fileSha256": "16af3bb757bca04299fbe1272ee250cfb30faa1e0fc7d852bb83e85fdce0be39",
+      "providerBillAvailable": false,
+      "requiredAuthority": "runtime_cost_reconciled"
+    }
+  },
+  "factorTable": [
+    {
+      "stage": 1,
+      "label": "fresh-sol-baseline",
+      "model": "openai-codex/gpt-5.6-sol",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "promptConfigSha256": "7979e6bd6c079aa671f90a55a2d6f245f1f61431015d01ccc21db164c26d23c1",
+      "lanePromptSha256ByLane": {
+        "baseline": "96dcb02986fdd050eebe44143eac22511b85080bfa357a45c369fdd00b4c396c",
+        "skill": "ab070cf03a3db30fdfe79e4ad43c0d9d37e6d45f3b04a0a9f083f0ca3bed6225",
+        "tuned": "e583628909b1b416f8a1506bb724336ebb6866d55a6f1abcf59d50a46acc2ffd",
+        "agentic": "7a5d16f9dee3ea76bda0fad56fd3e6e26f6e79cb435106f340ed6a89312dc6ae"
+      },
+      "deltaFromPrevious": "fresh reference"
+    },
+    {
+      "stage": 2,
+      "label": "fresh-luna-model-only",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "incumbent",
+      "promptConfigSha256": "350ec8d22253a2d5cd2afdc2666d2c94205e1db9dab86573adf894592145dceb",
+      "lanePromptSha256ByLane": {
+        "baseline": "96dcb02986fdd050eebe44143eac22511b85080bfa357a45c369fdd00b4c396c",
+        "skill": "ab070cf03a3db30fdfe79e4ad43c0d9d37e6d45f3b04a0a9f083f0ca3bed6225",
+        "tuned": "e583628909b1b416f8a1506bb724336ebb6866d55a6f1abcf59d50a46acc2ffd",
+        "agentic": "7a5d16f9dee3ea76bda0fad56fd3e6e26f6e79cb435106f340ed6a89312dc6ae"
+      },
+      "deltaFromPrevious": "model identity and model-routing identity only"
+    },
+    {
+      "stage": 3,
+      "label": "fresh-luna-prompt-adapted",
+      "model": "openai-codex/gpt-5.6-luna",
+      "thinking": "max",
+      "promptProfile": "coverage-balanced-evidence-gate-v4",
+      "promptConfigSha256": "202a97a475c4f5eac91bd2300074e61d4eda0f965ff7a7077c034e236dd80971",
+      "lanePromptSha256ByLane": {
+        "baseline": "af108ec148f214d45fd7a562237a834bc7bc78f9fb27a45190dd7fee402a75a2",
+        "skill": "efd691c518c271b4017fcf821004d313046f4a4f8bfd5ec6724bf74d971e37d3",
+        "tuned": "ba63b9dd75b3e7caca6cc1a636e9d8308a12af82cd2337c3df5ebdbc36b1643b",
+        "agentic": "d0ca33ab330d64dc384509f8e16e374144115809988fd92e955ace276a668f8d"
+      },
+      "deltaFromPrevious": "one generic Prompt rule block only"
+    }
+  ],
+  "executionPlan": {
+    "provider": "openai-codex",
+    "forbiddenProvider": "x1top",
+    "python": {
+      "path": "../learnA/wisdom-weasel-rag-ime/.venv/bin/python",
+      "resolvedExecutableSha256": "adf39d061c306b4bd72ff4d96a8d475bccbcef12f432bcd2429fcfc5cef26284",
+      "version": "3.13.12",
+      "mlxVersion": "0.32.0",
+      "mlxLmVersion": "0.31.3",
+      "transformersVersion": "5.13.1"
+    },
+    "localRerankerPreflight": {
+      "providerCalls": 0,
+      "configured": true,
+      "fingerprint": "mlx-qwen3-reranker:sha256:6bf8d4df70374b0ed0b592ade3c76bf6e3d2a1826e50f13eb2e8632e886dca44",
+      "calls": 1,
+      "scoredPairs": 2,
+      "cacheHits": 0,
+      "errorCount": 0,
+      "fallbackCount": 0,
+      "independentStage": true
+    },
+    "freshFullFourLaneRunPerStage": true,
+    "checkpointLaneStitchingAllowed": false,
+    "metricGuidedRetryAllowed": false,
+    "runAuthorized": false,
+    "blockedBy": "Local Gateway file-descriptor/connection exhaustion; the local MLX reranker is now verified, but wait for root confirmation that Gateway infrastructure is recovered.",
+    "providerCalls": 0,
+    "judgeCalls": 0,
+    "costReceiptsGenerated": 0,
+    "commonArguments": [
+      "--prepared", "../paw-vertical-research/enterprise-rag-eval-lab/artifacts/smoke-v1/host/prepared.json",
+      "--answer-cases", "../paw-vertical-research/enterprise-rag-eval-lab/artifacts/smoke-v1/host/task-cases.json",
+      "--answer-evidence-qrels", ".rag-ime-data/eval/host/validation-answer-evidence-qrels-v2.json",
+      "--retrieval-report", "../paw-vertical-research/enterprise-rag-eval-lab/results/validation-bge-qwen3-rerank-v1.json",
+      "--source-agent-config", ".rag-ime-data/runs/rag-agent-ablation-v10-resume/run-ak_nb8xv/agent/config",
+      "--evaluation-split", "validation",
+      "--answer-only",
+      "--development-only",
+      "--slice-cases-per-split", "16",
+      "--distractor-limit", "5000",
+      "--agent-case-limit", "4",
+      "--lane-attempts", "1",
+      "--timeout-seconds", "600",
+      "--agentic-supplemental-limit", "6",
+      "--reranker-model", "../paw-vertical-research/models/Qwen3-Reranker-0.6B-4bit-5f324548",
+      "--reranker-revision", "5f324548f1d20c2b5a450f126fc6ef2fb1126524",
+      "--reranker-cache", "../paw-vertical-research/enterprise-rag-eval-lab/runs/validation-answer-evidence-v18/reranker-cache",
+      "--pi-runtime-payload", "build/managed-pi-runtime/install-stack-current",
+      "--pricing-config", "eval/interview-metrics/openai-codex-runtime-pricing-20260904.v1.json",
+      "--pricing-published-date", "2026-09-04"
+    ],
+    "stages": [
+      {
+        "stage": 1,
+        "modelOverride": "gpt-5.6-sol",
+        "promptProfile": "incumbent",
+        "output": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r1-20260904.json",
+        "checkpoint": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-sol-max-frozen-v19-r1-20260904.json",
+        "privateRoot": ".rag-ime-data/runs/rag-agent-ablation-answer-evidence-sol-max-frozen-v19-r1-20260904",
+        "costReceiptOutput": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r1.v1.json",
+        "costRunId": "enterprise-rag-sol-max-frozen-v19-20260904-r1"
+      },
+      {
+        "stage": 2,
+        "modelOverride": "gpt-5.6-luna",
+        "promptProfile": "incumbent",
+        "output": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-model-only-v19-r1-20260904.json",
+        "checkpoint": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-luna-max-model-only-v19-r1-20260904.json",
+        "privateRoot": ".rag-ime-data/runs/rag-agent-ablation-answer-evidence-luna-max-model-only-v19-r1-20260904",
+        "costReceiptOutput": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-model-only-v19-20260904.r1.v1.json",
+        "costRunId": "enterprise-rag-luna-max-model-only-v19-20260904-r1"
+      },
+      {
+        "stage": 3,
+        "modelOverride": "gpt-5.6-luna",
+        "promptProfile": "coverage-balanced-evidence-gate-v4",
+        "output": ".rag-ime-data/eval/results/validation-answer-evidence-luna-max-coverage-balanced-v4-r1-20260904.json",
+        "checkpoint": ".rag-ime-data/eval/checkpoints/validation-answer-evidence-luna-max-coverage-balanced-v4-r1-20260904.json",
+        "privateRoot": ".rag-ime-data/runs/rag-agent-ablation-answer-evidence-luna-max-coverage-balanced-v4-r1-20260904",
+        "costReceiptOutput": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r1.v1.json",
+        "costRunId": "enterprise-rag-luna-max-coverage-balanced-v4-20260904-r1"
+      }
+    ]
+  },
+  "postRunAcceptance": {
+    "qualityBeforeCost": true,
+    "required": [
+      "Each stage contains four fresh lanes and a fresh Judge result with no reused checkpoint lane.",
+      "Every lane reaches turn_completed with zero failed Tool items and passing Tool, scope, split, cleanup, and citation-resolution contracts.",
+      "Tuned and Agentic report a healthy independent reranker with zero reranker errors.",
+      "All frozen input, runner, Runtime, Tool, Skill, Judge, retrieval, and Gold manifest hashes match; only the declared factor changes at each transition.",
+      "The final candidate passes every answer, citation-fact, abstention, and Agentic policy hard gate before any cost delta is reported.",
+      "Each cost receipt has authority=runtime_cost_reconciled and validates the hash-bound pricing content, Runtime DB usage, request count, reported cost, and estimate."
+    ],
+    "costRole": "secondary after all quality hard gates",
+    "providerBillAvailable": false
+  },
+  "publicSafety": {
+    "questionsIncluded": false,
+    "referenceAnswersIncluded": false,
+    "privateEvidenceBodyIncluded": false,
+    "retrievedTextIncluded": false,
+    "privateDocumentIdentifiersIncluded": false,
+    "privateQueryIdentifiersIncluded": false
+  },
+  "claimBoundary": [
+    "This receipt records an offline diagnosis and a frozen future experiment; it is not a model result.",
+    "The v4 Prompt was designed after Validation evidence inspection and is post-Validation calibrated.",
+    "No Provider or Judge call was made for the three planned stages, no exact stage cost exists yet, and no quality or savings claim is authorized.",
+    "Held-out remains unopened. A future matched Validation result is single-run development evidence, not production or general model proof."
+  ],
+  "receiptSha256": "c744c825ad21f39b0a055b624503f6c78e8eda22f4dd9bff2ea8c866025f50f8"
+}

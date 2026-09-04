@@ -654,7 +654,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
         self.assertIn(objective, transient_context)
         self.assertIn("当前工作卡片", transient_context)
         self.assertIn(str(item["id"]), transient_context)
-        self.assertIn("Room 正在工作的文档索引", transient_context)
+        self.assertIn("相关 WorkDocument 指针", transient_context)
         self.assertIn(str(document["documentId"]), transient_context)
         self.assertIn(str(document["path"]), transient_context)
         self.assertIn(str(owner["sessionId"]), transient_context)

@@ -19,14 +19,12 @@ implementation choices or live status.
 ## D-002 — Room Is Session Composition
 
 - **Status:** accepted
-- **Decision:** a Room is led by one Facilitator Session and may dispatch
-  visible Partner Sessions. It adds only collaboration identity, explicit
-  dispatch, ordered public events, cancellation fan-out, and one terminal Root.
-- **Why:** Partners already need the same Pi execution capabilities as an
-  ordinary Session; a second Room Agent loop and hard Kernel stages add failure
-  modes without useful work.
-- **Consequence:** Partners use ordinary task Skills. Review, worktree isolation,
-  and fan-out are conditional decisions by the responsible Agent.
+- **Decision:** a Room composes one Facilitator and visible Partner Sessions. It
+  owns collaboration identity, dispatch, ordered public events, cancellation
+  fan-out, and one terminal Root—not a second Agent loop.
+- **Why:** Partners already use ordinary Pi Session capabilities.
+- **Consequence:** Partners use normal task Skills; review, isolation, and
+  fan-out remain risk-shaped choices.
 
 ## D-003 — Tool Agents Are Private Child Sessions
 
@@ -57,14 +55,11 @@ implementation choices or live status.
 ## D-005 — Semantic Documents And Mechanical State Stay Separate
 
 - **Status:** accepted
-- **Decision:** documents own vision, intent, decisions, work meaning,
-  results, explanations, and risks. Runtime, workspace, Git, and event stores
-  own running/terminal state, ownership, revisions, dirty/head, Tools,
-  approvals, sequence, and cancellation.
-- **Why:** parsing Markdown as lifecycle authority would recreate the heavy
-  Kernel as a fragile document state machine.
-- **Consequence:** Project Field and document renderers may combine both sources
-  for display but never write inferred Runtime state back into the domain.
+- **Decision:** documents own meaning and risks; Runtime, workspace, Git, and
+  event stores own lifecycle, revisions, Tools, approvals, and cancellation.
+- **Why:** Markdown is not lifecycle authority.
+- **Consequence:** views may combine both sources but never persist inferred
+  Runtime state as fact.
 
 ## D-006 — Context Is Bounded And Progressively Disclosed
 
@@ -81,15 +76,13 @@ implementation choices or live status.
 ## D-007 — The Git Root Is The Self-Hosting Bootstrap
 
 - **Status:** accepted
-- **Decision:** tracked root files hold the bounded Agent guide, Project
-  context, Outcome focus set, cross-outcome decisions, glossary, and
-  architecture. The ignored `docs/` tree remains local evidence/history.
-- **Why:** Pi discovers the root Agent guide automatically, while local review
-  packs are too large, private, and unstable to be an automatic prompt source.
-- **Consequence:** current semantic progress is condensed into root files;
-  historical bundles load only by exact reference. A lightweight checker
-  guards links, budgets, and retired workflow names without interpreting
-  completion.
+- **Decision:** tracked root files hold bounded guidance, project context,
+  Outcomes, decisions, glossary, and architecture. Ignored `docs/` remains
+  local evidence/history.
+- **Why:** Pi auto-loads the root guide; private review packs are not prompt
+  sources.
+- **Consequence:** root files condense current meaning; history loads by exact
+  reference, and checks guard links and budgets without inferring completion.
 
 ## D-008 — Workspaces And Review Are Risk-Shaped
 
@@ -106,14 +99,11 @@ implementation choices or live status.
 ## D-009 — Model Guidance And Persona Are Separate
 
 - **Status:** proposed
-- **Decision:** model-specific operating advice belongs to a versioned Model
-  Card, while identity, tone, and social behavior belong to a Persona. A role or
-  responsibility selects work ownership and applicable Skills.
-- **Why:** advice such as avoiding defensive overengineering may be correct for
-  one model and harmful as a permanent character or permission rule.
-- **Consequence:** Runtime support and UX still need verification; until then,
-  do not claim uniform Provider thinking controls or that persona changes
-  execution authority.
+- **Decision:** versioned Model Cards hold model advice; Personas hold identity
+  and tone; roles select ownership and Skills.
+- **Why:** model advice must not become a permanent personality or permission.
+- **Consequence:** until Runtime support is verified, do not claim uniform
+  thinking controls or Persona-based execution authority.
 
 ## D-010 — Adopt Harness Mechanisms Selectively
 
@@ -160,15 +150,15 @@ implementation choices or live status.
 ## D-014 — Explicit Agent Permission Profiles Are System-Wide
 
 - **Status:** accepted
-- **Decision:** ordinary Session and Room controls expose paired Full Access
-  (`per_action`) and Full Auto (`full_trust`) profiles. Both authorize `/` and
-  all available Tools/Skills; optional roots are context. Full Access asks
-  before effects; Full Auto approves them.
-- **Why:** stale fences must not narrow an explicit full-system choice.
-- **Consequence:** PAW path, scope, disclosure, allowlist, and preview hashes do
-  not gate these profiles. Schemas, target applicability, atomic race checks,
-  actual Tool availability, macOS TCC, and Unix permissions remain boundaries.
-  Legacy profiles remain readable but are not ordinary choices.
+- **Decision:** ordinary Sessions expose exact Read Only (`read_only`), Full
+  Access (`per_action`), Workspace Managed (`workspace_managed`), and Full Auto
+  (`full_trust`) profiles. Read Only blocks effects; Workspace Managed needs a
+  confirmed project; both full-system modes expose `/` and all available
+  Tools/Skills, with per-action versus automatic effect approval.
+- **Why:** saved permissions must stay visible and exact.
+- **Consequence:** creation, Settings, persistence, and Runtime preserve the
+  selected profile and confirmation. Schemas, applicability, atomicity, actual
+  availability, TCC, and Unix permissions remain boundaries.
 
 ## D-015 — Experience Leads Runtime Tradeoffs
 
@@ -179,3 +169,14 @@ implementation choices or live status.
 - **Consequence:** one owner per fact; consumers project it. Move duplicate
   guards offline. Privacy, credentials, destructive authority, database
   atomicity, macOS permissions, and immutable artifacts remain hard.
+
+## D-016 — A Room Dispatch Is The Approval Boundary
+
+- **Status:** accepted
+- **Decision:** explicit Room dispatch uses `room_unrestricted`; it starts no
+  approval Agent and never pauses for a second per-Tool confirmation.
+- **Why:** dispatch is already the user's execution action.
+- **Consequence:** the gateway durably binds automatic policy and its receipt to
+  the exact Room dispatch. Ordinary Sessions keep their selected profile;
+  read-only, workspace, applicability, OS, failure, Stop, and cancellation
+  boundaries still apply.

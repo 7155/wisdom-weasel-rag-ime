@@ -15,11 +15,13 @@ from rag_ime.cloudops_benchmark_agent import CloudOpsBenchmarkGateway, CloudOpsB
 from rag_ime.eval_run_store import EvalRunStore
 from rag_ime.pi_runtime import _tools_for_session
 from rag_ime.sandbox_run_store import SandboxRunStore
+from rag_ime.trace_runtime import ArtifactRef
 from rag_ime.trace_store import TraceStore
 from scripts.run_cloudops_agent_eval import (
     _CloudOpsContextProjectionGateway,
     _assert_expected_runtime,
     _batch_prompt,
+    _build_batch_trace,
     _candidate_runtime_config,
     _cost_optimization_comparison,
     _normalize_trial_id,
@@ -144,6 +146,45 @@ class _NoSubmissionService(_FakeAgentService):
 
 
 class RunCloudOpsAgentEvalTests(unittest.TestCase):
+    def test_batch_trace_deduplicates_repeated_reads_of_the_same_observation(self) -> None:
+        repeated_read = {
+            "operation": "read",
+            "ok": True,
+            "startedAtMs": 10,
+            "endedAtMs": 11,
+            "args": {"caseId": "demo/runtime/1"},
+            "resultSummary": {
+                "observationSha256": "b" * 64,
+                "evidenceId": "evidence:cloudops:repeated-observation",
+            },
+        }
+        trace = _build_batch_trace(
+            {
+                "batchId": "batch-1",
+                "answerCount": 4,
+                "promptSha256": "c" * 64,
+                "sessionId": "agent:cloudops:1",
+                "turnId": "turn:cloudops:1",
+                "workflowProfile": "alert-first-v5",
+                "ledger": {"items": [repeated_read, dict(repeated_read)]},
+            },
+            trace_id="trace:cloudops:repeated-read",
+            trial_id="cloudops-repeated-read",
+            artifact=ArtifactRef(
+                artifact_id="artifact:cloudops:repeated-read",
+                kind="cloudops_eval_receipt",
+                media_type="application/json",
+                sha256="a" * 64,
+                byte_size=1,
+                record_count=1,
+            ),
+            now_ms=20,
+        )
+
+        payload = trace.to_dict()
+        self.assertEqual(1, len(payload["evidence"]))
+        self.assertEqual(3, len(payload["spans"]))
+
     def test_observation_id_projection_changes_only_public_tool_addressing(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cloudops-projection-") as temporary:
             root = Path(temporary)
@@ -453,6 +494,190 @@ class RunCloudOpsAgentEvalTests(unittest.TestCase):
             }
             self.assertEqual("baseline-v1", binding["workflowProfile"])
             self.assertNotIn("search", operations)
+
+    def test_luna_prompt_v6_preserves_v5_harness_and_closes_observed_model_gaps(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="luna-evidence-calibrated-v6",
+        )
+
+        self.assertIn("copy its cacheKey byte-for-byte", prompt)
+        self.assertIn("Never synthesize a cacheKey", prompt)
+        self.assertIn("one Tool call at a time", prompt)
+        self.assertIn("successful connectivity does not rule out latency", prompt)
+        self.assertIn("direct code or runtime evidence", prompt)
+        self.assertIn("Treat fault_object as the affected application", prompt)
+
+        with tempfile.TemporaryDirectory(prefix="cloudops-luna-prompt-contract-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={"batch-1": case_ids})
+            gateway = _CloudOpsContextProjectionGateway(CloudOpsBenchmarkGateway(suite))
+            binding = gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="luna-evidence-calibrated-v6",
+            )
+            operations = {
+                item["properties"]["op"]["const"]
+                for item in gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+            }
+            self.assertEqual("baseline-v1", binding["workflowProfile"])
+            self.assertNotIn("search", operations)
+
+        baseline = {
+            "suiteSha256": "suite",
+            "contractSha256": "contract",
+            "batchPlanSha256": "batch",
+            "caseCount": 12,
+            "thinkingLevel": "max",
+            "workflowProfile": "alert-first-v5",
+            "contextProjection": "standard-v1",
+            "runtimeIdentity": {
+                "runtimeVersion": "runtime",
+                "piVersion": "pi",
+                "protocolVersion": "2",
+                "manifestSha256": "1" * 64,
+                "entrypointSha256": "2" * 64,
+                "nodeSha256": "3" * 64,
+                "extensionSha256": "4" * 64,
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+            },
+            "metrics": {key: 1.0 for key in ("AnswerCoverage", "CA", "FA", "JRA", "Top3JRA")},
+            "usage": {"available": True, "input": 100, "cacheRead": 200, "output": 50},
+        }
+        candidate = {
+            **baseline,
+            "workflowProfile": "luna-evidence-calibrated-v6",
+            "usage": {"available": True, "input": 90, "cacheRead": 190, "output": 45},
+        }
+
+        comparison = _cost_optimization_comparison(baseline, candidate)
+        self.assertEqual("keep", comparison["decision"])
+        self.assertEqual("luna_prompt_evidence_contract", comparison["singleVariable"])
+
+    def test_luna_prompt_v7_preserves_corrections_but_bounds_the_failed_search_loop(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "trainticket/service/1",
+                "trainticket/service/2",
+                "trainticket/performance/1",
+                "trainticket/performance/2",
+            ),
+            workflow_profile="luna-bounded-evidence-v7",
+        )
+
+        self.assertIn("copy its cacheKey byte-for-byte", prompt)
+        self.assertIn("Never synthesize a cacheKey", prompt)
+        self.assertIn("successful connectivity does not rule out latency", prompt)
+        self.assertIn("direct code or runtime evidence", prompt)
+        self.assertIn("Treat fault_object as the affected application", prompt)
+        self.assertIn("strict ceiling, not a target", prompt)
+        self.assertIn("six exact reads per case", prompt)
+        self.assertIn("stop reading that case immediately", prompt)
+        self.assertIn("Do not revisit a completed case", prompt)
+        self.assertNotIn("one Tool call at a time", prompt)
+
+        with tempfile.TemporaryDirectory(prefix="cloudops-luna-v7-contract-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={"batch-1": case_ids})
+            gateway = _CloudOpsContextProjectionGateway(CloudOpsBenchmarkGateway(suite))
+            binding = gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="luna-bounded-evidence-v7",
+            )
+            operations = {
+                item["properties"]["op"]["const"]
+                for item in gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+            }
+            self.assertEqual("baseline-v1", binding["workflowProfile"])
+            self.assertNotIn("search", operations)
+
+    def test_luna_prompt_v8_requires_direct_owner_and_mechanism_evidence(self) -> None:
+        prompt = _batch_prompt(
+            "batch-3",
+            (
+                "demo/runtime/1",
+                "demo/service/1",
+                "demo/performance/1",
+                "demo/code/1",
+            ),
+            workflow_profile="luna-owner-mechanism-gate-v8",
+        )
+
+        self.assertIn("owner-and-mechanism gate", prompt)
+        self.assertIn('list(toolName="GetErrorLogs")', prompt)
+        self.assertIn('list(toolName="GetAlerts")', prompt)
+        self.assertIn('list(toolName="GetAppYAML")', prompt)
+        self.assertIn('list(toolName="CheckNodeServiceStatus")', prompt)
+        self.assertIn("Never invent a toolName", prompt)
+        self.assertIn("discriminator remains unresolved", prompt)
+        self.assertIn("one broad inventory page", prompt)
+        self.assertNotIn("trainticket", prompt)
+        self.assertNotIn("ts-gateway-service", prompt)
+        self.assertNotIn("db_connection_exhaustion", prompt)
+
+        with tempfile.TemporaryDirectory(prefix="cloudops-luna-v8-contract-") as temporary:
+            root = Path(temporary)
+            case_ids = [f"demo/runtime/{index}" for index in range(1, 5)]
+            _write_fixture(root, case_ids)
+            suite = CloudOpsBlindSuite(root / "blind", batches={"batch-1": case_ids})
+            gateway = _CloudOpsContextProjectionGateway(CloudOpsBenchmarkGateway(suite))
+            binding = gateway.bind_session(
+                "session-1",
+                batch_id="batch-1",
+                workflow_profile="luna-owner-mechanism-gate-v8",
+            )
+            operations = {
+                item["properties"]["op"]["const"]
+                for item in gateway.runtime_manifests({"id": "session-1"})[0]["parameters"]["oneOf"]
+            }
+            self.assertEqual("baseline-v1", binding["workflowProfile"])
+            self.assertNotIn("search", operations)
+
+        baseline = {
+            "suiteSha256": "suite",
+            "contractSha256": "contract",
+            "batchPlanSha256": "batch",
+            "caseCount": 12,
+            "thinkingLevel": "max",
+            "workflowProfile": "alert-first-v5",
+            "contextProjection": "standard-v1",
+            "runtimeIdentity": {
+                "runtimeVersion": "runtime",
+                "piVersion": "pi",
+                "protocolVersion": "2",
+                "manifestSha256": "1" * 64,
+                "entrypointSha256": "2" * 64,
+                "nodeSha256": "3" * 64,
+                "extensionSha256": "4" * 64,
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+            },
+            "metrics": {key: 1.0 for key in ("AnswerCoverage", "CA", "FA", "JRA", "Top3JRA")},
+            "usage": {"available": True, "input": 100, "cacheRead": 200, "output": 50},
+        }
+        candidate = {
+            **baseline,
+            "workflowProfile": "luna-bounded-evidence-v7",
+            "usage": {"available": True, "input": 90, "cacheRead": 190, "output": 45},
+        }
+
+        comparison = _cost_optimization_comparison(baseline, candidate)
+        self.assertEqual("keep", comparison["decision"])
+        self.assertEqual("luna_prompt_evidence_contract", comparison["singleVariable"])
 
     def test_trial_id_is_a_bounded_basename_not_a_path(self) -> None:
         self.assertEqual("cloudops-run.v1", _normalize_trial_id("cloudops-run.v1"))

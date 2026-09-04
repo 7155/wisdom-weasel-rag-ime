@@ -389,16 +389,38 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn('if [[ "$SOURCE_BRANCH" != "main" ]]', build)
         self.assertIn('if [[ "$SOURCE_DIRTY" == "true" ]]', build)
 
+    def test_electron_host_replaces_atom_identity_and_projects_exact_build(self) -> None:
+        build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
+            encoding="utf-8"
+        )
+        web_build = (ROOT / "scripts" / "build_control_center_web.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('build_app_icon.sh" "$RESOURCES/RagImeIcon.icns"', build)
+        self.assertIn('rm -f "$RESOURCES/electron.icns"', build)
+        self.assertIn('CFBundleIconFile string RagImeIcon', build)
+        self.assertIn('CFBundleShortVersionString $PRODUCT_VERSION', build)
+        self.assertIn('CFBundleVersion $BUILD_NUMBER', build)
+        self.assertIn('RAG_IME_SOURCE_DIRTY="$SOURCE_DIRTY"', build)
+        self.assertIn('VITE_PAW_SOURCE_DIRTY="${RAG_IME_SOURCE_DIRTY:-false}"', web_build)
+
     def test_electron_release_hydrates_the_pinned_runtime(self) -> None:
         build = (ROOT / "scripts" / "build_paw_os_electron_host.sh").read_text(
             encoding="utf-8"
         )
 
         self.assertIn('ELECTRON_INSTALLER="$WEB/node_modules/electron/install.js"', build)
+        self.assertIn("hydrate_electron_runtime()", build)
+        self.assertEqual(build.count("hydrate_electron_runtime\n"), 2)
         self.assertIn('node "$ELECTRON_INSTALLER"', build)
         self.assertLess(
             build.index('node "$ELECTRON_INSTALLER"'),
-            build.rindex('[[ -d "$ELECTRON_APP" ]]'),
+            build.rindex('hydrate_electron_runtime\n'),
+        )
+        self.assertLess(
+            build.index('"$ROOT/scripts/build_control_center_web.sh"'),
+            build.rindex('hydrate_electron_runtime\n'),
         )
 
     def test_database_maintenance_stop_and_reinstall_cover_voice_and_maintenance_jobs(self) -> None:

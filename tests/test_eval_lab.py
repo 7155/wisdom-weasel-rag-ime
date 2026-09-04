@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from copy import deepcopy
@@ -142,13 +143,17 @@ class EvalLabProjectionTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["taskCount"], 1)
 
     def test_optional_source_ledger_read_through_keeps_external_db_current(self) -> None:
+        ledger_path = (
+            Path(__file__).resolve().parents[1]
+            / "eval/interview-metrics/agent-experiments.v1.json"
+        )
         payload = EvalLabProjection(
             self.db_path,
-            source_ledger_path=Path(__file__).resolve().parents[1]
-            / "eval/interview-metrics/agent-experiments.v1.json",
+            source_ledger_path=ledger_path,
         ).list_runs()
         validate_contract(payload, "eval-lab-run-list.v1.json")
-        self.assertEqual(payload["experimentTotal"], 22)
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["experimentTotal"], len(ledger["experiments"]))
         experiment_ids = {item["experimentId"] for item in payload["experiments"]}
         self.assertIn("agent-lab.model-cost.luna-max-validation.v1", experiment_ids)
         self.assertIn("trace-agent.closed-loop-historical-replay.v1", experiment_ids)
@@ -160,16 +165,36 @@ class EvalLabProjectionTests(unittest.TestCase):
             / "eval/interview-metrics/agent-experiments.v1.json",
         ).list_runs()
         validate_contract(payload, "eval-lab-run-list.v1.json")
-        self.assertEqual(payload["pathSearchTotal"], 2)
+        self.assertEqual(payload["pathSearchTotal"], 4)
         search = payload["pathSearches"][0]
-        self.assertEqual(search["selectedNodeId"], "sol-max-controlled-20260903")
-        self.assertEqual(search["claimStatus"], "insufficient_evidence")
-        self.assertEqual(len(search["candidates"]), 2)
+        self.assertEqual(
+            search["selectedNodeId"], "cloudops-luna-owner-mechanism-r5"
+        )
+        self.assertEqual(search["claimStatus"], "best_known")
+        self.assertEqual(len(search["candidates"]), 3)
         self.assertEqual(search["candidates"][0]["changedFactor"], "baseline")
-        self.assertEqual(search["candidates"][0]["nodeId"], search["selectedNodeId"])
+        self.assertEqual(
+            search["candidates"][0]["nodeId"], "cloudops-sol-alert-first-r7"
+        )
         self.assertEqual(search["candidates"][1]["status"], "rejected")
-        self.assertIn("all tasks complete", search["candidates"][1]["reason"])
-        historical = payload["pathSearches"][1]
+        self.assertEqual(
+            search["candidates"][1]["nodeId"],
+            "cloudops-luna-model-only-r1",
+        )
+        self.assertEqual(search["candidates"][2]["status"], "eligible")
+        self.assertEqual(
+            search["candidates"][2]["nodeId"], search["selectedNodeId"]
+        )
+        self.assertIn("质量与可靠性硬门失败", search["candidates"][1]["reason"])
+        enterprise = payload["pathSearches"][1]
+        self.assertEqual(
+            enterprise["selectedNodeId"], "enterpriseops-luna-prompt-r7"
+        )
+        self.assertEqual(enterprise["claimStatus"], "best_known")
+        previous = payload["pathSearches"][2]
+        self.assertEqual(previous["selectedNodeId"], "sol-max-controlled-20260903")
+        self.assertEqual(previous["claimStatus"], "insufficient_evidence")
+        historical = payload["pathSearches"][3]
         self.assertEqual(historical["selectedNodeId"], "sol-state-contract")
         self.assertEqual(historical["claimStatus"], "best_known")
         self.assertNotIn("evidenceRefs", str(search))

@@ -6,9 +6,13 @@ import sqlite3
 from typing import Any, Protocol
 
 from .agent_execution_policy import (
+    APPROVAL_ASK,
     APPROVAL_AUTO,
+    APPROVAL_DENY,
     APPROVAL_MODEL,
+    ROOM_UNRESTRICTED_EXECUTION_MODE,
     approval_strategy,
+    read_only_policy_active,
     unrestricted_workspace_policy_active,
 )
 from .agent_external_approval import ExternalApprovalFinalizer
@@ -32,6 +36,8 @@ class ApprovalHost(Protocol):
     sessions: Any
     runtime: Any
     events: Any
+    rooms: Any
+    room_events: Any
     memory_sources: Any
     _approval_executor: Any
     approval_model: Any
@@ -42,12 +48,331 @@ class ApprovalHost(Protocol):
         approval: Mapping[str, object],
     ) -> dict[str, object]: ...
 
+    def _active_room_dispatch_context(
+        self,
+        session_id: str,
+    ) -> Mapping[str, object] | None: ...
+
+    def _claim_approval_execution(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]: ...
+
 class AgentApprovalApplicationService:
     """Own approval decisions, execution receipts, and external finalization."""
 
     def __init__(self, host: ApprovalHost) -> None:
         self.host = host
         self.external = ExternalApprovalFinalizer(host)
+
+    def reconcile_abandoned_execution_claims(self) -> dict[str, object]:
+        """Repair interrupted approval projections without replaying Tools."""
+
+        recovered, projection_candidates = (
+            self.host.sessions.fail_abandoned_approval_executions()
+        )
+        session_projected_ids: list[str] = []
+        for approval in projection_candidates:
+            session_id = str(approval.get("sessionId") or "")
+            approval_id = str(approval.get("approvalId") or "")
+            causal = (
+                approval.get("causalMetadata")
+                if isinstance(approval.get("causalMetadata"), Mapping)
+                else {}
+            )
+            tool_call_id = str(approval.get("toolCallId") or "").strip()
+            has_approval_terminal = self.host.sessions.has_runtime_approval_resolution(
+                session_id,
+                approval_id,
+            )
+            has_tool_terminal = self.host.sessions.has_runtime_tool_terminal(
+                session_id,
+                tool_call_id,
+                turn_id=str(causal.get("turnId") or ""),
+                tool_name=str(approval.get("toolId") or ""),
+                requested_after_ms=int(approval.get("requestedAtMs") or 0),
+            )
+            if has_approval_terminal and has_tool_terminal:
+                continue
+            self._project_recovered_session_execution(
+                approval,
+                include_approval=not has_approval_terminal,
+                include_tool=not has_tool_terminal,
+            )
+            session_projected_ids.append(approval_id)
+        if session_projected_ids:
+            flush = getattr(self.host.events, "flush", None)
+            if callable(flush) and not flush():
+                raise RuntimeError(
+                    "recovered Session projections did not drain"
+                )
+        projected_ids: list[str] = []
+        has_tool_terminal = getattr(
+            self.host.room_events,
+            "has_tool_terminal",
+            None,
+        )
+        for approval in projection_candidates:
+            causal = (
+                approval.get("causalMetadata")
+                if isinstance(approval.get("causalMetadata"), Mapping)
+                else {}
+            )
+            if not bool(causal.get("roomBound")):
+                continue
+            approval_id = str(approval.get("approvalId") or "")
+            room_id = str(causal.get("roomId") or "")
+            tool_call_id = str(approval.get("toolCallId") or "")
+            if (
+                callable(has_tool_terminal)
+                and has_tool_terminal(
+                    room_id,
+                    tool_call_id,
+                    root_id=str(causal.get("rootId") or ""),
+                    dispatch_id=str(causal.get("dispatchId") or ""),
+                )
+            ):
+                continue
+            self._project_abandoned_room_execution(approval)
+            projected_ids.append(approval_id)
+        return {
+            "recoveredCount": len(recovered),
+            "approvalIds": [
+                str(approval.get("approvalId") or "")
+                for approval in recovered
+            ],
+            "sessionReconciledCount": len(session_projected_ids),
+            "sessionApprovalIds": session_projected_ids,
+            "projectionReconciledCount": len(projected_ids),
+            "projectionApprovalIds": projected_ids,
+        }
+
+    def _project_recovered_session_execution(
+        self,
+        approval: Mapping[str, object],
+        *,
+        include_approval: bool,
+        include_tool: bool,
+    ) -> None:
+        """Publish known durable terminal facts without repeating effects.
+
+        This deliberately does not call ``execute_approved``, checkpoint
+        memory, or record Tool evidence again. The approval row and receipt
+        are already authoritative; only the missing public lifecycle is
+        repaired.
+        """
+
+        session_id = str(approval.get("sessionId") or "").strip()
+        approval_id = str(approval.get("approvalId") or "").strip()
+        tool_call_id = str(approval.get("toolCallId") or "").strip()
+        state = str(approval.get("state") or "failed")
+        turn_id = _approval_turn_id(approval)
+        receipt = (
+            approval.get("receipt")
+            if isinstance(approval.get("receipt"), Mapping)
+            else {}
+        )
+        summary = str(receipt.get("summary") or "").strip() or (
+            "上次工具执行已完成。"
+            if state == "applied"
+            else "上次工具执行已终止。"
+        )
+        if not session_id or not approval_id:
+            return
+
+        causal = (
+            approval.get("causalMetadata")
+            if isinstance(approval.get("causalMetadata"), Mapping)
+            else {}
+        )
+        room_bound = bool(causal.get("roomBound"))
+
+        if self.host.runtime.has_pending_approval(session_id, approval_id):
+            # A surviving Runtime may still own a waiting Tool bridge. Resolve
+            # it with the persisted truth, but continue to write the durable
+            # recovery events below so another restart cannot lose the fact.
+            self.host.runtime.resolve_approval(
+                session_id,
+                approval_id,
+                approved=state in {"applied", "external_pending"},
+                resolution_state=state,
+            )
+        if include_approval:
+            recovery_identity = (
+                {
+                    "automatic": True,
+                    "decisionMode": "policy",
+                }
+                if room_bound
+                else {}
+            )
+            self.host.events.publish(
+                session_id,
+                "approval_resolved",
+                {
+                    "approvalId": approval_id,
+                    "state": state,
+                    "recoveredExecutionTerminal": True,
+                    **recovery_identity,
+                    **_approval_event_identity(approval),
+                },
+                turn_id=turn_id,
+            )
+        if include_tool and tool_call_id:
+            is_error = state != "applied"
+            self.host.events.publish(
+                session_id,
+                "tool_finished",
+                {
+                    "approvalId": approval_id,
+                    "toolCallId": tool_call_id,
+                    "toolName": str(approval.get("toolId") or ""),
+                    "isError": is_error,
+                    "status": "failed" if is_error else "completed",
+                    "state": state,
+                    "summary": summary,
+                    "result": dict(receipt),
+                    "recoveredExecutionTerminal": True,
+                },
+                turn_id=turn_id,
+            )
+
+    def _project_abandoned_room_execution(
+        self,
+        approval: Mapping[str, object],
+    ) -> None:
+        """Persist the recovered terminal in Room without volatile turn state."""
+
+        causal = (
+            approval.get("causalMetadata")
+            if isinstance(approval.get("causalMetadata"), Mapping)
+            else {}
+        )
+        if not bool(causal.get("roomBound")):
+            return
+        session_id = str(approval.get("sessionId") or "").strip()
+        room_id = str(causal.get("roomId") or "").strip()
+        root_id = str(causal.get("rootId") or "").strip()
+        dispatch_id = str(causal.get("dispatchId") or "").strip()
+        approval_id = str(approval.get("approvalId") or "").strip()
+        if not session_id or not room_id or not root_id or not approval_id:
+            return
+        participant = self.host.rooms.participant_for_session(
+            session_id,
+            active_only=False,
+        )
+        if (
+            not isinstance(participant, Mapping)
+            or str(participant.get("roomId") or "") != room_id
+        ):
+            return
+        receipt = (
+            approval.get("receipt")
+            if isinstance(approval.get("receipt"), Mapping)
+            else {}
+        )
+        state = str(approval.get("state") or "failed")
+        summary = str(receipt.get("summary") or "").strip() or (
+            "上次工具执行已完成。"
+            if state == "applied"
+            else "上次工具执行的结果未知，未自动重放。"
+        )
+        tool_call_id = str(approval.get("toolCallId") or "").strip()
+        is_error = state != "applied"
+        resolved_at_ms = (
+            int(receipt.get("reconciledAtMs") or 0)
+            or int(approval.get("decidedAtMs") or 0)
+            or None
+        )
+        effect_may_have_occurred = bool(
+            receipt.get("effectMayHaveOccurred")
+            or receipt.get("mutationApplied") is True
+            or state == "applied"
+        )
+        approval_data: dict[str, object] = {
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "generation": int(causal.get("generation") or 0),
+            "approvalId": approval_id,
+            "toolCallId": tool_call_id,
+            "toolName": str(approval.get("toolId") or ""),
+            "state": state,
+            "resolutionState": state,
+            "status": "failed" if is_error else "completed",
+            "automatic": True,
+            "decisionMode": "policy",
+            "isError": is_error,
+            "summary": summary,
+            "executionOutcome": str(
+                receipt.get("executionOutcome") or (
+                    "completed" if state == "applied" else "unknown"
+                )
+            ),
+            "effectMayHaveOccurred": effect_may_have_occurred,
+            "replayAllowed": bool(receipt.get("replayAllowed")),
+        }
+        if is_error:
+            approval_data["error"] = summary
+        self.host.room_events.publish_projection(
+            projection_key=(
+                f"approval-execution-recovery:{approval_id}"
+            ),
+            room_id=room_id,
+            event_type="participant_activity",
+            payload={
+                "sourceEventId": (
+                    f"approval-execution-recovery:{approval_id}"
+                ),
+                "sourceEventType": "approval_resolved",
+                "data": approval_data,
+            },
+            turn_id=root_id,
+            participant_id=str(participant.get("id") or ""),
+            source_session_id=session_id,
+            topic_id="",
+            created_at_ms=resolved_at_ms,
+        )
+        self.host.room_events.publish_projection(
+            projection_key=(
+                f"approval-execution-recovery:{approval_id}:tool-finished"
+            ),
+            room_id=room_id,
+            event_type="participant_activity",
+            payload={
+                "sourceEventId": (
+                    f"approval-execution-recovery:{approval_id}:tool-finished"
+                ),
+                "sourceEventType": "tool_finished",
+                "data": {
+                    "rootId": root_id,
+                    "dispatchId": dispatch_id,
+                    "generation": int(causal.get("generation") or 0),
+                    "approvalId": approval_id,
+                    "toolCallId": tool_call_id,
+                    "toolName": str(approval.get("toolId") or ""),
+                    "state": state,
+                    "status": "failed" if is_error else "completed",
+                    "automatic": True,
+                    "decisionMode": "policy",
+                    "isError": is_error,
+                    "summary": summary,
+                    "mutationApplied": receipt.get("mutationApplied"),
+                    "executionOutcome": str(
+                        receipt.get("executionOutcome") or (
+                            "completed" if state == "applied" else "unknown"
+                        )
+                    ),
+                    "effectMayHaveOccurred": effect_may_have_occurred,
+                    "replayAllowed": bool(receipt.get("replayAllowed")),
+                    "recoveredExecutionTerminal": True,
+                },
+            },
+            turn_id=root_id,
+            participant_id=str(participant.get("id") or ""),
+            source_session_id=session_id,
+            topic_id="",
+            created_at_ms=resolved_at_ms,
+        )
 
     def list_approvals(
         self,
@@ -300,6 +625,19 @@ class AgentApprovalApplicationService:
             if executor is None:
                 raise ValueError("approval executor is unavailable")
             try:
+                current = self.host._claim_approval_execution(current)
+            except ValueError:
+                terminal = self.host.sessions.get_approval(approval_id)
+                return self.finish_terminal(
+                    terminal,
+                    pending_in_pi=pending_in_pi,
+                )
+            if str(current.get("state") or "") != "approved":
+                return self.finish_terminal(
+                    current,
+                    pending_in_pi=pending_in_pi,
+                )
+            try:
                 receipt = dict(executor(current))
             except Exception as exc:
                 receipt = _failed_receipt(
@@ -308,14 +646,9 @@ class AgentApprovalApplicationService:
                     reason="recovery_failed",
                     error=exc,
                 )
-            final = self.host.sessions.complete_approval(
-                approval_id,
-                state=(
-                    "applied"
-                    if receipt.get("mutationApplied") is True
-                    else "failed"
-                ),
-                receipt=receipt,
+            final = self._complete_executor_receipt(
+                current,
+                receipt,
             )
             return self.finish_decision(
                 final,
@@ -447,16 +780,40 @@ class AgentApprovalApplicationService:
         current = self.host.sessions.get_approval(approval_id)
         session_id = str(current.get("sessionId") or "")
         session = self.host.sessions.get(session_id)
-        strategy = approval_strategy(
-            session,
-            tool=str(current.get("toolId") or ""),
-            operation=str(current.get("operation") or ""),
-            preview=(
-                current.get("preview")
-                if isinstance(current.get("preview"), Mapping)
-                else None
-            ),
-            risk_level=current.get("riskLevel"),
+        causal = (
+            current.get("causalMetadata")
+            if isinstance(current.get("causalMetadata"), Mapping)
+            else {}
+        )
+        effective_session = {
+            **session,
+            "roomDispatchAuthorized": False,
+        }
+        room_bound = bool(causal.get("roomBound"))
+        room_binding_live = self._room_binding_matches_live_dispatch(
+            session_id,
+            causal,
+        )
+        if room_binding_live and not read_only_policy_active(session):
+            effective_session = {
+                **session,
+                "roomExecutionMode": ROOM_UNRESTRICTED_EXECUTION_MODE,
+                "roomDispatchAuthorized": True,
+            }
+        strategy = (
+            APPROVAL_DENY
+            if room_bound and not room_binding_live
+            else approval_strategy(
+                effective_session,
+                tool=str(current.get("toolId") or ""),
+                operation=str(current.get("operation") or ""),
+                preview=(
+                    current.get("preview")
+                    if isinstance(current.get("preview"), Mapping)
+                    else None
+                ),
+                risk_level=current.get("riskLevel"),
+            )
         )
         if current.get("state") != "pending":
             return self._automatic_terminal_result(current)
@@ -471,7 +828,7 @@ class AgentApprovalApplicationService:
             )
 
         model_decision: Mapping[str, object] | None = None
-        approved = True
+        approved = strategy == APPROVAL_AUTO
         if strategy == APPROVAL_MODEL:
             model_decision = self.host.approval_model.decide(
                 current,
@@ -482,10 +839,35 @@ class AgentApprovalApplicationService:
                 "approval-model:"
                 + str(model_decision.get("receiptId") or "")
             )
+        elif strategy == APPROVAL_DENY:
+            decided_by = (
+                "execution-policy:room_dispatch_stale"
+                if room_bound and not room_binding_live
+                else "execution-policy:read_only"
+                if read_only_policy_active(session)
+                else "execution-policy:denied"
+            )
+        elif strategy == APPROVAL_ASK:
+            return {
+                "summary": "当前策略需要显式确认，操作尚未执行",
+                "approvalRequired": True,
+                "autoApproved": False,
+                "approvalId": approval_id,
+                "approval": dict(current),
+                "receipt": {},
+                "memoryCheckpoint": {},
+                "decisionMode": "manual",
+                "terminal": False,
+                "retryable": False,
+            }
         else:
             decided_by = (
                 "execution-policy:"
-                + str(session.get("executionMode") or "per_action")
+                + str(
+                    effective_session.get("roomExecutionMode")
+                    or effective_session.get("executionMode")
+                    or "per_action"
+                )
             )
 
         if approved and self.host._approval_executor is None:
@@ -566,7 +948,10 @@ class AgentApprovalApplicationService:
         result: dict[str, object] = {
             "summary": summary,
             "approvalRequired": False,
-            "autoApproved": approved,
+            "autoApproved": approved and str(final.get("state") or "") in {
+                "applied",
+                "external_pending",
+            },
             "approvalId": approval_id,
             "approval": final,
             "receipt": dict(receipt),
@@ -588,6 +973,52 @@ class AgentApprovalApplicationService:
         result["retryable"] = False
         result["terminalReason"] = summary
         return result
+
+    def _room_binding_matches_live_dispatch(
+        self,
+        session_id: str,
+        causal: Mapping[str, object],
+    ) -> bool:
+        if not bool(causal.get("roomBound")):
+            return False
+        inspect = getattr(
+            self.host,
+            "_active_room_dispatch_context",
+            None,
+        )
+        if not callable(inspect):
+            return False
+        try:
+            live = inspect(session_id)
+        except Exception:
+            return False
+        if not isinstance(live, Mapping):
+            return False
+        room_id = str(causal.get("roomId") or "").strip()
+        root_id = str(causal.get("rootId") or "").strip()
+        dispatch_id = str(causal.get("dispatchId") or "").strip()
+        generation = int(causal.get("generation") or 0)
+        live_room_id = str(live.get("roomId") or "").strip()
+        live_root_id = str(live.get("rootId") or "").strip()
+        live_dispatch_id = str(live.get("dispatchId") or "").strip()
+        live_generation = int(live.get("generation") or 0)
+        if (
+            not room_id
+            or not root_id
+            or not dispatch_id
+            or generation <= 0
+            or not live_room_id
+            or not live_root_id
+            or not live_dispatch_id
+            or live_generation <= 0
+        ):
+            return False
+        return (
+            live_room_id == room_id
+            and live_root_id == root_id
+            and live_dispatch_id == dispatch_id
+            and live_generation == generation
+        )
 
     def _fail_automatic_approval(
         self,
@@ -617,23 +1048,49 @@ class AgentApprovalApplicationService:
             except ValueError:
                 current = self.host.sessions.get_approval(approval_id)
         elif state == "approved":
-            receipt = _failed_receipt(
+            unknown_receipt = _unknown_effect_receipt(
                 current,
-                summary="自动审批执行失败，原操作没有执行",
-                reason="automatic_approval_bridge_failed",
                 error=error,
             )
             try:
-                current = self.host.sessions.complete_approval(
+                current = self.host.sessions.fail_claimed_approval_execution(
                     approval_id,
-                    state="failed",
-                    receipt=receipt,
+                    receipt=unknown_receipt,
                 )
             except ValueError:
-                current = self.host.sessions.get_approval(approval_id)
+                # The decision failed before the irreversible execution claim,
+                # so the executor is known not to have started.
+                receipt = _failed_receipt(
+                    current,
+                    summary="自动审批执行失败，原操作没有执行",
+                    reason="automatic_approval_bridge_failed",
+                    error=error,
+                )
+                try:
+                    current = self.host.sessions.complete_approval(
+                        approval_id,
+                        state="failed",
+                        receipt=receipt,
+                    )
+                except ValueError:
+                    current = self.host.sessions.get_approval(approval_id)
 
         terminal_state = str(current.get("state") or "failed")
-        summary = "自动审批执行失败，原操作没有执行"
+        current_receipt = (
+            current.get("receipt")
+            if isinstance(current.get("receipt"), Mapping)
+            else {}
+        )
+        effect_unknown = bool(
+            current_receipt.get("effectMayHaveOccurred") is True
+            and current_receipt.get("executionOutcome") == "unknown"
+            and current_receipt.get("replayAllowed") is False
+        )
+        summary = str(current_receipt.get("summary") or "").strip() or (
+            "自动审批执行结果未知，不会自动重放"
+            if effect_unknown
+            else "自动审批执行失败，原操作没有执行"
+        )
         event_payload: dict[str, object] = {
             "approvalId": approval_id,
             "state": terminal_state,
@@ -642,26 +1099,42 @@ class AgentApprovalApplicationService:
             "error": _public_error(error),
             **_approval_event_identity(current),
         }
-        self.host.events.publish(
-            str(current.get("sessionId") or approval.get("sessionId") or ""),
-            "approval_resolved",
-            event_payload,
-            turn_id=_approval_turn_id(current),
+        resolved_session_id = str(
+            current.get("sessionId") or approval.get("sessionId") or ""
         )
-        return {
+        if not self.host.sessions.has_runtime_approval_resolution(
+            resolved_session_id,
+            approval_id,
+        ):
+            self.host.events.publish(
+                resolved_session_id,
+                "approval_resolved",
+                event_payload,
+                turn_id=_approval_turn_id(current),
+            )
+        result = {
             "summary": summary,
             "approvalRequired": False,
-            "autoApproved": False,
+            "autoApproved": terminal_state in {
+                "applied",
+                "external_pending",
+            },
             "approvalId": approval_id,
             "approval": dict(current),
-            "receipt": {},
+            "receipt": dict(current_receipt),
             "memoryCheckpoint": {},
             "decisionMode": "policy",
-            "terminal": True,
+            "terminal": terminal_state not in {"pending", "approved"},
             "retryable": False,
             "terminalReason": summary,
-            "failureCode": "automatic_approval_bridge_failed",
         }
+        if terminal_state not in {"applied", "external_pending"}:
+            result["failureCode"] = (
+                "automatic_approval_effect_unknown"
+                if effect_unknown
+                else "automatic_approval_bridge_failed"
+            )
+        return result
 
     @staticmethod
     def _automatic_terminal_result(
@@ -745,6 +1218,15 @@ class AgentApprovalApplicationService:
         approval_id = str(decided.get("approvalId") or "")
         session_id = str(decided.get("sessionId") or "")
         try:
+            decided = self.host._claim_approval_execution(decided)
+        except ValueError:
+            # Stop/cancel may win after the policy decision but before the
+            # external effect. The durable terminal row wins and the executor
+            # must never be entered.
+            return self.host.sessions.get_approval(approval_id)
+        if str(decided.get("state") or "") != "approved":
+            return dict(decided)
+        try:
             executor = self.host._approval_executor
             assert executor is not None
             receipt = dict(executor(decided))
@@ -780,17 +1262,44 @@ class AgentApprovalApplicationService:
                     )
                     receipt["externalActionPending"] = False
                     external_action_pending = False
-        return self.host.sessions.complete_approval(
-            approval_id,
-            state=(
-                "external_pending"
-                if external_action_pending
-                else "applied"
-                if receipt.get("mutationApplied") is True
-                else "failed"
-            ),
-            receipt=receipt,
+        return self._complete_executor_receipt(
+            decided,
+            receipt,
+            external_action_pending=external_action_pending,
         )
+
+    def _complete_executor_receipt(
+        self,
+        approval: Mapping[str, object],
+        receipt: Mapping[str, object],
+        *,
+        external_action_pending: bool = False,
+    ) -> dict[str, object]:
+        """Persist executor truth or fail closed to a non-replayable unknown."""
+
+        approval_id = str(approval.get("approvalId") or "")
+        try:
+            return self.host.sessions.complete_approval(
+                approval_id,
+                state=(
+                    "external_pending"
+                    if external_action_pending
+                    else "applied"
+                    if receipt.get("mutationApplied") is True
+                    else "failed"
+                ),
+                receipt=receipt,
+            )
+        except Exception as error:
+            if receipt.get("mutationApplied") is not True:
+                raise
+            return self.host.sessions.fail_claimed_approval_execution(
+                approval_id,
+                receipt=_unknown_effect_receipt(
+                    approval,
+                    error=error,
+                ),
+            )
 
     def checkpoint_applied(
         self,
@@ -875,7 +1384,48 @@ class AgentApprovalApplicationService:
         approval_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        return self.external.finalize(approval_id, payload)
+        result = self.external.finalize(approval_id, payload)
+        approval = (
+            result.get("approval")
+            if isinstance(result.get("approval"), Mapping)
+            else {}
+        )
+        causal = _exact_room_causal_metadata(approval)
+        if causal is None:
+            return result
+
+        session_id = str(approval.get("sessionId") or "").strip()
+        tool_call_id = str(approval.get("toolCallId") or "").strip()
+        has_session_terminal = self.host.sessions.has_runtime_tool_terminal(
+            session_id,
+            tool_call_id,
+            turn_id=str(causal.get("turnId") or ""),
+            tool_name=str(approval.get("toolId") or ""),
+            requested_after_ms=int(approval.get("requestedAtMs") or 0),
+        )
+        if not has_session_terminal:
+            self._project_recovered_session_execution(
+                approval,
+                include_approval=False,
+                include_tool=True,
+            )
+
+        has_room_terminal = getattr(
+            self.host.room_events,
+            "has_tool_terminal",
+            None,
+        )
+        if not (
+            callable(has_room_terminal)
+            and has_room_terminal(
+                str(causal["roomId"]),
+                tool_call_id,
+                root_id=str(causal["rootId"]),
+                dispatch_id=str(causal["dispatchId"]),
+            )
+        ):
+            self._project_abandoned_room_execution(approval)
+        return result
 
     def approval_result(
         self,
@@ -911,6 +1461,38 @@ def _approval_event_identity(
     return {"toolCallId": tool_call_id} if tool_call_id else {}
 
 
+def _exact_room_causal_metadata(
+    approval: Mapping[str, object],
+) -> dict[str, object] | None:
+    causal = (
+        approval.get("causalMetadata")
+        if isinstance(approval.get("causalMetadata"), Mapping)
+        else {}
+    )
+    try:
+        generation = int(causal.get("generation") or 0)
+    except (TypeError, ValueError):
+        return None
+    room_id = str(causal.get("roomId") or "").strip()
+    root_id = str(causal.get("rootId") or "").strip()
+    dispatch_id = str(causal.get("dispatchId") or "").strip()
+    if (
+        causal.get("roomBound") is not True
+        or not room_id
+        or not root_id
+        or not dispatch_id
+        or generation <= 0
+    ):
+        return None
+    return {
+        **dict(causal),
+        "roomId": room_id,
+        "rootId": root_id,
+        "dispatchId": dispatch_id,
+        "generation": generation,
+    }
+
+
 def _approval_turn_id(approval: Mapping[str, object]) -> str:
     causal = approval.get("causalMetadata")
     if not isinstance(causal, Mapping):
@@ -933,6 +1515,30 @@ def _failed_receipt(
         "operation": str(approval.get("operation") or ""),
         "summary": summary,
         "reason": reason,
+        "error": _public_error(error),
+    }
+
+
+def _unknown_effect_receipt(
+    approval: Mapping[str, object],
+    *,
+    error: BaseException,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "rag-ime.agent-operation-receipt.v1",
+        "approvalId": str(approval.get("approvalId") or ""),
+        "toolId": str(approval.get("toolId") or ""),
+        "operation": str(approval.get("operation") or ""),
+        "summary": (
+            "工具可能已经产生外部效果，但终态保存失败；"
+            "结果未知，不会自动重放。"
+        ),
+        "reason": "terminal_persistence_failed_after_effect",
+        "mutationApplied": None,
+        "executionOutcome": "unknown",
+        "effectMayHaveOccurred": True,
+        "replayAllowed": False,
+        "retryTaskAllowed": False,
         "error": _public_error(error),
     }
 

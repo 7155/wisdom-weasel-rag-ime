@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "paw.enterprise-rag-answer-evidence-private-support-calibration.v1",
+  "runId": "enterprise-rag-answer-evidence-standard-candidate-aware-private-support-r5-calibration-20260905",
+  "status": "passed",
+  "evaluationScope": "validation-development-only",
+  "calibrationLabel": "post-validation-calibrated",
+  "candidateBlind": false,
+  "candidateAware": true,
+  "auditAware": true,
+  "localOnly": true,
+  "uploaded": false,
+  "providerCalls": 0,
+  "judgeCalls": 0,
+  "candidateRuns": 0,
+  "heldOutOpened": false,
+  "formalAcceptanceEligible": false,
+  "formalAcceptancePassed": false,
+  "unbiasedPromotionClaimAllowed": false,
+  "auditBoundary": {
+    "auditId": "enterprise-rag-answer-evidence-sol-candidate-aware-private-support-audit-r5-20260905",
+    "auditReceiptFileSha256": "e7288c940550029cac324ddc8acc34cabc84ea0d8381600da7a6e3149a5866a6",
+    "auditReceiptManifestSha256": "663b99b91137e70db8a7b4226b5c31f84d0a888c49859deb7bd0d9711f9773b2",
+    "candidateCitationsAccessed": true,
+    "questionReferenceFactsAccessed": true,
+    "heldOutAccessed": false
+  },
+  "sourceCandidate": {
+    "path": ".rag-ime-data/eval/results/validation-answer-evidence-sol-max-frozen-v19-r4-20260904.json",
+    "fileSha256": "667ca9403f70dca05b0d2cf4864ef21e6dce610f4c939656efae64fce1a95671",
+    "reportSha256": "d2d3d7e1e781b2546fb1cfe6e296454d6dec4ca20a17436fb879730cec97be35",
+    "model": "openai-codex/gpt-5.6-sol",
+    "lane": "agentic",
+    "answerSha256": "30bf964de2dd97ec006dfca9ca36832e7a1800911468ab294a1565716ccd2902"
+  },
+  "predecessor": {
+    "standardR4FileSha256": "0d6155f9055c6a47b7b311d57c0f05ba4436c4769b2f336ee3e8cba06ad35dc9",
+    "standardR4ManifestSha256": "bea2347557f9a728054cdf1200d635015e75805bd451c8ed97ab71c23977ba05",
+    "qrelsR4FileSha256": "6e29c0ab058f2293b5e9e5e7b9b4f4309c3b58c47199f9d30afa97ec96752719",
+    "qrelsR4ManifestSha256": "84b0a18450f0c81433a290796f13f6d6156ff8d7d028415a8b29b7d85dc29d28"
+  },
+  "standard": {
+    "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-private-support-r5.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+    "standardId": "enterprise-rag-answer-evidence-validation-candidate-aware-private-support-r5-20260905",
+    "fileSha256": "363926b1fe9797adc6b67019be03a6a147d6bdfa4d3dbfd6fc71a61a004f1e42",
+    "manifestSha256": "9d76af0508ec4bcdada0fa49ce31061acec12b37b9d10d990efff094d5e2ee46"
+  },
+  "qrels": {
+    "scope": "host-only",
+    "path": ".rag-ime-data/eval/host/validation-answer-evidence-qrels-candidate-aware-private-support-r5.json",
+    "schemaVersion": "rag-ime.rag-answer-evidence-qrels.v2",
+    "fileSha256": "26e37c922f9676758d3a0b29c4b2f743156f017fe68b3645afe089e3855dad8e",
+    "manifestSha256": "9e2efd5eab0815eafbad0f4453f999896a8faf574ca20a25c3948b59c5b8faef",
+    "factCount": 9,
+    "supportGroupCount": 19,
+    "evidenceBindingCount": 19
+  },
+  "calibrationDelta": {
+    "operator": "append_exact_private_platform_support_equivalent",
+    "changedFacts": [
+      "qst_0477/F3"
+    ],
+    "supportGroupModeBefore": "any",
+    "supportGroupModeAfter": "any",
+    "addedExactBindings": 1,
+    "otherFactBindingsAdded": 0,
+    "newlyCoveredFacts": [
+      "qst_0477/F3"
+    ]
+  },
+  "frozenSolCandidateRescore": {
+    "scorerContract": "exact-citation-token-to-document-chunk-ordinal",
+    "runnerPath": "scripts/run_rag_agent_ablation.py",
+    "runnerFileSha256": "e90af777b337374d750c7a994f78d7cf28770faf33d15ea7f7672ab16ef781e4",
+    "supportVerifierPath": "scripts/verify_enterprise_rag_revenue_category_standard.py",
+    "supportVerifierFileSha256": "42e139a434eec802a7996009833045465ba4d489534069ab5523500cb9586f71",
+    "verifierPath": "scripts/verify_enterprise_rag_private_support_standard.py",
+    "verifierFileSha256": "5319d94edb722b21bd52afcc78a489c6c239e620f3468abed8c800ad216f5c85",
+    "measurementStatus": "post-validation-sol-candidate-aware",
+    "beforeCoveredFactCount": 6,
+    "coveredFactCount": 7,
+    "factCount": 9,
+    "citationFactCoverage": 0.7777777777777778,
+    "decision": "reject",
+    "failedHardGates": [
+      "agentic:citationResolution"
+    ]
+  },
+  "publicSafety": {
+    "containsQuestions": false,
+    "containsReferenceAnswers": false,
+    "containsFactBodies": false,
+    "containsEvidenceQuotes": false,
+    "containsQrelsBody": false,
+    "containsCandidateAnswers": false,
+    "containsPrivateTranscripts": false
+  },
+  "verification": {
+    "command": "python3 scripts/verify_enterprise_rag_private_support_standard.py",
+    "result": "ENTERPRISE_RAG_PRIVATE_SUPPORT_STANDARD_R5_OK"
+  },
+  "claimBoundary": [
+    "This receipt proves an append-only post-Validation candidate-aware Standard/qrels fixed point and offline Sol rescore.",
+    "Only qst_0477/F3 receives one exact equivalent group; no other fact is newly credited.",
+    "The frozen Sol candidate rises from 6/9 to 7/9 citation facts and remains Reject.",
+    "This is not an unbiased promotion or model-quality improvement result.",
+    "No Provider or Judge was called, no candidate was rerun, and Held-out remains unopened."
+  ],
+  "receiptSha256": "7ccd59b39550e04d72a72797a9421c6ad59556645c3121ccbc811ceb61a5fb36"
+}

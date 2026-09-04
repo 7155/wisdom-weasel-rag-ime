@@ -353,16 +353,23 @@ export function reduceAgentEvent(
       );
       break;
     }
-    case 'approval_required':
-      upsertApprovalActivity(next, event, payload, 'waiting');
-      next.status = 'waiting';
-      touchTurn(
-        next,
-        approvalActivityTurnId(next, payload, event.turnId),
-        'waiting',
-        event.createdAtMs,
-      );
+    case 'approval_required': {
+      const roomToolOwner = roomBoundApprovalToolOwner(next, payload);
+      upsertApprovalActivity(next, event, payload, roomToolOwner?.status ?? 'waiting');
+      if (roomToolOwner) {
+        next.status = 'working';
+        touchTurn(next, roomToolOwner.turnId, 'running', event.createdAtMs);
+      } else {
+        next.status = 'waiting';
+        touchTurn(
+          next,
+          approvalActivityTurnId(next, payload, event.turnId),
+          'waiting',
+          event.createdAtMs,
+        );
+      }
       break;
+    }
     case 'user_input_required': {
       const resolved = ['resolved', 'cancelled'].includes(text(payload.resolutionState));
       upsertActivity(next, event, payload, resolved ? 'completed' : 'waiting');
@@ -372,16 +379,31 @@ export function reduceAgentEvent(
       }
       break;
     }
-    case 'approval_resolved':
+    case 'approval_resolved': {
+      const roomToolOwner = roomBoundApprovalToolOwner(next, payload);
+      const resolutionState = text(payload.state);
+      const roomAuthorizationApplied = Boolean(
+        roomToolOwner
+        && payload.automatic === true
+        && text(payload.decisionMode) === 'policy'
+        && ['approved', 'applied', 'external_pending'].includes(resolutionState),
+      );
       upsertApprovalActivity(
         next,
         event,
         payload,
-        ['approved', 'applied', 'external_pending'].includes(text(payload.state))
-          ? 'completed'
+        roomAuthorizationApplied
+          ? roomToolOwner!.status
+          : ['approved', 'applied', 'external_pending'].includes(resolutionState)
+            ? 'completed'
           : 'failed',
       );
+      if (roomAuthorizationApplied) {
+        next.status = 'working';
+        touchTurn(next, roomToolOwner!.turnId, 'running', event.createdAtMs);
+      }
       break;
+    }
     case 'background_job_started':
     case 'background_job_progress':
     case 'background_job_completed':
@@ -991,20 +1013,29 @@ function reconcileSnapshotOptimisticMessages(
     ) continue;
     const fingerprint = replayFingerprint(optimistic);
     if (!fingerprint) continue;
-    const candidate = [...transcriptMessageIds]
+    const candidates = [...transcriptMessageIds]
       .filter((messageId) => !claimedTranscriptIds.has(messageId))
       .map((messageId) => snapshot.messagesById[messageId])
       .filter((message): message is AgentMessageProjection => (
         Boolean(message)
         && message.role === 'user'
         && replayFingerprint(message) === fingerprint
+        // A transcript row older than the local admission can only belong to
+        // an earlier repeated prompt. The accepted current row is created by
+        // the local Runtime after the optimistic admission timestamp.
+        && message.createdAtMs >= optimistic.createdAtMs
         && Math.abs(message.createdAtMs - optimistic.createdAtMs) <= 60_000
       ))
       .sort((left, right) => (
         Math.abs(left.createdAtMs - optimistic.createdAtMs)
         - Math.abs(right.createdAtMs - optimistic.createdAtMs)
-      ))[0];
-    if (!candidate) continue;
+      ));
+    // A repeated user prompt can produce several indistinguishable legacy
+    // transcript rows inside this narrow time window. Guessing would settle
+    // the newest optimistic admission against an older turn. Only a unique
+    // legacy candidate is safe; current transcripts use clientMessageId.
+    if (candidates.length !== 1) continue;
+    const candidate = candidates[0];
     claimedTranscriptIds.add(candidate.id);
     serverClientIds.add(clientMessageId);
     snapshot.messagesById[candidate.id] = {
@@ -1952,6 +1983,21 @@ function upsertApprovalActivity(
       };
     }
   }
+}
+
+function roomBoundApprovalToolOwner(
+  state: AgentProjectionState,
+  payload: Record<string, unknown>,
+): AgentActivityProjection | undefined {
+  const owner = state.activitiesById[text(payload.toolCallId)];
+  if (!owner?.kind.startsWith('tool_')) return undefined;
+  const causal = record(payload.causalMetadata ?? owner.payload.causalMetadata);
+  return causal.roomBound === true
+    && Boolean(text(causal.roomId))
+    && Boolean(text(causal.rootId))
+    && Boolean(text(causal.dispatchId))
+    ? owner
+    : undefined;
 }
 
 function approvalActivityTurnId(

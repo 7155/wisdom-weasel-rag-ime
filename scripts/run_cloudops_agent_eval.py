@@ -58,6 +58,7 @@ _TRIAL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\Z")
 _SCORE_METRICS = ("AnswerCoverage", "CA", "FA", "JRA", "Top3JRA")
 _USAGE_KEYS = ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
 _CONTEXT_PROJECTIONS = frozenset({"standard-v1", "observation-id-v1"})
+_LUNA_OWNER_MECHANISM_PROFILE = "luna-owner-mechanism-gate-v8"
 
 
 class _CloudOpsContextProjectionGateway:
@@ -92,6 +93,9 @@ class _CloudOpsContextProjectionGateway:
             "quality-bounded-v3",
             "quality-staged-v4",
             "alert-first-v5",
+            "luna-evidence-calibrated-v6",
+            "luna-bounded-evidence-v7",
+            _LUNA_OWNER_MECHANISM_PROFILE,
         }:
             # This candidate changes only the Agent-visible diagnostic prompt.
             # The owning gateway remains on the exact baseline Tool contract.
@@ -427,6 +431,9 @@ def run_cloudops_agent_eval(
         "quality-bounded-v3",
         "quality-staged-v4",
         "alert-first-v5",
+        "luna-evidence-calibrated-v6",
+        "luna-bounded-evidence-v7",
+        _LUNA_OWNER_MECHANISM_PROFILE,
     }:
         raise ValueError("CloudOps workflow profile is unsupported")
     if context_projection not in _CONTEXT_PROJECTIONS:
@@ -925,8 +932,13 @@ def _batch_prompt(
             "residual uncertainty in Top-2 and Top-3, avoid narration between calls, and emit the smallest "
             "valid submit JSON once all four causal chains are complete."
         )
-    if workflow_profile == "alert-first-v5":
-        return (
+    if workflow_profile in {
+        "alert-first-v5",
+        "luna-evidence-calibrated-v6",
+        "luna-bounded-evidence-v7",
+        _LUNA_OWNER_MECHANISM_PROFILE,
+    }:
+        prompt = (
             base
             + " Investigate every case independently in two stages: localize the affected object, then "
             "falsify its closest competing cause. For code defects, follow caller/callee values across both "
@@ -942,6 +954,52 @@ def _batch_prompt(
             "compact four-row evidence ledger without recapping completed cases or narrating between calls. "
             "Preserve uncertainty in Top-2 and Top-3; keep each key_evidence_summary within 55 words and emit "
             "the smallest valid submit JSON once all four causal chains are complete."
+        )
+        if workflow_profile == "alert-first-v5":
+            return prompt
+        shared_luna_corrections = (
+            " This Luna adaptation changes only the Agent prompt. For every read, copy its cacheKey "
+            "byte-for-byte from a list result for that same case. Never synthesize a cacheKey from a Tool "
+            "name or arguments, and never reuse one across cases. Treat fault_object as the affected application whose task is failing when a "
+            "shared scheduling policy blocks it; use a node fault_object only when that specific node itself "
+            "is faulty. For performance diagnoses, successful connectivity does not rule out latency or "
+            "packet delay, and empty application error logs do not support code_artificial_delay. Rank "
+            "code_artificial_delay first only with direct code or runtime evidence of an inserted delay; "
+            "otherwise distinguish pod_network_delay from CPU or node capacity using latency propagation, "
+            "traffic anomalies, throttling, and resource signals."
+        )
+        if workflow_profile == "luna-evidence-calibrated-v6":
+            return (
+                prompt
+                + shared_luna_corrections
+                + " Make one Tool call at a time; do not issue parallel reads."
+            )
+        bounded_luna_contract = (
+            prompt
+            + shared_luna_corrections
+            + " Treat the retrieval budget as a strict ceiling, not a target: use no more than one broad inventory "
+            "page and six exact reads per case. As soon as one case has direct Top-1 support and evidence "
+            "against its closest alternative, stop reading that case immediately and lock its ledger row. "
+            "Do not revisit a completed case. Independent exact reads may share one response only after every "
+            "cacheKey has already appeared in a list result for its own case. When the ceiling is reached, "
+            "preserve remaining uncertainty in Top-2 and Top-3 and submit the best supported four-row result "
+            "instead of exploring the observation catalog exhaustively."
+        )
+        if workflow_profile == "luna-bounded-evidence-v7":
+            return bounded_luna_contract
+        return (
+            bounded_luna_contract
+            + " Before locking any Top-1, satisfy an owner-and-mechanism gate through an exact family lookup. "
+            "For a runtime crash, call list(toolName=\"GetErrorLogs\") and read logs from an affected workload. "
+            "For partial reachability or routing, call list(toolName=\"GetAlerts\") followed by "
+            "list(toolName=\"GetAppYAML\"), and attribute a bad route to the component whose configuration "
+            "contains it. For performance, retain the earliest alerting application as owner unless "
+            "list(toolName=\"CheckNodeServiceStatus\") or another direct node observation proves a node-wide "
+            "fault. These exact-family selectors are evidence lookups and do not count as an additional broad "
+            "inventory page. Never invent a toolName. Inventory status, labels, co-location, and healthy "
+            "neighbors may localize but cannot satisfy this gate. If the evidence summary says the discriminator "
+            "remains unresolved, do not lock that row; spend the remaining bounded reads on the exact family, "
+            "and never replace missing evidence with a guessed owner or mechanism."
         )
     if workflow_profile in {"evidence-search-v2", "observation-id-v1"}:
         prompt = (
@@ -1158,10 +1216,24 @@ def _cost_optimization_comparison(
         }
         and baseline_projection == candidate_projection == "standard-v1"
     )
-    identity_checks["singleVariable"] = observation_projection or prompt_contract
+    luna_prompt_contract = (
+        workflow_changed
+        and baseline_workflow == "alert-first-v5"
+        and candidate_workflow in {
+            "luna-evidence-calibrated-v6",
+            "luna-bounded-evidence-v7",
+            _LUNA_OWNER_MECHANISM_PROFILE,
+        }
+        and baseline_projection == candidate_projection == "standard-v1"
+    )
+    identity_checks["singleVariable"] = (
+        observation_projection or prompt_contract or luna_prompt_contract
+    )
     single_variable = (
         "public_tool_addressing_projection"
         if observation_projection
+        else "luna_prompt_evidence_contract"
+        if luna_prompt_contract
         else "bounded_diagnostic_prompt_contract"
         if prompt_contract
         else "invalid_multiple_or_missing_factors"
@@ -1281,13 +1353,20 @@ def _cloudops_optimization_receipt(
 ) -> dict[str, object]:
     comparison = _cost_optimization_comparison(baseline, candidate)
     variable = str(comparison["singleVariable"])
-    if variable == "bounded_diagnostic_prompt_contract":
+    if variable in {
+        "bounded_diagnostic_prompt_contract",
+        "luna_prompt_evidence_contract",
+    }:
         factor = {
             "layer": "prompt",
             "name": variable,
             "before": comparison["baselineWorkflowProfile"],
             "after": comparison["candidateWorkflowProfile"],
-            "why": "bound retrieval while requiring direct root-cause and competing-diagnosis evidence",
+            "why": (
+                "adapt the weaker model to exact Tool addressing, affected-object semantics, and evidence-backed latency discrimination"
+                if variable == "luna_prompt_evidence_contract"
+                else "bound retrieval while requiring direct root-cause and competing-diagnosis evidence"
+            ),
         }
     else:
         factor = {
@@ -1402,6 +1481,7 @@ def _build_batch_trace(
         )
     ]
     evidence: list[EvidenceRef] = []
+    evidence_keys: set[tuple[str, str]] = set()
     for index, item in enumerate(items, start=1):
         if not isinstance(item, Mapping):
             continue
@@ -1425,9 +1505,17 @@ def _build_batch_trace(
             observation_sha = str(summary.get("observationSha256") or "")
             case_id = str(args.get("caseId") or "") if isinstance(args, Mapping) else ""
             if observation_sha and case_id:
+                evidence_id = str(
+                    summary.get("evidenceId")
+                    or f"evidence:cloudops:{observation_sha[:32]}"
+                )
+                evidence_key = (evidence_id, "tool_observation")
+                if evidence_key in evidence_keys:
+                    continue
+                evidence_keys.add(evidence_key)
                 evidence.append(
                     EvidenceRef(
-                        evidence_id=str(summary.get("evidenceId") or f"evidence:cloudops:{observation_sha[:32]}"),
+                        evidence_id=evidence_id,
                         source_kind="tool",
                         source_ref=(
                             "fixture://cloudops/"
@@ -1489,6 +1577,9 @@ def main(argv: list[str] | None = None) -> int:
             "quality-bounded-v3",
             "quality-staged-v4",
             "alert-first-v5",
+            "luna-evidence-calibrated-v6",
+            "luna-bounded-evidence-v7",
+            _LUNA_OWNER_MECHANISM_PROFILE,
         ),
         default="baseline-v1",
     )

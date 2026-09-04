@@ -53,7 +53,10 @@ vi.mock('react-virtuoso', () => ({
   }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  delete window.pawBrowserHost;
+  cleanup();
+});
 
 describe('PAWOS Agent Session structural migration', () => {
   it('lets the newest terminal turn end composer busy state even when an older turn is stale-running', () => {
@@ -1954,6 +1957,127 @@ describe('PAWOS Agent Session structural migration', () => {
       sourceRoute: `/agent?session=${sessionId}`,
       refs: { surface: 'session-workspace' },
     });
+  });
+
+  it('keeps workspace-managed permission updates scoped and confirms the selected roots', async () => {
+    const sessionId = 'session-managed-permission';
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.mode.update': (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        return {
+          ok: true,
+          session: {
+            ...liveSession(),
+            id: sessionId,
+            executionMode: body.executionMode,
+            toolProfileVersion: body.toolProfileVersion,
+            workspaceRoots: body.workspaceRoots,
+          },
+        };
+      },
+    });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{
+              ...liveSession(),
+              id: sessionId,
+              workspaceRoots: ['/work/paw'],
+            }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
+    const picker = document.querySelector('.agent-picker-popover');
+    expect(picker).not.toBeNull();
+    await user.click(within(picker as HTMLElement).getByRole('radio', { name: /^工作区托管/ }));
+
+    await waitFor(() => expect(transport.requests.find((request) => (
+      request.pathId === 'agent.session.mode.update'
+    ))).toMatchObject({
+      body: {
+        mode: 'coordinator',
+        executionMode: 'workspace_managed',
+        workspaceRoots: ['/work/paw'],
+        toolProfileVersion: 'control-center-v1',
+        toolAllowlistMode: 'profile',
+        workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
+      },
+    }));
+    useAgentLiveStore.getState().clear(sessionId);
+  });
+
+  it('rebinds a managed Session through the installed Electron directory picker', async () => {
+    const sessionId = 'session-managed-electron';
+    const transport = new StubControlTransport('mock', {
+      ...idleSessionRoutes(),
+      'agent.session.mode.update': (request: ControlRequest) => ({
+        ok: true,
+        session: {
+          ...liveSession(),
+          id: sessionId,
+          ...(request.body as Record<string, unknown>),
+        },
+      }),
+    });
+    Object.defineProperty(transport, 'pickFiles', { configurable: true, value: undefined });
+    const pickWorkspaceDirectory = vi.fn(async () => ({
+      name: 'paw-next',
+      path: '/work/paw-next',
+    }));
+    window.pawBrowserHost = {
+      kind: 'electron-webview',
+      partition: 'persist:paw-browser',
+      pickWorkspaceDirectory,
+    } as unknown as NonNullable<typeof window.pawBrowserHost>;
+    render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider>
+          <PawSessionWorkspace
+            record={{
+              ...liveSession(),
+              id: sessionId,
+              executionMode: 'workspace_managed',
+              toolProfileVersion: 'control-center-v1',
+              workspaceRoots: ['/work/paw-old'],
+            }}
+            recordId={sessionId}
+            onNewWork={vi.fn()}
+            onSessionCreated={vi.fn()}
+            onSessionUpdated={vi.fn()}
+          />
+        </TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: '对话权限：工作区托管' }));
+    const workspace = screen.getByRole('region', { name: '授权工作区' });
+    await user.click(within(workspace).getByRole('button', { name: '更改目录' }));
+
+    await waitFor(() => expect(pickWorkspaceDirectory).toHaveBeenCalledTimes(1));
+    expect(transport.requests.find((request) => (
+      request.pathId === 'agent.session.mode.update'
+    ))).toMatchObject({
+      body: {
+        mode: 'coordinator',
+        executionMode: 'workspace_managed',
+        workspaceRoots: ['/work/paw-next'],
+        toolProfileVersion: 'control-center-v1',
+        toolAllowlistMode: 'profile',
+        workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
+      },
+    });
+    useAgentLiveStore.getState().clear(sessionId);
   });
 
   it('offers an explicit workspace replacement instead of resync for a removed Session directory', async () => {

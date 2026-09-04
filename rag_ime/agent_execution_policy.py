@@ -87,16 +87,17 @@ def read_only_policy_active(session: Mapping[str, object]) -> bool:
 
 
 def room_unrestricted_policy_active(session: Mapping[str, object]) -> bool:
-    """Return whether a confirmed Room may skip per-Tool approval prompts.
+    """Return whether an active Room may skip per-Tool approval prompts.
 
     This flag is intentionally not accepted by ``normalize_execution_mode``;
     it is a Room overlay on top of the ordinary Session policy. That keeps
     read-only Sessions and the four existing Session modes compatible while
-    making the Room migration's runtime consumer explicit.
+    making Room dispatch the single user execution action.
     """
 
     return (
-        str(session.get("roomExecutionMode") or "").strip().lower()
+        session.get("roomDispatchAuthorized") is True
+        and str(session.get("roomExecutionMode") or "").strip().lower()
         == ROOM_UNRESTRICTED_EXECUTION_MODE
     )
 
@@ -365,21 +366,20 @@ def approval_strategy(
         tool_profile_version=session.get("toolProfileVersion"),
     )
     effect = (str(tool), str(operation))
+    if mode == READ_ONLY_EXECUTION_MODE:
+        return APPROVAL_DENY
+    if room_unrestricted_policy_active(session):
+        # An explicit Room dispatch is already the user's execution action.
+        # Do not insert either a second human prompt or an approval-model turn
+        # into the Room hot path.  Applicability checks, workspace scope and
+        # execution receipts remain owned by the Tool implementation.
+        if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
+            return APPROVAL_DENY
+        return APPROVAL_AUTO
     if auto_approve_policy_active(session):
         return APPROVAL_AUTO
     if full_access_policy_active(session):
         return APPROVAL_ASK
-    if mode == READ_ONLY_EXECUTION_MODE:
-        return APPROVAL_DENY
-    if room_unrestricted_policy_active(session):
-        # Room-unrestricted mode is still bounded by the workspace lease,
-        # parameter validation, Stop/cancel path, and native hard fences for
-        # product/runtime replacement.
-        if effect in _ALWAYS_MANUAL_EFFECTS:
-            return APPROVAL_ASK
-        if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
-            return APPROVAL_DENY
-        return APPROVAL_AUTO
     if mode == PER_ACTION_EXECUTION_MODE:
         return APPROVAL_ASK
     if mode == FULL_TRUST_EXECUTION_MODE:
@@ -428,6 +428,18 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
     )
     auto_profile = auto_approve_policy_active(session)
     scope_granted = workspace_scope_is_granted(session)
+    if (
+        room_unrestricted_policy_active(session)
+        and mode != READ_ONLY_EXECUTION_MODE
+    ):
+        return (
+            f'<execution-mode mode="{mode}" room-mode="room_unrestricted">\n'
+            "本轮由活跃 Room 的显式任务分派授权。所有有效 Tool 操作直接执行，"
+            "不创建任何二次裁决或确认流程。\n"
+            "目标是否适用、参数与工作区是否有效、操作系统权限、Tool/Runtime 实际执行结果、"
+            "Stop/取消和审计仍由对应 Runtime 如实返回；失败必须作为 Tool 失败呈现，不能伪装成审批等待。\n"
+            "</execution-mode>"
+        )
     guidance = {
         READ_ONLY_EXECUTION_MODE: (
             "本轮是只读模式。可以直接查看、检索和分析；\n"
@@ -486,13 +498,6 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
             "人工批准（ASK），该批准是确认而不是权限拒绝。\n"
             "除了这一项一确认，PAW 的路径、工作区范围、审批预览哈希、Luna 审批和其他权限"
             "门槛均已关闭；操作系统/TCC、Unix 权限和 Tool 可用性仍是最终边界。"
-        )
-    elif room_unrestricted_policy_active(session) and mode != READ_ONLY_EXECUTION_MODE:
-        guidance = (
-            f"{guidance}\n"
-            "本轮已由 Room 显式确认 room_unrestricted：已披露且在授权边界内的 Tool 连续执行，"
-            "不再逐 Tool 弹出审批；工作区范围、参数校验、系统权限、取消/停止和审计仍然有效，"
-            "触发硬围栏的运行时替换等操作仍需人工处理。"
         )
     suffix = (
         ""

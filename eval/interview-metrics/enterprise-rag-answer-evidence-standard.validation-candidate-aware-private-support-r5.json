@@ -1,0 +1,82 @@
+{
+  "calibrationLabel": "post-validation-calibrated",
+  "calibrationSource": {
+    "auditId": "enterprise-rag-answer-evidence-sol-candidate-aware-private-support-audit-r5-20260905",
+    "auditReceiptSha256": "e7288c940550029cac324ddc8acc34cabc84ea0d8381600da7a6e3149a5866a6",
+    "proposalSha256": "08f84b56731981340a36c11d747f7759d1aa9d9f35ae15fb5543a6858f409b35"
+  },
+  "candidateBlind": false,
+  "chunkManifest": {
+    "chunkCount": 29846,
+    "manifestSha256": "6d5239b3b684c037d38eab4150bfb35d9d6393350cb9cff31bdc2c0b19d550cf",
+    "serialization": {
+      "canonicalJson": {
+        "encoding": "utf-8",
+        "ensureAscii": false,
+        "separators": [
+          ",",
+          ":"
+        ],
+        "sortKeys": true
+      },
+      "recordFields": [
+        "documentId",
+        "chunkOrdinal",
+        "contentSha256",
+        "headingSha256",
+        "page"
+      ],
+      "recordOrder": [
+        "documentId:unicode-code-point-ascending",
+        "chunkOrdinal:integer-ascending"
+      ],
+      "schemaVersion": "rag-ime.rag-chunk-manifest-serialization.v1"
+    },
+    "serializationSha256": "71e0628a4052019064929397feb17e532d2ce9d9f115d5d01a22a5f7e950cedd"
+  },
+  "chunking": {
+    "config": {
+      "overlap": 160,
+      "respectHeadings": true,
+      "respectPageBoundaries": true,
+      "separator": "",
+      "size": 1200,
+      "strategy": "general"
+    },
+    "configSha256": "d2731ede6a3e42afb473ba43c22c7fb6cdc3a041a587be71df77b0baf128a19c",
+    "dependencySurface": [
+      {
+        "qualifiedName": "rag_ime.knowledge_library.parsers._normalize_text",
+        "sourceSha256": "08d29fb737c7a79b679af8679a883d9bd9a5e87aa0e4e68431a7d2bf9aae0b2f"
+      },
+      {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_block_heading",
+        "sourceSha256": "a708c44c68974d4e70bd127c821b6a6daddc942184a61e3c0832bab5fbb53c6c"
+      },
+      {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_document",
+        "sourceSha256": "b4d254d72c3e99bbc7bf7d5ba4776db440b191ab5e15621661a5899c25867655"
+      },
+      {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_record",
+        "sourceSha256": "2f3463f11fb29c73d70b4c6c15717fc9696cf9a571fa214f83290cad13776ed9"
+      },
+      {
+        "qualifiedName": "rag_ime.knowledge_library.service._chunk_strategy_blocks",
+        "sourceSha256": "ebed9f30e0bd7c125a230a949dfcc56951ff074080c47662b959fa9e69dc7e79"
+      }
+    ],
+    "dependencySurfaceSha256": "45c5e2ec57ee16b2aa60b170a3f142cbcdc839e4f8a40082a23a3431b46f60a0"
+  },
+  "corpus": {
+    "documentCount": 5101,
+    "preparedArtifactSha256": "833641681e44b1f1490249ced863568a48723b7ca4995628e17493d333bc6f96",
+    "preparedSourceSha256": "6e4ebaf07fb51d06e6d8707f21a211884a75c7a6c22916e47b27a52f23a3bedb"
+  },
+  "evaluationScope": "validation-development-only",
+  "heldOutOpened": false,
+  "manifestSha256": "9d76af0508ec4bcdada0fa49ce31061acec12b37b9d10d990efff094d5e2ee46",
+  "schemaVersion": "rag-ime.rag-answer-evidence-standard.v2",
+  "standardId": "enterprise-rag-answer-evidence-validation-candidate-aware-private-support-r5-20260905",
+  "unbiasedPromotionClaimAllowed": false
+}

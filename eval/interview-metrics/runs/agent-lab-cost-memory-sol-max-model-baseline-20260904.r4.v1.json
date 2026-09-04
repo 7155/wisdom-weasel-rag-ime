@@ -1,0 +1,42 @@
+{
+  "authority": "pricing_estimate",
+  "billing": {
+    "status": "not_provided"
+  },
+  "boundaries": [
+    "This is a deterministic estimate from caller-supplied pricing and reported usage, not a provider bill.",
+    "No billed receipt was supplied; billing status remains not_provided.",
+    "No savings amount is inferred by this receipt."
+  ],
+  "estimate": {
+    "cachedInputCostUsd": "0",
+    "outputCostUsd": "0.06846",
+    "totalCostUsd": "0.269115",
+    "uncachedInputCostUsd": "0.200655"
+  },
+  "pricingIdentity": {
+    "currency": "USD",
+    "model": "gpt-5.6-sol",
+    "pricingId": "pricing:sha256:80067d14fbe8bca408a20e095bb0b4323b390bb14031157fb83bc7eb6490a04e",
+    "provider": "openai-codex",
+    "publishedDate": "2026-07-30",
+    "rates": {
+      "cachedInputUsd": "0.5",
+      "outputUsd": "30",
+      "uncachedInputUsd": "5"
+    },
+    "sourceSha256": "b8ed197ec0376af86fe581dd7f4783b2d94580c1554881a92ee7f542c2050225",
+    "sourceUrl": "https://developers.openai.com/api/docs/pricing",
+    "unit": "per_million_tokens"
+  },
+  "receiptSha256": "9f9dd23f51b9ebf03047b366850db7729fbc414f638ee2534c7c1cc5e9f6a074",
+  "schemaVersion": "rag-ime.agent-lab-cost-receipt.v1",
+  "usage": {
+    "available": true,
+    "cachedInputTokens": 0,
+    "outputTokens": 2282,
+    "sourceRef": "public-report:memory-maintenance-sol-max-concise-contract-model-baseline-20260904-r4",
+    "sourceSha256": "a53c10317030b9986d027d2b27f2ec58028c7222a29a41b936e8edc6c34b7620",
+    "uncachedInputTokens": 40131
+  }
+}

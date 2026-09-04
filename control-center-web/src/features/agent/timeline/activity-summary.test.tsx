@@ -1673,6 +1673,34 @@ describe('Agent tool activity details', () => {
     expect(onOpenApproval).toHaveBeenCalledOnce();
     expect(onOpenApproval).toHaveBeenCalledWith(activity);
   });
+
+  it('does not present an authorized Room execution bridge as an approval step', () => {
+    const activity = toolActivity('tool_started', 'running', {
+      toolCallId: 'call-room-policy',
+      toolName: 'workspace_shell',
+      approvalId: 'approval-room-policy',
+      payloadSha256: 'c'.repeat(64),
+      state: 'pending',
+      causalMetadata: {
+        roomBound: true,
+        roomId: 'room-1',
+        rootId: 'root-1',
+        dispatchId: 'dispatch-1',
+        generation: 4,
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(row).toHaveTextContent('运行项目命令');
+    expect(row).not.toHaveTextContent('权限确认');
+    expect(row).not.toHaveTextContent('审批状态');
+    expect(row.querySelector('.agent-activity-row__approval')).toBeNull();
+  });
+
   it('shows a fail-closed approval inside its owning tool row', () => {
     const activity = toolActivity('tool_finished', 'failed', {
       toolCallId: 'call-owned-approval',

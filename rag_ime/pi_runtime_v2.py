@@ -943,9 +943,22 @@ class PiRuntimeHostManager:
                 skill_allowlist is not None
                 and not bool(self._host_capabilities.get("sessionSkillAllowlist"))
             ):
-                raise PiRuntimeError(
-                    "Pi Runtime Host does not support per-Session Skill allowlists"
+                skill_systems_enabled = (
+                    not memory_curation_session
+                    and (
+                        bool(session.get("piSkillsEnabled", False))
+                        or bool(session.get("codexSkillsEnabled", False))
+                    )
                 )
+                if skill_allowlist and skill_systems_enabled:
+                    raise PiRuntimeError(
+                        "Pi Runtime Host does not support per-Session Skill allowlists"
+                    )
+                # The allowlist adds no authority when both Skill systems are
+                # disabled (Memory curation also forces them off). Older Hosts
+                # do not understand the field, so omit it while retaining
+                # fail-closed behavior whenever a Skill system can load it.
+                skill_allowlist = None
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roomEventFixture } from '@/test/fixtures/events';
 import { MockControlTransport } from '@/test/mock-transport';
 import type { ControlEventObserver, ControlSubscription } from '@/platform/transport';
+import { HttpControlTransport } from '@/platform/http-transport';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import { roomProjection, useRoomLiveStore } from '../state/live-store';
 import { useRoomLiveSession } from './use-room-live-session';
@@ -323,13 +324,97 @@ describe('useRoomLiveSession snapshot recovery', () => {
     expect(onConnectionRestored).toHaveBeenCalledTimes(1);
     expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'recovering');
 
-    await act(async () => vi.advanceTimersByTimeAsync(999));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
     expect(snapshotCalls).toBe(1);
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await act(async () => vi.advanceTimersByTimeAsync(250));
     await flushAsyncWork();
     expect(snapshotCalls).toBe(2);
     expect(onConnectionRestored).toHaveBeenCalledTimes(2);
     expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    unmount();
+  });
+
+  it('does not declare an HTTP Room stream synced from headers alone', async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/events')) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }), { headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      const snapshot = url.pathname.endsWith('/conversation')
+        ? roomConversationSnapshot([], 0, 0)
+        : roomSnapshot([]);
+      return new Response(JSON.stringify(snapshot), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+    const restored = vi.fn();
+    const recoveryState = vi.fn();
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: restored,
+      onConnectionError: vi.fn(),
+      onRecoveryState: recoveryState,
+      onEvents: vi.fn(),
+    }));
+
+    await waitFor(() => expect(streamController).toBeDefined());
+    expect(restored).not.toHaveBeenCalled();
+    expect(recoveryState).toHaveBeenLastCalledWith('room-1', 'recovering');
+    streamController?.enqueue(new TextEncoder().encode(': heartbeat\n'));
+    await Promise.resolve();
+    expect(restored).not.toHaveBeenCalled();
+    streamController?.enqueue(new TextEncoder().encode('\n'));
+    await waitFor(() => expect(restored).toHaveBeenCalledTimes(1));
+    expect(recoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    unmount();
+  });
+
+  it('honors a transport Retry-After hint before reloading one Room owner', async () => {
+    vi.useFakeTimers();
+    let snapshotCalls = 0;
+    const transport = new ReconnectableMockControlTransport({
+      routes: {
+        'agent.room.snapshot': () => {
+          snapshotCalls += 1;
+          return roomSnapshot([]);
+        },
+      },
+    });
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored: vi.fn(),
+      onConnectionError: vi.fn(),
+      onRecoveryState: vi.fn(),
+      onEvents: vi.fn(),
+    }));
+    await flushAsyncWork();
+
+    act(() => transport.disconnect(
+      Object.assign(new Error('event stream capacity'), { retryAfterMs: 2_000 }),
+    ));
+    await act(async () => vi.advanceTimersByTimeAsync(1_999));
+    expect(snapshotCalls).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(251));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(2);
+    expect(transport.activeSubscriptionCount()).toBe(1);
     unmount();
   });
 
@@ -416,9 +501,9 @@ describe('useRoomLiveSession snapshot recovery', () => {
     await flushAsyncWork();
     expect(snapshotCalls).toBe(1);
     expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'recovering');
-    await act(async () => vi.advanceTimersByTimeAsync(999));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
     expect(snapshotCalls).toBe(1);
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await act(async () => vi.advanceTimersByTimeAsync(250));
     await flushAsyncWork();
     expect(snapshotCalls).toBe(2);
     expect(onConnectionRestored).toHaveBeenCalledTimes(1);
@@ -457,10 +542,11 @@ describe('useRoomLiveSession snapshot recovery', () => {
     expect(snapshotCalls).toBe(1);
   });
 
-  it('resets the recovery delay after a successful open', async () => {
+  it('resets the recovery delay only after the recovered stream delivers an event', async () => {
     vi.useFakeTimers();
     let snapshotCalls = 0;
     const transport = new ReconnectableMockControlTransport({
+      stableOnOpen: false,
       routes: {
         'agent.room.snapshot': () => {
           snapshotCalls += 1;
@@ -483,16 +569,31 @@ describe('useRoomLiveSession snapshot recovery', () => {
 
     await flushAsyncWork();
     act(() => transport.disconnect(new Error('first interruption')));
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
     await flushAsyncWork();
     expect(snapshotCalls).toBe(2);
 
     act(() => transport.disconnect(new Error('second interruption')));
-    await act(async () => vi.advanceTimersByTimeAsync(999));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
     expect(snapshotCalls).toBe(2);
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
     await flushAsyncWork();
     expect(snapshotCalls).toBe(3);
+    await flushAsyncWork();
+    expect(transport.activeSubscriptionCount()).toBe(1);
+
+    const stableEvent = Object.fromEntries(Object.entries(
+      roomEventFixture(1, 'participant_status', { status: 'working' }),
+    ).filter(([key]) => key !== 'streamKind'));
+    act(() => {
+      expect(transport.emit('agent.room.events', stableEvent)).toBe(1);
+      transport.disconnect(new Error('interruption after stable event'));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(snapshotCalls).toBe(3);
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    await flushAsyncWork();
+    expect(snapshotCalls).toBe(4);
     unmount();
   });
 
@@ -568,9 +669,9 @@ describe('useRoomLiveSession snapshot recovery', () => {
     }));
 
     await flushAsyncWork();
-    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_250));
     await flushAsyncWork();
-    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    await act(async () => vi.advanceTimersByTimeAsync(2_250));
     await flushAsyncWork();
     expect(snapshotCalls).toBe(3);
     expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'failed');

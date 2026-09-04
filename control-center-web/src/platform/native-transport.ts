@@ -187,7 +187,14 @@ export class NativeControlTransport implements ControlTransport {
         });
         return true;
       })
-      .then((opened) => { if (opened) observer.open?.(request.lastEventId); })
+      .then((opened) => {
+        if (!opened) return;
+        observer.open?.(request.lastEventId);
+        // The native host acknowledges subscribe only after its SSE source is
+        // established, so this preserves native open semantics while hooks no
+        // longer mistake raw browser HTTP headers for recovery.
+        observer.stable?.(request.lastEventId);
+      })
       .catch((error) => {
         if (this.subscriptions.get(subscriptionId) === subscription) this.subscriptions.delete(subscriptionId);
         observer.error?.(asError(error));
@@ -446,7 +453,10 @@ export class NativeControlTransport implements ControlTransport {
       // receipt from the native host. Leave it unchanged when a consumer
       // throws so replay can redeliver the event.
       subscription.lastEventId = deliveredEventId;
-      if (!isSnapshotRequired(event)) subscription.uncommittedEventId = undefined;
+      if (!isSnapshotRequired(event)) {
+        subscription.uncommittedEventId = undefined;
+        subscription.observer.stable?.(subscription.lastEventId);
+      }
       subscription.reconnectAttempt = 0;
     } catch (error) {
       subscription.observer.error?.(asError(error));
@@ -501,6 +511,7 @@ export class NativeControlTransport implements ControlTransport {
           subscription.deliveryBlocked = false;
           subscription.uncommittedEventId = undefined;
           subscription.observer.open?.(subscription.lastEventId);
+          subscription.observer.stable?.(subscription.lastEventId);
         })
         .catch((error) => {
           subscription.observer.error?.(asError(error));

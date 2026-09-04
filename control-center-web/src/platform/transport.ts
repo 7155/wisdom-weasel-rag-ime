@@ -41,6 +41,8 @@ export interface ControlReconnectNotice {
 export interface ControlEventObserver<Event = UiControlEvent | unknown> {
   next(event: Event): void;
   open?(lastEventId: string): void;
+  /** The stream delivered a complete keepalive frame or a validated durable event. */
+  stable?(lastEventId: string): void;
   error?(error: Error): void;
   reconnect?(notice: ControlReconnectNotice): void;
   snapshotRequired?(event: Event): void;

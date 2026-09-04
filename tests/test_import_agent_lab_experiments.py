@@ -100,13 +100,21 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
                 write=False,
                 imported_at_ms=123,
             )
-        self.assertEqual(receipt["experimentCount"], 26)
+        self.assertEqual(receipt["experimentCount"], 34)
         self.assertIn("cloudops.agent-validation-and-falsification.v1", receipt["experimentIds"])
         self.assertIn("agent-lab.model-cost.luna-max-validation.v1", receipt["experimentIds"])
         self.assertIn("enterpriseops-csm.preloaded-tool-cost.v1", receipt["experimentIds"])
         self.assertIn("enterprise-rag.sol-max-budget3-r3.v1", receipt["experimentIds"])
         self.assertIn("cloudops.alert-first-sol-max.v1", receipt["experimentIds"])
         self.assertIn("memory.maintenance-concise-contract-sol-max.v1", receipt["experimentIds"])
+        self.assertIn("enterpriseops-csm.luna-model-only-r5.v1", receipt["experimentIds"])
+        self.assertIn("enterpriseops-csm.luna-prompt-adaptation-r7.v1", receipt["experimentIds"])
+        self.assertIn("memory.maintenance-luna-model-only-r1.v1", receipt["experimentIds"])
+        self.assertIn("cloudops.alert-first-luna-model-only-r1.v1", receipt["experimentIds"])
+        self.assertIn("cloudops.luna-owner-mechanism-prompt-r5.v1", receipt["experimentIds"])
+        self.assertIn("enterprise-rag.sol-max-standard-r6.v1", receipt["experimentIds"])
+        self.assertIn("enterprise-rag.luna-model-only-standard-r6.v1", receipt["experimentIds"])
+        self.assertIn("enterprise-rag.luna-prompt-v4-standard-r6.v1", receipt["experimentIds"])
 
     def test_projects_preview_ablation_rows_from_evidence_and_run_receipts(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -115,7 +123,7 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
         # Exercise the real receipt/evidence projection instead of merely
         # reading the already-materialized canonical rows.  The checked-in
         # ledger is the release artifact; this stripped copy models an older
-        # checkout that still needs the importer to add the 12 rows.
+        # checkout that still needs the importer to add the derived rows.
         canonical = json.loads(ledger.read_text(encoding="utf-8"))
         required_ids = {
             "enterprise-rag.tag-graph-readiness.v1",
@@ -163,7 +171,7 @@ class ImportAgentLabExperimentsTests(unittest.TestCase):
             "memory.maintenance-shadow-v4": ("rejected", "reject", 5),
             "cloudops.runtime-selection-repair-retry3.v1": ("rejected", "reject", 12),
         }
-        self.assertEqual(len(by_id), 26)
+        self.assertEqual(len(by_id), 34)
         for experiment_id, (status, decision, case_count) in required.items():
             experiment = by_id[experiment_id]
             self.assertEqual(experiment["status"], status, experiment_id)

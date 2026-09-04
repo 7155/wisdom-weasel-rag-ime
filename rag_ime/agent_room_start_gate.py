@@ -49,6 +49,21 @@ class AgentRoomStartGateStore:
             ).fetchall()
         return [str(row["room_id"]) for row in rows]
 
+    def retire_pending(self) -> int:
+        """Delete every obsolete Room start prompt in one durable operation.
+
+        Room dispatch is now the user authorization boundary.  This storage-
+        level cleanup deliberately has no Room list/page dependency: an older
+        installation may have left more pending rows than one directory page
+        can project during Host startup.
+        """
+
+        with self._connect(immediate=True) as conn:
+            cursor = conn.execute(
+                "DELETE FROM agent_room_start_gates WHERE status = 'pending'"
+            )
+            return max(0, int(cursor.rowcount))
+
     def claim(
         self,
         *,

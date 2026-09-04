@@ -47,6 +47,7 @@ import { publicToolResultView } from '../timeline/public-tool-result';
 import { SubagentLaunchPanel } from '../delegation/SubagentLaunchPanel';
 import type { SessionSummary } from '../types';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
+import { uniqueToolActivities } from '../tool-count';
 import { AgentBackgroundJobsView } from './AgentBackgroundJobsView';
 import { AgentWorkflowPanel } from './AgentWorkflowPanel';
 import { ContextXraySections } from './ContextXrayPanel';
@@ -196,7 +197,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           <>
             <div className="agent-status-turn agent-todo-turn-summary" data-state={view.turn.status}>
               <TurnStateIcon status={view.turn.status} />
-              <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view)}</small></span>
+              <span><strong>当前回合 · {turnStatusLabel(view.turn.status)}</strong><small>{turnProgressLabel(view, logicalTools)}</small></span>
             </div>
             {view.tasks.length ? <CurrentTurnTaskPlan tasks={view.tasks} /> : null}
           </>
@@ -949,13 +950,9 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
       }
     }
   }
-  const tools = turn.activityIds
+  const tools = uniqueToolActivities(turn.activityIds
     .map((id) => projection.activitiesById[id])
-    .filter((activity): activity is AgentActivityProjection => Boolean(
-      activity
-      && activity.kind.startsWith('tool_')
-      && text(activity.payload.toolId ?? activity.payload.toolName) !== 'todo',
-    ));
+    .filter((activity): activity is AgentActivityProjection => Boolean(activity)));
   return {
     turn,
     tasks: uniqueBy(tasks, (item) => item.id),
@@ -991,15 +988,20 @@ function statusPanelLabel(
   return '等待新回合';
 }
 
-function turnProgressLabel(view: StatusPanelProjection): string {
+function turnProgressLabel(
+  view: StatusPanelProjection,
+  logicalTools: LogicalToolActivity[],
+): string {
   if (!view.turn) return '';
   if (view.tasks.length) {
     const completed = view.tasks.filter((task) => task.status === 'completed').length;
     return `${completed} / ${view.tasks.length} 项待办已完成`;
   }
-  if (view.tools.length) {
-    const completed = view.tools.filter((tool) => tool.status === 'completed').length;
-    return `${completed} / ${view.tools.length} 个关键步骤已完成`;
+  if (logicalTools.length) {
+    const completed = logicalTools.filter((tool) => (
+      (tool.kind === 'attempts' ? tool.activities.at(-1) : tool.activities[0])?.status === 'completed'
+    )).length;
+    return `${completed} / ${logicalTools.length} 个关键步骤已完成`;
   }
   return view.turn.status === 'queued' || view.turn.status === 'running' ? '正在等待下一条可公开进度' : '本轮没有结构化待办';
 }

@@ -20,8 +20,16 @@ from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Event, RLock, Thread, Timer, current_thread, main_thread
-from typing import Any, Mapping
+from threading import (
+    BoundedSemaphore,
+    Event,
+    RLock,
+    Thread,
+    Timer,
+    current_thread,
+    main_thread,
+)
+from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .active_rag_service import (
@@ -10280,68 +10288,36 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         return True
 
     def _stream_management_events(self) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        try:
-            for chunk in self.service.management.events.subscribe():
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
-            return
+        self._stream_sse(
+            lambda: self.service.management.events.subscribe(),
+            cache_control="no-cache",
+        )
 
     def _stream_agent_events(self, session_id: str, *, after_event_id: str = "") -> None:
-        stream = self.service.agent.subscribe_events(
-            session_id,
-            after_event_id=after_event_id,
+        self._stream_sse(
+            lambda: self.service.agent.subscribe_events(
+                session_id,
+                after_event_id=after_event_id,
+            ),
+            cache_control="no-cache",
         )
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-        try:
-            for chunk in stream:
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
 
     def _stream_agent_control_events(self, *, after_event_id: str = "") -> None:
-        stream = self.service.agent.subscribe_control_events(after_event_id=after_event_id)
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-        try:
-            for chunk in stream:
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
+        self._stream_sse(
+            lambda: self.service.agent.subscribe_control_events(
+                after_event_id=after_event_id
+            ),
+            cache_control="no-cache",
+        )
 
     def _stream_agent_room_events(self, room_id: str, *, after_event_id: str = "") -> None:
-        stream = self.service.agent.subscribe_room_events(
-            room_id,
-            after_event_id=after_event_id,
+        self._stream_sse(
+            lambda: self.service.agent.subscribe_room_events(
+                room_id,
+                after_event_id=after_event_id,
+            ),
+            cache_control="no-cache",
         )
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-        try:
-            for chunk in stream:
-                self.wfile.write(chunk)
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            return
 
     def _stream_observation_events(
         self,
@@ -10349,23 +10325,98 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         after_event_id: str = "",
         filters: Mapping[str, object] | None = None,
     ) -> None:
-        stream = self.service.agent.subscribe_observations(
-            after_event_id=after_event_id,
-            filters=filters,
+        self._stream_sse(
+            lambda: self.service.agent.subscribe_observations(
+                after_event_id=after_event_id,
+                filters=filters,
+            ),
+            cache_control="no-cache, no-store",
+            nosniff=True,
         )
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache, no-store")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
+
+    def _stream_sse(
+        self,
+        stream_factory: Callable[[], object],
+        *,
+        cache_control: str,
+        nosniff: bool = False,
+    ) -> None:
+        """Commit HTTP 200 only after the event source yields a frame.
+
+        Subscription generators intentionally perform their SQLite cursor and
+        replay validation on first iteration. Sending headers before that
+        boundary turns a database failure into a misleading 200 + early EOF,
+        which clients interpret as a stable connection and rapidly retry.
+        """
+
+        iterator: object | None = None
+        close: object = None
+        acquire_slot = getattr(self.server, "acquire_event_stream", None)
+        release_slot = getattr(self.server, "release_event_stream", None)
+        slot_acquired = True
         try:
-            for chunk in stream:
+            if callable(acquire_slot):
+                slot_acquired = bool(acquire_slot())
+            if not slot_acquired:
+                self._write_event_stream_unavailable(
+                    error_code="event_stream_capacity",
+                    retry_after="2",
+                )
+                return
+            try:
+                iterator = iter(stream_factory())  # type: ignore[arg-type]
+                close = getattr(iterator, "close", None)
+                first_chunk = next(iterator)  # type: ignore[arg-type]
+            except StopIteration:
+                self._write_event_stream_unavailable()
+                return
+            except Exception:
+                self._write_event_stream_unavailable()
+                return
+            if not isinstance(first_chunk, bytes):
+                self._write_event_stream_unavailable()
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", cache_control)
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            if nosniff:
+                self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(first_chunk)
+            self.wfile.flush()
+            for chunk in iterator:  # type: ignore[union-attr]
                 self.wfile.write(chunk)
                 self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
+        except (BrokenPipeError, ConnectionResetError, OSError, sqlite3.Error):
             return
+        finally:
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            if slot_acquired and callable(release_slot):
+                release_slot()
+
+    def _write_event_stream_unavailable(
+        self,
+        *,
+        error_code: str = "event_stream_unavailable",
+        retry_after: str = "1",
+    ) -> None:
+        self._write_json(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            {
+                "schemaVersion": "rag-ime.event-stream-error.v1",
+                "ok": False,
+                "errorCode": error_code,
+                "error": "Realtime event stream is temporarily unavailable",
+                "recovery": {"action": "retry"},
+            },
+            headers={"Retry-After": retry_after},
+        )
 
     def _management_post_security_error(
         self,
@@ -10470,13 +10521,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             validate_contract(response, route.response_contract)
         self._write_json(HTTPStatus(route.status), response)
 
-    def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
+    def _write_json(
+        self,
+        status: HTTPStatus,
+        payload: dict[str, object],
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
+            for name, value in (headers or {}).items():
+                self.send_header(str(name), str(value))
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -10526,6 +10585,32 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
     # accept queue bounded but large enough that the Runtime Host's per-Session
     # concurrency limiter (currently 8) does not race the server backlog.
     request_queue_size = 64
+    max_event_streams = 64
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._event_stream_slots = BoundedSemaphore(self.max_event_streams)
+        self._event_stream_lock = RLock()
+        self._active_event_streams = 0
+
+    def acquire_event_stream(self) -> bool:
+        acquired = self._event_stream_slots.acquire(blocking=False)
+        if acquired:
+            with self._event_stream_lock:
+                self._active_event_streams += 1
+        return acquired
+
+    def release_event_stream(self) -> None:
+        with self._event_stream_lock:
+            if self._active_event_streams <= 0:
+                return
+            self._active_event_streams -= 1
+        self._event_stream_slots.release()
+
+    @property
+    def active_event_streams(self) -> int:
+        with self._event_stream_lock:
+            return self._active_event_streams
 
     def handle_error(self, request: object, client_address: object) -> None:
         error = sys.exc_info()[1]

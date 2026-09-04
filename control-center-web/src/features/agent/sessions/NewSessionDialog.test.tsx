@@ -20,7 +20,9 @@ describe('NewSessionDialog', () => {
 
     const dialog = screen.getByRole('dialog', { name: '新建对话' });
     expect(within(dialog).getByRole('radio', { name: /不预选项目/ })).toBeChecked();
+    expect(within(dialog).getAllByRole('radio', { name: /只读|全权限|工作区托管|全自动/ })).toHaveLength(4);
     expect(within(dialog).getByRole('radio', { name: /全自动/ })).toBeEnabled();
+    expect(within(dialog).getByText('只允许查看、搜索、分析，以及隔离无网络的只读验证命令；写入与应用动作阻止')).toBeVisible();
     await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
 
     expect(onCreate).toHaveBeenCalledWith({
@@ -28,6 +30,52 @@ describe('NewSessionDialog', () => {
       workspaceRoots: [],
       executionMode: 'per_action',
       toolProfileVersion: 'control-center-full-access-v1',
+    });
+  });
+
+  it('does not treat the system root as a project-scoped workspace', () => {
+    render(
+      <NewSessionDialog
+        open
+        projects={['/']}
+        defaultRoots={['/']}
+        onOpenChange={() => {}}
+        onPickRoots={vi.fn().mockResolvedValue(null)}
+        onCreate={vi.fn().mockResolvedValue(true)}
+      />,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: '新建对话' });
+    const projects = within(dialog).getByRole('radiogroup', { name: '对话的起始项目' });
+    expect(within(projects).getAllByRole('radio')).toHaveLength(1);
+    expect(within(projects).getByRole('radio', { name: /不预选项目/ })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: /工作区托管/ })).toBeDisabled();
+  });
+
+  it('creates a workspace-managed conversation with an explicit scope receipt', async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn().mockResolvedValue(true);
+    render(
+      <NewSessionDialog
+        open
+        projects={['/Volumes/work/learnA']}
+        defaultRoots={['/Volumes/work/learnA']}
+        onOpenChange={() => {}}
+        onPickRoots={vi.fn().mockResolvedValue(null)}
+        onCreate={onCreate}
+      />,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: '新建对话' });
+    await user.click(within(dialog).getByRole('radio', { name: /工作区托管/ }));
+    await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
+
+    expect(onCreate).toHaveBeenCalledWith({
+      title: '新对话',
+      workspaceRoots: ['/Volumes/work/learnA'],
+      executionMode: 'workspace_managed',
+      toolProfileVersion: 'control-center-v1',
+      workspaceScopeConfirmed: true,
     });
   });
 

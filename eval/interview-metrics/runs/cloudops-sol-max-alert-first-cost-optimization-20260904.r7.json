@@ -3,7 +3,7 @@
   "candidateRunId": "cloudops-sol-max-alert-first-candidate-20260904-r7",
   "claimBoundary": [
     "validation-only source-local candidate",
-    "cost verdict uses comparable Provider usage categories, not a Provider bill",
+    "cost verdict is reconciled against retained per-request Runtime usage.cost receipts and one hashed pricing source; it is not a Provider bill",
     "elapsed time is recorded but is not a Keep gate",
     "installed and foreground acceptance remain separate"
   ],
@@ -12,7 +12,16 @@
     "baselineWorkflowProfile": "baseline-v1",
     "candidateContextProjection": "standard-v1",
     "candidateWorkflowProfile": "alert-first-v5",
-    "costAuthority": "same-provider-model-usage-categories",
+    "costAuthority": "runtime_cost_reconciled",
+    "costComparison": {
+      "baselineCostReceipt": "agent-lab-cost-cloudops-sol-max-standard-baseline-20260904.r2.v1.json",
+      "baselineTotalUsd": "9.715217",
+      "candidateCostReceipt": "agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json",
+      "candidateTotalUsd": "4.568166",
+      "decreasePercent": "52.979269531498893",
+      "pricingId": "pricing:sha256:80067d14fbe8bca408a20e095bb0b4323b390bb14031157fb83bc7eb6490a04e",
+      "providerBillAvailable": false
+    },
     "costGatePassed": true,
     "decision": "keep",
     "elapsedIsKeepGate": false,
@@ -72,23 +81,23 @@
     "singleVariable": "bounded_diagnostic_prompt_contract",
     "usage": {
       "cachedInputTokens": {
-        "after": 4586112,
-        "before": 12995072,
-        "delta": -8408960,
+        "after": 4359552,
+        "before": 12583424,
+        "delta": -8223872,
         "nonIncreasing": true,
         "strictlyDecreased": true
       },
       "outputTokens": {
-        "after": 35356,
-        "before": 40601,
+        "after": 35012,
+        "before": 40257,
         "delta": -5245,
         "nonIncreasing": true,
         "strictlyDecreased": true
       },
       "uncachedInputTokens": {
-        "after": 279774,
-        "before": 450205,
-        "delta": -170431,
+        "after": 267606,
+        "before": 443159,
+        "delta": -175553,
         "nonIncreasing": true,
         "strictlyDecreased": true
       }
@@ -106,6 +115,7 @@
     "name": "bounded_diagnostic_prompt_contract",
     "why": "bound retrieval while requiring direct root-cause and competing-diagnosis evidence"
   },
+  "pricingBoundary": "The USD comparison is recomputed from one hashed pricing source and reconciled exactly to retained per-request Runtime usage.cost receipts. It is not a Provider bill.",
   "projection": {
     "profile": "standard-v1",
     "projectedChars": 602815,
