@@ -10,6 +10,31 @@ from scripts import build_paw_backend_web_model_package as package_builder
 
 
 class PawBackendWebModelPackageTests(unittest.TestCase):
+    def test_source_filter_uses_repository_relative_private_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temp:
+            root = Path(raw_temp) / "private" / "pi"
+            source = root / "src" / "host.ts"
+            source.parent.mkdir(parents=True)
+            source.write_text("export const version = 1;\n")
+            staging = Path(raw_temp) / "staging"
+            receipts: list[package_builder.SourceReceipt] = []
+            package_builder.add_text_source(
+                staging, receipts, repository="pi", category="runtime",
+                root=root, path=source, target="code/pi/src/host.ts",
+                git_status="tracked-clean", roots=(root,),
+            )
+            self.assertEqual((staging / "code/pi/src/host.ts").read_text(), source.read_text())
+            self.assertEqual(receipts[0].source_relative, "src/host.ts")
+            secret = root / "private" / "hidden.ts"
+            secret.parent.mkdir()
+            secret.write_text("private fixture")
+            with self.assertRaisesRegex(ValueError, "ineligible required source"):
+                package_builder.add_text_source(
+                    staging, receipts, repository="pi", category="runtime",
+                    root=root, path=secret, target="code/pi/private/hidden.ts",
+                    git_status="tracked-clean", roots=(root,),
+                )
+
     def test_agent_lab_index_projects_current_four_project_evidence(self) -> None:
         sources = (
             "eval/interview-metrics/runs/agent-lab-optimal-path-enterpriseops-luna-prompt-20260904.v1.json",

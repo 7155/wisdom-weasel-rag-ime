@@ -487,10 +487,15 @@ def status_for(relative: str, tracked: set[str], statuses: dict[str, str]) -> st
     return "tracked-clean" if relative in tracked else "outside-git-index"
 
 
-def eligible(path: Path) -> bool:
+def eligible(path: Path, *, root: Path) -> bool:
     if not path.is_file() or path.is_symlink() or path.name in EXCLUDED_NAMES:
         return False
-    if any(part in EXCLUDED_PARTS for part in path.parts):
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+    # Filter package contents, not host ancestors such as macOS /private/tmp.
+    if any(part in EXCLUDED_PARTS for part in relative.parts):
         return False
     if path.name not in TEXT_NAMES and path.suffix.lower() not in TEXT_SUFFIXES:
         return False
@@ -543,7 +548,7 @@ def add_text_source(
     git_status: str,
     roots: tuple[Path, ...],
 ) -> None:
-    if not eligible(path):
+    if not eligible(path, root=root):
         raise ValueError(f"ineligible required source: {path}")
     raw = path.read_bytes()
     if b"\0" in raw:
@@ -573,17 +578,17 @@ def add_text_source(
 
 
 def walk_eligible(root: Path) -> list[Path]:
-    return sorted((path for path in root.rglob("*") if eligible(path)), key=lambda path: path.relative_to(root).as_posix())
+    return sorted((path for path in root.rglob("*") if eligible(path, root=root)), key=lambda path: path.relative_to(root).as_posix())
 
 
 def collect_tutti_prompt_paths(tutti_root: Path) -> list[Path]:
     selected: set[Path] = set()
     for relative in TUTTI_EXACT_PROMPT_FILES:
         path = tutti_root / relative
-        if path.is_file() and eligible(path):
+        if path.is_file() and eligible(path, root=tutti_root):
             selected.add(path)
     for pattern in TUTTI_PROMPT_GLOBS:
-        selected.update(path for path in tutti_root.glob(pattern) if eligible(path))
+        selected.update(path for path in tutti_root.glob(pattern) if eligible(path, root=tutti_root))
     for relative_root in TUTTI_SCAN_ROOTS:
         scan_root = tutti_root / relative_root
         if not scan_root.is_dir():
@@ -604,10 +609,10 @@ def collect_tutti_duoagent_paths(tutti_root: Path) -> list[Path]:
     selected: set[Path] = set()
     for relative in TUTTI_DUOAGENT_EXACT_FILES:
         path = tutti_root / relative
-        if path.is_file() and eligible(path):
+        if path.is_file() and eligible(path, root=tutti_root):
             selected.add(path)
     for pattern in TUTTI_DUOAGENT_GLOBS:
-        selected.update(path for path in tutti_root.glob(pattern) if eligible(path))
+        selected.update(path for path in tutti_root.glob(pattern) if eligible(path, root=tutti_root))
     for relative_root in TUTTI_DUOAGENT_SCAN_ROOTS:
         scan_root = tutti_root / relative_root
         if not scan_root.is_dir():
@@ -1091,7 +1096,7 @@ is not a Keep gate in the current experiments.
 
 ## Current result matrix
 
-| Project | Causal path | Quality result | Runtime cost evidence | Decision |
+| Project | Causal path | Quality result | Estimated cost evidence | Decision |
 | --- | --- | --- | --- | --- |
 | EnterpriseOps | Sol baseline -> Luna model-only Reject -> Luna + general Prompt | 3/3 tasks, 31/31 host verifiers, 0 Tool failures | {cost_text(metric(enterpriseops_baseline, 'apiCostUsd'), metric(enterpriseops_candidate, 'apiCostUsd'))} | [Keep]({enterpriseops_link}) |
 | CloudOps | Sol baseline -> Luna model-only Reject -> Luna + owner/mechanism Prompt | CA 12/12, Top3JRA 12/12, FA/JRA 11/12, 0 Tool failures | {cost_text(metric(cloudops_baseline, 'apiCostUsd'), metric(cloudops_candidate, 'apiCostUsd'))} | [Keep]({cloudops_link}) |
@@ -1115,6 +1120,17 @@ model route, the general Prompt adaptation changed the estimate from
 All cost numbers are deterministic estimates or Runtime-reconciled estimates
 from reported usage and a versioned pricing source. `providerBillAvailable` is
 false, so use "estimated API cost" in a resume or interview, not "actual bill".
+Memory uses a bound report-usage estimate; the other three projects use
+Runtime-reconciled estimates. These are different evidence levels.
+
+## Remaining product work
+
+The current RAG optimization view has aggregate metrics and before/after factor
+descriptions, but lacks a recorded patch Diff, a linked baseline Trace diagnosis,
+and public per-Case before/after bodies. Factor names are not a patch Diff. The
+typed workbench is a read-only evidence projection, not an implemented generic
+counterfactual-probe or repair-operator engine. Review these gaps explicitly;
+do not infer their completion from the Keep decision or the included UI source.
 
 ## How to inspect the evidence
 

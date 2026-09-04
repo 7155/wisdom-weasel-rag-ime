@@ -2,10 +2,9 @@
 
 Updated: 2026-09-05
 
-This file is the bounded project focus set, not a task database. Domain status
-is one of `proposed`, `active`, `blocked`, `completed`, or `cancelled`.
-Runtime activity, owners, worktree state, and Tool progress are read from
-their authoritative projections.
+This bounded focus set uses `proposed`, `active`, `blocked`, `completed`, or
+`cancelled`. Read Runtime activity, owners, worktree state, and Tool progress
+from authoritative projections.
 
 ## Evidence Boundary
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-04T02:49:31.258Z",
+  "generatedAt": "2026-09-04T22:49:00.559796+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -15,11 +15,11 @@
   "groups": {
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 53
+      "pathCount": 106
     },
     "evaluation_audit": {
       "description": "Frozen Agent evaluations, public-safe receipts, importers, and cost/quality gates.",
-      "pathCount": 38
+      "pathCount": 116
     },
     "project_harness": {
       "description": "Bounded root project context and accepted cross-outcome rules.",
@@ -39,27 +39,32 @@
     },
     "session_runtime": {
       "description": "Authoritative backend Session, Provider, Trace, and durable-message contracts.",
-      "pathCount": 26
+      "pathCount": 45
     },
     "verification": {
       "description": "Backend and cross-layer regression tests.",
-      "pathCount": 21
+      "pathCount": 54
+    },
+    "product_installation": {
+      "description": "Product build, install, and installed evidence selection.",
+      "pathCount": 4
     }
   },
   "summary": {
-    "pathCount": 158,
+    "pathCount": 345,
     "dispositionCounts": {
-      "keep_release": 158
+      "keep_release": 345
     },
     "groupCounts": {
       "project_harness": 3,
       "requirement_evidence": 15,
-      "control_center_release_ui": 53,
-      "evaluation_audit": 38,
+      "control_center_release_ui": 106,
+      "evaluation_audit": 116,
       "session_room_skill_flow": 1,
-      "session_runtime": 26,
+      "session_runtime": 45,
       "release_scope": 1,
-      "verification": 21
+      "product_installation": 4,
+      "verification": 54
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -75,7 +80,8 @@
     "routeOwnership": "passed",
     "requirementIndex": "241 requirements structurally valid; assessment remains conservative",
     "localInstall": "pending formal install from the final clean commit",
-    "foregroundAcceptance": "pending installed-app canary"
+    "foregroundAcceptance": "pending installed-app canary",
+    "inventoryRefresh": "Reconciled 345 committed base-to-HEAD paths at b1a12d97; local packaging-only edits are not installed product changes. Prior test receipts below remain historical."
   },
   "items": [
     {
@@ -86,11 +92,18 @@
       "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
     },
     {
-      "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md",
+      "path": "DECISIONS.md",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "requirement_evidence",
-      "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
+      "group": "project_harness",
+      "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
+    },
+    {
+      "path": "OUTCOMES.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
     },
     {
       "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENTS.md",
@@ -100,14 +113,14 @@
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
     },
     {
-      "path": "control-center-web/docs/pawos/README.md",
+      "path": "control-center-web/docs/pawos/PAWOS_REQUIREMENT_STATUS.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "requirement_evidence",
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
     },
     {
-      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
+      "path": "control-center-web/docs/pawos/README.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "requirement_evidence",
@@ -191,11 +204,32 @@
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
     },
     {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
+    },
+    {
+      "path": "control-center-web/src/app/preview-control-transport.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/app/preview-eval-lab-data.ts",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/build-channel.d.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/contracts/agent-reducer.test.ts",
@@ -217,6 +251,27 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-approval.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-lab-cost-receipt.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-lab-cost-request.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/contracts/generated/agent-lab-experiment.v1.ts",
@@ -275,11 +330,74 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/agent/composer/AgentComposer.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/PermissionPicker.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ToolPicker.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/ToolPicker.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/permission-policy.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/composer/tool-policy.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/index.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/features/agent/optimistic-attachments.ts",
       "status": "added",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/features/agent/public-error.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/public-error.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/features/agent/runtime/use-agent-live-session.test.tsx",
@@ -296,6 +414,20 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/agent/sessions/NewSessionDialog.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/sessions/NewSessionDialog.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/features/agent/state/live-store.test.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -310,6 +442,20 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/agent/status/AgentStatusPanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/ActivitySummary.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/AgentTimeline.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -317,11 +463,53 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/agent-turn-work-model.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/chat-rendering.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/features/agent/tool-count.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/tool-count.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/types.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/agent/types.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/features/conversation-ui/components/VirtualTranscript.tsx",
@@ -373,6 +561,13 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/experiment-audit-html.test.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/experiment-audit-html.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -394,6 +589,69 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/features/eval-lab/optimization/OptimizationWorkbench.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/optimization/OptimizationWorkbench.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/optimization/optimization-view-model.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/optimization/optimization-workbench.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/optimization/use-linked-trace-report.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemoryCurationWorkbench.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/memory/MemorySteward.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/RoomStatusPanel.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/rooms-feature.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/features/rooms/runtime/use-room-live-session.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -406,6 +664,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/timeline/RoomTurn.activity.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/features/rooms/timeline/RoomTurn.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/features/trace-agent/html-export.ts",
@@ -464,6 +736,13 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawAgentApp.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawAgentHome.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -478,11 +757,32 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/paw-os/apps/PawContextTrace.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/paw-os/apps/PawRoomConversation.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomWorkspace.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawRoomWorkspace.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/paw-os/apps/PawSessionWorkspace.test.tsx",
@@ -497,6 +797,62 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/PawSystemAppsMigrated.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/apps/room-gravity-harness.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawBackgroundActivity.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawDesktop.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/shell/PawDesktop.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/paw-os/styles/paw-os-shell-migrated-v1.css",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "control-center-web/src/platform/http-transport.test.ts",
@@ -527,6 +883,13 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/platform/recovery-policy.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/platform/routes.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -548,6 +911,27 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
+      "path": "control-center-web/src/platform/transport.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/product-identity.test.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
+      "path": "control-center-web/src/product-identity.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
+    },
+    {
       "path": "control-center-web/src/test/mock-transport.test.ts",
       "status": "modified",
       "disposition": "keep_release",
@@ -562,21 +946,14 @@
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
     },
     {
-      "path": "DECISIONS.md",
+      "path": "control-center-web/vite.config.ts",
       "status": "modified",
       "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
+      "group": "control_center_release_ui",
+      "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
       "path": "eval/interview-metrics/AGENT_LAB_INTERVIEW_DATA_20260901.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "evaluation_audit",
-      "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
-    },
-    {
-      "path": "eval/interview-metrics/agent-experiments.v1.json",
       "status": "modified",
       "disposition": "keep_release",
       "group": "evaluation_audit",
@@ -597,11 +974,221 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "eval/interview-metrics/agent-experiments.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.v2.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-attention-r6.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-private-support-r5.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-aware-revenue-category-r4.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/enterprise-rag-answer-evidence-standard.validation-candidate-citation-revision-r3.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/openai-codex-runtime-pricing-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
       "path": "eval/interview-metrics/runs/agent-lab-aed-openai-codex-model-open-probe-20260904.v1.json",
       "status": "added",
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-alert-first-model-only-20260904.r1.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-cloudops-luna-max-owner-mechanism-prompt-20260904.r5.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-alert-first-20260904.r7.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-cloudops-sol-max-standard-baseline-20260904.r2.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-coverage-balanced-v4-20260904.r4.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-model-only-v19-20260904.r4.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-luna-max-scope-grounded-v5-20260905.r1.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r1.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterprise-rag-sol-max-frozen-v19-20260904.r4.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-explicit-enum-prompt-20260904.r7.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-luna-max-preloaded-model-only-20260904.r5.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-compact-baseline-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-enterpriseops-sol-max-preloaded-current-runtime-20260904.r8.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-memory-luna-max-model-only-20260904.r1.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-concise-contract-20260904.r3.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-full-json-baseline-20260904.r2.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-cost-memory-sol-max-model-baseline-20260904.r4.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-optimal-path-cloudops-luna-prompt-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/agent-lab-optimal-path-enterpriseops-luna-prompt-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/cloudops-luna-max-alert-first-model-only-case-projection-20260904.r1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/cloudops-luna-max-owner-mechanism-prompt-case-projection-20260904.r5.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "eval/interview-metrics/runs/cloudops-sol-max-alert-first-candidate-20260904.r7.json",
@@ -688,6 +1275,167 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "eval/interview-metrics/runs/cloudops-sol-to-luna-owner-mechanism-prompt-20260904.r1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-candidate-citation-r3-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-coverage-balanced-v4-r4-private-support-r5-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-candidate-citation-r3-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-model-only-v19-r4-private-support-r5-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-scope-grounded-v5-preflight-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-luna-max-standard-v2-offline-rescore-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-r3-v4-preflight-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-attention-r6-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-candidate-citation-r3-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-sol-max-frozen-v19-r4-private-support-r5-exact-offline-rescore-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-attention-r6-calibration-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-private-support-r5-calibration-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-aware-revenue-category-r4-calibration-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-candidate-citation-revision-r3-calibration-20260905.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-standard-v2-validation-calibration-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-preflight-20260904.v2.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-preflight-20260904.v3.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-preflight-20260904.v4.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-validation-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-answer-evidence-three-stage-validation-20260904.v2.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
       "path": "eval/interview-metrics/runs/enterprise-rag-golden-qrels-v5-validation-calibration-20260903.v1.json",
       "status": "added",
       "disposition": "keep_release",
@@ -700,6 +1448,13 @@
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterprise-rag-luna-max-prompt-only-v3-preflight-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "eval/interview-metrics/runs/enterprise-rag-sol-max-budget3-agentic-lane-20260904.r3.json",
@@ -716,6 +1471,55 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-explicit-enum-prompt-validation-20260904.r7.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-preloaded-model-only-validation-20260904.r5.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-role-tenure-preloaded-validation-20260904.r2.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-role-tenure-preloaded-validation-20260904.r3.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-role-tenure-preloaded-validation-20260904.r4.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-role-tenure-preloaded-validation-20260904.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-luna-selected-catalog-prompt-validation-20260904.r6.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
       "path": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-compact-validation-20260904.v1.json",
       "status": "added",
       "disposition": "keep_release",
@@ -730,6 +1534,13 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-current-runtime-validation-20260904.r8.v1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
       "path": "eval/interview-metrics/runs/enterpriseops-csm-sol-max-preloaded-validation-20260904.v1.json",
       "status": "added",
       "disposition": "keep_release",
@@ -742,6 +1553,20 @@
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "eval/interview-metrics/runs/enterpriseops-csm-sol-to-luna-prompt-adaptation-20260904.r1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "eval/interview-metrics/runs/memory-maintenance-luna-max-model-only-20260904.r1.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "eval/interview-metrics/runs/memory-maintenance-sol-max-compact-json-candidate-20260904.r2.json",
@@ -765,6 +1590,13 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "eval/interview-metrics/runs/memory-maintenance-sol-max-concise-contract-model-baseline-20260904.r4.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
       "path": "eval/interview-metrics/runs/memory-maintenance-sol-max-full-json-baseline-20260904.r2.json",
       "status": "added",
       "disposition": "keep_release",
@@ -779,11 +1611,11 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
-      "path": "eval/interview-metrics/TRACE_EVAL_COMPATIBILITY.md",
-      "status": "modified",
+      "path": "eval/interview-metrics/runs/memory-maintenance-sol-to-luna-model-only-optimization-20260904.r1.json",
+      "status": "added",
       "disposition": "keep_release",
       "group": "evaluation_audit",
-      "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "integrations/pi/skills/facilitate-room/SKILL.md",
@@ -793,18 +1625,67 @@
       "reason": "Keep the bounded Pi Skill routing correction used by the current Session and Room contract."
     },
     {
-      "path": "OUTCOMES.md",
-      "status": "modified",
-      "disposition": "keep_release",
-      "group": "project_harness",
-      "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
-    },
-    {
       "path": "rag_ime/activity_timeline_evaluation.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/agent_approval_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_capability_catalog.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_command_receipts.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_event_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_events.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_execution_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_external_approval.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_lab_cost.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "rag_ime/agent_lab_experiments.py",
@@ -814,6 +1695,20 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/agent_lab_optimal_path.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "rag_ime/agent_memory_context.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
       "path": "rag_ime/agent_prompt_application.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -821,11 +1716,46 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/agent_prompt_delivery.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
       "path": "rag_ime/agent_protocol.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/agent_room_prompt_context.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_room_prompt_support.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_room_start_gate.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_rooms.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
       "path": "rag_ime/agent_service.py",
@@ -856,11 +1786,11 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
-      "path": "rag_ime/agent_workspace_roots.py",
+      "path": "rag_ime/agent_tools.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
-      "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
       "path": "rag_ime/agent_workspace.py",
@@ -868,6 +1798,34 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/agent_workspace_roots.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-approval.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-lab-cost-receipt.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-lab-cost-request.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "rag_ime/contracts/json/agent-lab-experiment.v1.json",
@@ -905,6 +1863,20 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/db/migrations/0187_agent_approval_room_execution_fence.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/db/migrations/0188_agent_approval_terminal_projections.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -924,6 +1896,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/observability.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
       "path": "rag_ime/personal_memory_luna_evaluation.py",
@@ -961,6 +1940,13 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/rag_benchmark_agent.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
       "path": "rag_ime/system_terminal.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -982,11 +1968,53 @@
       "reason": "Record the exact base-to-candidate path inventory used by the formal installation."
     },
     {
+      "path": "scripts/build_agent_lab_cost_receipt_from_runtime_db.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/build_control_center_web.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_installation",
+      "reason": "Retain the committed build and install ownership fixes and installed evidence selection."
+    },
+    {
       "path": "scripts/build_managed_pi_runtime_v2.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "scripts/build_paw_backend_model_bundle.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/build_paw_backend_web_model_package.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/build_paw_os_electron_host.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_installation",
+      "reason": "Retain the committed build and install ownership fixes and installed evidence selection."
+    },
+    {
+      "path": "scripts/build_paw_pi_runtime_model_bundle.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "scripts/check_interview_agent_experiments.py",
@@ -1010,11 +2038,32 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "scripts/install_sidecar_launch_agent.sh",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "product_installation",
+      "reason": "Retain the committed build and install ownership fixes and installed evidence selection."
+    },
+    {
+      "path": "scripts/list_agent_lab_install_receipts.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "product_installation",
+      "reason": "Retain the committed build and install ownership fixes and installed evidence selection."
+    },
+    {
       "path": "scripts/promote_rag_agent_validation.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
+    },
+    {
+      "path": "scripts/rescore_enterprise_rag_answer_evidence.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
       "path": "scripts/run_cloudops_agent_eval.py",
@@ -1038,11 +2087,88 @@
       "reason": "Keep the frozen evaluation runners, public-safe receipts, cost gates, and interview evidence projection."
     },
     {
+      "path": "scripts/verify_enterprise_rag_answer_evidence_candidate_citation_revision.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/verify_enterprise_rag_answer_evidence_standard_v2.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/verify_enterprise_rag_attention_standard.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/verify_enterprise_rag_private_support_standard.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "scripts/verify_enterprise_rag_revenue_category_standard.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "evaluation_audit",
+      "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "tests/fixtures/agent/agent-approval.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
       "path": "tests/test_activity_timeline_evaluation.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_agent_approval_exactly_once.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_capability_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_events.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_execution_policy.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_lab_cost.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
       "path": "tests/test_agent_lab_experiment_store.py",
@@ -1052,6 +2178,41 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_agent_lab_optimal_path.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_memory_context.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_room_start_gate.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_room_work_service.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_rooms.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
       "path": "tests/test_agent_service.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -1059,11 +2220,130 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_agent_tool_runtime_contracts.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_tools.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_build_agent_lab_cost_receipt_from_runtime_db.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
       "path": "tests/test_build_managed_pi_runtime_v2.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_build_paw_backend_web_model_package.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_cloudops_luna_prompt_receipts.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_control_center_cutover.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_database_migrations.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_debug_management_api.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_answer_evidence_candidate_citation_revision.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_attention_standard.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_luna_prompt_v3.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_luna_prompt_v4.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_luna_prompt_v5.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_private_support_standard.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_revenue_category_standard.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_enterprise_rag_runtime_cost_export.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_eval_lab.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
       "path": "tests/test_eval_lab_evidence.py",
@@ -1094,11 +2374,32 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
+      "path": "tests/test_launch_agent_script.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
       "path": "tests/test_memory_model_executor.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_model_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_pawos_requirement_status.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
       "path": "tests/test_personal_memory_luna_evaluation.py",
@@ -1115,14 +2416,14 @@
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
-      "path": "tests/test_pi_runtime_v2.py",
+      "path": "tests/test_pi_runtime.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
     },
     {
-      "path": "tests/test_pi_runtime.py",
+      "path": "tests/test_pi_runtime_v2.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
@@ -1134,6 +2435,20 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_rag_benchmark_agent.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_rescore_enterprise_rag_answer_evidence.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
       "path": "tests/test_run_cloudops_agent_eval.py",
