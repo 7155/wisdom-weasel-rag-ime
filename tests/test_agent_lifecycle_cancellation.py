@@ -1119,7 +1119,9 @@ class AgentLifecycleCancellationTests(unittest.TestCase):
         coordinator._lock = threading.RLock()
         coordinator._active_runs = {str(target_run["id"]): active}
         coordinator._cancellation_grace_ms = 50
-        coordinator._schedule_pending_result_contexts = lambda: None
+        coordinator._schedule_pending_result_contexts = (
+            lambda *, hydrate_artifacts: self.assertFalse(hydrate_artifacts)
+        )
 
         receipt = coordinator.cancel_causal(
             self.session_id,

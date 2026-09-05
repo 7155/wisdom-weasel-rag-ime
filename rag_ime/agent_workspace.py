@@ -11,6 +11,7 @@ import selectors
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -4083,12 +4084,16 @@ class WorkspaceHarness:
         output_path: str | Path | None = None,
         exit_status_path: str | Path | None = None,
         temporary_path: str | Path | None = None,
+        launch_receipt_path: str | Path | None = None,
+        launch_release_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
         return self._spawn_sandboxed(
             prepared,
             output_path=output_path,
             exit_status_path=exit_status_path,
             temporary_path=temporary_path,
+            launch_receipt_path=launch_receipt_path,
+            launch_release_path=launch_release_path,
         )
 
     @staticmethod
@@ -4111,13 +4116,10 @@ class WorkspaceHarness:
                 process,
                 prepared.timeout_seconds,
             )
-            exit_code = process.poll()
-            if exit_code is None:
-                self._terminate_group(process)
-                exit_code = process.wait(timeout=2)
-            else:
-                # A shell may otherwise leave an approved background descendant.
-                self._terminate_group(process)
+            # Keep the leader waitable until its descendants have been stopped.
+            # Reaping first would allow its PID/process-group number to be reused.
+            self._terminate_group(process)
+            exit_code = process.wait(timeout=2)
             if process.stdout is not None:
                 process.stdout.close()
         finally:
@@ -4163,6 +4165,8 @@ class WorkspaceHarness:
         output_path: str | Path | None = None,
         exit_status_path: str | Path | None = None,
         temporary_path: str | Path | None = None,
+        launch_receipt_path: str | Path | None = None,
+        launch_release_path: str | Path | None = None,
     ) -> SpawnedWorkspaceCommand:
         sandbox = self.sandbox_executable
         if (
@@ -4179,6 +4183,12 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError(
                 "resumable background commands require output and exit-status paths"
             )
+        startup_receipt = Path(launch_receipt_path) if launch_receipt_path is not None else None
+        startup_release = Path(launch_release_path) if launch_release_path is not None else None
+        if (startup_receipt is None) != (startup_release is None) or (
+            startup_receipt is not None and durable_exit is None
+        ):
+            raise WorkspaceHarnessError("background launch gate requires durable receipt and release paths")
         temporary_directory = None
         if durable_temporary is None:
             temporary_directory = tempfile.TemporaryDirectory(
@@ -4190,6 +4200,7 @@ class WorkspaceHarness:
             temporary = durable_temporary.resolve(strict=True)
         output_handle = None
         exit_handle = None
+        launch_handle = None
         try:
             sandbox_prefix: list[str] = []
             if prepared.unrestricted:
@@ -4258,6 +4269,18 @@ class WorkspaceHarness:
                 ]
                 stdout = output_handle
                 pass_fds = (exit_fd,)
+            if startup_receipt is not None and startup_release is not None:
+                launch_handle = startup_receipt.open("xb", buffering=0)
+                os.chmod(startup_receipt, 0o600)
+                launch_fd = launch_handle.fileno()
+                command = [
+                    sys.executable, str(Path(__file__).with_name("agent_background_launch.py")),
+                    "--receipt-fd", str(launch_fd), "--exit-fd", str(exit_fd),
+                    "--release-path", str(startup_release),
+                    "--command-sha256", hashlib.sha256(prepared.command.encode("utf-8")).hexdigest(),
+                    "--", *command,
+                ]
+                pass_fds = (*pass_fds, launch_fd)
             process = subprocess.Popen(
                 command,
                 cwd=prepared.cwd,
@@ -4277,12 +4300,16 @@ class WorkspaceHarness:
                 durable_output.unlink(missing_ok=True)
             if durable_exit is not None:
                 durable_exit.unlink(missing_ok=True)
+            if startup_receipt is not None:
+                startup_receipt.unlink(missing_ok=True)
             raise
         finally:
             if output_handle is not None:
                 output_handle.close()
             if exit_handle is not None:
                 exit_handle.close()
+            if launch_handle is not None:
+                launch_handle.close()
         return SpawnedWorkspaceCommand(
             process=process,
             temporary_directory=temporary_directory,
@@ -4311,7 +4338,7 @@ class WorkspaceHarness:
                     self._terminate_group(process)
                     break
                 events = selector.select(timeout=min(0.1, remaining))
-                if not events and process.poll() is not None:
+                if not events and self._exit_observed_without_reaping(process):
                     events = selector.select(timeout=0)
                     if not events:
                         break
@@ -4332,18 +4359,47 @@ class WorkspaceHarness:
         return b"".join(chunks), timed_out, output_limited
 
     @staticmethod
+    def _exit_observed_without_reaping(process: subprocess.Popen[bytes]) -> bool:
+        if process.returncode is not None:
+            return True
+        try:
+            return os.waitid(
+                os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            ) is not None
+        except ChildProcessError:
+            return True
+
+    @staticmethod
     def _terminate_group(process: subprocess.Popen[bytes]) -> None:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            return
-        try:
-            process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
+        # Popen's wait/poll use this same lock. Keep the child unreaped through
+        # both signals, including when another monitor is polling the handle.
+        # WNOWAIT observes exit without releasing the leader's PID generation.
+        with process._waitpid_lock:
+            if process.returncode is not None:
+                return
+            try:
+                os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            except ChildProcessError:
+                return
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                return
+            deadline = time.monotonic() + 0.5
+            while not WorkspaceHarness._exit_observed_without_reaping(process):
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+            # A TERM-resistant descendant can survive the leader's exit.
+            # Each command has a dedicated group from start_new_session=True.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
+        try:
+            process.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _lsp_references_evidence_digest(value: Mapping[str, object]) -> str:

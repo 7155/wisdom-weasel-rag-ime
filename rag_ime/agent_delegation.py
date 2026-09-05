@@ -893,6 +893,7 @@ class AgentDelegationStore:
         run_id: str,
         *,
         scheduled_at_ms: int | None = None,
+        sync_artifacts: bool = True,
     ) -> dict[str, object]:
         now = _timestamp(scheduled_at_ms)
         with self._connect() as conn:
@@ -914,10 +915,14 @@ class AgentDelegationStore:
                     raise KeyError(run_id)
                 if row["result_context_scheduled_at_ms"] is None:
                     raise ValueError("delegated run is not ready for result context")
-        self._sync_run_artifact(run_id)
-        return self.get_run(run_id)
+        if sync_artifacts:
+            self._sync_run_artifact(run_id)
+        return self.get_run(run_id, hydrate_artifacts=sync_artifacts)
 
-    def request_abort(self, identifier: str, *, requested_at_ms: int | None = None) -> list[str]:
+    def request_abort(
+        self, identifier: str, *, requested_at_ms: int | None = None,
+        sync_artifacts: bool = True,
+    ) -> list[str]:
         now = _timestamp(requested_at_ms)
         affected: list[str] = []
         with self._connect() as conn:
@@ -971,8 +976,9 @@ class AgentDelegationStore:
                 elif state == "running":
                     active.append(run_id)
             self._refresh_batch_conn(conn, batch_id, updated_at_ms=now)
-        for run_id in affected:
-            self._sync_run_artifact(run_id)
+        if sync_artifacts:
+            for run_id in affected:
+                self._sync_run_artifact(run_id)
         return active
 
     def request_causal_abort(
@@ -984,6 +990,7 @@ class AgentDelegationStore:
         source_revision: int,
         reason: str,
         requested_at_ms: int | None = None,
+        sync_artifacts: bool = True,
     ) -> dict[str, object]:
         if scope_kind != "goal":
             raise ValueError("unsupported delegation cancellation scope")
@@ -1100,8 +1107,9 @@ class AgentDelegationStore:
                     batch_id,
                     updated_at_ms=now,
                 )
-        for run_id in affected_run_ids:
-            self._sync_run_artifact(run_id)
+        if sync_artifacts:
+            for run_id in affected_run_ids:
+                self._sync_run_artifact(run_id)
         return {
             "requestId": normalized_request_id,
             "batchIds": batch_ids,
@@ -3107,12 +3115,14 @@ class AgentDelegationCoordinator:
         if not identifier:
             raise ValueError("runId or batchId is required")
         try:
-            batch = self.store.get_batch(identifier)
+            batch = self.store.get_batch(identifier, hydrate_artifacts=False)
         except KeyError:
-            run = self.store.get_run(identifier)
-            batch = self.store.get_batch(str(run["batchId"]))
+            run = self.store.get_run(identifier, hydrate_artifacts=False)
+            batch = self.store.get_batch(str(run["batchId"]), hydrate_artifacts=False)
         _assert_batch_owner(batch, parent_session_id)
-        active = self.store.request_abort(identifier)
+        # Cancellation is accepted by the primary rows. Advisory lifecycle
+        # materialization must not delay delivery to the running Pi Session.
+        active = self.store.request_abort(identifier, sync_artifacts=False)
         for run_id in active:
             self._request_cancel(run_id, state="aborted", reason="Stopped by user")
         deadline = (
@@ -3120,7 +3130,7 @@ class AgentDelegationCoordinator:
             + self._cancellation_grace_ms / 1000.0
             + 1.0
         )
-        current = self.store.get_batch(str(batch["id"]))
+        current = self.store.get_batch(str(batch["id"]), hydrate_artifacts=False)
         while (
             any(
                 str(run.get("state") or "") in _ACTIVE_STATES
@@ -3129,10 +3139,9 @@ class AgentDelegationCoordinator:
             and time.monotonic() < deadline
         ):
             time.sleep(0.01)
-            current = self.store.get_batch(str(batch["id"]))
-        self._schedule_pending_result_contexts()
-        current = self.store.get_batch(str(batch["id"]))
-        self.collect_expired_sessions(force=False)
+            current = self.store.get_batch(str(batch["id"]), hydrate_artifacts=False)
+        self._schedule_pending_result_contexts(hydrate_artifacts=False)
+        current = self.store.get_batch(str(batch["id"]), hydrate_artifacts=False)
         pending_run_ids = [
             str(run.get("id") or "")
             for run in current["runs"]
@@ -3166,6 +3175,7 @@ class AgentDelegationCoordinator:
             scope_id=scope_id,
             source_revision=source_revision,
             reason=reason,
+            sync_artifacts=False,
         )
         for run_id in selection["activeRunIds"]:
             self._request_cancel(
@@ -3179,7 +3189,7 @@ class AgentDelegationCoordinator:
             + 1.0
         )
         batches = [
-            self.store.get_batch(str(batch_id))
+            self.store.get_batch(str(batch_id), hydrate_artifacts=False)
             for batch_id in selection["batchIds"]
         ]
         while (
@@ -3192,10 +3202,10 @@ class AgentDelegationCoordinator:
         ):
             time.sleep(0.01)
             batches = [
-                self.store.get_batch(str(batch_id))
+                self.store.get_batch(str(batch_id), hydrate_artifacts=False)
                 for batch_id in selection["batchIds"]
             ]
-        self._schedule_pending_result_contexts()
+        self._schedule_pending_result_contexts(hydrate_artifacts=False)
         pending_run_ids = [
             str(run["id"])
             for batch in batches
@@ -4049,14 +4059,6 @@ class AgentDelegationCoordinator:
                 return
             active.cancellation_state = state
             active.cancellation_reason = _bounded_text(reason, maximum=240)
-        requested_at_ms = _timestamp(None)
-        self.store.checkpoint_supervision(
-            run_id,
-            phase="hard",
-            reason=reason,
-            requested_at_ms=requested_at_ms,
-            grace_ms=self._cancellation_grace_ms,
-        )
         threading.Thread(
             target=self._cancel_active_run,
             args=(run_id, active),
@@ -4069,13 +4071,27 @@ class AgentDelegationCoordinator:
             active.runtime.abort(active.child_session_id)
         except Exception:
             pass
-        if active.terminal.wait(self._cancellation_grace_ms / 1000.0):
-            return
-        if active.owns_runtime:
+        acknowledged = active.terminal.wait(self._cancellation_grace_ms / 1000.0)
+        if not acknowledged and active.owns_runtime:
             try:
                 active.runtime.stop()
             except Exception:
                 pass
+        # The decision is already in the active run and durable abort rows.
+        # Deliver cancellation and owned-runtime escalation before advisory I/O.
+        try:
+            self.store.checkpoint_supervision(
+                run_id,
+                phase="hard",
+                reason=active.cancellation_reason,
+                requested_at_ms=_timestamp(None),
+                grace_ms=self._cancellation_grace_ms,
+            )
+        except Exception:
+            # An unavailable projection must not strand forced cancellation.
+            pass
+        if acknowledged:
+            return
         try:
             # Publish the wake-up only after the forced supervision checkpoint
             # is durable. Otherwise the worker can finish and its caller can
@@ -4091,14 +4107,15 @@ class AgentDelegationCoordinator:
         finally:
             active.forced.set()
 
-    def _schedule_pending_result_contexts(self) -> None:
+    def _schedule_pending_result_contexts(self, *, hydrate_artifacts: bool = True) -> None:
         for pending in self.store.pending_result_context_runs():
-            batch = self.store.get_batch(str(pending["batchId"]))
-            run = self.store.get_run(str(pending["runId"]))
+            batch = self.store.get_batch(str(pending["batchId"]), hydrate_artifacts=hydrate_artifacts)
+            run = self.store.get_run(str(pending["runId"]), hydrate_artifacts=hydrate_artifacts)
             self._schedule_result_context(
                 str(pending["parentSessionId"]),
                 batch,
                 run,
+                hydrate_artifacts=hydrate_artifacts,
             )
 
     def _schedule_result_context(
@@ -4106,6 +4123,8 @@ class AgentDelegationCoordinator:
         parent_session_id: str,
         batch: Mapping[str, object],
         run: Mapping[str, object],
+        *,
+        hydrate_artifacts: bool = True,
     ) -> dict[str, object]:
         current = dict(run)
         if (
@@ -4120,13 +4139,17 @@ class AgentDelegationCoordinator:
                 # The child may finish after its Root generation was revoked.
                 # Persist a consumed delivery marker, but never enqueue a late
                 # result into the fenced parent Session.
-                return self.store.mark_result_context_scheduled(str(current["id"]))
+                return self.store.mark_result_context_scheduled(
+                    str(current["id"]), sync_artifacts=hydrate_artifacts,
+                )
         self.context_runtime.enqueue_delegated_result(
             parent_session_id=parent_session_id,
             batch=batch,
             run=current,
         )
-        return self.store.mark_result_context_scheduled(str(current["id"]))
+        return self.store.mark_result_context_scheduled(
+            str(current["id"]), sync_artifacts=hydrate_artifacts,
+        )
 
     def _publish_parent_progress(
         self,

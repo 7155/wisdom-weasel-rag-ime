@@ -47,6 +47,8 @@ The 2026-08-16 installed receipt covered activity, Steer, Stop, Tool closure,
 refresh, and bounded public Tool payloads. It is not a multi-day soak or public
 release claim.
 
+[Fault matrix](eval/execution-reliability/README.md): 45/45 source checks.
+
 ## O2 — Lightweight Room
 
 The accepted design is one Facilitator Session plus zero or more visible Partner

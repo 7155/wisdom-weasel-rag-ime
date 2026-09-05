@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-04T22:49:00.559796+00:00",
+  "generatedAt": "2026-09-05T23:06:24.345792+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -48,17 +48,22 @@
     "product_installation": {
       "description": "Product build, install, and installed evidence selection.",
       "pathCount": 4
+    },
+    "execution_reliability": {
+      "description": "Background ownership, safe process recovery, idempotency, cancellation, and reproducible fault evidence.",
+      "pathCount": 28
     }
   },
   "summary": {
-    "pathCount": 345,
+    "pathCount": 373,
     "dispositionCounts": {
-      "keep_release": 345
+      "keep_release": 373
     },
     "groupCounts": {
       "project_harness": 3,
       "requirement_evidence": 15,
       "control_center_release_ui": 106,
+      "execution_reliability": 28,
       "evaluation_audit": 116,
       "session_room_skill_flow": 1,
       "session_runtime": 45,
@@ -953,6 +958,13 @@
       "reason": "Retain the committed PAWOS interaction, identity, transport, and frontend regression changes."
     },
     {
+      "path": "eval/execution-reliability/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "eval/interview-metrics/AGENT_LAB_INTERVIEW_DATA_20260901.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -1639,6 +1651,27 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_background_jobs.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/agent_background_launch.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/agent_background_ownership.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "rag_ime/agent_capability_catalog.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -1651,6 +1684,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_delegation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
       "path": "rag_ime/agent_event_projection.py",
@@ -1700,6 +1740,20 @@
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "rag_ime/agent_lab_trial_execution.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/agent_lab_trials.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
       "path": "rag_ime/agent_memory_context.py",
@@ -1877,6 +1931,41 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/db/migrations/0189_agent_lab_scene_recipes.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/db/migrations/0190_agent_lab_golden.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/db/migrations/0191_agent_lab_trials.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/db/migrations/0192_background_job_request_identity.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/db/migrations/0193_background_job_owner_leases.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "rag_ime/debug_server.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2017,6 +2106,13 @@
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
     },
     {
+      "path": "scripts/check_agent_execution_fault_matrix.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "scripts/check_interview_agent_experiments.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2129,6 +2225,20 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/fixtures/agent_background_ownership_host.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/fixtures/agent_execution_fault_host.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "tests/test_activity_timeline_evaluation.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -2143,11 +2253,53 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_agent_background_job_idempotency.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_background_job_ownership.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_background_job_process_faults.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_background_jobs.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_background_launch_recovery.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "tests/test_agent_capability_policy.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_delegation_cancel_contention.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
       "path": "tests/test_agent_events.py",
@@ -2157,11 +2309,32 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_agent_execution_attempts.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_execution_network_faults.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
       "path": "tests/test_agent_execution_policy.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_execution_process_faults.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
       "path": "tests/test_agent_lab_cost.py",
@@ -2183,6 +2356,27 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_lab_trial_execution.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_lab_trials.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "tests/test_agent_lifecycle_cancellation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
       "path": "tests/test_agent_memory_context.py",
@@ -2491,6 +2685,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_workspace_job_idempotency_gateway.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
     },
     {
       "path": "tests/test_workspace_lsp.py",

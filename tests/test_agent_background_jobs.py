@@ -9,6 +9,7 @@ import time
 import unittest
 import threading
 from unittest.mock import patch
+from contextlib import nullcontext
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote
@@ -168,7 +169,10 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
             raw_output_path=raw_path,
         )
 
-        with patch.object(self.service, "_persist_live_progress"):
+        with (
+            patch.object(self.service, "_persist_live_progress"),
+            patch.object(self.service._ownership, "guard", side_effect=lambda _: nullcontext()),
+        ):
             self.service._drain_raw_output("bg_chunked", live, final=True)
         durable = log_path.read_text(encoding="utf-8")
 
@@ -190,7 +194,10 @@ class AgentBackgroundJobServiceTests(unittest.TestCase):
             raw_output_path=raw_path,
         )
 
-        with patch.object(self.service, "_persist_live_progress"):
+        with (
+            patch.object(self.service, "_persist_live_progress"),
+            patch.object(self.service._ownership, "guard", side_effect=lambda _: nullcontext()),
+        ):
             self.service._drain_raw_output("bg_utf8", live, final=True)
         durable = log_path.read_text(encoding="utf-8")
 

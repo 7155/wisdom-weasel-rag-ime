@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import codecs
 import hashlib
+import json
 import os
 import selectors
 import shutil
-import signal
 import sqlite3
 import subprocess
 import threading
@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .agent_execution_policy import unrestricted_workspace_policy_active
+from .agent_background_ownership import BackgroundJobLeaseLost, BackgroundJobOwnership
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import (
     PreparedWorkspaceCommand,
@@ -29,6 +30,10 @@ from .room_runtime_host_kill_gate import _process_identity, _signal_process_grou
 
 class AgentBackgroundJobError(RuntimeError):
     pass
+
+
+class AgentBackgroundJobConflict(AgentBackgroundJobError):
+    """An idempotency key was reused for a different execution request."""
 
 
 EventPublisher = Callable[..., object]
@@ -48,10 +53,13 @@ class _LiveJob:
     launched: SpawnedWorkspaceCommand | object | None
     log_path: Path
     max_run_seconds: int
+    job_id: str = ""
     session_id: str = ""
     raw_output_path: Path | None = None
     exit_status_path: Path | None = None
     temporary_path: Path | None = None
+    launch_receipt_path: Path | None = None
+    launch_release_path: Path | None = None
     pid: int = 0
     process_group_id: int = 0
     process_birth_token: str = ""
@@ -78,6 +86,7 @@ class AgentBackgroundJobService:
         log_root: str | Path | None = None,
         execution_owner: bool = True,
         sessions: AgentSessionStore | None = None,
+        lease_seconds: float = 10.0,
     ) -> None:
         self.db_path = Path(db_path)
         self.events = events
@@ -88,6 +97,10 @@ class AgentBackgroundJobService:
         self._lock = threading.RLock()
         self._live: dict[str, _LiveJob] = {}
         self._closed = False
+        self._ownership = BackgroundJobOwnership(self.db_path, lease_seconds=lease_seconds)
+        self._recovery_stop = threading.Event()
+        self._recovery_thread: threading.Thread | None = None
+        self._recovery_lock = threading.Lock()
 
     def initialize(self) -> None:
         self._ensure_log_root()
@@ -109,11 +122,43 @@ class AgentBackgroundJobService:
                 if self.execution_owner
                 else []
             )
-        for row in active_rows:
-            self._reattach_persisted_job(row)
+        with self._recovery_lock:
+            for row in active_rows:
+                self._claim_and_reattach(row)
+            if self.execution_owner and self._recovery_thread is None and not self._closed:
+                self._recovery_thread = threading.Thread(
+                    target=self._recover_loop, name="rag-ime-background-recovery", daemon=True,
+                )
+                self._recovery_thread.start()
+
+    def _claim_and_reattach(self, row: Mapping[str, object]) -> None:
+        if self._closed or not self._ownership.claim(str(row["job_id"])):
+            return
+        try:
+            self._reattach_persisted_job(self._row_for_job(str(row["job_id"])))
+        except BackgroundJobLeaseLost:
+            return
+
+    def _recover_loop(self) -> None:
+        while not self._recovery_stop.wait(0.5):
+            try:
+                with self._recovery_lock:
+                    with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
+                        rows = conn.execute(
+                            "SELECT * FROM agent_background_jobs WHERE status IN ('queued','running','cancelling')"
+                        ).fetchall()
+                    for row in rows:
+                        self._claim_and_reattach(row)
+            except (sqlite3.Error, OSError):
+                # A transient storage failure does not permit an unfenced
+                # write or a replacement execution. Retry discovery later.
+                continue
 
     def _reattach_persisted_job(self, row: Mapping[str, object]) -> None:
         job_id = str(row["job_id"])
+        row = self._restore_launch_identity(row)
+        if str(row["status"]) in _TERMINAL_STATUSES:
+            return
         pid = int(row["pid"]) if row["pid"] is not None else 0
         process_group_id = (
             int(row["process_group_id"])
@@ -168,12 +213,15 @@ class AgentBackgroundJobService:
             detached_launch = _DETACHED_PROCESSES.pop(pid, None)
         live = _LiveJob(
             launched=detached_launch,
+            job_id=job_id,
             log_path=log_path,
             max_run_seconds=int(row["max_run_seconds"]),
             session_id=str(row["session_id"] or ""),
             raw_output_path=raw_output_path if resumable else None,
             exit_status_path=exit_status_path if resumable else None,
             temporary_path=temporary_path,
+            launch_receipt_path=self.log_root / f"{job_id}.launch",
+            launch_release_path=self.log_root / f"{job_id}.release",
             pid=pid,
             process_group_id=process_group_id,
             process_birth_token=birth_token,
@@ -185,6 +233,26 @@ class AgentBackgroundJobService:
         )
         with self._lock:
             self._live[job_id] = live
+        if identity_matches and str(row["status"]) == "cancelling":
+            self._terminate_live(live)
+        elif identity_matches and live.launch_receipt_path.exists():
+            try:
+                self._release_launch(job_id)
+            except BackgroundJobLeaseLost:
+                with self._lock:
+                    self._live.pop(job_id, None)
+                return
+            except Exception as exc:
+                self._terminate_live(live)
+                self._finalize_without_process(
+                    job_id,
+                    status="cancelled" if isinstance(exc, AgentBackgroundJobError) else "failed",
+                    error=_public_error(exc),
+                )
+                self._cleanup_runtime_files(live)
+                with self._lock:
+                    self._live.pop(job_id, None)
+                return
         monitor = threading.Thread(
             target=self._monitor,
             args=(job_id,),
@@ -202,6 +270,7 @@ class AgentBackgroundJobService:
         label: object = "",
         approval_id: str = "",
         causal_metadata: Mapping[str, object] | None = None,
+        idempotency_key: str = "",
     ) -> dict[str, object]:
         self._require_execution_owner()
         with self._lock:
@@ -209,96 +278,156 @@ class AgentBackgroundJobService:
                 raise AgentBackgroundJobError("background job service is closed")
         session = _required_text(session_id, field="sessionId", maximum=240)
         normalized_label = _job_label(label, prepared.command)
+        normalized_idempotency_key = _idempotency_key(idempotency_key)
+        idempotency_digest = (
+            _background_start_digest(prepared)
+            if normalized_idempotency_key
+            else ""
+        )
         job_id = f"bg_{uuid.uuid4().hex}"
         log_path = self._log_path(job_id)
         raw_output_path = self._raw_output_path(job_id)
         exit_status_path = self._exit_status_path(job_id)
         temporary_path = self._temporary_path(job_id)
-        log_path.touch(mode=0o600, exist_ok=False)
-        os.chmod(log_path, 0o600)
         now_ms = _now_ms()
         command_sha256 = hashlib.sha256(prepared.command.encode("utf-8")).hexdigest()
+        replay_receipt: dict[str, object] | None = None
         try:
-            with sqlite_connection(self.db_path, foreign_keys=True) as conn:
+            with sqlite_connection(
+                self.db_path,
+                row_factory=sqlite3.Row,
+                foreign_keys=True,
+            ) as conn:
                 conn.execute("BEGIN IMMEDIATE")
-                causal = _job_causal_metadata(
-                    conn,
-                    session_id=session,
-                    approval_id=str(approval_id or ""),
-                    supplied=causal_metadata,
-                )
-                self._require_capacity(conn, session)
-                self._require_live_causal_epoch(conn, session, causal)
-                conn.execute(
-                    """
-                    INSERT INTO agent_background_jobs(
-                        job_id,
-                        session_id,
-                        label,
-                        status,
-                        command,
-                        command_sha256,
-                        cwd,
-                        network_allowed,
-                        max_run_seconds,
-                        log_path,
-                        raw_output_path,
-                        exit_status_path,
-                        temporary_path,
-                        approval_id,
-                        causal_todo_id,
-                        causal_todo_revision,
-                        causal_goal_id,
-                        causal_goal_revision,
-                        causal_turn_id,
-                        room_bound,
-                        causal_room_id,
-                        causal_root_id,
-                        causal_generation,
-                        causal_task_id,
-                        causal_dispatch_id,
-                        created_at_ms,
-                        updated_at_ms
-                    ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        job_id,
-                        session,
-                        normalized_label,
-                        prepared.command,
-                        command_sha256,
-                        str(prepared.cwd),
-                        int(prepared.allow_network),
-                        prepared.timeout_seconds,
-                        str(log_path),
-                        str(raw_output_path),
-                        str(exit_status_path),
-                        str(temporary_path),
-                        str(approval_id or "")[:240],
-                        causal["todoId"],
-                        causal["todoRevision"],
-                        causal["goalId"],
-                        causal["goalRevision"],
-                        causal["turnId"],
-                        int(bool(causal["roomBound"])),
-                        causal["roomId"],
-                        causal["rootId"],
-                        causal["generation"],
-                        causal["taskId"],
-                        causal["dispatchId"],
-                        now_ms,
-                        now_ms,
-                    ),
-                )
+                if normalized_idempotency_key:
+                    existing = conn.execute(
+                        """
+                        SELECT *
+                        FROM agent_background_jobs
+                        WHERE session_id = ? AND idempotency_key = ?
+                        """,
+                        (session, normalized_idempotency_key),
+                    ).fetchone()
+                    if existing is not None:
+                        if str(existing["idempotency_digest"] or "") != idempotency_digest:
+                            raise AgentBackgroundJobConflict(
+                                "background job idempotency key is already bound "
+                                "to different execution content"
+                            )
+                        replay_job = self._job_payload(existing)
+                        replay_receipt = {
+                            "schemaVersion": (
+                                "rag-ime.agent-background-job-start-receipt.v1"
+                            ),
+                            "ok": True,
+                            "summary": (
+                                f"后台任务《{replay_job['label']}》已存在，返回原任务"
+                            ),
+                            "replayed": True,
+                            "job": replay_job,
+                            "launchReceipt": {
+                                "jobId": str(replay_job["jobId"]),
+                                "approvalId": str(replay_job["approvalId"]),
+                                "commandSha256": str(replay_job["commandSha256"]),
+                                "startedAtMs": int(replay_job["startedAtMs"]),
+                            },
+                        }
+                    else:
+                        replay_receipt = None
+                if replay_receipt is None:
+                    causal = _job_causal_metadata(
+                        conn,
+                        session_id=session,
+                        approval_id=str(approval_id or ""),
+                        supplied=causal_metadata,
+                    )
+                    self._require_capacity(conn, session)
+                    self._require_live_causal_epoch(conn, session, causal)
+                    log_path.touch(mode=0o600, exist_ok=False)
+                    os.chmod(log_path, 0o600)
+                    conn.execute(
+                        """
+                        INSERT INTO agent_background_jobs(
+                            job_id,
+                            session_id,
+                            label,
+                            status,
+                            command,
+                            command_sha256,
+                            cwd,
+                            network_allowed,
+                            max_run_seconds,
+                            log_path,
+                            raw_output_path,
+                            exit_status_path,
+                            temporary_path,
+                            approval_id,
+                            idempotency_key,
+                            idempotency_digest,
+                            causal_todo_id,
+                            causal_todo_revision,
+                            causal_goal_id,
+                            causal_goal_revision,
+                            causal_turn_id,
+                            room_bound,
+                            causal_room_id,
+                            causal_root_id,
+                            causal_generation,
+                            causal_task_id,
+                            causal_dispatch_id,
+                            created_at_ms,
+                            updated_at_ms
+                        ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            job_id,
+                            session,
+                            normalized_label,
+                            prepared.command,
+                            command_sha256,
+                            str(prepared.cwd),
+                            int(prepared.allow_network),
+                            prepared.timeout_seconds,
+                            str(log_path),
+                            str(raw_output_path),
+                            str(exit_status_path),
+                            str(temporary_path),
+                            str(approval_id or "")[:240],
+                            normalized_idempotency_key,
+                            idempotency_digest,
+                            causal["todoId"],
+                            causal["todoRevision"],
+                            causal["goalId"],
+                            causal["goalRevision"],
+                            causal["turnId"],
+                            int(bool(causal["roomBound"])),
+                            causal["roomId"],
+                            causal["rootId"],
+                            causal["generation"],
+                            causal["taskId"],
+                            causal["dispatchId"],
+                            now_ms,
+                            now_ms,
+                        ),
+                    )
+                    self._ownership.admit(conn, job_id)
         except Exception:
             log_path.unlink(missing_ok=True)
             raise
+        if replay_receipt is not None:
+            return replay_receipt
         try:
+            with self._ownership.guard(job_id):
+                pass
+            # Process creation must not hold the shared database write lock.
+            # The launcher cannot execute user code until the fenced release.
             launched = self.workspace_harness.spawn_background(
                 prepared,
                 output_path=raw_output_path,
                 exit_status_path=exit_status_path,
                 temporary_path=temporary_path,
+                launch_receipt_path=self.log_root / f"{job_id}.launch",
+                launch_release_path=self.log_root / f"{job_id}.release",
             )
         except Exception as exc:
             error = _public_error(exc)
@@ -312,12 +441,15 @@ class AgentBackgroundJobService:
 
         live = _LiveJob(
             launched=launched,
+            job_id=job_id,
             log_path=log_path,
             session_id=session,
             max_run_seconds=prepared.timeout_seconds,
             raw_output_path=raw_output_path,
             exit_status_path=exit_status_path,
             temporary_path=temporary_path,
+            launch_receipt_path=self.log_root / f"{job_id}.launch",
+            launch_release_path=self.log_root / f"{job_id}.release",
             pid=launched.process.pid,
         )
         identity = _process_identity(launched.process.pid)
@@ -340,8 +472,7 @@ class AgentBackgroundJobService:
                 self._live[job_id] = live
             started_at_ms = _now_ms()
             live.started_at_ms = started_at_ms
-            with sqlite_connection(self.db_path, foreign_keys=True) as conn:
-                conn.execute("BEGIN IMMEDIATE")
+            with self._ownership.guard(job_id, renew_expired=True) as conn:
                 self._require_live_causal_epoch(conn, session, causal)
                 cursor = conn.execute(
                     """
@@ -367,6 +498,7 @@ class AgentBackgroundJobService:
                     raise AgentBackgroundJobError(
                         "background job admission was cancelled before launch"
                     )
+            self._release_launch(job_id)
             job = self.status(session, job_id)["job"]
             self._publish("background_job_started", job)
             monitor = threading.Thread(
@@ -715,7 +847,10 @@ class AgentBackgroundJobService:
         with self._lock:
             live = self._live.get(normalized_job_id)
         if live is not None:
-            self._terminate_live(live)
+            try:
+                self._terminate_live(live)
+            except BackgroundJobLeaseLost:
+                live.detach_requested.set()
             thread = live.thread
             if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout=2.0)
@@ -884,6 +1019,9 @@ class AgentBackgroundJobService:
                 return
             self._closed = True
             live_jobs = list(self._live.values())
+        self._recovery_stop.set()
+        if self._recovery_thread is not None:
+            self._recovery_thread.join(timeout=2.0)
         for live in live_jobs:
             live.detach_requested.set()
         for live in live_jobs:
@@ -896,25 +1034,37 @@ class AgentBackgroundJobService:
             ):
                 with _DETACHED_PROCESS_LOCK:
                     _DETACHED_PROCESSES[live.pid] = live.launched
+        self._ownership.release_all()
 
     def _monitor(self, job_id: str) -> None:
         with self._lock:
             live = self._live.get(job_id)
         if live is None:
             return
-        if live.raw_output_path is not None and live.exit_status_path is not None:
-            self._monitor_resumable(job_id, live)
-            return
-        if live.launched is None:
-            self._monitor_legacy_recovery(job_id, live)
-            return
-        self._monitor_pipe(job_id)
+        try:
+            if live.raw_output_path is not None and live.exit_status_path is not None:
+                self._monitor_resumable(job_id, live)
+            elif live.launched is None:
+                self._monitor_legacy_recovery(job_id, live)
+            else:
+                self._monitor_pipe(job_id)
+        except BackgroundJobLeaseLost:
+            live.detach_requested.set()
+
+    def _poll_control(self, job_id: str, live: _LiveJob) -> None:
+        # Heartbeats do not depend on the command producing output. Cancellation
+        # can be admitted by another control host; only the current owner signals.
+        with self._ownership.guard(job_id, renew_expired=True) as conn:
+            row = conn.execute("SELECT status FROM agent_background_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is not None and row["status"] == "cancelling":
+                self._terminate_live(live)
 
     def _monitor_resumable(self, job_id: str, live: _LiveJob) -> None:
         timed_out = False
         terminal = False
         try:
             while not live.detach_requested.wait(0.1):
+                self._poll_control(job_id, live)
                 exit_code = self._read_exit_status(live.exit_status_path)
                 terminal = exit_code is not None
                 self._drain_raw_output(job_id, live, final=terminal)
@@ -944,60 +1094,15 @@ class AgentBackgroundJobService:
                     time.sleep(0.02)
             self._drain_raw_output(job_id, live, final=True)
             self._persist_live_progress(job_id, live, force=True)
-            row = self._row_for_job(job_id)
-            cancelling = str(row["status"] or "") == "cancelling"
-            if cancelling and not timed_out:
-                status = "cancelled"
-                event_type = "background_job_cancelled"
-                error = str(row["error"] or "")
-            elif timed_out:
-                status = "failed"
-                event_type = "background_job_failed"
-                error = f"后台任务超过 {live.max_run_seconds} 秒运行上限"
-            elif terminal and int(exit_code) == 0:
-                status = "completed"
-                event_type = "background_job_completed"
-                error = ""
-            elif terminal:
-                status = "failed"
-                event_type = "background_job_failed"
-                error = f"后台任务退出码 {exit_code}"
-            else:
-                status = "orphaned"
-                event_type = "background_job_failed"
-                error = "后台任务进程已结束，但退出回执缺失"
-                exit_code = None
-            ended_at_ms = _now_ms()
-            with sqlite_connection(self.db_path, foreign_keys=True) as conn:
-                conn.execute(
-                    """
-                    UPDATE agent_background_jobs
-                    SET status = ?, exit_code = ?, output_bytes = ?,
-                        raw_output_cursor = ?, log_start_cursor = ?,
-                        log_truncated = ?, updated_at_ms = ?, ended_at_ms = ?,
-                        error = ?
-                    WHERE job_id = ?
-                    """,
-                    (
-                        status,
-                        int(exit_code) if exit_code is not None else None,
-                        live.output_bytes,
-                        live.raw_output_cursor,
-                        live.log_start_cursor,
-                        int(live.log_truncated),
-                        ended_at_ms,
-                        ended_at_ms,
-                        error,
-                        job_id,
-                    ),
-                )
+            event_type, job = self._commit_result(job_id, live, exit_code=exit_code, timed_out=timed_out)
             if self._live_identity_matches(live):
                 self._terminate_live(live)
-            job = self._job_payload(self._row_for_job(job_id))
             try:
                 self._publish(event_type, job)
             except Exception:
                 pass
+        except BackgroundJobLeaseLost:
+            live.detach_requested.set()
         except Exception as exc:
             if live.detach_requested.is_set():
                 return
@@ -1009,13 +1114,17 @@ class AgentBackgroundJobService:
             )
         finally:
             if not live.detach_requested.is_set():
-                self._cleanup_runtime_files(live)
+                try:
+                    self._cleanup_runtime_files(live)
+                except BackgroundJobLeaseLost:
+                    live.detach_requested.set()
             with self._lock:
                 self._live.pop(job_id, None)
 
     def _monitor_legacy_recovery(self, job_id: str, live: _LiveJob) -> None:
         try:
             while not live.detach_requested.wait(0.1):
+                self._poll_control(job_id, live)
                 if not self._live_identity_matches(live):
                     row = self._row_for_job(job_id)
                     cancelling = str(row["status"] or "") == "cancelling"
@@ -1049,6 +1158,9 @@ class AgentBackgroundJobService:
             if output is not None:
                 selector.register(output, selectors.EVENT_READ)
             while selector.get_map():
+                if live.detach_requested.is_set():
+                    return
+                self._poll_control(job_id, live)
                 if process.poll() is None and time.monotonic() >= deadline:
                     timed_out = True
                     self._request_timeout(job_id)
@@ -1064,8 +1176,9 @@ class AgentBackgroundJobService:
                         selector.unregister(key.fileobj)
                         continue
                     pending_text += decoder.decode(chunk)
-                    pending_text = self._flush_complete_lines(live, pending_text)
-                    self._persist_live_progress(job_id, live)
+                    with self._ownership.guard(job_id):
+                        pending_text = self._flush_complete_lines(live, pending_text)
+                        self._persist_live_progress(job_id, live)
                 if process.poll() is not None:
                     # A shell that exits must not leave an approved descendant
                     # running in the same process group with the log pipe open.
@@ -1074,7 +1187,8 @@ class AgentBackgroundJobService:
                         break
             pending_text += decoder.decode(b"", final=True)
             if pending_text:
-                self._append_redacted_text(live, pending_text)
+                with self._ownership.guard(job_id):
+                    self._append_redacted_text(live, pending_text)
             try:
                 exit_code = process.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
@@ -1087,56 +1201,13 @@ class AgentBackgroundJobService:
             else:
                 self._terminate_and_wait(live)
             self._persist_live_progress(job_id, live, force=True)
-            row = self._row_for_job(job_id)
-            cancelling = str(row["status"] or "") == "cancelling"
-            if cancelling and not timed_out:
-                status = "cancelled"
-                event_type = "background_job_cancelled"
-                error = str(row["error"] or "")
-            elif timed_out:
-                status = "failed"
-                event_type = "background_job_failed"
-                error = f"后台任务超过 {live.max_run_seconds} 秒运行上限"
-            elif int(exit_code) == 0:
-                status = "completed"
-                event_type = "background_job_completed"
-                error = ""
-            else:
-                status = "failed"
-                event_type = "background_job_failed"
-                error = f"后台任务退出码 {exit_code}"
-            ended_at_ms = _now_ms()
-            with sqlite_connection(self.db_path, foreign_keys=True) as conn:
-                conn.execute(
-                    """
-                    UPDATE agent_background_jobs
-                    SET status = ?,
-                        exit_code = ?,
-                        output_bytes = ?,
-                        log_start_cursor = ?,
-                        log_truncated = ?,
-                        updated_at_ms = ?,
-                        ended_at_ms = ?,
-                        error = ?
-                    WHERE job_id = ?
-                    """,
-                    (
-                        status,
-                        int(exit_code),
-                        live.output_bytes,
-                        live.log_start_cursor,
-                        int(live.log_truncated),
-                        ended_at_ms,
-                        ended_at_ms,
-                        error,
-                        job_id,
-                    ),
-                )
-            job = self._job_payload(self._row_for_job(job_id))
+            event_type, job = self._commit_result(job_id, live, exit_code=exit_code, timed_out=timed_out)
             try:
                 self._publish(event_type, job)
             except Exception:
                 pass
+        except BackgroundJobLeaseLost:
+            live.detach_requested.set()
         except Exception as exc:
             error = _public_error(exc)
             self._terminate_and_wait(live)
@@ -1156,10 +1227,11 @@ class AgentBackgroundJobService:
                     output.close()
                 except Exception:
                     pass
-            try:
-                live.launched.cleanup()
-            except Exception:
-                pass
+            if not live.detach_requested.is_set():
+                try:
+                    self._cleanup_runtime_files(live)
+                except BackgroundJobLeaseLost:
+                    live.detach_requested.set()
             with self._lock:
                 self._live.pop(job_id, None)
 
@@ -1183,7 +1255,8 @@ class AgentBackgroundJobService:
                 if final:
                     pending_text += decoder.decode(b"", final=True)
                     if pending_text:
-                        self._append_redacted_text(live, pending_text)
+                        with self._ownership.guard(job_id):
+                            self._append_redacted_text(live, pending_text)
                 return
             consumed = len(data)
             if not final:
@@ -1193,11 +1266,41 @@ class AgentBackgroundJobService:
                 consumed = boundary + 1
                 data = data[:consumed]
             pending_text += decoder.decode(data)
-            pending_text = self._flush_complete_lines(live, pending_text)
-            live.raw_output_cursor += consumed
-            self._persist_live_progress(job_id, live)
+            with self._ownership.guard(job_id):
+                pending_text = self._flush_complete_lines(live, pending_text)
+                live.raw_output_cursor += consumed
+                self._persist_live_progress(job_id, live)
             if not final and consumed < 1_048_576:
                 return
+
+    def _commit_result(self, job_id: str, live: _LiveJob, *, exit_code: int | None, timed_out: bool):
+        with self._ownership.guard(job_id) as conn:
+            # Read cancellation and commit the result under the same fence.
+            # A control request cannot slip between the snapshot and writeback.
+            row = self._row_for_job(job_id)
+            if row["status"] in _TERMINAL_STATUSES:
+                raise BackgroundJobLeaseLost("background job already has a terminal result")
+            timed_out = timed_out or row["error"] == "background_job_timeout"
+            if row["status"] == "cancelling" and not timed_out:
+                status, event_type, error = "cancelled", "background_job_cancelled", str(row["error"] or "")
+            elif timed_out:
+                status, event_type, error = "failed", "background_job_failed", f"后台任务超过 {live.max_run_seconds} 秒运行上限"
+            elif exit_code == 0:
+                status, event_type, error = "completed", "background_job_completed", ""
+            elif exit_code is not None:
+                status, event_type, error = "failed", "background_job_failed", f"后台任务退出码 {exit_code}"
+            else:
+                status, event_type, error = "orphaned", "background_job_failed", "后台任务进程已结束，但退出回执缺失"
+            now_ms = _now_ms()
+            conn.execute(
+                """UPDATE agent_background_jobs
+                   SET status=?, exit_code=?, output_bytes=?, raw_output_cursor=?,
+                       log_start_cursor=?, log_truncated=?, updated_at_ms=?, ended_at_ms=?, error=?
+                   WHERE job_id=? AND status IN ('queued','running','cancelling')""",
+                (status, exit_code, live.output_bytes, live.raw_output_cursor,
+                 live.log_start_cursor, int(live.log_truncated), now_ms, now_ms, error, job_id),
+            )
+            return event_type, self._job_payload(self._row_for_job(job_id))
 
     @staticmethod
     def _read_exit_status(path: Path | None) -> int | None:
@@ -1228,6 +1331,12 @@ class AgentBackgroundJobService:
         )
 
     def _terminate_live(self, live: _LiveJob) -> None:
+        if not isinstance(live.launched, SpawnedWorkspaceCommand) and not self._live_identity_matches(live):
+            return
+        with self._ownership.guard(live.job_id):
+            self._terminate_live_owned(live)
+
+    def _terminate_live_owned(self, live: _LiveJob) -> None:
         if isinstance(live.launched, SpawnedWorkspaceCommand):
             try:
                 self.workspace_harness.terminate_background(live.launched)
@@ -1246,8 +1355,11 @@ class AgentBackgroundJobService:
         except (OSError, ProcessLookupError):
             pass
 
-    @staticmethod
-    def _cleanup_runtime_files(live: _LiveJob) -> None:
+    def _cleanup_runtime_files(self, live: _LiveJob) -> None:
+        with self._ownership.guard(live.job_id):
+            self._cleanup_runtime_files_owned(live)
+
+    def _cleanup_runtime_files_owned(self, live: _LiveJob) -> None:
         if isinstance(live.launched, SpawnedWorkspaceCommand):
             try:
                 live.launched.process.wait(timeout=1.0)
@@ -1259,10 +1371,76 @@ class AgentBackgroundJobService:
                 pass
         elif live.temporary_path is not None:
             shutil.rmtree(live.temporary_path, ignore_errors=True)
+        for path in (live.launch_receipt_path, live.launch_release_path):
+            if path is not None:
+                path.unlink(missing_ok=True)
         if live.raw_output_path is not None:
             live.raw_output_path.unlink(missing_ok=True)
         if live.exit_status_path is not None:
             live.exit_status_path.unlink(missing_ok=True)
+
+    def _restore_launch_identity(self, row: Mapping[str, object]) -> Mapping[str, object]:
+        """Recover the child's pre-execution receipt, never spawn a replacement."""
+        if str(row["status"]) not in {"queued", "cancelling"} or row["pid"] is not None:
+            return row
+        job_id = str(row["job_id"])
+        path = self.log_root / f"{job_id}.launch"
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as stream:
+                content = stream.read(4097)
+            if len(content) > 4096:
+                return row
+            receipt = json.loads(content)
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("schemaVersion") != "rag-ime.background-launch.v1"
+                or receipt.get("commandSha256") != str(row["command_sha256"])
+            ):
+                return row
+            pid = int(receipt["pid"])
+            group = int(receipt["processGroupId"])
+            birth = str(receipt["processBirthToken"])
+        except (OSError, ValueError, TypeError, KeyError):
+            return row
+        if pid <= 0 or group != pid or group == os.getpgrp() or not birth:
+            return row
+        if _process_identity(pid) != (group, birth):
+            return row
+        with self._ownership.guard(job_id) as conn:
+            now_ms = _now_ms()
+            conn.execute(
+                """
+                UPDATE agent_background_jobs
+                SET status=CASE WHEN status='queued' THEN 'running' ELSE status END,
+                    pid=?, process_group_id=?, process_birth_token=?,
+                    started_at_ms=?, updated_at_ms=?
+                WHERE job_id=? AND status IN ('queued', 'cancelling') AND pid IS NULL
+                """,
+                (pid, group, birth, now_ms, now_ms, job_id),
+            )
+        return self._row_for_job(job_id)
+
+    def _release_launch(self, job_id: str) -> None:
+        """Release only the same durably admitted job under its current epoch."""
+        with self._ownership.guard(job_id) as conn:
+            row = conn.execute("SELECT * FROM agent_background_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None or str(row["status"]) != "running":
+                raise AgentBackgroundJobError("background job was cancelled before launch release")
+            self._require_live_causal_epoch(conn, str(row["session_id"]), {
+                "roomBound": bool(row["room_bound"]),
+                "goalId": str(row["causal_goal_id"] or ""),
+                "goalRevision": int(row["causal_goal_revision"] or 0),
+            })
+            path = self.log_root / f"{job_id}.release"
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(b"admitted\n")
+                stream.flush()
+                os.fsync(stream.fileno())
 
     def _session_allows_raw_output(self, session_id: str) -> bool:
         if not session_id:
@@ -1324,7 +1502,7 @@ class AgentBackgroundJobService:
             return
         live.last_persisted_at = now
         now_ms = _now_ms()
-        with sqlite_connection(self.db_path, foreign_keys=True) as conn:
+        with self._ownership.guard(job_id) as conn:
             conn.execute(
                 """
                 UPDATE agent_background_jobs
@@ -1333,7 +1511,7 @@ class AgentBackgroundJobService:
                     log_start_cursor = ?,
                     log_truncated = ?,
                     updated_at_ms = ?
-                WHERE job_id = ?
+                WHERE job_id = ? AND status IN ('queued', 'running', 'cancelling')
                 """,
                 (
                     live.output_bytes,
@@ -1351,7 +1529,7 @@ class AgentBackgroundJobService:
 
     def _request_timeout(self, job_id: str) -> None:
         now_ms = _now_ms()
-        with sqlite_connection(self.db_path, foreign_keys=True) as conn:
+        with self._ownership.guard(job_id) as conn:
             conn.execute(
                 """
                 UPDATE agent_background_jobs
@@ -1366,19 +1544,19 @@ class AgentBackgroundJobService:
 
     def _mark_launch_failed(self, job_id: str, error: str) -> None:
         now_ms = _now_ms()
-        with sqlite_connection(self.db_path, foreign_keys=True) as conn:
+        with self._ownership.guard(job_id) as conn:
             conn.execute(
                 """
                 UPDATE agent_background_jobs
                 SET status = 'failed', updated_at_ms = ?, ended_at_ms = ?, error = ?
-                WHERE job_id = ?
+                WHERE job_id = ? AND status IN ('queued', 'running', 'cancelling')
                 """,
                 (now_ms, now_ms, error, job_id),
             )
 
     def _finalize_without_process(self, job_id: str, *, status: str, error: str) -> None:
         now_ms = _now_ms()
-        with sqlite_connection(self.db_path, foreign_keys=True) as conn:
+        with self._ownership.guard(job_id) as conn:
             conn.execute(
                 """
                 UPDATE agent_background_jobs
@@ -1389,15 +1567,19 @@ class AgentBackgroundJobService:
             )
 
     def _terminate_and_wait(self, live: _LiveJob) -> None:
+        with self._ownership.guard(live.job_id):
+            self._terminate_and_wait_owned(live)
+
+    def _terminate_and_wait_owned(self, live: _LiveJob) -> None:
         process = live.launched.process
         try:
             self.workspace_harness.terminate_background(live.launched)
         except Exception:
             pass
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+            # The harness may already have reaped the leader. Reuse the
+            # generation-safe group terminator instead of signalling its old PID.
+            WorkspaceHarness._terminate_group(process)
         except Exception:
             try:
                 process.kill()
@@ -1424,7 +1606,13 @@ class AgentBackgroundJobService:
         *,
         error: str,
     ) -> None:
-        self._terminate_and_wait(live)
+        try:
+            self._terminate_and_wait(live)
+        except BackgroundJobLeaseLost:
+            live.detach_requested.set()
+            with self._lock:
+                self._live.pop(job_id, None)
+            return
         output = live.launched.process.stdout
         if output is not None:
             try:
@@ -1497,6 +1685,12 @@ class AgentBackgroundJobService:
         return row
 
     def _row_for_job(self, job_id: str) -> sqlite3.Row:
+        owned_conn = self._ownership.current_connection(job_id)
+        if owned_conn is not None:
+            row = owned_conn.execute("SELECT * FROM agent_background_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                raise AgentBackgroundJobError("background job was not found")
+            return row
         with sqlite_connection(
             self.db_path,
             row_factory=sqlite3.Row,
@@ -1560,6 +1754,8 @@ class AgentBackgroundJobService:
             )
 
     def _publish(self, event_type: str, job: Mapping[str, object]) -> None:
+        if self._ownership.defer_event(lambda: self._publish(event_type, job)):
+            return
         self.events(
             str(job["sessionId"]),
             event_type,
@@ -1747,6 +1943,36 @@ def _job_id(value: object) -> str:
     if any(character not in "0123456789abcdef" for character in suffix):
         raise AgentBackgroundJobError("background job id is invalid")
     return normalized
+
+
+def _idempotency_key(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if len(normalized) > 240 or any(ord(char) < 32 for char in normalized):
+        raise AgentBackgroundJobError("background job idempotency key is invalid")
+    return normalized
+
+
+def _background_start_digest(prepared: PreparedWorkspaceCommand) -> str:
+    execution = {
+        "schemaVersion": "rag-ime.agent-background-job-start-identity.v1",
+        "command": prepared.command,
+        "cwd": str(prepared.cwd),
+        "rootsDigest": prepared.roots_digest,
+        "timeoutSeconds": int(prepared.timeout_seconds),
+        "allowNetwork": bool(prepared.allow_network),
+        "sourceReadOnly": bool(prepared.source_read_only),
+        "unrestricted": bool(prepared.unrestricted),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            execution,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _required_text(value: object, *, field: str, maximum: int) -> str:

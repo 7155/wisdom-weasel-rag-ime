@@ -2327,6 +2327,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]
         "maximum": 86_400,
         "description": "后台任务最长运行秒数；默认 3600，最大 86400。",
     },
+    ("workspace_job", "idempotencyKey"): {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "description": (
+            "start 的稳定请求标识。启动回复丢失时携带相同标识和参数读取原任务，"
+            "不会再次执行命令；新的独立任务使用新标识。"
+        ),
+    },
     ("browser", "timeoutMs"): {
         "type": "integer",
         "minimum": 1_000,
@@ -2395,7 +2404,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "workspace_shell": ("command", "cwd", "timeoutSeconds", "allowNetwork"),
     "workspace_job": (
         "command", "label", "jobId", "cwd", "timeoutSeconds", "allowNetwork",
-        "cursor", "limitBytes", "limit", "status", "reason",
+        "cursor", "limitBytes", "limit", "status", "reason", "idempotencyKey",
     ),
 }
 
@@ -6792,6 +6801,8 @@ class ControlToolGateway:
         label = _bounded_text(args.get("label"), maximum=120)
         action_payload = dict(preview.get("actionPayload") or {})
         action_payload["label"] = label
+        if "idempotencyKey" in args:
+            action_payload["idempotencyKey"] = args["idempotencyKey"]
         base_state = dict(preview.get("baseState") or {})
         preview.update(
             {
@@ -6892,10 +6903,15 @@ class ControlToolGateway:
             label=action_payload.get("label"),
             approval_id=str(approval.get("approvalId") or ""),
             causal_metadata=causal_metadata,
+            **(
+                {"idempotency_key": action_payload["idempotencyKey"]}
+                if "idempotencyKey" in action_payload
+                else {}
+            ),
         )
         return {
             **receipt,
-            "mutationApplied": True,
+            "mutationApplied": not bool(receipt.get("replayed")),
             "approvalId": str(approval.get("approvalId") or ""),
             "toolId": "workspace_job",
             "operation": "start",
