@@ -30,6 +30,49 @@ PROJECT = "wisdom-weasel-rag-ime"
 
 
 class SessionMemoryRecallTests(unittest.TestCase):
+    def test_selected_evidence_preserves_scope_time_and_fact_support(self):
+        selected, _ = _select_hits([{
+            "source_id": "timeline:review", "doc_type": "timeline",
+            "text": "昨天讨论了缓存方案", "score": 1.0, "confidence": 0.9,
+            "evidence_event_ids": [42], "tags": ["缓存方案"],
+            "metadata": {"docType": "timeline", "sourceId": "timeline:review",
+                "title": "缓存方案", "lanes": ["bm25_raw"], "sourceUpdatedAtMs": 1234, "sourceStartMs": 1000,
+                "sourceEndMs": 1200, "project": PROJECT, "claimState": "current",
+                "corroborationOnly": True, "maySupportFacts": False},
+        }], query_text="昨天的缓存方案", max_items=4, max_chars=2000,
+            detail_level="compact", timeline_allowed=True, timeline_max_items=2)
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["sourceUpdatedAtMs"], 1234)
+        self.assertEqual(selected[0]["project"], PROJECT)
+        self.assertEqual(selected[0]["evidenceEventIds"], [42])
+        self.assertTrue(selected[0]["corroborationOnly"])
+        self.assertFalse(selected[0]["maySupportFacts"])
+
+    def test_successful_embedding_is_not_reported_as_fallback(self):
+        payload = SessionMemoryRecallBuilder(self.db_path, project=PROJECT,
+            embedding_provider=HashingEmbeddingProvider(dimensions=8)).build(
+                self.session_id, role_id="", query_text="缓存方案")["payload"]
+        self.assertEqual(payload["retrieval"]["requestedEmbeddingProvider"],
+                         payload["retrieval"]["embeddingProvider"])
+        self.assertFalse(payload["retrieval"]["embeddingFallback"])
+
+    def test_no_hits_still_exposes_curation_watermark_without_claiming_full_coverage(self):
+        from rag_ime.agent_context_runtime import render_provider_context_items
+        with self.connect() as conn:
+            conn.execute("""INSERT INTO memory_curation_cursors
+                (owner_kind, owner_id, project, lane, last_source_created_at_ms, last_source_id,
+                 last_run_ms, status, next_due_at_ms, updated_at_ms)
+                VALUES ('user', 'default', ?, 'daily', 1787152674541, 'source:covered',
+                        1788610060286, 'idle', 1788652319882, 1788610060286)""", (PROJECT,))
+        payload = self.builder.build(self.session_id, role_id="", query_text="不存在的项目要求")["payload"]
+        self.assertEqual(payload["items"], [])
+        self.assertEqual(payload["coverage"]["processedThroughAtMs"], 1787152674541)
+        rendered = render_provider_context_items([{"sourceKind": "memory_bootstrap", "payload": payload}])
+        self.assertIn("2026-08-19", rendered)
+        self.assertIn("无命中不代表", rendered)
+        room_payload = self.builder.build(self.session_id, role_id="", query_text="项目要求", trigger="room_task")["payload"]
+        self.assertNotIn("coverage", room_payload)
+
     def test_room_and_subagent_tasks_exclude_cross_project_personal_memory(self) -> None:
         for trigger in ("room_task", "subagent_task"):
             with self.subTest(trigger=trigger):
@@ -137,6 +180,11 @@ class SessionMemoryRecallTests(unittest.TestCase):
         role_b_payload = role_b["payload"]
         self.assertTrue(role_a_payload["query"]["recentCompleteInputUsedForRetrieval"])
         self.assertIn("atom:role-a-salt", role_a_payload["sourceIds"])
+        selected_atom = next(item for item in role_a_payload["items"] if item["sourceId"] == "atom:role-a-salt")
+        self.assertEqual(selected_atom["project"], PROJECT)
+        self.assertEqual(selected_atom["claimState"], "current")
+        self.assertIn("validFromMs", selected_atom)
+        self.assertIn("sourceUpdatedAtMs", selected_atom)
         self.assertNotIn("atom:role-b-mint", role_a_payload["sourceIds"])
         self.assertNotIn("atom:role-a-salt", role_b_payload["sourceIds"])
         self.assertEqual(role_a_payload["policy"]["rawRecentInputInjected"], False)
@@ -151,7 +199,7 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertIn("### 事实与偏好", rendered)
         self.assertIn("甲角色采用海盐缓存方案", rendered)
         self.assertNotIn("乙角色采用薄荷缓存方案", rendered)
-        self.assertNotIn("atom:role-a-salt", rendered)
+        self.assertIn("atom:role-a-salt", rendered)
         self.assertNotIn("agent/role-a", rendered)
         self.assertNotIn("命中通道", rendered)
         self.assertNotIn("相关度", rendered)
@@ -584,7 +632,7 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertNotIn("ownerId", rendered)
         self.assertNotIn("rawScores", rendered)
         self.assertNotIn("sha256", rendered)
-        self.assertNotIn("atom:session-rag", rendered)
+        self.assertIn("atom:session-rag", rendered)
 
     def test_topic_book_quota_prefers_query_tags_and_vector_relevance(self) -> None:
         def book(

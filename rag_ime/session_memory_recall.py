@@ -262,7 +262,9 @@ class SessionMemoryRecallBuilder:
                     NullEmbeddingProvider(),
                 )
                 effective_embedding = "none"
-            embedding_fallback = requested_embedding != "none"
+                embedding_fallback = requested_embedding != "none"
+
+            coverage = _curation_coverage(conn, self.project) if ("user", "default") in visible_owners else None
 
         selected, omitted = _select_hits(
             retrieval.get("memoryHits"),
@@ -324,6 +326,7 @@ class SessionMemoryRecallBuilder:
                 # selected content, not only the list of source ids, so the
                 # Provider context can invalidate superseded text.
                 "selectedContentSha256": selected_content_sha256,
+                "coverage": coverage,
                 "compactionRecovery": recovery,
             },
             ensure_ascii=False,
@@ -403,6 +406,8 @@ class SessionMemoryRecallBuilder:
         }
         if recovery:
             payload["compactionRecovery"] = recovery
+        if coverage is not None:
+            payload["coverage"] = coverage
         validate_contract(payload, "session-memory-recall.v1.json")
         return {
             "session_id": session,
@@ -459,6 +464,19 @@ def _require_preverified_recall_schema(conn: sqlite3.Connection) -> None:
             "preverified Session recall database is missing required tables: "
             + ",".join(missing)
         )
+
+
+def _curation_coverage(conn: sqlite3.Connection, project: str) -> dict[str, object]:
+    """A cheap cursor projection; a no-hit result is never evidence of absence."""
+    row = conn.execute("""SELECT last_source_created_at_ms, last_run_ms, status
+        FROM memory_curation_cursors
+        WHERE owner_kind = 'user' AND owner_id = 'default' AND project = ? AND lane = 'daily'
+        """, (project,)).fetchone()
+    if row is None:
+        return {"status": "unknown", "processedThroughAtMs": 0, "lastRunAtMs": 0}
+    return {"status": str(row["status"]),
+            "processedThroughAtMs": max(0, int(row["last_source_created_at_ms"] or 0)),
+            "lastRunAtMs": max(0, int(row["last_run_ms"] or 0))}
 
 
 def _select_hits(
@@ -595,6 +613,14 @@ def _select_hits(
                     for event_id in item.get("evidence_event_ids") or []
                     if isinstance(event_id, int) and event_id > 0
                 ][:16],
+                **{
+                    key: metadata[key]
+                    for key in ("project", "claimState", "validFromMs", "validToMs",
+                                "supersedesId", "sourceUpdatedAtMs", "sourceStartMs", "sourceEndMs")
+                    if key in metadata and metadata[key] is not None
+                },
+                "corroborationOnly": is_activity_timeline or bool(metadata.get("corroborationOnly")),
+                "maySupportFacts": not is_activity_timeline and metadata.get("maySupportFacts") is not False,
             }
         )
         if doc_type == "book":

@@ -183,6 +183,157 @@ class _AtomFirstOrganizer:
 
 
 class PersonalMemoryOwnerFlowTests(unittest.TestCase):
+    def test_atom_first_cross_app_correction_retires_previous_choice(self) -> None:
+        self._assert_cross_app_correction("supersede")
+
+    def test_atom_first_update_refreshes_existing_book_summary(self) -> None:
+        self._assert_cross_app_correction("update")
+
+    def _assert_cross_app_correction(self, correction_action: str) -> None:
+        from rag_ime.deepseek_memory_organizer import _bind_atom_first_canonical_evidence
+        from rag_ime.memory_curation import (
+            build_memory_curation_model_bundle, curation_decisions_to_compile_output,
+        )
+
+        initial = "在 PAW 本次迭代的记忆报告中，时间随记忆条目展示。"
+        correction = "更正：在 PAW 本次迭代的记忆报告中，用户展开条目后才显示时间。"
+        current = "在 PAW 本次迭代的记忆报告中，用户展开条目后才显示时间。"
+
+        class RecordedDecisionOrganizer(_AtomFirstOrganizer):
+            def curate_owner_memory(self, *, bundle, project, **_kwargs):
+                snapshot = build_memory_curation_model_bundle(bundle)
+                source = next(item for item in snapshot["inputs"]
+                              if "记忆报告中" in item["text"])
+                changed = source["text"].startswith("更正")
+                action = {"e": source["ref"], "text": current if changed else initial,
+                          "kind": "project_decision", "g": "new:memory-report",
+                          "topicTitle": "记忆报告", "confidence": 0.99}
+                if changed:
+                    action["p"] = next(item["ref"] for item in snapshot["existingAtoms"]
+                                       if item["text"] == initial)
+                    action.pop("g")
+                    action.pop("topicTitle")
+                decisions = {correction_action if changed else "create": [action],
+                             "ignore": [item["ref"] for item in snapshot["inputs"]
+                                        if item["ref"] != source["ref"]]}
+                compiled = curation_decisions_to_compile_output(
+                    decisions, source_bundle=bundle, project=project)
+                return _bind_atom_first_canonical_evidence(compiled, bundle=bundle)
+
+        self._capture(initial, ordinal=2, app="RagImeControl")
+        organizer = RecordedDecisionOrganizer(self.db_path, self._curation_session_id())
+        curator = OwnerMemoryCurator(self.db_path, organizer=organizer,
+            project="personal-agent-workbench", initial_settle_ms=0, auto_apply=True)
+        curator.initialize()
+        first = curator.run_due(manual=True, owner_kind="user", owner_id="default",
+                                current_ms=10_000)
+        self.assertTrue(first["ok"], first)
+        self._capture(correction, ordinal=3, app="com.openai.codex")
+        organizer.session_id = self._curation_session_id()
+        second = curator.run_due(manual=True, owner_kind="user", owner_id="default",
+                                 current_ms=20_000)
+        self.assertTrue(second["ok"], second)
+        with self.core._connect() as conn:
+            rows = [dict(row) for row in conn.execute(
+                "SELECT * FROM memory_atoms WHERE canonical_text LIKE '%记忆报告中%'")]
+            books = [dict(row) for row in conn.execute(
+                "SELECT * FROM memory_books WHERE status IN ('active', 'approved')")]
+        active = [row for row in rows if row["claim_state"] == "current"]
+        self.assertEqual([row["canonical_text"] for row in active], [current])
+        if correction_action == "supersede":
+            old = next(row for row in rows if row["canonical_text"] == initial)
+            self.assertEqual(old["status"], "superseded")
+            self.assertEqual(active[0]["supersedes_id"], old["id"])
+            self.assertEqual(active[0]["valid_from_ms"], 3_000)
+            self.assertEqual(old["valid_to_ms"], 3_000)
+        self.assertTrue(books)
+        self.assertTrue(any(current in row["summary"] for row in books))
+        self.assertTrue(all(initial not in row["summary"] for row in books))
+        self.assertTrue(all(3 in json.loads(row["source_event_ids_json"]) for row in books))
+
+    def test_full_source_and_bound_question_share_curation_budget(self):
+        from rag_ime.memory_curation import build_memory_curation_model_bundle
+        from rag_ime.owner_memory_curation import (
+            _build_owner_source_bundle, _bounded_personal_v2_model_inputs,
+            _fit_personal_v2_inputs_to_catalog,
+        )
+
+        text = "本次调整需要保留来源和适用范围。" * 300 + "最后一个限制：未经确认不能发布。"
+        self._capture(text, ordinal=2)
+        with self.core._connect() as conn:
+            bundle = _build_owner_source_bundle(conn, owner_kind="user", owner_id="default",
+                project="personal-agent-workbench", limit=10, canonical_personal=True)
+        snapshot = build_memory_curation_model_bundle(bundle)
+        self.assertIn(text, [item["text"] for item in snapshot["inputs"]])
+        choice = {"text": "推荐后者", "decisionContext": {"questionText": "范" * 4000},
+                  "createdAtMs": 100, "sourceId": "choice"}
+        with patch("rag_ime.owner_memory_curation.MAX_PERSONAL_V2_INPUT_TOKENS", 8000):
+            self.assertEqual(len(_bounded_personal_v2_model_inputs([choice, choice])), 1)
+            self.assertEqual(len(_fit_personal_v2_inputs_to_catalog([choice, choice],
+                existing_memory_context={}, context_only=[])), 1)
+            with self.assertRaisesRegex(ValueError, "budget"):
+                _fit_personal_v2_inputs_to_catalog([{"text": "范" * 7000}],
+                    existing_memory_context={}, context_only=[])
+
+    def test_automatic_catch_up_stops_on_failure(self):
+        self._capture("我长期要求解释记忆的来源和适用条件。", ordinal=2,
+                      created_at_ms=13 * 60 * 60 * 1000)
+        curator = OwnerMemoryCurator(self.db_path, organizer=_PersonalV2NoopOrganizer(fail_finish=True),
+            project="personal-agent-workbench", initial_settle_ms=0, auto_apply=True)
+        curator.initialize()
+        report = curator.run_due(current_ms=100 * 60 * 60 * 1000)
+        self.assertFalse(report["ok"])
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["status"]["pendingSourceCount"], 2)
+
+    def test_automatic_catch_up_handles_late_sources_behind_monotonic_cursor(self):
+        hour = 60 * 60 * 1000
+        for ordinal in (2, 3):
+            self._capture(f"我长期要求第{ordinal}个协作约定保留来源。",
+                          ordinal=ordinal, created_at_ms=ordinal * 13 * hour)
+        curator = OwnerMemoryCurator(self.db_path, organizer=_PersonalV2NoopOrganizer(),
+            project="personal-agent-workbench", initial_settle_ms=0, auto_apply=True)
+        curator.initialize()
+        with self.core._connect() as conn:
+            conn.execute("""INSERT INTO memory_curation_cursors
+                (owner_kind, owner_id, project, lane, last_source_created_at_ms,
+                 last_source_id, next_due_at_ms, status, updated_at_ms)
+                VALUES ('user', 'default', 'personal-agent-workbench', 'daily', ?,
+                        'source:later-cursor', 0, 'idle', 0)""", (100 * hour,))
+        report = curator.run_due(current_ms=200 * hour)
+        self.assertTrue(report["ok"])
+        self.assertEqual(len(report["results"]), 3)
+        self.assertEqual(report["status"]["pendingSourceCount"], 0)
+        with self.core._connect() as conn:
+            self.assertEqual(conn.execute("SELECT last_source_created_at_ms FROM memory_curation_cursors").fetchone()[0],
+                             100 * hour)
+
+    def test_automatic_curation_catches_up_in_bounded_batches_then_resumes_cadence(self):
+        hour = 60 * 60 * 1000
+        for ordinal in range(2, 6):
+            self._capture(f"我长期希望第{ordinal}项协作约定保持清楚且可以追溯。",
+                          ordinal=ordinal, created_at_ms=ordinal * 13 * hour)
+        organizer = _PersonalV2NoopOrganizer()
+        curator = OwnerMemoryCurator(self.db_path, organizer=organizer,
+            project="personal-agent-workbench", initial_settle_ms=0,
+            daily_interval_ms=12 * hour, auto_apply=True)
+        curator.initialize()
+        now = 100 * hour
+        first = curator.run_due(current_ms=now)
+        self.assertTrue(first["ok"])
+        self.assertEqual(first["ranScopeCount"], 1)
+        self.assertEqual(len(first["results"]), 3)
+        self.assertTrue(first["status"]["due"])
+        second = curator.run_due(current_ms=now + 1)
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["status"]["pendingSourceCount"], 0)
+        # E/S refs are local to each frozen batch; the drained ledger and five
+        # calls prove each of the five separately timed inputs was handled.
+        self.assertEqual(len(organizer.source_refs), 5)
+        scope = second["status"]["scopes"][0]
+        self.assertEqual(scope["nextDueAtMs"], now + 1 + 12 * hour)
+        self.assertFalse(curator.run_due(current_ms=now + 2)["results"])
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="rag-ime-personal-owner-")
         self.db_path = Path(self.temporary.name) / "rag-ime.sqlite"
@@ -501,6 +652,7 @@ class PersonalMemoryOwnerFlowTests(unittest.TestCase):
         *,
         ordinal: int = 1,
         created_at_ms: int | None = None,
+        app: str = "com.apple.TextEdit",
     ) -> str:
         timestamp = ordinal * 1_000 if created_at_ms is None else created_at_ms
         metadata = {
@@ -518,7 +670,7 @@ class PersonalMemoryOwnerFlowTests(unittest.TestCase):
             "finalCommitted": True,
             "controllerEpoch": 1,
             "focusEpoch": 1,
-            "appBundleId": "com.apple.TextEdit",
+            "appBundleId": app,
             "fieldIdentitySha256": hashlib.sha256(b"personal-owner-field").hexdigest(),
             "privacyRevision": "foreground-privacy.v1",
             "occurredStartMs": timestamp,
@@ -537,7 +689,7 @@ class PersonalMemoryOwnerFlowTests(unittest.TestCase):
                 source="squirrel_input_segment",
                 committed_text=text,
                 privacy_disposition="allowed",
-                app="com.apple.TextEdit",
+                app=app,
                 project="personal-agent-workbench",
                 capture_metadata=metadata,
             )

@@ -64,6 +64,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -83,6 +93,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -100,59 +120,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
-        },
-      ]
-    | [
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -172,6 +149,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -189,6 +176,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -206,110 +203,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-      ]
-    | [
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -329,6 +232,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -346,6 +259,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -363,6 +286,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -380,161 +313,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-      ]
-    | [
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -554,6 +342,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -571,6 +369,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -588,6 +396,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -605,6 +423,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -622,212 +450,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-      ]
-    | [
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -847,6 +479,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -864,6 +506,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -881,6 +533,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -898,6 +560,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -915,6 +587,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -932,74 +614,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -1019,6 +643,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1036,6 +670,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1053,6 +697,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1070,6 +724,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1087,6 +751,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1104,6 +778,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1121,74 +805,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
-        },
-        {
-          rank: number;
-          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
-          sourceId: string;
-          title: string;
-          text: string;
-          score: number;
-          confidence: number;
-          lanes: string[];
-          rawScores: {
-            [k: string]: number;
-          };
-          tags: string[];
-          ownerKind: string;
-          ownerId: string;
-          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ]
     | [
@@ -1208,6 +834,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1225,6 +861,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1242,6 +888,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1259,6 +915,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1276,6 +942,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1293,6 +969,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1310,6 +996,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1327,6 +1023,45 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+      ]
+    | [
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1344,6 +1079,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1361,6 +1106,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1378,6 +1133,16 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
         {
           rank: number;
@@ -1395,6 +1160,1021 @@ export interface SessionMemoryRecallV1 {
           ownerKind: string;
           ownerId: string;
           evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+      ]
+    | [
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+      ]
+    | [
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+      ]
+    | [
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
+        },
+        {
+          rank: number;
+          sourceType: 'memory_book' | 'memory_atom' | 'memory_timeline';
+          sourceId: string;
+          title: string;
+          text: string;
+          score: number;
+          confidence: number;
+          lanes: string[];
+          rawScores: {
+            [k: string]: number;
+          };
+          tags: string[];
+          ownerKind: string;
+          ownerId: string;
+          evidenceEventIds: number[];
+          project?: string;
+          claimState?: string;
+          validFromMs?: number;
+          validToMs?: number;
+          supersedesId?: string;
+          sourceUpdatedAtMs?: number;
+          sourceStartMs?: number;
+          sourceEndMs?: number;
+          corroborationOnly?: boolean;
+          maySupportFacts?: boolean;
         },
       ];
   /**
@@ -1774,6 +2554,11 @@ export interface SessionMemoryRecallV1 {
       name: string;
       schemaRevision: string;
     }[];
+  };
+  coverage?: {
+    status: string;
+    processedThroughAtMs: number;
+    lastRunAtMs: number;
   };
   sourceIds: string[];
   budget: {

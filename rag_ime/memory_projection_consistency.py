@@ -348,11 +348,13 @@ def invalidate_superseded_atom_dependencies(
     new_atom_id: str = "",
     timestamp: int | None = None,
 ) -> dict[str, object]:
-    """Invalidate every current projection derived from superseded Atoms.
+    """Invalidate projections derived from superseded or revised Atom text.
 
     Books remain as auditable records, but are marked retrieval-stale and leave
     retrieval immediately. Semantic-group membership may move to a verified
     replacement Atom; the old Atom can never keep boosting current retrieval.
+    An in-place revision passes its own ID as the replacement and keeps its
+    existing group memberships while refreshing the dependent projections.
     """
 
     resolved_at = now_ms() if timestamp is None else max(0, int(timestamp))
@@ -413,7 +415,7 @@ def invalidate_superseded_atom_dependencies(
                 atom_placeholders = ",".join("?" for _ in next_ids)
                 atom_rows = conn.execute(
                     f"""
-                    SELECT id, canonical_text, text
+                    SELECT id, canonical_text, text, source_event_ids_json
                     FROM memory_atoms
                     WHERE id IN ({atom_placeholders})
                       AND status IN ('active', 'approved')
@@ -430,6 +432,11 @@ def invalidate_superseded_atom_dependencies(
                 for atom_row in atom_rows
             }
             current_ids = [atom_id for atom_id in next_ids if atom_id in text_by_id]
+            source_event_ids = sorted({
+                event_id
+                for atom_row in atom_rows
+                for event_id in _positive_ints(_json_list(atom_row["source_event_ids_json"]))
+            })
             summary = "；".join(
                 text_by_id[atom_id]
                 for atom_id in current_ids
@@ -449,6 +456,7 @@ def invalidate_superseded_atom_dependencies(
                 """
                 UPDATE memory_books
                 SET summary = ?, normalized_text = ?, memory_atom_ids_json = ?,
+                    source_event_ids_json = ?,
                     tags_json = '[]', surface_hints_json = '[]',
                     query_expansions_json = '[]', metadata_json = ?,
                     updated_at_ms = ?, last_active_at_ms = ?
@@ -458,6 +466,7 @@ def invalidate_superseded_atom_dependencies(
                     summary,
                     normalize_text(f"{row['title']} {summary}"),
                     json.dumps(current_ids, ensure_ascii=False),
+                    json.dumps(source_event_ids),
                     json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                     resolved_at,
                     resolved_at,
@@ -645,6 +654,8 @@ def invalidate_superseded_atom_dependencies(
     moved = 0
     if replacement:
         for row in group_rows:
+            if str(row[2]) == replacement:
+                continue
             conn.execute(
                 """
                 INSERT INTO memory_semantic_group_members(
@@ -661,8 +672,9 @@ def invalidate_superseded_atom_dependencies(
         f"""
         DELETE FROM memory_semantic_group_members
         WHERE member_type = 'atom' AND member_id IN ({placeholders})
+          AND member_id <> ?
         """,
-        old_ids,
+        (*old_ids, replacement),
     )
 
     dependent_doc_ids = [f"atom:{atom_id}" for atom_id in old_ids]

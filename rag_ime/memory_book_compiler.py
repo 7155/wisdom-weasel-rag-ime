@@ -4174,17 +4174,24 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             atom_id=atom_id,
             merge=global_merge,
         )
+    revised_atom_ids = [
+        compact_whitespace(str(item.get("id") or ""))
+        for item in auto_superseded
+    ]
+    if previous and normalize_text(
+        str(previous.get("canonical_text") or previous.get("text") or "")
+    ) != normalize_text(canonical):
+        # An in-place semantic update also invalidates summaries and vectors
+        # derived from the previous text, even though the Atom ID is stable.
+        revised_atom_ids.append(atom_id)
     dependency_invalidation = (
         invalidate_superseded_atom_dependencies(
             conn,
-            old_atom_ids=[
-                compact_whitespace(str(item.get("id") or ""))
-                for item in auto_superseded
-            ],
+            old_atom_ids=revised_atom_ids,
             new_atom_id=atom_id,
             timestamp=timestamp,
         )
-        if auto_superseded
+        if revised_atom_ids
         and claim_state == "current"
         and stored_status in {"active", "approved"}
         else {}

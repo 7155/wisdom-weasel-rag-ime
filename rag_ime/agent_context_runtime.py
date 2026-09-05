@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .contracts.json_schema import validate_contract
@@ -1256,9 +1257,18 @@ def _render_session_memory_evidence(
         else {}
     )
     recalled = payload.get("items") if isinstance(payload.get("items"), list) else []
-    if not recalled:
+    coverage = payload.get("coverage")
+    if not recalled and not isinstance(coverage, Mapping):
         return []
     lines = ["", "## Session 记忆"]
+    if isinstance(coverage, Mapping):
+        stamp = coverage.get("processedThroughAtMs")
+        if isinstance(stamp, (int, float)) and 0 < stamp < 253402300799000:
+            date = datetime.fromtimestamp(stamp / 1000, timezone.utc).isoformat(timespec="seconds")
+            lines.append(f"记忆整理游标：{date}；这是处理进度，不保证此前输入已全部整理，更晚输入及待复核内容可能尚未整理。")
+        else:
+            lines.append("记忆整理覆盖范围尚未确认。")
+        lines.append("无命中不代表用户没有表达过；需要时查当前对话、原始来源及项目文档。当前要求优先。")
     books: list[Mapping[str, object]] = []
     timelines: list[Mapping[str, object]] = []
     atoms: list[Mapping[str, object]] = []
@@ -1292,10 +1302,12 @@ def _render_session_memory_evidence(
             lines.extend(["", "### 近期时间线"])
         for item in timelines:
             lines.extend(_memory_book_body(item))
+            lines.extend(_memory_evidence_provenance(item, timeline=True))
     if books:
         lines.extend(["", "### 主题书"])
         for item in books:
             lines.extend(_memory_book_body(item))
+            lines.extend(_memory_evidence_provenance(item))
     if atoms:
         lines.extend(["", "### 事实与偏好"])
         for item in atoms:
@@ -1303,7 +1315,36 @@ def _render_session_memory_evidence(
             body = compact_whitespace(str(item.get("text") or ""))
             if body:
                 lines.append(f"- **{atom_type}**: {body}")
+                lines.extend(_memory_evidence_provenance(item))
     return lines
+
+
+def _memory_evidence_provenance(
+    item: Mapping[str, object], *, timeline: bool = False,
+) -> list[str]:
+    parts: list[str] = []
+    for key, label in (("sourceId", "来源"), ("project", "适用项目"),
+                       ("claimState", "记忆状态"), ("supersedesId", "替代记忆")):
+        value = compact_whitespace(str(item.get(key) or ""))
+        if value:
+            parts.append(f"{label}：{value}")
+    refs = [f"event:{value}" for value in item.get("evidenceEventIds") or []
+            if isinstance(value, int) and value > 0][:16]
+    if refs:
+        parts.append("原始输入：" + ", ".join(refs))
+    for key, label in (("sourceStartMs", "来源起点"), ("sourceEndMs", "来源终点"),
+                       ("sourceUpdatedAtMs", "来源更新"), ("validFromMs", "生效时间"),
+                       ("validToMs", "失效时间")):
+        value = item.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            try:
+                stamp = datetime.fromtimestamp(value / 1000, timezone.utc).isoformat(timespec="seconds")
+            except (ValueError, OverflowError, OSError):
+                continue
+            parts.append(f"{label}：{stamp}")
+    if timeline or item.get("corroborationOnly") or item.get("maySupportFacts") is False:
+        parts.append("仅辅助理解活动，不能独立证明事实或任务完成")
+    return ["依据：" + "；".join(parts)] if parts else []
 
 
 def _render_compaction_recovery(

@@ -12,6 +12,103 @@ from rag_ime.personal_context import AgentMemoryEvidenceStore
 
 
 class AgentMemorySourceStoreTests(unittest.TestCase):
+    def test_short_selection_is_bound_to_exact_same_session_question(self):
+        from rag_ime.owner_memory_curation import _build_owner_source_bundle, _deterministic_personal_v2_disposition
+        from rag_ime.memory_curation import build_memory_curation_model_bundle
+        from rag_ime.memory_evidence_admission import (
+            curatable_personal_evidence_sql, evidence_is_admitted, transition_evidence_admission,
+        )
+
+        evidence = AgentMemoryEvidenceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        evidence.initialize()
+        question = evidence.record_assistant_message(session_id=str(self.session["id"]),
+            pi_entry_id="question:style", turn_id="turn:question", role_id="",
+            text="本次项目界面暂用哪种风格？ A. 深色界面 B. 浅色界面（推荐），发布另行决定。", occurred_at_ms=100)
+        result = self.store.checkpoint_user_message(session_id=str(self.session["id"]),
+            pi_entry_id="answer:style", turn_id="turn:answer", text="推荐后者", created_at_ms=200)
+        context = result["source"]["metadata"]["decisionContext"]
+        self.assertEqual(context["questionEvidenceId"], question["evidence"]["evidenceId"])
+        self.assertEqual(context["answerEntryId"], "answer:style")
+        self.assertEqual(context["answerText"], "推荐后者")
+        selected_options = ["浅色界面，发布另行决定。"]
+        self.assertEqual(context["selectedOptions"], selected_options)
+        self.assertEqual(context["scope"], "this_question_only")
+        captured = self.store.capture_hint(session_id=str(self.session["id"]), source_id=result["source"]["sourceId"],
+            kind="decision", claim="本次项目界面选择浅色界面。", scope="user",
+            basis="explicit_user_statement", future_use="恢复用户对该界面方案的选择。", created_at_ms=201)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            bundle = _build_owner_source_bundle(conn, owner_kind="user", owner_id="default",
+                project="wisdom-weasel-rag-ime", limit=10, canonical_personal=True)
+        candidate = bundle["inputs"][0]
+        self.assertEqual(candidate["text"], "推荐后者")
+        self.assertIsNone(_deterministic_personal_v2_disposition(candidate))
+        self.assertEqual(candidate["decisionContext"]["selectedOptions"], selected_options)
+        model = build_memory_curation_model_bundle({"recentEvents": [{**candidate, "eventId": candidate["sourceEventIds"][0]}]})
+        self.assertEqual(model["inputs"][0]["decisionContext"]["selectedOptions"], selected_options)
+        # A subsequently backfilled question must never rebind an already
+        # checkpointed answer to different options.
+        evidence.record_assistant_message(session_id=str(self.session["id"]), role_id="",
+            pi_entry_id="question:backfilled", text="发布到哪里？ A. 测试环境 B. 生产环境（推荐）",
+            occurred_at_ms=150)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            replay = _build_owner_source_bundle(conn, owner_kind="user", owner_id="default",
+                project="wisdom-weasel-rag-ime", limit=10, canonical_personal=True)
+        self.assertIsNone(replay["inputs"][0]["decisionContext"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            transition_evidence_admission(conn, captured["evidenceId"], new_state="admitted",
+                reason_code="verified_question_selection", actor_kind="luna", created_at_ms=300)
+            self.assertTrue(evidence_is_admitted(conn, captured["evidenceId"]))
+            conn.execute("UPDATE agent_memory_evidence SET admission_state = 'forgotten' WHERE evidence_id = ?",
+                         (context["questionEvidenceId"],))
+            self.assertFalse(evidence_is_admitted(conn, captured["evidenceId"]))
+            self.assertIsNone(conn.execute(f"""SELECT 1 FROM agent_memory_evidence AS evidence
+                WHERE evidence.evidence_id = ? AND {curatable_personal_evidence_sql()}""",
+                (captured["evidenceId"],)).fetchone())
+
+    def test_selection_does_not_cross_project_session_or_intervening_user_message(self):
+        from rag_ime.memory_decision_context import resolve_decision_context
+
+        session_id = str(self.session["id"])
+        question_text = "本次界面采用哪种风格？ A. 深色界面 B. 浅色界面（推荐）"
+        for index, (project, question_session, intervening) in enumerate([
+            ("", session_id, False),
+            ("wisdom-weasel-rag-ime", "another-session", False),
+            ("wisdom-weasel-rag-ime", session_id, True),
+        ]):
+            with self.subTest(index=index):
+                evidence = AgentMemoryEvidenceStore(self.db_path, project=project)
+                evidence.record_assistant_message(session_id=question_session, role_id="",
+                    pi_entry_id=f"question:boundary:{index}", text=question_text, occurred_at_ms=100 + index * 100)
+                if intervening:
+                    self.store.checkpoint_user_message(session_id=session_id, pi_entry_id="user:intervening",
+                        turn_id="turn:intervening", text="先处理检索失败的问题。", created_at_ms=325)
+                with closing(sqlite3.connect(self.db_path)) as conn:
+                    conn.row_factory = sqlite3.Row
+                    self.assertIsNone(resolve_decision_context(conn, session_id=session_id,
+                        project="wisdom-weasel-rag-ime", answer_entry_id=f"answer:boundary:{index}",
+                        answer_text="推荐后者", occurred_at_ms=150 + index * 100))
+
+    def test_ambiguous_quoted_and_unrelated_confirmations_are_not_bound(self):
+        evidence = AgentMemoryEvidenceStore(self.db_path, project="wisdom-weasel-rag-ime")
+        evidence.initialize()
+        for index, (question, answer) in enumerate([
+            ("项目采用哪种风格？ A. 深色界面 B. 浅色界面", "全部推荐"),
+            ("> 项目采用哪种风格？ A. 深色界面 B. 浅色界面（推荐）", "推荐后者"),
+            ("你已经完成了两项工作。", "推荐后者"),
+            ("缓存选好了吗？界面采用哪种风格？ A. 深色界面 B. 浅色界面（推荐）", "全部推荐"),
+            ("界面采用哪种风格？ A. 深色界面 B. 浅色界面 C. 系统主题", "推荐后者"),
+        ]):
+            with self.subTest(index=index):
+                evidence.record_assistant_message(session_id=str(self.session["id"]),
+                    pi_entry_id=f"question:{index}", role_id="", text=question, occurred_at_ms=100 + index * 100)
+                result = self.store.checkpoint_user_message(session_id=str(self.session["id"]),
+                    pi_entry_id=f"answer:{index}", turn_id=f"turn:{index}", text=answer,
+                    created_at_ms=150 + index * 100)
+                self.assertNotIn("decisionContext", result["source"]["metadata"])
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-memory-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"

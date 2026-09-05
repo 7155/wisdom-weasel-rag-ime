@@ -24762,6 +24762,41 @@ export const contractSchemas = {
                 "type": "integer",
                 "minimum": 1
               }
+            },
+            "project": {
+              "type": "string"
+            },
+            "claimState": {
+              "type": "string"
+            },
+            "validFromMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "validToMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "supersedesId": {
+              "type": "string"
+            },
+            "sourceUpdatedAtMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sourceStartMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sourceEndMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "corroborationOnly": {
+              "type": "boolean"
+            },
+            "maySupportFacts": {
+              "type": "boolean"
             }
           }
         }
@@ -24927,6 +24962,28 @@ export const contractSchemas = {
                 }
               }
             }
+          }
+        }
+      },
+      "coverage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "processedThroughAtMs",
+          "lastRunAtMs"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "processedThroughAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastRunAtMs": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },

@@ -289,9 +289,17 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
                 "ref": f"E{len(evidence) + 1}",
                 "sourceRef": compact_whitespace(str(item.get("sourceRef") or "")),
                 "eventIds": source_ids,
-                "text": text[:600],
+                # Batch admission already enforces a token budget. Truncating
+                # one admitted source here can hide a trailing correction while
+                # still claiming that its complete Evidence was processed.
+                "text": text,
+                **({"decisionContext": dict(item["decisionContext"])}
+                   if isinstance(item.get("decisionContext"), Mapping) else {}),
                 "app": compact_whitespace(str(item.get("app") or ""))[:120],
                 "createdAtMs": _int(item.get("createdAtMs")),
+                "sourceOccurredAtMs": _int(item.get("sourceOccurredAtMs") or item.get("createdAtMs")),
+                "project": compact_whitespace(str(item.get("project") or bundle.get("project") or "")),
+                "sourceKind": compact_whitespace(str(item.get("sourceKind") or item.get("source") or "")),
                 "contextGroupId": compact_whitespace(
                     str(item.get("contextGroupId") or "")
                 )[:120],
@@ -993,12 +1001,18 @@ def curation_decisions_to_compile_output(
         evidence_items = [
             evidence_by_ref[ref] for ref in evidence_refs if ref in evidence_by_ref
         ]
-        scope_app = _single_app(
-            [
-                *evidence_items,
-                {"app": base_atom.get("app")},
-                {"app": (merge_source_atom or {}).get("app")},
-            ]
+        # A new receipt's capture app is provenance, not a scope migration for
+        # an explicitly selected existing claim. Changing this field prevents
+        # the writer from closing the previous version in the same scope.
+        scope_app = (
+            compact_whitespace(str(existing_atom.get("app") or ""))
+            if existing_atom is not None
+            else _single_app(evidence_items)
+        )
+        replacement_time = max(
+            (_int(item.get("sourceOccurredAtMs") or item.get("createdAtMs"))
+             for item in evidence_items),
+            default=0,
         )
         kind = (
             compact_whitespace(str(base_atom.get("kind") or "project_fact"))
@@ -1117,7 +1131,9 @@ def curation_decisions_to_compile_output(
                 )
             ).lower(),
             "validFromMs": (
-                _int((existing_atom or {}).get("validFromMs"))
+                replacement_time
+                if action == "supersede"
+                else _int((existing_atom or {}).get("validFromMs"))
                 if (existing_atom or {}).get("validFromMs") is not None
                 else _int((merge_source_atom or {}).get("validFromMs"))
                 if (merge_source_atom or {}).get("validFromMs") is not None
@@ -1134,6 +1150,7 @@ def curation_decisions_to_compile_output(
             ),
             "supersedesId": compact_whitespace(
                 str(
+                    old_atom_id if action == "supersede" else
                     (existing_atom or {}).get("supersedesId")
                     or (merge_source_atom or {}).get("supersedesId")
                     or decision.get("supersedesId")
@@ -1143,6 +1160,7 @@ def curation_decisions_to_compile_output(
             if catalog_audit
             else compact_whitespace(
                 str(
+                    old_atom_id if action == "supersede" else
                     (existing_atom or {}).get("supersedesId")
                     or (merge_source_atom or {}).get("supersedesId")
                     or decision.get("supersedesId")

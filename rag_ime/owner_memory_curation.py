@@ -36,6 +36,7 @@ from .memory_evidence_admission import (
 )
 from .memory_evidence_policy import memory_evidence_exclusion_reason
 from .memory_ingest import normalize_text
+from .memory_decision_context import resolve_decision_context
 from .memory_curation import MEMORY_CURATION_ARCHITECTURE
 from .memory_purpose import personal_current_state_profile, purpose_audit_fields
 from .personal_context import (
@@ -56,6 +57,7 @@ DEFAULT_MAX_SOURCES = 1_000
 MAX_PERSONAL_V2_SOURCES = 1_500
 MAX_PERSONAL_V2_INPUT_TOKENS = 200_000
 MAX_PERSONAL_V2_WINDOW_MS = 12 * 60 * 60 * 1_000
+MAX_AUTOMATIC_CATCH_UP_BATCHES = 3
 MAX_EXTERNAL_MODEL_INPUTS_PER_RUN = 8
 MAX_OWNER_MODEL_INPUTS_PER_RUN = 6
 MAX_OWNER_MEMORY_ATOMS_PER_RUN = 6
@@ -318,15 +320,18 @@ class OwnerMemoryCurator:
                 continue
             if not manual and not bool(scope.get("due")):
                 continue
-            results.append(
-                self._run_scope(
+            batch_limit = MAX_AUTOMATIC_CATCH_UP_BATCHES if self.personal_v2 and not manual and self.auto_apply else 1
+            for _ in range(batch_limit):
+                result = self._run_scope(
                     owner_kind=str(scope["ownerKind"]),
                     owner_id=str(scope["ownerId"]),
                     manual=manual,
                     instruction=instruction,
                     current_ms=timestamp,
                 )
-            )
+                results.append(result)
+                if not result.get("ok") or not result.get("catchUpPending"):
+                    break
         after = self.status(
             owner_kind=owner_kind,
             owner_id=owner_id,
@@ -336,7 +341,8 @@ class OwnerMemoryCurator:
             "schemaVersion": OWNER_CURATION_RUN_SCHEMA_VERSION,
             "ok": all(bool(item.get("ok")) for item in results),
             "manual": bool(manual),
-            "ranScopeCount": len(results),
+            "ranScopeCount": len({(item.get("ownerKind"), item.get("ownerId")) for item in results}),
+            "ranBatchCount": len(results),
             "results": results,
             "status": after,
         }
@@ -639,6 +645,8 @@ class OwnerMemoryCurator:
                                 "createdAtMs": item["createdAtMs"],
                                 "sourceOccurredAtMs": item["sourceOccurredAtMs"],
                                 "text": item["text"],
+                                "decisionContext": item.get("decisionContext"),
+                                "sourceKind": item["sourceKind"],
                                 "recentContext": item.get("recentContext", ""),
                                 "source": item["source"],
                                 "project": item["project"],
@@ -947,13 +955,34 @@ class OwnerMemoryCurator:
                 if callable(finish_model_run):
                     finish_model_run()
                 model_run_started = False
+            # A processed time slice is not a completed backlog. Keep bounded
+            # automatic batches runnable until the queue drains; waiting for the
+            # normal daily cadence here makes historical work starve new input.
+            with self._connect() as conn:
+                remaining_sources = _pending_source_count(
+                    conn, owner_kind=owner[0], owner_id=owner[1], project=self.project,
+                    cursor_ms=boundary[0], cursor_id=boundary[1], canonical_personal=self.personal_v2,
+                )
+            catch_up_pending = (
+                self.personal_v2 and self.auto_apply and not manual
+                and run_status in {"applied", "empty", "idle"}
+                and remaining_sources > 0
+                and (
+                    boundary > cursor_boundary
+                    or any(
+                        decision.get("changed")
+                        and decision.get("disposition") in {"remember", "not_for_memory"}
+                        for decision in [*deterministic, *model_decisions]
+                    )
+                )
+            )
             self._finish_scope(
                 owner_kind=owner[0],
                 owner_id=owner[1],
                 run_id=stored_run_id,
                 boundary=boundary,
                 status="idle" if run_status in {"applied", "empty"} else run_status,
-                next_due_at_ms=current_ms + self.daily_interval_ms,
+                next_due_at_ms=current_ms if catch_up_pending else current_ms + self.daily_interval_ms,
                 current_ms=current_ms,
             )
             self._emit_memory_event(
@@ -1001,6 +1030,8 @@ class OwnerMemoryCurator:
                 "modelDecisions": model_decisions,
                 "reviewRequired": run_status == "waiting_review",
                 "autoApplied": self.auto_apply and run_status == "applied",
+                "catchUpPending": catch_up_pending,
+                "remainingSourceCount": remaining_sources,
                 "diffCount": len(plan.get("diffs") or []) if plan is not None else 0,
             }
         except Exception as exc:
@@ -2645,6 +2676,17 @@ def _build_owner_source_bundle(
                 "sourceId": str(row["source_id"]),
                 "sourceIds": [str(row["source_id"])],
                 "sourceKind": str(row["source_kind"]),
+                "decisionContext": resolve_decision_context(
+                    conn, session_id=str(row["session_id"] or ""),
+                    project=str(row["event_project"] or ""),
+                    answer_entry_id=str(row["pi_entry_id"] or ""),
+                    answer_source_id=str(row["source_id"] or ""),
+                    expected_question_evidence_id=str(
+                        source_metadata["decisionContext"].get("questionEvidenceId") or ""
+                    ),
+                    answer_text=str(row["committed_text"] or ""),
+                    occurred_at_ms=int(row["created_at_ms"] or 0),
+                ) if isinstance(source_metadata.get("decisionContext"), Mapping) else None,
                 "trustClass": str(row["trust_class"]),
                 "createdAtMs": int(row["created_at_ms"] or 0),
                 "sourceEventIds": [int(row["input_event_id"])],
@@ -2655,7 +2697,7 @@ def _build_owner_source_bundle(
                         else row["committed_text"]
                         or ""
                     )
-                )[:4000],
+                ),
                 "disposition": str(row["disposition"]),
                 "source": str(row["event_source"] or ""),
                 "recentContext": compact_whitespace(
@@ -2859,6 +2901,8 @@ def _build_owner_source_bundle(
                 "createdAtMs": item["createdAtMs"],
                 "sourceOccurredAtMs": item["sourceOccurredAtMs"],
                 "text": item["text"],
+                "decisionContext": item.get("decisionContext"),
+                "sourceKind": item["sourceKind"],
                 "source": item["source"],
                 "project": item["project"],
                 "app": item["app"],
@@ -3663,9 +3707,7 @@ def _bounded_personal_v2_model_inputs(
             window_start_ms = occurred_at_ms
         if occurred_at_ms > window_start_ms + max(60_000, int(window_ms)):
             break
-        item_tokens = _estimate_personal_v2_tokens(
-            compact_whitespace(str(item.get("text") or ""))
-        ) + 32
+        item_tokens = _personal_v2_input_tokens(item)
         if result and estimated_tokens + item_tokens > MAX_PERSONAL_V2_INPUT_TOKENS:
             break
         if item_tokens > MAX_PERSONAL_V2_INPUT_TOKENS:
@@ -3708,12 +3750,22 @@ def _fit_personal_v2_inputs_to_catalog(
     result: list[dict[str, object]] = []
     used = 0
     for item in inputs:
-        cost = _estimate_personal_v2_tokens(str(item.get("text") or "")) + 32
+        cost = _personal_v2_input_tokens(item)
+        if not result and cost > evidence_budget:
+            raise ValueError("one complete Evidence expression exceeds the remaining curation budget")
         if result and used + cost > evidence_budget:
             break
         result.append(item)
         used += cost
     return result
+
+
+def _personal_v2_input_tokens(item: Mapping[str, object]) -> int:
+    text = compact_whitespace(str(item.get("text") or ""))
+    decision = item.get("decisionContext")
+    if isinstance(decision, Mapping):
+        text += json.dumps(dict(decision), ensure_ascii=False, separators=(",", ":"))
+    return _estimate_personal_v2_tokens(text) + 32
 
 
 def _estimate_personal_v2_tokens(value: str) -> int:
@@ -4627,6 +4679,11 @@ def _deterministic_personal_v2_disposition(
         return reason
     if contains_sensitive_content(text):
         return "sensitive_input"
+    if isinstance(item.get("decisionContext"), Mapping):
+        # Only the same-session resolver builds this context from stored rows.
+        # Preserve the original short answer and let the semantic pass judge
+        # whether the explicitly selected option has durable value.
+        return None
     historical_reconstruction = (
         compact_whitespace(str(item.get("evidenceOriginKind") or ""))
         == "legacy_untyped_input"

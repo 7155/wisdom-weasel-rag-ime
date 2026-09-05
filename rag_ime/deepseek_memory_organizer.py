@@ -2104,7 +2104,8 @@ def _semantic_curation_prompt_bundle(
         "evidenceOrder": str(bundle.get("evidenceOrder") or ""),
         "inputs": compact_items(
             "inputs",
-            ("ref", "text", "app", "createdAtMs", "localContext"),
+            ("ref", "text", "app", "createdAtMs", "sourceOccurredAtMs",
+             "project", "sourceKind", "localContext", "decisionContext"),
         ),
         "existingAtoms": compact_items(
             "existingAtoms",
@@ -2288,6 +2289,9 @@ def _memory_curation_verifier_prompt() -> str:
         supersede/merge 的目标语义是否匹配；merge 是否仅合并语义等价项；同一 E* 拆出多条 Atom 时
         每条是否都由原文直接表达；retract 是否同时具有明确的遗忘请求、匹配的 P* 目标和至少 0.9
         置信度。localContext 只能消歧，不能独立成证据。允许把无长期价值的完整输入放入 ignore。
+        E* 的 decisionContext 是后端绑定的同会话问题与用户选择：仅其 questionText、answerText、
+        selectedOptions 对应关系能支持本问题范围内的选择；必须保留问题对象、条件及 project，
+        不能推成跨任务偏好、已完成事实或新授权。这种绑定回答不属于孤立短片段。
 
         必须重新计算覆盖和动作数。动作数是 decisions、attach、create、update、supersede、merge、
         retract、ignore、tagMerges 各数组元素数之和。coveredEvidenceRefs 必须列出 decisions 实际覆盖
@@ -2325,7 +2329,9 @@ def _memory_curation_recovery_prompt() -> str:
         对每个 Atom 执行“独立变化测试”：若其中一部分可以在另一部分不变时被修改、撤销或单独验收，
         就是两个 Atom，必须拆开。禁止用“并且”“同时”“以及”、分号或列举把小清单包装成一个 Atom。
         优先 attach 到语义等价的现有 P*，不得把问题、条件或计划伪装成已完成事实。
-        短片段不只按字数判断：单个名词、标签、UI 文案、回答词、动作词、指代词，或任何必须依赖
+        若 E* 带 decisionContext，只能根据绑定的 questionText、answerText、selectedOptions
+        提取本问题内的选择，保留问题对象、条件及 project，不能推成跨任务偏好、已完成事实或新授权。
+        此类绑定回答不按孤立短片段忽略。其余短片段不只按字数判断：单个名词、标签、UI 文案、回答词、动作词、指代词，或任何必须依赖
         localContext 才能补出主语、对象、范围或持久谓词的 E*，都必须 ignore。多条短片段即使来自同一
         App、相邻时间或相同上下文，也禁止拼接、投票或概括成一个长期 Atom。规范化 text 不能添加
         E* 原文没有直接表达的主体、对象、动作、稳定性或适用范围。
@@ -2357,7 +2363,9 @@ def _memory_curation_semantic_repair_prompt() -> str:
         持久价值，不能继续 ignore；若没有语义等价 P*，必须根据 E* 的直接陈述 create 新 Atom。
         问题、条件、未来计划、时间、频率、App 轨迹和 localContext 都不能被推断成已完成事实、稳定习惯
         或人格。其他错误按审计器原义保守修复；不确定时优先使用与错误码一致的最小变更。
-        short_fragment 表示 E* 脱离 localContext 后不能独立表达一条持久结论；这种 finding 必须删除
+        E* 的 decisionContext 若存在，只能以 questionText、answerText、selectedOptions 的对应
+        关系支持本问题内的选择，保留问题对象、条件及 project，不得扩成跨任务偏好或新授权。
+        short_fragment 表示 E* 缺少明确 decisionContext 绑定且脱离 localContext 后不能独立表达一条持久结论；这种 finding 必须删除
         对应 Atom 操作并将相关 E* 置于 ignore，禁止通过补主语、补对象、扩写或合并其他碎片来修复。
 
         previousDecisions 中未被 verifierFindings 的 actionType/actionIndex 指向的动作已经通过本轮
@@ -2384,6 +2392,10 @@ def _memory_curation_system_prompt() -> str:
         P* 是否有语义等价重复项。全库审计与新增证据整理分开执行，因此
         snapshot.catalogAudit=true 时 inputs 为空是正常设计，不得因为没有 E* 就跳过目录检查，
         更不得删除或隐藏旧 Atom。新增完整输入由 incremental 批次另行处理。
+        若 E* 带 decisionContext，则后端已把该用户回答绑定到同一会话中紧邻的明确问题及选项；
+        只可从 questionText、answerText 和 selectedOptions 的对应关系提取本问题范围内的选择，
+        保留条件、问题对象及 project，不能把提问 Agent 的其他陈述当用户事实、跨任务偏好或新授权。
+        有此绑定的简短回答不按孤立碎片忽略；没有绑定时仍执行下述碎片规则。
         每个 E* 的 localContext 是当时有界、已脱敏的局部上下文；输入法来源通常来自 AX 捕捉的
         应用字段周边文本。它只帮助理解一条本身已经完整、已有长期价值的 E*，不是独立证据，
         不能单独创建 Atom，也不能替代 E* 的 eventIds。像“这个”“它”“继续”“改一下”这类短指令

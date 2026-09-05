@@ -20,6 +20,26 @@ from rag_ime.memory_book_compiler import (
 
 
 class MemoryCurationTests(unittest.TestCase):
+    def test_model_and_verifier_snapshot_keep_tail_constraint_and_source_scope(self):
+        from rag_ime.deepseek_memory_organizer import _semantic_curation_prompt_bundle
+
+        text = "讨论现有实现及其调用关系。" * 70 + "最终决定：不要自动发布，只允许本地修改。"
+        bundle = _source_bundle()
+        bundle["recentEvents"] = [{
+            "eventId": 901, "sourceEventIds": [901], "sourceRef": "source:901",
+            "text": text, "createdAtMs": 2000, "sourceOccurredAtMs": 1000,
+            "project": "paw", "app": "com.openai.codex", "sourceKind": "user_final",
+        }]
+        model_bundle = build_memory_curation_model_bundle(bundle)
+        snapshot = _semantic_curation_prompt_bundle(model_bundle)
+        evidence = snapshot["inputs"][0]
+        self.assertEqual(evidence["text"], text)
+        self.assertEqual(evidence["sourceOccurredAtMs"], 1000)
+        self.assertEqual(evidence["project"], "paw")
+        self.assertEqual(model_bundle["inputs"][0]["sourceRef"], "source:901")
+        self.assertEqual(model_bundle["inputs"][0]["eventIds"], [901])
+
+
     def test_model_bundle_uses_compact_refs_and_includes_existing_atoms(self) -> None:
         bundle = _source_bundle()
 

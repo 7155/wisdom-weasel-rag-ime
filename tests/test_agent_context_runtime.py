@@ -368,6 +368,21 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("- **偏好**: 解释先给结论。", rendered)
         self.assertNotIn("- **2026-07-18 活动时间线**", rendered)
 
+    def test_provider_memory_renders_source_scope_time_and_timeline_limits(self):
+        rendered = render_provider_context_items([{
+            "sourceKind": "memory_bootstrap", "payload": {
+                "schemaVersion": "rag-ime.session-memory-recall.v1",
+                "items": [{"sourceType": "memory_timeline", "sourceId": "timeline:review",
+                    "title": "项目活动", "text": "讨论过一次迁移方案。",
+                    "project": "paw", "sourceUpdatedAtMs": 1787152674541,
+                    "evidenceEventIds": [42], "corroborationOnly": True, "maySupportFacts": False}],
+            }}])
+        self.assertIn("timeline:review", rendered)
+        self.assertIn("event:42", rendered)
+        self.assertIn("paw", rendered)
+        self.assertIn("2026-08-19", rendered)
+        self.assertIn("不能独立证明事实", rendered)
+
     def test_session_memory_does_not_repeat_book_title_in_its_body(self) -> None:
         rendered = render_context_items(
             [

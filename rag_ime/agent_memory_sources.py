@@ -14,6 +14,7 @@ from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .knowledge_scope import quarantine_scope_issue, session_knowledge_scope
 from .memory_evidence_policy import memory_evidence_exclusion_reason
+from .memory_decision_context import resolve_decision_context
 from .memory_ingest import looks_sensitive, sync_event_to_memory_v2
 from .sensitive_content import contains_sensitive_content
 from .text_utils import compact_whitespace
@@ -782,7 +783,7 @@ class AgentMemorySourceStore:
                            source.source_kind, source.pi_entry_id, session.role_id,
                            source.input_event_id, source.canonical_text_sha256,
                            event.committed_text, event.project,
-                           event.created_at_ms AS event_created_at_ms
+                           event.created_at_ms AS event_created_at_ms, source.metadata_json
                     FROM agent_memory_sources AS source
                     JOIN agent_sessions AS session ON session.id = source.session_id
                     JOIN input_events AS event ON event.id = source.input_event_id
@@ -797,7 +798,7 @@ class AgentMemorySourceStore:
                            source.source_kind, source.pi_entry_id, session.role_id,
                            source.input_event_id, source.canonical_text_sha256,
                            event.committed_text, event.project,
-                           event.created_at_ms AS event_created_at_ms
+                           event.created_at_ms AS event_created_at_ms, source.metadata_json
                     FROM agent_memory_sources AS source
                     JOIN agent_sessions AS session ON session.id = source.session_id
                     JOIN input_events AS event ON event.id = source.input_event_id
@@ -1203,6 +1204,13 @@ class AgentMemorySourceStore:
                     result["evidence"] = evidence
                 return result
 
+            if source_kind == "user_final":
+                metadata = dict(metadata or {})
+                metadata.pop("decisionContext", None)
+                decision = resolve_decision_context(conn, session_id=session_id, project=self.project,
+                    answer_entry_id=pi_entry_id, answer_text=canonical, occurred_at_ms=timestamp)
+                if decision:
+                    metadata["decisionContext"] = decision
             event = conn.execute(
                 """
                 INSERT INTO input_events(
@@ -1697,6 +1705,8 @@ def _checkpoint_explicit_memory_evidence(
             "claim": claim,
             "futureUse": future_use,
             "captureScope": scope,
+            **({"decisionContext": _loaded_json_object(source["metadata_json"])["decisionContext"]}
+               if _loaded_json_object(source["metadata_json"]).get("decisionContext") else {}),
         },
         ensure_ascii=False,
         sort_keys=True,

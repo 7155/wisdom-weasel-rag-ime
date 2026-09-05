@@ -459,7 +459,8 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         SELECT id, kind, text, canonical_text, source_event_ids_json, scope_project,
                scope_app, owner_kind, owner_id, knowledge_domain, scope_kind,
                scope_id, visibility, authorization_revision, binding_id, scope_mode,
-               status, quality_score, confidence,
+               status, quality_score, confidence, claim_state,
+               valid_from_ms, valid_to_ms, supersedes_id,
                updated_at_ms
         FROM memory_atoms
         WHERE status IN ('active', 'approved')
@@ -519,6 +520,11 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "atomId": atom_id,
                     "sourceEventIds": source_event_ids,
                     "source": "memory_atoms",
+                    "project": str(row["scope_project"] or ""),
+                    "claimState": str(row["claim_state"] or ""),
+                    "validFromMs": int(row["valid_from_ms"] or 0),
+                    "validToMs": row["valid_to_ms"],
+                    "supersedesId": str(row["supersedes_id"] or ""),
                     "contextGroupId": _first_event_context_group(conn, source_event_ids),
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                     **_scope_metadata(scope),
@@ -618,6 +624,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "inlineAtoms": inline_atoms,
                     "inlineAtomsComplete": inline_atoms_complete,
                     "source": "memory_books",
+                    "project": str(row["project"] or ""),
                     "bookStatus": str(row["status"] or "active"),
                     "archived": str(row["status"] or "") == "archived",
                     "archivedAtMs": int(row["archived_at_ms"] or 0),
@@ -747,6 +754,7 @@ def _activity_timeline_docs(
                     "eventCount": int(row["event_count"] or 0),
                     "segmentCount": int(row["segment_count"] or 0),
                     "source": "daily_activity_timelines",
+                    "project": str(row["project"] or ""),
                     "sourceUpdatedAtMs": int(row["updated_at_ms"] or 0),
                     "publishedAtMs": int(row["approved_at_ms"] or 0),
                     "publishedBy": str(row["approved_by"] or ""),

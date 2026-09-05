@@ -31,6 +31,25 @@ class MemoryProjectionConsistencyTests(unittest.TestCase):
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
+    def test_in_place_revision_keeps_group_membership_and_can_restore_book(self) -> None:
+        with closing(self.connect()) as conn:
+            self._insert_atom(conn, "atom:old", "默认直接显示时间", 10)
+            self._insert_book(conn, "book:current", "active")
+            conn.execute("INSERT INTO memory_semantic_groups(group_id, title, project, status, created_at_ms, updated_at_ms) VALUES ('group:report', '报告', 'test', 'active', 1, 1)")
+            conn.execute("INSERT INTO memory_semantic_group_members(group_id, member_type, member_id, weight, source, updated_at_ms) VALUES ('group:report', 'atom', 'atom:old', 0.9, 'test', 1)")
+            before = tuple(conn.execute("SELECT * FROM memory_semantic_group_members").fetchone())
+            old_summary = conn.execute("SELECT summary FROM memory_books WHERE book_id = 'book:current'").fetchone()[0]
+            conn.execute("UPDATE memory_atoms SET canonical_text = '展开后显示时间', source_event_ids_json = '[20]' WHERE id = 'atom:old'")
+            receipt = invalidate_superseded_atom_dependencies(
+                conn, ["atom:old"], new_atom_id="atom:old", timestamp=30)
+            self.assertEqual(tuple(conn.execute("SELECT * FROM memory_semantic_group_members").fetchone()), before)
+            book = conn.execute("SELECT summary, source_event_ids_json FROM memory_books WHERE book_id = 'book:current'").fetchone()
+            self.assertEqual(book[0], "展开后显示时间")
+            self.assertEqual(json.loads(book[1]), [20])
+            restore_dependency_invalidation(conn, receipt)
+            self.assertEqual(tuple(conn.execute("SELECT * FROM memory_semantic_group_members").fetchone()), before)
+            self.assertEqual(conn.execute("SELECT summary FROM memory_books WHERE book_id = 'book:current'").fetchone()[0], old_summary)
+
     def test_supersession_invalidates_docs_rebuilds_current_book_and_moves_group(self) -> None:
         with closing(self.connect()) as conn:
             self._insert_atom(conn, "atom:old", "公司 VPN 账号是 account-A", 10)

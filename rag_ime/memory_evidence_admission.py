@@ -76,6 +76,25 @@ def _personal_evidence_sql(alias: str, *, admission_state_sql: str) -> str:
     AND {table}.owner_kind = 'user'
     AND {table}.owner_id = 'default'
     AND (
+        json_extract({table}.metadata_json, '$.decisionContext') IS NULL
+        OR EXISTS (
+            SELECT 1 FROM agent_memory_evidence AS decision_question
+            WHERE decision_question.evidence_id = json_extract(
+                {table}.metadata_json, '$.decisionContext.questionEvidenceId')
+              AND decision_question.session_id = {table}.session_id
+              AND decision_question.project = {table}.project
+              AND decision_question.source_kind = 'assistant_message'
+              AND decision_question.status = 'active'
+              AND decision_question.admission_state != 'forgotten'
+              AND NOT EXISTS (
+                  SELECT 1 FROM memory_tombstones AS question_tombstone
+                  WHERE question_tombstone.active = 1
+                    AND question_tombstone.target_type = 'memory_id'
+                    AND question_tombstone.target_value = decision_question.evidence_id
+              )
+        )
+    )
+    AND (
         {table}.origin_kind != 'legacy_untyped_input'
         OR EXISTS (
             SELECT 1
