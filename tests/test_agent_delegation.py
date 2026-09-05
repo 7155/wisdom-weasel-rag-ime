@@ -480,6 +480,7 @@ class _RetryExhaustedRuntime(_CompletingRuntime):
 class AgentDelegationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-agent-delegation-")
+        self._coordinators: list[AgentDelegationCoordinator] = []
         self.root = Path(self.tmp.name)
         self.db_path = self.root / "rag-ime.sqlite"
         self.sessions = AgentSessionStore(self.db_path)
@@ -503,6 +504,17 @@ class AgentDelegationTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        # A failed assertion skips the explicit close() at the end of a test.
+        # Finish every owned writer before deleting its SQLite/Artifact root;
+        # production close() is deliberately bounded by cancellation grace.
+        threads: list[threading.Thread] = []
+        for coordinator in reversed(self._coordinators):
+            with coordinator._lock:
+                threads.extend(coordinator._threads.values())
+            coordinator.close()
+        for thread in threads:
+            thread.join(timeout=10)
+            self.assertFalse(thread.is_alive(), "delegation writer outlived test ownership")
         self.tmp.cleanup()
 
     def coordinator(
@@ -516,7 +528,7 @@ class AgentDelegationTests(unittest.TestCase):
         runtime_provider=None,
         model_route_provider=None,
     ) -> AgentDelegationCoordinator:
-        return AgentDelegationCoordinator(
+        coordinator = AgentDelegationCoordinator(
             db_path=self.db_path,
             runtime_config=self.config,
             sessions=self.sessions,
@@ -530,6 +542,8 @@ class AgentDelegationTests(unittest.TestCase):
             room_context_provider=room_context_provider,
             model_route_provider=model_route_provider,
         )
+        self._coordinators.append(coordinator)
+        return coordinator
 
     def test_wait_false_ack_and_status_do_not_hydrate_artifact_under_contention(self) -> None:
         class _ArtifactBarrier:

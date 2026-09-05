@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-05T23:06:24.345792+00:00",
+  "generatedAt": "2026-09-05T23:25:15.415860+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -51,19 +51,24 @@
     },
     "execution_reliability": {
       "description": "Background ownership, safe process recovery, idempotency, cancellation, and reproducible fault evidence.",
-      "pathCount": 28
+      "pathCount": 29
+    },
+    "memory_context_continuity": {
+      "description": "Already committed memory decision context and correction continuity.",
+      "pathCount": 19
     }
   },
   "summary": {
-    "pathCount": 373,
+    "pathCount": 393,
     "dispositionCounts": {
-      "keep_release": 373
+      "keep_release": 393
     },
     "groupCounts": {
       "project_harness": 3,
       "requirement_evidence": 15,
       "control_center_release_ui": 106,
-      "execution_reliability": 28,
+      "memory_context_continuity": 19,
+      "execution_reliability": 29,
       "evaluation_audit": 116,
       "session_room_skill_flow": 1,
       "session_runtime": 45,
@@ -291,6 +296,13 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/session-memory-recall.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "control-center-web/src/contracts/generated/trace-diagnostic-report-list.v1.ts",
@@ -1686,6 +1698,13 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_context_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
       "path": "rag_ime/agent_delegation.py",
       "status": "modified",
       "disposition": "keep_release",
@@ -1761,6 +1780,13 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/agent_memory_sources.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "rag_ime/agent_prompt_application.py",
@@ -1896,6 +1922,13 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/contracts/json/session-memory-recall.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
       "path": "rag_ime/contracts/json/trace-diagnostic-report-list.v1.json",
       "status": "modified",
       "disposition": "keep_release",
@@ -1973,11 +2006,46 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/deepseek_memory_organizer.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
       "path": "rag_ime/eval_lab_evidence.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/memory_book_compiler.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/memory_decision_context.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/memory_evidence_admission.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "rag_ime/memory_model_executor.py",
@@ -1987,11 +2055,25 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/memory_projection_consistency.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
       "path": "rag_ime/observability.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/owner_memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "rag_ime/personal_memory_luna_evaluation.py",
@@ -2034,6 +2116,20 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
+    },
+    {
+      "path": "rag_ime/retrieval_docs.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "rag_ime/session_memory_recall.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "rag_ime/system_terminal.py",
@@ -2295,6 +2391,20 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_agent_context_runtime.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "tests/test_agent_delegation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Join test-owned runtime writers before deleting temporary storage."
+    },
+    {
       "path": "tests/test_agent_delegation_cancel_contention.py",
       "status": "added",
       "disposition": "keep_release",
@@ -2384,6 +2494,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_memory_sources.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "tests/test_agent_room_start_gate.py",
@@ -2575,11 +2692,25 @@
       "reason": "Retain the committed regression tests and fixtures for the candidate."
     },
     {
+      "path": "tests/test_memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
       "path": "tests/test_memory_model_executor.py",
       "status": "modified",
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_memory_projection_consistency.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "tests/test_model_runtime.py",
@@ -2601,6 +2732,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_personal_memory_owner_flow.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "tests/test_pi_provider_config.py",
@@ -2664,6 +2802,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "tests/test_session_memory_recall.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
       "path": "tests/test_system_terminal.py",
