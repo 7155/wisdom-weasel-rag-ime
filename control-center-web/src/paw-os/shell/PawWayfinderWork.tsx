@@ -57,6 +57,38 @@ export const PawWayfinderWork = memo(function PawWayfinderWork({ onArchive, onSe
 }) {
   const api = usePawDesktopApi();
   const wayfinder = usePawDesktopStore((state) => state.wayfinder);
+  useEffect(() => {
+    // Preserve positions, archive choices and manual assignments from keys
+    // that used to include the extra filesystem access root.
+    const projectId = (id: string) => id.split('\u001f').filter((root, _, roots) => root !== '/' || roots.length === 1).join('\u001f');
+    const iconId = (id: string) => id.startsWith('project:') ? `project:${projectId(id.slice(8))}` : id;
+    const positions = { ...wayfinder.iconPositions };
+    let changed = false;
+    for (const [oldId, position] of Object.entries(wayfinder.iconPositions)) {
+      const nextId = iconId(oldId);
+      if (nextId === oldId) continue;
+      positions[nextId] ??= position;
+      delete positions[oldId];
+      changed = true;
+    }
+    const archived = [...new Set(wayfinder.archived.map((id) => {
+      const nextId = iconId(id);
+      changed ||= nextId !== id;
+      return nextId;
+    }))];
+    const assignments = Object.fromEntries(Object.entries(wayfinder.projectAssignments).map(([id, target]) => {
+      const nextId = projectId(target);
+      changed ||= nextId !== target;
+      return [id, nextId];
+    }));
+    if (!changed) return;
+    // Let the desktop provider subscribe before publishing the migration.
+    const timer = window.setTimeout(() => api.setState({
+      wayfinder: { ...wayfinder, iconPositions: positions, archived, projectAssignments: assignments },
+    }), 0);
+    return () => window.clearTimeout(timer);
+  }, [api, wayfinder]);
+
   const {
     failed,
     loaded: loadedOnce,
@@ -564,7 +596,7 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
             const additive = event.shiftKey || event.metaKey || event.ctrlKey;
             onSelect?.(projectIconId(project.id), additive);
           }}
-          onDoubleClick={(event) => { event.currentTarget.focus(); onOpenGalaxy(); }}
+          onDoubleClick={(event) => { event.preventDefault(); event.currentTarget.focus(); onToggle(); }}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -580,11 +612,11 @@ function ProjectFolder({ expanded, expandedBuckets, expandedRepeats, iconPositio
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
             event.currentTarget.focus();
-            onOpenGalaxy();
+            onToggle();
           }}
           onDragEnd={onDragEnd}
           onDragStart={(event) => onDragStart(event, projectIconId(project.id))}
-          title={`${project.label} · ${project.items.length} 个对话`}
+          title={`${project.label} · ${project.items.length} 个对话${project.workspaceRoots.length ? `\n${project.workspaceRoots.join("\n")}` : ""}`}
         >
           <span
             className="paw-wayfinder-work__folder-art"

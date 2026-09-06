@@ -760,7 +760,6 @@ describe('PAWOS desktop', () => {
       return element!;
     }, { timeout: 2_500 });
     fireEvent.doubleClick(folder);
-    fireEvent.click(await screen.findByRole('button', { name: '文字列表' }, { timeout: 5000 }));
     const row = await waitFor(() => {
       const element = document.querySelector<HTMLButtonElement>('button[data-wayfinder-row]');
       expect(element).toBeTruthy();

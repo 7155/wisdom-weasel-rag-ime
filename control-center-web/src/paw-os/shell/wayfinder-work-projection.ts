@@ -327,14 +327,22 @@ function normalizedTitle(title: string): string {
 }
 
 function projectLeaf(roots: readonly string[] | undefined): string {
-  const first = normalizedWorkspaceRoots(roots)[0] ?? '';
+  const first = projectWorkspaceRoots(roots)[0] ?? '';
   if (!first) return '';
-  return first.split('/').filter(Boolean).at(-1) ?? '';
+  return first === '/' ? '文件系统根目录' : first.split('/').filter(Boolean).at(-1) ?? '';
 }
 
 function projectKey(roots: readonly string[] | undefined): string {
-  const normalized = normalizedWorkspaceRoots(roots);
+  const normalized = projectWorkspaceRoots(roots);
   return normalized.length ? normalized.join('\u001f') : '__unbound__';
+}
+
+/** Root access is a capability, not another project when a concrete root exists.
+ * Keep the original roots on each item for Files and Runtime consumers. */
+function projectWorkspaceRoots(roots: readonly string[] | undefined): string[] {
+  const all = normalizedWorkspaceRoots(roots);
+  const concrete = all.filter((root) => root !== '/');
+  return concrete.length ? concrete : all;
 }
 
 function normalizedWorkspaceRoots(roots: readonly string[] | undefined): string[] {

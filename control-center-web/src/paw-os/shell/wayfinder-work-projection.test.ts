@@ -254,6 +254,26 @@ describe('projectWayfinderWork', () => {
     expect(view.buckets[0]!.items[0]!.title).toBe('仍在进行');
   });
 
+  it('uses concrete project names and groups access-root variants without losing roots', () => {
+    const view = projectWayfinderWork({
+      nowMs: NOW, rooms: [],
+      sessions: [
+        session({ id: 'a', title: 'first', workspaceRoots: ['/work/paw', '/'] }),
+        session({ id: 'b', title: 'second', workspaceRoots: ['/work/paw'] }),
+        session({ id: 'c', title: 'third', workspaceRoots: ['/', '/work/other'] }),
+        session({ id: 'd', title: 'root', workspaceRoots: ['/'] }),
+        session({ id: 'e', title: 'chat', workspaceRoots: [] }),
+      ],
+    });
+    expect(view.projects).toHaveLength(4);
+    expect(view.projects.find((project) => project.label === 'paw')).toMatchObject({
+      sessionCount: 2, workspaceRoots: ['/', '/work/paw'],
+    });
+    expect(view.projects.map((project) => project.label)).toEqual(expect.arrayContaining([
+      'paw', 'other', '文件系统根目录', '未绑定项目',
+    ]));
+  });
+
   it('projects workspace roots and current status counts for a project context', () => {
     const view = projectWayfinderWork({
       nowMs: NOW,
