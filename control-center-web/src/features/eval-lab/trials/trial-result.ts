@@ -1,7 +1,7 @@
 import { object } from './api';
 
 const metricNames: Record<string, string> = {
-  AnswerCoverage: '答案覆盖率', CA: '故障类别准确率', FA: '故障对象准确率', JRA: '联合定位准确率', Top3JRA: '前三项定位准确率',
+  AnswerCoverage: '答案覆盖率', CA: '故障组件命中（CA）', FA: '故障类型命中（FA）', JRA: '联合根因命中（JRA）', Top3JRA: '前三项联合命中',
   passRate: '任务通过率', casePassRate: '任务通过率', factCoverage: '事实覆盖率', citationFactCoverage: '引用事实覆盖率',
   highLevelAnswerCorrectnessRate: '回答正确率', curationPassRate: '记忆维护通过率', durableRecallRate: '持久记忆召回率', abstentionPassRate: '拒答通过率',
   highLevelFactCoverage: '回答事实覆盖率', answerableCitationSupportRate: '可回答案例引用支持率', infoNotFoundAbstentionRecall: '无答案案例拒答召回率',

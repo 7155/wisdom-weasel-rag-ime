@@ -38,7 +38,7 @@
 .golden-header { display: grid; gap: 12px; padding-bottom: 18px; }
 .golden-header__titlebar { display: flex; align-items: flex-start; gap: 10px; }
 .golden-header__title { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.golden-header__title h2 { font-size: 26px; line-height: 1.4; }
+.golden-workflow .golden-header__title h2 { font-size: 26px; line-height: 1.4; }
 .golden-section__heading p { max-width: 720px; color: var(--golden-muted); }
 .golden-header__actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .golden-header__context { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 240px); align-items: start; gap: 10px; }
@@ -188,7 +188,7 @@
 @container golden-workflow (max-width: 560px) {
   .golden-workflow h2 { font-size: 19px; }
   .golden-header__titlebar { gap: 8px; }
-  .golden-header__title h2 { font-size: 17px; }
+  .golden-workflow .golden-header__title h2 { font-size: 17px; }
   .golden-header__context { grid-template-columns: minmax(70px, 1fr) minmax(140px, 230px); }
   .golden-steps { margin-bottom: 22px; }
   .golden-steps button { display: grid; gap: 3px; padding: 8px 4px 12px; font-size: 13px; }
@@ -259,7 +259,7 @@
   .golden-guidance h3 { font-size: 18px; }
   .golden-steps button { align-content: start; }
   .golden-step-label small { display: none; }
-  .golden-header__title h2 { font-size: 22px; }
+  .golden-workflow .golden-header__title h2 { font-size: 22px; }
   .golden-section__footer > button { width: 100%; }
   .golden-rate-row { grid-template-columns: 32px minmax(0, 1fr) 62px; gap: 8px; }
   .golden-rate-row small { grid-column: 2 / -1; }

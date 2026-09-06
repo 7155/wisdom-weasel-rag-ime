@@ -18,7 +18,7 @@ export function CalibrationPanel({ suite, disabled, onLabel, onJudge, onCalibrat
   const development = suite.cases.filter((item) => item.split === 'development' && item.review.status === 'approved');
   const samples = development.flatMap((item) => item.samples.map((sample) => ({ item, sample, key: `${item.caseId}:${sample.sampleId}` })));
   const [selectedKey, setSelectedKey] = useState('');
-  const selected = samples.find((entry) => entry.key === selectedKey) ?? samples[0];
+  const selected = samples.find((entry) => entry.key === selectedKey) ?? samples.find((entry) => entry.sample.humanVerdict === null) ?? samples[0];
   const [drafts, setDrafts] = useState<Record<string, SampleDraft>>({});
   const sample = selected ? drafts[selected.key] ?? selected.sample : null;
   const unsavedSamples = new Set(samples.filter((entry) => sampleChanged(drafts[entry.key], entry.sample)).map((entry) => entry.key));

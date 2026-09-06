@@ -126,6 +126,12 @@ export function ExperimentWorkspace(props: ExperimentWorkspaceProps) {
         </div>
       </header>
 
+      {props.trialSceneId === 'cloudops' ? <aside className="lab-workspace__scene-context" aria-label="云上诊断评测范围">
+        <strong>事故快照回放 · 诊断评测</strong>
+        <p>从告警与资源状态出发，查询观测证据，提交排序后的故障组件与类型。运行页会显示本机是否已连接这套数据与执行环境。</p>
+        <details><summary>如何判断这次诊断有用？</summary><p>先看联合根因命中（JRA），再分别核对组件（CA）、故障类型（FA）与工具失败。低成本不能抵消关键诊断退步。</p><p>这条流程验证固定快照上的诊断能力。线上处置与恢复需要另有执行和恢复证据。</p></details>
+      </aside> : null}
+
       <nav aria-label="实验流程" className="lab-workspace__steps" role="tablist">
         {STEPS.map(([value, label], index) => <button
           aria-controls={`${id}-${value}-panel`}

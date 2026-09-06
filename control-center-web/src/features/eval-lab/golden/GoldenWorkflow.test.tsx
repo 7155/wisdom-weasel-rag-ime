@@ -56,6 +56,18 @@ function experimentResult(): ExperimentResult {
 }
 
 describe('Golden workflow user boundaries', () => {
+  it('reopens the unfinished calibration and selects the first unlabelled sample', async () => {
+    const cases = [goldenCase(), goldenCase('case-hold', 'holdout')].map((item) => ({ ...item,
+      review: { status: 'approved' as const, note: '', reviewedAtMs: 3000 },
+      samples: item.samples.map((sample, index) => ({ ...sample, humanVerdict: index === 0 ? 'pass' as const : null })),
+    }));
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.golden.get': read(suite({ cases })) } });
+    mount(transport);
+    await waitFor(() => expect(screen.getByRole('tab', { name: '校准评审' })).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.getByRole('textbox', { name: '待标注答案' })).toHaveValue('三十天。');
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.eval-lab.golden.command')).toBe(false);
+  });
+
   it('explains the minimum split instead of leaving a one-question form silently disabled', async () => {
     const transport = new MockControlTransport({ routes: { 'agent.eval-lab.golden.get': { ok: true, items: [], suite: null } } });
     mount(transport, { startNew: true });

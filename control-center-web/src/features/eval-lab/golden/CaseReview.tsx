@@ -24,7 +24,7 @@ export function CaseReview({ suite, disabled, onReview, onNext, onDraft, onDirty
   const [filter, setFilter] = useState('all');
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const filtered = suite.cases.filter((item) => filter === 'all' || item.review.status === filter);
-  const selected = filtered.find((item) => item.caseId === selectedId) ?? filtered[0];
+  const selected = filtered.find((item) => item.caseId === selectedId) ?? filtered.find((item) => item.review.status === 'pending') ?? filtered[0];
   const approved = suite.cases.filter((item) => item.review.status === 'approved');
   const pending = suite.cases.filter((item) => item.review.status === 'pending').length;
   const dirtyIds = new Set(suite.cases.filter((item) => drafts[item.caseId]

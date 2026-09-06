@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-06T08:25:06.032673+00:00",
+  "generatedAt": "2026-09-06T09:01:27.943829+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 368
+      "pathCount": 369
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 848,
+    "pathCount": 849,
     "dispositionCounts": {
-      "keep_release": 847,
+      "keep_release": 848,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 5,
       "requirement_evidence": 39,
-      "control_center_release_ui": 368,
+      "control_center_release_ui": 369,
       "memory_context_continuity": 26,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -170,6 +170,13 @@
     {
       "path": "control-center-web/docs/pawos/LAB_GOLDEN_WORKFLOW_20260905.md",
       "group": "requirement_evidence",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_PRODUCTION_FLOW_RESEARCH_20260906.md",
+      "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"

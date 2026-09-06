@@ -438,7 +438,7 @@ function metricLabel(value: string): string {
     recallAt10: '前 10 条覆盖率', recall_at_10: '前 10 条覆盖率', mrr: '首个正确结果排名', ndcgAt10: '前 10 条排序质量', ndcg_at_10: '前 10 条排序质量',
     agentCaseCount: 'Agent 任务数', agentSuccessRate: 'Agent 任务通过率', answerCaseCount: '可评分答案数', answerSuccessRate: '答案通过率',
     highLevelFactCount: '必要事实总数', verifiedRequiredFactCount: '已核验必要事实数', highLevelFactCoverage: '必要事实覆盖率', citationFactCoverage: '带有效引用的事实比例', answerableCitationSupportRate: '可回答问题的引用支持率', infoNotFoundCaseCount: '应拒答案例数', infoNotFoundAbstentionRecall: '正确拒答率', citationHardGatePassed: '引用底线', outputProtocolRate: '输出格式通过率',
-    answerCoverage: '回答覆盖率', ca: '诊断正确率', fa: '事实准确率', jra: '根因覆盖率', top3Jra: '前三根因覆盖率',
+    answerCoverage: '回答覆盖率', ca: '故障组件命中（CA）', fa: '故障类型命中（FA）', jra: '联合根因命中（JRA）', top3Jra: '前三项联合命中',
     curationCases: '记忆判断总数', curationPassed: '记忆判断通过数', durableRecallPassed: '长期记忆召回通过数', durableRecallTotal: '长期记忆召回总数', abstentionPassed: '临时信息拒记通过数', abstentionTotal: '临时信息拒记总数', vectorCoverage: '向量可检索覆盖率', rollbackPassed: '回滚验证', replayPassed: '重复运行验证', receiptJsonValid: 'JSON 结果可解析', jsonReceiptValid: 'JSON 结果可解析',
     temporaryDatabasesDeleted: '临时数据库清理数', databasesCleaned: '临时数据库清理数', allDatabasesCleaned: '临时数据库全部清理',
   } as Record<string, string>)[value] ?? value.replaceAll('_', ' ');

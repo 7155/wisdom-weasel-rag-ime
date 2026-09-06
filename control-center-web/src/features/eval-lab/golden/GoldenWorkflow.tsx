@@ -47,7 +47,7 @@ export function GoldenWorkflow({ onClose, startNew = false }: { onClose?: () => 
   useEffect(() => {
     if (!suite || suite.suiteId === lastSuite.current) return;
     lastSuite.current = suite.suiteId;
-    setStep(suite.snapshot ? 3 : suite.calibration ? 2 : suite.cases.length ? 1 : 0);
+    setStep(suite.snapshot ? 3 : suite.calibration ? 2 : goldenJourney(suite).next);
   }, [suite]);
   const createNew = () => {
     setSelectedSuiteId(null); setStep(0); lastSuite.current = ''; setNewGeneration((value) => value + 1);
@@ -116,7 +116,7 @@ function SourceForm({ disabled, onCreate }: { disabled: boolean; onCreate: (inpu
   const missing = [!title.trim() ? '评测集名称' : '', !scenario.trim() ? '要评测的任务' : '', !validCount ? '2–100 道题' : '', sources.some((source) => !source.title.trim() || !source.uri.trim() || !source.text.trim()) ? '来源标题、引用和原文' : ''].filter(Boolean);
   const changeSource = (sourceId: string, patch: Partial<GoldenSource>) => setSources((current) => current.map((source) => source.sourceId === sourceId ? { ...source, ...patch } : source));
   return <section className="golden-section" aria-labelledby={`${id}-heading`}>
-    <header className="golden-section__heading"><div><h3 id={`${id}-heading`}>这次想评测什么？</h3><p>先定义任务，再粘贴一份真实资料作为答案依据。</p></div></header>
+    <header className="golden-section__heading"><div><h3 id={`${id}-heading`}>这次想评测什么？</h3><p>这条流程评测资料问答。先定义问题，再提供可核对的原文；模型会使用这些原文作为回答依据。</p></div></header>
     <form className="golden-source-form" onSubmit={(event) => { event.preventDefault(); if (valid && !disabled) void onCreate({ title: title.trim(), scenario: scenario.trim(), targetCount: Number(targetCount), sources }); }}>
       <fieldset disabled={disabled}>
         <div className="golden-source-form__identity"><Field htmlFor={`${id}-title`} label="评测集名称" required><Input id={`${id}-title`} value={title} placeholder="例如：产品文档问答" onChange={(event) => setTitle(event.target.value)} /></Field><Field htmlFor={`${id}-count`} label="计划题数" error={!validCount ? '至少 2 题：分别用于调整和最后验证；最多 100 题。' : undefined}><Input id={`${id}-count`} type="number" min={2} max={100} step={1} value={targetCount} aria-invalid={!validCount || undefined} aria-describedby={`${id}-count-help`} onChange={(event) => setTargetCount(event.target.value)} /></Field></div>

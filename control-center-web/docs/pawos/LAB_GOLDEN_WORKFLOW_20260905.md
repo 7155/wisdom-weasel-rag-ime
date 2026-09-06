@@ -5,6 +5,9 @@ Agent drafting from real documents/history/failures with evidence, human review,
 Judge calibration, and frozen automatic experiments. The user also renewed
 permission to remove replaced incorrect code. No stable message ID was supplied.
 The contract below is followed by scoped source and runtime acceptance receipts.
+
+Production-flow research and the verified CloudOps scope are recorded in
+[LAB_PRODUCTION_FLOW_RESEARCH_20260906.md](LAB_PRODUCTION_FLOW_RESEARCH_20260906.md).
 It does not claim installed-product acceptance or a human-approved Golden set.
 
 ## Accepted experience

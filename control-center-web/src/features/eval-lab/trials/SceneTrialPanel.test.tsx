@@ -308,7 +308,7 @@ describe('scene trial execution', () => {
     vi.spyOn(transport, 'request').mockResolvedValue(read([job('completed')]));
     mount(transport);
     expect(await screen.findByText('已完成')).toBeInTheDocument();
-    expect(screen.getByText('联合定位准确率')).toBeInTheDocument();
+    expect(screen.getByText('联合根因命中（JRA）')).toBeInTheDocument();
     expect(screen.getByText('100%')).toBeInTheDocument();
     expect(screen.getByText('$0.3341')).toBeInTheDocument();
     expect(screen.queryByText(/节省|最优配置|提升了/u)).not.toBeInTheDocument();

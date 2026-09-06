@@ -286,7 +286,7 @@ export function EvalLabFeature({ initialPage = 'workspace' }: { initialPage?: Ev
       <header className="eval-lab__header">
         <div>
           <h1 id="eval-lab-title"><FlaskConical aria-hidden="true" size={23} /> Agent 工作流实验室</h1>
-          <p className="eval-lab__lede">从真实资料开始，逐步完成标准确认、模型对比和结果检查。</p>
+          <p className="eval-lab__lede">沿真实任务、执行记录与验收结果，比较 Agent 方案。</p>
           <Button aria-expanded={recordsOpen} leadingIcon={<ClipboardList size={15} />} onClick={() => setRecordsOpen((open) => !open)} variant="secondary">浏览实验记录</Button>
         </div>
         <div className="eval-lab__header-actions">
@@ -298,7 +298,7 @@ export function EvalLabFeature({ initialPage = 'workspace' }: { initialPage?: Ev
           </Button>
         </div>
       </header>
-      {page === 'workspace' ? <div className="eval-lab__start-guide"><div><strong>第一次使用，从「新建评测」开始</strong><p>提供资料 → 审核题目 → 校准评审 → 对比结果。每一步都会提示完成条件。</p></div><span>下方为已保存的场景实验；可用执行环境以本机实际连接为准。</span></div> : null}
+      {page === 'workspace' ? <div className="eval-lab__start-guide"><div><strong>资料问答，从「新建评测」开始</strong><p>提供资料 → 审核题目 → 校准评审 → 对比结果。每一步都会提示完成条件。</p></div><span>诊断、检索等场景从下方已有实验进入，使用各自的数据、工具和评分规则；运行页显示本机是否已连接执行环境。</span></div> : null}
 
       <TraceLabContext experiment={page === 'workspace' ? activeWorkspaceExperiment(runs.data?.experiments ?? [], selectedExperimentId) : activeProjectExperiment(runs.data?.experiments ?? [], selectedExperimentId)} />
 
@@ -1705,7 +1705,7 @@ function matrixQuality(experiment: EvalLabExperiment): string {
     return `任务完成 ${ratePair(baseline.taskSuccessRate, candidate.taskSuccessRate)} · 验收条件 ${ratePair(baseline.verifierPassRate, candidate.verifierPassRate)}`;
   }
   if (hasMetric(baseline, 'ca') && hasMetric(candidate, 'ca')) {
-    return `答案覆盖 ${ratePair(baseline.ca, candidate.ca)} · 根因与证据同时正确 ${ratePair(baseline.jra, candidate.jra)}`;
+    return `故障组件命中 ${ratePair(baseline.ca, candidate.ca)} · 组件与故障类型同时命中 ${ratePair(baseline.jra, candidate.jra)}`;
   }
   if (hasMetric(candidate, 'realPredictionCases')) return `真实预测 ${integerMetric(candidate.realPredictionCases)}（尚未形成成功样本）`;
   return metricDigest(candidate);
@@ -2058,7 +2058,7 @@ function metricLabel(name: string): string {
     verifierCount: '验收条件总数',
     failedToolCalls: '工具失败',
     toolCalls: '工具调用',
-    fa: '事实准确（FA）',
+    fa: '故障类型命中（FA）',
     transcriptToolCalls: '运行记录中的工具调用',
     failedTranscriptToolCalls: '运行记录中的工具失败',
     sessionCount: 'Session 数',
@@ -2089,10 +2089,10 @@ function metricLabel(name: string): string {
     toolContractPassed: '工具协议验收',
     toolSuccessRate: '工具成功率',
     outputProtocolRate: '输出协议通过率',
-    ca: '一致性',
-    jra: '引用准确',
-    top3Jra: '前三方向引用',
-    top3_jra: '前三方向引用',
+    ca: '故障组件命中（CA）',
+    jra: '联合根因命中（JRA）',
+    top3Jra: '前三项联合命中',
+    top3_jra: '前三项联合命中',
     realPredictionCases: '真实预测案例',
     publicHistoricalCasesPrepared: '已准备历史案例',
     scorerContractTestsPassed: 'Scorer 合同测试',
@@ -3122,7 +3122,7 @@ function reportLabel(key: string): string {
     transcriptCount: 'Transcript 数',
     latencyMs: '耗时（ms）',
     allDatabasesCleaned: '临时库是否清理',
-    fa: '事实准确（FA）',
+    fa: '故障类型命中（FA）',
     answerJudgeCorrectnessRate: '答案 Judge 正确率',
     answerSuccessRate: '答案通过率',
     highLevelFactCoverage: '高层事实覆盖',
@@ -3615,10 +3615,10 @@ function experimentDatasetExplanation(experiment: EvalLabExperiment): DatasetExp
   }
   if (project === 'cloudops') {
     return {
-      source: '冻结的 12 条 CloudOps 故障诊断任务，每条都绑定同一份只读观测快照和可用 Tool 清单。',
+      source: 'Cloud-OpsBench 中选取的 12 条故障快照，每条绑定只读观测与可用 Tool 清单；这是离线回放评测。',
       preparation: '固定 case、观测数据、模型/Runtime、Tool 地址和评分器；每个候选只改变一项搜索或工具策略。',
-      gold: 'Host-only scorer 比较最终根因与标准根因，分别计算诊断正确率、根因覆盖和 Top-3 覆盖；Tool failure 单独作为硬门禁。',
-      agentContract: '只依据冻结日志、指标、Trace 与 runbook；观察、推断和未知分开写，没有证据就不猜根因。',
+      gold: 'Host-only scorer 分别核对首位故障组件（CA）、故障类型（FA）、两者同时命中（JRA）和前三位联合命中（Top-3 JRA）。答案覆盖与工具失败另计；是否阻止采用以本轮验收条件为准。',
+      agentContract: '通过登记的 Tool 查询冻结告警、资源状态、日志与可用指标；输出证据摘要及排序后的故障组件与类型。只使用快照实际包含的数据。',
       boundary: isHistoricalExperiment(experiment)
         ? '降低 Tool 次数不能抵消诊断质量下降或一次工具失败，所以更省调用的候选仍被回退。'
         : currentExperimentBoundary(experiment, '结果只代表同一冻结 CloudOps case 与观测快照。'),

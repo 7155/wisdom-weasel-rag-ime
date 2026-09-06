@@ -133,6 +133,11 @@ ul.lab-workspace__error { padding-left: 30px; }
   .lab-workspace__case-output { grid-template-columns: 1fr; }
   .lab-workspace__setup-layout { gap: 24px; }
 }
+.lab-workspace__scene-context { padding: 16px 20px; border-left: 3px solid var(--lab-accent); background: var(--lab-surface-subtle); font-size: 14px; line-height: 1.65; }
+.lab-workspace__scene-context > strong { color: var(--lab-ink); font-size: 16px; }
+.lab-workspace__scene-context p { max-width: 85ch; margin: 6px 0 0; color: var(--lab-muted); }
+.lab-workspace__scene-context details { margin-top: 10px; }
+.lab-workspace__scene-context summary { cursor: pointer; color: var(--lab-ink); }
 @container lab-workspace (max-width: 560px) {
   .lab-workspace__heading { flex-direction: column; gap: 12px; }
   .lab-workspace__case > header, .lab-workspace__case-columns { gap: 8px; grid-template-columns: minmax(62px, .75fr) repeat(2, minmax(0, 1fr)) 68px; }

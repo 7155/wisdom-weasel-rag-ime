@@ -575,7 +575,7 @@ describe('Agent Lab', () => {
     );
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Agent 工作流实验室' })).toBeInTheDocument();
-    expect(screen.getByText('从真实资料开始，逐步完成标准确认、模型对比和结果检查。')).toBeInTheDocument();
+    expect(screen.getByText('沿真实任务、执行记录与验收结果，比较 Agent 方案。')).toBeInTheDocument();
     expect(screen.queryByLabelText('Agent Lab 三步流程')).not.toBeInTheDocument();
     expect(await screen.findByRole('heading', { level: 2, name: '每一轮都回答：为什么改、改了什么、结果如何' })).toBeInTheDocument();
     expect(screen.getByText('下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较成本；耗时只用于诊断，不阻止保留正确方案。')).toBeInTheDocument();
@@ -1167,6 +1167,9 @@ describe('Agent Lab', () => {
 
     const cloudOps = (await screen.findByRole('heading', { level: 3, name: '云上事故诊断' })).closest('.eval-lab__project-matrix');
     expect(cloudOps).not.toBeNull();
+    expect(cloudOps).toHaveTextContent('故障组件命中');
+    expect(cloudOps).toHaveTextContent('组件与故障类型同时命中');
+    expect(cloudOps).not.toHaveTextContent('根因与证据同时正确');
     expect(within(cloudOps as HTMLElement).getByText('项目验收：已达标')).toBeInTheDocument();
     expect(within(cloudOps as HTMLElement).getByText(/Runtime 对账 API 成本 \$9\.7152 USD → \$4\.5682 USD（降低 53\.0%）/)).toBeInTheDocument();
     expect(within(cloudOps as HTMLElement).getByText(/Provider 账单：未提供/)).toBeInTheDocument();
