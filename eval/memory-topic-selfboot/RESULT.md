@@ -10,10 +10,11 @@ claims forward. Recovery prompts also omitted parts of the topic rule.
 - Incremental curation receives the complete compact Book identity index in
   addition to bounded bodies. Stable IDs, unique aliases and valid redirects
   preserve identity even when a Book has no semantic groups.
-- A topic requires the same stable object and question or decision axis. A
-  shared project, broad label, app, date or similar wording is insufficient.
-  Explicit empty scope values are preserved. Ambiguous or incompatible matches
-  retain the Atom without inventing a parallel Book.
+- The Agent chooses coherent long-lived topics from current members. A Book
+  can contain complementary subproblems and decisions while each Atom remains
+  independently retrievable and correctable. Shared project, app, date or
+  similar wording alone is insufficient. Explicit empty scope values are
+  preserved; incompatible scopes remain separate.
 - Governed catalog merges keep an existing target, current member union, source
   provenance and redirects. Projections, retrieval dependencies and rollback
   follow the same operation. Summaries are rebuilt from current members.
@@ -98,3 +99,23 @@ workspace tests also passed, including explicit memory Tool visibility. Frontend
 type checking, generated contracts, project harness, import boundaries and route
 ownership passed. These checks establish source behavior; installed and real
 foreground acceptance require a fresh canary after installation.
+
+## Automatic aggregation — 2026-09-07
+
+The earlier same-question-axis rule accidentally imposed Atom-level granularity
+on Books. It mostly removed duplicate topics while keeping related subtopics
+fragmented. Topic granularity is an organizational choice for the Agent to make
+from content, rather than a routine question for the user.
+
+Incremental, catalog, recovery and verifier prompts now share one aggregation
+contract. It permits related subproblems in a stable work area or product
+capability, reuses a suitable existing Book, and preserves every current Atom,
+source and scope. It does not impose a topic-count quota or merge unrelated
+content under a catch-all title. The catalog digest includes the policy revision
+so a changed policy reconsiders the catalog once; repeated runs under the same
+policy and content still skip the model call.
+
+The change passed 161 organizer, compiler, scheduler and owner-curation tests,
+plus two focused Gateway cache regressions. These checks cover scope, member
+preservation, freshness and repeat behavior; a real model run is still required
+to measure the resulting topic organization.

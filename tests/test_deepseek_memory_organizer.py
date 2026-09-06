@@ -403,7 +403,30 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
             self.assertNotIn("sourceRef", semantic_input)
             self.assertNotIn("contextGroupId", semantic_input)
 
-    def test_recovery_requests_keep_narrow_topic_rules_before_verifier(self) -> None:
+    def test_all_memory_phases_allow_automatic_topic_aggregation(self) -> None:
+        from rag_ime import deepseek_memory_organizer as prompts
+
+        names = (
+            "_memory_curation_system_prompt",
+            "_memory_curation_recovery_prompt",
+            "_memory_curation_semantic_repair_prompt",
+            "_memory_curation_verifier_prompt",
+            "_memory_catalog_consolidation_system_prompt",
+            "_memory_catalog_consolidation_recovery_prompt",
+            "_memory_catalog_consolidation_repair_prompt",
+            "_memory_catalog_consolidation_verifier_prompt",
+        )
+        for name in names:
+            with self.subTest(phase=name):
+                prompt = getattr(prompts, name)()
+                self.assertIn("自动聚合", prompt)
+                self.assertIn("不同子问题", prompt)
+                self.assertIn("Atom 独立", prompt)
+                self.assertIn("来源", prompt)
+                self.assertNotIn("同一问题/决策轴", prompt)
+                self.assertNotIn("窄标题", prompt)
+
+    def test_recovery_requests_keep_topic_aggregation_and_scope_rules(self) -> None:
         calls: list[dict[str, object]] = []
 
         def response(payload: dict[str, object]) -> dict[str, object]:
@@ -553,11 +576,11 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
             }
         }
         common_rules = (
-            "同一稳定对象",
-            "同一问题/决策轴",
-            "窄标题",
+            "自动聚合",
+            "Atom 独立",
+            "不同子问题",
+            "自行选择主题粒度",
             "项目名",
-            "RAG/输入法上位标签",
             "App",
             "日期",
             "共现",

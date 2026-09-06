@@ -13,6 +13,24 @@ from .text_utils import compact_whitespace, stable_text_hash, truncate_text
 MEMORY_CURATION_DECISION_SCHEMA_VERSION = "rag-ime.memory-curation-decisions.v1"
 MEMORY_CURATION_MODEL_BUNDLE_SCHEMA_VERSION = "rag-ime.memory-curation-model-bundle.v1"
 MEMORY_CURATION_ARCHITECTURE = "atom-first-v1"
+MEMORY_TOPIC_AGGREGATION_POLICY_VERSION = "long-lived-topic-aggregation-v2"
+MEMORY_TOPIC_AGGREGATION_RULES = compact_whitespace("""
+主题自动聚合：Atom 独立，Topic Book 按长期主题组织。每个 Atom 的事实、条件、当前状态和来源
+保持独立；多个不同子问题、要求或决定可以共同属于一个有明确内容边界的长期主题，不要求事实
+重复或问题完全相同。先按完整 owner/project/scope/binding 划定合法范围，再阅读当前有效成员，
+由整理器自行选择主题粒度并归并过度拆分的 Book，不把正常的分类和命名工作交给用户。
+例如同一产品的导航、布局、结果展示可以归入“前端体验”；同一 Room 的任务分工、进度反馈、
+对话顺序可以归入“Room 协作”。这些是内容关联的例子，不是固定分类清单。RAG 检索质量与前端
+视觉体验不能仅因属于同一项目就合并，也不能把全库塞进“项目事项”这样的兜底主题。
+完整目录中的每个小主题都要检查是否已被某个长期主题覆盖；不同子问题只要服务于同一稳定
+工作领域或产品能力，就可以聚合。只共享项目名、App、日期、共现、相似词或标签不足以证明内容关联。
+优先复用能覆盖合并后内容的现有 target Book，保留稳定 ID、全部成员与来源；多个合适 target
+中再优先保留较早身份。一次直接把相关 source Book 归入最终 target，避免合并链。
+新增事实先查完整 Book 身份索引并沿用已有长期主题，不能因为出现新子问题、措辞或小标题就另建
+平行 Book。没有明确归属时 Atom 可以保持可检索；没有最低主题数、固定数量配额或凑数归并。
+主题聚合不等于 Atom 合并、删除或改写。不同断言仍逐条检索、纠正和回滚；已有来源、作用域与
+当前有效性必须保持。scope/project/binding 的空值按快照核对，不能为聚合补猜或扩大授权范围。
+""")
 
 _GROUP_ID_RE = re.compile(r"^group:[a-z0-9][a-z0-9._-]{1,63}$")
 _PINYIN_RE = re.compile(r"^[a-zv]+(?: [a-zv]+)*$")
@@ -190,9 +208,14 @@ def _canonical_catalog_value(value: object) -> object:
 
 
 def memory_catalog_digest(bundle: Mapping[str, object]) -> str:
-    """Return an order-independent semantic identity for the complete catalog."""
+    """Seal catalog content and its topic policy for repeat/freshness checks.
+
+    A changed organization policy must reconsider the catalog once, even when
+    its facts are unchanged. Repeats under the same policy remain idempotent.
+    """
 
     catalog = {
+        "topicAggregationPolicyVersion": MEMORY_TOPIC_AGGREGATION_POLICY_VERSION,
         "atoms": bundle.get("existingMemoryAtoms", bundle.get("existingAtoms", [])),
         "books": bundle.get("existingMemoryBooks", bundle.get("existingBooks", [])),
         "groups": bundle.get("existingSemanticGroups", bundle.get("existingGroups", [])),
@@ -764,6 +787,7 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         catalog_digest = memory_catalog_digest(bundle)
     return {
         "schemaVersion": MEMORY_CURATION_MODEL_BUNDLE_SCHEMA_VERSION,
+        "topicAggregationPolicyVersion": MEMORY_TOPIC_AGGREGATION_POLICY_VERSION,
         "project": compact_whitespace(str(bundle.get("project") or "")),
         "curationScope": curation_scope,
         "catalogAudit": catalog_audit,

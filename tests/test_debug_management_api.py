@@ -1574,6 +1574,42 @@ class DebugManagementApiTests(unittest.TestCase):
         compile_due.assert_not_called()
         owner_status.assert_not_called()
 
+    def test_global_catalog_policy_change_runs_once_then_reuses(self) -> None:
+        managed = MemoryMaintenanceSettings(
+            automatic_organization_enabled=True,
+            dreaming_enabled=False,
+            catalog_consolidation_enabled=True,
+        )
+
+        def organizer_result(_request, *, source_bundle, **_kwargs):
+            return {
+                "ok": True,
+                "modelCalled": True,
+                "sealedCatalogDigest": source_bundle["catalogDigest"],
+                "storedRun": {"runId": "memory-book-run:policy", "status": "applied"},
+            }
+
+        def run():
+            return self.service._execute_gateway_memory_catalog_consolidation(
+                project="wisdom-weasel-rag-ime", manual=True, managed=managed,
+            )
+
+        policy = "rag_ime.memory_curation.MEMORY_TOPIC_AGGREGATION_POLICY_VERSION"
+        with patch.object(self.service, "_knowledge_workbench_database_organizer", side_effect=organizer_result) as organizer:
+            with patch(policy, "previous-topic-policy", create=True):
+                before = run()
+            with patch(policy, "automatic-topic-aggregation", create=True):
+                changed = run()
+                repeated = run()
+
+        self.assertTrue(before["ok"])
+        self.assertTrue(changed["ok"])
+        self.assertFalse(changed["skipped"])
+        self.assertNotEqual(before["catalogDigest"], changed["catalogDigest"])
+        self.assertEqual(organizer.call_count, 2)
+        self.assertTrue(repeated["skipped"])
+        self.assertEqual(repeated["reason"], "catalog_unchanged")
+
     def test_global_catalog_unchanged_digest_skips_a_second_model_call(self) -> None:
         managed = MemoryMaintenanceSettings(
             automatic_organization_enabled=True,

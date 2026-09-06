@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-06T15:39:10.716611+00:00",
+  "generatedAt": "2026-09-06T23:48:00.458423+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -15,15 +15,15 @@
   "groups": {
     "project_harness": {
       "description": "Bounded root project context and accepted cross-outcome rules.",
-      "pathCount": 5
+      "pathCount": 7
     },
     "requirement_evidence": {
       "description": "Lossless user requirement volumes and evidence/status indexes.",
-      "pathCount": 39
+      "pathCount": 51
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 369
+      "pathCount": 392
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -39,11 +39,11 @@
     },
     "session_room_skill_flow": {
       "description": "Scenario-scoped Pi Skill routing.",
-      "pathCount": 6
+      "pathCount": 14
     },
     "session_runtime": {
       "description": "Authoritative backend Session, Provider, Trace, and durable-message contracts.",
-      "pathCount": 112
+      "pathCount": 126
     },
     "release_scope": {
       "description": "Self-describing candidate inventory.",
@@ -59,28 +59,28 @@
     },
     "verification": {
       "description": "Backend and cross-layer regression tests.",
-      "pathCount": 119
+      "pathCount": 125
     }
   },
   "summary": {
-    "pathCount": 854,
+    "pathCount": 919,
     "dispositionCounts": {
-      "keep_release": 853,
+      "keep_release": 918,
       "delete_old_implementation": 1
     },
     "groupCounts": {
-      "project_harness": 5,
-      "requirement_evidence": 39,
-      "control_center_release_ui": 369,
+      "project_harness": 7,
+      "requirement_evidence": 51,
+      "control_center_release_ui": 392,
       "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
-      "session_room_skill_flow": 6,
-      "session_runtime": 112,
+      "session_room_skill_flow": 14,
+      "session_runtime": 126,
       "release_scope": 1,
       "product_installation": 4,
       "input_adapter": 5,
-      "verification": 119
+      "verification": 125
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -119,6 +119,13 @@
       "reason": "Keep the bounded project Outcome, decision, and bootstrap rules aligned with this candidate."
     },
     {
+      "path": "CONTEXT.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "DECISIONS.md",
       "status": "modified",
       "disposition": "keep_release",
@@ -147,6 +154,27 @@
       "disposition": "keep_release"
     },
     {
+      "path": "PROJECT.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "project_harness",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/handoffs/PAWOS_REAL_FRONTEND_SOURCE_MAP.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "control-center-web/docs/pawos/APP_OPTIMIZATION_20260905.md",
       "group": "requirement_evidence",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -168,6 +196,13 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "control-center-web/docs/pawos/LAB_GOLDEN_WORKFLOW_20260905.md",
       "group": "requirement_evidence",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -175,11 +210,25 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/docs/pawos/LAB_INTERVIEW_WALKTHROUGH_20260906.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "control-center-web/docs/pawos/LAB_PRODUCTION_FLOW_RESEARCH_20260906.md",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/LAB_PRODUCT_DESIGN.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "control-center-web/docs/pawos/OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md",
@@ -243,6 +292,41 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/README.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/index.html",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/workbench.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/pawos/prototypes/lab-workbench/workbench.js",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_PRODUCT_CONTRACT.md",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_091_120.md",
@@ -420,11 +504,32 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_284_291.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENTS_292_297.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "requirement_evidence",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "control-center-web/docs/pawos/requirements/PAWOS_REQUIREMENT_EVIDENCE.md",
       "status": "modified",
       "disposition": "keep_release",
       "group": "requirement_evidence",
       "reason": "Keep the source-linked PAWOS requirement ledger and evidence boundary for this candidate."
+    },
+    {
+      "path": "control-center-web/e2e/file-previews.e2e.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "control-center-web/electron/assistant-launch.mjs",
@@ -698,6 +803,20 @@
       "disposition": "keep_release",
       "group": "control_center_release_ui",
       "reason": "Keep the PAWOS message, Trace, Agent Lab, transport, and generated-contract changes with their frontend tests."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-tool-call.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/contracts/generated/agent-tool-result.v1.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "control-center-web/src/contracts/generated/memory-entity.v1.ts",
@@ -1461,6 +1580,104 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/ArtifactSurface.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabAppDelivery.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabAppDelivery.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabAppHost.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabAppPreview.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.test.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/ProjectGuide.tsx",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/api.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/apps.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/drafts.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/lab-project-workbench.css",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/types.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/projects/views.ts",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "control-center-web/src/features/eval-lab/scene-recipes.test.tsx",
@@ -2485,11 +2702,53 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/src/paw-os/extensions/installation.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/installation.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/registry.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/paw-os/extensions/types.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "control-center-web/src/paw-os/runtime/app-registry.test.ts",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/app-registry.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "control-center-web/src/paw-os/runtime/desktop-context.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "control_center_release_ui",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "control-center-web/src/paw-os/runtime/desktop-store.test.ts",
@@ -3836,6 +4095,13 @@
       "disposition": "keep_release"
     },
     {
+      "path": "integrations/pi/rag-ime-control.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "integrations/pi/skill-routing-cards.json",
       "group": "session_room_skill_flow",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -3862,6 +4128,55 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",
       "disposition": "keep_release"
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/SKILL.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/assets/app-delivery.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/assets/comparison.json",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/assets/evidence-note.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/assets/interactive.html",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/references/apps.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "integrations/pi/skills/agent-lab-project/references/artifacts.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_room_skill_flow",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "integrations/pi/skills/facilitate-room/SKILL.md",
@@ -4018,6 +4333,27 @@
       "reason": "Retain the committed Session/Room execution, recovery, approval projection, and append-only persistence changes."
     },
     {
+      "path": "rag_ime/agent_lab_app_runtime.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/agent_lab_app_sources.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/agent_lab_apps.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "rag_ime/agent_lab_candidate_evidence.py",
       "group": "session_runtime",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -4100,6 +4436,34 @@
       "disposition": "keep_release",
       "group": "evaluation_audit",
       "reason": "Retain the committed frozen evaluation, scorer, pricing, and review-artifact changes; estimates and calibration boundaries remain explicit."
+    },
+    {
+      "path": "rag_ime/agent_lab_project_application.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/agent_lab_project_artifacts.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/agent_lab_project_materials.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/agent_lab_projects.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "rag_ime/agent_lab_rag_trial.py",
@@ -4277,6 +4641,13 @@
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
     },
     {
+      "path": "rag_ime/agent_skill_routing.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "rag_ime/agent_surface_runtime.py",
       "group": "session_runtime",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -4289,6 +4660,13 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "rag_ime/agent_tool_ids.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "rag_ime/agent_tools.py",
@@ -4352,6 +4730,20 @@
       "disposition": "keep_release",
       "group": "session_runtime",
       "reason": "Keep the authoritative Session admission, durable identity, Trace repair, Provider, and Runtime synchronization changes."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-tool-call.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/contracts/json/agent-tool-result.v1.json",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "rag_ime/contracts/json/memory-entity.v1.json",
@@ -4443,6 +4835,27 @@
       "disposition": "keep_release",
       "group": "execution_reliability",
       "reason": "Durable execution lifecycle, fault reproduction, and the minimal schema and Lab trial dependencies required by these checks."
+    },
+    {
+      "path": "rag_ime/db/migrations/0194_agent_lab_projects.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/db/migrations/0195_agent_lab_project_artifacts.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "rag_ime/db/migrations/0196_agent_lab_apps.sql",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "session_runtime",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "rag_ime/debug_server.py",
@@ -5257,6 +5670,20 @@
       "disposition": "keep_release"
     },
     {
+      "path": "tests/test_agent_lab_app_runtime.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "tests/test_agent_lab_apps.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
       "path": "tests/test_agent_lab_candidate_evidence.py",
       "group": "verification",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -5346,6 +5773,20 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_lab_project_routes.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
+    },
+    {
+      "path": "tests/test_agent_lab_projects.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "tests/test_agent_lab_rag_trial.py",
@@ -5521,6 +5962,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_workspace.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "tests/test_agent_workspace_sqlite_scratch.py",
@@ -5787,6 +6235,13 @@
       "disposition": "keep_release",
       "group": "memory_context_continuity",
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
+    },
+    {
+      "path": "tests/test_memory_projection_lifecycle.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Include the separately committed Lab source in the current source inventory; its validation remains separately owned."
     },
     {
       "path": "tests/test_memory_references.py",
