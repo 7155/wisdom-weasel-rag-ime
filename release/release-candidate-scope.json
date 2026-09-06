@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-06T07:17:08.647401+00:00",
+  "generatedAt": "2026-09-06T08:25:06.032673+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -23,7 +23,7 @@
     },
     "control_center_release_ui": {
       "description": "PAWOS message delivery, Trace Agent, Agent Lab, transport, and UI verification.",
-      "pathCount": 366
+      "pathCount": 368
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
@@ -63,15 +63,15 @@
     }
   },
   "summary": {
-    "pathCount": 846,
+    "pathCount": 848,
     "dispositionCounts": {
-      "keep_release": 845,
+      "keep_release": 847,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 5,
       "requirement_evidence": 39,
-      "control_center_release_ui": 366,
+      "control_center_release_ui": 368,
       "memory_context_continuity": 26,
       "execution_reliability": 30,
       "evaluation_audit": 134,
@@ -1330,7 +1330,21 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/src/features/eval-lab/golden/RunRecord.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
       "path": "control-center-web/src/features/eval-lab/golden/Shared.tsx",
+      "group": "control_center_release_ui",
+      "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
+      "status": "added",
+      "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/eval-lab/golden/WorkflowGuide.tsx",
       "group": "control_center_release_ui",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "added",

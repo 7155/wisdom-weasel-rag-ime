@@ -286,19 +286,19 @@ export function EvalLabFeature({ initialPage = 'workspace' }: { initialPage?: Ev
       <header className="eval-lab__header">
         <div>
           <h1 id="eval-lab-title"><FlaskConical aria-hidden="true" size={23} /> Agent 工作流实验室</h1>
-          <p className="eval-lab__lede">设定目标，运行候选，用同一批任务检查改善。</p>
+          <p className="eval-lab__lede">从真实资料开始，逐步完成标准确认、模型对比和结果检查。</p>
           <Button aria-expanded={recordsOpen} leadingIcon={<ClipboardList size={15} />} onClick={() => setRecordsOpen((open) => !open)} variant="secondary">浏览实验记录</Button>
         </div>
         <div className="eval-lab__header-actions">
           {transport.kind === 'mock' ? <span className="eval-lab__source-badge eval-lab__source-badge--mock">示例数据</span> : null}
-          <Button onClick={() => showGolden()} variant="secondary">评测集</Button>
+          <Button onClick={() => showGolden()} variant="secondary">继续评测集</Button>
           <Button leadingIcon={<ClipboardList size={15} />} onClick={() => showGolden(true)} variant="primary">新建评测</Button>
           <Button leadingIcon={<RefreshCw size={15} />} loading={runs.isFetching || sourceEvidence.isFetching} onClick={() => { void runs.refetch(); void sourceEvidence.refetch(); }} variant="secondary">
             刷新
           </Button>
         </div>
       </header>
-
+      {page === 'workspace' ? <div className="eval-lab__start-guide"><div><strong>第一次使用，从「新建评测」开始</strong><p>提供资料 → 审核题目 → 校准评审 → 对比结果。每一步都会提示完成条件。</p></div><span>下方为已保存的场景实验；可用执行环境以本机实际连接为准。</span></div> : null}
 
       <TraceLabContext experiment={page === 'workspace' ? activeWorkspaceExperiment(runs.data?.experiments ?? [], selectedExperimentId) : activeProjectExperiment(runs.data?.experiments ?? [], selectedExperimentId)} />
 
@@ -354,6 +354,7 @@ export function EvalLabFeature({ initialPage = 'workspace' }: { initialPage?: Ev
                 key={experiment.experimentId}
                 onDiscuss={() => { if (pendingDispatch) showOwnedRoom(pendingDispatch.room, roomPersonas, 'workspace'); else void createOptimizationRoom(experiment, undefined, experiment.experimentId, 'workspace'); }}
                 onStart={(setup) => createCandidateRoom(experiment, setup)}
+                onCreateEvaluation={() => showGolden(true)}
                 results={<ExperimentWorkspaceResults desktop={desktop} evidenceCatalog={sourceEvidence.data} evidenceError={Boolean(sourceEvidence.error)} evidenceLoading={sourceEvidence.isLoading} experiment={experiment} linkedRuns={matchingRuns(experiment, runs.data.items)} />}
                 room={<AgentLabRoomDeck activeRoomId={activeRoomId} error={roomCatalogError} onRoomUpdated={(updated) => { setOwnedRooms((current) => mergeAgentLabRooms([updated], current)); void runs.refetch(); void sourceEvidence.refetch(); }} onSelect={setActiveRoomId} personas={roomPersonas} rooms={rooms} />}
                 roomCount={rooms.length}

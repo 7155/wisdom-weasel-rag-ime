@@ -56,6 +56,61 @@ function experimentResult(): ExperimentResult {
 }
 
 describe('Golden workflow user boundaries', () => {
+  it('explains the minimum split instead of leaving a one-question form silently disabled', async () => {
+    const transport = new MockControlTransport({ routes: { 'agent.eval-lab.golden.get': { ok: true, items: [], suite: null } } });
+    mount(transport, { startNew: true });
+    await screen.findByRole('heading', { name: '新建评测集' });
+    fireEvent.change(screen.getByRole('spinbutton', { name: '计划题数' }), { target: { value: '1' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('至少 2 题');
+    expect(screen.getByRole('button', { name: '保存来源，建立评测集' })).toBeDisabled();
+    expect(screen.getByRole('complementary', { name: '本步指引' })).toHaveTextContent('先提供一份能核对答案的资料');
+  });
+
+  it('advances to the next pending case only after a successful save', async () => {
+    const onReview = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    render(<CaseReview suite={suite({ cases: [goldenCase(), goldenCase('case-hold', 'holdout')] })} disabled={false} onReview={onReview} onNext={() => {}} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '通过并看下一题' }));
+    expect(screen.getByRole('textbox', { name: '问题' })).toHaveValue('退款期限是多少？');
+    await user.click(screen.getByRole('button', { name: '通过并看下一题' }));
+    expect(screen.getByRole('textbox', { name: '问题' })).toHaveValue('申请退款需要什么？');
+    expect(onReview).toHaveBeenLastCalledWith(expect.objectContaining({ caseId: 'case-dev', verdict: 'approved' }));
+  });
+
+  it('opens the original failed run without creating another model request', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.golden.get': read(suite({ jobs: [job('failed')] })),
+      'agent.session.snapshot': { items: [{ blocks: [{ type: 'error', data: { message: 'Cannot find module runtime-host/openai-codex.js' } }] }] },
+    } });
+    mount(transport);
+    await userEvent.setup().click(await screen.findByRole('button', { name: '查看原运行记录' }));
+    await screen.findByText(/本机模型运行组件缺失/);
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.snapshot')[0]?.request.params).toEqual({ sessionId: 'session-1' });
+    expect(transport.requests.some(({ request }) => request.pathId === 'agent.eval-lab.golden.command')).toBe(false);
+  });
+
+  it('selects an available drafting model and saves it before allowing execution', async () => {
+    let current = suite();
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.golden.get': () => read(current),
+      'agent.role.models': { providers: [{ id: 'configured-provider', models: [{ id: 'another-model', name: '另一个已配置模型', thinkingLevels: ['low', 'high'] }] }] },
+      'agent.eval-lab.golden.command': (request: ControlRequest) => {
+        const command = request.body as GoldenCommand;
+        current = { ...current, revision: current.revision + 1, judgeConfig: command.input.judgeConfig as typeof model };
+        return receipt(command, current);
+      },
+    } });
+    mount(transport);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: '选择已配置模型' }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: '选择起草模型' }), 'configured-provider/another-model');
+    expect(screen.getByRole('button', { name: '让 Agent 起草题目' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '保存起草模型' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '让 Agent 起草题目' })).toBeEnabled());
+    expect(current.judgeConfig).toMatchObject({ model: 'another-model', thinkingLevel: 'high' });
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.eval-lab.golden.command')).toHaveLength(1);
+  });
+
   it.each([
     ['审核标准', '问题', '退款期限是多少？', '退款的申请期限是多少？'],
     ['校准评审', '待标注答案', '七天。', '按来源应为七天。'],
@@ -71,6 +126,7 @@ describe('Golden workflow user boundaries', () => {
     const user = userEvent.setup();
     await screen.findByRole('heading', { name: '校准通过，可以冻结' });
     await user.click(screen.getByRole('tab', { name: step }));
+    if (field === '评审模型') await user.click(screen.getByText('模型标识与推理强度', { selector: '[role="tabpanel"]:not([hidden]) summary' }));
     fireEvent.change(screen.getByRole('textbox', { name: field }), { target: { value: draft } });
     await user.click(screen.getByRole('tab', { name: '冻结与实验' }));
     expect(screen.getByRole('button', { name: '冻结当前标准' })).toBeDisabled();
@@ -206,7 +262,7 @@ describe('Golden workflow user boundaries', () => {
     } });
     mount(transport, { startNew: true, onClose: close });
     const user = userEvent.setup();
-    expect(await screen.findByRole('heading', { name: '起草题目' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '这次想评测什么？' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Golden 评测集' })).toBeInTheDocument();
     const source = screen.getByRole('textbox', { name: '来源 1 原文' });
     expect(source).toHaveValue('');
@@ -220,7 +276,7 @@ describe('Golden workflow user boundaries', () => {
     await user.click(screen.getByRole('button', { name: '保存来源，建立评测集' }));
     await screen.findByRole('button', { name: '让 Agent 起草题目' });
     expect(commands).toHaveLength(1);
-    expect(commands[0]).toMatchObject({ action: 'create', expectedRevision: 0, input: { title: '新任务评测', targetCount: 30 } });
+    expect(commands[0]).toMatchObject({ action: 'create', expectedRevision: 0, input: { title: '新任务评测', targetCount: 4 } });
     expect(commands[0].suiteId).toBeUndefined();
     expect(transport.requests.every(({ request }) => request.pathId.startsWith('agent.eval-lab.golden.'))).toBe(true);
     await user.click(screen.getByRole('button', { name: '返回实验工作区' }));
@@ -259,6 +315,7 @@ describe('Golden workflow user boundaries', () => {
     await user.click(await screen.findByRole('button', { name: '继续校准评审' }));
     expect(screen.getAllByRole('radio').every((input) => !(input as HTMLInputElement).checked)).toBe(true);
     expect(screen.getByRole('button', { name: '开始校准评审' })).toBeDisabled();
+    await user.click(screen.getByText('模型标识与推理强度', { selector: '[role="tabpanel"]:not([hidden]) summary' }));
     expect(screen.getByRole('textbox', { name: '评审模型' })).toHaveValue('configured-model');
     for (const [category, label] of [['正确样例', '通过'], ['错误样例', '不通过'], ['边界样例', '不通过']] as const) {
       await user.click(within(screen.getByRole('complementary', { name: '校准样例列表' })).getByRole('button', { name: new RegExp(category) }));
@@ -272,6 +329,7 @@ describe('Golden workflow user boundaries', () => {
     await user.click(screen.getByRole('button', { name: '继续冻结与实验' }));
     await user.click(screen.getByRole('button', { name: '冻结当前标准' }));
     expect(await screen.findByLabelText('冻结快照')).toHaveTextContent('paw.golden.context-qa-judge.v1');
+    await user.click(within(screen.getByRole('group', { name: '基线' })).getByText('模型标识与推理强度'));
     expect(screen.getByRole('textbox', { name: '基线模型' })).toHaveValue('configured-model');
     await user.click(screen.getByRole('button', { name: '开始冻结集实验' }));
     expect(await screen.findByRole('heading', { name: '候选在本次冻结题集上有改善' })).toBeInTheDocument();
@@ -450,6 +508,7 @@ describe('Golden workflow user boundaries', () => {
     expect(screen.getByText(scenario)).toBeVisible();
     expect(screen.getByRole('region', { name: '留出题比较' }).compareDocumentPosition(screen.getByRole('region', { name: '开发题逐题差异' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(settings);
+    await user.click(within(screen.getByRole('group', { name: '候选' })).getByText('模型标识与推理强度'));
     const candidateModel = screen.getByRole('textbox', { name: '候选模型' });
     await user.clear(candidateModel); await user.type(candidateModel, 'next-model');
     await user.click(await enabledButton('开始冻结集实验'));
@@ -469,7 +528,6 @@ describe('Golden workflow user boundaries', () => {
     const rendered = render(<CalibrationPanel suite={current} {...props} />);
     const user = userEvent.setup();
     expect(screen.getByRole('button', { name: '继续冻结与实验' })).toBeEnabled();
-    await user.click(screen.getByText('查看本题标准和引用'));
     expect(screen.getByRole('heading', { name: '必须回答的事实' })).toBeInTheDocument();
     expect(screen.getByText('必须说明七天期限')).toBeInTheDocument();
     expect(screen.getByText('依据来源回答，不得虚构')).toBeInTheDocument();

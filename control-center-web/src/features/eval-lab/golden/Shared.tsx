@@ -1,16 +1,28 @@
-import { useId } from 'react';
-import { Disclosure, Field, Input, TextArea } from '@/components/primitives';
+import { createContext, useContext, useId, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Button, Disclosure, Field, Input, TextArea } from '@/components/primitives';
+import { useControlTransport } from '@/app/control-transport';
+import { parsePiModelCatalogOptions, type PiModelOption } from '@/features/agent/model-catalog-options';
+import { labConnectionKey, requestLabControl } from '../control-request';
 import { goldenThinkingLevels, isGoldenThinkingLevel, type GoldenEvidence, type GoldenSource, type ModelConfig } from './types';
+
+const CatalogContext = createContext<{ models: PiModelOption[]; loading: boolean; error: boolean; read: () => void } | null>(null);
+export function GoldenModelCatalog({ children }: { children: ReactNode }) {
+  const transport = useControlTransport();
+  const query = useQuery({ queryKey: ['golden-model-options', labConnectionKey(transport)],
+    queryFn: ({ signal }) => requestLabControl(transport, { pathId: 'agent.role.models', signal }),
+    enabled: false, retry: false, staleTime: 60_000 });
+  return <CatalogContext.Provider value={{ models: parsePiModelCatalogOptions(query.data).models, loading: query.isFetching, error: query.isError, read: () => { void query.refetch(); } }}>{children}</CatalogContext.Provider>;
+}
 
 export function ModelFields({ label, value, onChange, disabled = false }: {
   label: string; value: ModelConfig; onChange: (value: ModelConfig) => void; disabled?: boolean;
 }) {
   const id = useId();
+  const catalog = useContext(CatalogContext);
   const validThinking = isGoldenThinkingLevel(value.thinkingLevel);
   const promptLabel = label === '评审' ? '评审规则' : `${label}回答规则`;
-  return <fieldset className="golden-model" disabled={disabled}>
-    <legend>{label}</legend>
-    <div className="golden-model__fields">
+  const manual = <div className="golden-model__fields">
       <Field htmlFor={`${id}-provider`} label={`${label}服务`} required>
         <Input id={`${id}-provider`} value={value.provider} required aria-invalid={!value.provider.trim() || undefined} placeholder="填写服务标识" onChange={(event) => onChange({ ...value, provider: event.target.value })} />
       </Field>
@@ -24,7 +36,18 @@ export function ModelFields({ label, value, onChange, disabled = false }: {
           {goldenThinkingLevels.map((level) => <option key={level} value={level}>{level}</option>)}
         </select>
       </Field>
-    </div>
+    </div>;
+  return <fieldset className="golden-model" disabled={disabled}>
+    <legend>{label}</legend>
+    {catalog ? <>
+      <div className="golden-model-choice"><strong>{value.model || '尚未选择模型'}</strong><span>{value.provider} · {value.thinkingLevel}</span><Button size="small" loading={catalog.loading} onClick={catalog.read}>{catalog.models.length ? '刷新可用模型' : '选择已配置模型'}</Button></div>
+      {catalog.models.length ? <Field htmlFor={`${id}-choice`} label={`选择${label}模型`}><select id={`${id}-choice`} value={`${value.provider}/${value.model}`} onChange={(event) => {
+        const chosen = catalog.models.find((model) => model.reference === event.target.value);
+        if (chosen) onChange({ ...value, provider: chosen.provider, model: chosen.id, thinkingLevel: chosen.thinkingLevels.includes(value.thinkingLevel) ? value.thinkingLevel : chosen.thinkingLevels.find((level) => level === 'high') ?? chosen.thinkingLevels[0] ?? '' });
+      }}><option value={`${value.provider}/${value.model}`}>当前：{value.model} · {value.provider}</option>{catalog.models.filter((model) => model.reference !== `${value.provider}/${value.model}`).map((model) => <option key={model.reference} value={model.reference}>{model.name} · {model.provider}</option>)}</select></Field> : null}
+      {catalog.error ? <p className="golden-field-error" role="status">模型列表暂不可读。当前设置已保留，可重试或手动填写。</p> : null}
+      <Disclosure className="golden-disclosure" summary="模型标识与推理强度">{manual}</Disclosure>
+    </> : manual}
     {!value.provider.trim() || !value.model.trim() || !validThinking ? <p className="golden-field-error" role="status">请填写明确的服务、模型，并选择支持的推理强度。</p> : null}
     <Disclosure className="golden-disclosure" summary={`${promptLabel}（Prompt）`}>
       <Field htmlFor={`${id}-prompt`} label={promptLabel}>

@@ -53,11 +53,12 @@ export function GoldenExperiment({ suite, disabled, onFreeze, onExperiment, onRe
         {typeof snapshot.judgeProtocolVersion === 'string' ? <p className="golden-note">评审协议：{snapshot.judgeProtocolVersion}</p> : null}
       </div>
       <form className="golden-experiment-form" onSubmit={(event) => { event.preventDefault(); if (!disabled) void start(); }}>
-        <div className="golden-model-comparison"><ModelFields label="基线" value={baseline} onChange={setBaseline} disabled={disabled} /><ModelFields label="候选" value={candidate} onChange={setCandidate} disabled={disabled} /></div>
+        <div className="golden-model-comparison"><section><p className="golden-note">当前使用的方案，作为比较起点</p><ModelFields label="基线" value={baseline} onChange={setBaseline} disabled={disabled} /></section><section><p className="golden-note">准备尝试的新方案</p><ModelFields label="候选" value={candidate} onChange={setCandidate} disabled={disabled} /></section></div>
         <div className="golden-experiment-options"><label className="golden-check"><input type="checkbox" checked={optimizePrompt} disabled={disabled} onChange={(event) => setOptimizePrompt(event.target.checked)} />基于开发题自动优化 Prompt</label>
           {optimizePrompt ? <label htmlFor={`${id}-budget`}>最多尝试<select id={`${id}-budget`} value={maxCandidates} disabled={disabled} onChange={(event) => setMaxCandidates(Number(event.target.value))}>{[1, 2, 3].map((number) => <option key={number} value={number}>{number} 个候选</option>)}</select></label> : null}
         </div>
-        <div className="golden-section__footer"><p className="golden-note">本流程比较有来源的问答与 Prompt。新题集的分数不会与历史不同题目的分数混用。</p><Button type="submit" variant="primary" disabled={disabled || !modelsRunnable}>开始冻结集实验</Button></div>
+        <div className="golden-run-plan" aria-label="本轮执行范围"><strong>本轮将实际执行</strong><ol><li>{snapshot.developmentCount} 道开发题：基线与候选分别作答并接受评审。</li><li>{optimizePrompt ? `最多尝试 ${maxCandidates} 个候选，只按开发题调整回答规则。` : '使用你填写的候选规则，不自动调整。'}</li><li>{snapshot.holdoutCount} 道留出题：验证最终候选，保存答案、评审和用量。</li></ol></div>
+        <div className="golden-section__footer golden-action-bar"><p className="golden-note">点击后会调用所选模型。运行中可以离开页面，回来查看真实进度与结果。</p><Button type="submit" variant="primary" disabled={disabled || !modelsRunnable}>开始冻结集实验</Button></div>
       </form>
     </> : <div className="golden-empty"><h4>还没有冻结快照</h4><p>完成逐题人审和评审校准后，即可冻结同一套标准用于自动实验。</p>{!developmentCount || !holdoutCount ? onReview ? <Button size="small" onClick={onReview}>去审核题目</Button> : null : !calibrationReady && onCalibrate ? <Button size="small" onClick={onCalibrate}>去校准评审</Button> : null}</div>}
   </div>;
@@ -97,6 +98,10 @@ function ExperimentReport({ result, sources }: { result: ExperimentResult; sourc
 function PhaseResults({ title, phase }: { title: string; phase: PhaseReport }) {
   return <section className="golden-phase" aria-label={`${title}比较`}>
     <h4>{title}</h4>
+    <figure className="golden-rate-chart" aria-label={`${title}通过率对比图`}>
+      <figcaption>{title === '留出题' ? '最终验证 · 未用于调整' : '调整阶段'}<span>通过率 · 相同的 0–100% 刻度</span></figcaption>
+      {([['基线', phase.baselineMetrics], ['候选', phase.candidateMetrics]] as const).map(([label, metrics]) => <div className="golden-rate-row" data-version={label === '候选' ? 'candidate' : 'baseline'} key={label}><span>{label}</span><div className="golden-rate-track" aria-hidden="true">{typeof metrics.passRate === 'number' && Number.isFinite(metrics.passRate) ? <div style={{ width: `${Math.max(0, Math.min(1, metrics.passRate)) * 100}%` }} /> : null}</div><strong>{formatRate(metrics.passRate)}</strong><small>{metrics.passed} / {metrics.total} 题</small></div>)}
+    </figure>
     <div className="golden-table-scroll"><table className="golden-table"><caption className="golden-visually-hidden">{title}基线与候选汇总</caption><thead><tr><th scope="col">版本</th><th scope="col">通过率</th><th scope="col">通过 / 总数</th><th scope="col">不通过</th><th scope="col">无法判定</th><th scope="col">运行错误</th></tr></thead><tbody>{([['基线', phase.baselineMetrics], ['候选', phase.candidateMetrics]] as const).map(([label, metrics]) => <tr key={label}><th scope="row">{label}</th><td>{formatRate(metrics.passRate)}</td><td>{metrics.passed} / {metrics.total}</td><td>{metrics.failed}</td><td>{metrics.uncertain}</td><td>{metrics.runtimeErrors}</td></tr>)}</tbody></table></div>
     {phase.businessCost ? <BusinessCost cost={phase.businessCost} /> : <p className="golden-note">本阶段尚未提供可比较的业务答案费用。</p>}
   </section>;

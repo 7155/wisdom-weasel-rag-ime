@@ -294,6 +294,9 @@ _OAUTH_RUNTIME_MODULES = {
         "packages/ai/src/auth/oauth/openai-codex.ts",
         "openaiCodexOAuth",
     ),
+    "openrouter.ts": ("packages/ai/src/auth/oauth/openrouter.ts", "openRouterOAuth"),
+    "kimi-coding.ts": ("packages/ai/src/auth/oauth/kimi-coding.ts", "kimiCodingOAuth"),
+    "xai.ts": ("packages/ai/src/auth/oauth/xai.ts", "xaiOAuth"),
     "radius.ts": (
         "packages/ai/src/auth/oauth/radius.ts",
         "createRadiusOAuth",
@@ -1800,15 +1803,20 @@ def _bundle_oauth_runtime_modules(
             cwd=pi_root,
         )
         output.chmod(0o644)
+        # The SDK's compiled loader requests .js while source-based entrypoints
+        # request .ts. Both are opaque imports inside the same managed bundle.
+        # These files contain bundled JavaScript, regardless of the suffix.
+        shutil.copy2(output, output.with_suffix(".js"))
 
 
 def _smoke_oauth_runtime_modules(node: Path, runtime_dir: Path) -> dict[str, object]:
     module_specs = [
         {
-            "url": (runtime_dir / output_name).as_uri(),
+            "url": (runtime_dir / Path(output_name).with_suffix(suffix)).as_uri(),
             "exportName": export_name,
         }
         for output_name, (_relative_source, export_name) in _OAUTH_RUNTIME_MODULES.items()
+        for suffix in (".ts", ".js")
     ]
     probe = (
         f"const specs = {json.dumps(module_specs, separators=(',', ':'))};"
@@ -1842,7 +1850,7 @@ def _smoke_oauth_runtime_modules(node: Path, runtime_dir: Path) -> dict[str, obj
         raise ManagedPiRuntimeError(
             "managed Pi OAuth runtime smoke returned invalid JSON"
         ) from exc
-    if response != {"ok": True, "moduleCount": len(_OAUTH_RUNTIME_MODULES)}:
+    if response != {"ok": True, "moduleCount": len(_OAUTH_RUNTIME_MODULES) * 2}:
         raise ManagedPiRuntimeError("managed Pi OAuth runtime smoke did not load every module")
     return response
 

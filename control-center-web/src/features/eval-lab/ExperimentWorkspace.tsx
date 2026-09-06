@@ -35,6 +35,7 @@ type ExperimentWorkspaceProps = {
   roomCount: number;
   onStart: (setup: ExperimentSetup) => Promise<void>;
   onDiscuss: () => void;
+  onCreateEvaluation?: () => void;
 };
 
 /**
@@ -197,7 +198,7 @@ export function ExperimentWorkspace(props: ExperimentWorkspaceProps) {
           </div>
         </> : null}
         {step === 'run' ? <>
-          {props.trialSceneId ? <SceneTrialPanel sceneId={props.trialSceneId} onResultChange={selectTrial} onInspectResult={(identity) => { selectTrial(identity); setStep('results'); }} /> : null}
+          {props.trialSceneId ? <SceneTrialPanel sceneId={props.trialSceneId} onCreateEvaluation={props.onCreateEvaluation} onResultChange={selectTrial} onInspectResult={(identity) => { selectTrial(identity); setStep('results'); }} /> : null}
           <header className="lab-workspace__section-heading"><h3>与 Agent 一起优化</h3><p>在实验 Room 中诊断原因、提出修改，并核对下一轮结果。</p></header>
           {props.busy && !props.roomCount ? <p className="lab-workspace__notice" role="status">正在创建本轮实验对话并发送已设定的任务…</p> : null}
           {props.roomCount ? props.room : !props.busy ? <div className="lab-workspace__empty"><h4>尚未建立本轮优化 Room</h4><p>设置修改范围与预算后，可让 Agent 协作诊断并提出候选方案。</p><Button onClick={() => setStep('setup')} trailingIcon={<ArrowRight size={15} />} variant="primary">设置下一轮</Button></div> : null}

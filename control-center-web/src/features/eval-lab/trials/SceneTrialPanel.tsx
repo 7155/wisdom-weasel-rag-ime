@@ -6,7 +6,7 @@ import { TrialOutcome, trialStateLabels as labels, type TrialResultIdentity } fr
 import './scene-trial.css';
 
 /** Execution belongs to the trial service; the panel only projects receipts. */
-export function SceneTrialPanel({ sceneId, onResultChange, onInspectResult }: { sceneId: string; onResultChange?: (identity: TrialResultIdentity) => void; onInspectResult?: (identity: TrialResultIdentity) => void }) {
+export function SceneTrialPanel({ sceneId, onResultChange, onInspectResult, onCreateEvaluation }: { sceneId: string; onResultChange?: (identity: TrialResultIdentity) => void; onInspectResult?: (identity: TrialResultIdentity) => void; onCreateEvaluation?: () => void }) {
   const trials = useSceneTrials(sceneId);
   const { selectedJobId: selected, resultRequestId, model, prompt } = trials.view;
   const setSelected = (selectedJobId: string) => trials.updateView({ selectedJobId, resultRequestId: '' });
@@ -31,7 +31,7 @@ export function SceneTrialPanel({ sceneId, onResultChange, onInspectResult }: { 
     </header>
     {trials.query.isPending ? <p role="status">正在读取执行记录…</p> : null}
     {trials.query.isError ? <p className="scene-trial__error" role="alert">暂时无法读取执行状态。已有实验不会因断开连接而重新启动，请刷新核对。</p> : null}
-    {!trials.query.isPending && !trials.query.isError && !trials.registered ? <p>这个场景尚未连接执行环境。</p> : null}
+    {!trials.query.isPending && !trials.query.isError && !trials.registered ? <div className="scene-trial__unavailable"><strong>这个场景尚未连接执行环境。</strong><p>已有报告可供查看；要运行自己的资料问答评测，请先建立评测集。</p>{onCreateEvaluation ? <Button onClick={onCreateEvaluation}>从真实资料新建评测</Button> : null}</div> : null}
     {active && current?.jobId !== active.jobId ? <div className="scene-trial__active">
       <p>{trials.query.isError ? `另一次验证的上次状态：${labels[active.state]}；当前进展尚未确认。` : `另一次验证${labels[active.state]}。`}</p>
       <Button onClick={() => setSelected(active.jobId)} size="small" variant="secondary">查看当前执行</Button>

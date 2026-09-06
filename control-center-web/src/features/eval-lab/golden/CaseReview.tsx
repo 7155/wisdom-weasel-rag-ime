@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Button, Disclosure, Field, IconButton, Input, TextArea } from '@/components/primitives';
 import type { GoldenCase, GoldenCommand, GoldenSource, GoldenSuite } from './types';
 import { splitLabel } from './types';
+import { SavedProgress } from './WorkflowGuide';
 
 type Draft = Omit<GoldenCase, 'review' | 'samples'> & { note: string };
 const reviewLabel = { pending: '待审核', approved: '已通过', rejected: '已拒绝' };
@@ -32,10 +33,14 @@ export function CaseReview({ suite, disabled, onReview, onNext, onDraft, onDirty
   useEffect(() => { onDirtyChange?.(hasUnsaved); }, [hasUnsaved, onDirtyChange]);
   const draft = selected ? drafts[selected.caseId] ?? caseDraft(selected) : null;
   const change = (value: Draft) => setDrafts((current) => ({ ...current, [value.caseId]: value }));
-  const submit = async (verdict: 'approved' | 'rejected') => {
+  const submit = async (verdict: 'approved' | 'rejected', advance = false) => {
     if (!draft) return;
     if (await onReview({ ...draft, verdict })) {
-      setDrafts((current) => { const next = { ...current }; delete next[draft.caseId]; return next; });
+      setDrafts((current) => { if (current[draft.caseId] && JSON.stringify(current[draft.caseId]) !== JSON.stringify(draft)) return current; const next = { ...current }; delete next[draft.caseId]; return next; });
+      if (advance) {
+        const next = suite.cases.find((item) => item.caseId !== draft.caseId && item.review.status === 'pending');
+        if (next) { setFilter('all'); setSelectedId(next.caseId); }
+      }
     }
   };
   const enoughSplits = approved.some((item) => item.split === 'development') && approved.some((item) => item.split === 'holdout');
@@ -44,6 +49,7 @@ export function CaseReview({ suite, disabled, onReview, onNext, onDraft, onDirty
       <h3 id={`${id}-review-title`}>逐题确认标准与证据</h3>
       <p>Agent 草稿需要你的明确审核。修改问题、必要事实与引用后，保存本题的审核结论。</p>
     </div><span className="golden-count">{approved.length} / {suite.cases.length} 题通过 · {pending} 题待审核</span></header>
+    {suite.cases.length ? <SavedProgress label="审核已保存" value={suite.cases.length - pending} total={suite.cases.length} /> : null}
     {!suite.cases.length ? <div className="golden-empty"><h4>题目尚未就绪</h4><p>起草任务结束后，真实题目和引用会出现在这里。</p>{onDraft ? <Button size="small" onClick={onDraft}>返回起草题目</Button> : null}</div> : <div className="golden-notebook">
       <aside className="golden-case-list" aria-label="题目列表">
         <label className="golden-list-filter">显示题目<select value={filter} onChange={(event) => setFilter(event.target.value)}>
@@ -54,17 +60,17 @@ export function CaseReview({ suite, disabled, onReview, onNext, onDraft, onDirty
         </button></li>)}</ol>
         {!filtered.length ? <p className="golden-note">此筛选下没有题目。</p> : null}
       </aside>
-      {selected && draft ? <CaseEditor key={selected.caseId} value={draft} onChange={change} sources={suite.sources} disabled={disabled} onSubmit={submit} /> : null}
+      {selected && draft ? <CaseEditor key={selected.caseId} value={draft} onChange={change} sources={suite.sources} disabled={disabled} onSubmit={submit} hasNext={suite.cases.some((item) => item.caseId !== selected.caseId && item.review.status === 'pending')} /> : null}
     </div>}
-    <footer className="golden-section__footer"><p className="golden-note">至少通过一道开发题和一道留出题，才能冻结用于比较的评测集。</p>
-      <Button onClick={onNext} disabled={!enoughSplits || disabled || hasUnsaved}>继续校准评审</Button>
+    <footer className="golden-section__footer golden-action-bar"><p className="golden-note">{enoughSplits ? pending ? `还有 ${pending} 题待审核；继续后只使用已通过的题目。` : '题目审核已完成。接下来用示例答案对齐评审标准。' : '至少通过一道开发题和一道留出题，才能冻结用于比较的评测集。'}</p>
+      <Button variant="primary" onClick={onNext} disabled={!enoughSplits || disabled || hasUnsaved}>继续校准评审</Button>
     </footer>
   </section>;
 }
 
-function CaseEditor({ value, onChange, sources, disabled, onSubmit }: {
+function CaseEditor({ value, onChange, sources, disabled, onSubmit, hasNext }: {
   value: Draft; onChange: (value: Draft) => void; sources: GoldenSource[]; disabled: boolean;
-  onSubmit: (verdict: 'approved' | 'rejected') => Promise<void>;
+  onSubmit: (verdict: 'approved' | 'rejected', advance?: boolean) => Promise<void>; hasNext: boolean;
 }) {
   const id = useId();
   const invalidQuote = value.evidence.some((item) => !item.quote.trim() || !sources.find((source) => source.sourceId === item.sourceId)?.text.includes(item.quote));
@@ -95,6 +101,6 @@ function CaseEditor({ value, onChange, sources, disabled, onSubmit }: {
       </section>
       <Field htmlFor={`${id}-note`} label="审核说明"><TextArea id={`${id}-note`} rows={2} value={value.note} placeholder="记录通过或拒绝的理由" onChange={(event) => onChange({ ...value, note: event.target.value })} /></Field>
     </fieldset>
-    <div className="golden-editor-actions"><Button type="submit" variant="primary" disabled={disabled || !valid}>保存并通过</Button><Button disabled={disabled || !value.question.trim() || invalidQuote} onClick={() => void onSubmit('rejected')}>保存并拒绝</Button></div>
+    <div className="golden-editor-actions"><Button type="submit" variant={hasNext ? 'secondary' : 'primary'} disabled={disabled || !valid}>保存并通过</Button>{hasNext ? <Button variant="primary" disabled={disabled || !valid} onClick={() => void onSubmit('approved', true)}>通过并看下一题</Button> : null}<Button variant="quiet" disabled={disabled || !value.question.trim() || invalidQuote} onClick={() => void onSubmit('rejected')}>保存并拒绝</Button></div>
   </form>;
 }

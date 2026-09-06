@@ -575,7 +575,7 @@ describe('Agent Lab', () => {
     );
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Agent 工作流实验室' })).toBeInTheDocument();
-    expect(screen.getByText('设定目标，运行候选，用同一批任务检查改善。')).toBeInTheDocument();
+    expect(screen.getByText('从真实资料开始，逐步完成标准确认、模型对比和结果检查。')).toBeInTheDocument();
     expect(screen.queryByLabelText('Agent Lab 三步流程')).not.toBeInTheDocument();
     expect(await screen.findByRole('heading', { level: 2, name: '每一轮都回答：为什么改、改了什么、结果如何' })).toBeInTheDocument();
     expect(screen.getByText('下面按业务场景整理所有实验。先看任务是否做对、结果是否安全可靠，再比较成本；耗时只用于诊断，不阻止保留正确方案。')).toBeInTheDocument();

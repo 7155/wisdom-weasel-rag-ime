@@ -816,12 +816,18 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 else:
                     body = f"export const {export_name} = {{}};\n"
                 (runtime_dir / output_name).write_text(body, encoding="utf-8")
+                (runtime_dir / Path(output_name).with_suffix(".js")).write_text(body, encoding="utf-8")
 
             result = _smoke_oauth_runtime_modules(node, runtime_dir)
+            # The installed SDK loads this .js name. A .ts-only smoke used to
+            # pass even though real Codex OAuth could not resolve its module.
+            (runtime_dir / "openai-codex.js").unlink()
+            with self.assertRaises(subprocess.CalledProcessError):
+                _smoke_oauth_runtime_modules(node, runtime_dir)
 
         self.assertEqual(
             result,
-            {"ok": True, "moduleCount": len(_OAUTH_RUNTIME_MODULES)},
+            {"ok": True, "moduleCount": len(_OAUTH_RUNTIME_MODULES) * 2},
         )
         self.assertEqual(
             set(_OAUTH_RUNTIME_MODULES),
@@ -829,6 +835,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "anthropic.ts",
                 "github-copilot.ts",
                 "openai-codex.ts",
+                "openrouter.ts",
+                "kimi-coding.ts",
+                "xai.ts",
                 "radius.ts",
             },
         )
