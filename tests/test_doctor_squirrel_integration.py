@@ -500,6 +500,7 @@ class DoctorSquirrelIntegrationScriptTests(unittest.TestCase):
                     base_url="http://127.0.0.1:18767",
                     extra_env={
                         "RAG_IME_RUNTIME_PROFILE": "foreground-rag-proof",
+                        "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "1",
                         "RAG_IME_RAG_DIRECT_DISPLAY": "1",
                     },
                 )

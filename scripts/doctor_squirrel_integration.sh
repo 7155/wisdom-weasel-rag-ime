@@ -289,6 +289,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 root = sys.argv[1]
+sys.path.insert(0, root)
+from rag_ime.runtime_profile import PROFILES
+
 sidecar_plist_path = Path(sys.argv[2])
 sidecar_label = sys.argv[3]
 mlx_plist_path = Path(sys.argv[4])
@@ -448,7 +451,9 @@ else:
         "RAG_IME_HYBRID_RAG_CORE": "1",
         "RAG_IME_RAG_DIRECT_DISPLAY": expected_rag_direct_display or "0",
         "RAG_IME_POST_COMMIT_ACTIVE_RAG_BUTTON": "1",
-        "RAG_IME_POST_COMMIT_PENDING_PREVIEW": "0",
+        "RAG_IME_POST_COMMIT_PENDING_PREVIEW": (
+            "1" if runtime_profile in PROFILES and PROFILES[runtime_profile].assistant_pending_preview else "0"
+        ),
         "RAG_IME_ENABLE_DEMO_SAFE_FALLBACK": "0",
     }
     v1_errors = []
