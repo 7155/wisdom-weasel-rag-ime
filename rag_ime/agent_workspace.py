@@ -4518,6 +4518,15 @@ def _sandbox_profile(
     temp = _profile_escape(str(temporary))
     lines.append(f'(allow file-read* (subpath "{temp}"))')
     lines.append(f'(allow file-write* (subpath "{temp}"))')
+    # Test suites may create disposable databases in this command's private,
+    # freshly created scratch directory. Existing workspace and user databases
+    # remain protected, including symlink targets outside that directory.
+    for operation in ("file-read*", "file-write*"):
+        lines.append(
+            f'(deny {operation} (require-all '
+            '(regex #"/[^/]*\\.(sqlite|sqlite3|db)$") '
+            f'(require-not (subpath "{temp}"))))'
+        )
     sensitive_patterns = (
         r"/\.env$",
         r"/\.env\.[^/]*$",
@@ -4528,7 +4537,7 @@ def _sandbox_profile(
         r"/cookies\.sqlite$",
         r"/id_rsa$",
         r"/id_ed25519$",
-        r"/[^/]*\.(pem|key|p12|pfx|sqlite|sqlite3|db)$",
+        r"/[^/]*\.(pem|key|p12|pfx)$",
         r"/\.(ssh|gnupg|aws|azure|keychain)(/|$)",
     )
     for pattern in sensitive_patterns:
