@@ -35,8 +35,11 @@ from .memory_evidence_admission import (
 )
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
 from .memory_projection_consistency import (
+    bump_source_revision,
+    delete_retrieval_docs,
     invalidate_superseded_atom_dependencies,
     restore_dependency_invalidation,
+    sync_projection_dependencies,
 )
 from .memory_purpose import purpose_audit_fields
 from .personal_memory_books import project_personal_memory_books
@@ -55,6 +58,19 @@ MEMORY_BOOK_ROLLBACK_SCHEMA_VERSION = "rag-ime.memory-book-rollback.v1"
 # these are the only sources admitted as governed retrieval tags.
 _DEFAULT_TAG_SOURCES = ("dsv4", "user")
 _GOVERNED_TAG_SOURCES = ("curated_import", "dsv4", "user")
+_MEMORY_BOOK_SCOPE_FIELDS = (
+    "owner_kind",
+    "owner_id",
+    "project",
+    "app",
+    "knowledge_domain",
+    "scope_kind",
+    "scope_id",
+    "visibility",
+    "authorization_revision",
+    "binding_id",
+    "scope_mode",
+)
 
 
 def _tag_source_predicate(alias: str, *, catalog_only: bool) -> str:
@@ -956,9 +972,16 @@ def _filter_global_catalog_diffs(
         if compact_whitespace(str(item.get("atomId") or item.get("id") or ""))
     }
     tags = _list_of_dicts(source.get("existingSemanticTags"))
+    books = _list_of_dicts(source.get("existingMemoryBooks"))
+    books_by_id = {
+        compact_whitespace(str(item.get("bookId") or "")): item
+        for item in books
+        if compact_whitespace(str(item.get("bookId") or ""))
+    }
     accepted_upserts: dict[str, tuple[int, dict[str, object]]] = {}
     supersedes: list[tuple[int, dict[str, object], str, str]] = []
     accepted_tag_merges: set[int] = set()
+    accepted_book_merges: set[int] = set()
     warnings: list[str] = []
     for index, diff in enumerate(diffs):
         op = compact_whitespace(str(diff.get("op") or ""))
@@ -1026,6 +1049,39 @@ def _filter_global_catalog_diffs(
                 warnings.append(f"global_catalog_unsafe_tag_merge:{index}")
                 continue
             accepted_tag_merges.add(index)
+        elif op == "merge_memory_books":
+            if not isinstance(payload, dict):
+                warnings.append(f"global_catalog_disallowed_diff:{index}:merge_memory_books")
+                continue
+            target_id = compact_whitespace(str(payload.get("targetBookId") or ""))
+            source_ids = _memory_book_merge_sources(payload)
+            target = books_by_id.get(target_id)
+            if (
+                target is None
+                or compact_whitespace(str(target.get("bookType") or "topic")) != "topic"
+                or compact_whitespace(str(target.get("status") or "")) not in {"active", "approved"}
+                or not source_ids
+                or target_id in source_ids
+                or len(source_ids) != len(set(source_ids))
+            ):
+                warnings.append(f"global_catalog_unsafe_book_merge:{index}")
+                continue
+            sources = [books_by_id.get(source_id) for source_id in source_ids]
+            if (
+                any(source is None for source in sources)
+                or any(
+                    compact_whitespace(str(source.get("bookType") or "topic")) != "topic"
+                    or compact_whitespace(str(source.get("status") or "")) not in {"active", "approved"}
+                    or not _memory_books_same_scope(source, target)
+                    for source in sources
+                    if source is not None
+                )
+                or not compact_whitespace(str(payload.get("reason") or ""))
+                or _bounded_float(payload.get("confidence"), default=0.0) < 0.8
+            ):
+                warnings.append(f"global_catalog_unsafe_book_merge:{index}")
+                continue
+            accepted_book_merges.add(index)
         else:
             warnings.append(f"global_catalog_disallowed_diff:{index}:{op or 'empty'}")
 
@@ -1040,7 +1096,7 @@ def _filter_global_catalog_diffs(
         )
         return [], warnings
 
-    accepted_indexes = set(accepted_tag_merges)
+    accepted_indexes = set(accepted_tag_merges) | set(accepted_book_merges)
     paired_upserts: set[str] = set()
     source_ids_by_target: dict[str, list[str]] = {}
     for index, _diff, old_id, new_id in supersedes:
@@ -1066,6 +1122,38 @@ def _filter_global_catalog_diffs(
     rewritten: list[dict[str, object]] = []
     for index, diff in enumerate(diffs):
         if index not in accepted_indexes:
+            continue
+        if diff.get("op") == "merge_memory_books":
+            payload = diff.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            target_id = compact_whitespace(str(payload.get("targetBookId") or ""))
+            source_ids = _memory_book_merge_sources(payload)
+            target = books_by_id.get(target_id)
+            sources = [books_by_id.get(source_id) for source_id in source_ids]
+            if (
+                target is None
+                or any(source is None for source in sources)
+                or any(
+                    not _memory_books_same_scope(source, target)
+                    for source in sources
+                    if source is not None
+                )
+            ):
+                warnings.append(f"global_catalog_unsafe_book_merge:{index}")
+                continue
+            rewritten_diff = dict(diff)
+            rewritten_diff["targetId"] = target_id
+            rewritten_diff["payload"] = {
+                "targetBookId": target_id,
+                "sourceBookIds": source_ids,
+                "ownerKind": _memory_book_field(target, "owner_kind"),
+                "ownerId": _memory_book_field(target, "owner_id"),
+                "project": _memory_book_field(target, "project"),
+                "reason": compact_whitespace(str(payload.get("reason") or ""))[:360],
+                "confidence": _bounded_float(payload.get("confidence"), default=0.0),
+            }
+            rewritten.append(rewritten_diff)
             continue
         if diff.get("op") != "upsert_memory_atom":
             rewritten.append(diff)
@@ -1132,6 +1220,10 @@ def memory_book_plan_from_compile_output(
         )
     )
     tag_merges = _planned_tag_merges(compile_output, source_bundle=source_bundle)
+    book_merges = _planned_memory_book_merges(
+        compile_output,
+        source_bundle=source_bundle,
+    )
     tag_name_map = {
         normalize_text(str(item["source"])): str(item["target"])
         for item in tag_merges
@@ -1224,6 +1316,16 @@ def memory_book_plan_from_compile_output(
                 "status": "pending",
             }
         )
+    for merge in book_merges:
+        target_book_id = compact_whitespace(str(merge.get("targetBookId") or ""))
+        diffs.append(
+            {
+                "op": "merge_memory_books",
+                "targetId": target_book_id,
+                "payload": dict(merge),
+                "status": "pending",
+            }
+        )
     book_items = [
         *(("daily", item) for item in _list_of_dicts(compile_output.get("dailyBooks"))),
         *(("topic", item) for item in _list_of_dicts(compile_output.get("topicBooks"))),
@@ -1234,7 +1336,13 @@ def memory_book_plan_from_compile_output(
         if not title and not summary:
             continue
         existing_book = (
-            _match_existing_topic_book(item, source_bundle=source_bundle)
+            _match_existing_topic_book(
+                item,
+                source_bundle=source_bundle,
+                project=project,
+                owner_kind=normalized_owner_kind,
+                owner_id=normalized_owner_id,
+            )
             if default_book_type == "topic"
             else None
         )
@@ -1266,12 +1374,34 @@ def memory_book_plan_from_compile_output(
         )
         prior_tags = _strings((existing_book or {}).get("tags"))
         prior_atom_ids = _strings((existing_book or {}).get("memoryAtomIds"))
+        scope_payload: dict[str, object] = {}
+        for scope_key in (
+            "knowledgeDomain",
+            "scopeKind",
+            "scopeId",
+            "visibility",
+            "authorizationRevision",
+            "bindingId",
+            "scopeMode",
+        ):
+            if scope_key in item:
+                scope_payload[scope_key] = item.get(scope_key)
+            elif existing_book is not None and scope_key in existing_book:
+                scope_payload[scope_key] = existing_book.get(scope_key)
         payload = {
             "bookId": book_id,
             "bookType": book_type,
             "bookKey": book_key,
             "title": title,
             "summary": summary,
+            "topicAliases": _unique_strings(
+                [
+                    *_strings((existing_book or {}).get("aliases")),
+                    *_strings(item.get("aliases")),
+                    title,
+                ],
+                limit=64,
+            ),
             "tags": _canonical_tag_names([*prior_tags, *_strings(item.get("tags"))], tag_name_map),
             "surfaceHints": _strings(item.get("surfaceHints")),
             "queryExpansions": _strings(item.get("queryExpansions")),
@@ -1282,8 +1412,21 @@ def memory_book_plan_from_compile_output(
                 source_ids=source_ids,
                 group_source_ids=group_source_ids,
             ),
-            "project": compact_whitespace(str(item.get("project") or project)),
-            "app": compact_whitespace(str(item.get("app") or "")),
+            "project": compact_whitespace(
+                str(
+                    item.get("project")
+                    if "project" in item
+                    else (existing_book or {}).get("project") or project
+                )
+            ),
+            "app": compact_whitespace(
+                str(
+                    item.get("app")
+                    if "app" in item
+                    else (existing_book or {}).get("app") or ""
+                )
+            ),
+            **scope_payload,
             "confidence": _bounded_float(item.get("confidence"), default=0.5),
             "qualityScore": _bounded_float(item.get("qualityScore"), default=_bounded_float(item.get("confidence"), default=0.5)),
             "status": compact_whitespace(str(item.get("status") or "active")) or "active",
@@ -1812,6 +1955,11 @@ def memory_book_plan_from_compile_output(
                 if global_scope
                 else []
             ),
+            "globalCatalogBooks": (
+                _list_of_dicts(source_data.get("existingMemoryBooks"))
+                if global_scope
+                else []
+            ),
             **(
                 purpose_audit_fields(
                     dict((source_bundle or {}).get("purposeProfile") or {})
@@ -1838,6 +1986,7 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         "semanticGroups": 0,
         "semanticTags": 0,
         "tagMerges": 0,
+        "bookMerges": 0,
         "memoryBooks": 0,
         "memoryAtoms": 0,
         "tagEdges": 0,
@@ -1876,6 +2025,18 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         if compact_whitespace(str(item.get("atomId") or item.get("id") or ""))
     }
     global_catalog_tags = _list_of_dicts(metadata.get("globalCatalogTags"))
+    global_catalog_books = _list_of_dicts(metadata.get("globalCatalogBooks"))
+    global_catalog_books_by_id = {
+        compact_whitespace(str(item.get("bookId") or "")): item
+        for item in global_catalog_books
+        if compact_whitespace(str(item.get("bookId") or ""))
+    }
+    global_book_merge_requested = any(
+        str(diff.get("op") or "") == "merge_memory_books"
+        for diff in diffs
+    )
+    global_book_merge_sources: set[str] = set()
+    global_book_merge_targets: set[str] = set()
     global_atom_upsert_targets: set[str] = set()
     global_atom_pairs: list[tuple[str, str]] = []
     if global_scope and (
@@ -1887,6 +2048,7 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
         or not compact_whitespace(str(metadata.get("catalogDigest") or ""))
         or "globalCatalogAtoms" not in metadata
         or "globalCatalogTags" not in metadata
+        or (global_book_merge_requested and "globalCatalogBooks" not in metadata)
     ):
         errors.append(_issue(0, "", "catalog", "global_catalog_snapshot_missing"))
     if global_scope and global_catalog_audit and not bool(metadata.get("catalogComplete", True)):
@@ -1910,6 +2072,7 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
                 "upsert_memory_atom",
                 "supersede_memory",
                 "merge_semantic_tag",
+                "merge_memory_books",
             }:
                 errors.append(_issue(index, op, "op", "global_catalog_disallowed_op"))
                 continue
@@ -1953,6 +2116,56 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
                 ):
                     errors.append(_issue(index, op, "newId", "global_catalog_atom_not_equivalent"))
                 global_atom_pairs.append((old_id, new_id))
+            elif op == "merge_memory_books":
+                counts["bookMerges"] += 1
+                _validate_required_text(errors, index, op, payload, "targetBookId")
+                _validate_required_text(errors, index, op, payload, "reason")
+                source_ids = _memory_book_merge_sources(payload)
+                if not source_ids:
+                    errors.append(_issue(index, op, "sourceBookIds", "required"))
+                target_id = compact_whitespace(str(payload.get("targetBookId") or ""))
+                target = global_catalog_books_by_id.get(target_id)
+                if (
+                    target is None
+                    or compact_whitespace(str(target.get("bookType") or "topic")) != "topic"
+                    or compact_whitespace(str(target.get("status") or "")) not in {"active", "approved"}
+                ):
+                    errors.append(_issue(index, op, "targetBookId", "global_catalog_book_not_found"))
+                if target_id in source_ids:
+                    errors.append(_issue(index, op, "sourceBookIds", "book_merge_source_equals_target"))
+                if len(source_ids) != len(set(source_ids)):
+                    errors.append(_issue(index, op, "sourceBookIds", "duplicate_book_merge_source"))
+                for source_id in source_ids:
+                    source = global_catalog_books_by_id.get(source_id)
+                    if source is None:
+                        errors.append(_issue(index, op, "sourceBookIds", "global_catalog_book_not_found", preview=source_id))
+                    elif (
+                        compact_whitespace(str(source.get("bookType") or "topic")) != "topic"
+                        or compact_whitespace(str(source.get("status") or "")) not in {"active", "approved"}
+                    ):
+                        errors.append(_issue(index, op, "sourceBookIds", "global_catalog_book_not_mergeable", preview=source_id))
+                    elif target is not None and not _memory_books_same_scope(source, target):
+                        errors.append(_issue(index, op, "sourceBookIds", "book_merge_scope_mismatch", preview=source_id))
+                    if target is not None:
+                        for member_id in _strings(
+                            [
+                                *(_strings(target.get("memoryAtomIds")) if target is not None else []),
+                                *(_strings(source.get("memoryAtomIds")) if source is not None else []),
+                            ]
+                        ):
+                            atom = global_catalog_atoms_by_id.get(member_id)
+                            if atom is not None and not _memory_book_atom_scope_matches(target, atom):
+                                errors.append(_issue(index, op, "sourceBookIds", "book_merge_member_scope_mismatch", preview=member_id))
+                    if source_id in global_book_merge_sources:
+                        errors.append(_issue(index, op, "sourceBookIds", "book_merge_source_reused", preview=source_id))
+                    global_book_merge_sources.add(source_id)
+                if target_id:
+                    if target_id in global_book_merge_sources:
+                        errors.append(_issue(index, op, "targetBookId", "book_merge_target_is_source", preview=target_id))
+                    global_book_merge_targets.add(target_id)
+                if _bounded_float(payload.get("confidence"), default=0.0) < 0.8:
+                    errors.append(_issue(index, op, "confidence", "book_merge_confidence_too_low"))
+                _validate_secret_free(errors, index, op, payload, ("reason",))
             else:
                 counts["tagMerges"] += 1
                 _validate_required_text(errors, index, op, payload, "source")
@@ -1988,7 +2201,7 @@ def inspect_memory_book_plan(plan: dict[str, object]) -> dict[str, object]:
             _validate_required_text(errors, index, op, payload, "bookKey")
             _validate_source_ids(errors, index, op, payload.get("sourceEventIds"), legal_source_event_ids=legal_source_event_ids)
             _validate_short_terms(errors, index, op, "surfaceHints", payload.get("surfaceHints"), max_len=16)
-            _validate_secret_free(errors, index, op, payload, ("title", "summary", "tags", "surfaceHints", "queryExpansions"))
+            _validate_secret_free(errors, index, op, payload, ("title", "summary", "tags", "topicAliases", "surfaceHints", "queryExpansions"))
         elif op == "upsert_memory_atom":
             counts["memoryAtoms"] += 1
             _validate_required_text(errors, index, op, payload, "atomId")
@@ -2321,8 +2534,21 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
             """,
             (run_id,),
         ).fetchall()
+        affected_book_ids: set[str] = set()
         for row in rows:
             rollback = _apply_memory_book_diff(conn, row=row)
+            if str(row["op"]) in {"upsert_memory_book", "merge_memory_books"}:
+                resolved_book_id = compact_whitespace(
+                    str(
+                        rollback.get("resolvedBookId")
+                        or rollback.get("targetId")
+                        or rollback.get("pkValue")
+                        or row["target_memory_id"]
+                        or ""
+                    )
+                )
+                if resolved_book_id:
+                    affected_book_ids.add(resolved_book_id)
             conn.execute(
                 """
                 UPDATE memory_cleanup_diffs
@@ -2331,6 +2557,8 @@ def apply_memory_book_plan(conn: sqlite3.Connection, plan: dict[str, object]) ->
                 """,
                 (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
             )
+        for book_id in sorted(affected_book_ids):
+            _reconcile_memory_book_current_state(conn, book_id=book_id)
         _sync_run_status(conn, run_id)
         if rows:
             _advance_compile_state(conn, plan=plan)
@@ -2643,8 +2871,21 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
             """,
             (run_id,),
         ).fetchall()
+        affected_book_ids: set[str] = set()
         for row in rows:
             rollback = _apply_memory_book_diff(conn, row=row)
+            if str(row["op"]) in {"upsert_memory_book", "merge_memory_books"}:
+                resolved_book_id = compact_whitespace(
+                    str(
+                        rollback.get("resolvedBookId")
+                        or rollback.get("targetId")
+                        or rollback.get("pkValue")
+                        or row["target_memory_id"]
+                        or ""
+                    )
+                )
+                if resolved_book_id:
+                    affected_book_ids.add(resolved_book_id)
             conn.execute(
                 """
                 UPDATE memory_cleanup_diffs
@@ -2653,6 +2894,8 @@ def apply_stored_memory_book_run(conn: sqlite3.Connection, *, run_id: str) -> di
                 """,
                 (now_ms(), json.dumps(rollback, ensure_ascii=False, sort_keys=True), int(row["id"])),
             )
+        for book_id in sorted(affected_book_ids):
+            _reconcile_memory_book_current_state(conn, book_id=book_id)
         resolved_status = _sync_run_status(conn, run_id)
         _advance_compile_state(
             conn,
@@ -3171,6 +3414,8 @@ def _apply_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) -> di
         return _apply_semantic_tag(conn, payload)
     if op == "upsert_memory_book":
         return _apply_memory_book(conn, payload)
+    if op == "merge_memory_books":
+        return _apply_memory_book_merge(conn, payload)
     if op == "upsert_memory_atom":
         return _apply_memory_atom(conn, payload)
     if op == "upsert_tag_edge":
@@ -3200,6 +3445,8 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
     elif op == "upsert_memory_book":
         _restore_or_delete_row(conn, table="memory_books", pk="book_id", rollback=rollback)
         _restore_semantic_group_members(conn, rollback)
+    elif op == "merge_memory_books":
+        _rollback_memory_book_merge(conn, rollback)
     elif op == "upsert_memory_atom":
         _restore_or_delete_row(conn, table="memory_atoms", pk="id", rollback=rollback)
         for old_row in rollback.get("autoSuperseded", []) or []:
@@ -3431,10 +3678,189 @@ def _apply_semantic_tag(conn: sqlite3.Connection, payload: dict[str, object]) ->
     }
 
 
+def _resolve_memory_book_write_target(
+    conn: sqlite3.Connection,
+    requested_book_id: str,
+) -> tuple[str, dict[str, object], list[str]]:
+    """Resolve a Book write through every persisted superseded redirect."""
+
+    requested_id = compact_whitespace(requested_book_id)
+    if not requested_id:
+        return "", {}, []
+    current = _row_dict(
+        conn.execute(
+            "SELECT * FROM memory_books WHERE book_id = ?",
+            (requested_id,),
+        ).fetchone()
+    )
+    if not current:
+        return requested_id, {}, []
+    visited: set[str] = set()
+    redirect_chain: list[str] = []
+    while True:
+        current_id = compact_whitespace(str(current.get("book_id") or ""))
+        if not current_id or current_id in visited:
+            raise ValueError("memory Book redirect is cyclic or incomplete")
+        visited.add(current_id)
+        redirect_chain.append(current_id)
+        if compact_whitespace(str(current.get("status") or "")) != "superseded":
+            return current_id, current, redirect_chain
+        metadata = _json_object(current.get("metadata_json"))
+        redirect_id = compact_whitespace(
+            str(metadata.get("supersededByBookId") or metadata.get("resolvedBookId") or "")
+        )
+        if not redirect_id:
+            raise ValueError("superseded memory Book has no redirect")
+        next_row = _row_dict(
+            conn.execute(
+                "SELECT * FROM memory_books WHERE book_id = ?",
+                (redirect_id,),
+            ).fetchone()
+        )
+        if not next_row:
+            raise ValueError("superseded memory Book redirect target is missing")
+        if not _memory_books_same_scope(current, next_row):
+            raise ValueError("memory Book redirect crosses owner or scope")
+        current = next_row
+
+
+def _book_summary_from_atom_rows(atom_rows: list[Mapping[str, object]]) -> str:
+    return compact_whitespace(
+        "；".join(
+            compact_whitespace(str(row.get("canonical_text") or row.get("text") or ""))
+            for row in atom_rows
+            if compact_whitespace(str(row.get("canonical_text") or row.get("text") or ""))
+        )
+    )[:2400]
+
+
 def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
-    book_id = str(payload["bookId"])
-    previous = _row_dict(conn.execute("SELECT * FROM memory_books WHERE book_id = ?", (book_id,)).fetchone())
+    requested_book_id = compact_whitespace(str(payload.get("bookId") or ""))
+    if not requested_book_id:
+        raise ValueError("memory Book id is required")
+    book_id, previous, redirect_chain = _resolve_memory_book_write_target(
+        conn,
+        requested_book_id,
+    )
+    payload = dict(payload)
+    payload["bookId"] = book_id
     _assert_memory_owner_unchanged(previous, payload, target_kind="book")
+    _assert_memory_book_scope_unchanged(previous, payload)
+
+    previous_member_ids = _json_list(previous.get("memory_atom_ids_json"))
+    requested_member_ids = _strings(payload.get("memoryAtomIds"))
+    candidate_member_ids = list(
+        dict.fromkeys([*previous_member_ids, *requested_member_ids])
+    )
+    scope_book: Mapping[str, object] = previous or payload
+    valid_atoms = _memory_book_valid_atom_members(
+        conn,
+        book=scope_book,
+        atom_ids=candidate_member_ids,
+    )
+    existing_atom_ids = {
+        compact_whitespace(str(row.get("id") or ""))
+        for row in (
+            _row_dict(conn.execute(
+                "SELECT * FROM memory_atoms WHERE id = ?",
+                (atom_id,),
+            ).fetchone())
+            for atom_id in candidate_member_ids
+        )
+        if row
+    }
+    # Preserve IDs for atoms created later in the same governed plan.  The
+    # post-plan reconciliation removes unknown or out-of-scope IDs once all
+    # Atom diffs have been applied.
+    pending_requested_ids = [
+        atom_id for atom_id in requested_member_ids if atom_id not in existing_atom_ids
+    ]
+    effective_member_ids = list(
+        dict.fromkeys(
+            [str(row["id"]) for row in valid_atoms] + pending_requested_ids
+        )
+    )
+    if candidate_member_ids:
+        summary = _book_summary_from_atom_rows(valid_atoms)
+        if not summary and pending_requested_ids:
+            summary = compact_whitespace(str(payload.get("summary") or ""))[:2400]
+    else:
+        summary = compact_whitespace(str(payload.get("summary") or ""))[:2400]
+
+    previous_tags = _json_list(previous.get("tags_json"))
+    tags = _unique_strings(
+        [*previous_tags, *_strings(payload.get("tags"))],
+        limit=None,
+    )
+    previous_surface_hints = _json_list(previous.get("surface_hints_json"))
+    surface_hints = _unique_strings(
+        [*previous_surface_hints, *_strings(payload.get("surfaceHints"))],
+        limit=None,
+    )
+    previous_query_expansions = _json_list(previous.get("query_expansions_json"))
+    query_expansions = _unique_strings(
+        [*previous_query_expansions, *_strings(payload.get("queryExpansions"))],
+        limit=None,
+    )
+    source_event_ids = _positive_ints(
+        [
+            *_json_list(previous.get("source_event_ids_json")),
+            *_positive_ints(payload.get("sourceEventIds")),
+            *[
+                event_id
+                for row in valid_atoms
+                for event_id in _positive_ints(
+                    _json_list(row.get("source_event_ids_json"))
+                )
+            ],
+        ]
+    )
+    previous_group_ids = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT group_id FROM memory_semantic_group_members "
+            "WHERE member_type = 'book' AND member_id = ? ORDER BY group_id",
+            (book_id,),
+        ).fetchall()
+    ]
+    group_ids = _unique_strings(
+        [*previous_group_ids, *_strings(payload.get("semanticGroupIds"))],
+        limit=None,
+    )
+
+    previous_metadata = _json_object(previous.get("metadata_json"))
+    metadata = {**previous_metadata, **payload}
+    aliases = _unique_strings(
+        [
+            *_strings(previous_metadata.get("topicAliases")),
+            *_strings(previous_metadata.get("aliases")),
+            *_strings(payload.get("topicAliases")),
+            *_strings(payload.get("aliases")),
+            compact_whitespace(str(previous.get("title") or "")),
+            compact_whitespace(str(previous.get("book_key") or "")),
+            compact_whitespace(str(payload.get("title") or "")),
+            compact_whitespace(str(payload.get("bookKey") or "")),
+        ],
+        limit=64,
+    )
+    if aliases:
+        metadata["topicAliases"] = aliases
+    previous_merged = _strings(previous_metadata.get("mergedSourceBookIds"))
+    requested_merged = _strings(payload.get("mergedSourceBookIds"))
+    if previous_merged or requested_merged:
+        metadata["mergedSourceBookIds"] = _unique_strings(
+            [*previous_merged, *requested_merged],
+            limit=None,
+        )
+    metadata["memberCount"] = len(effective_member_ids)
+    for stale_key in (
+        "retrievalStale",
+        "retrievalStaleReason",
+        "retrievalStaleAtMs",
+        "supersededByBookId",
+    ):
+        metadata.pop(stale_key, None)
+
     timestamp = now_ms()
     conn.execute(
         """
@@ -3474,37 +3900,511 @@ def _apply_memory_book(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         """,
         (
             book_id,
-            str(payload.get("bookType") or "daily"),
-            str(payload.get("bookKey") or ""),
-            str(payload.get("title") or ""),
-            str(payload.get("summary") or ""),
-            normalize_text(f"{payload.get('title', '')} {payload.get('summary', '')}"),
-            str(payload.get("project") or ""),
-            str(payload.get("app") or ""),
-            json.dumps(_strings(payload.get("tags")), ensure_ascii=False),
-            json.dumps(_strings(payload.get("surfaceHints")), ensure_ascii=False),
-            json.dumps(_strings(payload.get("queryExpansions")), ensure_ascii=False),
-            json.dumps(_positive_ints(payload.get("sourceEventIds")), ensure_ascii=False),
-            json.dumps(_strings(payload.get("memoryAtomIds")), ensure_ascii=False),
-            str(payload.get("ownerKind") or "user"),
-            str(payload.get("ownerId") or "default"),
+            str(payload.get("bookType") or previous.get("book_type") or "daily"),
+            str(payload.get("bookKey") or previous.get("book_key") or ""),
+            str(payload.get("title") or previous.get("title") or ""),
+            summary,
+            normalize_text(
+                f"{payload.get('title') or previous.get('title') or ''} {summary}"
+            ),
+            str(payload.get("project") or previous.get("project") or ""),
+            str(payload.get("app") or previous.get("app") or ""),
+            json.dumps(tags, ensure_ascii=False),
+            json.dumps(surface_hints, ensure_ascii=False),
+            json.dumps(query_expansions, ensure_ascii=False),
+            json.dumps(source_event_ids, ensure_ascii=False),
+            json.dumps(effective_member_ids, ensure_ascii=False),
+            str(payload.get("ownerKind") or previous.get("owner_kind") or "user"),
+            str(payload.get("ownerId") or previous.get("owner_id") or "default"),
             str(payload.get("status") or "active"),
-            _bounded_float(payload.get("confidence"), default=0.5),
-            _bounded_float(payload.get("qualityScore"), default=0.5),
+            _bounded_float(payload.get("confidence"), default=float(previous.get("confidence") or 0.5)),
+            _bounded_float(payload.get("qualityScore"), default=float(previous.get("quality_score") or 0.5)),
             book_id,
             timestamp,
             timestamp,
-            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
             timestamp,
         ),
+    )
+    scope_values = {
+        "knowledge_domain": compact_whitespace(
+            str(payload.get("knowledgeDomain") or previous.get("knowledge_domain") or "legacy")
+        ),
+        "scope_kind": compact_whitespace(
+            str(payload.get("scopeKind") or previous.get("scope_kind") or "legacy")
+        ),
+        "scope_id": compact_whitespace(
+            str(payload.get("scopeId") or previous.get("scope_id") or "")
+        ),
+        "visibility": compact_whitespace(
+            str(payload.get("visibility") or previous.get("visibility") or "legacy")
+        ),
+        "authorization_revision": compact_whitespace(
+            str(payload.get("authorizationRevision") or previous.get("authorization_revision") or "")
+        ),
+        "binding_id": compact_whitespace(
+            str(payload.get("bindingId") or previous.get("binding_id") or "")
+        ),
+        "scope_mode": compact_whitespace(
+            str(payload.get("scopeMode") or previous.get("scope_mode") or "legacy")
+        ),
+    }
+    conn.execute(
+        """
+        UPDATE memory_books
+        SET knowledge_domain = ?, scope_kind = ?, scope_id = ?, visibility = ?,
+            authorization_revision = ?, binding_id = ?, scope_mode = ?
+        WHERE book_id = ?
+        """,
+        (*scope_values.values(), book_id),
     )
     memberships = _sync_semantic_group_members(
         conn,
         member_type="book",
         member_id=book_id,
-        group_ids=_strings(payload.get("semanticGroupIds")),
+        group_ids=group_ids,
     )
-    return {"table": "memory_books", "pk": "book_id", "pkValue": book_id, "previous": previous, **memberships}
+    return {
+        "table": "memory_books",
+        "pk": "book_id",
+        "pkValue": book_id,
+        "requestedBookId": requested_book_id,
+        "redirectChain": redirect_chain,
+        "previous": previous,
+        **memberships,
+    }
+
+
+def _memory_book_valid_atom_members(
+    conn: sqlite3.Connection,
+    *,
+    book: Mapping[str, object],
+    atom_ids: list[str],
+) -> list[dict[str, object]]:
+    """Return current, non-sensitive Atoms that belong to one Book scope."""
+
+    book_owner = (
+        _memory_book_field(book, "owner_kind"),
+        _memory_book_field(book, "owner_id"),
+    )
+    book_project = _memory_book_field(book, "project")
+    result: list[dict[str, object]] = []
+    for atom_id in dict.fromkeys(atom_ids):
+        row = _row_dict(
+            conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (atom_id,)).fetchone()
+        )
+        if not row:
+            continue
+        if compact_whitespace(str(row.get("status") or "")) not in {"active", "approved"}:
+            continue
+        if compact_whitespace(str(row.get("claim_state") or "current")) != "current":
+            continue
+        if compact_whitespace(str(row.get("privacy_level") or "")) == "sensitive":
+            continue
+        if (
+            compact_whitespace(str(row.get("owner_kind") or "user")),
+            compact_whitespace(str(row.get("owner_id") or "default")),
+        ) != book_owner:
+            continue
+        atom_project = compact_whitespace(str(row.get("scope_project") or ""))
+        if atom_project != book_project:
+            continue
+        if not _memory_book_atom_scope_matches(book, row):
+            continue
+        result.append(row)
+    return result
+
+
+def _memory_book_union_values(
+    rows: list[Mapping[str, object]],
+    column: str,
+) -> list[str]:
+    values: list[str] = []
+    for row in rows:
+        values.extend(_json_list(row.get(column)))
+    return _unique_strings(values, limit=None)
+
+
+def _memory_book_union_ints(
+    rows: list[Mapping[str, object]],
+    column: str,
+) -> list[int]:
+    values: list[int] = []
+    for row in rows:
+        values.extend(_positive_ints(_json_list(row.get(column))))
+    return _positive_ints(values)
+
+
+def _memory_book_aliases(rows: list[Mapping[str, object]]) -> list[str]:
+    aliases: list[str] = []
+    for row in rows:
+        metadata = _json_object(row.get("metadata_json"))
+        aliases.extend(_strings(metadata.get("topicAliases")))
+        aliases.extend(_strings(metadata.get("aliases")))
+        for key in ("title", "book_key"):
+            value = compact_whitespace(str(row.get(key) or ""))
+            if value:
+                aliases.append(value)
+    return _unique_strings(
+        [alias for alias in aliases if not _contains_sensitive_text(alias)],
+        limit=64,
+    )
+
+
+def _refresh_memory_book_projection_state(
+    conn: sqlite3.Connection,
+    *,
+    book_ids: list[str],
+    timestamp: int,
+) -> None:
+    normalized_ids = list(dict.fromkeys(compact_whitespace(value) for value in book_ids if compact_whitespace(value)))
+    if not normalized_ids:
+        return
+    delete_retrieval_docs(conn, [f"book:{book_id}" for book_id in normalized_ids])
+    for book_id in normalized_ids:
+        conn.execute(
+            "DELETE FROM memory_projection_dependencies "
+            "WHERE dependent_type = 'book' AND dependent_id = ?",
+            (book_id,),
+        )
+    for book_id in normalized_ids:
+        bump_source_revision(
+            conn,
+            source_type="book",
+            source_id=book_id,
+            timestamp=timestamp,
+        )
+        row = _row_dict(
+            conn.execute("SELECT * FROM memory_books WHERE book_id = ?", (book_id,)).fetchone()
+        )
+        if not row or compact_whitespace(str(row.get("status") or "")) not in {"active", "approved", "archived"}:
+            continue
+        revision = max(
+            1,
+            int(
+                conn.execute(
+                    "SELECT generation FROM memory_source_generations "
+                    "WHERE source_type = 'book' AND source_id = ?",
+                    (book_id,),
+                ).fetchone()[0]
+                or 1
+            ),
+        )
+        sync_projection_dependencies(
+            conn,
+            [
+                {
+                    "doc_id": f"book:{book_id}",
+                    "doc_type": "book",
+                    "source_id": book_id,
+                    "source_revision": revision,
+                    "metadata": {
+                        "memoryAtomIds": _json_list(row.get("memory_atom_ids_json")),
+                    },
+                }
+            ],
+            timestamp=timestamp,
+        )
+
+
+def _reconcile_memory_book_current_state(
+    conn: sqlite3.Connection,
+    *,
+    book_id: str,
+    timestamp: int | None = None,
+) -> dict[str, object] | None:
+    """Recompute one live Book from the current DB Atom state.
+
+    Book diffs can run before Atom diffs in a stored plan, and another
+    transaction may have added a member after the model snapshot.  This
+    final pass closes that race without trusting the frozen member subset.
+    """
+
+    normalized_id = compact_whitespace(book_id)
+    if not normalized_id:
+        return None
+    row = _row_dict(
+        conn.execute(
+            "SELECT * FROM memory_books WHERE book_id = ?",
+            (normalized_id,),
+        ).fetchone()
+    )
+    if not row or compact_whitespace(str(row.get("status") or "")) == "superseded":
+        return None
+    member_ids = _json_list(row.get("memory_atom_ids_json"))
+    if not member_ids:
+        return None
+    valid_atoms = _memory_book_valid_atom_members(
+        conn,
+        book=row,
+        atom_ids=member_ids,
+    )
+    valid_ids = [str(atom.get("id") or "") for atom in valid_atoms if str(atom.get("id") or "")]
+    source_event_ids = _positive_ints(_json_list(row.get("source_event_ids_json")))
+    source_event_ids.extend(
+        event_id
+        for atom in valid_atoms
+        for event_id in _positive_ints(_json_list(atom.get("source_event_ids_json")))
+    )
+    resolved_at = now_ms() if timestamp is None else max(0, int(timestamp))
+    metadata = _json_object(row.get("metadata_json"))
+    metadata["memberCount"] = len(valid_ids)
+    summary = _book_summary_from_atom_rows(valid_atoms)
+    conn.execute(
+        """
+        UPDATE memory_books
+        SET summary = ?, normalized_text = ?, memory_atom_ids_json = ?,
+            source_event_ids_json = ?, metadata_json = ?, updated_at_ms = ?,
+            last_active_at_ms = CASE
+                WHEN status IN ('active', 'approved') THEN ?
+                ELSE last_active_at_ms
+            END
+        WHERE book_id = ? AND status != 'superseded'
+        """,
+        (
+            summary,
+            normalize_text(f"{row.get('title') or ''} {summary}"),
+            json.dumps(valid_ids, ensure_ascii=False),
+            json.dumps(_positive_ints(source_event_ids), ensure_ascii=False),
+            json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            resolved_at,
+            resolved_at,
+            normalized_id,
+        ),
+    )
+    _refresh_memory_book_projection_state(
+        conn,
+        book_ids=[normalized_id],
+        timestamp=resolved_at,
+    )
+    return {
+        "bookId": normalized_id,
+        "memoryAtomIds": valid_ids,
+        "memberCount": len(valid_ids),
+    }
+
+
+def _apply_memory_book_merge(
+    conn: sqlite3.Connection,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    target_id = compact_whitespace(str(payload.get("targetBookId") or ""))
+    source_ids = _memory_book_merge_sources(payload)
+    if not target_id or not source_ids or target_id in source_ids:
+        raise ValueError("memory Book merge references are incomplete")
+    if len(source_ids) != len(set(source_ids)):
+        raise ValueError("memory Book merge source is repeated")
+    target = _row_dict(
+        conn.execute("SELECT * FROM memory_books WHERE book_id = ?", (target_id,)).fetchone()
+    )
+    if not target:
+        raise ValueError(f"memory Book merge target is missing: {target_id}")
+    if compact_whitespace(str(target.get("book_type") or "")) != "topic":
+        raise ValueError("only topic Books can be merged")
+    if compact_whitespace(str(target.get("status") or "")) not in {"active", "approved"}:
+        raise ValueError("memory Book merge target is no longer active")
+    sources: list[dict[str, object]] = []
+    for source_id in source_ids:
+        source = _row_dict(
+            conn.execute("SELECT * FROM memory_books WHERE book_id = ?", (source_id,)).fetchone()
+        )
+        if not source:
+            raise ValueError(f"memory Book merge source is missing: {source_id}")
+        if compact_whitespace(str(source.get("book_type") or "")) != "topic":
+            raise ValueError("only topic Books can be merged")
+        if compact_whitespace(str(source.get("status") or "")) not in {"active", "approved"}:
+            raise ValueError(f"memory Book merge source is no longer active: {source_id}")
+        if not _memory_books_same_scope(source, target):
+            raise ValueError("memory Book merge crosses owner or scope")
+        sources.append(source)
+
+    all_rows = [target, *sources]
+    previous_group_members = [
+        _row_dict(row)
+        for row in conn.execute(
+            "SELECT * FROM memory_semantic_group_members "
+            "WHERE member_type = 'book' AND member_id IN ({}) ORDER BY group_id, member_id".format(
+                ",".join("?" for _ in all_rows)
+            ),
+            tuple(str(row["book_id"]) for row in all_rows),
+        ).fetchall()
+    ]
+    member_ids = _unique_strings(
+        [
+            atom_id
+            for row in all_rows
+            for atom_id in _json_list(row.get("memory_atom_ids_json"))
+        ],
+        limit=None,
+    )
+    valid_atoms = _memory_book_valid_atom_members(
+        conn,
+        book=target,
+        atom_ids=member_ids,
+    )
+    valid_member_ids = [str(row["id"]) for row in valid_atoms]
+    summary = compact_whitespace(
+        "；".join(
+            compact_whitespace(str(row.get("canonical_text") or row.get("text") or ""))
+            for row in valid_atoms
+            if compact_whitespace(str(row.get("canonical_text") or row.get("text") or ""))
+        )
+    )[:2400]
+    tags = _memory_book_union_values(all_rows, "tags_json")
+    surface_hints = _memory_book_union_values(all_rows, "surface_hints_json")
+    query_expansions = _memory_book_union_values(all_rows, "query_expansions_json")
+    source_event_ids = _memory_book_union_ints(all_rows, "source_event_ids_json")
+    aliases = _memory_book_aliases(all_rows)
+    target_metadata = _json_object(target.get("metadata_json"))
+    previous_merged = _strings(target_metadata.get("mergedSourceBookIds"))
+    target_metadata.update(
+        {
+            "topicAliases": aliases,
+            "mergedSourceBookIds": _unique_strings(
+                [*previous_merged, *source_ids],
+                limit=None,
+            ),
+            "memberCount": len(valid_member_ids),
+            "lastMergeReason": compact_whitespace(str(payload.get("reason") or ""))[:360],
+            "lastMergedAtMs": now_ms(),
+        }
+    )
+    for key in ("retrievalStale", "retrievalStaleReason", "retrievalStaleAtMs", "supersededByBookId"):
+        target_metadata.pop(key, None)
+    timestamp = now_ms()
+    conn.execute(
+        """
+        UPDATE memory_books
+        SET summary = ?, normalized_text = ?, tags_json = ?,
+            surface_hints_json = ?, query_expansions_json = ?,
+            source_event_ids_json = ?, memory_atom_ids_json = ?,
+            status = 'active', archived_at_ms = NULL, archive_reason = '',
+            updated_at_ms = ?, last_active_at_ms = ?, metadata_json = ?
+        WHERE book_id = ?
+        """,
+        (
+            summary,
+            normalize_text(f"{target.get('title') or ''} {summary}"),
+            json.dumps(tags, ensure_ascii=False, sort_keys=False),
+            json.dumps(surface_hints, ensure_ascii=False, sort_keys=False),
+            json.dumps(query_expansions, ensure_ascii=False, sort_keys=False),
+            json.dumps(source_event_ids, ensure_ascii=False, sort_keys=False),
+            json.dumps(valid_member_ids, ensure_ascii=False, sort_keys=False),
+            timestamp,
+            timestamp,
+            json.dumps(target_metadata, ensure_ascii=False, sort_keys=True),
+            target_id,
+        ),
+    )
+    for source in sources:
+        source_id = str(source["book_id"])
+        source_metadata = _json_object(source.get("metadata_json"))
+        source_metadata["supersededByBookId"] = target_id
+        source_metadata["supersededAtMs"] = timestamp
+        source_metadata["supersededReason"] = compact_whitespace(
+            str(payload.get("reason") or "topic_book_merge")
+        )[:360]
+        source_metadata["retrievalStale"] = True
+        source_metadata["retrievalStaleReason"] = "superseded_book"
+        source_metadata["topicAliases"] = aliases
+        conn.execute(
+            """
+            UPDATE memory_books
+            SET status = 'superseded', updated_at_ms = ?,
+                metadata_json = ?
+            WHERE book_id = ?
+            """,
+            (
+                timestamp,
+                json.dumps(source_metadata, ensure_ascii=False, sort_keys=True),
+                source_id,
+            ),
+        )
+
+    # Preserve historical source membership while making the live target
+    # discoverable through every semantic group that contained a fragment.
+    target_groups = {
+        str(row["group_id"])
+        for row in previous_group_members
+        if str(row.get("member_id") or "") == target_id
+    }
+    for row in previous_group_members:
+        group_id = compact_whitespace(str(row.get("group_id") or ""))
+        if not group_id or group_id in target_groups or str(row.get("member_id") or "") == target_id:
+            continue
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO memory_semantic_group_members(
+                group_id, member_type, member_id, weight, source, updated_at_ms
+            ) VALUES (?, 'book', ?, ?, ?, ?)
+            """,
+            (
+                group_id,
+                target_id,
+                float(row.get("weight") or 0.0),
+                str(row.get("source") or "dsv4"),
+                int(row.get("updated_at_ms") or timestamp),
+            ),
+        )
+        target_groups.add(group_id)
+
+    _refresh_memory_book_projection_state(
+        conn,
+        book_ids=[target_id, *source_ids],
+        timestamp=timestamp,
+    )
+    return {
+        "op": "merge_memory_books",
+        "target": {"bookId": target_id, "previous": target},
+        "sources": [
+            {"bookId": str(source["book_id"]), "previous": source}
+            for source in sources
+        ],
+        "groupMembers": previous_group_members,
+        "sourceBookIds": source_ids,
+    }
+
+
+def _rollback_memory_book_merge(
+    conn: sqlite3.Connection,
+    rollback: Mapping[str, object],
+) -> None:
+    target = rollback.get("target")
+    if isinstance(target, Mapping):
+        previous_target = target.get("previous")
+        if isinstance(previous_target, dict) and previous_target:
+            _insert_or_replace_dict(conn, "memory_books", dict(previous_target))
+    sources = rollback.get("sources")
+    source_ids: list[str] = []
+    if isinstance(sources, list):
+        for item in sources:
+            if not isinstance(item, Mapping):
+                continue
+            source_id = compact_whitespace(str(item.get("bookId") or ""))
+            previous = item.get("previous")
+            if source_id:
+                source_ids.append(source_id)
+            if isinstance(previous, dict) and previous:
+                _insert_or_replace_dict(conn, "memory_books", dict(previous))
+    target_id = (
+        compact_whitespace(str(target.get("bookId") or ""))
+        if isinstance(target, Mapping)
+        else ""
+    )
+    all_ids = [target_id, *source_ids]
+    if all_ids:
+        conn.execute(
+            "DELETE FROM memory_semantic_group_members "
+            "WHERE member_type = 'book' AND member_id IN ({})".format(",".join("?" for _ in all_ids)),
+            tuple(all_ids),
+        )
+    for row in _list_of_dicts(rollback.get("groupMembers")):
+        _insert_or_replace_dict(conn, "memory_semantic_group_members", row)
+    _refresh_memory_book_projection_state(
+        conn,
+        book_ids=all_ids,
+        timestamp=now_ms(),
+    )
 
 
 def _memory_atom_row_identity_projection(
@@ -3766,6 +4666,7 @@ def _apply_global_atom_merge_relations(
 def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> dict[str, object]:
     atom_id = str(payload["atomId"])
     previous = _row_dict(conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (atom_id,)).fetchone())
+    operation = compact_whitespace(str(payload.get("operation") or "")).lower()
     previous_aliases = [
         _row_dict(row)
         for row in conn.execute(
@@ -5227,6 +6128,9 @@ def _apply_retract_memory_atom(
         atom_ids = _json_list(row["memory_atom_ids_json"])
         if target_id not in atom_ids:
             continue
+        # Retraction preserves the historical owner-scoped cleanup behavior:
+        # an existing Book that explicitly contains the Atom must lose that
+        # member even when legacy rows predate the newer full scope metadata.
         affected_books.append(dict(row))
         remaining_ids = [atom_id for atom_id in atom_ids if atom_id != target_id]
         active_rows = (
@@ -5255,11 +6159,18 @@ def _apply_retract_memory_atom(
             )
         )[:2400]
         if active_ids:
+            metadata = _json_object(row["metadata_json"])
+            for stale_key in (
+                "retrievalStale",
+                "retrievalStaleReason",
+                "retrievalStaleAtMs",
+            ):
+                metadata.pop(stale_key, None)
             conn.execute(
                 """
                 UPDATE memory_books
                 SET summary = ?, normalized_text = ?,
-                    memory_atom_ids_json = ?, updated_at_ms = ?,
+                    memory_atom_ids_json = ?, metadata_json = ?, updated_at_ms = ?,
                     last_active_at_ms = ?
                 WHERE book_id = ?
                 """,
@@ -5267,6 +6178,7 @@ def _apply_retract_memory_atom(
                     summary,
                     normalize_text(f"{row['title']} {summary}"),
                     json.dumps(active_ids, ensure_ascii=False),
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                     timestamp,
                     timestamp,
                     str(row["book_id"]),
@@ -5639,6 +6551,7 @@ def _memory_book_summary(diffs: list[dict[str, object]]) -> str:
         "分组": sum(1 for item in diffs if item.get("op") == "upsert_semantic_group"),
         "标签": sum(1 for item in diffs if item.get("op") == "upsert_semantic_tag"),
         "主题": sum(1 for item in diffs if item.get("op") == "upsert_memory_book"),
+        "主题合并": sum(1 for item in diffs if item.get("op") == "merge_memory_books"),
         "记忆": sum(1 for item in diffs if item.get("op") == "upsert_memory_atom"),
         "标签关系": sum(1 for item in diffs if item.get("op") == "upsert_tag_edge"),
         "标签合并": sum(1 for item in diffs if item.get("op") == "merge_semantic_tag"),
@@ -5759,6 +6672,265 @@ def _json_object(raw: object) -> dict[str, object]:
 
 def _list_of_dicts(value: object) -> list[dict[str, object]]:
     return [dict(item) for item in value or [] if isinstance(item, dict)]
+
+
+def _memory_book_field(item: Mapping[str, object], field: str) -> str:
+    aliases = {
+        "owner_kind": ("ownerKind", "owner_kind"),
+        "owner_id": ("ownerId", "owner_id"),
+        "project": ("project", "scope_project"),
+        "app": ("app", "scope_app"),
+        "knowledge_domain": ("knowledgeDomain", "knowledge_domain"),
+        "scope_kind": ("scopeKind", "scope_kind"),
+        "scope_id": ("scopeId", "scope_id"),
+        "visibility": ("visibility",),
+        "authorization_revision": (
+            "authorizationRevision",
+            "authorization_revision",
+        ),
+        "binding_id": ("bindingId", "binding_id"),
+        "scope_mode": ("scopeMode", "scope_mode"),
+    }
+    candidates = aliases.get(field, (field,))
+    for candidate in candidates:
+        if candidate in item:
+            return compact_whitespace(str(item.get(candidate) or ""))
+    return ""
+
+
+def _memory_books_same_scope(
+    left: Mapping[str, object],
+    right: Mapping[str, object],
+) -> bool:
+    """Compare authorization scope, not a derived resource's own identity.
+
+    Personal projected Books deliberately have one binding per resource while
+    their authorization is the same global ``user/default`` domain as the
+    personal Atoms.  Other Books retain the historical exact binding check.
+    """
+
+    identity_fields = (
+        "owner_kind",
+        "owner_id",
+        "project",
+        "app",
+        "knowledge_domain",
+        "scope_kind",
+        "scope_id",
+        "visibility",
+        "scope_mode",
+    )
+    if any(
+        _memory_book_field(left, field) != _memory_book_field(right, field)
+        for field in identity_fields
+    ):
+        return False
+    personal = (
+        _memory_book_field(left, "knowledge_domain") == "personal_memory"
+        and _memory_book_field(right, "knowledge_domain") == "personal_memory"
+    )
+    if not personal:
+        return (
+            _memory_book_field(left, "authorization_revision")
+            == _memory_book_field(right, "authorization_revision")
+            and _memory_book_field(left, "binding_id")
+            == _memory_book_field(right, "binding_id")
+        )
+
+    def valid_personal_book_binding(item: Mapping[str, object]) -> bool:
+        book_id = compact_whitespace(
+            str(item.get("book_id") or item.get("bookId") or "")
+        )
+        return (
+            _memory_book_field(item, "authorization_revision") == "memory-book-v1"
+            and bool(book_id)
+            and _memory_book_field(item, "binding_id")
+            == f"personal-memory-book:{book_id}"
+        )
+
+    return valid_personal_book_binding(left) and valid_personal_book_binding(right)
+
+
+def _memory_book_atom_scope_matches(
+    book: Mapping[str, object],
+    atom: Mapping[str, object],
+) -> bool:
+    """Check an Atom against the Book's effective authorization scope.
+
+    A Book with an empty ``app`` is intentionally app-unbounded; Atom app
+    provenance remains in the Atom row and is not collapsed during a merge.
+    Personal projected Books and personal Atoms have different resource
+    bindings (one is per Book, one is per user), so those binding IDs are
+    validated as a compatible authority family rather than compared as if
+    they were the same resource.
+    """
+
+    for book_field, atom_field in (
+        ("owner_kind", "owner_kind"),
+        ("owner_id", "owner_id"),
+        ("project", "project"),
+        ("knowledge_domain", "knowledge_domain"),
+        ("scope_kind", "scope_kind"),
+        ("scope_id", "scope_id"),
+        ("visibility", "visibility"),
+        ("scope_mode", "scope_mode"),
+    ):
+        if _memory_book_field(book, book_field) != _memory_book_field(
+            atom, atom_field
+        ):
+            return False
+    book_app = _memory_book_field(book, "app")
+    atom_app = _memory_book_field(atom, "app")
+    if book_app and book_app != atom_app:
+        return False
+
+    book_domain = _memory_book_field(book, "knowledge_domain")
+    atom_domain = _memory_book_field(atom, "knowledge_domain")
+    if book_domain != "personal_memory" or atom_domain != "personal_memory":
+        return (
+            _memory_book_field(book, "authorization_revision")
+            == _memory_book_field(atom, "authorization_revision")
+            and _memory_book_field(book, "binding_id")
+            == _memory_book_field(atom, "binding_id")
+        )
+
+    book_id = compact_whitespace(
+        str(book.get("book_id") or book.get("bookId") or "")
+    )
+    atom_owner_kind = _memory_book_field(atom, "owner_kind")
+    atom_owner_id = _memory_book_field(atom, "owner_id")
+    return (
+        _memory_book_field(book, "authorization_revision") == "memory-book-v1"
+        and bool(book_id)
+        and _memory_book_field(book, "binding_id")
+        == f"personal-memory-book:{book_id}"
+        and _memory_book_field(atom, "authorization_revision") == "memory-atom-v2"
+        and _memory_book_field(atom, "binding_id")
+        == f"personal-memory:{atom_owner_kind}:{atom_owner_id}"
+    )
+
+
+def _memory_book_merge_sources(payload: Mapping[str, object]) -> list[str]:
+    raw = payload.get("sourceBookIds") or payload.get("sourceIds")
+    if raw is None:
+        raw = [
+            payload.get("sourceBookId")
+            or payload.get("sourceRef")
+            or payload.get("source")
+        ]
+    return list(
+        dict.fromkeys(
+            compact_whitespace(str(value or ""))
+            for value in (raw if isinstance(raw, (list, tuple, set)) else [raw])
+            if compact_whitespace(str(value or ""))
+        )
+    )
+
+
+def _planned_memory_book_merges(
+    compile_output: Mapping[str, object],
+    *,
+    source_bundle: Mapping[str, object] | None,
+) -> list[dict[str, object]]:
+    """Resolve explicit Book references into deterministic merge diffs."""
+
+    source = source_bundle or {}
+    global_catalog = (
+        compact_whitespace(str(source.get("curationScope") or "")).lower()
+        == "global"
+        and bool(source.get("catalogAudit"))
+        and bool(source.get("catalogComplete", True))
+    )
+    if not global_catalog:
+        return []
+    books = _list_of_dicts(source.get("existingMemoryBooks"))
+    if not books:
+        return []
+    by_id = {
+        compact_whitespace(str(item.get("bookId") or "")): item
+        for item in books
+        if compact_whitespace(str(item.get("bookId") or ""))
+    }
+    by_key = {
+        compact_whitespace(str(item.get("bookKey") or "")): item
+        for item in books
+        if compact_whitespace(str(item.get("bookKey") or ""))
+    }
+    by_ref = {
+        f"B{index}": item
+        for index, item in enumerate(books, start=1)
+        if compact_whitespace(str(item.get("bookId") or ""))
+    }
+
+    def resolve(value: object) -> dict[str, object] | None:
+        reference = compact_whitespace(str(value or ""))
+        if not reference:
+            return None
+        return by_ref.get(reference) or by_id.get(reference) or by_key.get(reference)
+
+    raw_items: list[dict[str, object]] = []
+    for key in ("bookMerges", "topicBookMerges", "mergeBooks"):
+        raw_items.extend(_list_of_dicts(compile_output.get(key)))
+    result: list[dict[str, object]] = []
+    seen_sources: set[str] = set()
+    by_target: dict[str, dict[str, object]] = {}
+    for item in raw_items:
+        target = resolve(
+            item.get("targetBookId")
+            or item.get("targetRef")
+            or item.get("target")
+        )
+        if target is None:
+            continue
+        target_id = compact_whitespace(str(target.get("bookId") or ""))
+        if (
+            not target_id
+            or compact_whitespace(str(target.get("bookType") or "topic")) != "topic"
+            or compact_whitespace(str(target.get("status") or "")) not in {"active", "approved"}
+        ):
+            continue
+        reason = compact_whitespace(
+            str(item.get("reason") or item.get("semanticReason") or "")
+        )[:360]
+        confidence = _bounded_float(item.get("confidence"), default=0.0)
+        if not reason or confidence < 0.8:
+            continue
+        accepted: list[str] = []
+        for reference in _memory_book_merge_sources(item):
+            source_item = resolve(reference)
+            if source_item is None:
+                continue
+            source_id = compact_whitespace(str(source_item.get("bookId") or ""))
+            if (
+                not source_id
+                or source_id == target_id
+                or source_id in seen_sources
+                or compact_whitespace(str(source_item.get("bookType") or "topic")) != "topic"
+                or compact_whitespace(str(source_item.get("status") or "")) not in {"active", "approved"}
+                or not _memory_books_same_scope(source_item, target)
+            ):
+                continue
+            accepted.append(source_id)
+        if not accepted:
+            continue
+        current = by_target.setdefault(
+            target_id,
+            {
+                "targetBookId": target_id,
+                "sourceBookIds": [],
+                "ownerKind": _memory_book_field(target, "owner_kind"),
+                "ownerId": _memory_book_field(target, "owner_id"),
+                "project": _memory_book_field(target, "project"),
+                "reason": reason,
+                "confidence": confidence,
+            },
+        )
+        for source_id in accepted:
+            if source_id not in current["sourceBookIds"]:
+                current["sourceBookIds"].append(source_id)
+                seen_sources.add(source_id)
+    result.extend(by_target.values())
+    return result
 
 
 def _planned_tag_merges(
@@ -6300,11 +7472,14 @@ def _existing_book_summaries(
         SELECT book_id, book_type, book_key, title, summary, project, app,
                tags_json, surface_hints_json, query_expansions_json,
                source_event_ids_json, memory_atom_ids_json, status,
-               updated_at_ms, archived_at_ms, metadata_json,
+               created_at_ms, updated_at_ms, archived_at_ms, archive_reason, metadata_json,
                owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
                visibility, authorization_revision, binding_id, scope_mode
         FROM memory_books
-        WHERE status IN ('active', 'approved', 'archived')
+        WHERE (
+                status IN ('active', 'approved', 'archived')
+                OR (? = 1 AND status = 'superseded')
+              )
           AND (
                 ? = 1
                 OR ? = ''
@@ -6315,13 +7490,26 @@ def _existing_book_summaries(
                  updated_at_ms DESC, book_id ASC
         LIMIT ?
         """,
-        (1 if catalog_only else 0, project, project, -1 if catalog_only else 48),
+        (
+            1 if catalog_only else 0,
+            1 if catalog_only else 0,
+            project,
+            project,
+            -1 if catalog_only else 48,
+        ),
     ).fetchall()
     return [
         {
             "bookId": str(row["book_id"] or ""),
             "bookType": str(row["book_type"] or ""),
             "bookKey": str(row["book_key"] or ""),
+            "aliases": _unique_strings(
+                _strings(_json_object(row["metadata_json"]).get("topicAliases")),
+                limit=None if catalog_only else 32,
+            ),
+            "supersededByBookId": compact_whitespace(
+                str(_json_object(row["metadata_json"]).get("supersededByBookId") or "")
+            ),
             "title": _sanitize_catalog_text(
                 row["title"],
                 max_chars=80,
@@ -6400,6 +7588,8 @@ def _existing_book_summaries(
             "scopeMode": str(row["scope_mode"] or ""),
             "metadataHash": stable_text_hash(str(row["metadata_json"] or "{}")),
             "status": str(row["status"] or "active"),
+            "createdAtMs": int(row["created_at_ms"] or 0),
+            "archiveReason": compact_whitespace(str(row["archive_reason"] or "")),
             "updatedAtMs": int(row["updated_at_ms"] or 0),
             "archivedAtMs": int(row["archived_at_ms"] or 0),
         }
@@ -6561,6 +7751,21 @@ def _existing_memory_atoms(
                     else None
                 ),
                 "supersedesId": str(row["supersedes_id"] or ""),
+                **{
+                    field: raw_identity[field]
+                    for field in (
+                        "ownerKind",
+                        "ownerId",
+                        "privacyLevel",
+                        "knowledgeDomain",
+                        "scopeKind",
+                        "scopeId",
+                        "visibility",
+                        "authorizationRevision",
+                        "bindingId",
+                        "scopeMode",
+                    )
+                },
                 "tags": [
                     _sanitize_catalog_text(
                         tag_row.get("tag"),
@@ -6636,17 +7841,124 @@ def _match_existing_topic_book(
     item: dict[str, object],
     *,
     source_bundle: dict[str, object] | None,
+    project: str = "",
+    owner_kind: str = "user",
+    owner_id: str = "default",
 ) -> dict[str, object] | None:
-    existing = _list_of_dicts((source_bundle or {}).get("existingMemoryBooks"))
+    """Resolve an existing Topic Book without letting identity cross scope."""
+
+    existing_by_id: dict[str, dict[str, object]] = {}
+    for candidate in [
+        *(_list_of_dicts((source_bundle or {}).get("existingMemoryBookIndex"))),
+        *(_list_of_dicts((source_bundle or {}).get("existingMemoryBooks"))),
+    ]:
+        candidate_id = compact_whitespace(str(candidate.get("bookId") or ""))
+        if candidate_id:
+            existing_by_id[candidate_id] = {
+                **existing_by_id.get(candidate_id, {}),
+                **candidate,
+            }
+    existing = list(existing_by_id.values())
     if not existing:
         return None
     requested_id = compact_whitespace(str(item.get("bookId") or ""))
     requested_key = compact_whitespace(str(item.get("bookKey") or ""))
-    for candidate in existing:
-        if requested_id and requested_id == compact_whitespace(str(candidate.get("bookId") or "")):
-            return candidate
-        if requested_key and requested_key == compact_whitespace(str(candidate.get("bookKey") or "")):
-            return candidate
+    requested_aliases = {
+        normalize_text(str(value or ""))
+        for value in (
+            item.get("title"),
+            item.get("topicAlias"),
+            item.get("bookAlias"),
+            *(item.get("aliases") if isinstance(item.get("aliases"), list) else []),
+        )
+        if normalize_text(str(value or ""))
+    }
+    scope_fields = (
+        ("ownerKind", owner_kind),
+        ("ownerId", owner_id),
+        ("project", compact_whitespace(project)),
+        ("app", ""),
+        ("knowledgeDomain", ""),
+        ("scopeKind", ""),
+        ("scopeId", ""),
+        ("visibility", ""),
+        ("authorizationRevision", ""),
+        ("bindingId", ""),
+        ("scopeMode", ""),
+    )
+
+    def compatible(candidate: Mapping[str, object]) -> bool:
+        for field, default in scope_fields:
+            # Owner/project are supplied by the caller's governed context;
+            # other fields are compared when the model explicitly asserted
+            # them. Incomplete legacy fixtures omit fields and remain readable.
+            if field in item and item.get(field) is not None:
+                requested = compact_whitespace(str(item.get(field) or ""))
+            elif field in {"ownerKind", "ownerId", "project"}:
+                requested = default
+            else:
+                continue
+            if field not in candidate:
+                if field in {"ownerKind", "ownerId", "project"}:
+                    continue
+                continue
+            if compact_whitespace(str(candidate.get(field) or "")) != requested:
+                return False
+        return True
+
+    def resolve(candidate: Mapping[str, object]) -> dict[str, object] | None:
+        current = dict(candidate)
+        seen: set[str] = set()
+        while True:
+            if not compatible(current):
+                return None
+            current_id = compact_whitespace(str(current.get("bookId") or ""))
+            if not current_id or current_id in seen:
+                return None
+            seen.add(current_id)
+            if compact_whitespace(str(current.get("status") or "")) != "superseded":
+                return current
+            redirect_id = compact_whitespace(
+                str(current.get("supersededByBookId") or "")
+            )
+            if not redirect_id or redirect_id in seen:
+                return None
+            current = dict(existing_by_id.get(redirect_id) or {})
+            if not current:
+                return None
+
+    # An existing explicit ID wins over a conflicting title or alias. An
+    # unknown model-invented ID may still be corrected by strong similarity.
+    if requested_id and requested_id in existing_by_id:
+        return resolve(existing_by_id[requested_id])
+    if requested_key:
+        key_matches = [
+            candidate
+            for candidate in existing
+            if compact_whitespace(str(candidate.get("bookKey") or "")) == requested_key
+        ]
+        if key_matches:
+            resolved = {str(item.get("bookId") or ""): item for item in (resolve(candidate) for candidate in key_matches) if item is not None}
+            return next(iter(resolved.values())) if len(resolved) == 1 else None
+
+    exact_candidates = [
+        candidate
+        for candidate in existing
+        if requested_aliases.intersection(
+            {
+                normalize_text(str(candidate.get("title") or "")),
+                normalize_text(str(candidate.get("bookKey") or "")),
+                *{
+                    normalize_text(str(value or ""))
+                    for value in candidate.get("aliases") or []
+                    if normalize_text(str(value or ""))
+                },
+            }
+        )
+    ]
+    if exact_candidates:
+        resolved = {str(item.get("bookId") or ""): item for item in (resolve(candidate) for candidate in exact_candidates) if item is not None}
+        return next(iter(resolved.values())) if len(resolved) == 1 else None
     if (
         compact_whitespace(str((source_bundle or {}).get("schemaVersion") or ""))
         == "rag-ime.owner-memory-source-bundle.v1"
@@ -6657,10 +7969,13 @@ def _match_existing_topic_book(
     title = compact_whitespace(str(item.get("title") or ""))
     summary = compact_whitespace(str(item.get("summary") or ""))
     tags = _strings(item.get("tags"))
+    candidates = [candidate for candidate in existing if resolve(candidate) is not None]
     ranked = sorted(
-        ((_topic_book_similarity(title, summary, tags, candidate), candidate) for candidate in existing),
-        key=lambda pair: pair[0],
-        reverse=True,
+        (
+            (_topic_book_similarity(title, summary, tags, candidate), candidate)
+            for candidate in candidates
+        ),
+        key=lambda pair: (-pair[0], str(pair[1].get("bookId") or "")),
     )
     if not ranked or ranked[0][0] < 0.52:
         return None
@@ -7237,6 +8552,36 @@ def _assert_memory_owner_unchanged(
     )
     if previous_owner != requested_owner:
         raise ValueError(f"memory {target_kind} id is already owned by another scope")
+
+
+def _assert_memory_book_scope_unchanged(
+    previous: dict[str, object] | None,
+    payload: Mapping[str, object],
+) -> None:
+    """Prevent a stable Book ID from being moved to another scope."""
+
+    if not previous:
+        return
+    payload_fields = {
+        "owner_kind": "ownerKind",
+        "owner_id": "ownerId",
+        "project": "project",
+        "app": "app",
+        "knowledge_domain": "knowledgeDomain",
+        "scope_kind": "scopeKind",
+        "scope_id": "scopeId",
+        "visibility": "visibility",
+        "authorization_revision": "authorizationRevision",
+        "binding_id": "bindingId",
+        "scope_mode": "scopeMode",
+    }
+    for field, payload_key in payload_fields.items():
+        if payload_key not in payload or payload.get(payload_key) is None:
+            continue
+        requested = compact_whitespace(str(payload.get(payload_key) or ""))
+        stored = _memory_book_field(previous, field)
+        if requested != stored:
+            raise ValueError("memory book id is already bound to another scope")
 
 
 def _validate_required_text(errors: list[dict[str, object]], index: int, op: str, payload: dict[str, object], field: str) -> None:

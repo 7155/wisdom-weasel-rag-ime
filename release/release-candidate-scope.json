@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-05T23:25:15.415860+00:00",
+  "generatedAt": "2026-09-06T04:14:55.337053+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -51,24 +51,24 @@
     },
     "execution_reliability": {
       "description": "Background ownership, safe process recovery, idempotency, cancellation, and reproducible fault evidence.",
-      "pathCount": 29
+      "pathCount": 30
     },
     "memory_context_continuity": {
-      "description": "Already committed memory decision context and correction continuity.",
-      "pathCount": 19
+      "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
+      "pathCount": 26
     }
   },
   "summary": {
-    "pathCount": 393,
+    "pathCount": 401,
     "dispositionCounts": {
-      "keep_release": 393
+      "keep_release": 401
     },
     "groupCounts": {
       "project_harness": 3,
       "requirement_evidence": 15,
       "control_center_release_ui": 106,
-      "memory_context_continuity": 19,
-      "execution_reliability": 29,
+      "memory_context_continuity": 26,
+      "execution_reliability": 30,
       "evaluation_audit": 116,
       "session_room_skill_flow": 1,
       "session_runtime": 45,
@@ -91,7 +91,15 @@
     "requirementIndex": "241 requirements structurally valid; assessment remains conservative",
     "localInstall": "pending formal install from the final clean commit",
     "foregroundAcceptance": "pending installed-app canary",
-    "inventoryRefresh": "Reconciled 345 committed base-to-HEAD paths at b1a12d97; local packaging-only edits are not installed product changes. Prior test receipts below remain historical."
+    "inventoryRefresh": "Reconciled 345 committed base-to-HEAD paths at b1a12d97; local packaging-only edits are not installed product changes. Prior test receipts below remain historical.",
+    "memoryTopicContinuity": {
+      "focusedTests": "195 passed: 50 organizer/curation, 71 compiler/projection/lifecycle, 74 owner/personal/maintenance",
+      "independentChecks": "23 identity/projection/verifier boundaries and 9 parser compatibility/rejection cases passed",
+      "modelReplays": "Normal and recovery paths passed in private databases; malformed initial recovery responses were explicit fixtures",
+      "localInstall": "Combined dirty-source candidate installed; 737 backend files match; 304 Gateway/native frontend files preserved",
+      "runtime": "Sidecar/Gateway health, Session/Memory list routes and managed Pi ensure passed",
+      "selfHostingBoundary": "Pi Sessions authored the change; parent recovery assistance was needed after Runtime failures; unattended operation remains unproven"
+    }
   },
   "items": [
     {
@@ -2844,6 +2852,62 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Keep regression coverage for the exact source and contract changes in this candidate."
+    },
+    {
+      "path": "eval/memory-topic-selfboot/RESULT.md",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "rag_ime/memory_projection.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "rag_ime/personal_memory_books.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "tests/test_agent_workspace_sqlite_scratch.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "execution_reliability",
+      "reason": "Keep the installed workspace-managed SQLite scratch regression."
+    },
+    {
+      "path": "tests/test_deepseek_memory_organizer.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "tests/test_memory_book_compiler.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "tests/test_owner_memory_curation.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
+    },
+    {
+      "path": "tests/test_personal_memory_application.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Preserve stable memory Book identity, current members, governed merge recovery and regression evidence."
     }
   ]
 }

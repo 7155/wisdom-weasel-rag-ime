@@ -2151,6 +2151,7 @@ def _empty_agent_conversation_context(timeline_date: str) -> dict[str, object]:
 def _empty_existing_memory_context() -> dict[str, object]:
     return {
         "existingMemoryBooks": [],
+        "existingMemoryBookIndex": [],
         "existingMemoryAtoms": [],
         "existingMemoryRecall": {
             "strategy": "deferred_until_quality_gate",
@@ -2247,10 +2248,21 @@ def _build_current_personal_atom_catalog(
                 "status": str(row["status"] or "active"),
                 "project": "",
                 "app": "",
+                "ownerKind": str(row["owner_kind"] or ""),
+                "ownerId": str(row["owner_id"] or ""),
+                "privacyLevel": str(row["privacy_level"] or ""),
+                "knowledgeDomain": str(row["knowledge_domain"] or ""),
+                "scopeKind": str(row["scope_kind"] or ""),
+                "scopeId": str(row["scope_id"] or ""),
+                "visibility": str(row["visibility"] or ""),
+                "authorizationRevision": str(row["authorization_revision"] or ""),
+                "bindingId": str(row["binding_id"] or ""),
+                "scopeMode": str(row["scope_mode"] or ""),
             }
         )
     return {
         "existingMemoryBooks": [],
+        "existingMemoryBookIndex": [],
         "existingMemoryAtoms": atoms,
         "existingMemoryRecall": {
             "strategy": "complete_current_personal_atom_catalog",
@@ -2265,6 +2277,84 @@ def _build_current_personal_atom_catalog(
     }
 
 
+def _owner_topic_book_index(
+    conn: sqlite3.Connection,
+    *,
+    owner_kind: str,
+    owner_id: str,
+    project: str = "",
+) -> list[dict[str, object]]:
+    """Return a complete identity-only index for this owner's Topic Books."""
+
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM memory_books
+        WHERE owner_kind = ? AND owner_id = ?
+          AND book_type = 'topic'
+          AND (? = '' OR project = ? OR project = '')
+        ORDER BY book_id
+        """,
+        (owner_kind, owner_id, compact_whitespace(project), compact_whitespace(project)),
+    ).fetchall()
+    result: list[dict[str, object]] = []
+    for row in rows:
+        metadata = _json_mapping(row["metadata_json"])
+        aliases: list[str] = []
+        for key in ("topicAliases", "aliases"):
+            value = metadata.get(key)
+            values = value if isinstance(value, list) else [value]
+            aliases.extend(
+                compact_whitespace(str(item))
+                for item in values
+                if item is not None
+                and compact_whitespace(str(item))
+                and not contains_sensitive_content(str(item))
+            )
+        for value in (row["title"], row["book_key"]):
+            text = compact_whitespace(str(value or ""))
+            if text and not contains_sensitive_content(text):
+                aliases.append(text)
+        result.append(
+            {
+                "bookId": str(row["book_id"] or ""),
+                "bookType": str(row["book_type"] or "topic"),
+                "createdAtMs": int(row["created_at_ms"] or 0),
+                "bookKey": str(row["book_key"] or ""),
+                "title": compact_whitespace(str(row["title"] or ""))[:160],
+                "aliases": list(dict.fromkeys(aliases))[:64],
+                "tags": _json_strings(row["tags_json"]),
+                "queryExpansions": _json_strings(row["query_expansions_json"]),
+                "semanticGroupIds": [
+                    str(member[0])
+                    for member in conn.execute(
+                        "SELECT group_id FROM memory_semantic_group_members "
+                        "WHERE member_type = 'book' AND member_id = ? ORDER BY group_id",
+                        (str(row["book_id"] or ""),),
+                    ).fetchall()
+                ],
+                "memoryAtomIds": _json_strings(row["memory_atom_ids_json"]),
+                "sourceEventIds": _json_ints(row["source_event_ids_json"]),
+                "ownerKind": str(row["owner_kind"] or ""),
+                "ownerId": str(row["owner_id"] or ""),
+                "project": str(row["project"] or ""),
+                "app": str(row["app"] or ""),
+                "knowledgeDomain": str(row["knowledge_domain"] or ""),
+                "scopeKind": str(row["scope_kind"] or ""),
+                "scopeId": str(row["scope_id"] or ""),
+                "visibility": str(row["visibility"] or ""),
+                "authorizationRevision": str(row["authorization_revision"] or ""),
+                "bindingId": str(row["binding_id"] or ""),
+                "scopeMode": str(row["scope_mode"] or ""),
+                "status": str(row["status"] or "active"),
+                "supersededByBookId": compact_whitespace(
+                    str(metadata.get("supersededByBookId") or "")
+                ),
+            }
+        )
+    return result
+
+
 def _build_existing_memory_context(
     conn: sqlite3.Connection,
     *,
@@ -2276,6 +2366,12 @@ def _build_existing_memory_context(
 ) -> dict[str, object]:
     """Recall only the old facts relevant to quality-gated source inputs."""
 
+    book_index = _owner_topic_book_index(
+        conn,
+        owner_kind=owner_kind,
+        owner_id=owner_id,
+        project=project,
+    )
     book_rows = conn.execute(
         """
         SELECT *
@@ -2318,13 +2414,33 @@ def _build_existing_memory_context(
         {
             "bookId": str(row["book_id"]),
             "bookType": str(row["book_type"]),
+            "createdAtMs": int(row["created_at_ms"] or 0),
             "bookKey": str(row["book_key"]),
             "title": str(row["title"]),
             "summary": compact_whitespace(str(row["summary"]))[:800],
+            "aliases": [
+                *_metadata_strings(
+                    _json_mapping(row["metadata_json"]).get("topicAliases")
+                ),
+                *_metadata_strings(
+                    _json_mapping(row["metadata_json"]).get("aliases")
+                ),
+            ],
             "tags": _json_strings(row["tags_json"]),
             "sourceEventIds": _json_ints(row["source_event_ids_json"]),
             "memoryAtomIds": _json_strings(row["memory_atom_ids_json"]),
             "status": str(row["status"]),
+            "ownerKind": str(row["owner_kind"] or ""),
+            "ownerId": str(row["owner_id"] or ""),
+            "project": str(row["project"] or ""),
+            "app": str(row["app"] or ""),
+            "knowledgeDomain": str(row["knowledge_domain"] or ""),
+            "scopeKind": str(row["scope_kind"] or ""),
+            "scopeId": str(row["scope_id"] or ""),
+            "visibility": str(row["visibility"] or ""),
+            "authorizationRevision": str(row["authorization_revision"] or ""),
+            "bindingId": str(row["binding_id"] or ""),
+            "scopeMode": str(row["scope_mode"] or ""),
         }
         for book_id in recalled_book_ids
         if (row := book_rows_by_id.get(book_id)) is not None
@@ -2350,6 +2466,16 @@ def _build_existing_memory_context(
             "supersedesId": str(row["supersedes_id"] or ""),
             "project": str(row["scope_project"] or ""),
             "app": str(row["scope_app"] or ""),
+            "ownerKind": str(row["owner_kind"] or ""),
+            "ownerId": str(row["owner_id"] or ""),
+            "privacyLevel": str(row["privacy_level"] or ""),
+            "knowledgeDomain": str(row["knowledge_domain"] or ""),
+            "scopeKind": str(row["scope_kind"] or ""),
+            "scopeId": str(row["scope_id"] or ""),
+            "visibility": str(row["visibility"] or ""),
+            "authorizationRevision": str(row["authorization_revision"] or ""),
+            "bindingId": str(row["binding_id"] or ""),
+            "scopeMode": str(row["scope_mode"] or ""),
         }
         for atom_id in recalled_atom_ids
         if (row := atom_rows_by_id.get(atom_id)) is not None
@@ -2367,6 +2493,7 @@ def _build_existing_memory_context(
     ][:MAX_ARCHIVED_TOPIC_BOOK_GUARDS]
     return {
         "existingMemoryBooks": books,
+        "existingMemoryBookIndex": book_index,
         "existingMemoryAtoms": atoms,
         "existingMemoryRecall": recall_summary,
         "archivedMemoryBookGuards": archived_book_guards,
@@ -2422,6 +2549,11 @@ def _build_atom_first_memory_context(
         "existingMemoryBooks": [
             dict(item)
             for item in relevant.get("existingMemoryBooks") or []
+            if isinstance(item, dict)
+        ],
+        "existingMemoryBookIndex": [
+            dict(item)
+            for item in relevant.get("existingMemoryBookIndex") or []
             if isinstance(item, dict)
         ],
         "existingMemoryAtoms": list(atoms_by_id.values()),
@@ -2911,6 +3043,7 @@ def _build_owner_source_bundle(
             for item in inputs
         ],
         "existingMemoryBooks": existing_memory_context["existingMemoryBooks"],
+        "existingMemoryBookIndex": existing_memory_context["existingMemoryBookIndex"],
         "existingMemoryAtoms": existing_memory_context["existingMemoryAtoms"],
         "existingMemoryRecall": existing_memory_context["existingMemoryRecall"],
         # Archived books are compact governance tombstones, not retrieval
@@ -4051,29 +4184,147 @@ def _match_owner_topic_book(
     existing_books: list[dict[str, object]],
     used_book_ids: set[str],
 ) -> dict[str, object] | None:
+    """Reuse one stable Book identity, including aliases and old redirects.
+
+    An explicit physical ``bookId`` is an identity assertion, not a term for
+    fuzzy matching.  Scope fields supplied by the caller are checked at every
+    redirect hop so a stale alias cannot cross an owner or authorization
+    boundary.
+    """
+
     requested_id = compact_whitespace(str(proposed.get("bookId") or ""))
     requested_key = compact_whitespace(str(proposed.get("bookKey") or ""))
-    candidates = [
-        item
+    requested_terms = {
+        normalize_text(str(value or ""))
+        for value in (
+            proposed.get("title"),
+            proposed.get("bookAlias"),
+            proposed.get("topicAlias"),
+            *(proposed.get("aliases") if isinstance(proposed.get("aliases"), list) else []),
+        )
+        if normalize_text(str(value or ""))
+    }
+    scope_fields = (
+        "ownerKind",
+        "ownerId",
+        "project",
+        "app",
+        "knowledgeDomain",
+        "scopeKind",
+        "scopeId",
+        "visibility",
+        "authorizationRevision",
+        "bindingId",
+        "scopeMode",
+    )
+    by_id = {
+        compact_whitespace(str(item.get("bookId") or "")): item
         for item in existing_books
-        if compact_whitespace(str(item.get("bookId") or "")) not in used_book_ids
+        if compact_whitespace(str(item.get("bookId") or ""))
+    }
+
+    def compatible(candidate: Mapping[str, object]) -> bool:
+        # Missing fields in older model proposals are filled by the governed
+        # caller; do not make an old read-only proposal unusable.  Whenever a
+        # scope field is present, however, an absent/different candidate is a
+        # hard mismatch (including project="" versus a named project).
+        for field in scope_fields:
+            if field not in proposed or proposed.get(field) is None:
+                continue
+            requested = compact_whitespace(str(proposed.get(field) or ""))
+            candidate_value = compact_whitespace(str(candidate.get(field) or ""))
+            if requested != candidate_value:
+                return False
+        return True
+
+    def resolved(candidate: Mapping[str, object]) -> dict[str, object] | None:
+        current = dict(candidate)
+        visited: set[str] = set()
+        while True:
+            if not compatible(current):
+                return None
+            current_id = compact_whitespace(str(current.get("bookId") or ""))
+            if not current_id or current_id in visited:
+                return None
+            visited.add(current_id)
+            if compact_whitespace(str(current.get("status") or "")) != "superseded":
+                break
+            redirect_id = compact_whitespace(
+                str(current.get("supersededByBookId") or current.get("resolvedBookId") or "")
+            )
+            if not redirect_id or redirect_id in visited:
+                return None
+            current = dict(by_id.get(redirect_id) or {})
+            if not current:
+                return None
+        resolved_id = compact_whitespace(str(current.get("bookId") or ""))
+        if not resolved_id or resolved_id in used_book_ids:
+            return None
+        return current
+
+    def unique_resolved(candidates: list[Mapping[str, object]]) -> dict[str, object] | None:
+        matches: dict[str, dict[str, object]] = {}
+        for candidate in candidates:
+            match = resolved(candidate)
+            if match is not None:
+                matches.setdefault(str(match.get("bookId") or ""), match)
+        if len(matches) == 1:
+            return next(iter(matches.values()))
+        return None
+
+    # Identity precedence is deliberate: a conflicting title/alias must not
+    # turn an explicit ID into a new Book or an ambiguous result.
+    if requested_id:
+        candidate = by_id.get(requested_id)
+        return resolved(candidate) if candidate is not None else None
+    if requested_key:
+        match = unique_resolved(
+            [
+                candidate
+                for candidate in existing_books
+                if compact_whitespace(str(candidate.get("bookKey") or "")) == requested_key
+            ]
+        )
+        if match is not None:
+            return match
+        if any(
+            compact_whitespace(str(candidate.get("bookKey") or "")) == requested_key
+            for candidate in existing_books
+        ):
+            return None
+
+    exact_candidates = [
+        candidate
+        for candidate in existing_books
+        if requested_terms.intersection(
+            {
+                normalize_text(str(candidate.get("title") or "")),
+                normalize_text(str(candidate.get("bookKey") or "")),
+                *{
+                    normalize_text(str(value or ""))
+                    for value in candidate.get("aliases") or []
+                    if value is not None and normalize_text(str(value or ""))
+                },
+            }
+        )
     ]
-    for candidate in candidates:
-        if requested_id and requested_id == compact_whitespace(
-            str(candidate.get("bookId") or "")
-        ):
-            return candidate
-        if requested_key and requested_key == compact_whitespace(
-            str(candidate.get("bookKey") or "")
-        ):
-            return candidate
+    if exact_candidates:
+        # An alias that resolves to multiple live Books is ambiguous and must
+        # not silently choose one by similarity.
+        return unique_resolved(exact_candidates)
+
+    candidates_by_resolved_id: dict[str, dict[str, object]] = {}
+    for candidate in existing_books:
+        match = resolved(candidate)
+        if match is not None:
+            candidates_by_resolved_id.setdefault(str(match.get("bookId") or ""), match)
+    candidates = list(candidates_by_resolved_id.values())
     ranked = sorted(
         (
             (_owner_topic_similarity(proposed, candidate), candidate)
             for candidate in candidates
         ),
-        key=lambda pair: pair[0],
-        reverse=True,
+        key=lambda pair: (-pair[0], str(pair[1].get("bookId") or "")),
     )
     if not ranked or ranked[0][0] < 0.42:
         return None
@@ -4394,14 +4645,43 @@ def _govern_owner_compile_output(
             not in replaced_claim_keys
         )
     ]
-    existing_books = [
-        dict(item)
-        for item in [
-            *(bundle.get("existingMemoryBooks") or []),
-            *(bundle.get("archivedMemoryBookGuards") or []),
-        ]
-        if isinstance(item, dict)
-    ]
+    existing_books_by_id: dict[str, dict[str, object]] = {}
+    for raw_book in [
+        *(bundle.get("existingMemoryBookIndex") or []),
+        *(bundle.get("existingMemoryBooks") or []),
+        *(bundle.get("archivedMemoryBookGuards") or []),
+    ]:
+        if not isinstance(raw_book, dict):
+            continue
+        raw_book_id = compact_whitespace(str(raw_book.get("bookId") or ""))
+        if raw_book_id:
+            # The recalled body is richer than the identity index, but may not
+            # repeat identity-only aliases/scope fields. Merge both views.
+            previous_book = existing_books_by_id.get(raw_book_id, {})
+            merged_book = {**previous_book, **dict(raw_book)}
+            for list_field in ("aliases", "tags", "queryExpansions", "memoryAtomIds", "sourceEventIds", "semanticGroupIds"):
+                if list_field in previous_book or list_field in raw_book:
+                    previous_values = previous_book.get(list_field)
+                    raw_values = raw_book.get(list_field)
+                    previous_values = (
+                        [] if previous_values is None
+                        else previous_values if isinstance(previous_values, list)
+                        else [previous_values]
+                    )
+                    raw_values = (
+                        [] if raw_values is None
+                        else raw_values if isinstance(raw_values, list)
+                        else [raw_values]
+                    )
+                    merged_book[list_field] = list(
+                        dict.fromkeys(
+                            value
+                            for value in [*previous_values, *raw_values]
+                            if value is not None
+                        )
+                    )
+            existing_books_by_id[raw_book_id] = merged_book
+    existing_books = list(existing_books_by_id.values())
     proposed_book_limit = (
         0
         if personal_only
@@ -4423,6 +4703,59 @@ def _govern_owner_compile_output(
     books: list[dict[str, object]] = []
     used_existing_book_ids: set[str] = set()
     for proposed in proposed_books:
+        proposed = dict(proposed)
+        proposed_project = compact_whitespace(str(proposed.get("project") or ""))
+        if proposed_project and proposed_project != project:
+            # A model-provided project is an authorization assertion; never
+            # rewrite it into the current run's project.
+            continue
+        proposed["project"] = project
+        proposed["ownerKind"] = owner_kind
+        proposed["ownerId"] = owner_id
+        source_ids = _legal_ints(
+            proposed.get("sourceEventIds"),
+            remembered_event_ids,
+        )
+        proposed_member_candidates = []
+        for value in proposed.get("memoryAtomIds") or []:
+            proposed_member_id = compact_whitespace(str(value))
+            member_id = governed_atom_id_by_proposed_id.get(
+                proposed_member_id,
+                proposed_member_id,
+            )
+            if member_id in current_atom_id_set:
+                proposed_member_candidates.append(member_id)
+        if not proposed_member_candidates:
+            proposed_member_candidates = [
+                atom_id
+                for atom_id in atom_ids
+                if set(
+                    _positive_event_ids(
+                        current_atom_by_id[atom_id].get("sourceEventIds")
+                    )
+                ).intersection(source_ids)
+            ]
+        scope_fields = (
+            "knowledgeDomain",
+            "scopeKind",
+            "scopeId",
+            "visibility",
+            "authorizationRevision",
+            "bindingId",
+            "scopeMode",
+        )
+        candidate_scopes = {
+            tuple(
+                compact_whitespace(str(current_atom_by_id[atom_id].get(field) or ""))
+                for field in scope_fields
+            )
+            for atom_id in proposed_member_candidates
+        }
+        candidate_scopes.discard(("", "", "", "", "", "", ""))
+        if len(candidate_scopes) == 1:
+            for field, value in zip(scope_fields, next(iter(candidate_scopes))):
+                if not compact_whitespace(str(proposed.get(field) or "")):
+                    proposed[field] = value
         title = compact_whitespace(str(proposed.get("title") or ""))[:120]
         proposed_summary = compact_whitespace(str(proposed.get("summary") or ""))
         if (
@@ -5036,6 +5369,15 @@ def _json_mapping(value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _metadata_strings(value: object) -> list[str]:
+    values = value if isinstance(value, list) else ([] if value in (None, "") else [value])
+    return [
+        compact_whitespace(str(item))
+        for item in values
+        if item is not None and compact_whitespace(str(item))
+    ]
 
 
 def _json_ints(value: object) -> list[int]:

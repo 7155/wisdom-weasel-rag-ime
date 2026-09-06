@@ -22,6 +22,7 @@ from rag_ime.models import InputEvent
 from rag_ime.owner_memory_curation import (
     OwnerMemoryCurator,
     _deterministic_personal_v2_disposition,
+    _match_owner_topic_book,
     _owner_scope_statuses,
     _pending_source_count,
     owner_memory_curation_status,
@@ -719,6 +720,118 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
+
+    def test_topic_book_index_reuses_alias_and_resolves_superseded_identity(self) -> None:
+        existing_books = [
+            {
+                "bookId": "book:target",
+                "bookKey": "stable-topic",
+                "title": "输入法架构",
+                "aliases": ["旧输入法主题", "RAG 预测"],
+                "status": "active",
+                "project": "paw",
+            },
+            {
+                "bookId": "book:old",
+                "bookKey": "old-topic",
+                "title": "旧标题",
+                "aliases": ["历史别名"],
+                "status": "superseded",
+                "supersededByBookId": "book:target",
+                "project": "paw",
+            },
+        ]
+        by_alias = _match_owner_topic_book(
+            {"title": "RAG 预测"},
+            existing_books=existing_books,
+            used_book_ids=set(),
+        )
+        by_redirect = _match_owner_topic_book(
+            {"bookId": "book:old", "title": "旧标题"},
+            existing_books=existing_books,
+            used_book_ids=set(),
+        )
+        self.assertEqual(by_alias["bookId"], "book:target")
+        self.assertEqual(by_redirect["bookId"], "book:target")
+
+    def test_explicit_book_id_wins_and_redirect_scope_mismatch_fails_closed(self) -> None:
+        existing_books = [
+            {
+                "bookId": "book:a",
+                "bookKey": "topic-a",
+                "title": "稳定主题 A",
+                "aliases": [None, "共同别名"],
+                "status": "active",
+                "ownerKind": "user",
+                "ownerId": "default",
+                "project": "paw",
+                "knowledgeDomain": "legacy",
+                "scopeKind": "project",
+                "scopeId": "one",
+                "visibility": "private",
+                "authorizationRevision": "rev-1",
+                "bindingId": "bind-1",
+                "scopeMode": "authoritative",
+            },
+            {
+                "bookId": "book:b",
+                "bookKey": "topic-b",
+                "title": "稳定主题 A",
+                "aliases": ["另一个别名"],
+                "status": "active",
+                "ownerKind": "user",
+                "ownerId": "default",
+                "project": "paw",
+                "knowledgeDomain": "legacy",
+                "scopeKind": "project",
+                "scopeId": "two",
+                "visibility": "private",
+                "authorizationRevision": "rev-1",
+                "bindingId": "bind-1",
+                "scopeMode": "authoritative",
+            },
+            {
+                "bookId": "book:redirected",
+                "bookKey": "topic-old",
+                "title": "旧主题",
+                "aliases": [],
+                "status": "superseded",
+                "supersededByBookId": "book:a",
+                "ownerKind": "user",
+                "ownerId": "default",
+                "project": "paw",
+                "knowledgeDomain": "legacy",
+                "scopeKind": "project",
+                "scopeId": "two",
+                "visibility": "private",
+                "authorizationRevision": "rev-1",
+                "bindingId": "bind-1",
+                "scopeMode": "authoritative",
+            },
+        ]
+        explicit = _match_owner_topic_book(
+            {
+                "bookId": "book:a",
+                "title": "稳定主题 A",
+                "project": "paw",
+                "scopeKind": "project",
+                "scopeId": "one",
+            },
+            existing_books=existing_books,
+            used_book_ids=set(),
+        )
+        mismatched_redirect = _match_owner_topic_book(
+            {
+                "bookId": "book:redirected",
+                "project": "paw",
+                "scopeKind": "project",
+                "scopeId": "one",
+            },
+            existing_books=existing_books,
+            used_book_ids=set(),
+        )
+        self.assertEqual(explicit["bookId"], "book:a")
+        self.assertIsNone(mismatched_redirect)
 
     def test_status_projects_pending_days_applications_without_source_text(self) -> None:
         first = self._checkpoint_user_message(

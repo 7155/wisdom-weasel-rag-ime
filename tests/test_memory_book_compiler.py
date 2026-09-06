@@ -1500,11 +1500,15 @@ class MemoryBookCompilerTests(unittest.TestCase):
                 INSERT INTO memory_atoms(
                     id, kind, text, canonical_text, source_event_ids_json,
                     scope_project, language, confidence, quality_score,
-                    privacy_level, status, created_at_ms, updated_at_ms
+                    privacy_level, owner_kind, owner_id, knowledge_domain,
+                    scope_kind, scope_id, visibility, authorization_revision,
+                    binding_id, scope_mode, status, created_at_ms, updated_at_ms
                 ) VALUES (
                     'atom:second-project', 'project_fact', '第二项目事实',
                     '第二项目事实', ?, 'other-project', 'zh', 0.9, 0.9,
-                    'local', 'active', 1, 1
+                    'local', 'user', 'default', 'legacy', 'project',
+                    'other-project', 'private', 'auth:catalog',
+                    'binding:catalog-atom', 'authoritative', 'active', 1, 1
                 )
                 """,
                 (json.dumps([self.event_id]),),
@@ -1568,7 +1572,22 @@ class MemoryBookCompilerTests(unittest.TestCase):
             "curated-import-tag",
             {item["name"] for item in incremental["existingSemanticTags"]},
         )
-        self.assertTrue(any(item["atomId"] == "atom:second-project" and item["project"] == "other-project" for item in catalog["existingMemoryAtoms"]))
+        catalog_atom = next(
+            item
+            for item in catalog["existingMemoryAtoms"]
+            if item["atomId"] == "atom:second-project"
+        )
+        self.assertEqual(catalog_atom["project"], "other-project")
+        self.assertEqual(catalog_atom["ownerKind"], "user")
+        self.assertEqual(catalog_atom["ownerId"], "default")
+        self.assertEqual(catalog_atom["knowledgeDomain"], "legacy")
+        self.assertEqual(catalog_atom["scopeKind"], "project")
+        self.assertEqual(catalog_atom["scopeId"], "other-project")
+        self.assertEqual(catalog_atom["visibility"], "private")
+        self.assertEqual(catalog_atom["authorizationRevision"], "auth:catalog")
+        self.assertEqual(catalog_atom["bindingId"], "binding:catalog-atom")
+        self.assertEqual(catalog_atom["scopeMode"], "authoritative")
+        self.assertEqual(catalog_atom["privacyLevel"], "local")
         self.assertTrue(any(item["bookId"] == "book:second-project" and item["project"] == "other-project" for item in catalog["existingMemoryBooks"]))
         self.assertTrue(any(item["groupId"] == "group:second-project" and item["project"] == "other-project" for item in catalog["existingSemanticGroups"]))
         self.assertIn(
@@ -1593,6 +1612,194 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertTrue(catalog["catalogComplete"])
         self.assertFalse(any(catalog["catalogTruncated"].values()))
         self.assertTrue(catalog["catalogDigest"])
+
+    def test_catalog_maintenance_compiles_governed_topic_book_merge(self) -> None:
+        source_bundle = {
+            "project": "wisdom-weasel-rag-ime",
+            "curationScope": "global",
+            "catalogAudit": True,
+            "catalogComplete": True,
+            "catalogTruncated": {},
+            "catalogDigest": "sha256:" + "0" * 64,
+            "existingMemoryBooks": [
+                {
+                    "bookId": "book:owner:550ccb5c952c95ca:topic:0858f8e09639d58f",
+                    "bookKey": "owner-topic-rag",
+                    "bookType": "topic",
+                    "title": "输入法架构",
+                    "summary": "RAG 输入法的长期架构主题。",
+                    "tags": ["输入法", "RAG"],
+                    "memoryAtomIds": ["atom:target"],
+                    "sourceEventIds": [101],
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "project": "wisdom-weasel-rag-ime",
+                    "status": "active",
+                },
+                {
+                    "bookId": "book:owner:550ccb5c952c95ca:topic:058c7f41df478bd3",
+                    "bookKey": "owner-topic-squirrel",
+                    "bookType": "topic",
+                    "title": "Squirrel 预测",
+                    "summary": "输入法预测与 RAG 记忆属于同一长期主题。",
+                    "tags": ["输入法", "RAG"],
+                    "memoryAtomIds": ["atom:source"],
+                    "sourceEventIds": [102],
+                    "ownerKind": "user",
+                    "ownerId": "default",
+                    "project": "wisdom-weasel-rag-ime",
+                    "status": "active",
+                },
+            ],
+            "existingMemoryAtoms": [],
+            "existingSemanticGroups": [],
+            "existingSemanticTags": [],
+            "existingTagEdges": [],
+        }
+        compiled = curation_decisions_to_compile_output(
+            {
+                "bookMerges": [
+                    {
+                        "sourceRef": "B2",
+                        "targetRef": "B1",
+                        "reason": "不同标题但成员和语义都证明是同一输入法 RAG 主题",
+                        "confidence": 0.94,
+                    }
+                ]
+            },
+            source_bundle=source_bundle,
+            project="wisdom-weasel-rag-ime",
+        )
+        self.assertEqual(len(compiled["bookMerges"]), 1)
+        plan = memory_book_plan_from_compile_output(
+            compiled,
+            project="wisdom-weasel-rag-ime",
+            provider="test",
+            model="test",
+            source_bundle=source_bundle,
+            run_id="memory_book_topic_merge_compile",
+        )
+        merges = [item for item in plan["diffs"] if item["op"] == "merge_memory_books"]
+        self.assertEqual(len(merges), 1)
+        self.assertEqual(merges[0]["payload"]["targetBookId"], source_bundle["existingMemoryBooks"][0]["bookId"])
+        self.assertEqual(merges[0]["payload"]["sourceBookIds"], [source_bundle["existingMemoryBooks"][1]["bookId"]])
+        self.assertTrue(inspect_memory_book_plan(plan)["ok"])
+
+    def test_topic_book_merge_apply_preserves_members_redirects_and_rolls_back(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project, status,
+                    created_at_ms, updated_at_ms, claim_key, lineage_id,
+                    claim_state, valid_from_ms, owner_kind, owner_id,
+                    privacy_level
+                ) VALUES
+                    ('atom:target', 'project_fact', '输入法使用 RAG', '输入法使用 RAG',
+                     'wisdom-weasel-rag-ime', 'active', 1, 1, 'claim:target',
+                     'lineage:target', 'current', 1, 'user', 'default', 'local'),
+                    ('atom:source', 'project_fact', 'Squirrel 预测复用 RAG', 'Squirrel 预测复用 RAG',
+                     'wisdom-weasel-rag-ime', 'active', 2, 2, 'claim:source',
+                     'lineage:source', 'current', 2, 'user', 'default', 'local')
+                """
+            )
+            conn.executemany(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary, normalized_text,
+                    project, tags_json, surface_hints_json, query_expansions_json,
+                    source_event_ids_json, memory_atom_ids_json, owner_kind, owner_id,
+                    status, confidence, quality_score, created_at_ms, updated_at_ms,
+                    metadata_json
+                ) VALUES (?, 'topic', ?, ?, ?, ?, ?, ?, '[]', '[]', ?, ?,
+                          'user', 'default', 'active', 0.9, 0.9, 1, 1, '{}')
+                """,
+                [
+                    (
+                        "book:target",
+                        "topic-target",
+                        "输入法架构",
+                        "旧摘要不应成为合并后的权威摘要",
+                        "输入法架构 旧摘要",
+                        "wisdom-weasel-rag-ime",
+                        json.dumps(["目标标签"], ensure_ascii=False),
+                        json.dumps([self.event_id]),
+                        json.dumps(["atom:target"]),
+                    ),
+                    (
+                        "book:source",
+                        "topic-source",
+                        "Squirrel 预测",
+                        "来源摘要",
+                        "Squirrel 预测 来源摘要",
+                        "wisdom-weasel-rag-ime",
+                        json.dumps(["来源标签"], ensure_ascii=False),
+                        json.dumps([self.event_id]),
+                        json.dumps(["atom:source"]),
+                    ),
+                ],
+            )
+            # A stable target ID remains valid even when it is newer than the
+            # source; createdAtMs is only a model-side default preference.
+            conn.execute(
+                "UPDATE memory_books SET created_at_ms = 2, updated_at_ms = 2 "
+                "WHERE book_id = 'book:target'"
+            )
+            conn.execute(
+                "UPDATE memory_books SET created_at_ms = 1, updated_at_ms = 1 "
+                "WHERE book_id = 'book:source'"
+            )
+            bundle = build_memory_book_source_bundle(
+                conn,
+                project="wisdom-weasel-rag-ime",
+                curation_scope="global",
+                catalog_only=True,
+            )
+            model_bundle = build_memory_curation_model_bundle(bundle)
+            refs = {item["bookId"]: item["ref"] for item in model_bundle["existingBooks"]}
+            plan = memory_book_plan_from_compile_output(
+                {
+                    "bookMerges": [
+                        {
+                            "sourceRef": refs["book:source"],
+                            "targetRef": refs["book:target"],
+                            "reason": "同一长期主题",
+                            "confidence": 0.95,
+                        }
+                    ]
+                },
+                project="wisdom-weasel-rag-ime",
+                provider="test",
+                model="test",
+                source_bundle=bundle,
+                run_id="memory_book_topic_merge_apply",
+            )
+            self.assertTrue(inspect_memory_book_plan(plan)["ok"], inspect_memory_book_plan(plan))
+            applied = apply_memory_book_plan(conn, plan)
+            self.assertEqual(applied["status"], "applied")
+            target = conn.execute(
+                "SELECT summary, memory_atom_ids_json, tags_json, metadata_json FROM memory_books WHERE book_id = 'book:target'"
+            ).fetchone()
+            source = conn.execute(
+                "SELECT status, metadata_json FROM memory_books WHERE book_id = 'book:source'"
+            ).fetchone()
+            self.assertEqual(set(json.loads(target["memory_atom_ids_json"])), {"atom:target", "atom:source"})
+            self.assertIn("输入法使用 RAG", target["summary"])
+            self.assertIn("Squirrel 预测复用 RAG", target["summary"])
+            self.assertEqual(set(json.loads(target["tags_json"])), {"目标标签", "来源标签"})
+            self.assertEqual(source["status"], "superseded")
+            self.assertEqual(json.loads(source["metadata_json"])["supersededByBookId"], "book:target")
+            rollback_memory_book_run(conn, run_id=plan["runId"])
+            target_after = conn.execute(
+                "SELECT summary, memory_atom_ids_json, tags_json FROM memory_books WHERE book_id = 'book:target'"
+            ).fetchone()
+            source_after = conn.execute(
+                "SELECT status, metadata_json FROM memory_books WHERE book_id = 'book:source'"
+            ).fetchone()
+            self.assertEqual(target_after["summary"], "旧摘要不应成为合并后的权威摘要")
+            self.assertEqual(json.loads(target_after["memory_atom_ids_json"]), ["atom:target"])
+            self.assertEqual(source_after["status"], "active")
+            self.assertEqual(json.loads(source_after["metadata_json"]), {})
 
     def test_global_catalog_apply_rejects_a_changed_frozen_digest(self) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]

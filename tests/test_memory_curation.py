@@ -39,6 +39,24 @@ class MemoryCurationTests(unittest.TestCase):
         self.assertEqual(model_bundle["inputs"][0]["sourceRef"], "source:901")
         self.assertEqual(model_bundle["inputs"][0]["eventIds"], [901])
 
+    def test_topic_summary_rebuilds_from_members_and_preserves_new_correction_before_truncation(self):
+        from rag_ime.memory_curation import _derive_topic_books
+
+        bundle = {"existingMemoryBooks": [{"bookId":"book:topic:a", "bookKey":"a",
+            "title":"主题 A", "summary":"失效旧方案。" * 200,
+            "semanticGroupIds":["group:a"], "memoryAtomIds":["atom:old", "atom:constraint"]}],
+            "existingMemoryAtoms":[
+                {"atomId":"atom:old", "canonicalText":"失效旧方案", "status":"active", "claimState":"current"},
+                {"atomId":"atom:constraint", "canonicalText":"仍需保留原有输入内核", "status":"active", "claimState":"current"}]}
+        result = _derive_topic_books(source_bundle=bundle, semantic_groups={"group:a":{"title":"主题 A"}},
+            memory_atoms={"atom:new":{"canonicalText":"已经改用新的当前方案", "supersedesId":"atom:old"}},
+            group_atom_ids={"group:a":["atom:new"]}, group_source_ids={"group:a":[2]},
+            atom_tags={}, project="test", excluded_atom_ids={"atom:old"})["group:a"]
+        self.assertIn("已经改用新的当前方案", result["summary"])
+        self.assertIn("仍需保留原有输入内核", result["summary"])
+        self.assertNotIn("失效旧方案", result["summary"])
+        self.assertNotIn("本次补充", result["summary"])
+        self.assertEqual(result["memoryAtomIds"], ["atom:new", "atom:constraint"])
 
     def test_model_bundle_uses_compact_refs_and_includes_existing_atoms(self) -> None:
         bundle = _source_bundle()
@@ -52,6 +70,148 @@ class MemoryCurationTests(unittest.TestCase):
         self.assertEqual(result["existingGroups"][0]["ref"], "G1")
         self.assertEqual(result["existingTags"][0]["ref"], "T1")
         self.assertNotIn("rimeRankFeedback", result)
+
+    def test_atom_first_prompt_keeps_full_book_index_and_atom_identity_mapping(self) -> None:
+        from rag_ime.deepseek_memory_organizer import _semantic_curation_prompt_bundle
+
+        bundle = _source_bundle(include_feedback=False)
+        bundle["existingMemoryBookIndex"] = [
+            {
+                "bookId": "book:topic:input-method",
+                "bookType": "topic",
+                "bookKey": "input-method",
+                "title": "输入法",
+                "aliases": [None, "历史输入主题"],
+                "memoryAtomIds": ["atom:no-fragment-context"],
+                "semanticGroupIds": ["group:input-method"],
+                "createdAtMs": 17,
+                "ownerKind": "user",
+                "ownerId": "default",
+                "project": "ime",
+                "app": "",
+                "knowledgeDomain": "legacy",
+                "scopeKind": "project",
+                "scopeId": "ime",
+                "visibility": "private",
+                "authorizationRevision": "auth:1",
+                "bindingId": "memory-book:input-method",
+                "scopeMode": "authoritative",
+                "status": "active",
+            }
+        ]
+
+        model_bundle = build_memory_curation_model_bundle(bundle)
+        index = model_bundle["existingMemoryBookIndex"]
+        self.assertEqual(len(index), 1)
+        self.assertEqual(index[0]["bookType"], "topic")
+        self.assertEqual(index[0]["createdAtMs"], 17)
+        self.assertEqual(index[0]["aliases"], ["历史输入主题"])
+        self.assertEqual(index[0]["atomRefs"], ["P1"])
+        self.assertEqual(index[0]["memberAtoms"], [{"atomId": "atom:no-fragment-context", "atomRef": "P1"}])
+
+        snapshot = _semantic_curation_prompt_bundle(model_bundle)
+        self.assertEqual(snapshot["existingAtoms"][0]["atomId"], "atom:no-fragment-context")
+        self.assertEqual(snapshot["existingBooks"][0]["bookType"], "topic")
+        self.assertEqual(snapshot["existingBooks"][0]["createdAtMs"], 0)
+        self.assertEqual(snapshot["existingMemoryBookIndex"][0]["atomRefs"], ["P1"])
+        self.assertEqual(snapshot["existingMemoryBookIndex"][0]["createdAtMs"], 17)
+        self.assertEqual(snapshot["existingMemoryBookIndex"][0]["app"], "")
+
+    def test_known_topic_book_refs_fail_closed_without_parallel_books(self) -> None:
+        def compile_for(books: list[dict[str, object]], reference: str) -> dict[str, object]:
+            bundle = _source_bundle(include_feedback=False)
+            bundle["existingSemanticGroups"] = []
+            for atom in bundle["existingMemoryAtoms"]:
+                atom["semanticGroupIds"] = []
+            bundle["existingMemoryBooks"] = books
+            return curation_decisions_to_compile_output(
+                {
+                    "decisions": [
+                        {
+                            "action": "create",
+                            "evidenceRefs": ["E2"],
+                            "canonicalText": "用户将该产品称为澄输入法。",
+                            "kind": "preference",
+                            "topicRef": reference,
+                            "topicTitle": "新的显示名称",
+                            "confidence": 0.9,
+                        }
+                    ],
+                    "warnings": [],
+                },
+                source_bundle=bundle,
+                project="ime",
+            )
+
+        target = {
+            "bookId": "book:topic:stable-input-context",
+            "bookKey": "stable-input-context",
+            "bookType": "topic",
+            "title": "输入片段进入上下文的条件",
+            "aliases": ["输入上下文旧主题"],
+            "project": "ime",
+            "status": "active",
+            "semanticGroupIds": [],
+            "memoryAtomIds": [],
+        }
+        cases = [
+            # An explicit empty project is a global scope, not a wildcard for
+            # this named-project write.
+            ("book:topic:stable-input-context", [dict(target, project="")]),
+            # A redirect cannot cross an explicitly different scope.
+            (
+                "book:topic:old-input-context",
+                [
+                    dict(target, scopeId="scope-one"),
+                    dict(
+                        target,
+                        bookId="book:topic:old-input-context",
+                        status="superseded",
+                        scopeId="scope-two",
+                        supersededByBookId=target["bookId"],
+                    ),
+                ],
+            ),
+            # A shared alias is known but ambiguous, so it cannot fall through
+            # to a new Book identity.
+            (
+                target["aliases"][0],
+                [
+                    target,
+                    dict(
+                        target,
+                        bookId="book:topic:another-input-context",
+                        bookKey="another-input-context",
+                    ),
+                ],
+            ),
+        ]
+        for reference, books in cases:
+            result = compile_for(books, reference)
+            self.assertTrue(result["memoryAtoms"])
+            self.assertEqual(result["semanticGroups"], [])
+            self.assertEqual(result["topicBooks"], [])
+            self.assertEqual(result["memoryAtoms"][0]["semanticGroupIds"], [])
+
+    def test_topic_book_reference_prompt_contract_is_consistent(self) -> None:
+        from rag_ime.deepseek_memory_organizer import (
+            _memory_curation_recovery_prompt,
+            _memory_curation_semantic_repair_prompt,
+            _memory_curation_system_prompt,
+            _memory_curation_verifier_prompt,
+        )
+
+        for prompt_factory in (
+            _memory_curation_system_prompt,
+            _memory_curation_recovery_prompt,
+            _memory_curation_semantic_repair_prompt,
+            _memory_curation_verifier_prompt,
+        ):
+            prompt = prompt_factory()
+            self.assertIn("existingMemoryBookIndex", prompt)
+            self.assertIn("semanticGroupIds", prompt)
+            self.assertIn("唯一 alias", prompt)
+            self.assertIn("Book", prompt)
 
     def test_atom_decisions_drive_all_semantic_projections_and_native_lexicon_lane(self) -> None:
         bundle = _source_bundle()
@@ -829,6 +989,21 @@ class MemoryCurationTests(unittest.TestCase):
             snapshot["existingAtoms"][0]["claimKey"],
             "claim:duplicate",
         )
+        self.assertEqual(
+            snapshot["existingAtoms"][0]["atomId"],
+            "atom:duplicate:1",
+        )
+        self.assertEqual(snapshot["existingBooks"][0]["bookType"], "topic")
+        self.assertIn("createdAtMs", snapshot["existingBooks"][0])
+        self.assertEqual(
+            snapshot["existingMemoryBookIndex"][0]["atomRefs"],
+            ["P1", "P2"],
+        )
+        self.assertEqual(
+            snapshot["existingMemoryBookIndex"][0]["bookType"],
+            "topic",
+        )
+        self.assertIn("createdAtMs", snapshot["existingMemoryBookIndex"][0])
         self.assertIn("normalized name", captured[0]["messages"][0]["content"])
 
         incomplete = _global_catalog_bundle()

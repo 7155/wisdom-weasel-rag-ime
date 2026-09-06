@@ -882,6 +882,16 @@ def _source_refs_for_memory_book_run(
             _add_dependency_invalidation_refs(refs, rollback)
         elif op == "upsert_memory_book":
             _add_ref(refs, "book", payload.get("bookId"))
+        elif op == "merge_memory_books":
+            _add_ref(refs, "book", payload.get("targetBookId"))
+            for source_id in payload.get("sourceBookIds") or []:
+                _add_ref(refs, "book", source_id)
+            for value in rollback.get("sources") or []:
+                if isinstance(value, dict):
+                    _add_ref(refs, "book", value.get("bookId"))
+            target = rollback.get("target")
+            if isinstance(target, dict):
+                _add_ref(refs, "book", target.get("bookId"))
         elif op == "add_phrase_candidate":
             _add_ref(refs, "phrase", payload.get("memoryId"))
             _add_ref(refs, "item", payload.get("memoryId"))

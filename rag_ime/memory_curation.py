@@ -235,6 +235,11 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
     raw_tags = _dicts(bundle.get("existingSemanticTags"))
     raw_edges = _dicts(bundle.get("existingTagEdges"))
     raw_books = _dicts(bundle.get("existingMemoryBooks"))
+    # Owner-scoped Atom-first bundles carry a complete identity-only Book
+    # index beside the bounded recalled Book bodies.  Keep that distinction
+    # through the compact model bundle; global catalog bundles can derive the
+    # same index from their complete Book snapshot below.
+    raw_book_index = _dicts(bundle.get("existingMemoryBookIndex"))
     upstream_truncation = {
         str(key): bool(value)
         for key, value in dict(bundle.get("catalogTruncated") or {}).items()
@@ -357,6 +362,17 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
             "sourceEventIds": _positive_ints(item.get("sourceEventIds")),
             "app": catalog_text(item.get("app"), max_chars=120),
             "project": catalog_text(item.get("project"), max_chars=120),
+            "knowledgeDomain": compact_whitespace(
+                str(item.get("knowledgeDomain") or "")
+            ),
+            "scopeKind": compact_whitespace(str(item.get("scopeKind") or "")),
+            "scopeId": compact_whitespace(str(item.get("scopeId") or "")),
+            "visibility": compact_whitespace(str(item.get("visibility") or "")),
+            "authorizationRevision": compact_whitespace(
+                str(item.get("authorizationRevision") or "")
+            ),
+            "bindingId": compact_whitespace(str(item.get("bindingId") or "")),
+            "scopeMode": compact_whitespace(str(item.get("scopeMode") or "")),
             "status": compact_whitespace(str(item.get("status") or "active")),
             "confidence": _float(item.get("confidence"), default=0.0),
             "qualityScore": _float(item.get("qualityScore"), default=0.0),
@@ -377,6 +393,11 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
             max_chars=500,
         )
     ]
+    atom_ref_by_id = {
+        compact_whitespace(str(item.get("atomId") or "")): str(item["ref"])
+        for item in atoms
+        if compact_whitespace(str(item.get("atomId") or ""))
+    }
     groups = [
         {
             "ref": f"G{index}",
@@ -475,8 +496,10 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         {
             "ref": f"B{index}",
             "bookId": compact_whitespace(str(item.get("bookId") or "")),
+            "bookKey": catalog_text(item.get("bookKey"), max_chars=120),
             "title": catalog_text(item.get("title"), max_chars=100),
             "summary": catalog_text(item.get("summary"), max_chars=320),
+            "aliases": catalog_strings(item.get("aliases"), incremental_limit=32),
             "tags": catalog_strings(item.get("tags"), incremental_limit=16),
             "surfaceHints": catalog_strings(
                 item.get("surfaceHints"),
@@ -494,6 +517,26 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
                 item.get("memoryAtomIds"),
                 incremental_limit=80,
             ),
+            "atomRefs": [
+                atom_ref_by_id[atom_id]
+                for atom_id in catalog_strings(
+                    item.get("memoryAtomIds"),
+                    incremental_limit=80,
+                )
+                if atom_id in atom_ref_by_id
+            ],
+            "memberAtoms": [
+                {"atomId": atom_id, "atomRef": atom_ref_by_id[atom_id]}
+                for atom_id in catalog_strings(
+                    item.get("memoryAtomIds"),
+                    incremental_limit=80,
+                )
+                if atom_id in atom_ref_by_id
+            ],
+            "bookType": compact_whitespace(
+                str(item.get("bookType") or "topic")
+            ),
+            "createdAtMs": _int(item.get("createdAtMs")),
             "project": catalog_text(item.get("project"), max_chars=120),
             "app": catalog_text(item.get("app"), max_chars=120),
             "ownerKind": compact_whitespace(str(item.get("ownerKind") or "")),
@@ -516,10 +559,115 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
                 str(item.get("contentHash") or "")
             ),
             "status": compact_whitespace(str(item.get("status") or "active")),
+            "supersededByBookId": compact_whitespace(
+                str(item.get("supersededByBookId") or "")
+            ),
         }
         for index, item in enumerate(books_source, start=1)
         if compact_whitespace(str(item.get("bookId") or ""))
     ]
+
+    # ``existingBooks`` is the bounded body view.  ``existingMemoryBookIndex``
+    # is the complete identity view used for continuity lookup.  Prefer an
+    # upstream owner index when present, then overlay the bounded body only
+    # for fields it actually supplies; global snapshots naturally use all
+    # Books.  Member IDs stay physical, while P* refs are supplied whenever
+    # the corresponding Atom is in this same compact snapshot.
+    raw_book_index_by_id: dict[str, dict[str, object]] = {}
+    for item in raw_book_index:
+        book_id = compact_whitespace(str(item.get("bookId") or ""))
+        if book_id:
+            raw_book_index_by_id[book_id] = dict(item)
+    for item in raw_books:
+        book_id = compact_whitespace(str(item.get("bookId") or ""))
+        if not book_id:
+            continue
+        previous = raw_book_index_by_id.get(book_id)
+        if previous is None:
+            raw_book_index_by_id[book_id] = dict(item)
+            continue
+        merged = dict(previous)
+        for field, value in item.items():
+            if field in {
+                "aliases",
+                "tags",
+                "queryExpansions",
+                "semanticGroupIds",
+                "groupIds",
+                "memoryAtomIds",
+                "atomIds",
+                "sourceEventIds",
+            }:
+                merged[field] = list(
+                    dict.fromkeys(
+                        [
+                            *_items(previous.get(field)),
+                            *_items(value),
+                        ]
+                    )
+                )
+            elif field not in merged or merged[field] in (None, "", []):
+                merged[field] = value
+        raw_book_index_by_id[book_id] = merged
+    book_index: list[dict[str, object]] = []
+    for item in raw_book_index_by_id.values():
+        book_id = compact_whitespace(str(item.get("bookId") or ""))
+        member_ids = catalog_strings(
+            item.get("memoryAtomIds") or item.get("atomIds"),
+            incremental_limit=256,
+        )
+        atom_refs = [
+            atom_ref_by_id[atom_id]
+            for atom_id in member_ids
+            if atom_id in atom_ref_by_id
+        ]
+        book_index.append(
+            {
+                "bookId": book_id,
+                "bookType": compact_whitespace(
+                    str(item.get("bookType") or "topic")
+                ),
+                "bookKey": catalog_text(item.get("bookKey"), max_chars=120),
+                "title": catalog_text(item.get("title"), max_chars=100),
+                "aliases": catalog_strings(item.get("aliases"), incremental_limit=64),
+                "tags": catalog_strings(item.get("tags"), incremental_limit=32),
+                "queryExpansions": catalog_strings(
+                    item.get("queryExpansions"), incremental_limit=64
+                ),
+                "semanticGroupIds": catalog_strings(
+                    item.get("semanticGroupIds") or item.get("groupIds"),
+                    incremental_limit=16,
+                ),
+                "memoryAtomIds": member_ids,
+                "atomRefs": atom_refs,
+                "memberAtoms": [
+                    {"atomId": atom_id, "atomRef": atom_ref_by_id[atom_id]}
+                    for atom_id in member_ids
+                    if atom_id in atom_ref_by_id
+                ],
+                "sourceEventIds": _positive_ints(item.get("sourceEventIds")),
+                "createdAtMs": _int(item.get("createdAtMs")),
+                "project": catalog_text(item.get("project"), max_chars=120),
+                "app": catalog_text(item.get("app"), max_chars=120),
+                "ownerKind": compact_whitespace(str(item.get("ownerKind") or "")),
+                "ownerId": compact_whitespace(str(item.get("ownerId") or "")),
+                "knowledgeDomain": compact_whitespace(
+                    str(item.get("knowledgeDomain") or "")
+                ),
+                "scopeKind": compact_whitespace(str(item.get("scopeKind") or "")),
+                "scopeId": compact_whitespace(str(item.get("scopeId") or "")),
+                "visibility": compact_whitespace(str(item.get("visibility") or "")),
+                "authorizationRevision": compact_whitespace(
+                    str(item.get("authorizationRevision") or "")
+                ),
+                "bindingId": compact_whitespace(str(item.get("bindingId") or "")),
+                "scopeMode": compact_whitespace(str(item.get("scopeMode") or "")),
+                "status": compact_whitespace(str(item.get("status") or "active")),
+                "supersededByBookId": compact_whitespace(
+                    str(item.get("supersededByBookId") or "")
+                ),
+            }
+        )
 
     catalog_truncated = {
         "atoms": len(raw_atoms) > len(atoms),
@@ -627,6 +775,7 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         "existingTags": tags,
         "existingTagEdges": edges,
         "existingBooks": books,
+        "existingMemoryBookIndex": book_index,
         "cursor": dict(bundle.get("cursor") or {}),
         "reconstruction": dict(bundle.get("reconstruction") or {}),
         "catalogTruncated": catalog_truncated,
@@ -964,6 +1113,10 @@ def curation_decisions_to_compile_output(
             project=project,
             source_ids=projection_source_ids,
             semantic_groups=semantic_groups,
+            existing_books=[
+                *_dicts(model_bundle.get("existingMemoryBookIndex")),
+                *_dicts(model_bundle.get("existingBooks")),
+            ],
         )
         tag_names = _resolve_decision_tags(
             decision,
@@ -1268,6 +1421,15 @@ def curation_decisions_to_compile_output(
             source_bundle=source_bundle,
         )
     )
+    book_merges = (
+        []
+        if catalog_incomplete
+        else _compile_book_merges(
+            decisions_payload,
+            source_bundle=source_bundle,
+            project=project,
+        )
+    )
     if catalog_audit:
         # A catalog audit is a consolidation pass, not a second projection
         # writer.  Existing Book/Group/Tag/edge projections are rebuilt by the
@@ -1299,6 +1461,10 @@ def curation_decisions_to_compile_output(
             group_source_ids=group_source_ids,
             atom_tags=atom_tags,
             project=project,
+            excluded_atom_ids={
+                *(str(item["oldId"]) for item in supersedes),
+                *(str(item["targetAtomId"]) for item in memory_retractions),
+            },
         )
         phrase_candidates, negative_phrases, lexicon_diagnostics = _derive_lexicon_lane(
             source_bundle=source_bundle,
@@ -1315,6 +1481,7 @@ def curation_decisions_to_compile_output(
         or semantic_groups
         or semantic_tags
         or tag_merges
+        or book_merges
         or phrase_candidates
         or negative_phrases
         else "no_changes"
@@ -1374,6 +1541,7 @@ def curation_decisions_to_compile_output(
         "semanticGroups": list(semantic_groups.values()),
         "semanticTags": list(semantic_tags.values()),
         "tagMerges": tag_merges,
+        "bookMerges": book_merges,
         "memoryAtoms": list(memory_atoms.values()),
         "tagEdges": tag_edges,
         "phraseCandidates": phrase_candidates,
@@ -1399,6 +1567,7 @@ def curation_decisions_to_compile_output(
             "derivedGroupCount": len(semantic_groups),
             "derivedTagCount": len(semantic_tags),
             "derivedBookCount": len(topic_books),
+            "bookMergeCount": len(book_merges),
             "derivedTagEdgeCount": len(tag_edges),
         },
         "lexiconDiagnostics": lexicon_diagnostics,
@@ -1564,7 +1733,124 @@ def _resolve_decision_groups(
     project: str,
     source_ids: list[int],
     semantic_groups: dict[str, dict[str, object]],
+    existing_books: list[Mapping[str, object]] | None = None,
 ) -> list[str]:
+    topic_books = [
+        dict(item)
+        for item in (existing_books or [])
+        if isinstance(item, Mapping)
+        and compact_whitespace(str(item.get("bookId") or ""))
+    ]
+    books_by_id = {
+        compact_whitespace(str(item.get("bookId") or "")): item
+        for item in topic_books
+    }
+
+    scope_fields = (
+        "ownerKind",
+        "ownerId",
+        "project",
+        "app",
+        "knowledgeDomain",
+        "scopeKind",
+        "scopeId",
+        "visibility",
+        "authorizationRevision",
+        "bindingId",
+        "scopeMode",
+    )
+
+    def requested_scope_value(field: str) -> str | None:
+        if field in decision and decision.get(field) is not None:
+            return compact_whitespace(str(decision.get(field) or ""))
+        if existing_atom is not None and field in existing_atom:
+            return compact_whitespace(str(existing_atom.get(field) or ""))
+        if field == "ownerKind":
+            return "user"
+        if field == "ownerId":
+            return "default"
+        if field == "project":
+            return compact_whitespace(project)
+        return None
+
+    def compatible_book(book: Mapping[str, object]) -> bool:
+        for field in scope_fields:
+            requested = requested_scope_value(field)
+            if requested is None or field not in book:
+                # A missing field is a legacy omission, not a wildcard value.
+                continue
+            candidate_value = compact_whitespace(str(book.get(field) or ""))
+            if field != "project" and not candidate_value:
+                # The model bundle materializes omitted legacy scope fields as
+                # empty strings.  Only an explicitly present project remains
+                # authoritative: project="" is a global scope, never a
+                # wildcard for a named project.
+                continue
+            if candidate_value != requested:
+                return False
+        return True
+
+    def same_scope(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
+        for field in scope_fields:
+            if field not in left or field not in right:
+                continue
+            if compact_whitespace(str(left.get(field) or "")) != compact_whitespace(
+                str(right.get(field) or "")
+            ):
+                return False
+        return True
+
+    def reference_candidates(value: object) -> list[dict[str, object]]:
+        reference = compact_whitespace(str(value or ""))
+        if not reference:
+            return []
+        direct = books_by_id.get(reference)
+        if direct is not None:
+            return [direct]
+        normalized = normalize_text(reference)
+        if not normalized:
+            return []
+        return [
+            item
+            for item in topic_books
+            if normalized
+            in {
+                normalize_text(str(item.get("bookKey") or "")),
+                normalize_text(str(item.get("title") or "")),
+                *{
+                    normalize_text(alias)
+                    for alias in _strings(item.get("aliases"), limit=64)
+                },
+            }
+        ]
+
+    def resolve_book(value: object) -> dict[str, object] | None:
+        resolved: dict[str, dict[str, object]] = {}
+        for candidate in reference_candidates(value):
+            current = dict(candidate)
+            visited: set[str] = set()
+            while True:
+                book_id = compact_whitespace(str(current.get("bookId") or ""))
+                if not book_id or book_id in visited or not compatible_book(current):
+                    current = {}
+                    break
+                visited.add(book_id)
+                if compact_whitespace(str(current.get("status") or "")) != "superseded":
+                    break
+                redirect_id = compact_whitespace(
+                    str(current.get("supersededByBookId") or "")
+                )
+                next_book = books_by_id.get(redirect_id)
+                if not redirect_id or next_book is None or not same_scope(current, next_book):
+                    current = {}
+                    break
+                current = dict(next_book)
+            if current:
+                resolved[compact_whitespace(str(current.get("bookId") or ""))] = current
+        if len(resolved) != 1:
+            return None
+        return next(iter(resolved.values()))
+
     refs = _strings(
         decision.get("topicRefs")
         or decision.get("groupRefs")
@@ -1572,16 +1858,73 @@ def _resolve_decision_groups(
         limit=4,
     )
     result: list[str] = []
+    rejected_known_reference = False
     for ref in refs:
+        known_reference = bool(reference_candidates(ref))
+        resolved_book = resolve_book(ref)
+        topic_book_id = (
+            compact_whitespace(str(resolved_book.get("bookId") or ""))
+            if resolved_book is not None
+            else ""
+        )
+        book_group_ids = (
+            _strings(
+                resolved_book.get("semanticGroupIds")
+                or resolved_book.get("groupIds"),
+                limit=4,
+            )
+            if resolved_book is not None
+            else []
+        )
         existing = groups_by_ref.get(ref)
         if existing is None and ref in source_groups_by_id:
             existing = source_groups_by_id[ref]
+        if existing is None and book_group_ids:
+            existing = (
+                groups_by_ref.get(book_group_ids[0])
+                or source_groups_by_id.get(book_group_ids[0])
+            )
         if existing is not None:
             group_id = compact_whitespace(str(existing.get("groupId") or ""))
             title = compact_whitespace(str(existing.get("title") or ""))
             description = compact_whitespace(str(existing.get("description") or ""))
             aliases = _strings(existing.get("aliases"), limit=24)
             tags = _strings(existing.get("tags"), limit=24)
+        elif resolved_book is not None:
+            raw_key = compact_whitespace(
+                str(resolved_book.get("bookKey") or resolved_book.get("bookId") or "")
+            )
+            key = _stable_key(raw_key or str(decision.get("topicTitle") or ""))
+            group_id = f"group:{key}" if key else ""
+            title = compact_whitespace(
+                str(
+                    resolved_book.get("title")
+                    or decision.get("topicTitle")
+                    or raw_key
+                    or "个人知识"
+                )
+            )
+            description = compact_whitespace(
+                str(
+                    decision.get("topicDescription")
+                    or resolved_book.get("summary")
+                    or ""
+                )
+            )
+            aliases = _strings(
+                [
+                    *(_items(resolved_book.get("aliases"))),
+                    decision.get("topicTitle"),
+                ],
+                limit=24,
+            )
+            tags = _strings(resolved_book.get("tags"), limit=24)
+        elif known_reference:
+            # A known ID/key/alias that is ambiguous or outside this scope is
+            # not permission to invent a parallel Book.  Keep the Atom itself
+            # eligible; the caller may still retain its existing group refs.
+            rejected_known_reference = True
+            continue
         else:
             raw_key = ref.removeprefix("new:").removeprefix("topic:")
             key = _stable_key(raw_key or str(decision.get("topicTitle") or ""))
@@ -1597,6 +1940,7 @@ def _resolve_decision_groups(
         current = semantic_groups.get(group_id)
         semantic_groups[group_id] = {
             "groupId": group_id,
+            "topicBookId": topic_book_id,
             # A later Atom may refer to a topic created earlier in the same
             # batch while also creating another topic.  Keep the first stable
             # title instead of overwriting it with the later Atom's
@@ -1637,12 +1981,12 @@ def _resolve_decision_groups(
             limit=4,
         )
         result.extend(group_id for group_id in existing_group_ids if _GROUP_ID_RE.fullmatch(group_id))
-    if not result and len(source_groups_by_id) == 1:
+    if not result and not rejected_known_reference and len(source_groups_by_id) == 1:
         only_group = next(iter(source_groups_by_id.values()))
         group_id = compact_whitespace(str(only_group.get("groupId") or ""))
         if _GROUP_ID_RE.fullmatch(group_id):
             result.append(group_id)
-    if not result:
+    if not result and not rejected_known_reference:
         group_id = "group:personal-knowledge"
         semantic_groups.setdefault(
             group_id,
@@ -1856,6 +2200,203 @@ def _compile_tag_merges(
     return result
 
 
+def _compile_book_merges(
+    decisions_payload: Mapping[str, object],
+    *,
+    source_bundle: Mapping[str, object],
+    project: str,
+) -> list[dict[str, object]]:
+    """Compile explicit, scope-checked Topic Book merge proposals.
+
+    Book similarity is only a discovery signal.  The model must name existing
+    physical Books and provide a semantic reason; the write/inspect paths
+    repeat the owner, project and scope checks against the frozen/live catalog.
+    """
+
+    if not _is_global_catalog_audit(source_bundle):
+        return []
+    model_bundle = build_memory_curation_model_bundle(source_bundle)
+    books = _dicts(source_bundle.get("existingMemoryBooks"))
+    books_by_id = {
+        compact_whitespace(str(item.get("bookId") or "")): item
+        for item in books
+        if compact_whitespace(str(item.get("bookId") or ""))
+    }
+    books_by_ref = {
+        compact_whitespace(str(item.get("ref") or "")): item
+        for item in _dicts(model_bundle.get("existingBooks"))
+        if compact_whitespace(str(item.get("ref") or ""))
+    }
+    books_by_key = {
+        compact_whitespace(str(item.get("bookKey") or "")): item
+        for item in books
+        if compact_whitespace(str(item.get("bookKey") or ""))
+    }
+    scope_fields = (
+        "ownerKind",
+        "ownerId",
+        "project",
+        "app",
+        "knowledgeDomain",
+        "scopeKind",
+        "scopeId",
+        "visibility",
+        "scopeMode",
+    )
+
+    def same_authority_scope(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
+        if any(
+            compact_whitespace(str(left.get(field) or ""))
+            != compact_whitespace(str(right.get(field) or ""))
+            for field in scope_fields
+        ):
+            return False
+        personal = (
+            compact_whitespace(str(left.get("knowledgeDomain") or ""))
+            == "personal_memory"
+            and compact_whitespace(str(right.get("knowledgeDomain") or ""))
+            == "personal_memory"
+        )
+        if not personal:
+            return (
+                compact_whitespace(str(left.get("authorizationRevision") or ""))
+                == compact_whitespace(str(right.get("authorizationRevision") or ""))
+                and compact_whitespace(str(left.get("bindingId") or ""))
+                == compact_whitespace(str(right.get("bindingId") or ""))
+            )
+        return all(
+            compact_whitespace(str(item.get("authorizationRevision") or ""))
+            == "memory-book-v1"
+            and compact_whitespace(str(item.get("bindingId") or ""))
+            == "personal-memory-book:"
+            + compact_whitespace(str(item.get("bookId") or ""))
+            for item in (left, right)
+        )
+
+    def resolve(value: object) -> dict[str, object] | None:
+        reference = compact_whitespace(str(value or ""))
+        if not reference:
+            return None
+        if reference in books_by_ref:
+            reference = compact_whitespace(
+                str(books_by_ref[reference].get("bookId") or "")
+            )
+        return (
+            books_by_id.get(reference)
+            or books_by_key.get(reference)
+            or next(
+                (
+                    item
+                    for item in books
+                    if normalize_text(reference)
+                    and normalize_text(reference)
+                    in {
+                        normalize_text(str(item.get("title") or "")),
+                        *{
+                            normalize_text(alias)
+                            for alias in _strings(item.get("aliases"), limit=64)
+                        },
+                    }
+                ),
+                None,
+            )
+        )
+
+    raw_items: list[Mapping[str, object]] = []
+    for key in ("bookMerges", "topicBookMerges", "mergeBooks"):
+        raw_items.extend(
+            item for item in _dicts(decisions_payload.get(key)) if isinstance(item, Mapping)
+        )
+    for item in _dicts(decisions_payload.get("decisions")):
+        action = compact_whitespace(str(item.get("action") or "")).lower()
+        if action in {"merge_book", "merge_topic_book", "book_merge"}:
+            raw_items.append(item)
+
+    result: list[dict[str, object]] = []
+    seen_sources: set[str] = set()
+    target_sources: dict[str, list[str]] = defaultdict(list)
+    for item in raw_items:
+        target = resolve(
+            item.get("targetRef")
+            or item.get("targetBookId")
+            or item.get("target")
+        )
+        raw_sources = item.get("sourceRefs") or item.get("sourceBookIds")
+        if raw_sources is None:
+            raw_sources = [
+                item.get("sourceRef")
+                or item.get("sourceBookId")
+                or item.get("source")
+            ]
+        source_items = [resolve(value) for value in _items(raw_sources)]
+        source_items = [item for item in source_items if item is not None]
+        if target is None or not source_items:
+            continue
+        target_id = compact_whitespace(str(target.get("bookId") or ""))
+        if (
+            not target_id
+            or compact_whitespace(str(target.get("bookType") or "topic")) != "topic"
+            or compact_whitespace(str(target.get("status") or "")) not in {"active", "approved"}
+        ):
+            continue
+        confidence = max(0.0, min(1.0, _float(item.get("confidence"), default=0.0)))
+        reason = compact_whitespace(
+            str(item.get("reason") or item.get("semanticReason") or "")
+        )[:360]
+        # A score alone is never authorization.  Require a human-readable
+        # semantic attestation and a high-confidence explicit proposal; the
+        # independent verifier and live catalog gate still decide legality.
+        if not reason or confidence < 0.8:
+            continue
+        if item.get("confirmed") is False or item.get("semanticMatch") is False:
+            continue
+        accepted_sources: list[str] = []
+        for source in source_items:
+            source_id = compact_whitespace(str(source.get("bookId") or ""))
+            if (
+                not source_id
+                or source_id == target_id
+                or source_id in seen_sources
+                or compact_whitespace(str(source.get("bookType") or "topic")) != "topic"
+                or compact_whitespace(str(source.get("status") or "")) not in {"active", "approved"}
+                or not same_authority_scope(source, target)
+                or (
+                    compact_whitespace(project)
+                    and compact_whitespace(str(source.get("project") or ""))
+                    != compact_whitespace(project)
+                )
+            ):
+                continue
+            accepted_sources.append(source_id)
+        if not accepted_sources:
+            continue
+        target_sources.setdefault(target_id, []).extend(accepted_sources)
+        seen_sources.update(accepted_sources)
+        result.append(
+            {
+                "targetBookId": target_id,
+                "sourceBookIds": accepted_sources,
+                "ownerKind": compact_whitespace(str(target.get("ownerKind") or "")),
+                "ownerId": compact_whitespace(str(target.get("ownerId") or "")),
+                "project": compact_whitespace(str(target.get("project") or project)),
+                "reason": reason,
+                "confidence": confidence,
+            }
+        )
+    # Coalesce repeated proposals for one target so each source has one
+    # deterministic redirect and one rollback record.
+    coalesced: list[dict[str, object]] = []
+    for target_id, source_ids in target_sources.items():
+        first = next(item for item in result if item["targetBookId"] == target_id)
+        coalesced.append(
+            {
+                **first,
+                "sourceBookIds": list(dict.fromkeys(source_ids)),
+            }
+        )
+    return coalesced
+
+
 def _derive_tag_edges(
     *,
     atom_tags: Mapping[str, list[str]],
@@ -1908,49 +2449,150 @@ def _derive_topic_books(
     group_source_ids: Mapping[str, list[int]],
     atom_tags: Mapping[str, list[str]],
     project: str,
+    excluded_atom_ids: set[str] | None = None,
 ) -> dict[str, dict[str, object]]:
-    existing_books = _dicts(source_bundle.get("existingMemoryBooks"))
+    existing_by_id: dict[str, dict[str, object]] = {}
+    for item in [
+        *_dicts(source_bundle.get("existingMemoryBookIndex")),
+        *_dicts(source_bundle.get("existingMemoryBooks")),
+    ]:
+        book_id = compact_whitespace(str(item.get("bookId") or ""))
+        if not book_id:
+            continue
+        previous = existing_by_id.get(book_id)
+        if previous is None:
+            existing_by_id[book_id] = dict(item)
+            continue
+        merged = dict(previous)
+        for field, value in item.items():
+            if field in {
+                "aliases",
+                "tags",
+                "queryExpansions",
+                "semanticGroupIds",
+                "groupIds",
+                "memoryAtomIds",
+                "atomIds",
+                "sourceEventIds",
+            }:
+                merged[field] = list(
+                    dict.fromkeys(
+                        [*_items(previous.get(field)), *_items(value)]
+                    )
+                )
+            elif field not in merged or merged[field] in (None, "", []):
+                merged[field] = value
+        existing_by_id[book_id] = merged
+    existing_books = list(existing_by_id.values())
+    known_atoms = {str(item.get("atomId") or item.get("id") or ""): item
+                   for item in _dicts(source_bundle.get("existingMemoryAtoms"))}
+    known_atoms.update(memory_atoms)
+    excluded = set(excluded_atom_ids or ())
+    excluded.update(str(item.get("supersedesId")) for item in memory_atoms.values()
+                    if item.get("supersedesId"))
+
+    def resolve_book(book: Mapping[str, object] | None) -> dict[str, object] | None:
+        current = dict(book or {})
+        visited: set[str] = set()
+        while current:
+            book_id = compact_whitespace(str(current.get("bookId") or ""))
+            if not book_id or book_id in visited:
+                return None
+            visited.add(book_id)
+            book_project = compact_whitespace(str(current.get("project") or ""))
+            if book_project and project and book_project != compact_whitespace(project):
+                return None
+            if compact_whitespace(str(current.get("status") or "")) != "superseded":
+                return current
+            redirect_id = compact_whitespace(
+                str(current.get("supersededByBookId") or "")
+            )
+            if not redirect_id:
+                return None
+            current = dict(existing_by_id.get(redirect_id) or {})
+        return None
+
     result: dict[str, dict[str, object]] = {}
     for group_id, atom_ids in group_atom_ids.items():
         group = semantic_groups.get(group_id)
         if group is None or not atom_ids:
             continue
-        existing = next(
-            (
-                item
-                for item in existing_books
-                if group_id in _strings(item.get("semanticGroupIds"), limit=8)
-            ),
-            None,
+        explicit_book_id = compact_whitespace(
+            str(group.get("topicBookId") or group.get("bookId") or "")
         )
+        existing = (
+            resolve_book(existing_by_id.get(explicit_book_id))
+            if explicit_book_id
+            else None
+        )
+        if existing is None:
+            existing = next(
+                (
+                    resolve_book(item)
+                    for item in existing_books
+                    if group_id in _strings(item.get("semanticGroupIds"), limit=8)
+                    and (
+                        compact_whitespace(str(item.get("project") or ""))
+                        == compact_whitespace(project)
+                        or not compact_whitespace(str(item.get("project") or ""))
+                    )
+                    and resolve_book(item) is not None
+                ),
+                None,
+            )
+        if existing is None:
+            group_terms = {
+                normalize_text(str(value or ""))
+                for value in [
+                    group.get("title"),
+                    *_strings(group.get("aliases"), limit=16),
+                ]
+                if normalize_text(str(value or ""))
+            }
+            alias_matches = [
+                resolved
+                for item in existing_books
+                if (
+                    compact_whitespace(str(item.get("project") or ""))
+                    == compact_whitespace(project)
+                    or not compact_whitespace(str(item.get("project") or ""))
+                )
+                and group_terms.intersection(
+                    {
+                        normalize_text(str(item.get("title") or "")),
+                        normalize_text(str(item.get("bookKey") or "")),
+                        *{
+                            normalize_text(alias)
+                            for alias in _strings(item.get("aliases"), limit=32)
+                        },
+                    }
+                )
+                for resolved in [resolve_book(item)]
+                if resolved is not None
+            ]
+            if len(alias_matches) == 1:
+                existing = alias_matches[0]
         title = compact_whitespace(
             str((existing or {}).get("title") or group.get("title") or "个人知识")
         )
+        member_ids = _unique_strings([
+            *atom_ids, *_strings((existing or {}).get("memoryAtomIds"), limit=256),
+        ], limit=256)
+        member_ids = [atom_id for atom_id in member_ids if atom_id not in excluded
+                      and str(known_atoms.get(atom_id, {}).get("status") or "active") in {"active", "approved"}
+                      and str(known_atoms.get(atom_id, {}).get("claimState") or "current") == "current"]
         statements = _unique_strings(
             [
-                compact_whitespace(str(memory_atoms[atom_id].get("canonicalText") or ""))
-                for atom_id in atom_ids
-                if atom_id in memory_atoms
+                compact_whitespace(str(known_atoms[atom_id].get("canonicalText") or known_atoms[atom_id].get("text") or ""))
+                for atom_id in member_ids
+                if atom_id in known_atoms
             ],
             limit=24,
         )
-        previous_summary = compact_whitespace(str((existing or {}).get("summary") or ""))
-        additions = [
-            statement
-            for statement in statements
-            if normalize_text(statement) not in normalize_text(previous_summary)
-        ]
-        if previous_summary:
-            summary = previous_summary
-            if additions:
-                summary = compact_whitespace(
-                    f"{previous_summary} 本次补充：" + "；".join(additions)
-                )
-        else:
-            summary = compact_whitespace(
-                f"本主题汇总经审核的长期记忆：" + "；".join(statements)
-            )
-        summary = truncate_text(summary, 900)
+        # The bounded summary is rebuilt from known current members. Previously
+        # generated prose is not independent evidence and cannot carry a
+        # superseded conclusion forward or consume the new correction's budget.
+        summary = truncate_text("；".join(statements), 900)
         book_key = compact_whitespace(str((existing or {}).get("bookKey") or ""))
         if not book_key:
             book_key = group_id.removeprefix("group:")
@@ -1974,6 +2616,14 @@ def _derive_topic_books(
             "bookKey": book_key,
             "title": title,
             "summary": summary,
+            "aliases": _unique_strings(
+                [
+                    *_strings((existing or {}).get("aliases"), limit=32),
+                    *_strings(group.get("aliases"), limit=16),
+                    title,
+                ],
+                limit=48,
+            ),
             "tags": tags,
             "surfaceHints": [],
             "queryExpansions": _unique_strings(
@@ -1987,13 +2637,7 @@ def _derive_topic_books(
                 ],
                 limit=512,
             ),
-            "memoryAtomIds": _unique_strings(
-                [
-                    *_strings((existing or {}).get("memoryAtomIds"), limit=256),
-                    *atom_ids,
-                ],
-                limit=256,
-            ),
+            "memoryAtomIds": member_ids,
             "semanticGroupIds": [group_id],
             "project": project,
             "app": "",

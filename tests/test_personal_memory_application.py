@@ -170,6 +170,93 @@ class PersonalMemoryApplicationTests(unittest.TestCase):
         self.assertEqual(rollback_projection_status["unbookedAtomCount"], 1)
         self.assertNotEqual(first_run, second_run)
 
+    def test_projector_folds_redirected_groups_and_drops_retired_members(self) -> None:
+        from rag_ime.memory_book_compiler import _apply_memory_book_merge
+        from rag_ime.personal_memory_books import project_personal_memory_books
+
+        for ordinal, text in enumerate(
+            [
+                "用户希望回答简洁自然。",
+                "用户希望解释有具体例子。",
+                "用户希望提问过程自然。",
+                "用户希望追问紧扣当前问题。",
+            ],
+            start=1,
+        ):
+            event_id, evidence_id = self._evidence(ordinal, text)
+            self._apply_atom(
+                ordinal=ordinal,
+                event_id=event_id,
+                evidence_id=evidence_id,
+                claim_key=f"user:projector:{ordinal}",
+                canonical=text,
+            )
+
+        with self.core._connect() as conn:
+            conn.execute("DELETE FROM memory_atom_tags")
+            for tag, members in (
+                ("回答风格", [1, 2]),
+                ("提问风格", [3, 4]),
+            ):
+                tag_id = conn.execute(
+                    "INSERT INTO memory_tags(tag, normalized_tag, created_at_ms, updated_at_ms) "
+                    "VALUES (?, ?, 1, 1)",
+                    (tag, tag),
+                ).lastrowid
+                for ordinal in members:
+                    conn.execute(
+                        "INSERT INTO memory_atom_tags(memory_atom_id, tag_id) VALUES (?, ?)",
+                        (f"atom:personal:{ordinal}", str(tag_id)),
+                    )
+            project_personal_memory_books(conn, current_ms=10_000)
+            books = {
+                str(row["title"]): dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM memory_books WHERE status = 'active'"
+                ).fetchall()
+            }
+            target = books["回答风格"]
+            source = books["提问风格"]
+            _apply_memory_book_merge(
+                conn,
+                {
+                    "targetBookId": target["book_id"],
+                    "sourceBookIds": [source["book_id"]],
+                    "reason": "controlled projector regression",
+                },
+            )
+            project_personal_memory_books(conn, current_ms=11_000)
+            merged = conn.execute(
+                "SELECT memory_atom_ids_json, summary, metadata_json FROM memory_books WHERE book_id = ?",
+                (target["book_id"],),
+            ).fetchone()
+            self.assertEqual(
+                set(json.loads(merged["memory_atom_ids_json"])),
+                {f"atom:personal:{ordinal}" for ordinal in range(1, 5)},
+            )
+            self.assertIn(source["book_id"], json.loads(merged["metadata_json"])["mergedSourceBookIds"])
+            self.assertEqual(
+                conn.execute(
+                    "SELECT status FROM memory_books WHERE book_id = ?",
+                    (source["book_id"],),
+                ).fetchone()[0],
+                "superseded",
+            )
+            self.assertTrue(personal_memory_book_projection_status(conn)["inSync"])
+
+            conn.execute(
+                "UPDATE memory_atoms SET status = 'retracted', claim_state = 'retracted' "
+                "WHERE id = 'atom:personal:1'"
+            )
+            project_personal_memory_books(conn, current_ms=12_000)
+            retired = conn.execute(
+                "SELECT memory_atom_ids_json, summary FROM memory_books WHERE book_id = ?",
+                (target["book_id"],),
+            ).fetchone()
+            self.assertNotIn("atom:personal:1", json.loads(retired["memory_atom_ids_json"]))
+            self.assertNotIn("用户希望回答简洁自然。", retired["summary"])
+            self.assertTrue(personal_memory_book_projection_status(conn)["inSync"])
+
     def test_catalog_audit_quarantines_derived_memory_but_keeps_evidence(self) -> None:
         first_event, first_evidence = self._evidence(
             1,

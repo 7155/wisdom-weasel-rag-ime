@@ -583,6 +583,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         book_type = str(row["book_type"] or "")
         book_key = str(row["book_key"] or "")
         stored_metadata = _json_object(row["metadata_json"])
+        topic_aliases = _json_list(stored_metadata.get("topicAliases"))
         atom_ids = _json_list(row["memory_atom_ids_json"])
         if stored_metadata.get("retrievalStale") is True or not _current_atom_ids(
             conn,
@@ -600,7 +601,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "source_id": book_id,
                 "raw_text": raw_text,
                 "tags_text": " ".join(_json_list(row["tags_json"])),
-                "aliases_text": "",
+                "aliases_text": " ".join(topic_aliases),
                 "surface_hints_text": " ".join(_json_list(row["surface_hints_json"])),
                 "query_expansions_text": " ".join(_json_list(row["query_expansions_json"])),
                 "time_key": f"{book_type}:{book_key}" if book_type and book_key else book_key,

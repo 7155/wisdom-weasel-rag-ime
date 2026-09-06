@@ -2,15 +2,13 @@
 
 Updated: 2026-09-05
 
-This bounded focus set uses `proposed`, `active`, `blocked`, `completed`, or
-`cancelled`. Read Runtime activity, owners, worktree state, and Tool progress
-from authoritative projections.
+Outcome statuses describe focus; Runtime projections own activity, worktree
+state and Tool progress.
 
 ## Evidence Boundary
 
-Entries separate source/test, install, foreground, and distribution evidence.
-Git, installed identity, Runtime state, and release gates must be checked live;
-machine evidence remains in `release/product-status.json` and its audit.
+Separate source, installation, foreground, and distribution evidence. Verify
+Git and Runtime live; `release/product-status.json` and its audit record release gates.
 
 ## Current Focus
 
@@ -69,10 +67,8 @@ The parent selects their task, context refs, Skills, model/model card, thinking,
 access, tools, workspace, and peer-call permission. A child result has
 `evidence_only` authority until its parent verifies and integrates it.
 
-Current conservative parallel/depth limits are an implementation boundary, not
-the product goal. Scale should come from event pagination, bounded result
-retention, cancellation, resource budgets, and a compact UI—not a heavier Room
-Kernel.
+Scale concurrency through pagination, bounded results, cancellation, resource
+budgets and compact UI. Current parallel/depth limits constrain implementation.
 
 ## O4 — Self-Hosting Harness
 
@@ -98,15 +94,15 @@ the root `AGENTS.md`; Session creation never writes project files.
 
 ## O5–O8 — Product Surfaces And Release
 
-These Outcomes remain visible because Session/Room success cannot justify a
-false whole-product claim. UI projections must use Runtime truth; governed
-Memory/Knowledge must keep provenance and evaluation; native adapters require
-foreground evidence; release remains blocked until the machine-readable gates
-and distribution evidence are current.
+Session/Room success does not prove whole-product readiness. UI requires Runtime
+truth, Memory requires provenance and evaluation, native adapters require foreground
+evidence, and distribution requires current release gates.
+
+The [2026-09-06 memory continuity result](eval/memory-topic-selfboot/RESULT.md)
+adds stable Book reuse, governed merges and current-member summaries. Pi development
+required Session recovery; unattended self-hosting remains unproven.
 
 ## Condensed History
 
-Older Kernel-heavy Room plans, mandatory quality/review stages, per-task
-worktree ceremony, and giant self-contained review bundles are historical
-evidence, not current workflow. Persisted migrations remain append-only;
-source paths are deleted only after current consumers are proven absent.
+Retired Room/Kernel workflows and mandatory review pipelines remain historical.
+Migrations stay append-only; delete replaced paths only after proving no consumers.

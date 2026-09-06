@@ -10,6 +10,7 @@ from rag_ime.deepseek_config import load_deepseek_config
 from rag_ime.deepseek_memory_organizer import (
     DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION,
     DeepSeekMemoryOrganizer,
+    DeepSeekMemoryOrganizerError,
     ManagedPiMemoryOrganizer,
     _bind_atom_first_canonical_evidence,
     _bind_curation_local_create_references,
@@ -402,6 +403,565 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
             self.assertNotIn("sourceRef", semantic_input)
             self.assertNotIn("contextGroupId", semantic_input)
 
+    def test_recovery_requests_keep_narrow_topic_rules_before_verifier(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def response(payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps(payload)},
+                    }
+                ]
+            }
+
+        def curation_payload() -> dict[str, object]:
+            return {
+                "create": [
+                    {
+                        "e": "E1",
+                        "text": "用户偏好简洁回答",
+                        "kind": "durable_preference",
+                        "g": "new:answer-style",
+                        "topicTitle": "回答风格",
+                        "confidence": 0.9,
+                    }
+                ],
+                "attach": [],
+                "update": [],
+                "supersede": [],
+                "merge": [],
+                "retract": [],
+                "ignore": [],
+                "tagMerges": [],
+                "warnings": [],
+            }
+
+        class RecoveryExecutor:
+            provider = "openai-codex"
+            model_id = "gpt-5.6-luna"
+
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del max_tokens
+                calls.append(
+                    {
+                        "messages": messages,
+                        "phase": phase,
+                        "isolated": isolated,
+                    }
+                )
+                if phase in {
+                    "atom-first-curation",
+                    "memory-catalog-consolidation",
+                }:
+                    return {
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"content": "not-json"},
+                            }
+                        ]
+                    }
+                if phase == "atom-first-repair":
+                    return response(curation_payload())
+                if phase == "memory-catalog-consolidation-repair":
+                    return response(
+                        {
+                            "merge": [],
+                            "tagMerges": [],
+                            "bookMerges": [],
+                            "warnings": [],
+                        }
+                    )
+                if phase in {
+                    "atom-first-verifier",
+                    "memory-catalog-consolidation-verifier",
+                }:
+                    packet = json.loads(messages[1]["content"])
+                    return response(
+                        {
+                            "v": 1,
+                            "ok": 1,
+                            "coveredEvidenceRefs": packet.get(
+                                "expectedEvidenceRefs", []
+                            ),
+                            "checkedActionCount": packet["expectedActionCount"],
+                            "decisionDigest": packet["decisionDigest"],
+                            "findings": [],
+                            "errors": [],
+                        }
+                    )
+                raise AssertionError(f"unexpected phase: {phase}")
+
+        organizer = ManagedPiMemoryOrganizer(RecoveryExecutor())
+        organizer.compile_memory_curation(
+            bundle={
+                "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
+                "project": "ime",
+                "recentEvents": [
+                    {
+                        "eventId": 1,
+                        "sourceEventIds": [1],
+                        "text": "用户偏好简洁回答",
+                        "createdAtMs": 1,
+                        "finalized": True,
+                        "memoryEligible": True,
+                    }
+                ],
+                "existingMemoryAtoms": [],
+                "existingSemanticGroups": [],
+                "existingSemanticTags": [],
+                "existingMemoryBooks": [],
+                "existingTagEdges": [],
+            },
+            project="ime",
+        )
+        organizer.compile_memory_curation(
+            bundle={
+                "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
+                "project": "ime",
+                "curationScope": "global",
+                "catalogAudit": True,
+                "catalogOnly": True,
+                "catalogComplete": True,
+                "catalogTruncated": {},
+                "recentEvents": [],
+                "existingMemoryAtoms": [],
+                "existingSemanticGroups": [],
+                "existingSemanticTags": [],
+                "existingMemoryBooks": [],
+                "existingTagEdges": [],
+            },
+            project="ime",
+        )
+
+        recovery_calls = {
+            str(call["phase"]): call
+            for call in calls
+            if str(call["phase"])
+            in {
+                "atom-first-repair",
+                "memory-catalog-consolidation-repair",
+            }
+        }
+        common_rules = (
+            "同一稳定对象",
+            "同一问题/决策轴",
+            "窄标题",
+            "项目名",
+            "RAG/输入法上位标签",
+            "App",
+            "日期",
+            "共现",
+            "相似词",
+        )
+        for phase, call in recovery_calls.items():
+            prompt = str(call["messages"][0]["content"])
+            for rule in common_rules:
+                self.assertIn(rule, prompt, phase)
+        incremental_prompt = str(
+            recovery_calls["atom-first-repair"]["messages"][0]["content"]
+        )
+        self.assertIn(
+            "scope、project、binding 的空字符串是快照中的明确值",
+            incremental_prompt,
+        )
+        self.assertIn("不能视为缺失", incremental_prompt)
+
+        self.assertEqual(
+            [str(call["phase"]) for call in calls],
+            [
+                "atom-first-curation",
+                "atom-first-repair",
+                "atom-first-verifier",
+                "memory-catalog-consolidation",
+                "memory-catalog-consolidation-repair",
+                "memory-catalog-consolidation-verifier",
+            ],
+        )
+        self.assertTrue(calls[2]["isolated"])
+        self.assertTrue(calls[5]["isolated"])
+
+    def test_verifier_contract_repair_corrects_digest_without_semantic_repair(self) -> None:
+        phases: list[str] = []
+
+        def response(payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps(payload)},
+                    }
+                ]
+            }
+
+        class DigestRepairExecutor:
+            provider = "openai-codex"
+            model_id = "gpt-5.6-luna"
+            contract_repairs = 0
+
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del max_tokens, isolated
+                phases.append(phase)
+                if phase == "atom-first-curation":
+                    return response(
+                        {
+                            "create": [
+                                {
+                                    "e": "E1",
+                                    "text": "用户偏好简洁回答",
+                                    "kind": "durable_preference",
+                                    "g": "new:answer-style",
+                                    "topicTitle": "回答风格",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                            "attach": [],
+                            "update": [],
+                            "supersede": [],
+                            "merge": [],
+                            "retract": [],
+                            "ignore": [],
+                            "tagMerges": [],
+                            "warnings": [],
+                        }
+                    )
+                if phase == "atom-first-verifier":
+                    packet = json.loads(messages[1]["content"])
+                    digest = packet["decisionDigest"]
+                    wrong_digest = digest[:-1] + ("0" if digest[-1] != "0" else "1")
+                    return response(
+                        {
+                            "v": 1,
+                            "ok": 1,
+                            "coveredEvidenceRefs": ["E1"],
+                            "checkedActionCount": packet["expectedActionCount"],
+                            "decisionDigest": wrong_digest,
+                            "findings": [],
+                            "errors": [],
+                        }
+                    )
+                if phase == "atom-first-verifier-contract-repair":
+                    self.contract_repairs += 1
+                    packet = json.loads(messages[1]["content"])
+                    return response(
+                        {
+                            "v": 1,
+                            "ok": 1,
+                            "coveredEvidenceRefs": packet["expectedEvidenceRefs"],
+                            "checkedActionCount": packet["expectedActionCount"],
+                            "decisionDigest": packet["decisionDigest"],
+                            "findings": [],
+                            "errors": [],
+                        }
+                    )
+                raise AssertionError(f"unexpected phase: {phase}")
+
+        executor = DigestRepairExecutor()
+        result = ManagedPiMemoryOrganizer(executor).compile_memory_curation(
+            bundle={
+                "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
+                "project": "ime",
+                "recentEvents": [
+                    {
+                        "eventId": 1,
+                        "sourceEventIds": [1],
+                        "text": "用户偏好简洁回答",
+                        "createdAtMs": 1,
+                        "finalized": True,
+                        "memoryEligible": True,
+                    }
+                ],
+                "existingMemoryAtoms": [],
+                "existingSemanticGroups": [],
+                "existingSemanticTags": [],
+                "existingMemoryBooks": [],
+                "existingTagEdges": [],
+            },
+            project="ime",
+        )
+        self.assertTrue(result["independentlyVerified"])
+        self.assertEqual(executor.contract_repairs, 1)
+        self.assertEqual(
+            phases,
+            [
+                "atom-first-curation",
+                "atom-first-verifier",
+                "atom-first-verifier-contract-repair",
+            ],
+        )
+        self.assertTrue(
+            result["modelDiagnostics"]["independentVerification"]["contractRepair"]["passed"]
+        )
+
+    def test_verifier_contract_repair_still_rejects_a_persistent_digest_error(self) -> None:
+        phases: list[str] = []
+
+        def response(payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps(payload)},
+                    }
+                ]
+            }
+
+        class PersistentDigestErrorExecutor:
+            provider = "openai-codex"
+            model_id = "gpt-5.6-luna"
+            contract_repairs = 0
+
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del max_tokens, isolated
+                phases.append(phase)
+                if phase == "atom-first-curation":
+                    return response(
+                        {
+                            "create": [
+                                {
+                                    "e": "E1",
+                                    "text": "用户偏好简洁回答",
+                                    "kind": "durable_preference",
+                                    "g": "new:answer-style",
+                                    "topicTitle": "回答风格",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                            "attach": [],
+                            "update": [],
+                            "supersede": [],
+                            "merge": [],
+                            "retract": [],
+                            "ignore": [],
+                            "tagMerges": [],
+                            "warnings": [],
+                        }
+                    )
+                if phase in {
+                    "atom-first-verifier",
+                    "atom-first-verifier-contract-repair",
+                }:
+                    if phase == "atom-first-verifier-contract-repair":
+                        self.contract_repairs += 1
+                    packet = json.loads(messages[1]["content"])
+                    digest = packet["decisionDigest"]
+                    wrong_digest = digest[:-1] + ("0" if digest[-1] != "0" else "1")
+                    return response(
+                        {
+                            "v": 1,
+                            "ok": 1,
+                            "coveredEvidenceRefs": packet.get(
+                                "expectedEvidenceRefs", ["E1"]
+                            ),
+                            "checkedActionCount": packet["expectedActionCount"],
+                            "decisionDigest": wrong_digest,
+                            "findings": [],
+                            "errors": [],
+                        }
+                    )
+                raise AssertionError(f"unexpected phase: {phase}")
+
+        executor = PersistentDigestErrorExecutor()
+        with self.assertRaisesRegex(
+            DeepSeekMemoryOrganizerError,
+            "response-contract repair",
+        ):
+            ManagedPiMemoryOrganizer(executor).compile_memory_curation(
+                bundle={
+                    "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
+                    "project": "ime",
+                    "recentEvents": [
+                        {
+                            "eventId": 1,
+                            "sourceEventIds": [1],
+                            "text": "用户偏好简洁回答",
+                            "createdAtMs": 1,
+                            "finalized": True,
+                            "memoryEligible": True,
+                        }
+                    ],
+                    "existingMemoryAtoms": [],
+                    "existingSemanticGroups": [],
+                    "existingSemanticTags": [],
+                    "existingMemoryBooks": [],
+                    "existingTagEdges": [],
+                },
+                project="ime",
+            )
+        self.assertEqual(executor.contract_repairs, 1)
+        self.assertEqual(
+            phases,
+            [
+                "atom-first-curation",
+                "atom-first-verifier",
+                "atom-first-verifier-contract-repair",
+            ],
+        )
+        self.assertNotIn("atom-first-repair", phases)
+
+    def test_unparsed_verifier_response_uses_semantic_repair_not_metadata_repair(self) -> None:
+        phases: list[str] = []
+        verifier_calls = 0
+
+        def response(payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps(payload)},
+                    }
+                ]
+            }
+
+        class UnparsedVerifierExecutor:
+            provider = "openai-codex"
+            model_id = "gpt-5.6-luna"
+
+            def complete(
+                self,
+                *,
+                messages,
+                max_tokens=None,
+                phase="model-call",
+                isolated=False,
+            ):
+                del max_tokens, isolated
+                nonlocal verifier_calls
+                phases.append(phase)
+                if phase == "atom-first-curation":
+                    return response(
+                        {
+                            "create": [
+                                {
+                                    "e": "E1",
+                                    "text": "用户偏好简洁回答",
+                                    "kind": "durable_preference",
+                                    "g": "new:answer-style",
+                                    "topicTitle": "回答风格",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                            "attach": [],
+                            "update": [],
+                            "supersede": [],
+                            "merge": [],
+                            "retract": [],
+                            "ignore": [],
+                            "tagMerges": [],
+                            "warnings": [],
+                        }
+                    )
+                if phase == "atom-first-verifier":
+                    verifier_calls += 1
+                    if verifier_calls == 1:
+                        return {
+                            "choices": [
+                                {
+                                    "finish_reason": "stop",
+                                    "message": {"content": "not-json"},
+                                }
+                            ]
+                        }
+                    packet = json.loads(messages[1]["content"])
+                    return response(
+                        {
+                            "v": 1,
+                            "ok": 1,
+                            "coveredEvidenceRefs": ["E1"],
+                            "checkedActionCount": packet["expectedActionCount"],
+                            "decisionDigest": packet["decisionDigest"],
+                            "findings": [],
+                            "errors": [],
+                        }
+                    )
+                if phase == "atom-first-repair":
+                    return response(
+                        {
+                            "create": [
+                                {
+                                    "e": "E1",
+                                    "text": "用户偏好简洁回答",
+                                    "kind": "durable_preference",
+                                    "g": "new:answer-style",
+                                    "topicTitle": "回答风格",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                            "attach": [],
+                            "update": [],
+                            "supersede": [],
+                            "merge": [],
+                            "retract": [],
+                            "ignore": [],
+                            "tagMerges": [],
+                            "warnings": [],
+                        }
+                    )
+                raise AssertionError(f"unexpected phase: {phase}")
+
+        executor = UnparsedVerifierExecutor()
+        with self.assertRaisesRegex(
+            DeepSeekMemoryOrganizerError,
+            "independent memory curation verifier rejected",
+        ):
+            ManagedPiMemoryOrganizer(
+                executor,
+                max_semantic_repair_rounds=1,
+            ).compile_memory_curation(
+                bundle={
+                    "schemaVersion": "rag-ime.memory-book-source-bundle.v1",
+                    "project": "ime",
+                    "recentEvents": [
+                        {
+                            "eventId": 1,
+                            "sourceEventIds": [1],
+                            "text": "用户偏好简洁回答",
+                            "createdAtMs": 1,
+                            "finalized": True,
+                            "memoryEligible": True,
+                        }
+                    ],
+                    "existingMemoryAtoms": [],
+                    "existingSemanticGroups": [],
+                    "existingSemanticTags": [],
+                    "existingMemoryBooks": [],
+                    "existingTagEdges": [],
+                },
+                project="ime",
+            )
+        self.assertEqual(
+            phases,
+            [
+                "atom-first-curation",
+                "atom-first-verifier",
+                "atom-first-repair",
+            ],
+        )
+        self.assertNotIn("atom-first-verifier-contract-repair", phases)
+
     def test_managed_luna_repairs_one_semantic_verifier_rejection(self) -> None:
         phases: list[str] = []
         verifier_calls = 0
@@ -579,6 +1139,7 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
                 "atom-first-verifier",
             ],
         )
+        self.assertNotIn("atom-first-verifier-contract-repair", phases)
         self.assertEqual(len(result["memoryAtoms"]), 2)
         self.assertTrue(
             result["modelDiagnostics"]["semanticRepair"]["passed"]

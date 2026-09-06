@@ -260,10 +260,14 @@ GLOBAL_MEMORY_CATALOG_CONSOLIDATION_INSTRUCTION = (
     "Duplicate Books and over-split relations are candidate signals only: "
     "propose exact-equivalence Atom merges and Tag merges only when two "
     "physical Tags have the same normalized name or an explicit direct alias. "
+    "For existing topic Books, a Book merge is allowed only when the complete "
+    "owner/project/scope/binding identity matches and the catalog directly "
+    "supports one long-lived topic; similarity alone is never authorization. "
     "Preserve every evidence reference. Do not create, update, retract, or "
-    "rewrite facts, and do not directly change Books, Groups, Tag edges, or "
-    "memberships. The dedicated memory-catalog-consolidation curator and its "
-    "independent verifier must reject every other operation."
+    "rewrite facts; do not rewrite Book fields, Groups, Tag edges, or "
+    "memberships outside a governed Book merge. The dedicated "
+    "memory-catalog-consolidation curator and its independent verifier must "
+    "reject every other operation."
 )
 _MAX_EMBEDDING_WARMUP_DELAY_SECONDS = 300.0
 
@@ -293,6 +297,7 @@ def _memory_book_operation_label(operation: str) -> str:
         "upsert_memory_atom": "更新记忆条目",
         "upsert_tag_edge": "更新标签关系",
         "merge_semantic_tag": "合并标签",
+        "merge_memory_books": "合并主题书",
         "add_phrase_candidate": "新增词表提案",
         "add_negative_phrase": "新增负向记忆",
         "supersede_memory": "替代旧记忆",
