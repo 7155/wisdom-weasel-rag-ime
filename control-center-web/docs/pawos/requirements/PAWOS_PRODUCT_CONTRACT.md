@@ -30,6 +30,29 @@
   or recreate a Skill that turns every result or handoff into a generated HTML
   webpage. Generate an HTML report only when the user explicitly requests one.
 
+## Lab Optimization And Delivery Product
+
+[UR-292–UR-297](PAWOS_REQUIREMENTS_292_297.md) extend Lab's product contract:
+start from a business description or project/material path; guide the user
+through real evaluation and improvement in the frontend; deliver the optimized
+App or supported external integration artifacts. Public benchmark packages are
+optional inputs, not a fixed product navigation or prerequisite. Lab's internal
+orchestration keeps Pi ownership; an external target need not adopt Pi. The first release serves developers and small teams, delivering PAW Apps and
+independently runnable applications. The [overall design](../LAB_PRODUCT_DESIGN.md)
+separates these accepted choices from proposed packaging and implementation
+details; it is not a runtime receipt. Lab is an Agent-led general SaaS: Skill
+resources provide optional templates, while each project determines its own
+artifact structures, views and interactions. The frontend hosts these artifacts
+and the shared Agent/Tool controls; it must not require all projects to fill one
+business schema or navigate a fixed set of domain pages. Project UI artifacts
+may use HTML when the Agent chooses that form within the user's project work;
+this does not turn every work document or handoff into an HTML report.
+The [earlier workbench prototype](../prototypes/lab-workbench/README.md) is now a
+knowledge-support template reference, not the universal frontend contract.
+The current run must exercise the real frontend through experiments, App export
+and target execution. Its overnight work deadline is recorded in LP-S16 and is
+not a recurring product behavior.
+
 ## Product Definition
 
 - PAWOS is the primary product surface of Personal Agent Workbench, built and

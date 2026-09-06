@@ -2138,6 +2138,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "room_partner",
                 "browser",
                 "plugins",
+                "lab_project",
                 "desktop_semantic",
                 "workspace_lsp",
                 "workspace_job",

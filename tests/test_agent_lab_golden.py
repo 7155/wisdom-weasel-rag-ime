@@ -7,6 +7,8 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
+from urllib.parse import quote
+from unittest.mock import patch
 
 from rag_ime.agent_lab_golden import (
     AgentLabGoldenConflict,
@@ -193,6 +195,64 @@ class GoldenStoreTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE agent_lab_golden_snapshots SET payload_json = '{}' WHERE snapshot_id = ?", (snapshot["snapshotId"],))
 
+    def test_validation_reuse_counts_started_validation_and_recovery_keeps_its_ordinal(self) -> None:
+        self.reviewed(); self.calibration()
+        snapshot = self.command('freeze')['suite']['snapshot']
+        inputs = {'snapshotId':snapshot['snapshotId'],'baseline':{},'candidate':{},'optimizePrompt':False}
+        first = self.command('experiment', inputs)['job']
+        self.store.update_job(first['jobId'], {'state':'running'})
+        use = self.store.begin_validation(first['jobId'])
+        self.assertEqual(use['ordinal'], 1); self.assertFalse(use['reused'])
+        self.assertEqual(self.store.begin_validation(first['jobId']), use)
+        self.store.update_job(first['jobId'], {'state':'failed','error':'provider stopped'})
+        second = self.command('experiment', inputs)['job']
+        self.store.update_job(second['jobId'], {'state':'running'})
+        later = self.store.begin_validation(second['jobId'])
+        self.assertEqual(later['ordinal'], 2); self.assertTrue(later['reused'])
+        self.assertEqual(later['priorStartedRuns'], 1)
+
+    def test_cancelled_development_does_not_count_as_a_validation_use(self) -> None:
+        self.reviewed(); self.calibration()
+        snapshot = self.command('freeze')['suite']['snapshot']
+        inputs = {'snapshotId':snapshot['snapshotId'],'baseline':{},'candidate':{}}
+        cancelled = self.command('experiment',inputs)['job']
+        self.command('cancel', {'jobId':cancelled['jobId']})
+        with self.assertRaises(AgentLabGoldenConflict): self.store.begin_validation(cancelled['jobId'])
+        actual = self.command('experiment',inputs)['job']
+        self.store.update_job(actual['jobId'], {'state':'running'})
+        self.assertEqual(self.store.begin_validation(actual['jobId'])['ordinal'], 1)
+
+    def test_new_judge_protocol_requires_new_calibration_and_preserves_old_snapshot(self) -> None:
+        with patch('rag_ime.agent_lab_golden.GOLDEN_JUDGE_PROTOCOL_VERSION', 'older-judge-protocol'):
+            self.reviewed(); self.calibration()
+            old = self.command('freeze')['suite']['snapshot']
+        self.refresh()
+        self.assertFalse(self.suite['calibration']['ready'])
+        with self.assertRaisesRegex(AgentLabGoldenValidationError, '旧评审协议'):
+            self.command('experiment', {'snapshotId':old['snapshotId'],'baseline':{},'candidate':{}})
+        self.calibration()
+        self.assertEqual(self.suite['revision'], old['sourceRevision']+1)
+        self.assertEqual(self.suite['calibration']['suiteRevision'], self.suite['revision'])
+        new = self.command('freeze')['suite']['snapshot']
+        self.assertNotEqual(old['snapshotId'], new['snapshotId'])
+        self.assertEqual(new['version'], old['version']+1)
+        with closing(sqlite3.connect(self.path)) as conn:
+            previous = conn.execute('SELECT payload_json FROM agent_lab_golden_snapshots WHERE snapshot_id=?',(old['snapshotId'],)).fetchone()[0]
+        self.assertIn('older-judge-protocol', previous)
+
+    def test_new_snapshot_does_not_disguise_reused_holdout_questions_as_fresh(self) -> None:
+        self.reviewed(); self.calibration()
+        old = self.command('freeze')['suite']['snapshot']
+        first = self.command('experiment',{'snapshotId':old['snapshotId'],'baseline':{},'candidate':{}})['job']
+        self.store.update_job(first['jobId'],{'state':'running'}); self.store.begin_validation(first['jobId'])
+        self.store.update_job(first['jobId'],{'state':'failed','error':'stopped'})
+        self.command('judge_config', {'judgeConfig':{**MODEL,'prompt':'clarify the judge protocol'}})
+        self.calibration(); new = self.command('freeze')['suite']['snapshot']
+        second = self.command('experiment',{'snapshotId':new['snapshotId'],'baseline':{},'candidate':{}})['job']
+        self.store.update_job(second['jobId'],{'state':'running'})
+        use = self.store.begin_validation(second['jobId'])
+        self.assertTrue(use['reused']); self.assertEqual(use['overlappingQuestionCount'],1)
+
     def test_label_and_judge_edits_clear_calibration(self) -> None:
         self.reviewed()
         self.calibration()
@@ -263,7 +323,7 @@ class GoldenStoreTests(unittest.TestCase):
     def test_calibration_and_freeze_pin_judge_protocol_and_reject_other_versions(self) -> None:
         self.reviewed()
         calibration = self.calibration()
-        self.assertEqual(calibration["judgeProtocolVersion"], "paw.golden.context-qa-judge.v1")
+        self.assertEqual(calibration["judgeProtocolVersion"], "paw.golden.context-qa-judge.v2")
         snapshot = self.command("freeze")["suite"]["snapshot"]
         self.assertEqual(snapshot["judgeProtocolVersion"], calibration["judgeProtocolVersion"])
         job = self.command("calibrate")["job"]
@@ -320,6 +380,35 @@ class GoldenStoreTests(unittest.TestCase):
                 self.assertTrue(resumed["reprocessOnly"])
                 self.assertEqual(resumed["state"], "queued")
                 self.assertEqual(self.store.job_input(job["jobId"])["job"]["result"]["receipts"][0]["requestId"], "original-request")
+
+    def test_confirmed_failed_call_gets_a_new_attempt_without_replacing_successful_receipts(self) -> None:
+        self.reviewed(); job = self.command('calibrate')['job']
+        base = quote(job['jobId'], safe='-_.') + ':calibration:dev:dev-negative'
+        successful = {'requestId':quote(job['jobId'],safe='-_.')+':calibration:dev:dev-positive','sessionId':'s-ok','turnId':'t-ok','stage':'calibration','receipt':{'status':'completed'}}
+        failed = {'requestId':base,'sessionId':'s-failed','turnId':'t-failed','stage':'calibration','receipt':{'status':'failed'}}
+        self.store.update_job(job['jobId'],{'state':'running'})
+        self.store.update_job(job['jobId'],{'state':'failed','result':{'partial':True,'pendingRequestId':base,'receipts':[successful,failed]}})
+        self.refresh(); self.assertTrue(self.suite['jobs'][0].get('canRetryFailedCall'))
+        request = self.payload('resume',{'jobId':job['jobId']})
+        resumed = self.store.command(request)['job']; replayed = self.store.command(request)['job']
+        self.assertEqual(resumed,replayed)
+        self.assertEqual(resumed['requestRetries'][base]['requestId'],base+':retry:1')
+        self.assertEqual(resumed['result']['receipts'],[successful,failed])
+        self.assertEqual(self.store.job_input(job['jobId'])['suite']['judgeConfig'],self.suite['judgeConfig'])
+        self.store.update_job(job['jobId'],{'state':'running'})
+        self.store.update_job(job['jobId'],{'state':'interrupted'})
+        interrupted = self.command('resume',{'jobId':job['jobId']})['job']
+        self.assertEqual(interrupted['requestRetries'],resumed['requestRetries'])
+
+    def test_unknown_or_unbound_failed_receipt_cannot_authorize_a_new_paid_attempt(self) -> None:
+        for status in ('accepted','interrupted','completed'):
+            with self.subTest(status=status):
+                job = self.command('draft')['job']; base=quote(job['jobId'],safe='-_.')+':draft'
+                self.store.update_job(job['jobId'],{'state':'running'})
+                self.store.update_job(job['jobId'],{'state':'failed','result':{'pendingRequestId':base,'receipts':[{'requestId':'another-job:draft','sessionId':'s','turnId':'t','receipt':{'status':status}}]}})
+                self.refresh(); self.assertFalse(self.suite['jobs'][0].get('canRetryFailedCall',False))
+                if status != 'completed':
+                    with self.assertRaises(AgentLabGoldenConflict): self.command('resume',{'jobId':job['jobId']})
 
 
 if __name__ == "__main__":

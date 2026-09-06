@@ -11,9 +11,9 @@ import { GoldenRunRecord } from './RunRecord';
 import { isActiveJob, isRunnableGoldenModel, jobLabel, jobStateLabel, type GoldenAction, type GoldenCommand, type GoldenJob, type GoldenSource, type GoldenSuite } from './types';
 import './GoldenWorkflow.css';
 
-export function GoldenWorkflow({ onClose, startNew = false }: { onClose?: () => void; startNew?: boolean }) {
+export function GoldenWorkflow({ onClose, startNew = false, initialSuiteId = '' }: { onClose?: () => void; startNew?: boolean; initialSuiteId?: string }) {
   const id = useId();
-  const [selectedSuiteId, setSelectedSuiteId] = useState<string | null | undefined>(startNew ? null : undefined);
+  const [selectedSuiteId, setSelectedSuiteId] = useState<string | null | undefined>(initialSuiteId || (startNew ? null : undefined));
   const [step, setStep] = useState(0);
   const [newGeneration, setNewGeneration] = useState(0);
   const lastSuite = useRef('');
@@ -39,8 +39,9 @@ export function GoldenWorkflow({ onClose, startNew = false }: { onClose?: () => 
   const disabled = commandBusy || Boolean(activeJob);
   const journey = goldenJourney(suite, hasUnsaved);
   useEffect(() => {
-    if (startNew) { setSelectedSuiteId(null); setStep(0); }
-  }, [startNew]);
+    if (initialSuiteId) setSelectedSuiteId(initialSuiteId);
+    else if (startNew) { setSelectedSuiteId(null); setStep(0); }
+  }, [startNew, initialSuiteId]);
   useEffect(() => {
     if (selectedSuiteId === undefined && data) setSelectedSuiteId(data.suite?.suiteId ?? data.items[0]?.suiteId ?? null);
   }, [data, selectedSuiteId]);
@@ -72,16 +73,17 @@ export function GoldenWorkflow({ onClose, startNew = false }: { onClose?: () => 
     if (target === null) return;
     event.preventDefault(); setStep(target); document.getElementById(`${id}-tab-${target}`)?.focus();
   };
+  if (initialSuiteId && !suite) return <section className="golden-workflow" aria-label="项目绑定的评测集"><p role={workflow.query.isError ? 'alert' : 'status'}>{workflow.query.isPending ? '正在读取项目绑定的评测集…' : '绑定的评测集暂未读到，原绑定已保留。'}</p><Button onClick={() => void workflow.query.refetch()}>重新读取评测集</Button>{onClose ? <Button onClick={onClose}>返回项目运行</Button> : null}</section>;
   return <GoldenModelCatalog><section className="golden-workflow" aria-label="Golden 评测集">
     <header className="golden-header">
       <div className="golden-header__titlebar">
         {onClose ? <IconButton icon={<ArrowLeft size={15} />} label="返回实验工作区" onClick={onClose} /> : null}
         <div className="golden-header__title"><span className="golden-header__eyebrow">Agent Lab · 从资料到对照结果</span><h2>{suite?.title || '新建评测集'}</h2>{suite ? <span className="golden-count">标准版本 {suite.revision}</span> : null}</div>
-        {suite ? <div className="golden-header__actions"><IconButton icon={<RefreshCw size={14} />} label="重新读取评测集" disabled={workflow.query.isFetching} onClick={() => void workflow.query.refetch()} /><IconButton icon={<Plus size={15} />} label="新建评测集" disabled={Boolean(workflow.pending)} onClick={createNew} /></div> : null}
+        {suite ? <div className="golden-header__actions"><IconButton icon={<RefreshCw size={14} />} label="重新读取评测集" disabled={workflow.query.isFetching} onClick={() => void workflow.query.refetch()} />{!initialSuiteId ? <IconButton icon={<Plus size={15} />} label="新建评测集" disabled={Boolean(workflow.pending)} onClick={createNew} /> : null}</div> : null}
       </div>
       {suite || data?.items.length ? <div className="golden-header__context">
         {suite ? <Disclosure className="golden-task-description" summary="任务说明"><p className="golden-preserve-text">{suite.scenario}</p></Disclosure> : <p className="golden-note">从真实来源建立可人审、可校准、可复用的评测标准。</p>}
-        {data?.items.length ? <label className="golden-suite-selector"><span className="golden-visually-hidden">选择评测集</span><select value={suite?.suiteId ?? ''} disabled={Boolean(workflow.pending)} onChange={(event) => { setSelectedSuiteId(event.target.value); lastSuite.current = ''; }}><option value="" disabled>选择已有评测集</option>{data.items.map((item) => <option key={item.suiteId} value={item.suiteId}>{item.title} · v{item.revision}</option>)}</select></label> : null}
+        {!initialSuiteId && data?.items.length ? <label className="golden-suite-selector"><span className="golden-visually-hidden">选择评测集</span><select value={suite?.suiteId ?? ''} disabled={Boolean(workflow.pending)} onChange={(event) => { setSelectedSuiteId(event.target.value); lastSuite.current = ''; }}><option value="" disabled>选择已有评测集</option>{data.items.map((item) => <option key={item.suiteId} value={item.suiteId}>{item.title} · v{item.revision}</option>)}</select></label> : null}
       </div> : null}
     </header>
     <div className="golden-steps" role="tablist" aria-label="Golden 工作步骤">{steps.map((label, index) => <button key={label} type="button" id={`${id}-tab-${index}`} role="tab" aria-label={label} aria-selected={step === index} aria-describedby={`${id}-step-state-${index}`} aria-controls={`${id}-panel-${index}`} data-complete={journey.done[index] || undefined} tabIndex={step === index ? 0 : -1} disabled={index > 0 && !suite} onKeyDown={(event) => onTabKey(event, index)} onClick={() => setStep(index)}><span className="golden-step-number" aria-hidden="true">{journey.done[index] ? <Check size={16} /> : index + 1}</span><span className="golden-step-label">{label}<small id={`${id}-step-state-${index}`}>{journey.done[index] ? '已完成' : ['提供真实资料', '确认答案依据', '对齐评分标准', '比较实际表现'][index]}</small></span></button>)}</div>
@@ -151,6 +153,7 @@ function SourceSummary({ suite, disabled, onDraft, onJudge, onDirtyChange }: { s
 function JobStatus({ job, stale, disabled, onCancel, onResume }: { job: GoldenJob; stale: boolean; disabled: boolean; onCancel: () => void; onResume: () => void }) {
   const active = isActiveJob(job);
   const canReprocess = job.kind === 'draft' && job.state === 'failed' && job.canReprocess === true;
-  return <section className="golden-job" data-state={stale ? 'stale' : job.state} aria-label="当前任务状态"><div><p role="status">{active && !stale ? <LoaderCircle aria-hidden="true" size={15} className="golden-job__spinner" /> : null}<strong>{jobLabel[job.kind]} · {jobStateLabel[job.state]}</strong><span>{formatTime(job.updatedAtMs)}</span></p><p>{stale ? '上次读取的状态，当前进展尚未确认。' : job.error || job.progress || (active ? '等待真实执行回执。' : '任务已经停止。')}</p>{canReprocess ? <p>复用原结果重新处理，不会重新调用模型。</p> : null}{job.sessionId ? <GoldenRunRecord sessionId={job.sessionId} /> : null}</div><div>{active ? <Button size="small" disabled={disabled} onClick={onCancel}>停止任务</Button> : job.state === 'interrupted' ? <Button size="small" disabled={disabled} onClick={onResume}>恢复任务</Button> : canReprocess ? <Button size="small" disabled={disabled} onClick={onResume}>重新处理结果</Button> : null}</div></section>;
+  const canRetry = job.state === 'failed' && job.canRetryFailedCall === true;
+  return <section className="golden-job" data-state={stale ? 'stale' : job.state} aria-label="当前任务状态"><div><p role="status">{active && !stale ? <LoaderCircle aria-hidden="true" size={15} className="golden-job__spinner" /> : null}<strong>{jobLabel[job.kind]} · {jobStateLabel[job.state]}</strong><span>{formatTime(job.updatedAtMs)}</span></p><p>{stale ? '上次读取的状态，当前进展尚未确认。' : job.error || job.progress || (active ? '等待真实执行回执。' : '任务已经停止。')}</p>{canReprocess ? <p>复用原结果重新处理，不会重新调用模型。</p> : canRetry ? <p>保留已成功的结果，重试已确认失败的调用并继续剩余任务。</p> : null}{job.sessionId ? <GoldenRunRecord sessionId={job.sessionId} active={active && !stale} /> : null}</div><div>{active ? <Button size="small" disabled={disabled} onClick={onCancel}>停止任务</Button> : job.state === 'interrupted' ? <Button size="small" disabled={disabled} onClick={onResume}>恢复任务</Button> : canReprocess ? <Button size="small" disabled={disabled} onClick={onResume}>重新处理结果</Button> : canRetry ? <Button size="small" disabled={disabled} onClick={onResume}>重试未完成部分</Button> : null}</div></section>;
 }
 function emptySource(): GoldenSource { return { sourceId: `source:${crypto.randomUUID()}`, title: '', kind: 'document', uri: '', text: '' }; }

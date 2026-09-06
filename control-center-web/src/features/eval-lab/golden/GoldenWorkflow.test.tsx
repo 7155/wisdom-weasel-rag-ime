@@ -101,6 +101,17 @@ describe('Golden workflow user boundaries', () => {
     expect(transport.requests.some(({ request }) => request.pathId === 'agent.eval-lab.golden.command')).toBe(false);
   });
 
+  it('shows the owning Runtime retry while a model call is still active', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.eval-lab.golden.get': read(suite({ jobs: [job('running')] })),
+      'agent.session.snapshot': { items: [], status:'busy', liveEvents:[{eventType:'status_changed',payload:{phase:'provider_retry',summary:'模型连接暂时失败，正在自动重试（3/7）',delayMs:10000}}] },
+    } });
+    mount(transport);
+    expect(await screen.findByRole('status', { name:'当前模型运行状态' })).toHaveTextContent('自动重试（3/7）');
+    expect(screen.getByRole('status', { name:'当前模型运行状态' })).toHaveTextContent('10 秒');
+    expect(transport.requests.some(({request}) => request.pathId==='agent.eval-lab.golden.command')).toBe(false);
+  });
+
   it('selects an available drafting model and saves it before allowing execution', async () => {
     let current = suite();
     const transport = new MockControlTransport({ routes: {
@@ -474,6 +485,25 @@ describe('Golden workflow user boundaries', () => {
     expect(onExperiment).toHaveBeenCalledWith(expect.objectContaining({ baseline: model, candidate: model }));
   });
 
+  it('restores experiment rules and optimization choice after reopening without starting a run', () => {
+    const current = suite({ snapshot:{snapshotId:'snapshot-1',suiteId:'suite-1',version:1,sourceRevision:1,createdAtMs:6000,developmentCount:1,holdoutCount:1,judgeConfig:model} });
+    const onExperiment = vi.fn();
+    const first = render(<GoldenExperiment suite={current} disabled={false} onFreeze={() => {}} onExperiment={onExperiment} />);
+    fireEvent.click(screen.getByText('基线回答规则（Prompt）'));
+    fireEvent.click(screen.getByText('候选回答规则（Prompt）'));
+    fireEvent.change(screen.getByLabelText('基线回答规则',{exact:true}),{target:{value:'保留原始规则'}});
+    fireEvent.change(screen.getByLabelText('候选回答规则',{exact:true}),{target:{value:'先提取事实，再检查规则'}});
+    fireEvent.click(screen.getByRole('checkbox',{name:'基于开发题自动优化 Prompt'}));
+    first.unmount();
+    render(<GoldenExperiment suite={current} disabled={false} onFreeze={() => {}} onExperiment={onExperiment} />);
+    fireEvent.click(screen.getByText('基线回答规则（Prompt）'));
+    fireEvent.click(screen.getByText('候选回答规则（Prompt）'));
+    expect(screen.getByLabelText('基线回答规则',{exact:true})).toHaveValue('保留原始规则');
+    expect(screen.getByLabelText('候选回答规则',{exact:true})).toHaveValue('先提取事实，再检查规则');
+    expect(screen.getByRole('checkbox',{name:'基于开发题自动优化 Prompt'})).not.toBeChecked();
+    expect(onExperiment).not.toHaveBeenCalled();
+  });
+
   it('does not submit a blank Judge model or thinking level as a default', async () => {
     const reviewed = goldenCase();
     reviewed.review.status = 'approved';
@@ -611,7 +641,7 @@ describe('Golden command recovery', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: '核对本次操作' })).not.toBeInTheDocument());
     expect(commands).toEqual([commands[0], commands[0]]);
     expect(screen.getByText('标准版本 7')).toBeInTheDocument();
-    expect(window.sessionStorage.length).toBe(0);
+    expect(Object.keys(window.sessionStorage).filter((key) => key.startsWith('paw.lab.golden-command.v1:'))).toEqual([]);
   });
 
   it.each([409, 422])('releases a known %s rejection and uses the newly read revision for a new command', async (status) => {

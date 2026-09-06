@@ -1094,6 +1094,23 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotIn("must-not-leak", wildcard["output"])
 
     @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
+    def test_shell_heredoc_uses_private_scratch_in_managed_and_read_only_commands(self) -> None:
+        harness = WorkspaceHarness()
+        if not harness.sandbox_executable.is_file():
+            self.skipTest("sandbox-exec is unavailable")
+        for mode in ("workspace_managed", "read_only"):
+            with self.subTest(execution_mode=mode):
+                result = harness.execute(harness.prepare_command(
+                    {**self.session, "executionMode": mode},
+                    {"cwd": str(self.root), "command": "set -e\n/bin/cat <<'PAW_END'\nheredoc-inside-private-scratch\nPAW_END\nprint -r -- \"$TMPPREFIX\""},
+                ))
+                self.assertEqual(result["exitCode"], 0, result["output"])
+                self.assertIn("heredoc-inside-private-scratch", result["output"])
+                prefix = Path(result["output"].splitlines()[-1])
+                self.assertNotEqual(prefix, Path("/tmp/zsh"))
+                self.assertFalse(prefix.parent.exists(), "Disposable command scratch must be removed after execution")
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
     def test_read_only_harness_runs_tests_but_only_writes_command_temp(self) -> None:
         sandbox = Path("/usr/bin/sandbox-exec")
         if not sandbox.is_file():

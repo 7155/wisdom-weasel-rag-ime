@@ -76,6 +76,10 @@ class FakeStore:
         with self.lock:
             return {"job": copy.deepcopy(self.job), "suite": copy.deepcopy(self.frozen), "snapshot": copy.deepcopy(self.snapshot), "input": copy.deepcopy(self.input), "cancelRequested": self.cancel_requested}
 
+    def begin_validation(self, job_id: str) -> dict:
+        with self.lock:
+            return self.job.setdefault('validationUse', {'snapshotId':self.snapshot['snapshotId'],'ordinal':1,'priorStartedRuns':0,'priorCompletedRuns':0,'reused':False,'scope':'local_lab_validation_entry','startedAtMs':1})
+
     def update_job(self, job_id: str, patch: dict) -> dict:
         with self.lock:
             if self.job["state"] not in {"completed", "failed", "cancelled", "interrupted"}:
@@ -252,6 +256,37 @@ class GoldenExecutionTests(unittest.TestCase):
                 self.assertEqual(complete_calls, [])
                 self.assertEqual(job["result"]["receipts"][0]["requestId"], "job-1:draft")
 
+    def test_calibration_publishes_completed_sample_progress_while_calls_are_running(self) -> None:
+        store, pi, observed = FakeStore("calibrate"), PiDouble(), []
+        def complete(**request):
+            observed.append(store.read()["suite"]["jobs"][0]["progress"])
+            return pi(**request)
+        job = self.run_job(self.application(store, complete), store)
+        self.assertEqual(job["state"], "completed")
+        self.assertEqual(len(observed), 3)
+        for count, progress in enumerate(observed):
+            self.assertIn(f"{count} / 3", progress)
+
+    def test_explicit_retry_reads_prior_success_and_only_admits_failed_and_remaining_calls(self) -> None:
+        store, pi, paid = FakeStore('calibrate'), PiDouble(), []
+        success = 'job-1:calibration:dev-1:positive'
+        failed = 'job-1:calibration:dev-1:negative'
+        cached = response(json.dumps({'verdict':'pass','reason':'Supported','evidence':[{'sourceId':'source-1','quote':'Alpha is supported'}]}))
+        pi.cache[success] = cached
+        store.job['requestRetries'] = {failed:{'requestId':failed+':retry:1','attempt':1}}
+        store.job['result'] = {'receipts':[
+            {'requestId':success,'stage':'calibration',**{key:cached[key] for key in ['sessionId','turnId','receipt','usage']}},
+            {'requestId':failed,'stage':'calibration','sessionId':'failed-session','turnId':'failed-turn','receipt':{'status':'failed'},'usage':{'inputTokens':3}},
+        ]}
+        def complete(**request):
+            if request['request_id'] not in pi.cache: paid.append(request['request_id'])
+            return pi(**request)
+        job = self.run_job(self.application(store, complete), store)
+        self.assertEqual(job['state'],'completed')
+        self.assertEqual(paid,[failed+':retry:1','job-1:calibration:dev-1:boundary'])
+        self.assertEqual({row['requestId'] for row in job['result']['receipts']}, {success,failed,*paid})
+        self.assertEqual(len(job['result']['judgments']),3)
+
     def test_calibration_only_judges_labeled_approved_development_without_label_leakage(self) -> None:
         store, pi = FakeStore("calibrate"), PiDouble()
         pending = golden_case("pending")
@@ -263,6 +298,8 @@ class GoldenExecutionTests(unittest.TestCase):
         self.assertEqual({item["caseId"] for item in job["result"]["judgments"]}, {"dev-1"})
         for call in pi.calls:
             self.assertEqual(call["model"], JUDGE)
+            self.assertIn("The quotation requirement applies to YOUR evidence, not automatically to the answer", call['prompt'])
+            self.assertIn('Accept a factually correct paraphrase', call['prompt'])
             for secret in ("HUMAN-LABEL-SECRET", "HOLDOUT-SECRET", '"humanVerdict"', '"category"', "REVIEW-SECRET"):
                 self.assertNotIn(secret, call["prompt"])
 

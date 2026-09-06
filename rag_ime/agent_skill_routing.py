@@ -11,14 +11,14 @@ SKILL_SCENARIOS = ("ordinary", "room", "trace", "agentLab")
 SCENARIO_PRIVATE_SKILLS: dict[str, frozenset[str]] = {
     "room": frozenset({"facilitate-room"}),
     "trace": frozenset({"trace-agent-diagnostics"}),
-    "agentLab": frozenset({"agent-eval-room-optimizer"}),
+    "agentLab": frozenset({"agent-eval-room-optimizer", "agent-lab-project"}),
 }
 
 TRACE_AGENT_OWNER_APP_ID = "extension:trace-agent"
 TRACE_AGENT_SURFACE_KEYS = frozenset({"diagnostic", "repair"})
 AGENT_LAB_OWNER_APP_ID = "extension:agent-lab"
 AGENT_LAB_SURFACE_KEYS = frozenset({"wizard"})
-AGENT_LAB_SURFACE_PREFIXES = ("experiment.", "candidate.")
+AGENT_LAB_SURFACE_PREFIXES = ("experiment.", "candidate.", "project.")
 
 _GENERAL_SKILLS = (
     "alignment-and-decision",
@@ -152,6 +152,9 @@ def skill_allowlist_for_session(
         room_participant=room_participant,
     )
     selected = set(routing[scenario])
+    if scenario == "agentLab":
+        project_guide = str(session.get("surfaceKey") or "").startswith("project.")
+        selected.discard("agent-eval-room-optimizer" if project_guide else "agent-lab-project")
     # Agent Lab participants are still Room participants. Compose both
     # mandatory private capabilities without merging the two configurable
     # general-Skill selections.

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.6 system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 1100px; margin: auto; }
+    button, input, select, textarea { font: inherit; }
+    :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+    @media (max-width: 600px) { body { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <main id="project-surface" aria-label="项目交互成果"></main>
+  <script>
+    // Build the project-specific interface here using this artifact's data.
+    // Request an Agent action only after a user gesture and only with an ID
+    // declared in the published artifact's actions. No remote requests.
+    function requestProjectAction(actionId, values = {}) {
+      window.parent.postMessage({type: 'paw.lab.artifact.action', actionId, values}, '*');
+    }
+  </script>
+</body>
+</html>

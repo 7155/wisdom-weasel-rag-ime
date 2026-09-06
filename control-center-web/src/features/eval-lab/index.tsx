@@ -11,12 +11,13 @@ import {
   Scale,
   Users,
 } from 'lucide-react';
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useInRouterContext, useLocation, useNavigate } from 'react-router-dom';
 import { Button, EmptyState } from '@/components/primitives';
 import { useControlTransport } from '@/app/control-transport';
 import { roleItems } from '@/features/agent/types';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-context';
+import { openPawOsRoute, usePawOsAppActive, usePawOsDesktop } from '@/features/paw-os/surface-context';
 import { PawRoomWorkspace } from '@/paw-os/apps/PawRoomWorkspace';
 import type { RoomPermissionPolicy, RoomSummary } from '@/features/rooms/room-types';
 import {
@@ -38,6 +39,7 @@ import { createEvalLabExperimentAuditDownload } from './experiment-audit-html';
 import { LinkedOptimizationWorkbench } from './optimization/OptimizationWorkbench';
 import { ExperimentWorkspace } from './ExperimentWorkspace';
 import { GoldenWorkflow } from './golden/GoldenWorkflow';
+import { LabProjectWorkbench } from './projects/LabProjectWorkbench';
 import { ExperimentApplication } from './ExperimentApplication';
 import { ExperimentResultSummary } from './ExperimentResultSummary';
 import { buildExperimentDisplayMetrics } from './experiment-display-metrics';
@@ -79,7 +81,50 @@ const EVAL_LAB_PAGES = [
   ['sessions', '对话与证据'],
 ] as const satisfies readonly (readonly [EvalLabPage, string])[];
 
-export function EvalLabFeature({ initialPage = 'workspace' }: { initialPage?: EvalLabPage } = {}) {
+export function EvalLabFeature({ initialPage }: { initialPage?: EvalLabPage } = {}) {
+  const routed = useInRouterContext();
+  return routed ? <RoutedEvalLabFeature initialPage={initialPage} />
+    : <EvalLabEntry initialPage={initialPage} search={window.location.hash.split('?')[1] ?? window.location.search} onProjectSelect={(id) => {
+      if (window.location.hash.startsWith('#/eval-lab')) window.history.replaceState(null, '', `#${projectRoute(id)}`);
+    }} />;
+}
+
+function RoutedEvalLabFeature({ initialPage }: { initialPage?: EvalLabPage }) {
+  const location = useLocation(); const navigate = useNavigate();
+  const active = usePawOsAppActive(); const activeRef = useRef(active); activeRef.current = active;
+  const mounted = useRef(true); const deferredRoute = useRef<string | undefined>(undefined);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (active === false || !deferredRoute.current) return;
+    const route = deferredRoute.current; deferredRoute.current = undefined;
+    navigate(route, { replace: true }); reflectProjectRoute(route, active);
+  }, [active, navigate]);
+  return <EvalLabEntry initialPage={initialPage} search={location.search} onProjectSelect={(id) => {
+    if (!mounted.current) return;
+    const route = projectRoute(id);
+    if (activeRef.current === false) { deferredRoute.current = route; return; }
+    deferredRoute.current = undefined;
+    navigate(route, { replace: true }); reflectProjectRoute(route, activeRef.current);
+  }} />;
+}
+
+function projectRoute(id: string) { return id ? `/eval-lab?project=${encodeURIComponent(id)}` : '/eval-lab'; }
+function reflectProjectRoute(route: string, active: boolean | null) {
+  if (active === true || window.location.hash.startsWith('#/eval-lab')) window.history.replaceState(null, '', `${window.location.search}#${route}`);
+}
+
+function EvalLabEntry({ initialPage, search, onProjectSelect }: { initialPage?: EvalLabPage; search: string; onProjectSelect: (id: string) => void }) {
+  const parameters = new URLSearchParams(search);
+  const requestedGolden = parameters.get('view') === 'golden';
+  const traceReportId = parameters.get('traceReportId')?.trim() ?? '';
+  const projectId = parameters.get('project') ?? '';
+  const [historyOpen, setHistoryOpen] = useState(Boolean(initialPage) || requestedGolden || Boolean(traceReportId));
+  useEffect(() => { setHistoryOpen(Boolean(initialPage) || requestedGolden || Boolean(traceReportId)); }, [initialPage, requestedGolden, traceReportId, projectId]);
+  return historyOpen ? <div className="lab-project-legacy"><Button className="lab-project-legacy__back" size="small" onClick={() => setHistoryOpen(false)}>返回 Lab 项目</Button><LegacyEvalLabFeature initialPage={initialPage ?? (requestedGolden ? 'golden' : 'workspace')} /></div>
+    : <LabProjectWorkbench initialProjectId={projectId} onProjectSelect={onProjectSelect} onOpenHistory={() => setHistoryOpen(true)} />;
+}
+
+export function LegacyEvalLabFeature({ initialPage = 'workspace' }: { initialPage?: EvalLabPage } = {}) {
   const id = useId();
   const desktop = usePawOsDesktop();
   const transport = useControlTransport();

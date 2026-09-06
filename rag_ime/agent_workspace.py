@@ -4295,6 +4295,10 @@ class WorkspaceHarness:
                 environment = {
                     "HOME": str(temporary),
                     "TMPDIR": str(temporary),
+                    # zsh uses TMPPREFIX for heredocs, independently of
+                    # TMPDIR. Its /tmp/zsh default is outside this command's
+                    # private scratch allowance, so normal scripts fail.
+                    "TMPPREFIX": str(temporary / "zsh"),
                     "XDG_CACHE_HOME": str(cache_directory),
                     "PYTHONPYCACHEPREFIX": str(python_cache_directory),
                     "npm_config_cache": str(cache_directory / "npm"),

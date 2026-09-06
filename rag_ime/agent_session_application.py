@@ -168,6 +168,14 @@ class AgentSessionApplicationService:
             "session": session,
         }
 
+    def create_in_transaction(
+        self, payload: Mapping[str, object], connection: sqlite3.Connection,
+    ) -> dict[str, object]:
+        """Apply normal Session creation policy inside an owning App transaction."""
+        if not connection.in_transaction:
+            raise ValueError("App Session creation requires an active transaction")
+        return self._create_session_record(payload, connection=connection)
+
     def _create_session_record(
         self,
         payload: Mapping[str, object],

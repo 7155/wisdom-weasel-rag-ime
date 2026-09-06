@@ -1,6 +1,6 @@
 # Project Context
 
-Updated: 2026-08-16
+Updated: 2026-09-06
 
 This is the durable Project Context Pack for Personal Agent Workbench. It is
 small on purpose. It preserves direction and boundaries; it does not mirror
@@ -39,6 +39,16 @@ PAW should support long-running self-hosted development with:
    of maintaining a parallel frontend state machine; and
 7. governed local memory, knowledge, input, voice, and browser adapters that
    remain separate from Session/Room ownership.
+
+Agent Lab should become an Agent-led, general SaaS optimization product for developers and small
+teams. Skill templates help the Agent produce project-specific artifacts and interfaces;
+the platform must not require every project to fill one business schema or fixed workflow.
+Users provide a business description or project/material path; Lab guides
+real evaluation and improvement, delivering a PAW App and an independently
+runnable application with suitable task quality and execution cost.
+The [overall product design](control-center-web/docs/pawos/LAB_PRODUCT_DESIGN.md)
+links the 2026-09-06 user sources and accepted first-release choices. Lab's PAW
+orchestration retains Pi ownership; cloud hosting is a later design frontier.
 
 ## Users And Core Jobs
 

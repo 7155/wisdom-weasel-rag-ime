@@ -725,6 +725,7 @@ class DebugImeService:
             browser_control=self.browser_control,
             artifact_projector=AgentToolArtifactProjector(self.agent.media),
             work_documents=self.agent.work_documents,
+            lab_projects=self.agent,
             sandbox_connector=self.vertical_sandbox_connector,
             trace_diagnostics=self.agent,
             workflow_publisher=lambda session_id, reason: self.agent.publish_workflow_state(
@@ -7621,7 +7622,7 @@ _ISOLATED_HTML_PREVIEW_DOCUMENT = b"""<!doctype html>
 <body>
   <noscript>This preview requires JavaScript.</noscript>
   <script>
-  (() => {
+  window.addEventListener('DOMContentLoaded', () => {
     try {
       const encoded = window.location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
       if (!encoded) throw new Error('preview source is missing');
@@ -7635,7 +7636,7 @@ _ISOLATED_HTML_PREVIEW_DOCUMENT = b"""<!doctype html>
     } catch (error) {
       document.body.textContent = `HTML preview failed: ${String(error)}`;
     }
-  })();
+  }, { once: true });
   </script>
 </body>
 </html>
@@ -7803,6 +7804,21 @@ def _agent_lab_trial_error_response(exc: Exception) -> tuple[HTTPStatus, dict[st
     }
 
 
+def _agent_lab_project_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
+    from .agent_lab_projects import AgentLabProjectValidationError, AgentLabProjectUnavailable
+    if isinstance(exc, AgentLabProjectValidationError):
+        return HTTPStatus(exc.http_status), exc.response_payload()
+    if isinstance(exc, (sqlite3.Error, OSError)):
+        return HTTPStatus.SERVICE_UNAVAILABLE, AgentLabProjectUnavailable().response_payload()
+    if isinstance(exc, ValueError):
+        return HTTPStatus.UNPROCESSABLE_ENTITY, {
+            "ok": False, "code": "AGENT_LAB_PROJECT_INVALID_REQUEST", "message": "项目操作参数无效，请核对后重试。",
+        }
+    return HTTPStatus.INTERNAL_SERVER_ERROR, {
+        "ok": False, "code": "AGENT_LAB_PROJECT_INTERNAL_ERROR", "message": "项目服务暂时不可用；已保存的成果仍会保留。",
+    }
+
+
 def _agent_lab_golden_error_response(exc: Exception) -> tuple[HTTPStatus, dict[str, object]]:
     from .agent_lab_golden import (
         AgentLabGoldenConflict, AgentLabGoldenServiceUnavailable, AgentLabGoldenValidationError,
@@ -7849,6 +7865,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
                 except Exception as exc:
                     self._write_json(*_agent_lab_golden_error_response(exc))
+            elif descriptor_route.handler in {"agent.eval_lab_projects", "agent.eval_lab_apps", "agent.eval_lab_app_download"}:
+                try:
+                    self._dispatch_descriptor_route(descriptor_route, query=parse_qs(parsed.query or ""))
+                except Exception as exc:
+                    self._write_json(*_agent_lab_project_error_response(exc))
             elif descriptor_route.handler == "agent.eval_lab_scene_recipes":
                 try:
                     self._dispatch_descriptor_route(
@@ -8505,9 +8526,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/agent/sessions":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.agent.list_sessions(
+            try:
+                response = self.service.agent.list_sessions(
                     {
                         "includeArchived": _query_first(query, "includeArchived"),
                         "includeInternal": _query_first(query, "includeInternal"),
@@ -8519,8 +8539,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "surfaceKey": _query_first(query, "surfaceKey"),
                         "projectionOnly": _query_first(query, "projectionOnly"),
                     }
-                ),
-            )
+                )
+            except ValueError as exc:
+                self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                return
+            self._write_json(HTTPStatus.OK, response)
             return
         if background_job_session_id:
             try:
@@ -9860,6 +9883,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     response = self.service.agent.eval_lab_golden_command(payload)
                 except Exception as exc:
                     self._write_json(*_agent_lab_golden_error_response(exc))
+                else:
+                    self._write_json(HTTPStatus.OK, response)
+            elif path == "/api/agent/eval-lab/projects/command":
+                try:
+                    response = self.service.agent.eval_lab_project_command(payload)
+                except Exception as exc:
+                    self._write_json(*_agent_lab_project_error_response(exc))
+                else:
+                    self._write_json(HTTPStatus.OK, response)
+            elif path == "/api/agent/eval-lab/apps/command":
+                try:
+                    response = self.service.agent.eval_lab_app_command(payload)
+                except Exception as exc:
+                    self._write_json(*_agent_lab_project_error_response(exc))
                 else:
                     self._write_json(HTTPStatus.OK, response)
             elif path in ("/api/agent/eval-lab/scene-recipes/apply", "/api/agent/eval-lab/scene-recipes/rollback"):

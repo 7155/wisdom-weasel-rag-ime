@@ -1067,6 +1067,37 @@ describe('AgentEventReducer', () => {
     expect(recovered.turnOrder).toEqual(['history:pi-user']);
   });
 
+  it('reconciles a long-streamed final answer with its same-turn Pi transcript and keeps files', () => {
+    const turnId = 'lab-guide-turn';
+    const answer = '应用已经准备，保留实际运行记录。';
+    const streamed = serverMessage(`${turnId}:assistant`, 'assistant', turnId, answer);
+    const live = reduceAgentEvent(createAgentProjection('session-1'), {
+      ...agentEvent(1, 'message_completed', { message: { ...streamed, createdAtMs:1_000, completedAtMs:1_000 } }),
+      turnId,
+      createdAtMs:80_000,
+    }).state;
+    const durable = { ...serverMessage('pi-completed-app', 'assistant', turnId, answer),
+      createdAtMs:80_000, completedAtMs:80_000,
+      blocks:[...streamed.blocks,{id:'app-source',type:'file',status:'completed',presentationKind:'file',data:{fileName:'index.html',text:'<h1>应用文件内容</h1>'}}],
+    };
+    const restored = applyAgentSnapshot(live, {
+      messages:[durable],liveEvents:[],lastSequence:2,resumeToken:'session-1:2',status:'idle',snapshotScope:'recent',partial:true,
+    });
+    expect(restored.messageOrder).toEqual(['pi-completed-app']);
+    expect(restored.messagesById['pi-completed-app'].blocks.some((block) => block.id==='app-source')).toBe(true);
+  });
+
+  it('keeps an equal answer in a different turn outside the short replay window', () => {
+    const answer = '同一条回答也可能被独立请求两次。';
+    const live = reduceAgentEvent(createAgentProjection('session-1'), {
+      ...agentEvent(1,'message_completed',{message:{...serverMessage('first:assistant','assistant','first',answer),createdAtMs:1_000}}),turnId:'first',
+    }).state;
+    const restored = applyAgentSnapshot(live, {
+      messages:[{...serverMessage('second-pi','assistant','second',answer),createdAtMs:80_000}],liveEvents:[],lastSequence:2,resumeToken:'session-1:2',status:'idle',snapshotScope:'recent',partial:true,
+    });
+    expect(restored.messageOrder).toHaveLength(2);
+  });
+
   it('keeps one user anchor when transcript and replay media ids differ', () => {
     const question = '收起所有工具和思考';
     const transcriptUser = serverMessage('pi-user-with-image', 'user', 'history:pi-user-with-image', question);

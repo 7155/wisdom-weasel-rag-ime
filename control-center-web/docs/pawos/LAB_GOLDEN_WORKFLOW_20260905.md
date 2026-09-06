@@ -1,5 +1,31 @@
 # Lab Golden workflow — implementation brief
 
+## 整体设计入口
+
+当前产品定位与前端设计以 [Agent Lab 产品整体设计](LAB_PRODUCT_DESIGN.md)为主入口：面向开发者与小团队，从描述/路径开始引导优化，交付 PAW App 及独立运行应用。原话和已定选择见 [UR-292–UR-297](requirements/PAWOS_REQUIREMENTS_292_297.md)。
+
+本文件保留 Golden 原实施合同、历史检查与运行回执，不承担第二份整体设计，也不证明通用项目接入或 App 导出已经完成。
+
+2026-09-07 的[通用工作台验收](LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md)新增两个真实项目、评审协议 v2、跨快照验证复用记录及 PAW/独立应用运行证据。两轮 B0/C1 正式比较均不能确认改善；C2 商品范围修整单独验收，不覆盖或重写下文历史结果。
+
+## 用户需求账本 — 已记录的优化要求
+
+[UR-284–UR-291](requirements/PAWOS_REQUIREMENTS_284_291.md) 记录 2026-09-06
+最新澄清及 10 条逐字来源：Lab 要通过模型、提示词、Skill、工具、工作流及
+Harness 的实际候选对照，为垂直任务选择成功率与成本合适的方案。先说明任务、
+数据、工具和环境，再展示真实瓶颈、改动与验证；合理的完整上下文方案也是
+需要检验的基线。RAG、企业知识库问答和运维排查各有执行与验收合同。
+
+原有 Golden 四步和前端引导要求继续有效。下文的 `context_qa` / Prompt
+执行适配器及历史运行回执只证明各自范围，不代表所有垂直工具、Skill、工作流
+优化已完成。具体预算、质量门槛和收益等待任务与真实对照确认；本轮只记录需求。
+
+## 原实施范围与收据
+
+2026-09-06 的[面试展示稿](LAB_INTERVIEW_WALKTHROUGH_20260906.md)按业务任务、
+执行环境、模型对照、失败与改动、复验与选择、工程边界组织现有历史证据。
+可点击预览只用于讲述与交互设计，不代表真实 Lab 的完整前台路径已经接通。
+
 Owner: current parent Session. User request, 2026-09-05: the App must complete
 Agent drafting from real documents/history/failures with evidence, human review,
 Judge calibration, and frozen automatic experiments. The user also renewed

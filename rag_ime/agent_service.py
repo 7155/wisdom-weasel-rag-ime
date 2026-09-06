@@ -282,6 +282,10 @@ class AgentService:
         self._eval_lab_golden_store = None
         self._eval_lab_golden_application = None
         self._eval_lab_golden_execution_owner = background_job_execution_owner
+        self._eval_lab_project_lock = RLock()
+        self._eval_lab_project_application = None
+        self._eval_lab_app_lock = RLock()
+        self._eval_lab_app_application = None
         self._eval_lab_trial_lock = RLock()
         self._eval_lab_trial_store: AgentLabTrialStore | None = None
         self._eval_lab_trial_application: AgentLabTrialApplication | None = None
@@ -1618,6 +1622,48 @@ class AgentService:
     def eval_lab_trial_cancel(self, payload: Mapping[str, object]) -> dict[str, object]:
         self._trial_command_payload(payload, {"jobId"})
         return self._trial_application().cancel(payload["jobId"])
+
+    def _lab_project_application(self):
+        from .agent_lab_project_application import AgentLabProjectApplication
+        with self._eval_lab_project_lock:
+            if self._eval_lab_project_application is None:
+                self._eval_lab_project_application = AgentLabProjectApplication(
+                    self.sessions.db_path, session_application=self.session_application,
+                    current_model=self._golden_current_model,
+                    read_golden=self.eval_lab_golden, command_golden=self.eval_lab_golden_command,
+                )
+            return self._eval_lab_project_application
+
+    def eval_lab_projects(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
+        return self._lab_project_application().read(payload)
+
+    def eval_lab_project_command(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._lab_project_application().command(payload)
+
+    def eval_lab_project_tool(self, session_id: str, operation: str, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._lab_project_application().tool(self.sessions.get(session_id), operation, payload)
+
+    def eval_lab_apps(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
+        return self._lab_project_application().apps.read(payload)
+
+    def eval_lab_app_download(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self._lab_project_application().apps.download(payload)
+
+    def eval_lab_app_command(self, payload: Mapping[str, object]) -> dict[str, object]:
+        from .agent_lab_apps import AgentLabAppApplication
+        from .agent_lab_golden_pi import AgentLabGoldenPiExecutor
+        from .agent_lab_projects import AgentLabProjectUnavailable
+        if payload.get('action') in {'activate','deactivate'}:
+            return self._lab_project_application().apps.command(payload)
+        if not self._eval_lab_golden_execution_owner: raise AgentLabProjectUnavailable()
+        with self._eval_lab_app_lock:
+            if self._eval_lab_app_application is None:
+                executor = AgentLabGoldenPiExecutor(self.sessions.db_path,sessions=self.sessions,
+                    runtime=lambda:self.runtime,session_identity=lambda request_id:self._eval_lab_app_application.session_identity(request_id))
+                self._eval_lab_app_application = AgentLabAppApplication(self._lab_project_application().apps,
+                    complete=executor.complete,abort=lambda session_id:self.runtime.abort(session_id))
+            application = self._eval_lab_app_application
+        return application.command(payload)
 
     def _golden_store(self):
         from .agent_lab_golden import AgentLabGoldenStore
@@ -6390,6 +6436,8 @@ class AgentService:
             trial_application.close()
         if self._eval_lab_golden_application is not None:
             self._eval_lab_golden_application.close()
+        if self._eval_lab_app_application is not None:
+            self._eval_lab_app_application.close()
         self.delegation.close()
         self.runtime.stop()
         self.background_jobs.close()

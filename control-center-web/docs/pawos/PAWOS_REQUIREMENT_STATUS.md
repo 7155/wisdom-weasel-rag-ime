@@ -2,7 +2,7 @@
 
 This document answers “which requirements are complete?” without changing the
 meaning ledger set indexed by [PAWOS_REQUIREMENTS.md](PAWOS_REQUIREMENTS.md). The
-forty-four requirement volumes own user meaning; this index owns explicit assessment and evidence
+forty-six requirement volumes own user meaning; this index owns explicit assessment and evidence
 links. Runtime, Git, installation, and foreground state remain authoritative in
 their own projections and receipts.
 
@@ -43,8 +43,8 @@ not prove the Runtime path.
 
 ## Source progress — 2026-09-05
 
-The ledger now covers 283 requirements. The conservative indexed count is
-253 unassessed, 23 in progress, 7 complete, and 22 receipts; the table below remains the dated
+The ledger now covers 297 requirements. The conservative indexed count is
+261 unassessed, 29 in progress, 7 complete, and 26 receipts; the table below remains the dated
 241-requirement assessment. New source work does not automatically close a
 requirement. [Room experience progress](ROOM_EXPERIENCE_20260905.md) records the
 white UI correction, real message/reply navigation, satellite counts, terminal
@@ -71,6 +71,28 @@ checks. They add no native installation or full Room recovery claim.
 The latest [UR-275–UR-277](requirements/PAWOS_REQUIREMENTS_275_277.md) reject plastic materials, distinguish the galactic core from a Sun, and require rotation/orbit simulation. The [stellar continuation](STELLAR_BROWSER_CONTINUATION_20260905.md) records 186 scoped tests, the final production build and bounded source-browser interaction. Earlier 170-test receipts remain historical; neither run proves user visual satisfaction, native Browser or whole-OS acceptance.
 
 The latest [UR-278–UR-283](requirements/PAWOS_REQUIREMENTS_278_283.md) retain exact model, sync, in-OS authoring, scene loading, user-rejected visual rollback and both-mode requirements. [Current source evidence](OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md) records 228 frontend and 45+2 backend checks, the restored build and bounded Edge interaction; there is no new E4 receipt. UR-283 is satisfied for the checked source display-mode boundary, without closing the separate visual or native requirements.
+
+## Lab requirement clarification — 2026-09-06
+
+[UR-284–UR-291](requirements/PAWOS_REQUIREMENTS_284_291.md) records ten direct
+user messages and the current vertical Agent success/cost optimization goal.
+The eight new entries inherit `unassessed / unverified / unverified`; recording
+the requirements adds no product receipt or completion claim. Actual scene
+environments, baseline quality/cost, loaded candidate changes, comparisons and
+the complete frontend path remain to be assessed against these requirements.
+Earlier scoped Golden, CloudOps and four-scene receipts retain their own limits.
+
+## Lab implementation progress — 2026-09-07
+
+[UR-292–UR-297](requirements/PAWOS_REQUIREMENTS_292_297.md) now have scoped E1,
+E2, E3 and E5 receipts and remain `in_progress`. The [current acceptance record](LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md)
+contains two different projects, the actual frontend experiment path, v11 PAW
+and independent App packages, target consultation, rollback and restart evidence.
+The two formal comparisons do not establish improvement and actual cost remains
+unavailable. The second full backend run had one global-connection-counter failure. Its
+source was traced to other tests' background work; the scoped counter and 16
+health regressions pass. The full suite was not rerun after that final test fix. These automated source-browser and Runtime
+receipts add no E4 native installation or physical native E6 acceptance.
 
 ## Assessment snapshot — 2026-09-04
 
@@ -114,9 +136,9 @@ not inferred status.
   "schemaVersion": "pawos.requirement-status.v1",
   "sourceReceipt": {
     "path": "PAWOS_REQUIREMENTS.md",
-    "sha256": "sha256:b5e308197f9af274f17c9f3bdf52561afd26971a384c61dcb1cd042d1207a595",
-    "recordedAt": "2026-09-06T01:34:59.794518+00:00",
-    "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f"
+    "sha256": "sha256:c8dedfb2052a1615afe8c0aa52c0845ff54bee0c569925248d17f6a8a75972b4",
+    "recordedAt": "2026-09-06T16:20:56.232394+00:00",
+    "owner": "Lab product direction 01a07530-02ad-7a31-92c8-8a7ae531da07"
   },
   "evidenceLevelLabels": {
     "E1": "Source",
@@ -415,6 +437,50 @@ not inferred status.
         "OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md"
       ],
       "sha256": "sha256:938dba636f59dc723f2034fbd62263f987af7cbe15bdf38a8c384614ef6af90c"
+    },
+    "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907": {
+      "level": "E1",
+      "recordedAt": "2026-09-06T22:11:46.857098+00:00",
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "claim": "Generic Lab projects, scoped Guide Tools, versioned materials/artifacts, optional Golden execution and frozen App targets exist in the recorded combined source workspace; the platform has no mandatory business-goal schema.",
+      "artifactRefs": [
+        "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
+        "local candidate: lab-candidates/20260907-generic-v1/acceptance/lab-status-receipt-manifests.json#SOURCE"
+      ],
+      "sha256": "sha256:3cf68c09cfc83df355fd1330a2c06a0d5df5925740dd30aae36c8885fc607145"
+    },
+    "RCP-PAWOS-LAB-GENERIC-TESTS-20260907": {
+      "level": "E2",
+      "recordedAt": "2026-09-06T22:11:46.857098+00:00",
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "claim": "299 frontend files / 3354 tests passed, with 34 focused project/App service checks, 50 Runtime builder checks and 2 real-browser preview regressions. The separate second backend full run had 1 failure in 4960 tests and is not reported as passed.",
+      "artifactRefs": [
+        "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
+        "local candidate: lab-candidates/20260907-generic-v1/acceptance/lab-status-receipt-manifests.json#TESTS"
+      ],
+      "sha256": "sha256:4d13bd054352106f80f88ff02766ec5d6c49753da1bb7fb76c3fe8b64a112771"
+    },
+    "RCP-PAWOS-LAB-GENERIC-BUILD-20260907": {
+      "level": "E3",
+      "recordedAt": "2026-09-06T22:11:46.857098+00:00",
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "claim": "The production frontend, candidate Pi Runtime v7 and v11 PAW/standalone ZIPs were built and checked. App v11 changes only CSS from v10; business Skill, rules, descriptor and standalone Python implementation are unchanged. This is not a native installation receipt.",
+      "artifactRefs": [
+        "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
+        "local candidate: lab-candidates/20260907-generic-v1/acceptance/lab-status-receipt-manifests.json#BUILD"
+      ],
+      "sha256": "sha256:b40734d5cb85b995eba462e3a42ba9dba3e9a80109365f54515712cac00b13bf"
+    },
+    "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907": {
+      "level": "E5",
+      "recordedAt": "2026-09-06T22:11:46.857098+00:00",
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "claim": "The source Gateway and real candidate Pi produced the recorded two-project flow, inconclusive B0/C1 comparisons, completed v11 App call and independent HTTP call. PAW v11-to-v10-to-v11 retained 9 completed calls; the standalone restart retained one identical receipt. Browser operations and business labels were performed by Codex, not independent human reviewers or the installed native app.",
+      "artifactRefs": [
+        "control-center-web/docs/pawos/LAB_GENERIC_WORKBENCH_ACCEPTANCE_20260907.md",
+        "local candidate: lab-candidates/20260907-generic-v1/acceptance/lab-status-receipt-manifests.json#RUNTIME"
+      ],
+      "sha256": "sha256:d6bf25277b85fbd167232746062d50a79c34ef51f1512c1d995ac29508ef85e1"
     }
   },
   "requirements": {
@@ -1204,6 +1270,142 @@ not inferred status.
       "owner": "PAW continuation 01a071a1-a095-7e73-a2d5-e97cfefaa09f",
       "updatedAt": "2026-09-06T01:34:59.794518+00:00",
       "note": "Both project display modes are present; actual four-record source project switched galaxy/list/galaxy and the full-screen button remained horizontal. No new execution identity is created."
+    },
+    "UR-284": {},
+    "UR-285": {},
+    "UR-286": {},
+    "UR-287": {},
+    "UR-288": {},
+    "UR-289": {},
+    "UR-290": {},
+    "UR-291": {},
+    "UR-292": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E5",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907",
+        "RCP-PAWOS-LAB-GENERIC-TESTS-20260907",
+        "RCP-PAWOS-LAB-GENERIC-BUILD-20260907",
+        "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907"
+      ],
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "updatedAt": "2026-09-06T22:11:46.857098+00:00",
+      "note": "Two different projects reached supported generic outcomes, including a complete text-rule evaluation and dual-target App flow. Mature product coverage beyond these supported cases remains open.",
+      "nextAction": "Extend supported task and environment adapters, and validate additional domains with independent criteria and actual user experience."
+    },
+    "UR-293": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E5",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907",
+        "RCP-PAWOS-LAB-GENERIC-TESTS-20260907",
+        "RCP-PAWOS-LAB-GENERIC-BUILD-20260907",
+        "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907"
+      ],
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "updatedAt": "2026-09-06T22:11:46.857098+00:00",
+      "note": "Real text intake, source gaps, a managed Guide workspace and material-backed suggestions were exercised. Repository execution and non-text connector coverage are not inferred from this text-material path.",
+      "nextAction": "Expand supported material/environment connectors while keeping actual readability and missing prerequisites visible."
+    },
+    "UR-294": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E5",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907",
+        "RCP-PAWOS-LAB-GENERIC-TESTS-20260907",
+        "RCP-PAWOS-LAB-GENERIC-BUILD-20260907",
+        "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907"
+      ],
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "updatedAt": "2026-09-06T22:11:46.857098+00:00",
+      "note": "The real frontend completed calibration, freeze, two comparisons, inspection, repair and export. Both comparisons remain inconclusive and costs unavailable; the separate full-suite counter failure was traced to unrelated background connections and its scoped regression passed.",
+      "nextAction": "Use new validation materials and actual cost data for further improvement claims; a subsequent full-suite rerun and legacy fixture cleanup remain separate integration work."
+    },
+    "UR-295": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E3",
+        "E5",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907",
+        "RCP-PAWOS-LAB-GENERIC-TESTS-20260907",
+        "RCP-PAWOS-LAB-GENERIC-BUILD-20260907",
+        "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907"
+      ],
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "updatedAt": "2026-09-06T22:11:46.857098+00:00",
+      "note": "The v11 PAW and independent packages were downloaded through the UI and run against the same known regression; rollback and restart receipts are linked. The supported target is a text-operation App, not an arbitrary external tool/runtime conversion.",
+      "nextAction": "Broaden only explicitly supported application operations and target environments; native import and cloud publication require their own implementation and evidence."
+    },
+    "UR-296": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E3",
+        "E5",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907",
+        "RCP-PAWOS-LAB-GENERIC-TESTS-20260907",
+        "RCP-PAWOS-LAB-GENERIC-BUILD-20260907",
+        "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907"
+      ],
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "updatedAt": "2026-09-06T22:11:46.857098+00:00",
+      "note": "The business C2 Skill was changed for an observed product-scope failure, frozen and exercised in both targets. Lab templates remain optional. Candidate v7 packaging is verified, while older Guide Sessions retain their previously loaded Skill body by Pi design.",
+      "nextAction": "Validate method changes on new independent cases and distinguish newly loaded Lab Skills from already-active Session versions."
+    },
+    "UR-297": {
+      "assessment": "in_progress",
+      "runsVerdict": "passed",
+      "requirementVerdict": "unverified",
+      "requiredEvidenceLevels": [
+        "E1",
+        "E2",
+        "E5",
+        "E6"
+      ],
+      "evidenceRefs": [
+        "RCP-PAWOS-LAB-GENERIC-SOURCE-20260907",
+        "RCP-PAWOS-LAB-GENERIC-TESTS-20260907",
+        "RCP-PAWOS-LAB-GENERIC-BUILD-20260907",
+        "RCP-PAWOS-LAB-GENERIC-RUNTIME-20260907"
+      ],
+      "owner": "Lab product continuation 01a07530-02ad-7a31-92c8-8a7ae531da07",
+      "updatedAt": "2026-09-06T22:11:46.857098+00:00",
+      "note": "The generic Agent/artifact workspace, real result editing, project switching, App operations and narrow content behavior are exercised in Chromium. This does not close all native/whole-OS or all-domain experience boundaries.",
+      "nextAction": "Continue user-facing workflow review across supported project types and environments; retain the Agent-defined output model."
     }
   }
 }

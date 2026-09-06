@@ -6,15 +6,15 @@ import { openPawOsRoute, usePawOsDesktop } from '@/features/paw-os/surface-conte
 import { labConnectionKey, requestLabControl } from '../control-request';
 import { object } from './types';
 
-/** Read the owning Session only on request; never restart a model call. */
-export function GoldenRunRecord({ sessionId }: { sessionId: string }) {
+/** Observe the owning Session; reads never restart a model call. */
+export function GoldenRunRecord({ sessionId, active = false }: { sessionId: string; active?: boolean }) {
   const [open, setOpen] = useState(false);
   const transport = useControlTransport();
   const desktop = usePawOsDesktop();
   const query = useQuery({
     queryKey: ['golden-run-record', labConnectionKey(transport), sessionId],
     queryFn: ({ signal }) => requestLabControl(transport, { pathId: 'agent.session.snapshot', params: { sessionId }, signal }),
-    enabled: open, retry: false, staleTime: 0,
+    enabled: open || active, retry: false, staleTime: 0, refetchInterval: active ? 5_000 : false,
   });
   const snapshot = object(query.data);
   const errors = (Array.isArray(snapshot.items) ? snapshot.items : []).flatMap((item) => {
@@ -23,7 +23,13 @@ export function GoldenRunRecord({ sessionId }: { sessionId: string }) {
       .map((block) => object(object(block).data).message).filter((text): text is string => typeof text === 'string');
   });
   const missingRuntime = errors.some((error) => /Cannot find module|ERR_MODULE_NOT_FOUND/.test(error));
+  const latestRuntimeEvent = (Array.isArray(snapshot.liveEvents) ? snapshot.liveEvents : []).map(object).reverse()
+    .find((event) => ['status_changed', 'provider_request_completed', 'reasoning_summary', 'text_delta', 'message_completed'].includes(String(event.eventType)));
+  const progress = object(latestRuntimeEvent?.payload);
+  const retrying = active && latestRuntimeEvent?.eventType === 'status_changed' && progress.phase === 'provider_retry';
   return <div className="golden-run-record">
+    {retrying && !query.isError ? <p role="status" aria-label="当前模型运行状态">{typeof progress.summary === 'string' ? progress.summary : 'Runtime 正在恢复模型连接。'}{typeof progress.delayMs === 'number' && progress.delayMs > 0 ? ` · 本次等待 ${Math.ceil(progress.delayMs / 1000)} 秒` : ''}</p> : null}
+    {active && query.isError ? <p role="status">当前模型运行状态暂未确认，已有请求不会重新发送。</p> : null}
     <Button size="small" variant="quiet" aria-expanded={open} onClick={() => setOpen((value) => !value)}>查看原运行记录</Button>
     {open ? <div className="golden-run-record__body">
       {query.isPending ? <p role="status">正在读取原对话…</p> : query.isError ? <><p role="alert">暂时无法读取原记录。已有请求没有重新发送。</p><Button size="small" onClick={() => void query.refetch()}>重新读取运行记录</Button></> : <>

@@ -106,11 +106,12 @@ function makeTransport(extra: Record<string, unknown> = {}) {
   });
 }
 
-function showLab(transport: MockControlTransport, route = '/eval-lab') {
+function showLab(transport: MockControlTransport, route = '/eval-lab', openExisting = true) {
   const openRoute = vi.fn();
   render(<MemoryRouter initialEntries={[route]}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <ControlTransportProvider transport={transport}><PawOsDesktopProvider openWindow={vi.fn()} openRoute={openRoute}><EvalLabFeature /></PawOsDesktopProvider></ControlTransportProvider>
   </QueryClientProvider></MemoryRouter>);
+  if (openExisting) fireEvent.click(screen.getByRole('button', { name: '已有实验' }));
   return { openRoute };
 }
 
@@ -477,7 +478,7 @@ describe('experiment workspace', () => {
       targets: [{ targetKey: 'run:unrelated-run', kind: 'run', id: 'unrelated-run', title: 'Other run', traceIds: [], sourceAvailable: true }],
       traceIds: [], inspectionSha256: 'd'.repeat(64), inspection: {}, result: {}, failureReason: '', createdAtMs: 1, updatedAtMs: 1,
     } });
-    const { openRoute } = showLab(transport, `/eval-lab?traceReportId=${encodeURIComponent(reportId)}`);
+    const { openRoute } = showLab(transport, `/eval-lab?traceReportId=${encodeURIComponent(reportId)}`, false);
     expect(await screen.findByText('另一轮任务诊断')).toBeVisible();
     expect(screen.getByText(/来源报告尚未与本实验基线关联/)).toBeVisible();
     expect(screen.getByRole('combobox', { name: '当前实验' })).toHaveValue(experiment.experimentId);

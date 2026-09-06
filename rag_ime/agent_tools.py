@@ -599,6 +599,19 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "lab_project",
+        "domain": "agents",
+        "displayName": "Lab 项目成果",
+        "description": "读取当前 Lab 项目并创建带版本的项目成果、动态视图及可选执行绑定",
+        "when": ("当前 Session 是 Lab 项目 Agent，需要基于 Skill 模板组织项目特有成果与交互",),
+        "notFor": ("访问其他项目、直接修改业务环境或把成果正文当作执行成功",),
+        "input": "读取成果身份，或带 expectedRevision 和 clientRequestId 的项目命令",
+        "output": "真实项目、成果版本、材料快照、应用版本与实际调用回执",
+        "does": "与前端共用项目命令；执行操作只调用当前项目的真实绑定与原有执行所有者。",
+        "operations": ("read", "command", "execution_read", "execution_command"),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "desktop_semantic",
         "domain": "desktop",
         "displayName": "桌面语义操作",
@@ -870,6 +883,30 @@ _KNOWLEDGE_RETRIEVAL_PARAMETER_SCHEMA: dict[str, object] = {
 }
 
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
+    "lab_project": {
+        "type": "object",
+        "oneOf": [
+            {"type": "object", "additionalProperties": False, "required": ["op"],
+             "properties": {"op": {"const": "read"}, "artifactId": {"type": "string"},
+                            "artifactRevision": {"type": "integer", "minimum": 1}, "materialSetId": {"type": "string"},
+                            "appId": {"type": "string", "description": "读取本项目应用版本与调用摘要；与 artifactId/materialSetId 分开读取。"},
+                            "appVersion": {"type": "integer", "minimum": 1},
+                            "appCallId": {"type": "string", "description": "按需读取这次实际调用的完整输入、输出、用量及回执。"}}},
+            {"type": "object", "additionalProperties": False,
+             "required": ["op", "action", "expectedRevision", "clientRequestId", "input"],
+             "properties": {"op": {"const": "command"},
+                            "action": {"type": "string", "enum": ["update_brief", "import_materials", "remove_materials", "publish_artifact", "set_workspace", "bind_execution", "prepare_app"]},
+                            "expectedRevision": {"type": "integer", "minimum": 1},
+                            "clientRequestId": {"type": "string", "minLength": 1, "maxLength": 240},
+                            "input": {"type": "object", "description": "update_brief: title/description; import_materials: path or materials; remove_materials: sourceIds; publish_artifact: title,kind,view,content, optional artifactId+expectedArtifactRevision,summary,actions; set_workspace: artifactOrder,primaryArtifactId,layout; bind_execution: adapterId,input, optional artifactId+artifactRevision; prepare_app: directory relative to executionWorkspace.path, optional appId to create a new immutable version. Read the current project's commandGuide before a new operation."}}},
+            {"type": "object", "additionalProperties": False, "required": ["op", "bindingId"],
+             "properties": {"op": {"const": "execution_read"}, "bindingId": {"type": "string", "minLength": 1}}},
+            {"type": "object", "additionalProperties": False, "required": ["op", "bindingId", "action", "expectedRevision", "clientRequestId", "input"],
+             "properties": {"op": {"const": "execution_command"}, "bindingId": {"type": "string", "minLength": 1},
+                            "action": {"type": "string", "enum": ["draft", "judge_config", "calibrate", "freeze", "experiment", "cancel", "resume"]},
+                            "expectedRevision": {"type": "integer", "minimum": 1}, "clientRequestId": {"type": "string", "minLength": 1, "maxLength": 240}, "input": {"type": "object"}}},
+        ],
+    },
     "room_partner": {
         "type": "object",
         "additionalProperties": False,
@@ -2940,6 +2977,7 @@ class ControlToolGateway:
         role_books: object | None = None,
         artifact_projector: AgentToolArtifactProjector | None = None,
         work_documents: object | None = None,
+        lab_projects: object | None = None,
         sandbox_connector: object | None = None,
         trace_diagnostics: TraceDiagnosticsService | None = None,
         workflow_publisher: Callable[[str, str], object] | None = None,
@@ -2965,6 +3003,7 @@ class ControlToolGateway:
         self.role_books = role_books
         self.artifact_projector = artifact_projector
         self.work_documents = work_documents
+        self.lab_projects = lab_projects
         self.sandbox_connector = sandbox_connector
         self.trace_diagnostics = trace_diagnostics
         self.workflow_publisher = workflow_publisher
@@ -3212,6 +3251,12 @@ class ControlToolGateway:
             and str(participant.get("collaborationRole") or "") == "coordinator"
         )
 
+    def _lab_project(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        execute = getattr(self.lab_projects, "eval_lab_project_tool", None)
+        if not callable(execute):
+            raise ValueError("Lab project service is unavailable")
+        return dict(execute(str(args.get("_sessionId") or ""), operation, args))
+
     def _require_facilitator_root_work_document(
         self,
         session: Mapping[str, object],
@@ -3254,6 +3299,10 @@ class ControlToolGateway:
                 and (
                     str(spec["id"]) != "sandbox"
                     or self.sandbox_connector is not None
+                )
+                and (
+                    str(spec["id"]) != "lab_project"
+                    or self.lab_projects is not None
                 )
             )
             if str(spec["id"]) == "room_partner":
@@ -3335,6 +3384,13 @@ class ControlToolGateway:
                     # Keep the public capability card available so the UI can
                     # explain that Memory is off, but expose no executable
                     # operation to a model/runtime manifest.
+                    effective_operations = []
+                if str(spec["id"]) == "lab_project" and not (
+                    session.get("surfaceKind") == "extension_app"
+                    and session.get("ownerAppId") == "extension:agent-lab"
+                    and str(session.get("surfaceKey") or "").startswith("project.")
+                    and str(session.get("surfaceKey") or "").endswith(".guide")
+                ):
                     effective_operations = []
                 # A coordinator without a selected directory must not expose
                 # filesystem tools to Pi. The control center still lists the
@@ -3523,6 +3579,7 @@ class ControlToolGateway:
             "plugins": self._plugins,
             "sandbox": self._sandbox,
             "work_documents": self._work_documents,
+            "lab_project": self._lab_project,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
         if read_only_validation_command:
@@ -10452,6 +10509,9 @@ def _tool_profile_allows(
         ),
         "agent_goal": frozenset({"list"}),
         "work_documents": frozenset({"list", "history.search", "get"}),
+        # These commands maintain the current App's artifacts and bindings,
+        # like conversational Todo state; no external task runs here.
+        "lab_project": frozenset({"read", "command", "execution_read"}),
         "workspace_list": frozenset({"list"}),
         "workspace_read": frozenset({"read"}),
         "workspace_search": frozenset({"search"}),

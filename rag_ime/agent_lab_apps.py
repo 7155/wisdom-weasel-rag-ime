@@ -1,0 +1,302 @@
+"""Portable application versions, activation and actual Pi invocation receipts."""
+from __future__ import annotations
+
+import base64
+import copy
+import hashlib
+import json
+import sqlite3
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from .agent_lab_app_runtime import AppInputError, build_prompt
+from .agent_lab_app_sources import export_zip, freeze_source
+from .agent_lab_projects import (AgentLabProjectConflict, AgentLabProjectNotFound,
+                                 AgentLabProjectValidationError, _integer, _json, _now, _object, _text)
+from .db import apply_database_migrations, sqlite_connection
+
+
+class AgentLabAppStore:
+    def __init__(self, db_path: str | Path, *, scope_id: str = 'local') -> None:
+        self.db_path = Path(db_path)
+        self.scope_id = scope_id
+        self._lock = threading.RLock()
+        self._initialized = False
+
+    def initialize(self) -> None:
+        with self._lock:
+            if self._initialized: return
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite_connection(self.db_path) as conn: apply_database_migrations(conn)
+            self._initialized = True
+
+    def _app(self, conn: sqlite3.Connection, app_id: str) -> dict:
+        row = conn.execute('SELECT * FROM agent_lab_apps WHERE app_id=? AND scope_id=?', (app_id,self.scope_id)).fetchone()
+        if row is None: raise AgentLabProjectNotFound('应用不存在，或不属于当前工作空间。')
+        return {**json.loads(row['payload_json']), 'revision':row['revision'], 'latestVersion':row['latest_version'],
+                'activeVersion':row['active_version'], 'updatedAtMs':row['updated_at_ms']}
+
+    @staticmethod
+    def _version(conn: sqlite3.Connection, app_id: str, version: int) -> dict:
+        row = conn.execute('SELECT payload_json FROM agent_lab_app_versions WHERE app_id=? AND version=?', (app_id,version)).fetchone()
+        if row is None: raise AgentLabProjectNotFound('此应用版本不存在。')
+        return json.loads(row[0])
+
+    @staticmethod
+    def _public_version(version: dict, *, include_html: bool = True) -> dict:
+        result = {key:value for key,value in version.items() if key not in {'files','sourceDirectory','runtimeSource','exports'}}
+        result['fileCount'] = len(version['files'])
+        result['byteSize'] = sum(len(value.encode()) for value in version['files'].values())
+        if include_html: result['html'] = version['files'][version['spec']['html']]
+        result['sourceFiles'] = [{'path':path,'byteSize':len(value.encode()),'sha256':hashlib.sha256(value.encode()).hexdigest()} for path,value in version['files'].items()]
+        return result
+
+    def prepare(self, conn: sqlite3.Connection, project: dict, value: dict, default_model: dict[str,str]) -> dict:
+        value = _object(value, {'directory','appId'}, '应用准备')
+        directory = _text(value.get('directory'), '应用目录', 500)
+        workspace = project.get('executionWorkspace') or {}
+        if workspace.get('kind') != 'managed' or not workspace.get('path'):
+            raise AgentLabProjectValidationError('此项目没有可用的托管执行目录。')
+        try: frozen = freeze_source(Path(workspace['path']), directory, default_model)
+        except ValueError as exc:
+            if isinstance(exc, AgentLabProjectValidationError): raise
+            raise AgentLabProjectValidationError(str(exc)) from exc
+        app_id = _text(value.get('appId',''), '应用标识', optional=True)
+        previous = self._app(conn, app_id) if app_id else None
+        if previous and previous['projectId'] != project['projectId']:
+            raise AgentLabProjectValidationError('应用不属于当前项目。')
+        if previous:
+            latest = self._version(conn, app_id, previous['latestVersion'])
+            if latest['contentHash'] == frozen['contentHash']:
+                return {**previous,'version':self._public_version(latest)}
+        now = _now(); app_id = app_id or f'extension:lab-{uuid.uuid4().hex}'
+        version_number = previous['latestVersion'] + 1 if previous else 1
+        version = {**frozen, 'appId':app_id, 'version':version_number,'projectRevision':project['revision'],
+                   'materialSetId':project['materialSetId'],'createdAtMs':now}
+        # Freeze the entire distributable once. Later product runner, manifest,
+        # or README changes cannot silently rewrite an accepted App version.
+        version['exports'] = {}
+        for target in ('paw','standalone'):
+            filename,archive = export_zip(version,target)
+            version['exports'][target] = {'filename':filename,'mimeType':'application/zip',
+                'base64':base64.b64encode(archive).decode(),'byteSize':len(archive),'sha256':hashlib.sha256(archive).hexdigest()}
+        app = {'appId':app_id,'projectId':project['projectId'],'title':frozen['spec']['title'],
+               'description':frozen['spec']['description'],'revision':previous['revision']+1 if previous else 1,
+               'latestVersion':version_number,'activeVersion':previous['activeVersion'] if previous else None,
+               'createdAtMs':previous['createdAtMs'] if previous else now,'updatedAtMs':now}
+        conn.execute('INSERT INTO agent_lab_apps(app_id,project_id,scope_id,revision,latest_version,active_version,payload_json,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,?,?,?) '
+                     'ON CONFLICT(app_id) DO UPDATE SET revision=excluded.revision,latest_version=excluded.latest_version,payload_json=excluded.payload_json,updated_at_ms=excluded.updated_at_ms',
+                     (app_id,project['projectId'],self.scope_id,app['revision'],version_number,app['activeVersion'],_json(app),app['createdAtMs'],now))
+        conn.execute('INSERT INTO agent_lab_app_versions(app_id,version,payload_json,created_at_ms) VALUES(?,?,?,?)', (app_id,version_number,_json(version),now))
+        return {**app,'version':self._public_version(version)}
+
+    def read(self, payload: Mapping[str, Any] | None = None) -> dict:
+        value = _object(payload or {}, {'appId','projectId','version','callId'}, '应用读取')
+        self.initialize()
+        app_id = _text(value.get('appId',''), '应用标识', optional=True)
+        project_id = _text(value.get('projectId',''), '项目标识', optional=True)
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
+            conn.execute('BEGIN')
+            rows = conn.execute('SELECT app_id FROM agent_lab_apps WHERE scope_id=? AND (?="" OR project_id=?) ORDER BY updated_at_ms DESC', (self.scope_id,project_id,project_id))
+            items = [self._app(conn,row[0]) for row in rows]
+            for item in items:
+                installed = item['activeVersion']
+                if installed is not None:
+                    item['installation'] = self.manifest(item,self._version(conn,item['appId'],installed))
+            app = self._app(conn,app_id) if app_id else None
+            if app and project_id and app['projectId'] != project_id: raise AgentLabProjectNotFound('应用不属于当前项目。')
+            result = {'ok':True,'items':items,'app':app}
+            if app:
+                selected = value.get('version') or app['latestVersion']
+                if isinstance(selected,str) and selected.isdecimal(): selected = int(selected)
+                selected = _integer(selected,1)
+                result['version'] = self._public_version(self._version(conn,app_id,selected))
+                result['versions'] = [self._public_version(json.loads(row[0]),include_html=False) for row in conn.execute('SELECT payload_json FROM agent_lab_app_versions WHERE app_id=? ORDER BY version DESC',(app_id,))]
+                result['calls'] = [self._call(row) for row in conn.execute(
+                    "SELECT * FROM agent_lab_app_calls WHERE app_id=? AND (state IN ('queued','running') OR call_id IN "
+                    '(SELECT call_id FROM agent_lab_app_calls WHERE app_id=? ORDER BY created_at_ms DESC LIMIT 30)) ORDER BY created_at_ms DESC',
+                    (app_id,app_id))]
+            if value.get('callId'):
+                if not app: raise AgentLabProjectValidationError('读取调用需要指定应用。')
+                row = conn.execute('SELECT * FROM agent_lab_app_calls WHERE app_id=? AND call_id=?',(app_id,_text(value['callId'],'调用标识'))).fetchone()
+                if row is None: raise AgentLabProjectNotFound('应用调用不存在。')
+                result['call'] = self._call(row)
+            return result
+
+    @staticmethod
+    def manifest(app: dict, version: dict) -> dict:
+        # Generic desktop identity; it is a Lab-hosted application, not a claim
+        # that a compiled native Pi Package has been installed.
+        spec = version['spec']; slug = app['appId'].removeprefix('extension:')
+        return {'schemaVersion':'pawos.lab-app.v1','id':app['appId'],'version':f"0.{version['version']}.0",
+                'label':spec['title'],'shortLabel':spec['title'][:12],'tagline':spec['description'],
+                'route':f'/extensions/{slug}','presentation':'workspace','accent':'green',
+                'icon':{'symbol':'assistant','background':'#22876A'},'packageId':f'lab-app-{slug}',
+                'bindingSha256':version['contentHash'],'skillRef':spec['skill'],
+                'skillSha256':hashlib.sha256(version['files'][spec['skill']].encode()).hexdigest(),
+                'verticalSuiteId':app['projectId'],'verticalSuiteRevision':str(version['projectRevision']),
+                'hosting':{'kind':'lab-html','appId':app['appId'],'projectId':app['projectId'],'version':version['version']}}
+
+    def download(self, payload: Mapping[str, Any]) -> dict:
+        value = _object(payload, {'appId','version','target'}, '应用导出')
+        app_id = _text(value.get('appId'),'应用标识'); selected = value.get('version')
+        if isinstance(selected,str) and selected.isdecimal(): selected = int(selected)
+        selected = _integer(selected,1); target = _text(value.get('target'),'导出目标')
+        self.initialize()
+        with sqlite_connection(self.db_path,row_factory=sqlite3.Row) as conn:
+            self._app(conn,app_id)
+            version = self._version(conn,app_id,selected)
+        if target not in {'paw','standalone'}: raise AgentLabProjectValidationError('不支持此导出目标。')
+        return {'ok':True,**version['exports'][target],'contentHash':version['contentHash'],
+                'target':target,'appId':app_id,'version':selected}
+
+    def command(self, payload: Mapping[str, Any]) -> dict:
+        value = _object(payload, {'action','appId','expectedRevision','clientRequestId','input'}, '应用命令')
+        action = _text(value.get('action'),'应用操作')
+        if action not in {'activate','deactivate','invoke','cancel','resume'}: raise AgentLabProjectValidationError('应用操作尚不支持。')
+        app_id = _text(value.get('appId'),'应用标识'); client_id = _text(value.get('clientRequestId'),'请求标识')
+        expected = _integer(value.get('expectedRevision'),1); body = value.get('input')
+        if not isinstance(body,dict): raise AgentLabProjectValidationError('应用操作内容需要对象。')
+        request = _json({key:item for key,item in value.items() if key != 'clientRequestId'})
+        self.initialize()
+        with sqlite_connection(self.db_path,row_factory=sqlite3.Row,foreign_keys=True) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            receipt = conn.execute('SELECT request_json,response_json FROM agent_lab_app_commands WHERE scope_id=? AND client_request_id=?',(self.scope_id,client_id)).fetchone()
+            if receipt:
+                if receipt[0] != request: raise AgentLabProjectConflict('此应用请求标识已绑定其他内容。')
+                return {**json.loads(receipt[1]),'replayed':True}
+            app = self._app(conn,app_id)
+            if app['revision'] != expected: raise AgentLabProjectConflict('应用已经更新，请保留输入并重新读取。')
+            result = {'ok':True,'clientRequestId':client_id,'replayed':False}
+            if action in {'activate','deactivate'}:
+                _object(body, {'version'} if action == 'activate' else set(), '应用启用')
+                selected = _integer(body.get('version'),1) if action == 'activate' else None
+                if selected is not None: self._version(conn,app_id,selected)
+                app.update(activeVersion=selected,revision=app['revision']+1,updatedAtMs=_now())
+                conn.execute('UPDATE agent_lab_apps SET active_version=?,revision=?,updated_at_ms=? WHERE app_id=?',(selected,app['revision'],app['updatedAtMs'],app_id))
+            elif action == 'invoke':
+                _object(body,{'version','actionId','values'},'应用输入')
+                selected = _integer(body.get('version'),1); version = self._version(conn,app_id,selected)
+                action_id = _text(body.get('actionId'),'应用操作')
+                try: build_prompt(version['spec'],version['files'],action_id,body.get('values'))
+                except AppInputError as exc: raise AgentLabProjectValidationError(str(exc)) from exc
+                self._ensure_capacity(conn,app_id)
+                call_id = f'lab-app-call-{uuid.uuid4().hex}'; now = _now()
+                conn.execute('INSERT INTO agent_lab_app_calls(call_id,app_id,app_version,action_id,input_json,state,created_at_ms,updated_at_ms) VALUES(?,?,?,?,?,?,?,?)',
+                             (call_id,app_id,selected,action_id,_json(body['values']),'queued',now,now))
+                result['call'] = self._call(conn.execute('SELECT * FROM agent_lab_app_calls WHERE call_id=?',(call_id,)).fetchone())
+            else:
+                _object(body,{'callId'},'调用控制')
+                row = conn.execute('SELECT * FROM agent_lab_app_calls WHERE app_id=? AND call_id=?',(app_id,_text(body.get('callId'),'调用标识'))).fetchone()
+                if row is None: raise AgentLabProjectNotFound('应用调用不存在。')
+                if action == 'cancel' and row['state'] in {'queued','running','interrupted'}:
+                    state = 'cancelled' if row['state'] == 'queued' and not row['session_id'] else row['state']
+                    conn.execute('UPDATE agent_lab_app_calls SET cancel_requested=1,state=?,updated_at_ms=? WHERE call_id=?',(state,_now(),row['call_id']))
+                elif action == 'resume':
+                    if row['state'] != 'interrupted' or row['cancel_requested']: raise AgentLabProjectValidationError('此调用不需要恢复，或已经请求取消。')
+                    self._ensure_capacity(conn,app_id)
+                    conn.execute('UPDATE agent_lab_app_calls SET state="queued",error="",updated_at_ms=? WHERE call_id=?',(_now(),row['call_id']))
+                result['call'] = self._call(conn.execute('SELECT * FROM agent_lab_app_calls WHERE call_id=?',(row['call_id'],)).fetchone())
+            result['app'] = app
+            conn.execute('INSERT INTO agent_lab_app_commands(scope_id,client_request_id,request_json,response_json,created_at_ms) VALUES(?,?,?,?,?)',(self.scope_id,client_id,request,_json(result),_now()))
+            return result
+
+    @staticmethod
+    def _ensure_capacity(conn: sqlite3.Connection, app_id: str) -> None:
+        active_count = conn.execute("SELECT COUNT(*) FROM agent_lab_app_calls WHERE app_id=? AND state IN ('queued','running')",(app_id,)).fetchone()[0]
+        if active_count >= 4: raise AgentLabProjectConflict('此应用已有 4 项处理中调用，请等待完成或停止后再试。')
+
+    @staticmethod
+    def _call(row: sqlite3.Row) -> dict:
+        return {'callId':row['call_id'],'appId':row['app_id'],'version':row['app_version'],'actionId':row['action_id'],
+                'input':json.loads(row['input_json']),'state':row['state'],'sessionId':row['session_id'],
+                'result':json.loads(row['result_json']),'error':row['error'],'cancelRequested':bool(row['cancel_requested']),
+                'createdAtMs':row['created_at_ms'],'updatedAtMs':row['updated_at_ms']}
+
+    def call_input(self, call_id: str) -> tuple[dict,dict]:
+        self.initialize()
+        with sqlite_connection(self.db_path,row_factory=sqlite3.Row) as conn:
+            row = conn.execute('SELECT c.* FROM agent_lab_app_calls c JOIN agent_lab_apps a ON a.app_id=c.app_id WHERE call_id=? AND a.scope_id=?',(call_id,self.scope_id)).fetchone()
+            if row is None: raise AgentLabProjectNotFound('应用调用不存在。')
+            return self._call(row),self._version(conn,row['app_id'],row['app_version'])
+
+    def update_call(self, call_id: str, **fields: Any) -> dict:
+        if set(fields) - {'state','session_id','result_json','error'}: raise ValueError('invalid call fields')
+        with sqlite_connection(self.db_path,row_factory=sqlite3.Row) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            conn.execute(f"UPDATE agent_lab_app_calls SET {','.join(f'{key}=?' for key in fields)},updated_at_ms=? WHERE call_id=? AND state NOT IN ('completed','failed','cancelled')",
+                         (*fields.values(),_now(),call_id))
+            return self._call(conn.execute('SELECT * FROM agent_lab_app_calls WHERE call_id=?',(call_id,)).fetchone())
+
+
+class AgentLabAppApplication:
+    def __init__(self, store: AgentLabAppStore, *, complete: Callable[...,dict], abort: Callable[[str],Any], start_workers: bool = True) -> None:
+        self.store,self.complete,self.abort = store,complete,abort
+        self._pool = ThreadPoolExecutor(max_workers=2,thread_name_prefix='paw-lab-app') if start_workers else None
+        self._lock = threading.Lock(); self._active: set[str] = set(); self._closed = False
+        store.initialize()
+        with sqlite_connection(store.db_path) as conn:
+            conn.execute("UPDATE agent_lab_app_calls SET state='interrupted',error='执行进程已离线，请恢复原调用。',updated_at_ms=? WHERE state IN ('queued','running') AND app_id IN (SELECT app_id FROM agent_lab_apps WHERE scope_id=?)",(_now(),store.scope_id))
+
+    def command(self, payload: Mapping[str,Any]) -> dict:
+        result = self.store.command(payload); call = result.get('call')
+        if call and payload['action'] == 'cancel':
+            # A replay reconciles the original cancellation. A process restart
+            # can leave no worker to consume cancel_requested on its own.
+            current,_ = self.store.call_input(call['callId'])
+            if current['state'] not in {'completed','failed','cancelled'}:
+                if current['sessionId']:
+                    try:
+                        self.abort(current['sessionId'])
+                        self.store.update_call(current['callId'],state='cancelled',error='应用调用已停止。')
+                    except Exception:
+                        self.store.update_call(current['callId'],state='interrupted',error='停止尚未确认，请重试停止；原调用已保留。')
+                else:
+                    self.store.update_call(current['callId'],state='cancelled',error='应用调用已停止。')
+        elif call and call['state'] == 'queued' and self._pool:
+            with self._lock:
+                if self._closed or call['callId'] in self._active: return result
+                self._active.add(call['callId'])
+            self._pool.submit(self.run_call,call['callId'])
+        return result
+
+    def session_identity(self, request_id: str) -> dict:
+        call,version = self.store.call_input(request_id)
+        return {'title':version['spec']['title'],'owner_app_id':call['appId'],'surface_key':f"application.{call['callId']}"}
+
+    def run_call(self, call_id: str) -> None:
+        try:
+            call,version = self.store.call_input(call_id)
+            if call['state'] != 'queued' or call['cancelRequested']: return
+            self.store.update_call(call_id,state='running')
+            def cancelled():
+                return self._closed or self.store.call_input(call_id)[0]['cancelRequested']
+            result = self.complete(request_id=call_id,model=version['spec']['model'],
+                                   prompt=build_prompt(version['spec'],version['files'],call['actionId'],call['input']),
+                                   on_session=lambda session_id:self.store.update_call(call_id,session_id=session_id),cancelled=cancelled)
+            if self._closed: self.store.update_call(call_id,state='interrupted',error='应用执行已中断，请恢复原调用。')
+            elif cancelled(): self.store.update_call(call_id,state='cancelled',error='应用调用已停止。')
+            else: self.store.update_call(call_id,state='completed',result_json=_json(result),error='')
+        except Exception as exc:
+            call,_ = self.store.call_input(call_id)
+            cancelled = call['cancelRequested']
+            state = 'cancelled' if cancelled else 'interrupted' if self._closed or getattr(exc,'interrupted',False) or isinstance(exc,(TimeoutError,ConnectionError,OSError)) else 'failed'
+            completion = getattr(exc,'completion',None)
+            self.store.update_call(call_id,state=state,error='应用调用已停止。' if cancelled else str(exc)[:500] or '应用调用未完成。',
+                                   result_json=_json(completion or {}))
+        finally:
+            with self._lock: self._active.discard(call_id)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True; calls = list(self._active)
+        for call_id in calls:
+            call,_ = self.store.call_input(call_id)
+            self.store.update_call(call_id,state='interrupted',error='应用执行已中断，请恢复原调用。')
+            if call['sessionId']:
+                try: self.abort(call['sessionId'])
+                except Exception: pass
+        if self._pool: self._pool.shutdown(wait=False,cancel_futures=True)

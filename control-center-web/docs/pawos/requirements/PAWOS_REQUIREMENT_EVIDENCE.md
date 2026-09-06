@@ -1,8 +1,22 @@
 # PAWOS 用户逐字证据
 
-> 导航：[UR-225](PAWOS_REQUIREMENTS_225_225.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
+> 上一份：[UR-292–UR-297](PAWOS_REQUIREMENTS_292_297.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[产品契约](PAWOS_PRODUCT_CONTRACT.md)
 >
 > 本文件保存需求账本引用的逐字来源与来源覆盖。不得用 Agent 转述替代用户原话。
+
+## Lab 产品方向与前端重设计来源 — 2026-09-06
+
+[UR-292–UR-297 的逐字来源](PAWOS_REQUIREMENTS_292_297.md#逐字来源) 保存 16 条用户直接消息、选择或目标编辑、原始时间与消息 ID，覆盖成熟产品、描述/路径接入、App/外部交付、Skill 核心、前端重设计、整体设计优先及已定首版用户和双目标交付、复杂工作台、Flowith 参考和设计决策授权，以及 Agent 主导的通用 SaaS / Skill 模板修正、真实前端全流程与 App 导出、本轮截至 2026-09-07 07:00 的配套打磨。三份粘贴附件明确归为参考材料，未逐项视作用户采纳。
+
+## Lab 当前澄清来源 — 2026-09-06
+
+[UR-284–UR-291 的逐字来源](PAWOS_REQUIREMENTS_284_291.md#逐字来源) 保存本轮
+连续 10 条用户直接消息及 UTC 时间、消息 ID、修正关系和逐条覆盖表，范围从
+`msg_01a07656-852a-7c02-99f1-c8aeb7fcd905`（一起做）到
+`msg_01a07667-fba4-7b80-b679-a9399e14d6ff`（记录这些需求）。它明确 Lab 的
+垂直任务成功率/成本目标及模型、工具、提示词、Skill、工作流/Harness 的优化
+范围；助手的场景建议与引用对话不作为这批直接来源。原文只保存在该分卷，
+此处作索引，不复制成第二套可分歧的账本。
 
 ## 用户原始消息证据（逐字保留）
 
@@ -1346,6 +1360,7 @@ and `release/`.
 
 ## 继续阅读 / 编辑
 
+- 上一份：[UR-292–UR-297](PAWOS_REQUIREMENTS_292_297.md)
 - 下一份：[PAWOS 产品契约](PAWOS_PRODUCT_CONTRACT.md)
 - 返回：[需求总索引](../PAWOS_REQUIREMENTS.md)
 - 实施状态：[PAWOS_REQUIREMENT_STATUS.md](../PAWOS_REQUIREMENT_STATUS.md)

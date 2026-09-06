@@ -24,7 +24,7 @@ export type PawExtensionAppSandboxContract = {
 };
 
 export type PawExtensionAppManifest = {
-  schemaVersion: 'pawos.extension-app.v1';
+  schemaVersion: 'pawos.extension-app.v1' | 'pawos.lab-app.v1';
   id: PawExtensionAppId;
   version: string;
   bindingSha256: string;
@@ -44,6 +44,7 @@ export type PawExtensionAppManifest = {
   verticalSuiteId: string;
   verticalSuiteRevision: string;
   sandbox?: PawExtensionAppSandboxContract;
+  hosting?: { kind: 'lab-html'; appId: PawExtensionAppId; projectId: string; version: number };
 };
 
 export type PawExtensionAppInstallationEvidence = {

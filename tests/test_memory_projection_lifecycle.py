@@ -6,6 +6,8 @@ import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from threading import Event
@@ -425,6 +427,28 @@ class MemoryProjectionLifecycleTests(unittest.TestCase):
         session_store = service.agent.sessions
         room_store = service.agent.rooms
         core = service.core
+        foreground_thread = threading.get_ident()
+        service_database = self.db_path.resolve()
+        connect = sqlite3.connect
+        observed_connections: list[dict[str, object]] = []
+
+        def observe_connection(*args, **kwargs):
+            database = args[0] if args else kwargs["database"]
+            # Other tests can leave background work alive. Keep every foreground
+            # open and every open of this service's database, on any thread.
+            if (
+                threading.get_ident() == foreground_thread
+                or Path(str(database)).resolve() == service_database
+            ):
+                observed_connections.append({
+                    "database": str(database),
+                    "thread": threading.current_thread().name,
+                })
+            return connect(*args, **kwargs)
+
+        def read_unrelated_database() -> None:
+            with closing(sqlite3.connect(self.db_path.with_name("unrelated.sqlite"))) as conn:
+                conn.execute("SELECT 1").fetchone()
 
         with (
             patch.object(
@@ -444,9 +468,11 @@ class MemoryProjectionLifecycleTests(unittest.TestCase):
             ) as core_connections,
             patch(
                 "sqlite3.connect",
-                wraps=sqlite3.connect,
-            ) as sqlite_connections,
+                side_effect=observe_connection,
+            ),
+            ThreadPoolExecutor(max_workers=1) as unrelated_work,
         ):
+            unrelated_read = unrelated_work.submit(read_unrelated_database)
             for _ in range(2):
                 health = service.health()
                 sessions = service.agent.list_sessions(
@@ -458,11 +484,12 @@ class MemoryProjectionLifecycleTests(unittest.TestCase):
                 self.assertTrue(health["ok"])
                 self.assertTrue(sessions["ok"])
                 self.assertTrue(rooms["ok"])
+            unrelated_read.result(timeout=2)
 
         self.assertEqual(session_connections.call_count, 0)
         self.assertEqual(room_connections.call_count, 0)
         self.assertEqual(core_connections.call_count, 0)
-        self.assertEqual(sqlite_connections.call_count, 0)
+        self.assertEqual(observed_connections, [])
 
     def test_startup_recovery_failure_is_observable_without_breaking_health(
         self,

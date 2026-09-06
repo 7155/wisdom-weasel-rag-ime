@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expectNoHorizontalPageOverflow } from './helpers';
 
 const PNG_1X1 = Buffer.from(
@@ -79,10 +81,10 @@ test('managed Markdown, code, Diff, image, and interactive HTML previews stay us
   await expect(iframe).toHaveAttribute('sandbox', /allow-forms/);
   await expect(iframe.contentFrame().getByRole('heading', { name: '交互验收报告' })).toBeVisible();
   await expect(iframe.contentFrame().getByText('脚本与远程资源已运行。')).toBeVisible();
-  // The isolated preview contains the bootstrap loader and the authored
-  // report script. Both are expected: the first decodes the source into the
-  // sandbox, while the second provides the report's interaction.
-  await expect(iframe.contentFrame().locator('script')).toHaveCount(2);
+  // The authored document replaces the bootstrap after parsing, so its head
+  // metadata and policies belong to the head and only its own script remains.
+  await expect(iframe.contentFrame().locator('script')).toHaveCount(1);
+  await expect(iframe.contentFrame().locator('body meta')).toHaveCount(0);
   await expect(iframe.contentFrame().locator('form')).toHaveCount(1);
   await expect(iframe.contentFrame().locator('link[rel="stylesheet"]')).toHaveCount(1);
   await iframe.contentFrame().getByRole('textbox', { name: '报告备注' }).fill('表单交互正常');
@@ -117,15 +119,9 @@ const ISOLATED_PREVIEW_CSP = [
   'sandbox allow-forms allow-modals allow-pointer-lock allow-popups allow-scripts',
 ].join('; ');
 
-const ISOLATED_PREVIEW_BOOTSTRAP = `<!doctype html><meta charset="utf-8"><script>
-(() => {
-  const encoded = location.hash.slice(1).replace(/-/g, '+').replace(/_/g, '/');
-  const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
-  const binary = atob(padded);
-  const source = new TextDecoder().decode(Uint8Array.from(binary, c => c.charCodeAt(0)));
-  document.open(); document.write(source); document.close();
-})();
-</script>`;
+const ISOLATED_PREVIEW_BOOTSTRAP = execFileSync('python3', [
+  '-c', 'from rag_ime.debug_server import _ISOLATED_HTML_PREVIEW_DOCUMENT; import sys; sys.stdout.buffer.write(_ISOLATED_HTML_PREVIEW_DOCUMENT)',
+], { cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8' });
 
 /**
  * Generated HTML is delivered as a report card with its own labelled action

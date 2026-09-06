@@ -31,11 +31,13 @@ class GoldenPiCallError(RuntimeError):
 
 class AgentLabGoldenPiExecutor:
     def __init__(self, db_path: str | Path, *, sessions: AgentSessionStore,
-                 runtime: Callable[[], Any], timeout_seconds: float = 900) -> None:
+                 runtime: Callable[[], Any], timeout_seconds: float = 900,
+                 session_identity: Callable[[str], Mapping[str, str]] | None = None) -> None:
         self.db_path = Path(db_path)
         self.sessions = sessions
         self.runtime = runtime
         self.timeout_seconds = timeout_seconds
+        self.session_identity = session_identity
         self._locks: dict[str, threading.RLock] = {}
         self._lock = threading.Lock()
 
@@ -187,12 +189,13 @@ class AgentLabGoldenPiExecutor:
                 if row["model_json"] != model_json or row["prompt"] != prompt:
                     raise GoldenPiCallError("此任务身份已绑定其他输入；不能覆盖已有运行。", interrupted=False)
                 return row
+            identity = dict(self.session_identity(request_id)) if self.session_identity else {}
             session = self.sessions.create(
-                title="Lab · Golden 评测", model_profile=f"{provider}/{model_id}",
+                title=identity.get('title', "Lab · Golden 评测"), model_profile=f"{provider}/{model_id}",
                 thinking_level=thinking, tool_profile_version=READONLY_TOOL_PROFILE,
                 project_context_enabled=False, pi_skills_enabled=False, codex_skills_enabled=False,
-                workspace_roots=[], surface_kind="extension_app", owner_app_id="extension:agent-lab",
-                surface_key=f"golden.{uuid.uuid4().hex}", _connection=conn,
+                workspace_roots=[], surface_kind="extension_app", owner_app_id=identity.get('owner_app_id', "extension:agent-lab"),
+                surface_key=identity.get('surface_key', f"golden.{uuid.uuid4().hex}"), _connection=conn,
             )
             session_id = str(session["id"])
             self.sessions.set_runtime_policy(
@@ -345,9 +348,14 @@ def normalize_golden_usage(value: object) -> dict[str, object]:
         result["costBasis"] = str(value.get("costBasis") or "runtime_reported")
     else:
         cost = value.get("cost")
-        if isinstance(cost, Mapping) and number(cost.get("total")):
+        if isinstance(cost, Mapping) and number(cost.get("total")) and cost['total'] > 0:
             result["estimatedCostUsd"] = cost["total"]
             result["costBasis"] = "model_catalog_estimate"
+        elif isinstance(cost, Mapping) and cost.get('total') == 0:
+            # Pi custom providers default catalog prices to zero when none
+            # were configured. That value cannot prove a free model call.
+            result['costBasis'] = 'unavailable'
+            result['costUnavailableReason'] = '模型目录零值不能证明实际免费；本次费用未提供。'
     return result
 
 

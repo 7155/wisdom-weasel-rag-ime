@@ -438,20 +438,44 @@
           "contains": [
             "if (appId === 'eval-lab') return <EvalLabFeature />"
           ]
+        },
+        {
+          "file": "control-center-web/src/features/eval-lab/index.tsx",
+          "contains": [
+            "export function EvalLabFeature",
+            "<LabProjectWorkbench"
+          ]
         }
       ],
       "renderOwners": [
         "control-center-web/src/paw-os/apps/PawNativeApps.tsx",
-        "control-center-web/src/features/eval-lab/index.tsx"
+        "control-center-web/src/features/eval-lab/index.tsx",
+        "control-center-web/src/features/eval-lab/projects/LabProjectWorkbench.tsx",
+        "control-center-web/src/features/eval-lab/projects/ArtifactSurface.tsx",
+        "control-center-web/src/features/eval-lab/projects/ProjectGuide.tsx",
+        "control-center-web/src/features/eval-lab/projects/LabAppDelivery.tsx",
+        "control-center-web/src/features/eval-lab/projects/LabAppPreview.tsx",
+        "control-center-web/src/features/eval-lab/projects/LabAppHost.tsx"
       ],
       "styleOwners": [
-        "control-center-web/src/features/eval-lab/eval-lab.css"
+        "control-center-web/src/features/eval-lab/eval-lab.css",
+        "control-center-web/src/features/eval-lab/projects/lab-project-workbench.css"
       ],
       "featureSurfaces": [
-        "frozen evaluation runs and evidence",
-        "experiment comparison matrix",
-        "best-known path search",
-        "bounded optimization Room launch"
+        "Agent-led project intake and App-owned Pi conversation",
+        "project-defined versioned artifacts and optional Skill templates",
+        "dynamic document, table, form, code and isolated HTML surfaces",
+        "real material snapshots and optional execution bindings",
+        "existing experiment and Golden workspaces remain available",
+        "versioned App preview, PAW activation and rollback, two-target ZIP delivery",
+        "ordinary Pi App execution and independently runnable text-operation applications"
+      ],
+      "supportingOwners": [
+        "control-center-web/src/features/eval-lab/projects/api.ts",
+        "control-center-web/src/features/eval-lab/projects/types.ts",
+        "control-center-web/src/features/eval-lab/projects/drafts.ts",
+        "control-center-web/src/features/eval-lab/projects/apps.ts",
+        "control-center-web/src/features/eval-lab/projects/views.ts"
       ]
     },
     {

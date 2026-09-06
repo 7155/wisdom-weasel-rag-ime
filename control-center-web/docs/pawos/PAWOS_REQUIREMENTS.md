@@ -2,7 +2,7 @@
 
 ## 用户需求账本总索引
 
-这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成四十四卷，
+这是 PAWOS 需求文档集的稳定入口。原始单文件账本已按稳定编号拆成四十六卷，
 避免一次读取或编辑全部需求时发生截断。拆分只改变导航，不改变编号、
 语义、优先级、来源、修正关系或实施状态。
 
@@ -58,6 +58,8 @@ verdict 和 E1–E6 证据仍由
 | 42 | [UR-272–UR-274](requirements/PAWOS_REQUIREMENTS_272_274.md) | 直接打开立体星系、重做渲染器与思考星核居中修正 |
 | 43 | [UR-275–UR-277](requirements/PAWOS_REQUIREMENTS_275_277.md) | 真实天体质感、银河核心语义与自转/轨道模拟 |
 | 44 | [UR-278–UR-283](requirements/PAWOS_REQUIREMENTS_278_283.md) | 模型标识、同步恢复、OS 内制作装卸、场景加载、代码艺术星系与双显示模式 |
+| 45 | [UR-284–UR-291](requirements/PAWOS_REQUIREMENTS_284_291.md) | Lab 垂直 Agent 成功率/成本优化、模型/工具/Skill/工作流、真实环境、简单基线与逐步完成；10 条逐字来源 |
+| 46 | [UR-292–UR-297](requirements/PAWOS_REQUIREMENTS_292_297.md) | Lab 成熟产品、描述/路径与 Agent 引导、App/外部交付、Skill 核心、复杂工作台及设计授权；Agent 主导的通用 SaaS、Skill 模板与项目动态成果，修正固定业务表单方案、前端全流程与 App 导出验收、技能/工具/环境/提示词和前后端持续打磨；16 条用户来源 |
 
 ## 同一文档集的其他文件
 
@@ -71,7 +73,7 @@ verdict 和 E1–E6 证据仍由
 
 ## 读取与编辑规则
 
-- 从本索引进入后按四十四卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
+- 从本索引进入后按四十六卷顺序读取。每卷顶部和末尾都列出上一份、总索引与
   下一份；最后一卷继续到逐字证据、产品契约和实施状态，不会静默结束。
 - 修正已有需求时，编辑包含该稳定 ID 的分卷；不得重新编号。新增需求追加到
   最后一卷，超过可维护规模后再新建下一卷，并同时更新本索引与相邻导航。
@@ -83,5 +85,5 @@ verdict 和 E1–E6 证据仍由
 ## 继续阅读 / 编辑
 
 - 下一份：[UR-001–UR-030](requirements/PAWOS_REQUIREMENTS_001_030.md)
-- 若只查最新要求：[UR-278–UR-283](requirements/PAWOS_REQUIREMENTS_278_283.md)
+- 若只查最新要求：[UR-292–UR-297](requirements/PAWOS_REQUIREMENTS_292_297.md)
 - 若记录实现结果：[PAWOS_REQUIREMENT_STATUS.md](PAWOS_REQUIREMENT_STATUS.md)

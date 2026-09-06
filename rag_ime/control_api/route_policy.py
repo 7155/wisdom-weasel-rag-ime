@@ -65,6 +65,11 @@ class ControlPathId(str, Enum):
     AGENT_EVAL_LAB_EVIDENCE = "agent.eval-lab.evidence"
     AGENT_EVAL_LAB_SCENE_RECIPES_GET = "agent.eval-lab.scene-recipes.get"
     AGENT_EVAL_LAB_GOLDEN_GET = "agent.eval-lab.golden.get"
+    AGENT_EVAL_LAB_PROJECTS_GET = "agent.eval-lab.projects.get"
+    AGENT_EVAL_LAB_PROJECTS_COMMAND = "agent.eval-lab.projects.command"
+    AGENT_EVAL_LAB_APPS_GET = "agent.eval-lab.apps.get"
+    AGENT_EVAL_LAB_APPS_COMMAND = "agent.eval-lab.apps.command"
+    AGENT_EVAL_LAB_APPS_DOWNLOAD = "agent.eval-lab.apps.download"
     AGENT_EVAL_LAB_GOLDEN_COMMAND = "agent.eval-lab.golden.command"
     AGENT_EVAL_LAB_TRIALS_GET = "agent.eval-lab.trials.get"
     AGENT_EVAL_LAB_TRIALS_START = "agent.eval-lab.trials.start"
@@ -818,6 +823,11 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_EVAL_LAB_EVIDENCE, ControlMethod.GET, "/api/agent/eval-lab/evidence", None, query={"runId", "taskIndex"}),
         _route(ControlPathId.AGENT_EVAL_LAB_SCENE_RECIPES_GET, ControlMethod.GET, "/api/agent/eval-lab/scene-recipes", None, query={"sceneId", "experimentId"}, required_query={"sceneId"}),
         _route(ControlPathId.AGENT_EVAL_LAB_GOLDEN_GET, ControlMethod.GET, "/api/agent/eval-lab/golden", None, query={"suiteId"}),
+        _route(ControlPathId.AGENT_EVAL_LAB_PROJECTS_GET, ControlMethod.GET, "/api/agent/eval-lab/projects", None, query={"projectId", "materialSetId", "artifactId", "artifactRevision"}),
+        _route(ControlPathId.AGENT_EVAL_LAB_PROJECTS_COMMAND, ControlMethod.POST, "/api/agent/eval-lab/projects/command", None, body={"action", "projectId", "expectedRevision", "clientRequestId", "input"}, required_body={"action", "expectedRevision", "clientRequestId", "input"}),
+        _route(ControlPathId.AGENT_EVAL_LAB_APPS_GET, ControlMethod.GET, "/api/agent/eval-lab/apps", None, query={"appId","projectId","version","callId"}),
+        _route(ControlPathId.AGENT_EVAL_LAB_APPS_COMMAND, ControlMethod.POST, "/api/agent/eval-lab/apps/command", None, body={"action","appId","expectedRevision","clientRequestId","input"}, required_body={"action","appId","expectedRevision","clientRequestId","input"}),
+        _route(ControlPathId.AGENT_EVAL_LAB_APPS_DOWNLOAD, ControlMethod.GET, "/api/agent/eval-lab/apps/download", None, query={"appId","version","target"}, required_query={"appId","version","target"}),
         _route(ControlPathId.AGENT_EVAL_LAB_GOLDEN_COMMAND, ControlMethod.POST, "/api/agent/eval-lab/golden/command", None, body={"action", "suiteId", "expectedRevision", "clientRequestId", "input"}, required_body={"action", "expectedRevision", "clientRequestId", "input"}),
         _route(ControlPathId.AGENT_EVAL_LAB_TRIALS_GET, ControlMethod.GET, "/api/agent/eval-lab/trials", None, query={"jobId"}),
         _route(ControlPathId.AGENT_EVAL_LAB_TRIALS_START, ControlMethod.POST, "/api/agent/eval-lab/trials/start", None, body={"clientRequestId", "sceneId", "spec"}, required_body={"clientRequestId", "sceneId", "spec"}),

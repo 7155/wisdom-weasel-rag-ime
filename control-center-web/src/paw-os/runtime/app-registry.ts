@@ -7,6 +7,8 @@ import {
 } from '@/features/paw-os/model/app-registry';
 import {
   pawExtensionApps,
+  isPawExtensionAppId,
+  pawExtensionApp,
   type PawExtensionAppId,
 } from '../extensions/registry';
 
@@ -43,10 +45,21 @@ const extensionApps: readonly PawAppDefinition[] = pawExtensionApps.map((app) =>
 
 export const pawApps: readonly PawAppDefinition[] = [...builtinApps, ...extensionApps];
 
+export function currentPawApps(): readonly PawAppDefinition[] {
+  return [...builtinApps, ...pawExtensionApps.map((app) => ({
+    id: app.id, label: app.label, shortLabel: app.shortLabel, tagline: app.tagline, route: app.route,
+    kind: app.presentation === 'conversation' ? 'agent' as const : app.presentation === 'utility' || app.presentation === 'studio' ? 'tool' as const : 'work' as const,
+  }))];
+}
+
 const appById = new Map(pawApps.map((app) => [app.id, app]));
 
 export function pawApp(id: PawAppId): PawAppDefinition {
   const app = appById.get(id);
+  if (!app && isPawExtensionAppId(id)) {
+    const manifest = pawExtensionApp(id);
+    return { id, label: manifest.label, shortLabel: manifest.shortLabel, tagline: manifest.tagline, route: manifest.route, kind: 'work' };
+  }
   if (!app) throw new Error(`Unknown PAWOS App: ${id}`);
   return app;
 }
@@ -55,8 +68,8 @@ export function pawAppForPath(path: string): PawAppDefinition | null {
   const normalized = normalizePath(path);
   if (normalized === '/' || normalized === canonicalRoutePath('project-field')) return null;
   if (normalized === '/appearance') return pawApp('system-settings');
-  const extension = extensionApps.find((app) => app.route === normalized);
-  if (extension) return extension;
+  const extension = pawExtensionApps.find((app) => app.route === normalized);
+  if (extension) return pawApp(extension.id);
   const canonical = pawOsAppRegistry.find((app) => (
     app.routeIds.some((routeId) => canonicalRoutePath(routeId) === normalized)
     || (app.defaultRouteId === null && `/${app.id}` === normalized)

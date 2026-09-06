@@ -23,6 +23,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "plugins",
     "sandbox",
     "work_documents",
+    "lab_project",
     "desktop_semantic",
 )
 

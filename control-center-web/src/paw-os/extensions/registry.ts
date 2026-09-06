@@ -37,17 +37,53 @@ assertUnique(registeredApps, (app) => app.manifest.packageId, 'packageId');
 
 const byId = new Map(registeredApps.map((app) => [app.manifest.id, app]));
 const byPackage = new Map(registeredApps.map((app) => [app.manifest.packageId, app]));
+const labEntries = new Map<PawExtensionAppId, RegisteredExtensionApp>();
 
 export const pawExtensionApps: readonly PawExtensionAppManifest[] = registeredApps
   .map((app) => app.manifest)
   .sort((left, right) => left.id.localeCompare(right.id));
 
 export function isPawExtensionAppId(value: string): value is PawExtensionAppId {
-  return value.startsWith('extension:') && byId.has(value as PawExtensionAppId);
+  return value.startsWith('extension:') && (byId.has(value as PawExtensionAppId) || isLabExtensionAppId(value));
+}
+
+export function isLabExtensionAppId(value: string): value is PawExtensionAppId {
+  return /^extension:lab-[a-f0-9]{32}$/u.test(value);
+}
+
+/** Server-owned activation inventory supplies dynamic App identities. */
+export function registerLabExtensionApps(payload: unknown): Set<PawExtensionAppId> {
+  const value = isRecord(payload) ? payload : {}; const enabled = new Set<PawExtensionAppId>();
+  const items = value.ok === true && Array.isArray(value.items) ? value.items : [];
+  for (const raw of items) {
+    if (!isRecord(raw) || !Number.isSafeInteger(raw.activeVersion) || Number(raw.activeVersion) < 1 || !isRecord(raw.installation)) continue;
+    const manifest = raw.installation; const hosting = isRecord(manifest.hosting) ? manifest.hosting : {};
+    if (manifest.schemaVersion !== 'pawos.lab-app.v1' || typeof manifest.id !== 'string' || !isLabExtensionAppId(manifest.id)
+        || manifest.id !== raw.appId || hosting.appId !== raw.appId || hosting.projectId !== raw.projectId
+        || hosting.version !== raw.activeVersion || hosting.kind !== 'lab-html'
+        || manifest.route !== `/extensions/${manifest.id.slice('extension:'.length)}`
+        || !['label', 'shortLabel', 'tagline', 'version', 'packageId'].every((key) => typeof manifest[key] === 'string')
+        || typeof manifest.bindingSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(manifest.bindingSha256)
+        || !isRecord(manifest.icon) || manifest.icon.symbol !== 'assistant' || manifest.icon.background !== '#22876A') continue;
+    const id = manifest.id; const entry = { manifest: manifest as PawExtensionAppManifest,
+      ownerDirectory: id.slice('extension:'.length), load: () => import('@/features/eval-lab/projects/LabAppHost') };
+    labEntries.set(id, entry); byId.set(id, entry); enabled.add(id);
+  }
+  for (const id of labEntries.keys()) {
+    if (!enabled.has(id)) { byId.delete(id); labEntries.delete(id); }
+  }
+  (pawExtensionApps as PawExtensionAppManifest[]).splice(0, pawExtensionApps.length,
+    ...registeredApps.map((app) => app.manifest), ...[...labEntries.values()].map((entry) => entry.manifest));
+  return enabled;
 }
 
 export function pawExtensionApp(id: PawExtensionAppId): PawExtensionAppManifest {
   const app = byId.get(id);
+  if (!app && isLabExtensionAppId(id)) return {
+    schemaVersion: 'pawos.lab-app.v1', id, version: '0.0.0', label: '正在恢复应用', shortLabel: '应用', tagline: '',
+    route: `/extensions/${id.slice('extension:'.length)}`, presentation: 'workspace', accent: 'green', icon: { symbol: 'assistant', background: '#22876A' },
+    packageId: id, bindingSha256: '', skillRef: '', skillSha256: '', verticalSuiteId: '', verticalSuiteRevision: '',
+  };
   if (!app) throw new Error(`Unknown PAWOS Extension App: ${id}`);
   return app.manifest;
 }
@@ -58,6 +94,7 @@ export function extensionAppForPackage(packageId: string): PawExtensionAppManife
 
 export async function loadPawExtensionApp(id: PawExtensionAppId): Promise<PawExtensionAppModule> {
   const app = byId.get(id);
+  if (!app && isLabExtensionAppId(id)) return import('@/features/eval-lab/projects/LabAppHost');
   if (!app) throw new Error(`Unknown PAWOS Extension App: ${id}`);
   const module = await app.load();
   if (typeof module.default !== 'function') {

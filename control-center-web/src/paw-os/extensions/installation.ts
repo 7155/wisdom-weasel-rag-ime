@@ -1,7 +1,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import type { PawAppId } from '../runtime/app-registry';
-import { extensionAppForPackage, isPawExtensionAppId } from './registry';
+import { extensionAppForPackage, isPawExtensionAppId, registerLabExtensionApps } from './registry';
 import type {
   PawExtensionAppId,
   PawExtensionAppInstallationEvidence,
@@ -90,10 +90,19 @@ export function PawExtensionInstallationProvider({
     activeRequest.current = controller;
     setStatus('loading');
     try {
-      const payload = await transport.request({ pathId: 'agent.extensions.list', signal: controller.signal });
+      const [native, lab] = await Promise.allSettled([
+        transport.request({ pathId: 'agent.extensions.list', signal: controller.signal }),
+        transport.request({ pathId: 'agent.eval-lab.apps.get', signal: controller.signal }),
+      ]);
       if (controller.signal.aborted || activeRequest.current !== controller) return;
-      const next = projectPawExtensionInstallation(payload);
-      const runtimeUnavailable = asRecord(payload).runtimeAvailable === false;
+      const payload = native.status === 'fulfilled' ? native.value : { runtimeAvailable: false };
+      const labIds = registerLabExtensionApps(lab.status === 'fulfilled' ? lab.value : undefined);
+      const legacy = projectPawExtensionInstallation(payload);
+      const next = { installedExtensionIds: new Set([...legacy.installedExtensionIds, ...labIds]),
+        enabledExtensionIds: new Set([...legacy.enabledExtensionIds, ...labIds]),
+        availableExtensionIds: new Set([...legacy.availableExtensionIds, ...labIds]) };
+      const runtimeUnavailable = asRecord(payload).runtimeAvailable === false
+        && !(lab.status === 'fulfilled' && asRecord(lab.value).ok === true);
       setProjection((current) => sameProjection(current, next) ? current : next);
       setStatus(runtimeUnavailable ? 'unavailable' : 'ready');
     } catch {

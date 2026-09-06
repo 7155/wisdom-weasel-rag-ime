@@ -408,6 +408,22 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/eval-lab/golden',
     query: ['suiteId'],
   },
+  'agent.eval-lab.projects.get': {
+    method: 'GET',
+    path: '/api/agent/eval-lab/projects',
+    query: ['projectId', 'materialSetId', 'artifactId', 'artifactRevision'],
+  },
+  'agent.eval-lab.projects.command': {
+    method: 'POST',
+    path: '/api/agent/eval-lab/projects/command',
+    body: ['action', 'projectId', 'expectedRevision', 'clientRequestId', 'input'],
+    requiredBody: ['action', 'expectedRevision', 'clientRequestId', 'input'],
+  },
+  'agent.eval-lab.apps.get': { method: 'GET', path: '/api/agent/eval-lab/apps', query: ['appId', 'projectId', 'version', 'callId'] },
+  'agent.eval-lab.apps.command': { method: 'POST', path: '/api/agent/eval-lab/apps/command',
+    body: ['action', 'appId', 'expectedRevision', 'clientRequestId', 'input'],
+    requiredBody: ['action', 'appId', 'expectedRevision', 'clientRequestId', 'input'] },
+  'agent.eval-lab.apps.download': { method: 'GET', path: '/api/agent/eval-lab/apps/download', query: ['appId', 'version', 'target'], requiredQuery: ['appId', 'version', 'target'] },
   'agent.eval-lab.trials.get': {
     method: 'GET',
     path: '/api/agent/eval-lab/trials',

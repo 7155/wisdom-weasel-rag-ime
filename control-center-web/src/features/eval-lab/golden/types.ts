@@ -33,6 +33,7 @@ export type GoldenJob = {
   state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   progress: string; sessionId: string; error: string; result: Record<string, unknown> | null;
   canReprocess?: boolean;
+  canRetryFailedCall?: boolean;
   createdAtMs: number; updatedAtMs: number;
 };
 export type GoldenSuite = {
@@ -40,6 +41,7 @@ export type GoldenSuite = {
   revision: number; targetCount: number; sources: GoldenSource[]; cases: GoldenCase[];
   judgeConfig: ModelConfig; calibration: Calibration | null; snapshot: GoldenSnapshot | null;
   jobs: GoldenJob[]; createdAtMs: number; updatedAtMs: number;
+  currentJudgeProtocolVersion?: string;
 };
 export type GoldenRead = { ok: true; items: GoldenSuite[]; suite: GoldenSuite | null };
 export type GoldenAction = 'create' | 'draft' | 'review_case' | 'label_sample' | 'judge_config' | 'calibrate' | 'freeze' | 'experiment' | 'cancel' | 'resume';
@@ -74,6 +76,7 @@ export type ExperimentResult = {
   comparison: { decision: 'improved' | 'no_improvement' | 'inconclusive'; comparable: boolean | number; developmentDelta: number | null; holdoutDelta: number | null; reasons: string[]; sameSnapshot: true; goldenChanged: false; improvementBasis?: 'quality' | 'answer_cost' | 'answer_cost_estimate' | null; groupRegressions?: unknown[] };
   receipts: { requestId: string; stage: string; sessionId: string; turnId: string; usage: unknown; receipt: unknown }[];
   usage: ExperimentUsage;
+  validationUse?: { snapshotId: string; ordinal: number; priorStartedRuns: number; priorCompletedRuns: number; reused: boolean; overlappingQuestionCount?: number; totalQuestions?: number; startedAtMs: number; scope: 'local_lab_validation_entry' };
   usageByScope?: Partial<Record<'baselineAnswers' | 'candidateAnswers' | 'judging' | 'optimization' | 'drafting' | 'calibration', ExperimentUsage>>;
 };
 
@@ -99,6 +102,7 @@ export function isGoldenJob(value: unknown): value is GoldenJob {
     && ['draft', 'calibrate', 'experiment'].includes(String(job.kind))
     && ['queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'].includes(String(job.state))
     && (job.canReprocess === undefined || typeof job.canReprocess === 'boolean')
+    && (job.canRetryFailedCall === undefined || typeof job.canRetryFailedCall === 'boolean')
     && (job.result === null || (typeof job.result === 'object' && !Array.isArray(job.result)))
     && number(job.createdAtMs) && number(job.updatedAtMs);
 }
@@ -148,6 +152,7 @@ export function parseGoldenRead(value: unknown, expectedSuiteId = ''): GoldenRea
 
 export function isExperimentResult(value: unknown): value is ExperimentResult {
   const result = object(value); const comparison = object(result.comparison);
+  const validation = object(result.validationUse);
   const phase = (value: unknown) => {
     const report = object(value);
     const metrics = (value: unknown) => ['total', 'passed', 'failed', 'uncertain', 'runtimeErrors'].every((key) => number(object(value)[key])) && nullableNumber(object(value).passRate);
@@ -162,6 +167,9 @@ export function isExperimentResult(value: unknown): value is ExperimentResult {
   };
   return result.schemaVersion === 'rag-ime.agent-lab-golden-experiment.v1' && fields(result, ['suiteId', 'snapshotId'])
     && result.executionMode === 'context_qa' && result.optimizationScope === 'prompt'
+    && (result.validationUse === undefined || (Number.isSafeInteger(validation.ordinal) && Number(validation.ordinal) > 0 && typeof validation.reused === 'boolean'
+      && number(validation.priorStartedRuns) && number(validation.priorCompletedRuns) && number(validation.startedAtMs)
+      && (validation.overlappingQuestionCount === undefined || number(validation.overlappingQuestionCount))))
     && model(result.baseline) && model(result.candidate) && model(result.judgeConfig)
     && phase(result.development) && phase(result.holdout)
     && ['improved', 'no_improvement', 'inconclusive'].includes(String(comparison.decision))

@@ -7,7 +7,7 @@ import { previewEvalLabEvidence, previewEvalLabRuns } from '@/app/preview-eval-l
 import { PawOsDesktopProvider, type PawOsWindowRequest } from '@/features/paw-os/surface-context';
 import { MockControlTransport } from '@/test/mock-transport';
 import type { ControlRequest } from '@/platform/transport';
-import { EvalLabFeature } from './index';
+import { LegacyEvalLabFeature as EvalLabFeature } from './index';
 
 vi.mock('@/paw-os/apps/PawRoomWorkspace', () => ({
   PawRoomWorkspace: ({ participantProcessLocation, record, recordId }: { participantProcessLocation?: string; record?: { title?: string }; recordId: string }) => (

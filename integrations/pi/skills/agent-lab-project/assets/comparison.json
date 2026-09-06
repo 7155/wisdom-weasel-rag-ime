@@ -1,0 +1,10 @@
+{
+  "columns": [
+    {"key": "item", "label": "任务或对象"},
+    {"key": "before", "label": "原版本观测"},
+    {"key": "after", "label": "候选版本观测"},
+    {"key": "basis", "label": "比较依据"}
+  ],
+  "rows": [],
+  "caption": "仅比较有共同任务、标准与环境依据的实际观测；按本项目调整列。"
+}

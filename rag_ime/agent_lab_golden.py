@@ -19,6 +19,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from .db import apply_database_migrations, sqlite_connection
 
@@ -27,7 +28,7 @@ __all__ = [
     "AgentLabGoldenStore", "AgentLabGoldenValidationError", "GOLDEN_JUDGE_PROTOCOL_VERSION",
 ]
 
-GOLDEN_JUDGE_PROTOCOL_VERSION = "paw.golden.context-qa-judge.v1"
+GOLDEN_JUDGE_PROTOCOL_VERSION = "paw.golden.context-qa-judge.v2"
 
 _ACTIVE = {"queued", "running"}
 _TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
@@ -274,6 +275,20 @@ def _can_reprocess_draft(job: Mapping[str, Any]) -> bool:
             and record["receipt"].get("status") == "completed")
 
 
+def _retryable_request(job: Mapping[str, Any]) -> str:
+    """Only an exact failed Pi settlement permits another paid attempt."""
+    result = job.get('result')
+    if job.get('state') != 'failed' or not isinstance(result, Mapping): return ''
+    pending, receipts = result.get('pendingRequestId'), result.get('receipts')
+    if not isinstance(pending,str) or not pending.startswith(quote(str(job.get('jobId','')),safe='-_.')+':') or not isinstance(receipts,list): return ''
+    for record in receipts:
+        if (isinstance(record,Mapping) and record.get('requestId') == pending
+                and all(isinstance(record.get(key),str) and record[key] for key in ('sessionId','turnId'))
+                and isinstance(record.get('receipt'),Mapping) and record['receipt'].get('status') == 'failed'):
+            return pending
+    return ''
+
+
 class AgentLabGoldenStore:
     def __init__(self, db_path: str | Path, default_model: Mapping[str, Any] | None = None) -> None:
         self.db_path = Path(db_path)
@@ -311,13 +326,20 @@ class AgentLabGoldenStore:
     @staticmethod
     def _public_suite(conn: sqlite3.Connection, suite: dict[str, Any]) -> dict[str, Any]:
         result = copy.deepcopy(suite)
+        result['currentJudgeProtocolVersion'] = GOLDEN_JUDGE_PROTOCOL_VERSION
+        calibration = result.get('calibration')
+        if isinstance(calibration, dict) and calibration.get('judgeProtocolVersion') != GOLDEN_JUDGE_PROTOCOL_VERSION:
+            calibration['ready'] = False
+            calibration['reasons'] = ['评审协议已更新，需要重新校准；原校准记录仍保留。', *calibration.get('reasons', [])]
         result["jobs"] = []
         for row in conn.execute(
             "SELECT payload_json, input_json FROM agent_lab_golden_jobs WHERE suite_id = ? ORDER BY created_at_ms DESC, rowid DESC",
             (suite["suiteId"],),
         ):
             job = json.loads(row[0])
-            job["canReprocess"] = bool(_can_reprocess_draft(job) and json.loads(row[1])["suite"]["revision"] == suite["revision"])
+            unchanged = job['kind'] == 'experiment' or json.loads(row[1])["suite"]["revision"] == suite["revision"]
+            job["canReprocess"] = bool(_can_reprocess_draft(job) and unchanged)
+            job['canRetryFailedCall'] = bool(_retryable_request(job) and unchanged)
             result["jobs"].append(job)
         return result
 
@@ -393,6 +415,16 @@ class AgentLabGoldenStore:
                          (client_id, suite["suiteId"], request_json, _json(result), _now()))
             return result
 
+    def create_in_transaction(self, conn: sqlite3.Connection, value: dict[str, Any]) -> dict[str, Any]:
+        """Create a suite with an owning project's binding in one unit of work.
+
+        The caller owns the active transaction and migration initialization.
+        This creates no job, Session or model call.
+        """
+        if not conn.in_transaction:
+            raise AgentLabGoldenValidationError("关联评测集需要由项目事务创建。")
+        return self._create(conn, _object(value, "评测集"))
+
     def _create(self, conn: sqlite3.Connection, value: dict[str, Any]) -> dict[str, Any]:
         now = _now()
         suite = {
@@ -463,6 +495,8 @@ class AgentLabGoldenStore:
             if row is None:
                 raise AgentLabGoldenValidationError("请选择本套件已冻结的 Golden 版本。")
             snapshot = json.loads(row[0])
+            if snapshot.get('judgeProtocolVersion') != GOLDEN_JUDGE_PROTOCOL_VERSION:
+                raise AgentLabGoldenValidationError('此快照使用旧评审协议，请重新校准并冻结后开始实验。')
             optimize = value.get("optimizePrompt", True)
             if not isinstance(optimize, bool):
                 raise AgentLabGoldenValidationError("是否优化 Prompt 需要明确的是或否。")
@@ -533,8 +567,9 @@ class AgentLabGoldenStore:
                 job["progress"] = "停止请求已记录"
         else:
             reprocess = _can_reprocess_draft(job)
-            if job["state"] != "interrupted" and not reprocess:
-                raise AgentLabGoldenConflict("只有已中断的任务可以恢复。")
+            retry = _retryable_request(job)
+            if job["state"] != "interrupted" and not reprocess and not retry:
+                raise AgentLabGoldenConflict("只有已中断的任务或有明确失败回执的调用可以恢复。")
             bound = json.loads(row["input_json"])
             if job["kind"] != "experiment" and bound["suite"]["revision"] != suite["revision"]:
                 raise AgentLabGoldenConflict("任务对应的标准已经更新，请按当前标准重新开始。")
@@ -546,6 +581,14 @@ class AgentLabGoldenStore:
                 # Re-parse the original completed model output. This mode
                 # never admits another model request, even if its cache is gone.
                 job["reprocessOnly"] = True
+            if retry:
+                retries = job.setdefault('requestRetries', {})
+                base = next((key for key,item in retries.items() if item.get('requestId') == retry), retry)
+                attempt = int(retries.get(base, {}).get('attempt', 0)) + 1
+                receipt = {'requestId':f'{base}:retry:{attempt}', 'attempt':attempt,
+                           'previousRequestId':retry,'createdAtMs':_now()}
+                retries[base] = receipt
+                job.setdefault('retryHistory', []).append({'baseRequestId':base, **receipt})
             job.update(state="queued", progress="等待恢复", error="")
         self._save_job(conn, job)
         return job
@@ -556,6 +599,43 @@ class AgentLabGoldenStore:
             row = self._job_row(conn, _text(job_id, "任务标识", limit=240))
             return {**json.loads(row["input_json"]), "job": json.loads(row["payload_json"]),
                     "cancelRequested": bool(row["cancel_requested"])}
+
+    def begin_validation(self, job_id: str) -> dict[str, Any]:
+        """Record entry into held-out validation, once per logical job.
+
+        This records local execution history, not whether a person has seen
+        the questions elsewhere. Failed validation remains a prior exposure.
+        """
+        self.initialize()
+        with self._connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = self._job_row(conn, _text(job_id, '任务标识', limit=240))
+            job = json.loads(row['payload_json'])
+            if isinstance(job.get('validationUse'), dict): return copy.deepcopy(job['validationUse'])
+            if job['kind'] != 'experiment' or job['state'] != 'running' or row['cancel_requested']:
+                raise AgentLabGoldenConflict('当前任务不能进入留出题验证。')
+            snapshot = json.loads(row['input_json'])['snapshot']; snapshot_id = snapshot['snapshotId']
+            questions = {' '.join(item['question'].split()).casefold() for item in snapshot['cases'] if item['split']=='holdout'}
+            prior_started = prior_completed = 0; overlapping: set[str] = set()
+            prior_rows = conn.execute('''SELECT state, json_extract(input_json,'$.snapshot.cases')
+                FROM agent_lab_golden_jobs
+                WHERE suite_id=? AND kind='experiment' AND job_id<>?
+                AND (json_type(payload_json,'$.validationUse')='object'
+                    OR json_type(payload_json,'$.result.holdout')='object'
+                    OR EXISTS (SELECT 1 FROM json_each(payload_json,'$.result.receipts') AS receipt
+                        WHERE json_extract(receipt.value,'$.split')='holdout'))''',
+                (row['suite_id'],job_id)).fetchall()
+            for prior_state, encoded_cases in prior_rows:
+                previous_questions = {' '.join(item['question'].split()).casefold() for item in json.loads(encoded_cases or '[]') if item.get('split')=='holdout'}
+                shared = questions & previous_questions
+                if shared:
+                    overlapping.update(shared); prior_started += 1; prior_completed += prior_state=='completed'
+            usage = {'snapshotId':snapshot_id,'ordinal':prior_started+1,'priorStartedRuns':prior_started,
+                     'priorCompletedRuns':prior_completed,'reused':bool(overlapping),'overlappingQuestionCount':len(overlapping),
+                     'totalQuestions':len(questions),'startedAtMs':_now(),
+                     'scope':'local_lab_validation_entry'}
+            job['validationUse'] = usage; self._save_job(conn,job)
+            return copy.deepcopy(usage)
 
     def update_job(self, job_id: str, patch: Mapping[str, Any]) -> dict[str, Any]:
         patch = _object(patch, "任务进度")
@@ -616,7 +696,13 @@ class AgentLabGoldenStore:
                 else:
                     if result.get("judgeProtocolVersion", GOLDEN_JUDGE_PROTOCOL_VERSION) != GOLDEN_JUDGE_PROTOCOL_VERSION:
                         raise AgentLabGoldenValidationError("评审协议已变化，请按当前协议重新校准。")
-                    suite["calibration"] = _calibration(bound["suite"], result.get("judgments"))
+                    previous_snapshot = suite.get('snapshot') or {}
+                    if previous_snapshot.get('sourceRevision') == suite['revision'] and previous_snapshot.get('judgeProtocolVersion') != GOLDEN_JUDGE_PROTOCOL_VERSION:
+                        # The scoring protocol is part of a standard version.
+                        # Keep the old snapshot immutable and give the new
+                        # calibrated protocol a distinct revision to freeze.
+                        suite['revision'] += 1
+                    suite["calibration"] = _calibration({**bound["suite"], 'revision':suite['revision']}, result.get("judgments"))
                     result["judgments"] = suite["calibration"]["judgments"]
                     result["calibration"] = suite["calibration"]
                 self._save_suite(conn, suite)
@@ -626,6 +712,7 @@ class AgentLabGoldenStore:
                         or result.get("executionMode") != "context_qa" or result.get("optimizationScope") != "prompt"
                         or result.get("judgeProtocolVersion", GOLDEN_JUDGE_PROTOCOL_VERSION) != snapshot["judgeProtocolVersion"]):
                     raise AgentLabGoldenValidationError("实验结果必须绑定本次冻结版本和文档问答 Prompt 范围。")
+                if isinstance(job.get('validationUse'), dict): result['validationUse'] = copy.deepcopy(job['validationUse'])
             job.update(state="completed", progress="已完成", error="", result=result)
             self._save_job(conn, job)
             return job

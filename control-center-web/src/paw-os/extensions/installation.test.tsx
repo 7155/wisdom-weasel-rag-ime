@@ -198,7 +198,7 @@ describe('PAWOS Extension App installation projection', () => {
     act(() => document.dispatchEvent(new Event('visibilitychange')));
     await flushAsyncWork();
     expect(extensionListRequestCount(transport)).toBe(2);
-    const secondSignal = transport.requests[1]?.request.signal;
+    const secondSignal = transport.requests.filter(({ request }) => request.pathId === 'agent.extensions.list')[1]?.request.signal;
     expect(secondSignal?.aborted).toBe(false);
 
     unmount();

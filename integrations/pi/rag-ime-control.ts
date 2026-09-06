@@ -49,6 +49,7 @@ const delegatedProductToolIds = [
   "agent_goal",
   "plugins",
   "work_documents",
+  "lab_project",
   "desktop_semantic",
   "workspace_list",
   "workspace_lsp",
@@ -894,6 +895,41 @@ const roleBookParameterSchema: Record<string, unknown> = {
 };
 
 const toolSpecs: ToolSpec[] = [
+  {
+    name: "lab_project",
+    label: "Lab 项目成果",
+    description: "在当前 Lab 项目中读取材料和成果，发布项目特有的文档、表格、表单、代码或交互页面；与前端共用版本和命令。",
+    operations: ["read", "command", "execution_read", "execution_command"],
+    progress: { read: "正在读取项目成果", command: "正在保存项目成果", execution_read: "正在读取实际运行", execution_command: "正在提交执行操作" },
+    guidelines: [
+      "仅用于已绑定的 Lab 项目 Agent；项目身份由 Session 决定，不能传入其他项目标识。",
+      "先 read 获取真实 revision、材料与成果。根据项目选择或调整 Skill 模板，不套用固定业务字段或流程。",
+      "command 使用当前 expectedRevision 和唯一 clientRequestId。结果不确定时用完全相同的命令核对；冲突时先读取，保留草稿。",
+      "publish_artifact 的 kind 由项目定义；view 支持 markdown、table、form、code、html、json。执行状态只以真实运行回执为准。",
+      "read 可提供 appId 读取当前项目应用与调用摘要；appVersion 选择版本，appCallId 按需读取实际输入、输出与用量。它只观察，不启动调用。",
+    ],
+    parameterSchema: {
+      type: "object",
+      oneOf: [
+        { type: "object", additionalProperties: false, required: ["op"], properties: {
+          op: { const: "read" }, artifactId: { type: "string" }, artifactRevision: { type: "integer", minimum: 1 }, materialSetId: { type: "string" },
+          appId: { type: "string" }, appVersion: { type: "integer", minimum: 1 }, appCallId: { type: "string" },
+        } },
+        { type: "object", additionalProperties: false, required: ["op", "action", "expectedRevision", "clientRequestId", "input"], properties: {
+          op: { const: "command" }, action: { type: "string", enum: ["update_brief", "import_materials", "remove_materials", "publish_artifact", "set_workspace", "bind_execution", "prepare_app"] },
+          expectedRevision: { type: "integer", minimum: 1 }, clientRequestId: { type: "string", minLength: 1, maxLength: 240 }, input: { type: "object", description: "各操作输入请读项目返回的 commandGuide；prepare_app 使用相对执行目录 directory，可附 appId 创建该应用的新版本。" },
+        } },
+        { type: "object", additionalProperties: false, required: ["op", "bindingId"], properties: {
+          op: { const: "execution_read" }, bindingId: { type: "string", minLength: 1 },
+        } },
+        { type: "object", additionalProperties: false, required: ["op", "bindingId", "action", "expectedRevision", "clientRequestId", "input"], properties: {
+          op: { const: "execution_command" }, bindingId: { type: "string", minLength: 1 },
+          action: { type: "string", enum: ["draft", "judge_config", "calibrate", "freeze", "experiment", "cancel", "resume"] },
+          expectedRevision: { type: "integer", minimum: 1 }, clientRequestId: { type: "string", minLength: 1, maxLength: 240 }, input: { type: "object" },
+        } },
+      ],
+    },
+  },
   {
     name: "ask",
     label: "向用户提问",
@@ -2601,6 +2637,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
         agent_schedule: ["list", "runs"],
         todo: ["view"],
         agent_goal: ["list"],
+        lab_project: ["read", "command", "execution_read"],
         workspace_job: ["list", "status", "logs"],
         workspace_lsp: [
           "status", "symbols", "hover", "definition", "references", "diagnostics",

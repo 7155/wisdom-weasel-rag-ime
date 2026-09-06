@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, type ReactNode } from 're
 import { useStore } from 'zustand';
 import { createPawDesktopStore, type PawDesktopSnapshot, type PawDesktopState, type PawDesktopStore } from './desktop-store';
 import { pawApps, type PawAppId } from './app-registry';
+import { isLabExtensionAppId } from '../extensions/registry';
 
 const PawDesktopContext = createContext<PawDesktopStore | null>(null);
 const pawDesktopSnapshotKey = 'pawos.desktop.v1';
@@ -95,7 +96,7 @@ function sanitizePawDesktopSnapshot(value: unknown): PawDesktopSnapshot | undefi
     ? value.collaborationFocusReturnWindowId
     : null;
   const dockAppIds = Array.isArray(value.dockAppIds)
-    ? [...new Set(value.dockAppIds.filter((id): id is PawAppId => typeof id === 'string' && pawAppIds.has(id as PawAppId)))]
+    ? [...new Set(value.dockAppIds.filter((id): id is PawAppId => typeof id === 'string' && (pawAppIds.has(id as PawAppId) || isLabExtensionAppId(id))))]
     : undefined;
   const rawWayfinder = isRecord(value.wayfinder) ? value.wayfinder : {};
   const rawPositions = isRecord(rawWayfinder.iconPositions) ? rawWayfinder.iconPositions : {};

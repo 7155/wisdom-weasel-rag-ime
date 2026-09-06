@@ -1,7 +1,7 @@
 import { Archive, ArchiveRestore, ArrowUpRight, Bot, Earth, Grid3X3, LayoutGrid, Maximize2, Minus, PanelLeft, PanelRight, PanelsTopLeft, Pin, PinOff, Settings, X } from 'lucide-react';
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { ConnectionIndicator } from '@/components/feedback';
-import { pawApp, pawAppForPath, pawApps, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
+import { pawApp, pawAppForPath, pawApps, currentPawApps, type PawAppDefinition, type PawAppId } from '../runtime/app-registry';
 import { usePawDesktopApi, usePawDesktopStore } from '../runtime/desktop-context';
 import { dockMagnetics } from './dock-magnification';
 import { PawAppIcon, PawBrandMark } from './PawAppIcon';
@@ -1240,11 +1240,11 @@ function PawLaunchpad({ onClose, onOpen }: { onClose: () => void; onOpen: (id: P
   const installation = usePawExtensionInstallation();
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return pawApps.filter((app) => {
+    return currentPawApps().filter((app) => {
       if (!needle) return true;
       return [app.label, app.shortLabel, app.tagline, app.id].some((part) => part.toLowerCase().includes(needle));
     });
-  }, [query]);
+  }, [query, installation.enabledExtensionIds]);
   const groups = useMemo(() => {
     // A running index across groups drives the cascade arrival: each group
     // header takes its own beat and its tiles follow, so the archive opens as
@@ -1382,7 +1382,7 @@ function readDraggedAppId(dataTransfer: DataTransfer): PawAppId | null {
 
 function appIdFromDragValue(value: string): PawAppId | null {
   const candidate = value.startsWith('app:') ? value.slice(4) : value;
-  return PAW_APP_IDS.has(candidate as PawAppId) ? candidate as PawAppId : null;
+  return PAW_APP_IDS.has(candidate as PawAppId) || isPawExtensionAppId(candidate) ? candidate as PawAppId : null;
 }
 
 function sameIconSelection(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {

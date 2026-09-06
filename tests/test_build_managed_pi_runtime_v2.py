@@ -1477,6 +1477,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             skill_names,
             sorted({
                 "agent-eval-room-optimizer",
+                "agent-lab-project",
                 "alignment-and-decision",
                 "bootstrap-project-context",
                 "ego-browser",

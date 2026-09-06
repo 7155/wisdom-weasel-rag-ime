@@ -50,6 +50,21 @@ Partner Sessions around one user-facing result and one final response.
 
 _Avoid:_ Outcome Room, Room Agent Runtime, or Room as a second Session engine.
 
+## Agent Lab
+
+The product for guided vertical Agent optimization against business success and
+execution cost, delivering runnable Apps and external integration artifacts.
+Its current PAW App orchestrates work through Pi-owned Sessions.
+
+_Avoid:_ treating a benchmark score or an experiment report as an applied version.
+
+## Lab Optimization Project
+
+A durable workspace for an optimization task. Its Agent organizes materials,
+versioned artifacts, executions, and deliveries; their structure and interaction
+depend on the project and optional Skill templates. It may bind a PAW Project
+or an execution environment and outlives a Session.
+
 ## Facilitator
 
 The Room participant responsible for shared alignment, useful delegation,

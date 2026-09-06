@@ -56,5 +56,5 @@
 - **来源：** `msg_01a0743d-1a8b-75a3-8f49-bb00efc8a063`，`2026-09-06T01:02:36.693Z`；附件 `codex-clipboard-7a4626f6-14d1-40f2-aa06-76e026a60a39.png`。
 - **解释与验收：** 同一项目支持文字列表和全屏星系来回切换，保留实际 Session/Room、进度与 docs；不复制任务或另建执行态。修复“全屏星系”按钮被固定宽度挤成竖排。延续直接打开星系的既有入口，不推断新增默认模式偏好持久化要求。
 
-- 上一份：[UR-275–UR-277](PAWOS_REQUIREMENTS_275_277.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[逐字证据](PAWOS_REQUIREMENT_EVIDENCE.md)
+- 上一份：[UR-275–UR-277](PAWOS_REQUIREMENTS_275_277.md) · [总索引](../PAWOS_REQUIREMENTS.md) · 下一份：[UR-284–UR-291](PAWOS_REQUIREMENTS_284_291.md)
 - 实施与证据：[OS 能力、同步与显示模式续接](../OS_CAPABILITY_LIFECYCLE_CONTINUATION_20260906.md)

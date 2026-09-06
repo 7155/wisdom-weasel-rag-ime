@@ -133,6 +133,15 @@ class GoldenPiTests(unittest.TestCase):
         self.assertNotIn("costUsd", usage)
         self.assertNotIn("costUsd", normalize_golden_usage({"input": 1}))
 
+    def test_default_zero_catalog_price_is_unknown_but_explicit_reported_zero_is_preserved(self):
+        unknown = normalize_golden_usage({'input':20,'output':5,'cost':{'total':0}})
+        self.assertNotIn('estimatedCostUsd', unknown)
+        self.assertEqual(unknown['costBasis'], 'unavailable')
+        self.assertEqual(unknown['totalTokens'], 25)
+        reported = normalize_golden_usage({'input':20,'output':5,'costUsd':0})
+        self.assertEqual(reported['costUsd'],0)
+        self.assertEqual(reported['costBasis'],'runtime_reported')
+
     def test_failed_settlement_keeps_real_usage_and_replays_failure_receipt(self):
         self.runtime.failed = True
         with self.assertRaises(GoldenPiCallError) as first:

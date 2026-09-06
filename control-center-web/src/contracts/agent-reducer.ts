@@ -1167,6 +1167,18 @@ function reconcileTranscriptReplayMessages(
     const exactCandidate = nearbyCandidates(
       transcriptByFingerprint.get(fingerprint) ?? [],
     )[0]?.message;
+    // Pi's live final message retains the Provider request start, while its
+    // durable transcript is timestamped when appended. A long stream can
+    // exceed the short replay window. The Runtime's final-message alias and
+    // one matching completed transcript within that exact turn are stronger
+    // identity evidence; do not extend time-based matching for other turns.
+    const finalAlias = replay.role === 'assistant' && (
+      replay.id === `${replay.turnId}:assistant`
+      || replay.id.startsWith(`${replay.turnId}:assistant:segment:`)
+    );
+    const sameTurnFinals = finalAlias ? (transcriptByFingerprint.get(fingerprint) ?? [])
+      .filter((message) => message.turnId === replay.turnId && message.status === 'completed' && !claimedTranscriptIds.has(message.id)) : [];
+    const sameTurnFinal = sameTurnFinals.length === 1 ? sameTurnFinals[0] : undefined;
     /* The accepted upload and Pi's persisted inline image can be imported as
        two managed-media receipts with different ids. The event-proven
        clientMessageId, exact visible text, equal attachment count, one nearby
@@ -1185,7 +1197,7 @@ function reconcileTranscriptReplayMessages(
     const mediaShapeCandidate = mediaShapeCandidates.length === 1
       ? mediaShapeCandidates[0]?.message
       : undefined;
-    const candidate = exactCandidate ?? mediaShapeCandidate;
+    const candidate = exactCandidate ?? sameTurnFinal ?? mediaShapeCandidate;
     if (!candidate) continue;
 
     claimedTranscriptIds.add(candidate.id);
@@ -1358,6 +1370,9 @@ function replayMediaShapeFingerprint(message: AgentMessageProjection): string {
 
 function replayVisibleText(message: AgentMessageProjection): string {
   return message.blocks
+    // Frozen file previews may be enriched between SSE and transcript reads.
+    // Their source text is an attachment, not part of the spoken answer.
+    .filter((block) => message.role !== 'assistant' || block.type === 'text')
     .map((block) => text(record(block.data).text))
     .filter(Boolean)
     .join('\n')

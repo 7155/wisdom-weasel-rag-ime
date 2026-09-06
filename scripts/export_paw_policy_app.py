@@ -136,9 +136,11 @@ def verify_app(archive, config, *, repeats=3):
                 cwd=clean, env={"HOME":str(clean),"PATH":"/usr/bin:/bin","LANG":"en_US.UTF-8"},
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
-                import select
-                if not select.select([process.stdout], [], [], 8)[0]:
-                    raise RuntimeError("exported server did not start")
+                import selectors
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    if not selector.select(timeout=8):
+                        raise RuntimeError("exported server did not start")
                 url = json.loads(process.stdout.readline())["url"]
                 with urllib.request.urlopen(url, timeout=5) as response:
                     page = response.read().decode()
