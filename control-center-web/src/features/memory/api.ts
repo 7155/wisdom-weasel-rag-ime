@@ -485,14 +485,14 @@ export function useMemoryCurationQueries(enabled: boolean) {
     }),
   });
   const trigger = useMutation({
-    mutationFn: async ({ maxSources, instruction }: { maxSources: number; instruction: string }) => {
+    mutationFn: async ({ maxSources, instruction, catalogOnly = false }: { maxSources?: number; instruction: string; catalogOnly?: boolean }) => {
       const payload = await transport.request({
         pathId: 'agent.memoryMaintenance.trigger',
         body: {
           ownerKind: 'user',
           ownerId: 'default',
           manual: true,
-          maxSources,
+          ...(catalogOnly ? { catalogOnly: true } : { maxSources: maxSources ?? 4 }),
           instruction,
         },
       });
@@ -519,7 +519,7 @@ export function useMemoryCurationQueries(enabled: boolean) {
   const jobState = stringValue(asRecord(job.data).state);
   useEffect(() => {
     if (jobState !== 'completed' && jobState !== 'failed' && jobState !== 'expired') return;
-    void queryClient.invalidateQueries({ queryKey: memoryQueryKeys.curationStatus() });
+    void queryClient.invalidateQueries({ queryKey: memoryQueryKeys.root });
   }, [jobState, queryClient]);
   return { job, jobId, jobState, run, runId, status: statusForRender, trigger };
 }

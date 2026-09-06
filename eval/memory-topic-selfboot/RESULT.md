@@ -75,3 +75,26 @@ Gateway and the Session listing route passed health checks. This is local
 installation evidence, not native foreground or public distribution acceptance.
 
 The accepted project index is [O6 in OUTCOMES](../../OUTCOMES.md).
+
+## Conversation visibility and existing-topic action — 2026-09-06
+
+Real context traces recorded context-pack counts while the conversation receipt
+expected a memory-source count, so successful bootstrap recalls were hidden.
+A later steer trace could also hide the original recall in the same turn.
+Trace metadata now records the actual source count and bootstrap outcome; the
+conversation retains the most recent meaningful receipt and distinguishes
+bootstrap, compaction recall, reuse, empty results, disabled memory and failure.
+Historical traces without a source count show that memory was loaded without
+inventing a count or elapsed time. Source links retain whole identifiers.
+
+The memory library defaults to active Books and keeps the historical filters.
+Its existing-topic consolidation action uses the current governed catalog path,
+model settings, configured application policy and rollback. It skips new source,
+timeline and lexicon work so an evidence backlog does not delay catalog repair.
+
+Verification passed 37 focused backend tests, six Session delivery regressions,
+nine receipt UI tests, and 80 memory-feature and route tests. The shared Session
+workspace tests also passed, including explicit memory Tool visibility. Frontend
+type checking, generated contracts, project harness, import boundaries and route
+ownership passed. These checks establish source behavior; installed and real
+foreground acceptance require a fresh canary after installation.

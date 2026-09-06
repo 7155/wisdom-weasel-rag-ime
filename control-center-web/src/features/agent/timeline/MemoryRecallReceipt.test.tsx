@@ -1,9 +1,10 @@
-import { act, render, renderHook, screen, within } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentContextTraceV1 } from '@/contracts/generated/agent-context-trace.v1';
+import type { ControlRequest } from '@/platform/transport';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { PawOsDesktopProvider } from '@/features/paw-os/surface-context';
 import { StubControlTransport } from '@/test/stub-control-transport';
@@ -88,9 +89,51 @@ describe('MemoryRecallReceipt', () => {
     expect(openRoute).toHaveBeenCalledWith('/memory?view=preferences');
   });
 
-  it('does not manufacture a receipt for omitted recall or missing hit count', () => {
-    expect(memoryRecallReceiptFromTrace(memoryTrace({ disposition: 'omitted' }))).toBeUndefined();
-    expect(memoryRecallReceiptFromTrace(memoryTrace({ hitCount: undefined }))).toBeUndefined();
+  it('keeps a real legacy trace visible without confusing pack count with hit count', () => {
+    const trace = memoryTrace({ hitCount: undefined });
+    trace.nodes[0].metadata.itemCount = 1;
+    const receipt = memoryRecallReceiptFromTrace(trace);
+    expect(receipt).toMatchObject({ status: 'included', count: undefined });
+    render(<MemoryRecallReceipt receipt={receipt!} />);
+    expect(screen.getByText(/记忆召回 · 已载入/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 条/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['empty', 0, '未找到相关记忆'],
+    ['failed', undefined, '本轮未能召回'],
+    ['disabled', undefined, '已关闭'],
+    ['reused', 3, '沿用已有记忆'],
+  ] as const)('shows the recorded %s outcome without manufacturing a new search', (status, count, label) => {
+    const trace = memoryTrace({ hitCount: count });
+    trace.nodes[0].metadata.recallStatus = status;
+    trace.nodes[0].durationMs = 0;
+    if (status !== 'empty') trace.nodes[0].disposition = status === 'failed' ? 'failed' : 'omitted';
+    const receipt = memoryRecallReceiptFromTrace(trace);
+    expect(receipt?.status).toBe(status);
+    render(<MemoryRecallReceipt receipt={receipt!} />);
+    expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
+    expect(screen.queryByText(/0 ms/)).not.toBeInTheDocument();
+  });
+
+  it('does not let an omitted steer trace erase the original recall in the same turn', async () => {
+    const initial = memoryTrace();
+    const steer = memoryTrace({ disposition: 'omitted', hitCount: undefined });
+    steer.traceId = 'trace-steer';
+    const transport = new StubControlTransport('mock', {
+      'agent.session.contextTraces.list': { items: [
+        { traceId: steer.traceId, turnId: steer.turnId, status: 'accepted' },
+        { traceId: initial.traceId, turnId: initial.turnId, status: 'accepted' },
+      ] },
+      'agent.session.contextTrace.get': (request: ControlRequest) => request.params?.traceId === 'trace-steer' ? steer : initial,
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControlTransportProvider transport={transport}>{children}</ControlTransportProvider>
+    );
+    const { result } = renderHook(
+      () => useMemoryRecallReceipts('session-memory', ['turn-memory'], false), { wrapper },
+    );
+    await waitFor(() => expect(result.current['turn-memory']).toMatchObject({ traceId: 'trace-memory', count: 3 }));
   });
 
   it('keeps a recalled Knowledge document as a clickable source', async () => {

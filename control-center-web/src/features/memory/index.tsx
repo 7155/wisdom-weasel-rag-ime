@@ -93,7 +93,7 @@ type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize
 
 function defaultMemoryStatus(kind: MemoryKind): string {
   if (kind === 'phrases') return 'approved';
-  if (kind === 'evidence' || kind === 'books') return '';
+  if (kind === 'evidence') return '';
   if (kind === 'atoms') return 'current';
   return 'active';
 }

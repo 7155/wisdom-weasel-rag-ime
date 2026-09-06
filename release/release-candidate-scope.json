@@ -1,6 +1,6 @@
 {
   "schemaVersion": "personal-agent-workbench.release-candidate-scope.v1",
-  "generatedAt": "2026-09-06T09:01:27.943829+00:00",
+  "generatedAt": "2026-09-06T15:39:10.716611+00:00",
   "source": {
     "repository": "git@github.com:7155/personal-agent-workbench.git",
     "branch": "main",
@@ -27,7 +27,7 @@
     },
     "memory_context_continuity": {
       "description": "Memory decision context, current claims, stable topic identity, governed Book merges and response recovery.",
-      "pathCount": 26
+      "pathCount": 30
     },
     "execution_reliability": {
       "description": "Background ownership, safe process recovery, idempotency, cancellation, and reproducible fault evidence.",
@@ -59,20 +59,20 @@
     },
     "verification": {
       "description": "Backend and cross-layer regression tests.",
-      "pathCount": 118
+      "pathCount": 119
     }
   },
   "summary": {
-    "pathCount": 849,
+    "pathCount": 854,
     "dispositionCounts": {
-      "keep_release": 848,
+      "keep_release": 853,
       "delete_old_implementation": 1
     },
     "groupCounts": {
       "project_harness": 5,
       "requirement_evidence": 39,
       "control_center_release_ui": 369,
-      "memory_context_continuity": 26,
+      "memory_context_continuity": 30,
       "execution_reliability": 30,
       "evaluation_audit": 134,
       "session_room_skill_flow": 6,
@@ -80,7 +80,7 @@
       "release_scope": 1,
       "product_installation": 4,
       "input_adapter": 5,
-      "verification": 118
+      "verification": 119
     },
     "unclassifiedPathCount": 0,
     "otherWorkNotInReleasePathCount": 0
@@ -945,6 +945,20 @@
       "disposition": "keep_release"
     },
     {
+      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.test.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Verify truthful conversation memory receipts and bounded existing-topic consolidation."
+    },
+    {
+      "path": "control-center-web/src/features/agent/timeline/MemoryRecallReceipt.tsx",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Verify truthful conversation memory receipts and bounded existing-topic consolidation."
+    },
+    {
       "path": "control-center-web/src/features/agent/timeline/activity-summary.test.tsx",
       "status": "modified",
       "disposition": "keep_release",
@@ -1797,6 +1811,13 @@
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
       "status": "modified",
       "disposition": "keep_release"
+    },
+    {
+      "path": "control-center-web/src/features/memory/api.ts",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Verify truthful conversation memory receipts and bounded existing-topic consolidation."
     },
     {
       "path": "control-center-web/src/features/memory/index.tsx",
@@ -4550,6 +4571,13 @@
       "reason": "Retain the already committed memory decision-context and correction-continuity change in the full source inventory."
     },
     {
+      "path": "rag_ime/owner_memory_maintenance.py",
+      "status": "modified",
+      "disposition": "keep_release",
+      "group": "memory_context_continuity",
+      "reason": "Verify truthful conversation memory receipts and bounded existing-topic consolidation."
+    },
+    {
       "path": "rag_ime/personal_context_maintenance.py",
       "group": "session_runtime",
       "reason": "Integrate the scoped September 6 source checkpoint with its owning contracts and regression evidence.",
@@ -5395,6 +5423,13 @@
       "disposition": "keep_release",
       "group": "verification",
       "reason": "Retain the committed regression tests and fixtures for the candidate."
+    },
+    {
+      "path": "tests/test_agent_memory_receipts.py",
+      "status": "added",
+      "disposition": "keep_release",
+      "group": "verification",
+      "reason": "Verify truthful conversation memory receipts and bounded existing-topic consolidation."
     },
     {
       "path": "tests/test_agent_memory_sources.py",

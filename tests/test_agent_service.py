@@ -4258,9 +4258,12 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             memory_node["metadata"],
             {
+                "hitCount": 0,
                 "itemCount": 1,
                 "lifecycle": "session",
                 "priority": "developer",
+                "recallStatus": "empty",
+                "recallTrigger": "first_user_prompt",
                 "timelineMatched": "昨天",
                 "timelineRange": "yesterday",
                 "timelineReason": "relative_time",

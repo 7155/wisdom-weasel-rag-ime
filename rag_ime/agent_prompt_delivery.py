@@ -75,6 +75,7 @@ class AgentPromptDeliveryService:
         source_kind: str,
         delivery: str = "prompt",
         transient_context: str = "",
+        memory_bootstrap: Mapping[str, object] | None = None,
         on_accepted: (
             Callable[[Mapping[str, object]], None] | None
         ) = None,
@@ -148,6 +149,8 @@ class AgentPromptDeliveryService:
             memory_items=memory_items,
             async_items=async_items,
             char_count=len(memory_context),
+            delivery=delivery,
+            bootstrap=memory_bootstrap,
         )
         inbox_node = self._trace_inbox(
             trace_id,
@@ -308,7 +311,10 @@ class AgentPromptDeliveryService:
         memory_items: list[Mapping[str, object]],
         async_items: list[Mapping[str, object]],
         char_count: int,
+        delivery: str = "prompt",
+        bootstrap: Mapping[str, object] | None = None,
     ) -> str:
+        bootstrap = bootstrap or {}
         timeline_intent = _timeline_intent(memory_items)
         trace_metadata: dict[str, object] = {
             "itemCount": len(memory_items),
@@ -339,22 +345,57 @@ class AgentPromptDeliveryService:
             "memory_atom": "memoryAtomIds",
             "memory_timeline": "memoryTimelineIds",
         }
-        for source_type, metadata_key in reference_keys.items():
-            source_ids: list[str] = []
-            for context_item in memory_items:
-                payload = context_item.get("payload")
-                recalled = payload.get("items") if isinstance(payload, Mapping) else []
-                if not isinstance(recalled, (list, tuple)):
+        recalled_items: dict[tuple[str, str], Mapping[str, object]] = {}
+        triggers: list[str] = []
+        for context_item in memory_items:
+            payload = context_item.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            trigger = compact_whitespace(str(payload.get("trigger") or ""))
+            if trigger:
+                triggers.append(trigger)
+            recalled = payload.get("items")
+            for item in recalled if isinstance(recalled, (list, tuple)) else []:
+                if not isinstance(item, Mapping):
                     continue
-                source_ids.extend(
-                    compact_whitespace(str(item.get("sourceId") or ""))
-                    for item in recalled
-                    if isinstance(item, Mapping)
-                    and compact_whitespace(str(item.get("sourceType") or "")).casefold() == source_type
+                identity = (
+                    compact_whitespace(str(item.get("sourceType") or "")).casefold(),
+                    compact_whitespace(str(item.get("sourceId") or "")),
                 )
-            source_ids = list(dict.fromkeys(value for value in source_ids if value))[:24]
+                if identity[1]:
+                    recalled_items[identity] = item
+        if memory_items:
+            trace_metadata["hitCount"] = len(recalled_items)
+        elif isinstance(bootstrap.get("sourceCount"), int):
+            trace_metadata["hitCount"] = max(0, int(bootstrap["sourceCount"]))
+        trigger = next(iter(triggers), str(bootstrap.get("recallTrigger") or ""))
+        if trigger:
+            trace_metadata["recallTrigger"] = trigger
+        if bootstrap.get("status") == "recall_failed":
+            recall_status = "failed"
+        elif bootstrap.get("status") == "disabled":
+            recall_status = "disabled"
+        elif bootstrap.get("reused") is True or (
+            delivery != "prompt" and bootstrap.get("status") == "ready"
+        ):
+            recall_status = "reused"
+        elif memory_items:
+            recall_status = "included" if recalled_items else "empty"
+        else:
+            recall_status = "unavailable"
+        trace_metadata["recallStatus"] = recall_status
+        source_titles = _whole_metadata_values(
+            compact_whitespace(str(item.get("title") or ""))
+            for item in recalled_items.values()
+        )
+        if source_titles:
+            trace_metadata["sourceTitles"] = source_titles
+        for source_type, metadata_key in reference_keys.items():
+            source_ids = _whole_metadata_values(
+                source_id for (kind, source_id) in recalled_items if kind == source_type
+            )
             if source_ids:
-                trace_metadata[metadata_key] = ",".join(source_ids)
+                trace_metadata[metadata_key] = source_ids
         return self.context_runtime.add_trace_node(
             trace_id,
             stage="memory_recall",
@@ -362,10 +403,17 @@ class AgentPromptDeliveryService:
             source_kind="memory_bootstrap",
             parents=[session_node],
             disposition=(
-                "included" if memory_items else "omitted"
+                "failed" if recall_status == "failed"
+                else "included" if memory_items else "omitted"
             ),
             summary=(
-                "已加入首问与最近完整输入召回的角色可见 "
+                "本轮记忆召回失败，当前消息仍可继续"
+                if recall_status == "failed"
+                else "记忆召回已关闭"
+                if recall_status == "disabled"
+                else "沿用当前会话已有记忆，没有重复查询"
+                if recall_status == "reused"
+                else "已加入首问与最近完整输入召回的角色可见 "
                 "Timeline/Topic Book/Atom 记忆包"
                 if memory_items
                 else "本 Session 尚无可投递的首问记忆包"
@@ -522,6 +570,17 @@ def _partition_items(
         if item.get("sourceKind") != "memory_bootstrap"
     ]
     return memory, asynchronous
+
+
+def _whole_metadata_values(values: Any, *, maximum: int = 240) -> str:
+    """Fit complete values inside the public trace's scalar text budget."""
+    selected: list[str] = []
+    for value in values:
+        if not value or value in selected or "," in value:
+            continue
+        if len(",".join([*selected, value])) <= maximum:
+            selected.append(value)
+    return ",".join(selected)
 
 
 def _timeline_intent(

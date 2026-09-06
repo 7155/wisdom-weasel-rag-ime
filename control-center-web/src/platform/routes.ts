@@ -1145,7 +1145,7 @@ export const CONTROL_ROUTES = {
   'agent.memoryMaintenance.trigger': {
     method: 'POST',
     path: '/api/agent/memory-maintenance',
-    body: ['project', 'ownerKind', 'ownerId', 'instruction', 'manual', 'maxSources'],
+    body: ['project', 'ownerKind', 'ownerId', 'instruction', 'manual', 'maxSources', 'catalogOnly'],
   },
   'agent.subagents.templates': {
     method: 'GET',

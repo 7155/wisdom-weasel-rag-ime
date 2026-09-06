@@ -225,6 +225,8 @@ class GatewayMemoryMaintenanceJobs:
                     "totalDayCount": 1,
                     "completedDayCount": 0,
                 }
+            elif request.get("catalogOnly") is True:
+                job["progress"] = {"phase": "memory_catalog_consolidation"}
             else:
                 job["progress"] = {
                     "phase": "memory_maintenance",
@@ -613,6 +615,10 @@ class GatewayMemoryMaintenanceJobs:
             "jobId": job_id,
             "state": state,
             "reused": bool(reused),
+            "catalogOnly": (
+                isinstance(job.get("request"), Mapping)
+                and job["request"].get("catalogOnly") is True
+            ),
             "result": result,
             "progress": (
                 dict(job.get("progress") or {})

@@ -17,6 +17,42 @@ afterEach(() => {
 });
 
 describe('MemoryFeature relations', () => {
+  it('opens the topic library on active topics and keeps historical filters available', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'memory.summary': { memoryBookCount: 87 },
+      'memory.pages': { items: [], nextCursor: '' },
+    } });
+    renderMemory(transport, '/memory?layer=books');
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'memory.pages' && request.params?.kind === 'books' && request.query?.status === 'active'
+    ))).toBe(true));
+    await user.click(screen.getByRole('combobox', { name: '状态' }));
+    await user.click(await screen.findByRole('option', { name: '已归档' }));
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'memory.pages' && request.query?.status === 'archived'
+    ))).toBe(true));
+  });
+
+  it('consolidates the existing catalog independently from pending source curation', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'memory.summary': { memoryBookCount: 87 },
+      'memory.pages': { items: [], nextCursor: '' },
+      'agent.memoryMaintenance.run': (request: ControlRequest) => request.query?.jobId
+        ? { jobId: 'catalog-job', state: 'completed', catalogOnly: true, result: { ok: true, catalogOnly: true } }
+        : { ok: true, policy: 'auto_governed', autoApply: true, runs: [], ownerCuration: { pendingSourceCount: 906 }, catalogConsolidation: { enabled: true } },
+      'agent.memoryMaintenance.trigger': { ok: true, jobId: 'catalog-job', state: 'queued', catalogOnly: true },
+    } });
+    renderMemory(transport, '/memory?view=organize');
+    await user.click(await screen.findByRole('button', { name: '整理已有主题' }));
+    const calls = transport.requests.filter(({ request }) => request.pathId === 'agent.memoryMaintenance.trigger');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].request.body).toMatchObject({ catalogOnly: true, manual: true });
+    expect(calls[0].request.body).not.toHaveProperty('maxSources');
+    expect(await screen.findByText('已有主题整理完成')).toBeInTheDocument();
+  });
+
   it('opens the existing catalog from an empty day and searches without creating a model task', async () => {
     const user = userEvent.setup();
     const date = localCalendarDate();

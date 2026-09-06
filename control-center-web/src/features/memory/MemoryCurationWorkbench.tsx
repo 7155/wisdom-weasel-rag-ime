@@ -91,6 +91,8 @@ export function MemoryCurationWorkbench({
   const pending = queries.status.isPending || (Boolean(queries.runId) && queries.run.isPending);
   const jobPayload = asRecord(queries.job.data);
   const jobState = stringValue(jobPayload.state, queries.jobState);
+  const catalogJob = jobPayload.catalogOnly === true
+    || (queries.trigger.isPending && queries.trigger.variables?.catalogOnly === true);
   const jobActive = jobState === 'queued' || jobState === 'running' || queries.trigger.isPending;
   const jobExpired = jobState === 'expired';
   const jobFailed = jobState === 'failed' || jobExpired || Boolean(queries.trigger.error ?? queries.job.error);
@@ -130,9 +132,15 @@ export function MemoryCurationWorkbench({
             : '从上次位置继续推进；按日期和应用核对来源，再审核本轮形成的记忆草案。'}</span>
         </div>
         <div className="memory-curation__actions">
+          <Button
+            disabled={jobActive || !automaticOrganizationEnabled || asRecord(statusPayload.catalogConsolidation).enabled === false}
+            onClick={() => void startCatalogConsolidation()}
+            size="small"
+          >整理已有主题</Button>
           <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small" variant="quiet">补充整理要求</Button>
         </div>
       </div>
+      <p>已有主题可单独整理：合并同一对象、同一问题的重复主题，保留记忆、来源和回滚记录。</p>
 
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection
@@ -188,9 +196,9 @@ export function MemoryCurationWorkbench({
                     : publicErrorText(queries.trigger.error ?? queries.job.error ?? jobPayload.error, '整理任务没有完成；进度已经保留，可以重试。'))}
                 </InlineNotice>
               ) : jobState === 'completed' ? (
-                <InlineNotice title="本轮处理完成" tone="success">状态正在刷新；{automaticOrganizationAutoApply ? '通过治理校验的结果会自动应用。' : '如果产生了草案，请在下方逐项审核。'}</InlineNotice>
+                <InlineNotice title={catalogJob ? '已有主题整理完成' : '本轮处理完成'} tone="success">状态正在刷新；{automaticOrganizationAutoApply ? '通过治理校验的结果会自动应用。' : '如果产生了草案，请在下方逐项审核。'}</InlineNotice>
               ) : jobActive ? (
-                <InlineNotice title="正在读取并整理本轮来源" tone="info">你可以留在此页，完成后会自动刷新；正式记忆不会被直接改写。</InlineNotice>
+                <InlineNotice title={catalogJob ? '正在核对已有主题' : '正在读取并整理本轮来源'} tone="info">{catalogJob ? '正在检查主题和当前成员；不会推进新来源整理进度。' : '你可以留在此页，完成后会自动刷新；原始来源会保留。'}</InlineNotice>
               ) : null}
 
               {failedOwnerScope && !jobActive ? (
@@ -412,6 +420,18 @@ export function MemoryCurationWorkbench({
       });
     } catch (cause) {
       setStartError(publicErrorText(cause, '未能启动本轮整理；已有进度没有变化。'));
+    }
+  }
+
+  async function startCatalogConsolidation() {
+    setStartError('');
+    try {
+      await queries.trigger.mutateAsync({
+        catalogOnly: true,
+        instruction: '核对已有主题目录，合并同一稳定对象与同一问题轴的重复主题；保留当前记忆成员、来源、旧引用及回滚回执。',
+      });
+    } catch (cause) {
+      setStartError(publicErrorText(cause, '未能启动已有主题整理；可以重试。'));
     }
   }
 

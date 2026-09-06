@@ -578,6 +578,7 @@ class AgentPromptApplicationService:
                 source_kind=context_source,
                 delivery=delivery,
                 transient_context=transient_context,
+                memory_bootstrap=bootstrap,
                 on_accepted=on_accepted,
                 before_runtime=lambda: (
                     self._require_prompt_admission_active(

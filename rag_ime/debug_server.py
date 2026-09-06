@@ -4304,6 +4304,21 @@ class DebugImeService:
         project = _string(payload.get("project")) or self.config.project
         manual = bool(payload.get("manual"))
         managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        if payload.get("catalogOnly") is True:
+            catalog = self._execute_gateway_memory_catalog_consolidation(
+                project=project, manual=manual, managed=managed,
+            )
+            return {
+                "schemaVersion": "rag-ime.owner-memory-curation-run.v1",
+                "ok": catalog.get("ok") is True,
+                "catalogOnly": True,
+                "runId": _string(catalog.get("curationRunId")),
+                "catalogConsolidation": catalog,
+                "results": [],
+                "managedSettings": managed.as_dict(),
+                "executionOwner": "agent_gateway",
+                "transport": "gateway_internal_session",
+            }
         if bool(payload.get("timelineOnly")):
             return self._execute_gateway_memory_dreaming(
                 project=project,

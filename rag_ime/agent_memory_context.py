@@ -826,6 +826,8 @@ def _ready_existing(
     dedupe_key: str,
     expired_legacy: int,
 ) -> dict[str, object]:
+    payload = existing.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
     return {
         "schemaVersion": (
             "rag-ime.memory-bootstrap-enqueue-result.v1"
@@ -833,6 +835,9 @@ def _ready_existing(
         "ok": True,
         "sessionId": session_id,
         "status": "ready",
+        "reused": True,
+        "sourceCount": len(payload.get("items") or []),
+        "recallTrigger": str(payload.get("trigger") or ""),
         "itemId": str(existing.get("itemId") or ""),
         "dedupeKey": str(dedupe_key or ""),
         "queryAware": True,
